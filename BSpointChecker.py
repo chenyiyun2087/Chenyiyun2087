@@ -1,16 +1,17 @@
+import concurrent.futures
+import logging
 import os
 import time
-import pandas as pd
-import concurrent.futures
 from datetime import datetime
+
+import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
-import logging
 
 # 配置日志
 logging.basicConfig(
@@ -98,7 +99,7 @@ def capture_bs_point_screenshot(stock_code, save_dir):
     screenshot_filename = f"{stock_code}_{datetime.now().strftime('%Y%m%d')}.png"
     screenshot_path = os.path.join(save_dir, screenshot_filename)
 
-    # 设置Chrome选项
+    # 设置Chrome选项hh
     chrome_options = Options()
     chrome_options.add_argument("--headless")  # 无头模式
     chrome_options.add_argument("--disable-gpu")

@@ -50,6 +50,7 @@ def filter_file_data(input_file_path, output_csv_path):
         df_filtered = df.copy()
 
         numeric_cols = ['市盈增长比率', '盈利评分', '市盈率(经调整)', '预期净利润增长率']
+        numeric_cols = []
         for col in numeric_cols:
             if col in df_filtered.columns:
                 df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')

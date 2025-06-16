@@ -1,8 +1,9 @@
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
 import argparse
 from pathlib import Path
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def create_letter_templates():
