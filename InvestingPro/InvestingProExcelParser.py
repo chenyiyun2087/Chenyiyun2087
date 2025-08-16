@@ -58,14 +58,14 @@ def filter_file_data(input_file_path, output_csv_path):
                 print(f"警告: 列 '{col}' 在文件中未找到。将跳过涉及此列的筛选条件。")
 
         # Initialize conditions to Series of True values
-        condition1 = pd.Series([True] * len(df_filtered), index=df_filtered.index)
-        condition2 = pd.Series([True] * len(df_filtered), index=df_filtered.index)
-        condition3 = pd.Series([True] * len(df_filtered), index=df_filtered.index)
-        condition4 = pd.Series([True] * len(df_filtered), index=df_filtered.index)
+        # condition1 = pd.Series([True] * len(df_filtered), index=df_filtered.index)
+        # condition2 = pd.Series([True] * len(df_filtered), index=df_filtered.index)
+        # condition3 = pd.Series([True] * len(df_filtered), index=df_filtered.index)
+        # condition4 = pd.Series([True] * len(df_filtered), index=df_filtered.index)
         # condition5 = pd.Series([True] * len(df_filtered), index=df_filtered.index) # Not used in final_condition in original script
 
         if '市盈增长比率' in df_filtered.columns and pd.api.types.is_numeric_dtype(df_filtered['市盈增长比率']):
-            condition1 = (df_filtered['市盈增长比率'] >= 0) & (df_filtered['市盈增长比率'] <= 1)
+            condition1 = (df_filtered['市盈增长比率'] >= -9999) & (df_filtered['市盈增长比率'] <= 9999)
         else:
             print("警告: '市盈增长比率' 列不存在或非数值类型，无法应用筛选条件1。")
 
@@ -75,12 +75,12 @@ def filter_file_data(input_file_path, output_csv_path):
             print("警告: '公允价值不确定性' 列不存在，无法应用筛选条件2。")
 
         if '盈利评分' in df_filtered.columns and pd.api.types.is_numeric_dtype(df_filtered['盈利评分']):
-            condition3 = df_filtered['盈利评分'] > 2
+            condition3 = df_filtered['盈利评分'] > -9999
         else:
             print("警告: '盈利评分' 列不存在或非数值类型，无法应用筛选条件3。")
 
         if '市盈率(经调整)' in df_filtered.columns and pd.api.types.is_numeric_dtype(df_filtered['市盈率(经调整)']):
-            condition4 = df_filtered['市盈率(经调整)'] > 0
+            condition4 = df_filtered['市盈率(经调整)'] > -9999
         else:
             print("警告: '市盈率(经调整)' 列不存在或非数值类型，无法应用筛选条件4。")
 
@@ -90,8 +90,9 @@ def filter_file_data(input_file_path, output_csv_path):
         # else:
         #     print("警告: '预期净利润增长率' 列不存在或非数值类型，无法应用筛选条件5。")
 
-        final_condition = condition1 & condition2 & condition3 & condition4
-        result_df = df_filtered[final_condition].copy()
+        # final_condition = condition1 & condition2 & condition3 & condition4
+        # result_df = df_filtered[final_condition].copy()
+        result_df = df_filtered.copy()
 
         print("\n筛选后数据前几行 (Filtered DataFrame head):")
         print(result_df.head())

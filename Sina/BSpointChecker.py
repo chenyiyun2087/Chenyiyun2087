@@ -36,7 +36,7 @@ def setup_directories():
     today = datetime.now().strftime("%Y%m%d")
 
     # 创建基础目录
-    base_dir = "SinaAppBS"
+    base_dir = "../SinaAppBS"
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
         logger.info(f"创建基础目录: {base_dir}")

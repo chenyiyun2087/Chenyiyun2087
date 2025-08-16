@@ -37,13 +37,13 @@ def run_daily_processing_pipeline():
 
     # 2. Define filenames based on today's date
     base_name_prefix = "cyy - cyy - "
-
-    initial_input_xlsx = f"{base_name_prefix}{date_str}.xlsx"
+    base_dir  = 'D:\\交易\\investingPro\\'
+    initial_input_xlsx = base_dir +f"{base_name_prefix}{date_str}.xlsx"
     intermediate_csv = f"{base_name_prefix}{date_str}.csv"
     # Final output name based on discussion (e.g., YYYY-MM-DD-filtered.csv)
     # If you strictly need "cyy - cyy - filterYYYY-MM-DD.csv", change to:
     # final_output_csv = f"{base_name_prefix}filter{date_str}.csv"
-    final_output_csv = f"{base_name_prefix}{date_str}-filtered.csv"
+    final_output_csv =base_dir + f"{base_name_prefix}{date_str}-filtered.csv"
 
     print(f"\n--- Orchestration Started for Date: {date_str} ---")
     print(f"Initial Input Excel: {initial_input_xlsx}")
