@@ -1,0 +1,2041 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>37岁高净值个人成都退休规划：资产配置与奢华生活方案</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'serif': ['Playfair Display', 'serif'],
+                        'sans': ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'luxury-gold': '#D4AF37',
+                        'deep-burgundy': '#800020',
+                        'warm-taupe': '#8B7D6B',
+                        'soft-ivory': '#FDF9F3',
+                        'charcoal': '#2D2D2D',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .hero-gradient {
+            background: linear-gradient(135deg, #FDF9F3 0%, #F5F1EB 50%, #E8E2D5 100%);
+        }
+        .text-shadow {
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        .motion-blur {
+            backdrop-filter: blur(2px);
+        }
+        .bento-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            grid-template-rows: auto auto;
+            gap: 1.5rem;
+        }
+        .bento-item-1 {
+            grid-column: 1 / 2;
+            grid-row: 1 / 3;
+        }
+        .bento-item-2 {
+            grid-column: 2 / 3;
+            grid-row: 1 / 2;
+        }
+        .bento-item-3 {
+            grid-column: 2 / 3;
+            grid-row: 2 / 3;
+        }
+        .toc-fixed {
+            position: fixed;
+            top: 2rem;
+            left: 2rem;
+            width: 280px;
+            max-height: calc(100vh - 4rem);
+            overflow-y: auto;
+            z-index: 50;
+        }
+        .content-with-toc {
+            margin-left: 320px;
+        }
+
+        /* Mermaid Chart Styling */
+        .mermaid-container {
+            display: flex;
+            justify-content: center;
+            min-height: 300px;
+            max-height: 800px;
+            background: #ffffff;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 30px 0;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .mermaid-container .mermaid {
+            width: 100%;
+            max-width: 100%;
+            height: 100%;
+            cursor: grab;
+            transition: transform 0.3s ease;
+            transform-origin: center center;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            touch-action: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+
+        .mermaid-container .mermaid svg {
+            max-width: 100%;
+            height: 100%;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .mermaid-container .mermaid:active {
+            cursor: grabbing;
+        }
+
+        .mermaid-container.zoomed .mermaid {
+            height: 100%;
+            width: 100%;
+            cursor: grab;
+        }
+
+        .mermaid-controls {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            display: flex;
+            gap: 10px;
+            z-index: 20;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 8px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .mermaid-control-btn {
+            background: #ffffff;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            padding: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #374151;
+            font-size: 14px;
+            min-width: 36px;
+            height: 36px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mermaid-control-btn:hover {
+            background: #f8fafc;
+            border-color: #3b82f6;
+            color: #3b82f6;
+            transform: translateY(-1px);
+        }
+
+        .mermaid-control-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Enhanced Mermaid node styling for better contrast */
+        .mermaid .node rect,
+        .mermaid .node circle,
+        .mermaid .node ellipse,
+        .mermaid .node polygon {
+            stroke-width: 2px;
+        }
+
+        /* Ensure text contrast for different node colors */
+        .mermaid .node text {
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        /* Specific text color overrides for different node colors */
+        .mermaid .node[style*="fill:#D4AF37"] text,
+        .mermaid .node[style*="fill:#800020"] text,
+        .mermaid .node[style*="fill:#2D2D2D"] text {
+            fill: #FFFFFF !important;
+            font-weight: 700;
+        }
+
+        .mermaid .node[style*="fill:#FDF9F3"] text,
+        .mermaid .node[style*="fill:#8B7D6B"] text {
+            fill: #2D2D2D !important;
+            font-weight: 700;
+        }
+
+        .mermaid .edgeLabel {
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        /* Responsive adjustments for mermaid controls */
+        @media (max-width: 1024px) {
+            .mermaid-control-btn:not(.reset-zoom) {
+                display: none;
+            }
+            .mermaid-controls {
+                top: auto;
+                bottom: 15px;
+                right: 15px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .toc-fixed {
+                display: none;
+            }
+            .content-with-toc {
+                margin-left: 0;
+            }
+            .bento-grid {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto;
+            }
+            .bento-item-1, .bento-item-2, .bento-item-3 {
+                grid-column: auto;
+                grid-row: auto;
+            }
+            .hero-gradient img {
+                height: auto;
+                max-height: 200px;
+            }
+            .hero-gradient h1 {
+                font-size: 1.8rem;
+                line-height: 1.2;
+            }
+            .hero-gradient p {
+                font-size: 1rem;
+            }
+            .hero-gradient .bento-item-2, .hero-gradient .bento-item-3 {
+                padding: 1rem;
+            }
+            .bg-white > .p-8 {
+                padding: 1rem;
+            }
+            .container {
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+        }
+
+        /* Additional small screen adjustments */
+        @media (max-width: 390px) {
+            .hero-gradient h1 {
+                font-size: 1.5rem;
+            }
+            .hero-gradient .text-3xl {
+                font-size: 1.25rem;
+            }
+        }
+    </style>
+  <base target="_blank">
+</head>
+
+  <body class="bg-soft-ivory text-charcoal font-sans overflow-x-hidden">
+    <!-- Fixed Table of Contents -->
+    <nav class="toc-fixed bg-white shadow-lg rounded-lg p-6 border border-gray-100">
+      <h3 class="text-lg font-bold text-charcoal mb-4 border-b border-gray-200 pb-2">目录导航</h3>
+      <ul class="space-y-2 text-sm">
+        <li>
+          <a href="#executive-summary" class="block py-1 px-2 rounded hover:bg-gray-100 transition-colors">执行摘要</a>
+        </li>
+        <li>
+          <a href="#financial-planning" class="block py-1 px-2 rounded hover:bg-gray-100 transition-colors">核心财务规划</a>
+        </li>
+        <li>
+          <a href="#asset-allocation" class="block py-1 px-2 rounded hover:bg-gray-100 transition-colors">资产配置方案</a>
+        </li>
+        <li>
+          <a href="#chengdu-investments" class="block py-1 px-2 rounded hover:bg-gray-100 transition-colors">成都投资机会</a>
+        </li>
+        <li>
+          <a href="#risk-management" class="block py-1 px-2 rounded hover:bg-gray-100 transition-colors">风险管理</a>
+        </li>
+        <li>
+          <a href="#lifestyle" class="block py-1 px-2 rounded hover:bg-gray-100 transition-colors">奢华生活方式</a>
+        </li>
+      </ul>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="content-with-toc">
+      <!-- Hero Section with Bento Layout -->
+      <section class="hero-gradient min-h-screen flex items-center px-8 py-16">
+        <div class="container mx-auto">
+          <div class="bento-grid max-w-7xl mx-auto">
+            <!-- Main Hero Content -->
+            <div class="bento-item-1 flex flex-col justify-center space-y-8">
+              <div class="space-y-6">
+                <div class="inline-block px-4 py-2 bg-luxury-gold/10 rounded-full border border-luxury-gold/30">
+                  <span class="text-luxury-gold font-medium text-sm tracking-wide">私人财富管理方案</span>
+                </div>
+                <h1 class="text-5xl lg:text-7xl font-serif font-bold text-charcoal leading-tight text-shadow">
+                  <span class="italic text-deep-burgundy">37岁</span>
+                  <br>
+                  成都退休规划
+                  <br>
+                  <span class="text-warm-taupe">资产配置与奢华生活</span>
+                </h1>
+                <p class="text-xl lg:text-2xl text-gray-600 max-w-2xl leading-relaxed">
+                  为高净值个人量身定制的1300万现金资产配置策略与成都奢华生活方式规划
+                </p>
+              </div>
+              <div class="flex items-center space-x-8 text-sm text-gray-500">
+                <div class="flex items-center space-x-2">
+                  <i class="fas fa-map-marker-alt text-luxury-gold"></i>
+                  <span>成都</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <i class="fas fa-calendar text-luxury-gold"></i>
+                  <span>37岁退休规划</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <i class="fas fa-chart-line text-luxury-gold"></i>
+                  <span>高风险偏好</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Key Highlights -->
+            <div class="bento-item-2 bg-white/80 backdrop-blur rounded-xl p-8 shadow-lg">
+              <h3 class="text-xl font-bold text-charcoal mb-6">核心建议</h3>
+              <div class="space-y-4">
+                <div class="flex items-start space-x-3">
+                  <div class="w-8 h-8 bg-luxury-gold/20 rounded-full flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-percentage text-luxury-gold text-sm"></i>
+                  </div>
+                  <div>
+                    <p class="font-semibold text-charcoal">3.7%安全支取法则</p>
+                    <p class="text-sm text-gray-600">每年可安全支取48.1万元</p>
+                  </div>
+                </div>
+                <div class="flex items-start space-x-3">
+                  <div class="w-8 h-8 bg-deep-burgundy/20 rounded-full flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-chart-pie text-deep-burgundy text-sm"></i>
+                  </div>
+                  <div>
+                    <p class="font-semibold text-charcoal">70%权益类配置</p>
+                    <p class="text-sm text-gray-600">追求长期资本增值</p>
+                  </div>
+                </div>
+                <div class="flex items-start space-x-3">
+                  <div class="w-8 h-8 bg-warm-taupe/20 rounded-full flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-home text-warm-taupe text-sm"></i>
+                  </div>
+                  <div>
+                    <p class="font-semibold text-charcoal">租房优于购房</p>
+                    <p class="text-sm text-gray-600">保持资金灵活性</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Visual Element -->
+            <div class="bento-item-3 relative overflow-hidden rounded-xl">
+              <img src="https://kimi-img.moonshot.cn/pub/icon/spinner.svg" alt="成都现代城市天际线景观" class="w-full h-full object-cover" size="large" aspect="wide" style="photo" query="成都 城市天际线 现代建筑" referrerpolicy="no-referrer" />
+              <div class="absolute inset-0 bg-gradient-to-t from-charcoal/60 to-transparent"></div>
+              <div class="absolute bottom-6 left-6 text-white">
+                <p class="text-sm font-medium">成都 · 奢华生活之都</p>
+                <p class="text-xs opacity-80">高端住宅与精致生活方式的完美融合</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Executive Summary -->
+      <section id="executive-summary" class="py-16 bg-white">
+        <div class="container mx-auto px-8">
+          <div class="max-w-4xl mx-auto">
+            <div class="text-center mb-12">
+              <h2 class="text-4xl font-serif font-bold text-charcoal mb-4">执行摘要</h2>
+              <div class="w-24 h-1 bg-luxury-gold mx-auto"></div>
+            </div>
+
+            <div class="bg-soft-ivory rounded-2xl p-8 mb-8">
+              <blockquote class="text-xl lg:text-2xl font-serif italic text-charcoal leading-relaxed text-center">
+                "将1300万现金中的大部分配置于以股票和股票型基金为主的权益类资产，以追求长期资本增值；同时保留20%于债券等固定收益类资产以平衡风险，10%于现金及等价物以保证流动性。"
+              </blockquote>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8 mb-12">
+              <div class="text-center">
+                <div class="w-16 h-16 bg-luxury-gold/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-calculator text-luxury-gold text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-bold text-charcoal mb-2">资金可持续性</h3>
+                <p class="text-gray-600">基于"3.7%法则"，年安全支取48.1万元，确保财富长期保值增值</p>
+              </div>
+              <div class="text-center">
+                <div class="w-16 h-16 bg-deep-burgundy/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-chart-line text-deep-burgundy text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-bold text-charcoal mb-2">资产配置</h3>
+                <p class="text-gray-600">70%权益类资产追求高增长，20%固定收益平衡风险，10%现金保证流动性</p>
+              </div>
+              <div class="text-center">
+                <div class="w-16 h-16 bg-warm-taupe/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-crown text-warm-taupe text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-bold text-charcoal mb-2">奢华生活</h3>
+                <p class="text-gray-600">50-60万元年度预算，覆盖高端住宅、顶级餐饮、奢侈品消费和环球旅行</p>
+              </div>
+            </div>
+
+            <div class="prose max-w-none">
+              <p class="text-lg leading-relaxed text-gray-700 mb-6">
+                本方案专为37岁、拥有1300万现金、计划在成都提前退休并享受奢华生活的未婚男性量身定制。规划的核心在于平衡高风险偏好下的资产增值需求与长期、稳定、奢华的生活消费支出，确保财富在整个退休周期内能够抵御通货膨胀的侵蚀，并实现保值增值。
+              </p>
+              <p class="text-lg leading-relaxed text-gray-700">
+                基于"3.7%法则"的审慎支取策略，结合成都本地的高端生活成本，我们建议将年度奢华生活预算控制在50-60万元区间。这笔预算足以支撑包括高端住宅、顶级餐饮、奢侈品消费和环球旅行在内的全面奢华生活，同时确保财富的长期可持续性。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Financial Planning -->
+      <section id="financial-planning" class="py-16 bg-gray-50">
+        <div class="container mx-auto px-8">
+          <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-16">
+              <h2 class="text-4xl font-serif font-bold text-charcoal mb-4">核心财务规划与目标设定</h2>
+              <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                构建稳健且可持续的核心财务框架，平衡资产增值与奢华生活需求
+              </p>
+            </div>
+
+            <!-- 3.7% Rule Analysis -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-6 flex items-center">
+                  <i class="fas fa-shield-alt text-luxury-gold mr-3"></i>
+                  基于"3.7%法则"的安全支取策略
+                </h3>
+                <div class="prose max-w-none">
+                  <p class="text-lg leading-relaxed text-gray-700 mb-6">
+                    对于计划在37岁退休并维持奢华生活方式的高净值个人而言，确保资金的长期可持续性是财务规划的核心。传统的"4%法则"作为退休规划的基准，建议每年从投资组合中提取不超过4%的资金用于生活开支。然而，考虑到当前全球经济环境的低利率趋势、市场不确定性增加以及个人长达数十年的退休周期，更为审慎的<strong class="text-luxury-gold">"3.7%法则"</strong>被提出作为更安全的替代方案。
+                  </p>
+                  <div class="bg-luxury-gold/10 rounded-xl p-6 mb-6">
+                    <div class="flex items-center justify-between mb-4">
+                      <span class="text-lg font-semibold text-charcoal">年度可支取金额</span>
+                      <span class="text-2xl font-bold text-luxury-gold">48.1万元</span>
+                    </div>
+                    <div class="text-sm text-gray-600">
+                      计算方式：1300万 × 3.7% = 48.1万元/年
+                    </div>
+                  </div>
+                  <p class="text-gray-700">
+                    这一策略的核心在于，通过降低提取率，为投资组合的增长留出更多空间，使其能够更好地应对通货膨胀的侵蚀和市场的周期性波动，从而确保资金能够支撑您从37岁直至晚年的整个生命周期。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Portfolio Simulation -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-6 flex items-center">
+                  <i class="fas fa-chart-area text-deep-burgundy mr-3"></i>
+                  资金长期可持续性模拟与验证
+                </h3>
+                <div class="grid lg:grid-cols-2 gap-8">
+                  <div>
+                    <h4 class="text-lg font-semibold text-charcoal mb-4">资产配置与预期回报假设</h4>
+                    <div class="space-y-4">
+                      <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center space-x-3">
+                          <div class="w-4 h-4 bg-deep-burgundy rounded-full"></div>
+                          <span class="font-medium">股票</span>
+                          <span class="text-sm text-gray-600">60%</span>
+                        </div>
+                        <span class="font-semibold text-deep-burgundy">8%</span>
+                      </div>
+                      <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center space-x-3">
+                          <div class="w-4 h-4 bg-luxury-gold rounded-full"></div>
+                          <span class="font-medium">股票型基金</span>
+                          <span class="text-sm text-gray-600">30%</span>
+                        </div>
+                        <span class="font-semibold text-luxury-gold">7%</span>
+                      </div>
+                      <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center space-x-3">
+                          <div class="w-4 h-4 bg-warm-taupe rounded-full"></div>
+                          <span class="font-medium">债券</span>
+                          <span class="text-sm text-gray-600">5%</span>
+                        </div>
+                        <span class="font-semibold text-warm-taupe">3%</span>
+                      </div>
+                      <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center space-x-3">
+                          <div class="w-4 h-4 bg-gray-400 rounded-full"></div>
+                          <span class="font-medium">现金及等价物</span>
+                          <span class="text-sm text-gray-600">5%</span>
+                        </div>
+                        <span class="font-semibold text-gray-600">2%</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 class="text-lg font-semibold text-charcoal mb-4">模拟结果</h4>
+                    <div class="bg-deep-burgundy/10 rounded-xl p-6 mb-4">
+                      <div class="text-center">
+                        <div class="text-3xl font-bold text-deep-burgundy mb-2">19,677.98万元</div>
+                        <div class="text-sm text-gray-600">50年后投资组合预计价值</div>
+                      </div>
+                    </div>
+                    <div class="text-sm text-gray-600 space-y-2">
+                      <p>• 基于每年50万元支取的50年模拟</p>
+                      <p>• 初始投资：1,300万元</p>
+                      <p>• 验证了资金长期可持续性</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Lifestyle Budget -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-6 flex items-center">
+                  <i class="fas fa-crown text-warm-taupe mr-3"></i>
+                  奢华生活成本估算与预算分配
+                </h3>
+                <div class="grid lg:grid-cols-2 gap-8">
+                  <div>
+                    <h4 class="text-lg font-semibold text-charcoal mb-4">年度奢华生活预算建议</h4>
+                    <div class="bg-warm-taupe/10 rounded-xl p-6 mb-6">
+                      <div class="flex items-center justify-between mb-4">
+                        <span class="text-lg font-semibold text-charcoal">年度预算区间</span>
+                        <span class="text-2xl font-bold text-warm-taupe">50-60万元</span>
+                      </div>
+                      <div class="text-sm text-gray-600">
+                        基于3.7%法则的48.1万元安全支取额，给予适度消费灵活性
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 class="text-lg font-semibold text-charcoal mb-4">预算分配框架</h4>
+                    <div class="space-y-3">
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm">高端住宅</span>
+                        <div class="flex items-center space-x-2">
+                          <div class="w-32 bg-gray-200 rounded-full h-2">
+                            <div class="bg-deep-burgundy h-2 rounded-full" style="width: 40%"></div>
+                          </div>
+                          <span class="text-xs text-gray-600">20-30万</span>
+                        </div>
+                      </div>
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm">高端餐饮与社交</span>
+                        <div class="flex items-center space-x-2">
+                          <div class="w-32 bg-gray-200 rounded-full h-2">
+                            <div class="bg-luxury-gold h-2 rounded-full" style="width: 20%"></div>
+                          </div>
+                          <span class="text-xs text-gray-600">10-15万</span>
+                        </div>
+                      </div>
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm">旅行与休闲</span>
+                        <div class="flex items-center space-x-2">
+                          <div class="w-32 bg-gray-200 rounded-full h-2">
+                            <div class="bg-warm-taupe h-2 rounded-full" style="width: 20%"></div>
+                          </div>
+                          <span class="text-xs text-gray-600">10-15万</span>
+                        </div>
+                      </div>
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm">奢侈品与购物</span>
+                        <div class="flex items-center space-x-2">
+                          <div class="w-32 bg-gray-200 rounded-full h-2">
+                            <div class="bg-gray-500 h-2 rounded-full" style="width: 15%"></div>
+                          </div>
+                          <span class="text-xs text-gray-600">5-10万</span>
+                        </div>
+                      </div>
+                      <div class="flex justify-between items-center">
+                        <span class="text-sm">健康与保健</span>
+                        <div class="flex items-center space-x-2">
+                          <div class="w-32 bg-gray-200 rounded-full h-2">
+                            <div class="bg-gray-400 h-2 rounded-full" style="width: 7%"></div>
+                          </div>
+                          <span class="text-xs text-gray-600">3-5万</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Asset Allocation -->
+      <section id="asset-allocation" class="py-16 bg-white">
+        <div class="container mx-auto px-8">
+          <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-16">
+              <h2 class="text-4xl font-serif font-bold text-charcoal mb-4">资产配置方案（高风险偏好）</h2>
+              <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                以追求长期资本增值为核心目标，构建多元化投资组合
+              </p>
+            </div>
+
+            <!-- Asset Allocation Overview -->
+            <div class="mb-16">
+              <div class="bg-gray-50 rounded-2xl p-8">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 text-center">资产配置比例建议</h3>
+                <div class="grid lg:grid-cols-3 gap-8">
+                  <div class="bg-white rounded-xl p-6 shadow-md">
+                    <div class="text-center mb-4">
+                      <div class="w-20 h-20 bg-deep-burgundy/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-chart-line text-deep-burgundy text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-charcoal">权益类资产</h4>
+                      <p class="text-3xl font-bold text-deep-burgundy">70%</p>
+                    </div>
+                    <div class="space-y-2 text-sm text-gray-600">
+                      <p>• 核心增长引擎</p>
+                      <p>• 预期年化收益: 8%-12%</p>
+                      <p>• 股票、股票型基金</p>
+                    </div>
+                  </div>
+                  <div class="bg-white rounded-xl p-6 shadow-md">
+                    <div class="text-center mb-4">
+                      <div class="w-20 h-20 bg-warm-taupe/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-shield-alt text-warm-taupe text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-charcoal">固定收益类</h4>
+                      <p class="text-3xl font-bold text-warm-taupe">20%</p>
+                    </div>
+                    <div class="space-y-2 text-sm text-gray-600">
+                      <p>• 稳定器功能</p>
+                      <p>• 预期年化收益: 3%-5%</p>
+                      <p>• 债券、债券型基金</p>
+                    </div>
+                  </div>
+                  <div class="bg-white rounded-xl p-6 shadow-md">
+                    <div class="text-center mb-4">
+                      <div class="w-20 h-20 bg-luxury-gold/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-coins text-luxury-gold text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-charcoal">现金及等价物</h4>
+                      <p class="text-3xl font-bold text-luxury-gold">10%</p>
+                    </div>
+                    <div class="space-y-2 text-sm text-gray-600">
+                      <p>• 安全垫与流动性</p>
+                      <p>• 预期年化收益: 1%-3%</p>
+                      <p>• 货币基金、活期存款</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Investment Principles -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 flex items-center">
+                  <i class="fas fa-lightbulb text-luxury-gold mr-3"></i>
+                  核心投资原则
+                </h3>
+                <div class="grid md:grid-cols-3 gap-8">
+                  <div class="text-center">
+                    <div class="w-16 h-16 bg-deep-burgundy/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <i class="fas fa-clock text-deep-burgundy text-2xl"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-charcoal mb-3">长期投资与复利增长</h4>
+                    <p class="text-gray-600 text-sm leading-relaxed">
+                      时间是最大的盟友，通过长期持有优质资产，可以有效平滑短期市场波动，获得可观的复合回报。全国社保基金投资A股平均年化收益率达11.6%。
+                    </p>
+                  </div>
+                  <div class="text-center">
+                    <div class="w-16 h-16 bg-luxury-gold/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <i class="fas fa-balance-scale text-luxury-gold text-2xl"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-charcoal mb-3">风险与收益的平衡</h4>
+                    <p class="text-gray-600 text-sm leading-relaxed">
+                      在可接受的风险范围内寻求收益最大化，通过多元化资产配置降低非系统性风险，构建"进可攻，退可守"的投资组合。
+                    </p>
+                  </div>
+                  <div class="text-center">
+                    <div class="w-16 h-16 bg-warm-taupe/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <i class="fas fa-tint text-warm-taupe text-2xl"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-charcoal mb-3">流动性管理</h4>
+                    <p class="text-gray-600 text-sm leading-relaxed">
+                      保持充足的流动性至关重要，预留6-12个月生活费作为紧急备用金，配置高流动性资产以应对突发需求。
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Specific Investment Recommendations -->
+            <div class="mb-16">
+              <div class="bg-gray-50 rounded-2xl p-8">
+                <h3 class="text-2xl font-bold text-charcoal mb-8">具体投资标的建议</h3>
+                <div class="grid lg:grid-cols-3 gap-8">
+                  <div class="bg-white rounded-xl p-6">
+                    <h4 class="text-lg font-bold text-charcoal mb-4 flex items-center">
+                      <i class="fas fa-building text-deep-burgundy mr-2"></i>
+                      A股与港股优质蓝筹股
+                    </h4>
+                    <div class="space-y-3 text-sm">
+                      <div class="p-3 bg-gray-50 rounded-lg">
+                        <p class="font-semibold text-charcoal">A股市场推荐</p>
+                        <p class="text-gray-600">消费：贵州茅台、五粮液
+                          <br>金融：招商银行
+                          <br>医药：恒瑞医药、药明康德
+                          <br>科技：宁德时代
+                        </p>
+                      </div>
+                      <div class="p-3 bg-gray-50 rounded-lg">
+                        <p class="font-semibold text-charcoal">港股市场推荐</p>
+                        <p class="text-gray-600">互联网：腾讯、阿里巴巴
+                          <br>生物科技：优质生物科技公司
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="bg-white rounded-xl p-6">
+                    <h4 class="text-lg font-bold text-charcoal mb-4 flex items-center">
+                      <i class="fas fa-chart-bar text-luxury-gold mr-2"></i>
+                      宽基指数基金
+                    </h4>
+                    <div class="space-y-3 text-sm">
+                      <div class="p-3 bg-gray-50 rounded-lg">
+                        <p class="font-semibold text-charcoal">国内市场</p>
+                        <p class="text-gray-600">沪深300指数基金
+                          <br>中证500指数基金
+                        </p>
+                      </div>
+                      <div class="p-3 bg-gray-50 rounded-lg">
+                        <p class="font-semibold text-charcoal">海外市场</p>
+                        <p class="text-gray-600">标普500指数基金
+                          <br>纳斯达克100指数基金
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="bg-white rounded-xl p-6">
+                    <h4 class="text-lg font-bold text-charcoal mb-4 flex items-center">
+                      <i class="fas fa-industry text-warm-taupe mr-2"></i>
+                      行业主题基金
+                    </h4>
+                    <div class="space-y-3 text-sm">
+                      <div class="p-3 bg-gray-50 rounded-lg">
+                        <p class="font-semibold text-charcoal">高成长行业</p>
+                        <p class="text-gray-600">新能源、人工智能
+                          <br>生物医药、高端制造
+                        </p>
+                      </div>
+                      <div class="p-3 bg-gray-50 rounded-lg">
+                        <p class="font-semibold text-charcoal">选择标准</p>
+                        <p class="text-gray-600">经验丰富基金经理
+                          <br>历史业绩优良
+                          <br>风险控制能力
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Asset Allocation Flow Chart -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 text-center">资产配置流程图</h3>
+                <div class="mermaid-container">
+                  <div class="mermaid-controls">
+                    <button class="mermaid-control-btn zoom-in" title="放大">
+                      <i class="fas fa-search-plus"></i>
+                    </button>
+                    <button class="mermaid-control-btn zoom-out" title="缩小">
+                      <i class="fas fa-search-minus"></i>
+                    </button>
+                    <button class="mermaid-control-btn reset-zoom" title="重置">
+                      <i class="fas fa-expand-arrows-alt"></i>
+                    </button>
+                    <button class="mermaid-control-btn fullscreen" title="全屏查看">
+                      <i class="fas fa-expand"></i>
+                    </button>
+                  </div>
+                  <div class="mermaid">
+                    graph TD
+                    A["1300万总资金"] --> B["权益类资产 70%"]
+                    A --> C["固定收益类 20%"]
+                    A --> D["现金及等价物 10%"]
+
+                    B --> B1["A股优质蓝筹股 30%"]
+                    B --> B2["宽基指数基金 20%"]
+                    B --> B3["行业主题基金 20%"]
+
+                    C --> C1["国债与地方政府债 10%"]
+                    C --> C2["高信用企业债 5%"]
+                    C --> C3["债券型基金 5%"]
+
+                    D --> D1["货币基金 7%"]
+                    D --> D2["银行理财产品 2%"]
+                    D --> D3["活期存款 1%"]
+
+                    style A fill:#D4AF37,stroke:#B8941F,stroke-width:3px,color:#fff
+                    style B fill:#800020,stroke:#600018,stroke-width:2px,color:#fff
+                    style C fill:#8B7D6B,stroke:#6B5D4B,stroke-width:2px,color:#fff
+                    style D fill:#FDF9F3,stroke:#D4C4A4,stroke-width:2px,color:#2D2D2D
+                    style B1 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style B2 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style B3 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style C1 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style C2 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style C3 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style D1 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style D2 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style D3 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Chengdu Investments -->
+      <section id="chengdu-investments" class="py-16 bg-gray-50">
+        <div class="container mx-auto px-8">
+          <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-16">
+              <h2 class="text-4xl font-serif font-bold text-charcoal mb-4">成都本地投资机会与风险</h2>
+              <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                把握区域经济发展红利，融入成都高端生活圈
+              </p>
+            </div>
+
+            <!-- Real Estate Analysis -->
+            <div class="mb-16">
+              <div class="grid lg:grid-cols-2 gap-8">
+                <div class="bg-white rounded-2xl p-8 shadow-lg">
+                  <h3 class="text-2xl font-bold text-charcoal mb-6 flex items-center">
+                    <i class="fas fa-home text-deep-burgundy mr-3"></i>
+                    成都高端住宅市场分析
+                  </h3>
+                  <div class="space-y-6">
+                    <div class="bg-deep-burgundy/10 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">核心豪宅板块</h4>
+                      <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div class="p-3 bg-white rounded-lg">
+                          <p class="font-semibold">金融城板块</p>
+                          <p class="text-gray-600">CBD核心区，城市精英聚集地</p>
+                        </div>
+                        <div class="p-3 bg-white rounded-lg">
+                          <p class="font-semibold">攀成钢板块</p>
+                          <p class="text-gray-600">东二环新兴豪宅区</p>
+                        </div>
+                        <div class="p-3 bg-white rounded-lg">
+                          <p class="font-semibold">浣花溪板块</p>
+                          <p class="text-gray-600">文化腹地，环境清幽</p>
+                        </div>
+                        <div class="p-3 bg-white rounded-lg">
+                          <p class="font-semibold">麓湖板块</p>
+                          <p class="text-gray-600">生态湖居，现代艺术感</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">租金回报率分析</h4>
+                      <div class="flex items-center justify-between mb-2">
+                        <span class="text-lg font-semibold text-charcoal">年化回报率</span>
+                        <span class="text-2xl font-bold text-warm-taupe">约2%</span>
+                      </div>
+                      <p class="text-sm text-gray-600">
+                        1000万元豪宅年租金约20万元，远低于权益类投资回报，投资价值更多体现在保值和增值潜力。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div class="bg-white rounded-2xl p-8 shadow-lg">
+                  <h3 class="text-2xl font-bold text-charcoal mb-6">投资机遇与风险评估</h3>
+                  <div class="space-y-6">
+                    <div class="bg-green-50 rounded-xl p-6 border border-green-200">
+                      <h4 class="font-bold text-green-800 mb-3 flex items-center">
+                        <i class="fas fa-arrow-trend-up text-green-600 mr-2"></i>
+                        投资机遇
+                      </h4>
+                      <ul class="space-y-2 text-sm text-green-700">
+                        <li class="flex items-start space-x-2">
+                          <i class="fas fa-check text-green-500 mt-1 flex-shrink-0"></i>
+                          <span>城市发展红利：成都经济持续增长，人口流入提供坚实需求基础</span>
+                        </li>
+                        <li class="flex items-start space-x-2">
+                          <i class="fas fa-check text-green-500 mt-1 flex-shrink-0"></i>
+                          <span>稀缺性价值：核心地段、稀缺资源决定长期价值</span>
+                        </li>
+                        <li class="flex items-start space-x-2">
+                          <i class="fas fa-check text-green-500 mt-1 flex-shrink-0"></i>
+                          <span>高端住宅市场日趋成熟，产品设计品质达到国内一流水平</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <div class="bg-red-50 rounded-xl p-6 border border-red-200">
+                      <h4 class="font-bold text-red-800 mb-3 flex items-center">
+                        <i class="fas fa-exclamation-triangle text-red-600 mr-2"></i>
+                        投资风险
+                      </h4>
+                      <ul class="space-y-2 text-sm text-red-700">
+                        <li class="flex items-start space-x-2">
+                          <i class="fas fa-times text-red-500 mt-1 flex-shrink-0"></i>
+                          <span>政策调控风险：限购、限贷、房产税等政策影响</span>
+                        </li>
+                        <li class="flex items-start space-x-2">
+                          <i class="fas fa-times text-red-500 mt-1 flex-shrink-0"></i>
+                          <span>流动性风险：高端住宅总价高，目标客户群体小</span>
+                        </li>
+                        <li class="flex items-start space-x-2">
+                          <i class="fas fa-times text-red-500 mt-1 flex-shrink-0"></i>
+                          <span>持有成本高：物业费、维护成本远高于普通住宅</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Local Industry Investments -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 flex items-center">
+                  <i class="fas fa-industry text-warm-taupe mr-3"></i>
+                  本地特色产业投资机会
+                </h3>
+                <div class="grid md:grid-cols-3 gap-6">
+                  <div class="bg-blue-50 rounded-xl p-6 border border-blue-200">
+                    <div class="text-center mb-4">
+                      <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-microchip text-blue-600 text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-blue-800">科技与创新产业</h4>
+                    </div>
+                    <div class="space-y-3 text-sm text-blue-700">
+                      <p><strong>重点领域：</strong>电子信息、生物医药、航空航天、人工智能</p>
+                      <p><strong>投资方式：</strong>私募股权基金、直接股权投资</p>
+                      <p><strong>优势：</strong>成都打造全国科技创新中心，政策支持力度大</p>
+                    </div>
+                  </div>
+                  <div class="bg-purple-50 rounded-xl p-6 border border-purple-200">
+                    <div class="text-center mb-4">
+                      <div class="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-shopping-bag text-purple-600 text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-purple-800">消费与文旅产业</h4>
+                    </div>
+                    <div class="space-y-3 text-sm text-purple-700">
+                      <p><strong>重点领域：</strong>高端餐饮、精品酒店、文化旅游、时尚娱乐</p>
+                      <p><strong>投资方式：</strong>品牌股权投资、REITs基金</p>
+                      <p><strong>优势：</strong>成都"网红城市"流量红利，消费升级趋势明显</p>
+                    </div>
+                  </div>
+                  <div class="bg-green-50 rounded-xl p-6 border border-green-200">
+                    <div class="text-center mb-4">
+                      <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-chart-line text-green-600 text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-green-800">本地龙头企业</h4>
+                    </div>
+                    <div class="space-y-3 text-sm text-green-700">
+                      <p><strong>推荐标的：</strong>五粮液、通威股份、科伦药业</p>
+                      <p><strong>投资方式：</strong>二级市场股票投资</p>
+                      <p><strong>优势：</strong>直接受益成都经济发展，流动性好</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Rent vs Buy Analysis -->
+            <div class="mb-16">
+              <div class="bg-gradient-to-r from-deep-burgundy/10 to-warm-taupe/10 rounded-2xl p-8">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 text-center">购房与租房决策分析</h3>
+                <div class="grid lg:grid-cols-2 gap-8">
+                  <div class="bg-white rounded-xl p-6">
+                    <h4 class="text-lg font-bold text-charcoal mb-4 flex items-center">
+                      <i class="fas fa-home text-deep-burgundy mr-2"></i>
+                      购房方案
+                    </h4>
+                    <div class="space-y-4">
+                      <div>
+                        <h5 class="font-semibold text-green-700 mb-2">优势</h5>
+                        <ul class="text-sm text-gray-600 space-y-1">
+                          <li>• 拥有房产所有权，享受资产增值潜力</li>
+                          <li>• 可个性化装修改造</li>
+                          <li>• 心理归属感和安全感</li>
+                        </ul>
+                      </div>
+                      <div>
+                        <h5 class="font-semibold text-red-700 mb-2">劣势</h5>
+                        <ul class="text-sm text-gray-600 space-y-1">
+                          <li>• 占用大量投资资本（约300-500万）</li>
+                          <li>• 房产流动性较差</li>
+                          <li>• 承担维护成本和物业费</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="bg-white rounded-xl p-6">
+                    <h4 class="text-lg font-bold text-charcoal mb-4 flex items-center">
+                      <i class="fas fa-key text-luxury-gold mr-2"></i>
+                      租房方案
+                    </h4>
+                    <div class="space-y-4">
+                      <div>
+                        <h5 class="font-semibold text-green-700 mb-2">优势</h5>
+                        <ul class="text-sm text-gray-600 space-y-1">
+                          <li>• 资金占用少（年租金20-30万）</li>
+                          <li>• 灵活性高，可随时更换居所</li>
+                          <li>• 更多资金用于高收益投资</li>
+                          <li>• 无需承担维护责任</li>
+                        </ul>
+                      </div>
+                      <div>
+                        <h5 class="font-semibold text-red-700 mb-2">劣势</h5>
+                        <ul class="text-sm text-gray-600 space-y-1">
+                          <li>• 无房产所有权，不享受增值</li>
+                          <li>• 不能随意改造房屋</li>
+                          <li>• 面临租金上涨风险</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-8 p-6 bg-white rounded-xl border-2 border-luxury-gold">
+                  <h4 class="text-lg font-bold text-luxury-gold mb-3 flex items-center">
+                    <i class="fas fa-star text-luxury-gold mr-2"></i>
+                    专业建议
+                  </h4>
+                  <p class="text-gray-700 leading-relaxed">
+                    <strong>租房可能是更优选择</strong>。将购房的巨额资金（约300-500万）投入到年化回报可能更高的股票、基金等权益类资产中，长期来看更有利于财富的增长。同时，租房带来的灵活性也更符合您自由、随性的退休生活理念。以年租金20-30万计算，仅占年度预算的40-50%，剩余资金可充分满足其他奢华消费需求。
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Risk Management -->
+      <section id="risk-management" class="py-16 bg-white">
+        <div class="container mx-auto px-8">
+          <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-16">
+              <h2 class="text-4xl font-serif font-bold text-charcoal mb-4">风险管理与保障规划</h2>
+              <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                构建全面的风险管理体系，守护现有财富与未来生活品质
+              </p>
+            </div>
+
+            <!-- Insurance Planning -->
+            <div class="mb-16">
+              <div class="bg-blue-50 rounded-2xl p-8">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 flex items-center">
+                  <i class="fas fa-shield-alt text-blue-600 mr-3"></i>
+                  保险配置策略
+                </h3>
+                <div class="grid lg:grid-cols-2 gap-8">
+                  <div class="bg-white rounded-xl p-6">
+                    <h4 class="text-lg font-bold text-charcoal mb-4 flex items-center">
+                      <i class="fas fa-heartbeat text-red-500 mr-2"></i>
+                      高端医疗保险
+                    </h4>
+                    <div class="space-y-4">
+                      <div class="p-4 bg-red-50 rounded-lg">
+                        <h5 class="font-semibold text-red-800 mb-2">核心保障</h5>
+                        <ul class="text-sm text-red-700 space-y-1">
+                          <li>• 高额住院和手术费用报销</li>
+                          <li>• 私立医院、国际部就医通道</li>
+                          <li>• 海外就医二次诊疗意见</li>
+                          <li>• 门诊、牙科、体检附加服务</li>
+                        </ul>
+                      </div>
+                      <div class="p-4 bg-blue-50 rounded-lg">
+                        <h5 class="font-semibold text-blue-800 mb-2">推荐配置</h5>
+                        <p class="text-sm text-blue-700">保额数百万至上千万，确保重大疾病时获得最佳治疗，避免对投资组合造成毁灭性打击。</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="space-y-6">
+                    <div class="bg-white rounded-xl p-6">
+                      <h4 class="text-lg font-bold text-charcoal mb-4 flex items-center">
+                        <i class="fas fa-user-shield text-orange-500 mr-2"></i>
+                        意外伤害保险
+                      </h4>
+                      <div class="space-y-2 text-sm text-gray-600">
+                        <p>• 保障意外身故、残疾和医疗费用</p>
+                        <p>• 杠杆率高，保费低廉，性价比极高</p>
+                        <p>• 特别适合热衷旅行、运动的您</p>
+                      </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-6">
+                      <h4 class="text-lg font-bold text-charcoal mb-4 flex items-center">
+                        <i class="fas fa-piggy-bank text-green-500 mr-2"></i>
+                        年金保险与增额终身寿险
+                      </h4>
+                      <div class="grid grid-cols-1 gap-4">
+                        <div class="p-3 bg-green-50 rounded-lg">
+                          <h5 class="font-semibold text-green-800 mb-1">年金保险</h5>
+                          <p class="text-xs text-green-700">定期领取稳定现金流，对冲长寿风险，打造与生命等长的"退休金"</p>
+                        </div>
+                        <div class="p-3 bg-purple-50 rounded-lg">
+                          <h5 class="font-semibold text-purple-800 mb-1">增额终身寿险</h5>
+                          <p class="text-xs text-purple-700">保额和现金价值复利增长，灵活提取，兼具财富传承功能</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tax Planning -->
+            <div class="mb-16">
+              <div class="grid lg:grid-cols-2 gap-8">
+                <div class="bg-white rounded-2xl p-8 shadow-lg">
+                  <h3 class="text-2xl font-bold text-charcoal mb-6 flex items-center">
+                    <i class="fas fa-calculator text-luxury-gold mr-3"></i>
+                    税务规划
+                  </h3>
+                  <div class="space-y-6">
+                    <div class="bg-yellow-50 rounded-xl p-6">
+                      <h4 class="font-bold text-yellow-800 mb-3">投资收益税务优化</h4>
+                      <div class="space-y-3 text-sm text-yellow-700">
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-check-circle text-yellow-600 mt-1 flex-shrink-0"></i>
+                          <span>股票资本利得暂免个人所得税</span>
+                        </div>
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-check-circle text-yellow-600 mt-1 flex-shrink-0"></i>
+                          <span>持股超过1年股息红利免税</span>
+                        </div>
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-check-circle text-yellow-600 mt-1 flex-shrink-0"></i>
+                          <span>国债利息收入免征个人所得税</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-6">
+                      <h4 class="font-bold text-gray-800 mb-3">资产传承税务考量</h4>
+                      <p class="text-sm text-gray-700 leading-relaxed">
+                        目前中国尚未开征遗产税和赠与税，但未来政策存在不确定性。通过设立家族信托或购买人寿保险等方式，可在一定程度上实现财富隔离和传承，提前做好应对准备。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div class="bg-white rounded-2xl p-8 shadow-lg">
+                  <h3 class="text-2xl font-bold text-charcoal mb-6 flex items-center">
+                    <i class="fas fa-balance-scale text-deep-burgundy mr-3"></i>
+                    家族信托规划
+                  </h3>
+                  <div class="space-y-6">
+                    <div class="bg-purple-50 rounded-xl p-6">
+                      <h4 class="font-bold text-purple-800 mb-3">财富传承与资产隔离</h4>
+                      <p class="text-sm text-purple-700 leading-relaxed mb-3">
+                        通过信托合同精确设定财富分配方式、时间和条件，避免财富被过早挥霍。信托资产具有独立性，形成有效"防火墙"。
+                      </p>
+                      <div class="flex items-start space-x-2 text-xs text-purple-600">
+                        <i class="fas fa-shield-alt mt-1 flex-shrink-0"></i>
+                        <span>即使面临个人债务纠纷或婚姻变动，信托资产通常不会被强制执行或分割</span>
+                      </div>
+                    </div>
+                    <div class="bg-blue-50 rounded-xl p-6">
+                      <h4 class="font-bold text-blue-800 mb-3">设立条件与流程</h4>
+                      <div class="space-y-2 text-sm text-blue-700">
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-arrow-right text-blue-500 mt-1 flex-shrink-0"></i>
+                          <span>资产门槛：通常千万级别以上</span>
+                        </div>
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-arrow-right text-blue-500 mt-1 flex-shrink-0"></i>
+                          <span>专业团队：信托公司、律师、财务顾问</span>
+                        </div>
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-arrow-right text-blue-500 mt-1 flex-shrink-0"></i>
+                          <span>法律文件：信托架构设计、权利义务明确</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Risk Management Chart -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 text-center">全面风险管理框架</h3>
+                <div class="mermaid-container">
+                  <div class="mermaid-controls">
+                    <button class="mermaid-control-btn zoom-in" title="放大">
+                      <i class="fas fa-search-plus"></i>
+                    </button>
+                    <button class="mermaid-control-btn zoom-out" title="缩小">
+                      <i class="fas fa-search-minus"></i>
+                    </button>
+                    <button class="mermaid-control-btn reset-zoom" title="重置">
+                      <i class="fas fa-expand-arrows-alt"></i>
+                    </button>
+                    <button class="mermaid-control-btn fullscreen" title="全屏查看">
+                      <i class="fas fa-expand"></i>
+                    </button>
+                  </div>
+                  <div class="mermaid">
+                    graph TD
+                    A["风险管理框架"] --> B["保险保障"]
+                    A --> C["税务规划"]
+                    A --> D["财富传承"]
+
+                    B --> B1["高端医疗保险"]
+                    B --> B2["意外伤害保险"]
+                    B --> B3["年金保险"]
+                    B --> B4["增额终身寿险"]
+
+                    C --> C1["投资收益优化"]
+                    C --> C2["税务成本控制"]
+                    C --> C3["政策风险应对"]
+
+                    D --> D1["家族信托设立"]
+                    D --> D2["资产隔离保护"]
+                    D --> D3["代际传承规划"]
+
+                    style A fill:#D4AF37,stroke:#B8941F,stroke-width:3px,color:#fff
+                    style B fill:#800020,stroke:#600018,stroke-width:2px,color:#fff
+                    style C fill:#8B7D6B,stroke:#6B5D4B,stroke-width:2px,color:#fff
+                    style D fill:#FDF9F3,stroke:#D4C4A4,stroke-width:2px,color:#2D2D2D
+                    style B1 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style B2 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style B3 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style B4 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style C1 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style C2 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style C3 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style D1 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style D2 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                    style D3 fill:#FDF9F3,stroke:#D4C4A4,stroke-width:1px,color:#2D2D2D
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Lifestyle Planning -->
+      <section id="lifestyle" class="py-16 bg-gray-50">
+        <div class="container mx-auto px-8">
+          <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-16">
+              <h2 class="text-4xl font-serif font-bold text-charcoal mb-4">奢华生活方式规划</h2>
+              <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                在成都这座"巴适"之城，享受品质生活的无限可能
+              </p>
+            </div>
+
+            <!-- Luxury Housing -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 flex items-center">
+                  <i class="fas fa-home text-deep-burgundy mr-3"></i>
+                  高端住宅选择
+                </h3>
+                <div class="grid lg:grid-cols-2 gap-8">
+                  <div>
+                    <div class="bg-deep-burgundy/10 rounded-xl p-6 mb-6">
+                      <h4 class="text-lg font-bold text-charcoal mb-4">推荐高端住宅区</h4>
+                      <div class="space-y-4">
+                        <div class="flex items-start space-x-3">
+                          <div class="w-10 h-10 bg-deep-burgundy/20 rounded-full flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-building text-deep-burgundy"></i>
+                          </div>
+                          <div>
+                            <h5 class="font-semibold text-charcoal">金融城板块</h5>
+                            <p class="text-sm text-gray-600">成都CBD核心区，汇集高端写字楼、五星级酒店，城市精英聚集地，以大平层为主，拥有绝佳城市景观</p>
+                          </div>
+                        </div>
+                        <div class="flex items-start space-x-3">
+                          <div class="w-10 h-10 bg-luxury-gold/20 rounded-full flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-city text-luxury-gold"></i>
+                          </div>
+                          <div>
+                            <h5 class="font-semibold text-charcoal">攀成钢板块</h5>
+                            <p class="text-sm text-gray-600">东二环新兴高端居住区，配套成熟，商业、教育、医疗资源丰富，居住环境纯粹</p>
+                          </div>
+                        </div>
+                        <div class="flex items-start space-x-3">
+                          <div class="w-10 h-10 bg-warm-taupe/20 rounded-full flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-tree text-warm-taupe"></i>
+                          </div>
+                          <div>
+                            <h5 class="font-semibold text-charcoal">浣花溪板块</h5>
+                            <p class="text-sm text-gray-600">成都文化腹地，环境清幽，拥有浣花溪公园等稀缺自然资源，低密度别墅和洋房，人文气息浓厚</p>
+                          </div>
+                        </div>
+                        <div class="flex items-start space-x-3">
+                          <div class="w-10 h-10 bg-blue-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-water text-blue-600"></i>
+                          </div>
+                          <div>
+                            <h5 class="font-semibold text-charcoal">麓湖板块</h5>
+                            <p class="text-sm text-gray-600">天府新区生态湖居特色高端居住区，广阔水域和绿地，现代感和艺术感兼具，成都新晋豪宅标杆</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-6">
+                      <h4 class="text-lg font-bold text-charcoal mb-4">租赁优势</h4>
+                      <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div class="p-3 bg-white rounded-lg">
+                          <p class="font-semibold text-green-700 mb-1">资金灵活性</p>
+                          <p class="text-gray-600">年租金20-30万，剩余资金可用于高收益投资</p>
+                        </div>
+                        <div class="p-3 bg-white rounded-lg">
+                          <p class="font-semibold text-green-700 mb-1">居住灵活性</p>
+                          <p class="text-gray-600">可根据心情或需求随时更换居住地点和风格</p>
+                        </div>
+                        <div class="p-3 bg-white rounded-lg">
+                          <p class="font-semibold text-green-700 mb-1">维护便利性</p>
+                          <p class="text-gray-600">无需承担房屋维修和保养责任</p>
+                        </div>
+                        <div class="p-3 bg-white rounded-lg">
+                          <p class="font-semibold text-green-700 mb-1">生活品质</p>
+                          <p class="text-gray-600">可体验不同区域的高端住宅，享受多样化生活</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <img src="https://kimi-img.moonshot.cn/pub/icon/spinner.svg" alt="成都麓湖生态城高端住宅景观" class="w-full h-64 object-cover rounded-xl mb-6" size="medium" aspect="wide" style="photo" query="成都麓湖生态城 高端住宅" referrerpolicy="no-referrer" />
+                    <div class="bg-white rounded-xl p-6 shadow-md">
+                      <h4 class="text-lg font-bold text-charcoal mb-4">高端住宅配置标准</h4>
+                      <div class="space-y-3 text-sm">
+                        <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                          <span class="font-medium">面积要求</span>
+                          <span class="text-deep-burgundy font-semibold">200-400㎡</span>
+                        </div>
+                        <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                          <span class="font-medium">月租金预算</span>
+                          <span class="text-luxury-gold font-semibold">1.5-2.5万元</span>
+                        </div>
+                        <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                          <span class="font-medium">年租金成本</span>
+                          <span class="text-warm-taupe font-semibold">18-30万元</span>
+                        </div>
+                        <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                          <span class="font-medium">占年度预算</span>
+                          <span class="text-charcoal font-semibold">33%-50%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Luxury Consumption -->
+            <div class="mb-16">
+              <div class="grid lg:grid-cols-3 gap-8">
+                <div class="bg-white rounded-2xl p-8 shadow-lg">
+                  <h3 class="text-xl font-bold text-charcoal mb-6 flex items-center">
+                    <i class="fas fa-shopping-bag text-luxury-gold mr-3"></i>
+                    奢侈品购物
+                  </h3>
+                  <div class="space-y-6">
+                    <div class="bg-luxury-gold/10 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">核心商圈</h4>
+                      <div class="space-y-3">
+                        <div class="p-3 bg-white rounded-lg">
+                          <h5 class="font-semibold text-charcoal mb-1">成都远洋太古里</h5>
+                          <p class="text-sm text-gray-600">开放式、低密度街区购物中心，汇集国际一线奢侈品牌，成都时尚地标</p>
+                        </div>
+                        <div class="p-3 bg-white rounded-lg">
+                          <h5 class="font-semibold text-charcoal mb-1">成都IFS国际金融中心</h5>
+                          <p class="text-sm text-gray-600">拥有众多奢侈品牌旗舰店，西南地区最大旗舰店集群</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">品牌选择</h4>
+                      <div class="space-y-2 text-sm text-gray-600">
+                        <div class="flex justify-between">
+                          <span>高端腕表</span>
+                          <span class="text-luxury-gold">百达翡丽、宝格丽</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>珠宝首饰</span>
+                          <span class="text-luxury-gold">卡地亚、蒂芙尼</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>时装配饰</span>
+                          <span class="text-luxury-gold">爱马仕、香奈儿</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="bg-white rounded-2xl p-8 shadow-lg">
+                  <h3 class="text-xl font-bold text-charcoal mb-6 flex items-center">
+                    <i class="fas fa-utensils text-warm-taupe mr-3"></i>
+                    高端餐饮与社交
+                  </h3>
+                  <div class="space-y-6">
+                    <div class="bg-warm-taupe/10 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">米其林与黑珍珠餐厅</h4>
+                      <div class="space-y-3">
+                        <div class="p-3 bg-white rounded-lg">
+                          <h5 class="font-semibold text-charcoal mb-1">玉芝兰</h5>
+                          <p class="text-sm text-gray-600">米其林星级餐厅，川菜精致料理</p>
+                        </div>
+                        <div class="p-3 bg-white rounded-lg">
+                          <h5 class="font-semibold text-charcoal mb-1">松云泽</h5>
+                          <p class="text-sm text-gray-600">黑珍珠三钻餐厅，传统川菜创新演绎</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">私人会所</h4>
+                      <p class="text-sm text-gray-600 mb-3">
+                        成都拥有众多低调奢华的私人会所，提供定制化餐饮、品酒、雪茄等服务，是高端商务和社交活动的理想场所。
+                      </p>
+                      <div class="text-xs text-gray-500">
+                        年度预算：10-15万元，占年度预算17%-25%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="bg-white rounded-2xl p-8 shadow-lg">
+                  <h3 class="text-xl font-bold text-charcoal mb-6 flex items-center">
+                    <i class="fas fa-palette text-deep-burgundy mr-3"></i>
+                    文化艺术与社交
+                  </h3>
+                  <div class="space-y-6">
+                    <div class="bg-deep-burgundy/10 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">艺术场馆</h4>
+                      <div class="space-y-2 text-sm text-gray-600">
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-paint-brush text-deep-burgundy mt-1 flex-shrink-0"></i>
+                          <span>四川美术馆</span>
+                        </div>
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-landmark text-deep-burgundy mt-1 flex-shrink-0"></i>
+                          <span>成都博物馆</span>
+                        </div>
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-image text-deep-burgundy mt-1 flex-shrink-0"></i>
+                          <span>麓湖·A4美术馆</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">高端社交圈层</h4>
+                      <div class="space-y-2 text-sm text-gray-600">
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-golf-ball text-green-500 mt-1 flex-shrink-0"></i>
+                          <span>高尔夫俱乐部</span>
+                        </div>
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-wine-glass text-purple-500 mt-1 flex-shrink-0"></i>
+                          <span>红酒品鉴会</span>
+                        </div>
+                        <div class="flex items-start space-x-2">
+                          <i class="fas fa-gem text-luxury-gold mt-1 flex-shrink-0"></i>
+                          <span>艺术品收藏圈</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Travel & Leisure -->
+            <div class="mb-16">
+              <div class="bg-gradient-to-br from-blue-50 to-purple-50 rounded-2xl p-8">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 text-center">旅行与休闲生活</h3>
+                <div class="grid md:grid-cols-3 gap-8">
+                  <div class="bg-white rounded-xl p-6 shadow-md">
+                    <div class="text-center mb-4">
+                      <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-plane text-blue-600 text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-charcoal">高端旅行</h4>
+                    </div>
+                    <div class="space-y-3 text-sm text-gray-600">
+                      <div class="p-3 bg-blue-50 rounded-lg">
+                        <h5 class="font-semibold text-blue-800 mb-1">国内旅行</h5>
+                        <p class="text-blue-700">川西自然风光探索，稻城亚丁、九寨沟；三亚、云南头等舱度假</p>
+                      </div>
+                      <div class="p-3 bg-purple-50 rounded-lg">
+                        <h5 class="font-semibold text-purple-800 mb-1">国际旅行</h5>
+                        <p class="text-purple-700">欧洲古典艺术之旅，非洲野生动物探险，南太平洋海岛度假</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="bg-white rounded-xl p-6 shadow-md">
+                    <div class="text-center mb-4">
+                      <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-golf-ball text-green-600 text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-charcoal">高端运动</h4>
+                    </div>
+                    <div class="space-y-3 text-sm text-gray-600">
+                      <div class="p-3 bg-green-50 rounded-lg">
+                        <h5 class="font-semibold text-green-800 mb-1">高尔夫</h5>
+                        <p class="text-green-700">麓山国际乡村俱乐部、蓝光观岭高尔夫等高品质球场</p>
+                      </div>
+                      <div class="p-3 bg-yellow-50 rounded-lg">
+                        <h5 class="font-semibold text-yellow-800 mb-1">马术</h5>
+                        <p class="text-yellow-700">专业马术俱乐部，体验人与马的和谐共处</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="bg-white rounded-xl p-6 shadow-md">
+                    <div class="text-center mb-4">
+                      <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-heart text-red-600 text-2xl"></i>
+                      </div>
+                      <h4 class="text-lg font-bold text-charcoal">健康管理</h4>
+                    </div>
+                    <div class="space-y-3 text-sm text-gray-600">
+                      <div class="p-3 bg-red-50 rounded-lg">
+                        <h5 class="font-semibold text-red-800 mb-1">高端体检</h5>
+                        <p class="text-red-700">和睦家、百汇医疗等国际私立医院，一对一私人医生服务</p>
+                      </div>
+                      <div class="p-3 bg-orange-50 rounded-lg">
+                        <h5 class="font-semibold text-orange-800 mb-1">日常保健</h5>
+                        <p class="text-orange-700">专业营养师、私教制定科学健康管理计划，健身、瑜伽、游泳</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-8 text-center">
+                  <div class="inline-block bg-white rounded-xl p-6 shadow-lg">
+                    <h4 class="text-lg font-bold text-charcoal mb-2">年度旅行与休闲预算</h4>
+                    <div class="text-3xl font-bold text-luxury-gold mb-1">10-15万元</div>
+                    <div class="text-sm text-gray-600">占年度预算17%-25%</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Lifestyle Budget Summary -->
+            <div class="mb-16">
+              <div class="bg-white rounded-2xl p-8 shadow-lg">
+                <h3 class="text-2xl font-bold text-charcoal mb-8 text-center">奢华生活年度预算汇总</h3>
+                <div class="grid lg:grid-cols-2 gap-8">
+                  <div>
+                    <div class="bg-luxury-gold/10 rounded-xl p-6 mb-6">
+                      <h4 class="text-lg font-bold text-charcoal mb-4">预算分配总览</h4>
+                      <div class="space-y-4">
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg">
+                          <div class="flex items-center space-x-3">
+                            <i class="fas fa-home text-deep-burgundy"></i>
+                            <span class="font-medium">高端住宅</span>
+                          </div>
+                          <span class="font-bold text-deep-burgundy">20-30万</span>
+                        </div>
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg">
+                          <div class="flex items-center space-x-3">
+                            <i class="fas fa-utensils text-warm-taupe"></i>
+                            <span class="font-medium">高端餐饮与社交</span>
+                          </div>
+                          <span class="font-bold text-warm-taupe">10-15万</span>
+                        </div>
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg">
+                          <div class="flex items-center space-x-3">
+                            <i class="fas fa-plane text-blue-600"></i>
+                            <span class="font-medium">旅行与休闲</span>
+                          </div>
+                          <span class="font-bold text-blue-600">10-15万</span>
+                        </div>
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg">
+                          <div class="flex items-center space-x-3">
+                            <i class="fas fa-shopping-bag text-luxury-gold"></i>
+                            <span class="font-medium">奢侈品与购物</span>
+                          </div>
+                          <span class="font-bold text-luxury-gold">5-10万</span>
+                        </div>
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg">
+                          <div class="flex items-center space-x-3">
+                            <i class="fas fa-heart text-red-500"></i>
+                            <span class="font-medium">健康与保健</span>
+                          </div>
+                          <span class="font-bold text-red-500">3-5万</span>
+                        </div>
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg">
+                          <div class="flex items-center space-x-3">
+                            <i class="fas fa-piggy-bank text-gray-500"></i>
+                            <span class="font-medium">机动与应急</span>
+                          </div>
+                          <span class="font-bold text-gray-600">2-5万</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="text-center mb-6">
+                      <div class="bg-luxury-gold/20 rounded-full w-32 h-32 flex items-center justify-center mx-auto mb-4">
+                        <div class="text-center">
+                          <div class="text-2xl font-bold text-luxury-gold">50-60万</div>
+                          <div class="text-sm text-gray-600">年度总预算</div>
+                        </div>
+                      </div>
+                      <div class="text-lg text-gray-700">
+                        基于"3.7%法则"的48.1万元安全支取额
+                      </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-6">
+                      <h4 class="font-bold text-charcoal mb-3">财务可持续性分析</h4>
+                      <div class="space-y-2 text-sm text-gray-600">
+                        <div class="flex justify-between">
+                          <span>投资组合价值</span>
+                          <span class="font-semibold">1,300万元</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>安全支取率</span>
+                          <span class="font-semibold text-green-600">3.7%</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>年度安全支取</span>
+                          <span class="font-semibold text-green-600">48.1万元</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>奢侈生活预算</span>
+                          <span class="font-semibold text-blue-600">50-60万元</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>资金充裕度</span>
+                          <span class="font-semibold text-luxury-gold">充足</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="mt-6 p-4 bg-green-50 rounded-xl border border-green-200">
+                      <h4 class="font-bold text-green-800 mb-2 flex items-center">
+                        <i class="fas fa-check-circle text-green-600 mr-2"></i>
+                        结论
+                      </h4>
+                      <p class="text-sm text-green-700">
+                        该预算方案在确保财务可持续性的前提下，为您提供了充分的奢华生活空间，实现了财富保值增值与生活品质的完美平衡。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="bg-charcoal text-white py-12">
+        <div class="container mx-auto px-8">
+          <div class="max-w-4xl mx-auto text-center">
+            <div class="mb-8">
+              <h3 class="text-2xl font-serif font-bold mb-4">财富管理方案总结</h3>
+              <p class="text-gray-300 leading-relaxed">
+                本方案通过科学的资产配置、审慎的支取策略和全面的风险管理，为您的37岁提前退休生活提供了坚实的财务保障。在享受成都奢华生活的同时，确保财富的长期可持续增长。
+              </p>
+            </div>
+            <div class="grid md:grid-cols-3 gap-8 mb-8">
+              <div class="text-center">
+                <div class="w-16 h-16 bg-luxury-gold/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <i class="fas fa-chart-line text-luxury-gold text-xl"></i>
+                </div>
+                <h4 class="font-semibold mb-2">资产增值</h4>
+                <p class="text-sm text-gray-400">70%权益类资产配置，追求长期资本增值</p>
+              </div>
+              <div class="text-center">
+                <div class="w-16 h-16 bg-luxury-gold/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <i class="fas fa-shield-alt text-luxury-gold text-xl"></i>
+                </div>
+                <h4 class="font-semibold mb-2">风险保障</h4>
+                <p class="text-sm text-gray-400">全面保险配置，税务与信托规划</p>
+              </div>
+              <div class="text-center">
+                <div class="w-16 h-16 bg-luxury-gold/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <i class="fas fa-crown text-luxury-gold text-xl"></i>
+                </div>
+                <h4 class="font-semibold mb-2">品质生活</h4>
+                <p class="text-sm text-gray-400">50-60万年预算，成都奢华生活体验</p>
+              </div>
+            </div>
+            <div class="border-t border-gray-700 pt-8">
+              <p class="text-sm text-gray-400">
+                本方案基于2025年9月的市场环境与政策条件制定，建议定期回顾调整以适应变化。
+              </p>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </main>
+
+    <script>
+        // Initialize Mermaid with enhanced styling
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'base',
+            themeVariables: {
+                primaryColor: '#D4AF37',
+                primaryTextColor: '#2D2D2D',
+                primaryBorderColor: '#B8941F',
+                lineColor: '#8B7D6B',
+                sectionBkgColor: '#FDF9F3',
+                altSectionBkgColor: '#FFFFFF',
+                gridColor: '#E8E2D5',
+                secondaryColor: '#800020',
+                tertiaryColor: '#8B7D6B',
+                background: '#FDF9F3',
+                mainBkg: '#FDF9F3',
+                secondBkg: '#FFFFFF',
+                tertiaryBkg: '#F5F1EB',
+                // Enhanced contrast settings
+                nodeBorder: '#2D2D2D',
+                clusterBkg: '#FDF9F3',
+                clusterBorder: '#8B7D6B',
+                defaultLinkColor: '#8B7D6B',
+                titleColor: '#2D2D2D',
+                edgeLabelBackground: '#FFFFFF',
+                nodeTextColor: '#2D2D2D'
+            },
+            flowchart: {
+                htmlLabels: true,
+                curve: 'basis',
+                padding: 20,
+                nodeSpacing: 50,
+                rankSpacing: 80,
+                diagramPadding: 20
+            },
+            gantt: {
+                fontSize: 14,
+                fontFamily: 'Inter, sans-serif'
+            },
+            // Global font settings
+            fontFamily: 'Inter, sans-serif',
+            fontSize: '14px'
+        });
+
+        // Initialize Mermaid Controls for zoom and pan
+        function initializeMermaidControls() {
+            const containers = document.querySelectorAll('.mermaid-container');
+
+            containers.forEach(container => {
+            const mermaidElement = container.querySelector('.mermaid');
+            let scale = 1;
+            let isDragging = false;
+            let startX, startY, translateX = 0, translateY = 0;
+
+            // 触摸相关状态
+            let isTouch = false;
+            let touchStartTime = 0;
+            let initialDistance = 0;
+            let initialScale = 1;
+            let isPinching = false;
+
+            // Zoom controls
+            const zoomInBtn = container.querySelector('.zoom-in');
+            const zoomOutBtn = container.querySelector('.zoom-out');
+            const resetBtn = container.querySelector('.reset-zoom');
+            const fullscreenBtn = container.querySelector('.fullscreen');
+
+            function updateTransform() {
+                mermaidElement.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+
+                if (scale > 1) {
+                container.classList.add('zoomed');
+                } else {
+                container.classList.remove('zoomed');
+                }
+
+                mermaidElement.style.cursor = isDragging ? 'grabbing' : 'grab';
+            }
+
+            if (zoomInBtn) {
+                zoomInBtn.addEventListener('click', () => {
+                scale = Math.min(scale * 1.25, 4);
+                updateTransform();
+                });
+            }
+
+            if (zoomOutBtn) {
+                zoomOutBtn.addEventListener('click', () => {
+                scale = Math.max(scale / 1.25, 0.3);
+                if (scale <= 1) {
+                    translateX = 0;
+                    translateY = 0;
+                }
+                updateTransform();
+                });
+            }
+
+            if (resetBtn) {
+                resetBtn.addEventListener('click', () => {
+                scale = 1;
+                translateX = 0;
+                translateY = 0;
+                updateTransform();
+                });
+            }
+
+            if (fullscreenBtn) {
+                fullscreenBtn.addEventListener('click', () => {
+                if (container.requestFullscreen) {
+                    container.requestFullscreen();
+                } else if (container.webkitRequestFullscreen) {
+                    container.webkitRequestFullscreen();
+                } else if (container.msRequestFullscreen) {
+                    container.msRequestFullscreen();
+                }
+                });
+            }
+
+            // Mouse Events
+            mermaidElement.addEventListener('mousedown', (e) => {
+                if (isTouch) return; // 如果是触摸设备，忽略鼠标事件
+
+                isDragging = true;
+                startX = e.clientX - translateX;
+                startY = e.clientY - translateY;
+                mermaidElement.style.cursor = 'grabbing';
+                updateTransform();
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (isDragging && !isTouch) {
+                translateX = e.clientX - startX;
+                translateY = e.clientY - startY;
+                updateTransform();
+                }
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isDragging && !isTouch) {
+                isDragging = false;
+                mermaidElement.style.cursor = 'grab';
+                updateTransform();
+                }
+            });
+
+            document.addEventListener('mouseleave', () => {
+                if (isDragging && !isTouch) {
+                isDragging = false;
+                mermaidElement.style.cursor = 'grab';
+                updateTransform();
+                }
+            });
+
+            // 获取两点之间的距离
+            function getTouchDistance(touch1, touch2) {
+                return Math.hypot(
+                touch2.clientX - touch1.clientX,
+                touch2.clientY - touch1.clientY
+                );
+            }
+
+            // Touch Events - 触摸事件处理
+            mermaidElement.addEventListener('touchstart', (e) => {
+                isTouch = true;
+                touchStartTime = Date.now();
+
+                if (e.touches.length === 1) {
+                // 单指拖动
+                isPinching = false;
+                isDragging = true;
+
+                const touch = e.touches[0];
+                startX = touch.clientX - translateX;
+                startY = touch.clientY - translateY;
+
+                } else if (e.touches.length === 2) {
+                // 双指缩放
+                isPinching = true;
+                isDragging = false;
+
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                initialDistance = getTouchDistance(touch1, touch2);
+                initialScale = scale;
+                }
+
+                e.preventDefault();
+            }, { passive: false });
+
+            mermaidElement.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 1 && isDragging && !isPinching) {
+                // 单指拖动
+                const touch = e.touches[0];
+                translateX = touch.clientX - startX;
+                translateY = touch.clientY - startY;
+                updateTransform();
+
+                } else if (e.touches.length === 2 && isPinching) {
+                // 双指缩放
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                const currentDistance = getTouchDistance(touch1, touch2);
+
+                if (initialDistance > 0) {
+                    const newScale = Math.min(Math.max(
+                    initialScale * (currentDistance / initialDistance),
+                    0.3
+                    ), 4);
+                    scale = newScale;
+                    updateTransform();
+                }
+                }
+
+                e.preventDefault();
+            }, { passive: false });
+
+            mermaidElement.addEventListener('touchend', (e) => {
+                // 重置状态
+                if (e.touches.length === 0) {
+                isDragging = false;
+                isPinching = false;
+                initialDistance = 0;
+
+                // 延迟重置isTouch，避免鼠标事件立即触发
+                setTimeout(() => {
+                    isTouch = false;
+                }, 100);
+                } else if (e.touches.length === 1 && isPinching) {
+                // 从双指变为单指，切换为拖动模式
+                isPinching = false;
+                isDragging = true;
+
+                const touch = e.touches[0];
+                startX = touch.clientX - translateX;
+                startY = touch.clientY - translateY;
+                }
+
+                updateTransform();
+            });
+
+            mermaidElement.addEventListener('touchcancel', (e) => {
+                isDragging = false;
+                isPinching = false;
+                initialDistance = 0;
+
+                setTimeout(() => {
+                isTouch = false;
+                }, 100);
+
+                updateTransform();
+            });
+
+            // Enhanced wheel zoom with better center point handling
+            container.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const rect = container.getBoundingClientRect();
+                const centerX = rect.width / 2;
+                const centerY = rect.height / 2;
+
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                const newScale = Math.min(Math.max(scale * delta, 0.3), 4);
+
+                // Adjust translation to zoom towards center
+                if (newScale !== scale) {
+                const scaleDiff = newScale / scale;
+                translateX = translateX * scaleDiff;
+                translateY = translateY * scaleDiff;
+                scale = newScale;
+
+                if (scale <= 1) {
+                    translateX = 0;
+                    translateY = 0;
+                }
+
+                updateTransform();
+                }
+            });
+
+            // Initialize display
+            updateTransform();
+            });
+        }
+
+        // Initialize mermaid controls after charts are rendered
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(() => {
+                initializeMermaidControls();
+            }, 1000);
+        });
+
+        // Smooth scrolling for navigation links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Highlight active section in TOC
+        window.addEventListener('scroll', function() {
+            const sections = document.querySelectorAll('section[id]');
+            const navLinks = document.querySelectorAll('.toc-fixed a[href^="#"]');
+
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop - 100;
+                if (pageYOffset >= sectionTop) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(link => {
+                link.classList.remove('bg-luxury-gold', 'text-white');
+                if (link.getAttribute('href') === '#' + current) {
+                    link.classList.add('bg-luxury-gold', 'text-white');
+                }
+            });
+        });
+    </script>
+  </body>
+
+</html>

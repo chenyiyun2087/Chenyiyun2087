@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>量化策略表现分析</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+        }
+        .main-title {
+            color: #073B4C;
+        }
+        .sub-title {
+            color: #118AB2;
+        }
+        .kpi-card {
+            background-color: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .kpi-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 350px;
+            max-height: 40vh;
+        }
+        .flowchart-step {
+            border: 2px solid #118AB2;
+            background-color: #ffffff;
+            color: #073B4C;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            text-align: center;
+            box-shadow: 0 2px 4px rgb(0 0 0 / 0.05);
+            font-weight: 500;
+            position: relative;
+        }
+        .flowchart-arrow {
+            font-size: 2rem;
+            color: #FFD166;
+            align-self: center;
+            margin: 0 0.5rem;
+        }
+        .positive { color: #06D6A0; }
+        .negative { color: #FF6B6B; }
+        .neutral { color: #118AB2; }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <header class="bg-white shadow-md">
+        <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 text-center">
+            <h1 class="text-4xl font-extrabold main-title tracking-tight">量化策略深度分析</h1>
+            <p class="mt-2 text-xl sub-title">“依云精选”多因子模型表现报告 (2017-2024)</p>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+
+        <section id="kpis" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+            <div class="kpi-card p-6">
+                <h3 class="text-lg font-medium text-gray-500">平均策略收益</h3>
+                <p id="avg-return" class="mt-2 text-4xl font-bold positive">+42.82%</p>
+                <p class="text-sm text-gray-400">回测期间</p>
+            </div>
+            <div class="kpi-card p-6">
+                <h3 class="text-lg font-medium text-gray-500">平均超额收益</h3>
+                <p id="avg-alpha" class="mt-2 text-4xl font-bold positive">+42.18%</p>
+                <p class="text-sm text-gray-400">相较于基准</p>
+            </div>
+            <div class="kpi-card p-6">
+                <h3 class="text-lg font-medium text-gray-500">平均夏普比率</h3>
+                <p id="avg-sharpe" class="mt-2 text-4xl font-bold neutral">2.01</p>
+                <p class="text-sm text-gray-400">风险调整后收益</p>
+            </div>
+            <div class="kpi-card p-6">
+                <h3 class="text-lg font-medium text-gray-500">平均最大回撤</h3>
+                <p id="avg-drawdown" class="mt-2 text-4xl font-bold negative">-21.84%</p>
+                <p class="text-sm text-gray-400">从峰值到谷底的跌幅</p>
+            </div>
+        </section>
+
+        <section id="strategy-logic" class="bg-white rounded-lg shadow-md p-6 mb-12">
+            <h2 class="text-2xl font-bold main-title mb-4">策略逻辑拆解</h2>
+            <p class="text-gray-600 mb-6">该策略是一个每日进行再平衡的集中式多因子模型，旨在选出5只股票。根据代码分析，其核心逻辑遵循一个系统性的流程，以识别有潜力的投资标的。</p>
+            <div class="flex flex-col md:flex-row justify-around items-center space-y-4 md:space-y-0 md:space-x-4">
+                <div class="flowchart-step">1. 筛选股票池<br><span class="text-sm font-normal">剔除ST、次新股等特定类型股票</span></div>
+                <div class="flowchart-arrow hidden md:block">&rarr;</div>
+                <div class="flowchart-arrow md:hidden">&darr;</div>
+                <div class="flowchart-step">2. 因子筛选<br><span class="text-sm font-normal">市盈率 (0-100), 市净率 (>0), 市值 (>200亿)</span></div>
+                <div class="flowchart-arrow hidden md:block">&rarr;</div>
+                <div class="flowchart-arrow md:hidden">&darr;</div>
+                <div class="flowchart-step">3. 因子排序<br><span class="text-sm font-normal">根据每股收益(EPS)进行排序</span></div>
+                <div class="flowchart-arrow hidden md:block">&rarr;</div>
+                <div class="flowchart-arrow md:hidden">&darr;</div>
+                <div class="flowchart-step">4. 股票选择<br><span class="text-sm font-normal">选出排名靠前的5只股票</span></div>
+                <div class="flowchart-arrow hidden md:block">&rarr;</div>
+                 <div class="flowchart-arrow md:hidden">&darr;</div>
+                <div class="flowchart-step">5. 交易执行<br><span class="text-sm font-normal">等权重投资组合，每日再平衡</span></div>
+            </div>
+        </section>
+
+        <section id="performance-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold main-title mb-1">不同市场周期下的表现</h2>
+                <p class="text-gray-600 mb-4">该策略在不同市场环境下（这里以美国总统任期作为代理）的表现差异显著。在多数时期，它都展现出强劲的超额收益。</p>
+                <div class="chart-container">
+                    <canvas id="regime-performance-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold main-title mb-1">风险与收益概览</h2>
+                <p class="text-gray-600 mb-4">该图表绘制了每个回测期间的总收益与最大回撤。理想的策略应位于左上角（高收益，低风险），该图显示了该策略的风险回报权衡总体积极。</p>
+                <div class="chart-container">
+                    <canvas id="risk-return-chart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <section id="overall-performance" class="bg-white rounded-lg shadow-md p-6 mb-12">
+            <h2 class="text-2xl font-bold main-title mb-1">模拟净值增长曲线</h2>
+            <p class="text-gray-600 mb-4">该图表将所有回测期连接起来，模拟出一条连续的净值曲线，起始资金为10,000美元。它直观地展示了该策略相较于基准（中证500）强大的资本增长能力。</p>
+            <div class="chart-container h-[400px] max-h-[50vh]">
+                <canvas id="cumulative-return-chart"></canvas>
+            </div>
+        </section>
+
+        <section id="evaluation" class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-2xl font-bold main-title mb-4">综合评估与核心要点</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <h3 class="text-xl font-semibold sub-title mb-3">优势</h3>
+                    <ul class="list-disc list-inside space-y-2 text-gray-700">
+                        <li><strong>高超额收益：</strong>该策略在多数测试期间持续且显著地跑赢其基准，表明其选股机制稳健有效。</li>
+                        <li><strong>强劲的风险调整后收益：</strong>平均夏普比率高达2.01，非常出色，表明其所获得的收益与承担的风险相比非常理想。</li>
+                        <li><strong>系统化与纪律性：</strong>代码揭示了纯粹的量化规则方法，消除了投资过程中的情绪偏见。</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="text-xl font-semibold sub-title mb-3">需要考虑的方面</h3>
+                    <ul class="list-disc list-inside space-y-2 text-gray-700">
+                        <li><strong>集中度风险：</strong>仅持有5只股票会带来显著的个股风险。单一持仓的下跌可能会严重影响整个投资组合。</li>
+                        <li><strong>交易成本与滑点：</strong>回测假定零滑点和固定的佣金。在实盘交易中，尤其是每日再平衡的情况下，实际成本可能会更高并侵蚀收益。</li>
+                        <li><strong>潜在的过拟合：</strong>虽然因子（PE, PB, EPS）是标准的，但具体的参数值（PE < 100, 市值 > 200亿）应通过敏感性分析进行稳健性测试，以确保它们不是对回测期过度优化的结果。</li>
+                         <li><strong>市场周期依赖性：</strong>该策略在某一时期表现不佳（2017年收益率为-24.12%）。需要进一步分析是什么样的市场环境对此模型构成了挑战。</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="text-center py-6">
+        <p class="text-sm text-gray-500">本分析基于提供的2017-02-06至2024-11-29回测数据。所有图表均通过Chart.js以Canvas渲染生成。未使用任何SVG或Mermaid JS。仅供参考。</p>
+    </footer>
+
+    <script>
+        const backtestData = [
+            { president: "约瑟夫·拜登", start: "2024-02-19", end: "2024-11-29", strategyReturn: 0.9104, benchmarkReturn: 0.1362, maxDrawdown: 0.208, sharpeRatio: 2.67 },
+            { president: "约瑟夫·拜登", start: "2023-02-13", end: "2023-11-24", strategyReturn: 0.2118, benchmarkReturn: -0.0117, maxDrawdown: 0.2241, sharpeRatio: 1.144 },
+            { president: "约瑟夫·拜登", start: "2022-02-14", end: "2022-11-25", strategyReturn: 0.0519, benchmarkReturn: -0.1982, maxDrawdown: 0.3129, sharpeRatio: 0.212 },
+            { president: "约瑟夫·拜登", start: "2021-02-18", end: "2021-11-26", strategyReturn: 0.8143, benchmarkReturn: 0.134, maxDrawdown: 0.1539, sharpeRatio: 3.19 },
+            { president: "唐纳德·特朗普", start: "2020-02-03", end: "2020-11-20", strategyReturn: 1.1374, benchmarkReturn: 0.1944, maxDrawdown: 0.1015, sharpeRatio: 5.24 },
+            { president: "唐纳德·特朗普", start: "2019-02-12", end: "2019-11-30", strategyReturn: 0.6259, benchmarkReturn: 0.1118, maxDrawdown: 0.1015, sharpeRatio: 3.207 },
+            { president: "唐纳德·特朗普", start: "2018-02-26", end: "2018-11-23", strategyReturn: 0.3118, benchmarkReturn: -0.2582, maxDrawdown: 0.2798, sharpeRatio: 1.101 },
+            { president: "唐纳德·特朗普", start: "2017-02-06", end: "2017-11-24", strategyReturn: -0.2412, benchmarkReturn: 0.0114, maxDrawdown: 0.3125, sharpeRatio: -1.239 }
+        ];
+
+        const colors = {
+            strategy: '#06D6A0',
+            benchmark: '#118AB2',
+            risk: '#FF6B6B',
+            accent: '#FFD166',
+            text: '#073B4C'
+        };
+
+        function wrapLabel(str, maxWidth) {
+            if (typeof str !== 'string' || str.length <= maxWidth) {
+                return str;
+            }
+            const words = str.split(' ');
+            let lines = [];
+            let currentLine = '';
+            words.forEach(word => {
+                if ((currentLine + word).length > maxWidth) {
+                    lines.push(currentLine.trim());
+                    currentLine = '';
+                }
+                currentLine += word + ' ';
+            });
+            lines.push(currentLine.trim());
+            return lines;
+        }
+
+        const tooltipTitleCallback = {
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        title: function(tooltipItems) {
+                            const item = tooltipItems[0];
+                            let label = item.chart.data.labels[item.dataIndex];
+                            if (Array.isArray(label)) {
+                                return label.join(' ');
+                            } else {
+                                return label;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+
+            const totalStrategyReturn = backtestData.reduce((acc, cur) => acc + cur.strategyReturn, 0);
+            const totalAlpha = backtestData.reduce((acc, cur) => acc + (cur.strategyReturn - cur.benchmarkReturn), 0);
+            const totalSharpe = backtestData.reduce((acc, cur) => acc + cur.sharpeRatio, 0);
+            const totalDrawdown = backtestData.reduce((acc, cur) => acc + cur.maxDrawdown, 0);
+            const count = backtestData.length;
+
+            document.getElementById('avg-return').textContent = `+${(totalStrategyReturn / count * 100).toFixed(2)}%`;
+            document.getElementById('avg-alpha').textContent = `+${(totalAlpha / count * 100).toFixed(2)}%`;
+            document.getElementById('avg-sharpe').textContent = (totalSharpe / count).toFixed(2);
+            document.getElementById('avg-drawdown').textContent = `-${(totalDrawdown / count * 100).toFixed(2)}%`;
+
+
+            const bidenData = backtestData.filter(d => d.president === '约瑟夫·拜登');
+            const trumpData = backtestData.filter(d => d.president === '唐纳德·特朗普');
+            const avgBidenStrategy = bidenData.reduce((acc, cur) => acc + cur.strategyReturn, 0) / bidenData.length;
+            const avgBidenBenchmark = bidenData.reduce((acc, cur) => acc + cur.benchmarkReturn, 0) / bidenData.length;
+            const avgTrumpStrategy = trumpData.reduce((acc, cur) => acc + cur.strategyReturn, 0) / trumpData.length;
+            const avgTrumpBenchmark = trumpData.reduce((acc, cur) => acc + cur.benchmarkReturn, 0) / trumpData.length;
+
+            const regimeCtx = document.getElementById('regime-performance-chart').getContext('2d');
+            new Chart(regimeCtx, {
+                type: 'bar',
+                data: {
+                    labels: ['拜登任期 (平均)', '特朗普任期 (平均)'],
+                    datasets: [{
+                        label: '策略收益',
+                        data: [avgBidenStrategy, avgTrumpStrategy],
+                        backgroundColor: colors.strategy,
+                        borderColor: colors.strategy,
+                        borderWidth: 1
+                    }, {
+                        label: '基准收益',
+                        data: [avgBidenBenchmark, avgTrumpBenchmark],
+                        backgroundColor: colors.benchmark,
+                        borderColor: colors.benchmark,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    ...tooltipTitleCallback,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: value => `${(value * 100).toFixed(0)}%`
+                            }
+                        }
+                    },
+                    plugins: {
+                        ...tooltipTitleCallback.plugins,
+                        legend: { position: 'top' },
+                        title: { display: false }
+                    }
+                }
+            });
+
+            const riskReturnCtx = document.getElementById('risk-return-chart').getContext('2d');
+            new Chart(riskReturnCtx, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: '回测期间',
+                        data: backtestData.map(d => ({
+                            x: d.maxDrawdown,
+                            y: d.strategyReturn
+                        })),
+                        backgroundColor: colors.strategy,
+                    }]
+                },
+                options: {
+                    ...tooltipTitleCallback,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: { display: true, text: '最大回撤' },
+                            ticks: {
+                                callback: value => `${(value * 100).toFixed(0)}%`
+                            }
+                        },
+                        y: {
+                            title: { display: true, text: '策略收益' },
+                            ticks: {
+                                callback: value => `${(value * 100).toFixed(0)}%`
+                            }
+                        }
+                    },
+                    plugins: {
+                        ...tooltipTitleCallback.plugins,
+                         tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    const x = (context.parsed.x * 100).toFixed(2);
+                                    const y = (context.parsed.y * 100).toFixed(2);
+                                    return `回撤: ${x}%, 收益: ${y}%`;
+                                },
+                                title: (tooltipItems) => {
+                                    const dataPoint = backtestData[tooltipItems[0].dataIndex];
+                                    return `${dataPoint.start} 至 ${dataPoint.end}`;
+                                }
+                            }
+                        },
+                        legend: { display: false }
+                    }
+                }
+            });
+
+            const sortedData = [...backtestData].sort((a, b) => new Date(a.start) - new Date(b.start));
+            let cumulativeStrategy = 10000;
+            let cumulativeBenchmark = 10000;
+            const strategyCurve = [10000];
+            const benchmarkCurve = [10000];
+            const cumulativeLabels = ['开始'];
+
+            sortedData.forEach(d => {
+                cumulativeStrategy *= (1 + d.strategyReturn);
+                cumulativeBenchmark *= (1 + d.benchmarkReturn);
+                strategyCurve.push(cumulativeStrategy);
+                benchmarkCurve.push(cumulativeBenchmark);
+                cumulativeLabels.push(d.end);
+            });
+
+            const cumulativeCtx = document.getElementById('cumulative-return-chart').getContext('2d');
+            new Chart(cumulativeCtx, {
+                type: 'line',
+                data: {
+                    labels: cumulativeLabels,
+                    datasets: [{
+                        label: '策略净值曲线',
+                        data: strategyCurve,
+                        borderColor: colors.strategy,
+                        backgroundColor: Chart.helpers.color(colors.strategy).alpha(0.2).rgbString(),
+                        fill: true,
+                        tension: 0.1
+                    }, {
+                        label: '基准净值曲线',
+                        data: benchmarkCurve,
+                        borderColor: colors.benchmark,
+                        backgroundColor: Chart.helpers.color(colors.benchmark).alpha(0.2).rgbString(),
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    ...tooltipTitleCallback,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            type: 'logarithmic',
+                            ticks: {
+                                callback: function (value, index, values) {
+                                    if (value === 10000 || value === 25000 || value === 50000 || value === 100000 || value === 200000) {
+                                        return '$' + value.toLocaleString();
+                                    }
+                                }
+                            },
+                             title: {
+                                display: true,
+                                text: '投资组合价值 (对数刻度)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        ...tooltipTitleCallback.plugins,
+                        legend: { position: 'top' },
+                    }
+                }
+            });
+        });
+    </script>
+
+</body>
+</html>

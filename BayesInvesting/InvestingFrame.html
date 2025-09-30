@@ -1,0 +1,912 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>面向A股中短线交易的贝叶斯绝对收益投资框架</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --secondary: #64748b;
+            --accent: #f59e0b;
+            --neutral: #374151;
+            --base-100: #ffffff;
+            --base-200: #f8fafc;
+            --base-300: #e2e8f0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            line-height: 1.7;
+            color: var(--neutral);
+            overflow-x: hidden;
+        }
+
+        .serif {
+            font-family: 'Playfair Display', serif;
+        }
+
+        .toc-fixed {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 280px;
+            height: 100vh;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            border-right: 1px solid #e2e8f0;
+            z-index: 1000;
+            overflow-y: auto;
+            padding: 2rem 1.5rem;
+            transition: transform 0.3s ease;
+        }
+
+        .toc-fixed.hidden {
+            transform: translateX(-100%);
+        }
+
+        .main-content {
+            margin-left: 280px;
+            padding: 0;
+        }
+
+        .hero-section {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%);
+            color: white;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 3rem;
+            align-items: center;
+            min-height: 60vh;
+            position: relative;
+            z-index: 10;
+        }
+
+        .hero-title {
+            font-size: 3.5rem;
+            line-height: 1.1;
+            font-style: italic;
+            background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-visual {
+            position: relative;
+            height: 400px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 1rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .section-header {
+            border-left: 4px solid var(--primary);
+            padding-left: 1.5rem;
+            margin: 3rem 0 2rem 0;
+        }
+
+        .formula-box {
+            background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+            border: 1px solid #cbd5e1;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            font-family: 'Courier New', monospace;
+        }
+
+        .citation {
+            background: var(--accent);
+            color: white;
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.25rem;
+            text-decoration: none;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-left: 0.25rem;
+        }
+
+        .citation:hover {
+            background: #d97706;
+            text-decoration: none;
+            color: white;
+        }
+
+        .chart-container {
+            background: white;
+            border-radius: 1rem;
+            padding: 2rem;
+            margin: 2rem 0;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e2e8f0;
+        }
+
+        .highlight-box {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            border-left: 4px solid var(--accent);
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            border-radius: 0.5rem;
+        }
+
+        .toc-toggle {
+            display: none;
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            z-index: 1100;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 0.25rem;
+            padding: 0.5rem;
+            cursor: pointer;
+        }
+
+        @media (max-width: 1024px) {
+            .toc-toggle {
+                display: block;
+            }
+
+            .toc-fixed {
+                transform: translateX(-100%);
+            }
+
+            .toc-fixed:not(.hidden) {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0;
+            }
+
+            .hero-grid {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+
+            .hero-title {
+                font-size: 2.5rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .hero-title {
+                font-size: 2rem;
+            }
+            .hero-visual {
+                height: 300px;
+            }
+            .hero-grid {
+                gap: 1rem;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .hero-title {
+                font-size: 1.75rem;
+            }
+            .hero-visual {
+                height: 250px;
+            }
+        }
+
+        @media (max-width: 390px) {
+            .hero-title {
+                font-size: 1.5rem;
+            }
+            .hero-visual {
+                height: 200px;
+            }
+        }
+    </style>
+  <base target="_blank">
+</head>
+
+  <body class="bg-base-200">
+    <!-- Table of Contents -->
+    <div class="toc-fixed" id="toc">
+      <div class="mb-6">
+        <h3 class="serif text-xl font-bold text-neutral mb-4">目录</h3>
+      </div>
+      <nav class="space-y-2">
+        <a href="#overview" class="block text-sm text-secondary hover:text-primary transition-colors py-1">框架概述与理论基础</a>
+        <a href="#data-engineering" class="block text-sm text-secondary hover:text-primary transition-colors py-1">数据工程与处理流程</a>
+        <a href="#framework" class="block text-sm text-secondary hover:text-primary transition-colors py-1">贝叶斯投资框架构建</a>
+        <a href="#validation" class="block text-sm text-secondary hover:text-primary transition-colors py-1">策略验证与评估方法</a>
+        <a href="#optimization" class="block text-sm text-secondary hover:text-primary transition-colors py-1">框架优化与动态调整</a>
+        <a href="#comparison" class="block text-sm text-secondary hover:text-primary transition-colors py-1">实现工具对比</a>
+      </nav>
+
+      <div class="mt-8 pt-6 border-t border-base-300">
+        <h4 class="text-sm font-semibold text-neutral mb-3">核心优势</h4>
+        <ul class="text-xs text-secondary space-y-1">
+          <li>• 系统性处理不确定性</li>
+          <li>• 动态在线学习机制</li>
+          <li>• 概率性预测与风险量化</li>
+          <li>• 多维度信息融合</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Toggle button for mobile -->
+    <button class="toc-toggle" id="toc-toggle">
+      <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <!-- Hero Section -->
+      <section class="hero-section">
+        <div class="container mx-auto px-8 py-16">
+          <div class="hero-grid">
+            <div>
+              <h1 class="hero-title serif mb-6">
+                面向A股中短线交易的
+                <br>贝叶斯绝对收益投资框架
+              </h1>
+              <p class="text-xl text-gray-300 mb-8 leading-relaxed">
+                构建基于贝叶斯统计的动态量化投资体系，系统性处理市场不确定性，
+                实现多维度信息融合与自适应在线学习，追求稳健的绝对收益目标。
+              </p>
+              <div class="flex items-center space-x-6 text-sm text-gray-400">
+                <div class="flex items-center">
+                  <i class="fas fa-chart-line mr-2"></i>
+                  概率性预测
+                </div>
+                <div class="flex items-center">
+                  <i class="fas fa-network-wired mr-2"></i>
+                  动态建模
+                </div>
+                <div class="flex items-center">
+                  <i class="fas fa-cogs mr-2"></i>
+                  自适应优化
+                </div>
+              </div>
+            </div>
+            <div class="hero-visual">
+              <div class="absolute inset-0 flex items-center justify-center">
+                <img src="https://kimi-img.moonshot.cn/pub/icon/spinner.svg" alt="贝叶斯网络抽象概念图" class="w-full h-full object-cover rounded-lg opacity-80" size="medium" aspect="wide" query="贝叶斯网络抽象背景" referrerpolicy="no-referrer" />
+              </div>
+              <div class="absolute top-4 left-4 bg-black bg-opacity-50 text-white px-3 py-2 rounded text-sm">
+                <i class="fas fa-brain mr-2"></i>贝叶斯推理网络
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Framework Overview -->
+      <section id="overview" class="container mx-auto px-8 py-16">
+        <div class="section-header">
+          <h2 class="serif text-3xl font-bold text-neutral mb-4">框架概述与理论基础</h2>
+          <p class="text-lg text-secondary">贝叶斯统计为量化投资提供了处理不确定性、整合多源信息并进行动态更新的强大理论框架</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+          <div>
+            <h3 class="serif text-xl font-semibold mb-4">核心优势</h3>
+            <div class="space-y-4">
+              <div class="highlight-box">
+                <h4 class="font-semibold mb-2">处理不确定性与小数据问题</h4>
+                <p class="text-sm">通过引入先验分布，有效解决金融市场中的"小数据"难题。先验分布基于历史数据、专家经验构建，在数据稀疏情况下保持模型稳健性。<a href="https://cloud.tencent.cn/developer/article/2504581" class="citation" target="_blank">[1]</a>
+                </p>
+              </div>
+              <div class="highlight-box">
+                <h4 class="font-semibold mb-2">动态更新与在线学习机制</h4>
+                <p class="text-sm">上一期的后验分布作为下一期的先验分布，实现模型的持续学习和自适应调整，捕捉市场结构的时变特征。<a href="https://cloud.tencent.cn/developer/article/2504581" class="citation" target="_blank">[1]</a>
+                </p>
+              </div>
+              <div class="highlight-box">
+                <h4 class="font-semibold mb-2">概率性预测与风险量化</h4>
+                <p class="text-sm">输出完整的后验概率分布，而非单一的点估计，为风险管理和投资决策提供更丰富的信息维度。<a href="https://cloud.tencent.cn/developer/article/2504581" class="citation" target="_blank">[1]</a>
+                </p>
+              </div>
+            </div>
+          </div>
+          <div>
+            <img src="https://kimi-img.moonshot.cn/pub/icon/spinner.svg" alt="贝叶斯定理公式展示" class="w-full rounded-lg shadow-lg" size="medium" aspect="wide" style="linedrawing" query="贝叶斯定理数学公式" referrerpolicy="no-referrer" />
+          </div>
+        </div>
+
+        <!-- Core Models -->
+        <div class="bg-white rounded-lg p-8 shadow-lg mb-12">
+          <h3 class="serif text-2xl font-semibold mb-6">核心贝叶斯模型理论</h3>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="border-l-4 border-primary pl-4">
+              <h4 class="font-semibold mb-3">基础预测模型</h4>
+              <ul class="space-y-2 text-sm">
+                <li>• 贝叶斯线性回归</li>
+                <li>• 动态线性模型（DLM）</li>
+                <li>• 随机波动率（SV）模型</li>
+              </ul>
+            </div>
+            <div class="border-l-4 border-accent pl-4">
+              <h4 class="font-semibold mb-3">变量依赖关系建模</h4>
+              <ul class="space-y-2 text-sm">
+                <li>• 贝叶斯网络（BN）</li>
+                <li>• 有向无环图模型</li>
+                <li>• 多维度数据融合</li>
+              </ul>
+            </div>
+            <div class="border-l-4 border-secondary pl-4">
+              <h4 class="font-semibold mb-3">群体效应建模</h4>
+              <ul class="space-y-2 text-sm">
+                <li>• 分层贝叶斯模型</li>
+                <li>• 信息共享机制</li>
+                <li>• 跨板块联合建模</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mathematical Formulations -->
+        <div class="formula-box">
+          <h4 class="font-semibold mb-3">动态线性模型（DLM）数学表达</h4>
+          <p class="mb-2"><strong>观测方程：</strong> y_t = F_t'θ_t + v_t</p>
+          <p class="mb-2"><strong>状态方程：</strong> θ_t = G_tθ_{t-1} + w_t</p>
+          <p class="text-sm text-gray-600">其中 y_t 是t时刻观测值，θ_t 是状态向量，F_t 是回归向量，v_t 和 w_t 是噪声项。<a href="https://www.atyun.com/65769.html" class="citation" target="_blank">[353]</a>
+          </p>
+        </div>
+
+        <div class="formula-box">
+          <h4 class="font-semibold mb-3">随机波动率（SV）模型</h4>
+          <p class="mb-2"><strong>收益率方程：</strong> r_t = σ_t ε_t</p>
+          <p class="mb-2"><strong>波动率方程：</strong> log(σ_t²) = α + β log(σ_{t-1}²) + η_t</p>
+          <p class="text-sm text-gray-600">SV模型将波动率视为不可观测的随机过程，能够捕捉波动率聚集和杠杆效应。<a href="https://www.shfe.com.cn/upload/20160519/1463644169494.pdf" class="citation" target="_blank">[339]</a>
+          </p>
+        </div>
+      </section>
+
+      <!-- Data Engineering -->
+      <section id="data-engineering" class="container mx-auto px-8 py-16">
+        <div class="section-header">
+          <h2 class="serif text-3xl font-bold text-neutral mb-4">数据工程与处理流程</h2>
+          <p class="text-lg text-secondary">高质量的数据获取与处理是构建有效量化投资框架的基石</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+          <div>
+            <h3 class="serif text-xl font-semibold mb-4">数据源与获取工具</h3>
+            <div class="space-y-6">
+              <div class="bg-white p-6 rounded-lg shadow-md">
+                <h4 class="font-semibold mb-3 flex items-center">
+                  <i class="fas fa-chart-bar text-primary mr-2"></i>
+                  日频行情与基本面数据
+                </h4>
+                <div class="space-y-3 text-sm">
+                  <div class="border-l-2 border-blue-200 pl-3">
+                    <strong>Tushare：</strong>最广泛使用的免费财经数据接口，提供全面A股数据<a href="https://blog.csdn.net/weixin_57506268/article/details/135243692" class="citation" target="_blank">[37]</a>
+                  </div>
+                  <div class="border-l-2 border-green-200 pl-3">
+                    <strong>AkShare：</strong>数据源广泛，接口统一，完全免费<a href="https://juejin.cn/post/7069926565353619470" class="citation" target="_blank">[124]</a>
+                  </div>
+                  <div class="border-l-2 border-purple-200 pl-3">
+                    <strong>Baostock：</strong>数据准确完整，无需注册即可使用<a href="https://blog.csdn.net/qq_45590504/article/details/143171916" class="citation" target="_blank">[122]</a>
+                  </div>
+                </div>
+              </div>
+
+              <div class="bg-white p-6 rounded-lg shadow-md">
+                <h4 class="font-semibold mb-3 flex items-center">
+                  <i class="fas fa-newspaper text-accent mr-2"></i>
+                  另类数据：财经新闻与情绪
+                </h4>
+                <div class="space-y-3 text-sm">
+                  <div class="border-l-2 border-orange-200 pl-3">
+                    <strong>新浪财经新闻抓取：</strong>使用Python爬虫获取实时财经新闻数据
+                  </div>
+                  <div class="border-l-2 border-red-200 pl-3">
+                    <strong>FinBERT情感分析：</strong>基于BERT的中文金融情感分析模型
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <img src="https://kimi-img.moonshot.cn/pub/icon/spinner.svg" alt="量化金融数据处理流程示意图" class="w-full rounded-lg shadow-lg" size="medium" aspect="wide" query="量化金融数据处理流程" referrerpolicy="no-referrer" />
+          </div>
+        </div>
+
+        <!-- Feature Engineering -->
+        <div class="bg-white rounded-lg p-8 shadow-lg">
+          <h3 class="serif text-2xl font-semibold mb-6">数据处理与特征工程</h3>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="text-center">
+              <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-broom text-blue-600 text-xl"></i>
+              </div>
+              <h4 class="font-semibold mb-2">数据清洗</h4>
+              <p class="text-sm text-gray-600">处理缺失值、异常值，统一数据格式，确保数据质量</p>
+            </div>
+            <div class="text-center">
+              <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-chart-line text-green-600 text-xl"></i>
+              </div>
+              <h4 class="font-semibold mb-2">技术指标</h4>
+              <p class="text-sm text-gray-600">构建MA、RSI、MACD等技术指标，提取价量特征</p>
+            </div>
+            <div class="text-center">
+              <div class="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-layer-group text-purple-600 text-xl"></i>
+              </div>
+              <h4 class="font-semibold mb-2">宏观因子</h4>
+              <p class="text-sm text-gray-600">处理GDP、CPI、PMI等宏观经济数据的频率对齐</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Framework Construction -->
+      <section id="framework" class="container mx-auto px-8 py-16">
+        <div class="section-header">
+          <h2 class="serif text-3xl font-bold text-neutral mb-4">贝叶斯投资框架的构建与实现</h2>
+          <p class="text-lg text-secondary">通过系统化步骤构建完整的贝叶斯量化投资体系</p>
+        </div>
+
+        <!-- Construction Steps -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+          <div class="bg-white p-8 rounded-lg shadow-lg">
+            <div class="w-12 h-12 bg-blue-500 text-white rounded-lg flex items-center justify-center mb-6 text-xl font-bold">1</div>
+            <h3 class="serif text-xl font-semibold mb-4">定义变量层</h3>
+            <ul class="space-y-2 text-sm">
+              <li>• 技术指标因子</li>
+              <li>• 情绪量化指标</li>
+              <li>• 宏观与行业因子</li>
+              <li>• 基本面与事件因子</li>
+            </ul>
+          </div>
+
+          <div class="bg-white p-8 rounded-lg shadow-lg">
+            <div class="w-12 h-12 bg-green-500 text-white rounded-lg flex items-center justify-center mb-6 text-xl font-bold">2</div>
+            <h3 class="serif text-xl font-semibold mb-4">构建模型层</h3>
+            <ul class="space-y-2 text-sm">
+              <li>• 贝叶斯网络结构</li>
+              <li>• 分层模型设计</li>
+              <li>• 动态线性模型</li>
+              <li>• 混合模型集成</li>
+            </ul>
+          </div>
+
+          <div class="bg-white p-8 rounded-lg shadow-lg">
+            <div class="w-12 h-12 bg-purple-500 text-white rounded-lg flex items-center justify-center mb-6 text-xl font-bold">3</div>
+            <h3 class="serif text-xl font-semibold mb-4">设定先验层</h3>
+            <ul class="space-y-2 text-sm">
+              <li>• 专家知识转化</li>
+              <li>• 历史数据融合</li>
+              <li>• 共轭先验选择</li>
+              <li>• 敏感性分析</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Case Studies -->
+        <div class="bg-white rounded-lg p-8 shadow-lg mb-12">
+          <h3 class="serif text-2xl font-semibold mb-6">核心模型应用案例</h3>
+
+          <div class="space-y-8">
+            <div class="border-l-4 border-blue-500 pl-6">
+              <h4 class="font-semibold mb-3">贝叶斯网络在多因子与事件驱动策略中的整合</h4>
+              <p class="text-sm mb-3">借鉴Black-Litterman模型的贝叶斯推导，将多因子模型给出的残差收益预测作为先验，将事件驱动模型给出的信号作为观测，通过贝叶斯公式计算出后验的残差收益预测。<a href="https://bigquant.com/square/paper/4842f17f-059e-468e-b538-43784226eb56" class="citation" target="_blank">[362]</a>
+              </p>
+              <div class="bg-gray-50 p-4 rounded text-sm">
+                <strong>优势：</strong>动态加权、不确定性量化、框架通用性
+              </div>
+            </div>
+
+            <div class="border-l-4 border-green-500 pl-6">
+              <h4 class="font-semibold mb-3">随机波动率模型在风险管理中的应用</h4>
+              <p class="text-sm mb-3">SV模型将波动率本身视为不可观测的随机过程，能够更好地捕捉波动率聚集和杠杆效应。贝叶斯方法结合MCMC采样为SV模型提供了有效的解决方案。<a href="https://www.shfe.com.cn/upload/20160519/1463644169494.pdf" class="citation" target="_blank">[339]</a>
+              </p>
+              <div class="bg-gray-50 p-4 rounded text-sm">
+                <strong>应用：</strong>投资组合优化、期权定价、风险价值计算
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Validation Methods -->
+      <section id="validation" class="container mx-auto px-8 py-16">
+        <div class="section-header">
+          <h2 class="serif text-3xl font-bold text-neutral mb-4">策略验证与评估方法</h2>
+          <p class="text-lg text-secondary">贝叶斯框架下的验证方法与传统回测有本质区别，更注重模型的稳健性和预测能力</p>
+        </div>
+
+        <!-- Validation Methods -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+          <div class="space-y-6">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+              <h3 class="font-semibold mb-4 flex items-center">
+                <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                后验预测检验（PPC）
+              </h3>
+              <p class="text-sm mb-3">从参数的后验分布中抽取样本，生成模拟数据，与真实数据的统计特征进行比较，评估模型的拟合优度和生成能力。</p>
+              <div class="bg-green-50 p-3 rounded text-xs">
+                检验模型生成的收益率序列是否具有与真实A股市场相似的"尖峰厚尾"和"波动率聚集"特征
+              </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow-md">
+              <h3 class="font-semibold mb-4 flex items-center">
+                <i class="fas fa-chart-area text-blue-500 mr-2"></i>
+                概率性回测
+              </h3>
+              <p class="text-sm mb-3">从参数的后验分布中进行大量随机抽样，每条抽样对应一组模型参数，生成"权益曲线云"而非单一的权益曲线。</p>
+              <div class="bg-blue-50 p-3 rounded text-xs">
+                提供策略未来表现的概率分布，如95%概率实现正收益，5%概率最大回撤超过20%
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <img src="https://kimi-img.moonshot.cn/pub/icon/spinner.svg" alt="概率分布图展示" class="w-full rounded-lg shadow-lg" size="medium" aspect="wide" query="概率分布图" referrerpolicy="no-referrer" />
+          </div>
+        </div>
+
+        <!-- Evaluation Metrics -->
+        <div class="bg-white rounded-lg p-8 shadow-lg">
+          <h3 class="serif text-2xl font-semibold mb-6">概率预测评估指标</h3>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="border border-gray-200 rounded-lg p-6">
+              <h4 class="font-semibold mb-3 text-primary">连续分级概率评分（CRPS）</h4>
+              <p class="text-sm mb-3">衡量预测的概率分布与真实观测值之间的差异，是概率预测领域的"均方误差"。</p>
+              <ul class="text-xs space-y-1">
+                <li>• 同时评估预测的准确性和锐度</li>
+                <li>• 值越小表示预测质量越高</li>
+                <li>• 适用于整个概率分布的评估</li>
+              </ul>
+            </div>
+
+            <div class="border border-gray-200 rounded-lg p-6">
+              <h4 class="font-semibold mb-3 text-accent">其他适用指标</h4>
+              <div class="space-y-3 text-sm">
+                <div>
+                  <strong>对数评分：</strong>对预测分布的尾部敏感，惩罚对真实结果赋予极低概率的模型
+                </div>
+                <div>
+                  <strong>布赖尔分数：</strong>评估分类问题的概率预测，衡量预测概率与真实标签的均方误差
+                </div>
+                <div>
+                  <strong>概率积分变换（PIT）：</strong>诊断工具，检验预测分布是否校准良好
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Framework Optimization -->
+      <section id="optimization" class="container mx-auto px-8 py-16">
+        <div class="section-header">
+          <h2 class="serif text-3xl font-bold text-neutral mb-4">框架优化与动态调整</h2>
+          <p class="text-lg text-secondary">通过先进的优化技术提升框架性能和适应性</p>
+        </div>
+
+        <!-- Optimization Techniques -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+          <div class="bg-white p-6 rounded-lg shadow-md">
+            <div class="w-12 h-12 bg-blue-500 text-white rounded-lg flex items-center justify-center mb-4">
+              <i class="fas fa-cogs"></i>
+            </div>
+            <h3 class="font-semibold mb-3">模型优化技术</h3>
+            <ul class="text-sm space-y-2">
+              <li>• 贝叶斯模型选择（WAIC/LOO）</li>
+              <li>• 贝叶斯模型平均（BMA）</li>
+              <li>• 多模型组合预测</li>
+            </ul>
+          </div>
+
+          <div class="bg-white p-6 rounded-lg shadow-md">
+            <div class="w-12 h-12 bg-green-500 text-white rounded-lg flex items-center justify-center mb-4">
+              <i class="fas fa-sliders-h"></i>
+            </div>
+            <h3 class="font-semibold mb-3">策略参数优化</h3>
+            <ul class="text-sm space-y-2">
+              <li>• 贝叶斯优化算法</li>
+              <li>• 超参数自动调优</li>
+              <li>• 高效全局搜索</li>
+            </ul>
+          </div>
+
+          <div class="bg-white p-6 rounded-lg shadow-md">
+            <div class="w-12 h-12 bg-purple-500 text-white rounded-lg flex items-center justify-center mb-4">
+              <i class="fas fa-sync-alt"></i>
+            </div>
+            <h3 class="font-semibold mb-3">动态更新机制</h3>
+            <ul class="text-sm space-y-2">
+              <li>• 在线学习与自适应</li>
+              <li>• 后验作为新先验</li>
+              <li>• 实时市场响应</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Bayesian Optimization -->
+        <div class="bg-white rounded-lg p-8 shadow-lg mb-12">
+          <h3 class="serif text-2xl font-semibold mb-6">贝叶斯优化在参数调优中的应用</h3>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div>
+              <p class="text-sm mb-4">贝叶斯优化通过构建目标函数的概率代理模型（高斯过程），利用采集函数指导参数搜索，能够以更少的迭代次数找到更优的参数组合。<a href="https://www.cnblogs.com/apachecn/p/19087762" class="citation" target="_blank">[332]</a>
+              </p>
+              <div class="space-y-3">
+                <div class="bg-blue-50 p-3 rounded text-sm">
+                  <strong>优势：</strong>高效的全局优化，适用于计算成本高昂的黑箱函数
+                </div>
+                <div class="bg-green-50 p-3 rounded text-sm">
+                  <strong>应用：</strong>技术指标周期、信号阈值、持仓周期等超参数优化
+                </div>
+              </div>
+            </div>
+            <div>
+              <img src="https://kimi-img.moonshot.cn/pub/icon/spinner.svg" alt="贝叶斯优化过程示意图" class="w-full rounded-lg shadow-md" size="medium" aspect="wide" query="贝叶斯优化算法示意图" referrerpolicy="no-referrer" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Online Learning -->
+        <div class="highlight-box">
+          <h3 class="serif text-xl font-semibold mb-4">在线学习与自适应调整机制</h3>
+          <p class="mb-4">金融市场的规律并非一成不变，贝叶斯框架通过"先验-后验"更新机制，实现模型的在线学习和自适应调整。<a href="https://blog.csdn.net/caiair/article/details/144939684" class="citation" target="_blank">[317]</a>
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <h4 class="font-semibold mb-2">核心机制</h4>
+              <ul class="text-sm space-y-1">
+                <li>• t时刻后验分布 → t+1时刻先验分布</li>
+                <li>• 持续滚动学习闭环</li>
+                <li>• 实时追踪市场变化</li>
+              </ul>
+            </div>
+            <div>
+              <h4 class="font-semibold mb-2">实际应用</h4>
+              <ul class="text-sm space-y-1">
+                <li>• 多因子权重动态调整</li>
+                <li>• 事件驱动策略自适应</li>
+                <li>• 实时概率更新优化<a href="http://www.360doc.com/content/25/0312/22/53053684_1148780660.shtml" class="citation" target="_blank">[314]</a>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tool Comparison -->
+      <section id="comparison" class="container mx-auto px-8 py-16">
+        <div class="section-header">
+          <h2 class="serif text-3xl font-bold text-neutral mb-4">实现工具对比</h2>
+          <p class="text-lg text-secondary">Python生态中主要贝叶斯建模工具的优劣势分析</p>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+          <table class="w-full">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-900">工具</th>
+                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-900">核心优势</th>
+                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-900">适用场景</th>
+                <th class="px-6 py-4 text-left text-sm font-semibold text-gray-900">主要劣势</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+              <tr>
+                <td class="px-6 py-4">
+                  <div class="flex items-center">
+                    <i class="fab fa-python text-blue-500 mr-2"></i>
+                    <strong>PyMC</strong>
+                  </div>
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  语法灵活，生态系统成熟，与ArviZ等可视化工具结合紧密，支持多种先进采样算法（如NUTS）和变分推断<a href="https://zhuanlan.zhihu.com/p/603705401" class="citation" target="_blank">[315]</a>
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  研究和开发复杂的、需要高度定制化的贝叶斯模型，如分层模型、动态模型等
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  在处理超大规模模型时，性能可能不如Stan
+                </td>
+              </tr>
+              <tr class="bg-gray-50">
+                <td class="px-6 py-4">
+                  <div class="flex items-center">
+                    <i class="fas fa-cube text-green-500 mr-2"></i>
+                    <strong>Stan (PyStan)</strong>
+                  </div>
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  性能卓越，数值稳定性高，采样效率极高，尤其在学术界应用广泛，模型定义语言严谨<a href="https://developer.aliyun.com/article/1384070" class="citation" target="_blank">[343]</a>
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  对计算性能有极致要求的生产环境，或需要处理大规模、高维度数据的复杂模型
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  学习曲线较陡峭，需要学习独立的Stan语言，与Python生态集成不如PyMC无缝
+                </td>
+              </tr>
+              <tr>
+                <td class="px-6 py-4">
+                  <div class="flex items-center">
+                    <i class="fas fa-project-diagram text-purple-500 mr-2"></i>
+                    <strong>pgmpy</strong>
+                  </div>
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  专注于贝叶斯网络，提供便捷的图结构操作、结构学习和推理算法，轻量级且易于使用
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  以贝叶斯网络为核心，需要显式建模变量间因果或依赖关系的策略
+                </td>
+                <td class="px-6 py-4 text-sm">
+                  功能局限于图模型，对于非图模型的贝叶斯推断支持较弱
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tool Features -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-12">
+          <div class="bg-white p-6 rounded-lg shadow-md">
+            <h4 class="font-semibold mb-4 text-blue-600">PyMC：灵活性与生态系统</h4>
+            <p class="text-sm mb-4">PyMC以其语法灵活性和成熟的生态系统而闻名，与ArviZ库紧密集成，提供强大的模型诊断和可视化功能。<a href="https://www.atyun.com/43843.html" class="citation" target="_blank">[341]</a>
+            </p>
+            <div class="space-y-2 text-xs">
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                NUTS采样器自动调参
+              </div>
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                与ArviZ无缝集成
+              </div>
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                支持变分推断
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white p-6 rounded-lg shadow-md">
+            <h4 class="font-semibold mb-4 text-green-600">Stan：性能与稳定性</h4>
+            <p class="text-sm mb-4">Stan通过其独特的"基于梯度的采样"算法实现了高效的贝叶斯推断，将模型代码转换为高效的C++代码。<a href="https://developer.aliyun.com/article/1384070" class="citation" target="_blank">[343]</a>
+            </p>
+            <div class="space-y-2 text-xs">
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                高性能C++后端
+              </div>
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                数值稳定性高
+              </div>
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                学术界广泛应用
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white p-6 rounded-lg shadow-md">
+            <h4 class="font-semibold mb-4 text-purple-600">pgmpy：贝叶斯网络专用</h4>
+            <p class="text-sm mb-4">pgmpy专注于图模型，特别是贝叶斯网络，提供完整的结构学习、参数学习和推理工具集。</p>
+            <div class="space-y-2 text-xs">
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                结构学习算法
+              </div>
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                参数学习功能
+              </div>
+              <div class="flex items-center">
+                <i class="fas fa-check text-green-500 mr-2"></i>
+                多种推理算法
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="bg-gray-900 text-white py-12">
+        <div class="container mx-auto px-8">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div>
+              <h3 class="serif text-xl font-semibold mb-4">贝叶斯投资框架</h3>
+              <p class="text-sm text-gray-400">基于贝叶斯统计的动态量化投资体系，系统性处理市场不确定性，实现多维度信息融合与自适应优化。</p>
+            </div>
+            <div>
+              <h4 class="font-semibold mb-4">核心优势</h4>
+              <ul class="text-sm text-gray-400 space-y-2">
+                <li>• 概率性预测与风险量化</li>
+                <li>• 动态在线学习机制</li>
+                <li>• 小数据处理能力强</li>
+                <li>• 多源信息有效融合</li>
+              </ul>
+            </div>
+            <div>
+              <h4 class="font-semibold mb-4">技术栈</h4>
+              <div class="flex space-x-4 text-sm text-gray-400">
+                <span>PyMC</span>
+                <span>Stan</span>
+                <span>pgmpy</span>
+                <span>ArviZ</span>
+              </div>
+            </div>
+          </div>
+          <div class="border-t border-gray-800 mt-8 pt-8 text-center text-sm text-gray-500">
+            <p>构建专业的贝叶斯量化投资框架，追求稳健的绝对收益目标</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+        // Toggle TOC on mobile
+        document.getElementById('toc-toggle').addEventListener('click', function() {
+            document.getElementById('toc').classList.toggle('hidden');
+        });
+
+        // Smooth scrolling for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                    // Hide TOC after clicking a link on mobile
+                    if (window.innerWidth < 1024) {
+                        document.getElementById('toc').classList.add('hidden');
+                    }
+                }
+            });
+        });
+
+        // Highlight current section in TOC
+        const observerOptions = {
+            root: null,
+            rootMargin: '-20% 0px -80% 0px',
+            threshold: 0
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const id = entry.target.getAttribute('id');
+                    const tocLinks = document.querySelectorAll('#toc a');
+                    tocLinks.forEach(link => {
+                        link.classList.remove('text-primary', 'font-semibold');
+                        link.classList.add('text-secondary');
+                        if (link.getAttribute('href') === `#${id}`) {
+                            link.classList.remove('text-secondary');
+                            link.classList.add('text-primary', 'font-semibold');
+                        }
+                    });
+                }
+            });
+        }, observerOptions);
+
+        // Observe all sections
+        document.querySelectorAll('section[id]').forEach(section => {
+            observer.observe(section);
+        });
+    </script>
+  </body>
+
+</html>

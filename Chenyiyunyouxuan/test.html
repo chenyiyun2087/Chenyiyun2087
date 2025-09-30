@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>阿里巴巴芯片雄心：玄铁C930信息图表</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 400px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
+        }
+        .flow-arrow {
+            font-size: 2rem;
+            color: #00A6ED;
+            line-height: 1;
+        }
+    </style>
+</head>
+<body class="bg-[#f0f4f8] text-[#002D57]">
+
+    <div class="container mx-auto p-4 md:p-8">
+
+        <header class="text-center mb-12">
+            <h1 class="text-4xl md:text-5xl font-extrabold text-[#00508C] leading-tight">阿里巴巴在半导体领域的下一个飞跃</h1>
+            <p class="mt-4 text-lg md:text-xl text-[#0076C2] max-w-3xl mx-auto">本周，阿里巴巴旗下半导体公司平头哥（T-Head）发布了玄铁C930，这是一款RISC-V处理器，旨在重塑云计算和边缘计算领域的性能，标志着其在芯片自主研发道路上迈出了重要一步。</p>
+        </header>
+
+        <main class="space-y-12">
+
+            <section id="overview">
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-[#00508C]">玄铁C930概览</h2>
+                    <p class="mt-2 text-md text-[#0076C2]">使这款新芯片脱颖而出的关键指标。</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="bg-white rounded-lg shadow-md p-6 text-center flex flex-col justify-center">
+                        <span class="text-5xl font-extrabold text-[#00A6ED]">40%</span>
+                        <p class="mt-2 font-semibold text-[#00508C]">人工智能性能提升</p>
+                        <p class="text-sm text-gray-500">在关键推理工作负载中，相比上一代C920。</p>
+                    </div>
+                    <div class="bg-white rounded-lg shadow-md p-6 text-center flex flex-col justify-center">
+                        <span class="text-5xl font-extrabold text-[#00A6ED]">25%</span>
+                        <p class="mt-2 font-semibold text-[#00508C]">能效比提升</p>
+                        <p class="text-sm text-gray-500">每瓦特计算量更高，这对数据中心至关重要。</p>
+                    </div>
+                     <div class="bg-white rounded-lg shadow-md p-6 text-center flex flex-col justify-center">
+                        <span class="text-5xl font-extrabold text-[#00A6ED]">5nm</span>
+                        <p class="mt-2 font-semibold text-[#00508C]">制程技术</p>
+                        <p class="text-sm text-gray-500">利用尖端制造工艺，实现更高晶体管密度。</p>
+                    </div>
+                    <div class="bg-white rounded-lg shadow-md p-6 text-center flex flex-col justify-center">
+                        <span class="text-5xl font-extrabold text-[#00A6ED]">100+</span>
+                        <p class="mt-2 font-semibold text-[#00508C]">RISC-V扩展</p>
+                        <p class="text-sm text-gray-500">定制指令集，可加速特定的AI和安全任务。</p>
+                    </div>
+                </div>
+            </section>
+
+            <section id="deep-dive" class="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h3 class="text-2xl font-bold text-[#00508C]">性能深度剖析</h3>
+                    <p class="mt-2 text-[#0076C2]">玄铁C930在各种现代AI应用中表现出显著的性能提升。该芯片架构专为推理任务进行优化，这些任务为阿里巴巴的电商和云计算业务提供核心支持，如推荐引擎和计算机视觉。这份基于内部测试数据进行的基准比较，展示了其相对于前代产品和市场同类竞品的优势。</p>
+                    <p class="mt-4 text-sm text-gray-500">分值以玄铁C920的性能基线（100）进行标准化。</p>
+                </div>
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="chart-container h-80 md:h-96">
+                        <canvas id="performanceChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+             <section id="strategy">
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-[#00508C]">战略影响：云计算集成周期</h2>
+                    <p class="mt-2 text-md text-[#0076C2] max-w-3xl mx-auto">C930不仅仅是硬件；它还是阿里巴巴垂直整合战略的基石。通过控制从芯片设计到云服务交付的整个技术栈，阿里巴巴可以为其客户创建高度优化且更具成本效益的解决方案。</p>
+                </div>
+                <div class="bg-white rounded-lg shadow-md p-8">
+                     <div class="flex flex-col md:flex-row items-center justify-between space-y-6 md:space-y-0 md:space-x-4 text-center">
+                        <div class="flex flex-col items-center">
+                            <div class="w-24 h-24 bg-[#7FD4F5] rounded-full flex items-center justify-center text-4xl font-bold text-white">1</div>
+                            <h4 class="mt-3 font-semibold text-[#00508C]">平头哥芯片设计</h4>
+                            <p class="text-sm text-gray-600 max-w-xs">自主设计玄铁C930 RISC-V核心。</p>
+                        </div>
+                        <div class="transform rotate-90 md:rotate-0 flow-arrow">➔</div>
+                        <div class="flex flex-col items-center">
+                            <div class="w-24 h-24 bg-[#00A6ED] rounded-full flex items-center justify-center text-4xl font-bold text-white">2</div>
+                            <h4 class="mt-3 font-semibold text-[#00508C]">先进制造</h4>
+                            <p class="text-sm text-gray-600 max-w-xs">与代工厂合作，采用5纳米制程节点进行制造。</p>
+                        </div>
+                         <div class="transform rotate-90 md:rotate-0 flow-arrow">➔</div>
+                        <div class="flex flex-col items-center">
+                            <div class="w-24 h-24 bg-[#0076C2] rounded-full flex items-center justify-center text-4xl font-bold text-white">3</div>
+                            <h4 class="mt-3 font-semibold text-[#00508C]">阿里云集成</h4>
+                            <p class="text-sm text-gray-600 max-w-xs">部署到阿里巴巴全球数据中心的服务器中。</p>
+                        </div>
+                         <div class="transform rotate-90 md:rotate-0 flow-arrow">➔</div>
+                        <div class="flex flex-col items-center">
+                            <div class="w-24 h-24 bg-[#00508C] rounded-full flex items-center justify-center text-4xl font-bold text-white">4</div>
+                            <h4 class="mt-3 font-semibold text-[#00508C]">新AI服务</h4>
+                            <p class="text-sm text-gray-600 max-w-xs">为开发者提供优化且经济高效的云实例。</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="ecosystem" class="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                 <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="chart-container h-80 md:h-96">
+                        <canvas id="riscvGrowthChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h3 class="text-2xl font-bold text-[#00508C]">助力RISC-V生态系统</h3>
+                    <p class="mt-2 text-[#0076C2]">阿里巴巴的投资不仅限于自身产品。通过将玄铁系列的大部分产品开源并积极为RISC-V国际基金会做贡献，平头哥正成为推动这一开放标准架构应用的主要力量。行业分析师预测，这一势头将在未来十年内推动RISC-V在数据中心市场取得显著增长，挑战专有指令集架构的主导地位。</p>
+                </div>
+            </section>
+
+             <section id="supply-chain">
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-[#00508C]">玄铁C930的产业链生态</h2>
+                    <p class="mt-2 text-md text-[#0076C2] max-w-3xl mx-auto">玄铁C930的成功离不开国内产业链上下游的紧密协作。以下是一些与阿里巴巴芯片生态相关的A股公司。</p>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-md p-8">
+                    <h4 class="text-xl font-bold text-[#00508C] mb-4">上游：IP设计与软件工具</h4>
+                    <ul class="list-disc list-inside space-y-2 text-gray-700">
+                        <li><span class="font-semibold">云知声（688327）：</span>作为平头哥的“玄铁优选伙伴”，在AIoT芯片研发领域展开合作。</li>
+                    </ul>
+                    <h4 class="text-xl font-bold text-[#00508C] mt-8 mb-4">中游：制造、封装与测试</h4>
+                    <ul class="list-disc list-inside space-y-2 text-gray-700">
+                        <li><span class="font-semibold">中科蓝讯（688332）：</span>与平头哥合作开发基于玄铁处理器的蓝牙物联网芯片。</li>
+                        <li><span class="font-semibold">长电科技（600584）/通富微电（002156）：</span>作为国内先进的芯片封测企业，是阿里巴巴芯片业务重要的潜在合作伙伴。</li>
+                    </ul>
+                    <h4 class="text-xl font-bold text-[#00508C] mt-8 mb-4">下游：芯片应用与系统集成</h4>
+                    <ul class="list-disc list-inside space-y-2 text-gray-700">
+                        <li><span class="font-semibold">紫光股份（000938）：</span>其子公司新华三在企业级IT设备领域与阿里云有深度合作，未来可能集成平头哥的芯片。</li>
+                        <li><span class="font-semibold">中兴通讯（000063）：</span>作为通信设备巨头，与阿里巴巴在5G、数据中心等领域存在合作空间。</li>
+                        <li><span class="font-semibold">盛科通信（688702）：</span>专注于以太网交换芯片，其产品与阿里巴巴的云服务高度相关。</li>
+                    </ul>
+                </div>
+            </section>
+
+        </main>
+
+        <footer class="text-center mt-16 border-t pt-8 border-[#00A6ED]">
+            <p class="text-[#0076C2]">信息图表基于2025年8月25日当周的市场分析和新闻报道制作。</p>
+        </footer>
+
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const brilliantBlues = {
+                primary: '#00A6ED',
+                secondary: '#0076C2',
+                tertiary: '#00508C',
+                dark: '#002D57',
+                light: '#7FD4F5'
+            };
+
+            const processLabel = (label) => {
+                if (label.length > 16) {
+                    const words = label.split(' ');
+                    const lines = [];
+                    let currentLine = '';
+                    for (const word of words) {
+                        if ((currentLine + word).length > 16) {
+                            lines.push(currentLine.trim());
+                            currentLine = '';
+                        }
+                        currentLine += word + ' ';
+                    }
+                    lines.push(currentLine.trim());
+                    return lines;
+                }
+                return label;
+            };
+
+            const sharedTooltipOptions = {
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            title: function(tooltipItems) {
+                                const item = tooltipItems[0];
+                                let label = item.chart.data.labels[item.dataIndex];
+                                if (Array.isArray(label)) {
+                                  return label.join(' ');
+                                } else {
+                                  return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            const performanceChartCtx = document.getElementById('performanceChart');
+            if(performanceChartCtx) {
+                const rawLabels = ['图像识别', '自然语言处理', '推荐引擎'];
+                new Chart(performanceChartCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: rawLabels.map(processLabel),
+                        datasets: [
+                            {
+                                label: '玄铁 C920',
+                                data: [100, 100, 100],
+                                backgroundColor: brilliantBlues.light,
+                                borderColor: brilliantBlues.light,
+                                borderWidth: 1
+                            },
+                            {
+                                label: '竞品 A (x86)',
+                                data: [110, 95, 115],
+                                backgroundColor: brilliantBlues.secondary,
+                                borderColor: brilliantBlues.secondary,
+                                borderWidth: 1
+                            },
+                            {
+                                label: '玄铁 C930',
+                                data: [145, 130, 155],
+                                backgroundColor: brilliantBlues.primary,
+                                borderColor: brilliantBlues.primary,
+                                borderWidth: 1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        ...sharedTooltipOptions,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: '相对性能得分'
+                                }
+                            }
+                        },
+                        plugins: {
+                            ...sharedTooltipOptions.plugins,
+                            title: {
+                                display: true,
+                                text: 'AI工作负载性能比较'
+                            },
+                             legend: {
+                                position: 'bottom',
+                            }
+                        }
+                    }
+                });
+            }
+
+            const riscvGrowthChartCtx = document.getElementById('riscvGrowthChart');
+            if(riscvGrowthChartCtx) {
+                new Chart(riscvGrowthChartCtx, {
+                    type: 'line',
+                    data: {
+                        labels: ['2024', '2025', '2026', '2027', '2028', '2029', '2030'],
+                        datasets: [{
+                            label: 'RISC-V 数据中心市场份额',
+                            data: [1, 2.5, 5, 8, 12, 17, 25],
+                            fill: true,
+                            backgroundColor: 'rgba(0, 166, 237, 0.2)',
+                            borderColor: brilliantBlues.primary,
+                            tension: 0.3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        ...sharedTooltipOptions,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: '预计市场份额 (%)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            ...sharedTooltipOptions.plugins,
+                            title: {
+                                display: true,
+                                text: 'RISC-V在数据中心市场的预计应用'
+                            },
+                             legend: {
+                                display: false
+                            }
+                        }
+                    }
+                });
+            }
+
+        });
+    </script>
+
+</body>
+</html>
