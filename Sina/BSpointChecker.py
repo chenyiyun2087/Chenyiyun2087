@@ -36,7 +36,7 @@ def setup_directories():
     today = datetime.now().strftime("%Y%m%d")
 
     # 创建基础目录
-    base_dir = "../SinaAppBS"
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "SinaAppBS"))
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
         logger.info(f"创建基础目录: {base_dir}")
@@ -262,7 +262,7 @@ def main(excel_file, max_workers=20):
     stock_codes = read_stock_codes(excel_file)
     if not stock_codes:
         logger.error("未能读取到有效的股票代码，程序退出")
-        return
+        return None
 
     # 并行处理股票代码
     start_time = time.time()
@@ -279,6 +279,8 @@ def main(excel_file, max_workers=20):
         logger.info("失败的股票代码:")
         for code, error in results['failed_codes']:
             logger.info(f"  - {code}: {error}")
+
+    return save_dir
 
 
 if __name__ == "__main__":

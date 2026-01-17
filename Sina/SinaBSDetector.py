@@ -1,13 +1,15 @@
 import cv2
-import numpy as np
-import pytesseract
+import glob
 import os
+import sqlite3
 import threading
-import pandas as pd
-from datetime import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor
-import glob
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import pytesseract
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -15,6 +17,98 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 THREAD_LOCK = threading.Lock()
 DETECTION_RESULTS = []  # 存储所有检测结果
 COORDINATE_THRESHOLD = 1830  # 横坐标阈值
+
+
+def get_base_dir():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "SinaAppBS"))
+
+
+def init_db(db_path):
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bs_detection_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT NOT NULL,
+                has_buy_signal INTEGER NOT NULL,
+                has_sell_signal INTEGER NOT NULL,
+                buy_signal_description TEXT,
+                sell_signal_description TEXT,
+                total_b_points INTEGER,
+                total_s_points INTEGER,
+                buy_points_count INTEGER,
+                sell_points_count INTEGER,
+                process_time TEXT,
+                image_path TEXT,
+                batch_date TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bs_detection_batch ON bs_detection_results (batch_date)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bs_detection_stock ON bs_detection_results (stock_code)"
+        )
+        conn.commit()
+
+
+def save_results_to_db(results, db_path, batch_date):
+    if not results:
+        print("没有检测结果可写入数据库")
+        return
+
+    init_db(db_path)
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    rows = [
+        (
+            result.get('stock_code'),
+            int(bool(result.get('has_buy_signal'))),
+            int(bool(result.get('has_sell_signal'))),
+            result.get('buy_signal_description'),
+            result.get('sell_signal_description'),
+            result.get('total_b_points'),
+            result.get('total_s_points'),
+            result.get('buy_points_count'),
+            result.get('sell_points_count'),
+            result.get('process_time'),
+            result.get('image_path'),
+            batch_date,
+            now_str,
+        )
+        for result in results
+    ]
+
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO bs_detection_results (
+                stock_code,
+                has_buy_signal,
+                has_sell_signal,
+                buy_signal_description,
+                sell_signal_description,
+                total_b_points,
+                total_s_points,
+                buy_points_count,
+                sell_points_count,
+                process_time,
+                image_path,
+                batch_date,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        conn.commit()
+    print(f"检测结果已写入数据库: {db_path}")
 
 
 # --- OCR预处理函数 ---
@@ -267,7 +361,7 @@ def process_single_image(image_path, debug_mode=False):
 
 
 # --- 批量处理主函数 ---
-def batch_process_images(date_folder=None, max_workers=4, debug_mode=False):
+def batch_process_images(date_folder=None, max_workers=4, debug_mode=False, base_dir=None, db_path=None, save_excel=True):
     """
     批量多线程处理图片
     :param date_folder: 日期文件夹，如果为None则使用当前日期
@@ -277,17 +371,20 @@ def batch_process_images(date_folder=None, max_workers=4, debug_mode=False):
     global DETECTION_RESULTS
 
     # 确定处理的日期文件夹
+    if base_dir is None:
+        base_dir = get_base_dir()
+
     if date_folder is None:
         current_date = datetime.now().strftime('%Y%m%d')
-        folder_path = f'./SinaAppBS/{current_date}'
+        folder_path = os.path.join(base_dir, current_date)
     else:
-        folder_path = f'./SinaAppBS/{date_folder}'
+        folder_path = os.path.join(base_dir, date_folder)
         current_date = date_folder
 
     # 检查文件夹是否存在
     if not os.path.exists(folder_path):
         print(f"错误：文件夹不存在 - {folder_path}")
-        return
+        return []
 
     # 获取所有图片文件
     image_extensions = ['*.png', '*.jpg', '*.jpeg', '*.bmp', '*.tiff']
@@ -297,7 +394,7 @@ def batch_process_images(date_folder=None, max_workers=4, debug_mode=False):
 
     if not image_files:
         print(f"在文件夹 {folder_path} 中未找到图片文件")
-        return
+        return []
 
     print(f"找到 {len(image_files)} 个图片文件，开始处理...")
     print(f"使用 {max_workers} 个线程进行并行处理")
@@ -343,20 +440,27 @@ def batch_process_images(date_folder=None, max_workers=4, debug_mode=False):
 
     # 保存结果到Excel
     if DETECTION_RESULTS:
-        save_results_to_excel(current_date)
+        if save_excel:
+            save_results_to_excel(current_date, DETECTION_RESULTS)
+        if db_path:
+            save_results_to_db(DETECTION_RESULTS, db_path, current_date)
     else:
         print("没有有效的检测结果，不生成Excel文件")
+        if db_path:
+            save_results_to_db(DETECTION_RESULTS, db_path, current_date)
+
+    return DETECTION_RESULTS
 
 
 # --- 保存结果到Excel ---
-def save_results_to_excel(date_str):
+def save_results_to_excel(date_str, results):
     """
     将检测结果保存到Excel文件
     :param date_str: 日期字符串
     """
     try:
         # 创建DataFrame
-        df = pd.DataFrame(DETECTION_RESULTS)
+        df = pd.DataFrame(results)
 
         # 重新排列列的顺序
         column_order = [
