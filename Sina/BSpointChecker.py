@@ -25,9 +25,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def setup_directories():
+def setup_directories(excel_file):
     """
-    创建SinaAppBS文件夹和当前日期文件夹
+    创建SinaAppBS文件夹、来源文件夹和当前日期文件夹
 
     返回:
     str: 当前日期文件夹的路径
@@ -41,8 +41,14 @@ def setup_directories():
         os.makedirs(base_dir)
         logger.info(f"创建基础目录: {base_dir}")
 
+    batch_name = os.path.splitext(os.path.basename(excel_file))[0]
+    batch_dir = os.path.join(base_dir, batch_name)
+    if not os.path.exists(batch_dir):
+        os.makedirs(batch_dir)
+        logger.info(f"创建来源目录: {batch_dir}")
+
     # 创建日期目录
-    date_dir = os.path.join(base_dir, today)
+    date_dir = os.path.join(batch_dir, today)
     if not os.path.exists(date_dir):
         os.makedirs(date_dir)
         logger.info(f"创建日期目录: {date_dir}")
@@ -255,7 +261,7 @@ def main(excel_file, max_workers=20):
     max_workers (int): 最大线程数
     """
     # 创建目录
-    save_dir = setup_directories()
+    save_dir = setup_directories(excel_file)
     logger.info(f"截图将保存在: {save_dir}")
 
     # 读取股票代码
