@@ -17,6 +17,56 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 THREAD_LOCK = threading.Lock()
 DETECTION_RESULTS = []  # 存储所有检测结果
 COORDINATE_THRESHOLD = 1830  # 横坐标阈值
+MYSQL_CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS bs_detection_results (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    batch_name VARCHAR(128) NOT NULL,
+    batch_date VARCHAR(8) NOT NULL,
+    stock_code VARCHAR(16) NOT NULL,
+    has_buy_signal TINYINT NOT NULL,
+    has_sell_signal TINYINT NOT NULL,
+    buy_signal_description TEXT,
+    sell_signal_description TEXT,
+    total_b_points INT,
+    total_s_points INT,
+    buy_points_count INT,
+    sell_points_count INT,
+    process_time VARCHAR(32),
+    image_path TEXT,
+    created_at DATETIME NOT NULL,
+    UNIQUE KEY uniq_bs_detection (batch_name, batch_date, stock_code)
+);
+"""
+MYSQL_INSERT_SQL = """
+INSERT INTO bs_detection_results (
+    batch_name,
+    batch_date,
+    stock_code,
+    has_buy_signal,
+    has_sell_signal,
+    buy_signal_description,
+    sell_signal_description,
+    total_b_points,
+    total_s_points,
+    buy_points_count,
+    sell_points_count,
+    process_time,
+    image_path,
+    created_at
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON DUPLICATE KEY UPDATE
+    has_buy_signal = VALUES(has_buy_signal),
+    has_sell_signal = VALUES(has_sell_signal),
+    buy_signal_description = VALUES(buy_signal_description),
+    sell_signal_description = VALUES(sell_signal_description),
+    total_b_points = VALUES(total_b_points),
+    total_s_points = VALUES(total_s_points),
+    buy_points_count = VALUES(buy_points_count),
+    sell_points_count = VALUES(sell_points_count),
+    process_time = VALUES(process_time),
+    image_path = VALUES(image_path),
+    created_at = VALUES(created_at);
+"""
 
 
 def get_base_dir():
@@ -109,6 +159,51 @@ def save_results_to_db(results, db_path, batch_date):
         )
         conn.commit()
     print(f"检测结果已写入数据库: {db_path}")
+
+
+def init_mysql_db(mysql_config):
+    import pymysql
+
+    with pymysql.connect(**mysql_config) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(MYSQL_CREATE_TABLE_SQL)
+
+
+def save_results_to_mysql(results, mysql_config, batch_date, batch_name):
+    if not results:
+        print("没有检测结果可写入MySQL数据库")
+        return
+
+    init_mysql_db(mysql_config)
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    rows = [
+        (
+            batch_name,
+            batch_date,
+            result.get('stock_code'),
+            int(bool(result.get('has_buy_signal'))),
+            int(bool(result.get('has_sell_signal'))),
+            result.get('buy_signal_description'),
+            result.get('sell_signal_description'),
+            result.get('total_b_points'),
+            result.get('total_s_points'),
+            result.get('buy_points_count'),
+            result.get('sell_points_count'),
+            result.get('process_time'),
+            result.get('image_path'),
+            now_str,
+        )
+        for result in results
+    ]
+
+    import pymysql
+
+    with pymysql.connect(**mysql_config) as conn:
+        with conn.cursor() as cursor:
+            cursor.executemany(MYSQL_INSERT_SQL, rows)
+        conn.commit()
+    print("检测结果已写入MySQL数据库")
 
 
 # --- OCR预处理函数 ---
@@ -361,7 +456,15 @@ def process_single_image(image_path, debug_mode=False):
 
 
 # --- 批量处理主函数 ---
-def batch_process_images(date_folder=None, max_workers=4, debug_mode=False, base_dir=None, db_path=None, save_excel=True):
+def batch_process_images(
+    date_folder=None,
+    max_workers=4,
+    debug_mode=False,
+    base_dir=None,
+    db_path=None,
+    mysql_config=None,
+    save_excel=True,
+):
     """
     批量多线程处理图片
     :param date_folder: 日期文件夹，如果为None则使用当前日期
@@ -379,7 +482,11 @@ def batch_process_images(date_folder=None, max_workers=4, debug_mode=False, base
         folder_path = os.path.join(base_dir, current_date)
     else:
         folder_path = os.path.join(base_dir, date_folder)
-        current_date = date_folder
+        current_date = os.path.basename(date_folder)
+
+    relative_path = os.path.relpath(folder_path, base_dir)
+    parts = os.path.normpath(relative_path).split(os.sep)
+    batch_name = parts[-2] if len(parts) >= 2 else "default"
 
     # 检查文件夹是否存在
     if not os.path.exists(folder_path):
@@ -441,19 +548,23 @@ def batch_process_images(date_folder=None, max_workers=4, debug_mode=False, base
     # 保存结果到Excel
     if DETECTION_RESULTS:
         if save_excel:
-            save_results_to_excel(current_date, DETECTION_RESULTS)
+            save_results_to_excel(current_date, DETECTION_RESULTS, base_dir, batch_name)
         if db_path:
             save_results_to_db(DETECTION_RESULTS, db_path, current_date)
+        if mysql_config:
+            save_results_to_mysql(DETECTION_RESULTS, mysql_config, current_date, batch_name)
     else:
         print("没有有效的检测结果，不生成Excel文件")
         if db_path:
             save_results_to_db(DETECTION_RESULTS, db_path, current_date)
+        if mysql_config:
+            save_results_to_mysql(DETECTION_RESULTS, mysql_config, current_date, batch_name)
 
     return DETECTION_RESULTS
 
 
 # --- 保存结果到Excel ---
-def save_results_to_excel(date_str, results):
+def save_results_to_excel(date_str, results, base_dir, batch_name):
     """
     将检测结果保存到Excel文件
     :param date_str: 日期字符串
@@ -482,11 +593,15 @@ def save_results_to_excel(date_str, results):
             '处理时间', '图片路径'
         ]
 
-        # 保存到Excel文件
-        excel_filename = f'{date_str}.xlsx'
-        df.to_excel(excel_filename, index=False, engine='openpyxl')
+        result_dir = os.path.join(base_dir, "result")
+        os.makedirs(result_dir, exist_ok=True)
 
-        print(f"结果已保存到Excel文件: {excel_filename}")
+        # 保存到Excel文件
+        excel_filename = f'{batch_name}_{date_str}.xlsx'
+        excel_path = os.path.join(result_dir, excel_filename)
+        df.to_excel(excel_path, index=False, engine='openpyxl')
+
+        print(f"结果已保存到Excel文件: {excel_path}")
 
         # 输出统计信息
         total_stocks = len(df)
