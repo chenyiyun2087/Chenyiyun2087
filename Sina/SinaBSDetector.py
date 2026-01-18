@@ -1,7 +1,6 @@
 import cv2
 import glob
 import os
-import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +9,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import pytesseract
+
+from SinaLatestBSShow import print_latest_buy_signals
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -74,6 +75,8 @@ def get_base_dir():
 
 
 def init_db(db_path):
+    import sqlite3
+
     db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
@@ -134,6 +137,8 @@ def save_results_to_db(results, db_path, batch_date):
         )
         for result in results
     ]
+
+    import sqlite3
 
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
@@ -553,12 +558,14 @@ def batch_process_images(
             save_results_to_db(DETECTION_RESULTS, db_path, current_date)
         if mysql_config:
             save_results_to_mysql(DETECTION_RESULTS, mysql_config, current_date, batch_name)
+            print_latest_buy_signals(mysql_config)
     else:
         print("没有有效的检测结果，不生成Excel文件")
         if db_path:
             save_results_to_db(DETECTION_RESULTS, db_path, current_date)
         if mysql_config:
             save_results_to_mysql(DETECTION_RESULTS, mysql_config, current_date, batch_name)
+            print_latest_buy_signals(mysql_config)
 
     return DETECTION_RESULTS
 
