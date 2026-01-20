@@ -1,4 +1,5 @@
--- AkShare A股日频指标入库表结构
+-- AkShare A股日频指标入库表结构（MySQL 8.x）
+
 -- 覆盖：基本面、技术面、另类指标（剔除事件/行为、情绪/舆论）
 
 BEGIN;
@@ -122,7 +123,7 @@ CREATE TABLE IF NOT EXISTS a_share_daily_chip (
     chip_concentration NUMERIC(18, 6),
     chip_pct_90 NUMERIC(18, 6),
     avg_cost NUMERIC(18, 6),
-    chip_distribution JSONB,
+    chip_distribution JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (stock_code, trade_date)
@@ -152,44 +153,44 @@ CREATE TABLE IF NOT EXISTS a_share_daily_northbound (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_price_trade_date ON a_share_daily_price (trade_date);
-CREATE INDEX IF NOT EXISTS idx_technical_trade_date ON a_share_daily_technical (trade_date);
-CREATE INDEX IF NOT EXISTS idx_basic_trade_date ON a_share_daily_basic (trade_date);
-CREATE INDEX IF NOT EXISTS idx_fundamental_trade_date ON a_share_daily_fundamental (trade_date);
-CREATE INDEX IF NOT EXISTS idx_fund_flow_trade_date ON a_share_daily_fund_flow (trade_date);
-CREATE INDEX IF NOT EXISTS idx_chip_trade_date ON a_share_daily_chip (trade_date);
-CREATE INDEX IF NOT EXISTS idx_margin_trade_date ON a_share_daily_margin (trade_date);
+CREATE INDEX idx_price_trade_date ON a_share_daily_price (trade_date);
+CREATE INDEX idx_technical_trade_date ON a_share_daily_technical (trade_date);
+CREATE INDEX idx_basic_trade_date ON a_share_daily_basic (trade_date);
+CREATE INDEX idx_fundamental_trade_date ON a_share_daily_fundamental (trade_date);
+CREATE INDEX idx_fund_flow_trade_date ON a_share_daily_fund_flow (trade_date);
+CREATE INDEX idx_chip_trade_date ON a_share_daily_chip (trade_date);
+CREATE INDEX idx_margin_trade_date ON a_share_daily_margin (trade_date);
 
 COMMIT;
 
--- 入库示例（使用具名参数或占位符）
+-- 入库示例（使用 ? 占位符）
 INSERT INTO a_share_stock_list (stock_code, stock_name, exchange, list_date, is_active)
-VALUES (:stock_code, :stock_name, :exchange, :list_date, :is_active)
-ON CONFLICT (stock_code) DO UPDATE SET
-    stock_name = EXCLUDED.stock_name,
-    exchange = EXCLUDED.exchange,
-    list_date = EXCLUDED.list_date,
-    is_active = EXCLUDED.is_active,
+VALUES (?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+    stock_name = VALUES(stock_name),
+    exchange = VALUES(exchange),
+    list_date = VALUES(list_date),
+    is_active = VALUES(is_active),
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO a_share_daily_price (
     stock_code, trade_date, open_price, high_price, low_price, close_price,
     adj_close_price, volume, amount, turnover_rate, amplitude, pct_change
 ) VALUES (
-    :stock_code, :trade_date, :open_price, :high_price, :low_price, :close_price,
-    :adj_close_price, :volume, :amount, :turnover_rate, :amplitude, :pct_change
+    ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?
 )
-ON CONFLICT (stock_code, trade_date) DO UPDATE SET
-    open_price = EXCLUDED.open_price,
-    high_price = EXCLUDED.high_price,
-    low_price = EXCLUDED.low_price,
-    close_price = EXCLUDED.close_price,
-    adj_close_price = EXCLUDED.adj_close_price,
-    volume = EXCLUDED.volume,
-    amount = EXCLUDED.amount,
-    turnover_rate = EXCLUDED.turnover_rate,
-    amplitude = EXCLUDED.amplitude,
-    pct_change = EXCLUDED.pct_change,
+ON DUPLICATE KEY UPDATE
+    open_price = VALUES(open_price),
+    high_price = VALUES(high_price),
+    low_price = VALUES(low_price),
+    close_price = VALUES(close_price),
+    adj_close_price = VALUES(adj_close_price),
+    volume = VALUES(volume),
+    amount = VALUES(amount),
+    turnover_rate = VALUES(turnover_rate),
+    amplitude = VALUES(amplitude),
+    pct_change = VALUES(pct_change),
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO a_share_daily_technical (
@@ -197,52 +198,52 @@ INSERT INTO a_share_daily_technical (
     macd, macd_signal, macd_hist, rsi_6, rsi_12, rsi_24, kdj_k, kdj_d, kdj_j,
     boll_mid, boll_upper, boll_lower, atr_14, cci_14, obv, volume_ratio
 ) VALUES (
-    :stock_code, :trade_date, :ma_5, :ma_10, :ma_20, :ma_60, :ema_12, :ema_26,
-    :macd, :macd_signal, :macd_hist, :rsi_6, :rsi_12, :rsi_24, :kdj_k, :kdj_d, :kdj_j,
-    :boll_mid, :boll_upper, :boll_lower, :atr_14, :cci_14, :obv, :volume_ratio
+    ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?
 )
-ON CONFLICT (stock_code, trade_date) DO UPDATE SET
-    ma_5 = EXCLUDED.ma_5,
-    ma_10 = EXCLUDED.ma_10,
-    ma_20 = EXCLUDED.ma_20,
-    ma_60 = EXCLUDED.ma_60,
-    ema_12 = EXCLUDED.ema_12,
-    ema_26 = EXCLUDED.ema_26,
-    macd = EXCLUDED.macd,
-    macd_signal = EXCLUDED.macd_signal,
-    macd_hist = EXCLUDED.macd_hist,
-    rsi_6 = EXCLUDED.rsi_6,
-    rsi_12 = EXCLUDED.rsi_12,
-    rsi_24 = EXCLUDED.rsi_24,
-    kdj_k = EXCLUDED.kdj_k,
-    kdj_d = EXCLUDED.kdj_d,
-    kdj_j = EXCLUDED.kdj_j,
-    boll_mid = EXCLUDED.boll_mid,
-    boll_upper = EXCLUDED.boll_upper,
-    boll_lower = EXCLUDED.boll_lower,
-    atr_14 = EXCLUDED.atr_14,
-    cci_14 = EXCLUDED.cci_14,
-    obv = EXCLUDED.obv,
-    volume_ratio = EXCLUDED.volume_ratio,
+ON DUPLICATE KEY UPDATE
+    ma_5 = VALUES(ma_5),
+    ma_10 = VALUES(ma_10),
+    ma_20 = VALUES(ma_20),
+    ma_60 = VALUES(ma_60),
+    ema_12 = VALUES(ema_12),
+    ema_26 = VALUES(ema_26),
+    macd = VALUES(macd),
+    macd_signal = VALUES(macd_signal),
+    macd_hist = VALUES(macd_hist),
+    rsi_6 = VALUES(rsi_6),
+    rsi_12 = VALUES(rsi_12),
+    rsi_24 = VALUES(rsi_24),
+    kdj_k = VALUES(kdj_k),
+    kdj_d = VALUES(kdj_d),
+    kdj_j = VALUES(kdj_j),
+    boll_mid = VALUES(boll_mid),
+    boll_upper = VALUES(boll_upper),
+    boll_lower = VALUES(boll_lower),
+    atr_14 = VALUES(atr_14),
+    cci_14 = VALUES(cci_14),
+    obv = VALUES(obv),
+    volume_ratio = VALUES(volume_ratio),
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO a_share_daily_basic (
     stock_code, trade_date, market_cap, float_market_cap, total_shares, float_shares,
     pe_ratio, pb_ratio, ps_ratio, peg_ratio, dividend_yield
 ) VALUES (
-    :stock_code, :trade_date, :market_cap, :float_market_cap, :total_shares, :float_shares,
-    :pe_ratio, :pb_ratio, :ps_ratio, :peg_ratio, :dividend_yield
+    ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?
 )
-ON CONFLICT (stock_code, trade_date) DO UPDATE SET
-    market_cap = EXCLUDED.market_cap,
-    float_market_cap = EXCLUDED.float_market_cap,
-    total_shares = EXCLUDED.total_shares,
-    float_shares = EXCLUDED.float_shares,
-    pe_ratio = EXCLUDED.pe_ratio,
-    pb_ratio = EXCLUDED.pb_ratio,
-    ps_ratio = EXCLUDED.ps_ratio,
-    peg_ratio = EXCLUDED.peg_ratio,
-    dividend_yield = EXCLUDED.dividend_yield,
+ON DUPLICATE KEY UPDATE
+    market_cap = VALUES(market_cap),
+    float_market_cap = VALUES(float_market_cap),
+    total_shares = VALUES(total_shares),
+    float_shares = VALUES(float_shares),
+    pe_ratio = VALUES(pe_ratio),
+    pb_ratio = VALUES(pb_ratio),
+    ps_ratio = VALUES(ps_ratio),
+    peg_ratio = VALUES(peg_ratio),
+    dividend_yield = VALUES(dividend_yield),
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO a_share_daily_fundamental (
@@ -251,80 +252,80 @@ INSERT INTO a_share_daily_fundamental (
     debt_to_asset, receivable_turnover, total_asset_turnover, operating_cf,
     investing_cf, financing_cf, free_cf
 ) VALUES (
-    :stock_code, :trade_date, :roe, :roa, :gross_margin, :net_margin, :revenue_yoy,
-    :revenue_qoq, :net_profit_yoy, :net_profit_qoq, :current_ratio, :quick_ratio,
-    :debt_to_asset, :receivable_turnover, :total_asset_turnover, :operating_cf,
-    :investing_cf, :financing_cf, :free_cf
+    ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?,
+    ?, ?, ?
 )
-ON CONFLICT (stock_code, trade_date) DO UPDATE SET
-    roe = EXCLUDED.roe,
-    roa = EXCLUDED.roa,
-    gross_margin = EXCLUDED.gross_margin,
-    net_margin = EXCLUDED.net_margin,
-    revenue_yoy = EXCLUDED.revenue_yoy,
-    revenue_qoq = EXCLUDED.revenue_qoq,
-    net_profit_yoy = EXCLUDED.net_profit_yoy,
-    net_profit_qoq = EXCLUDED.net_profit_qoq,
-    current_ratio = EXCLUDED.current_ratio,
-    quick_ratio = EXCLUDED.quick_ratio,
-    debt_to_asset = EXCLUDED.debt_to_asset,
-    receivable_turnover = EXCLUDED.receivable_turnover,
-    total_asset_turnover = EXCLUDED.total_asset_turnover,
-    operating_cf = EXCLUDED.operating_cf,
-    investing_cf = EXCLUDED.investing_cf,
-    financing_cf = EXCLUDED.financing_cf,
-    free_cf = EXCLUDED.free_cf,
+ON DUPLICATE KEY UPDATE
+    roe = VALUES(roe),
+    roa = VALUES(roa),
+    gross_margin = VALUES(gross_margin),
+    net_margin = VALUES(net_margin),
+    revenue_yoy = VALUES(revenue_yoy),
+    revenue_qoq = VALUES(revenue_qoq),
+    net_profit_yoy = VALUES(net_profit_yoy),
+    net_profit_qoq = VALUES(net_profit_qoq),
+    current_ratio = VALUES(current_ratio),
+    quick_ratio = VALUES(quick_ratio),
+    debt_to_asset = VALUES(debt_to_asset),
+    receivable_turnover = VALUES(receivable_turnover),
+    total_asset_turnover = VALUES(total_asset_turnover),
+    operating_cf = VALUES(operating_cf),
+    investing_cf = VALUES(investing_cf),
+    financing_cf = VALUES(financing_cf),
+    free_cf = VALUES(free_cf),
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO a_share_daily_fund_flow (
     stock_code, trade_date, net_inflow, super_large_inflow, large_inflow, medium_inflow, small_inflow
 ) VALUES (
-    :stock_code, :trade_date, :net_inflow, :super_large_inflow, :large_inflow, :medium_inflow, :small_inflow
+    ?, ?, ?, ?, ?, ?, ?
 )
-ON CONFLICT (stock_code, trade_date) DO UPDATE SET
-    net_inflow = EXCLUDED.net_inflow,
-    super_large_inflow = EXCLUDED.super_large_inflow,
-    large_inflow = EXCLUDED.large_inflow,
-    medium_inflow = EXCLUDED.medium_inflow,
-    small_inflow = EXCLUDED.small_inflow,
+ON DUPLICATE KEY UPDATE
+    net_inflow = VALUES(net_inflow),
+    super_large_inflow = VALUES(super_large_inflow),
+    large_inflow = VALUES(large_inflow),
+    medium_inflow = VALUES(medium_inflow),
+    small_inflow = VALUES(small_inflow),
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO a_share_daily_chip (
     stock_code, trade_date, chip_concentration, chip_pct_90, avg_cost, chip_distribution
 ) VALUES (
-    :stock_code, :trade_date, :chip_concentration, :chip_pct_90, :avg_cost, :chip_distribution::jsonb
+    ?, ?, ?, ?, ?, ?
 )
-ON CONFLICT (stock_code, trade_date) DO UPDATE SET
-    chip_concentration = EXCLUDED.chip_concentration,
-    chip_pct_90 = EXCLUDED.chip_pct_90,
-    avg_cost = EXCLUDED.avg_cost,
-    chip_distribution = EXCLUDED.chip_distribution,
+ON DUPLICATE KEY UPDATE
+    chip_concentration = VALUES(chip_concentration),
+    chip_pct_90 = VALUES(chip_pct_90),
+    avg_cost = VALUES(avg_cost),
+    chip_distribution = VALUES(chip_distribution),
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO a_share_daily_margin (
     stock_code, trade_date, margin_balance, margin_buy, margin_repay,
     short_balance, short_sell, short_repay, margin_short_ratio
 ) VALUES (
-    :stock_code, :trade_date, :margin_balance, :margin_buy, :margin_repay,
-    :short_balance, :short_sell, :short_repay, :margin_short_ratio
+    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?
 )
-ON CONFLICT (stock_code, trade_date) DO UPDATE SET
-    margin_balance = EXCLUDED.margin_balance,
-    margin_buy = EXCLUDED.margin_buy,
-    margin_repay = EXCLUDED.margin_repay,
-    short_balance = EXCLUDED.short_balance,
-    short_sell = EXCLUDED.short_sell,
-    short_repay = EXCLUDED.short_repay,
-    margin_short_ratio = EXCLUDED.margin_short_ratio,
+ON DUPLICATE KEY UPDATE
+    margin_balance = VALUES(margin_balance),
+    margin_buy = VALUES(margin_buy),
+    margin_repay = VALUES(margin_repay),
+    short_balance = VALUES(short_balance),
+    short_sell = VALUES(short_sell),
+    short_repay = VALUES(short_repay),
+    margin_short_ratio = VALUES(margin_short_ratio),
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO a_share_daily_northbound (
     trade_date, net_inflow, sh_net_inflow, sz_net_inflow
 ) VALUES (
-    :trade_date, :net_inflow, :sh_net_inflow, :sz_net_inflow
+    ?, ?, ?, ?
 )
-ON CONFLICT (trade_date) DO UPDATE SET
-    net_inflow = EXCLUDED.net_inflow,
-    sh_net_inflow = EXCLUDED.sh_net_inflow,
-    sz_net_inflow = EXCLUDED.sz_net_inflow,
+ON DUPLICATE KEY UPDATE
+    net_inflow = VALUES(net_inflow),
+    sh_net_inflow = VALUES(sh_net_inflow),
+    sz_net_inflow = VALUES(sz_net_inflow),
     updated_at = CURRENT_TIMESTAMP;
