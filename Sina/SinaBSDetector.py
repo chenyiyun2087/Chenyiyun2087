@@ -255,7 +255,14 @@ def preprocess_for_ocr(roi):
 
 
 # --- 标记检测核心函数 ---
-def detect_markers(image, hsv_color_ranges, expected_char, config):
+def detect_markers(
+    image,
+    hsv_color_ranges,
+    expected_char,
+    config,
+    extra_ocr_configs=None,
+    enable_lenient_match=False,
+):
     """
     在图像中检测特定颜色和字符的标记。
     :param image: 原始输入图像 (BGR)
@@ -321,13 +328,9 @@ def detect_markers(image, hsv_color_ranges, expected_char, config):
 
         # 使用Pytesseract进行字符识别
         try:
-            # 尝试多种OCR配置以提高识别率
-            configs = [
-                r'--oem 3 --psm 10 -c tessedit_char_whitelist=BS',
-                r'--oem 3 --psm 8 -c tessedit_char_whitelist=BS',
-                r'--oem 3 --psm 7 -c tessedit_char_whitelist=BS',
-                r'--oem 3 --psm 13 -c tessedit_char_whitelist=BS'
-            ]
+            configs = [config] if config else []
+            if extra_ocr_configs:
+                configs.extend(extra_ocr_configs)
 
             text_found = False
             for cfg in configs:
@@ -337,8 +340,8 @@ def detect_markers(image, hsv_color_ranges, expected_char, config):
                     text_found = True
                     break
 
-            # 如果标准OCR失败，尝试更宽松的匹配
-            if not text_found:
+            # 如果标准OCR失败，按需尝试更宽松的匹配
+            if not text_found and enable_lenient_match:
                 # 尝试识别任何文本并检查是否包含类似字符
                 text = pytesseract.image_to_string(preprocessed_roi, config=r'--oem 3 --psm 10').strip()
                 # 检查是否包含B/S或类似字符（如8、5等可能被误识别的字符）
@@ -435,14 +438,14 @@ def process_single_image(image_path, debug_mode=False):
             original_image,
             [(lower_red1, upper_red1), (lower_red2, upper_red2)],
             'B',
-            ocr_config
+            ocr_config,
         )
 
         s_points, s_scan_areas = detect_markers(
             original_image,
             [(lower_blue, upper_blue)],
             'S',
-            ocr_config
+            ocr_config,
         )
 
         # 分析结果
@@ -660,11 +663,32 @@ def process_single_chart(image_path):
 
     # 执行检测
     print("正在检测 'B' 点 (红色)...")
-    b_points, b_scan_areas = detect_markers(original_image, [(lower_red1, upper_red1), (lower_red2, upper_red2)], 'B',
-                                            ocr_config)
+    b_points, b_scan_areas = detect_markers(
+        original_image,
+        [(lower_red1, upper_red1), (lower_red2, upper_red2)],
+        'B',
+        ocr_config,
+        extra_ocr_configs=[
+            r'--oem 3 --psm 8 -c tessedit_char_whitelist=BS',
+            r'--oem 3 --psm 7 -c tessedit_char_whitelist=BS',
+            r'--oem 3 --psm 13 -c tessedit_char_whitelist=BS',
+        ],
+        enable_lenient_match=True,
+    )
 
     print("正在检测 'S' 点 (蓝色)...")
-    s_points, s_scan_areas = detect_markers(original_image, [(lower_blue, upper_blue)], 'S', ocr_config)
+    s_points, s_scan_areas = detect_markers(
+        original_image,
+        [(lower_blue, upper_blue)],
+        'S',
+        ocr_config,
+        extra_ocr_configs=[
+            r'--oem 3 --psm 8 -c tessedit_char_whitelist=BS',
+            r'--oem 3 --psm 7 -c tessedit_char_whitelist=BS',
+            r'--oem 3 --psm 13 -c tessedit_char_whitelist=BS',
+        ],
+        enable_lenient_match=True,
+    )
 
     # 提取股票代码
     filename = os.path.basename(image_path)
