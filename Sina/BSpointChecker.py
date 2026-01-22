@@ -25,30 +25,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def setup_directories(excel_file):
+def get_base_dir():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "SinaAppBS"))
+
+
+def setup_directories(config_name, date_str):
     """
     创建SinaAppBS文件夹、来源文件夹和当前日期文件夹
 
     返回:
     str: 当前日期文件夹的路径
     """
-    # 获取当前日期
-    today = datetime.now().strftime("%Y%m%d")
-
     # 创建基础目录
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "SinaAppBS"))
+    base_dir = get_base_dir()
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
         logger.info(f"创建基础目录: {base_dir}")
 
-    batch_name = os.path.splitext(os.path.basename(excel_file))[0]
-    batch_dir = os.path.join(base_dir, batch_name)
+    batch_dir = os.path.join(base_dir, config_name)
     if not os.path.exists(batch_dir):
         os.makedirs(batch_dir)
         logger.info(f"创建来源目录: {batch_dir}")
 
     # 创建日期目录
-    date_dir = os.path.join(batch_dir, today)
+    date_dir = os.path.join(batch_dir, date_str)
     if not os.path.exists(date_dir):
         os.makedirs(date_dir)
         logger.info(f"创建日期目录: {date_dir}")
@@ -89,7 +89,7 @@ def read_stock_codes(excel_file):
         return []
 
 
-def capture_bs_point_screenshot(stock_code, save_dir):
+def capture_bs_point_screenshot(stock_code, save_dir, date_str):
     """
     访问新浪财经查询指定股票代码的实时行情，
     切换到B/S点标签页并进行全屏截图
@@ -102,7 +102,7 @@ def capture_bs_point_screenshot(stock_code, save_dir):
     tuple: (股票代码, 是否成功, 截图路径或错误信息)
     """
     # 设置截图文件名
-    screenshot_filename = f"{stock_code}_{datetime.now().strftime('%Y%m%d')}.png"
+    screenshot_filename = f"{stock_code}_{date_str}.png"
     screenshot_path = os.path.join(save_dir, screenshot_filename)
 
     # 设置Chrome选项hh
@@ -203,7 +203,7 @@ def capture_bs_point_screenshot(stock_code, save_dir):
             driver.quit()
 
 
-def process_stock_codes_parallel(stock_codes, save_dir, max_workers=20):
+def process_stock_codes_parallel(stock_codes, save_dir, date_str, max_workers=20):
     """
     并行处理多个股票代码
 
@@ -228,7 +228,7 @@ def process_stock_codes_parallel(stock_codes, save_dir, max_workers=20):
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # 提交所有任务
         future_to_stock = {
-            executor.submit(capture_bs_point_screenshot, code, save_dir): code
+            executor.submit(capture_bs_point_screenshot, code, save_dir, date_str): code
             for code in stock_codes
         }
 
@@ -252,7 +252,7 @@ def process_stock_codes_parallel(stock_codes, save_dir, max_workers=20):
     return results
 
 
-def main(excel_file, max_workers=20):
+def main(excel_file, config_name, date_str=None, max_workers=20):
     """
     主函数
 
@@ -261,7 +261,10 @@ def main(excel_file, max_workers=20):
     max_workers (int): 最大线程数
     """
     # 创建目录
-    save_dir = setup_directories(excel_file)
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y%m%d")
+
+    save_dir = setup_directories(config_name, date_str)
     logger.info(f"截图将保存在: {save_dir}")
 
     # 读取股票代码
@@ -272,7 +275,7 @@ def main(excel_file, max_workers=20):
 
     # 并行处理股票代码
     start_time = time.time()
-    results = process_stock_codes_parallel(stock_codes, save_dir, max_workers)
+    results = process_stock_codes_parallel(stock_codes, save_dir, date_str, max_workers)
     end_time = time.time()
 
     # 输出统计结果
@@ -290,11 +293,13 @@ def main(excel_file, max_workers=20):
 
 
 if __name__ == "__main__":
-    # 设置Excel文件路径
-    excel_file = "stock_codes.xlsx"  # 请替换为实际的Excel文件路径
+    import argparse
 
-    # 设置最大线程数
-    max_workers = 3
+    parser = argparse.ArgumentParser(description="Sina B/S 点截图采集")
+    parser.add_argument("--excel-file", default="stock_codes.xlsx", help="股票代码Excel文件路径")
+    parser.add_argument("--config-name", default="default", help="配置文件名称")
+    parser.add_argument("--date", help="日期 (YYYYMMDD)，默认当天")
+    parser.add_argument("--max-workers", type=int, default=20, help="截图线程数")
+    args = parser.parse_args()
 
-    # 执行主函数
-    main(excel_file, max_workers)
+    main(args.excel_file, args.config_name, args.date, args.max_workers)

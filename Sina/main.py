@@ -131,15 +131,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Sina B/S 点位检测调度入口")
     parser.add_argument("config_name", help="配置文件名称（位于Sina/config）")
     parser.add_argument("date", help="日期 (YYYYMMDD)")
-    parser.add_argument("--screenshot-workers", type=int, help="截图线程数")
-    parser.add_argument("--detect-workers", type=int, help="检测线程数")
+    parser.add_argument("--screenshot-workers", type=int, default=3, help="截图线程数")
+    parser.add_argument("--detect-workers", type=int, default=5, help="检测线程数")
     parser.add_argument("--db-path", help="数据库路径")
     parser.add_argument("--archive-days", type=int, help="归档天数阈值，0表示不归档")
-    parser.add_argument("--mysql-host", help="MySQL主机地址")
+    parser.add_argument("--mysql-host", default="localhost", help="MySQL主机地址")
     parser.add_argument("--mysql-port", type=int, default=3306, help="MySQL端口")
-    parser.add_argument("--mysql-user", help="MySQL用户名")
-    parser.add_argument("--mysql-password", help="MySQL密码")
-    parser.add_argument("--mysql-db", help="MySQL数据库名")
+    parser.add_argument("--mysql-user", default="root", help="MySQL用户名")
+    parser.add_argument("--mysql-password", default="19871019", help="MySQL密码")
+    parser.add_argument("--mysql-db", default="chenyiyun", help="MySQL数据库名")
     return parser.parse_args()
 
 
@@ -156,16 +156,15 @@ if __name__ == "__main__":
     if args.archive_days is not None:
         overrides["archive_days"] = args.archive_days
 
-    if args.mysql_host and args.mysql_user and args.mysql_db:
-        overrides["mysql_config"] = {
-            "host": args.mysql_host,
-            "port": args.mysql_port,
-            "user": args.mysql_user,
-            "password": args.mysql_password or "",
-            "database": args.mysql_db,
-            "charset": "utf8mb4",
-            "autocommit": True,
-        }
+    overrides["mysql_config"] = {
+        "host": args.mysql_host,
+        "port": args.mysql_port,
+        "user": args.mysql_user,
+        "password": args.mysql_password or "",
+        "database": args.mysql_db,
+        "charset": "utf8mb4",
+        "autocommit": True,
+    }
     raise SystemExit(
         run_pipeline(
             config_name=config_name,

@@ -1,7 +1,7 @@
 {
   "excel_file": "../stock_codes.xlsx",
-  "screenshot_workers": 10,
-  "detect_workers": 4,
+  "screenshot_workers": 3,
+  "detect_workers": 5,
   "db_path": "bs_detection.db",
   "archive_days": 30,
   "mysql": {
