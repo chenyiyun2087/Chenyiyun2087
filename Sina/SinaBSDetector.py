@@ -71,7 +71,7 @@ ON DUPLICATE KEY UPDATE
 
 
 def get_base_dir():
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "SinaAppBS"))
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "SinaAppBS"))
 
 
 def init_mysql_db(mysql_config):
@@ -92,7 +92,27 @@ def init_mysql_db(mysql_config):
             cursor.execute(MYSQL_CREATE_TABLE_SQL)
 
 
+def deduplicate_results(results):
+    if not results:
+        return []
+
+    deduped = {}
+    for result in results:
+        if not result:
+            continue
+        stock_code = result.get("stock_code")
+        if not stock_code:
+            continue
+        deduped[stock_code] = result
+
+    if len(deduped) < len(results):
+        print(f"检测结果去重: {len(results)} -> {len(deduped)}")
+
+    return list(deduped.values())
+
+
 def save_results_to_mysql(results, mysql_config, batch_date, batch_name):
+    results = deduplicate_results(results)
     if not results:
         print("没有检测结果可写入MySQL数据库")
         return
@@ -383,10 +403,13 @@ def process_single_image(image_path, debug_mode=False):
 
 # --- 批量处理主函数 ---
 def batch_process_images(
+    config_name=None,
+    date_str=None,
     date_folder=None,
     max_workers=4,
     debug_mode=False,
     base_dir=None,
+    db_path=None,
     mysql_config=None,
     save_excel=True,
 ):
@@ -403,15 +426,20 @@ def batch_process_images(
         base_dir = get_base_dir()
 
     if date_folder is None:
-        current_date = datetime.now().strftime('%Y%m%d')
-        folder_path = os.path.join(base_dir, current_date)
+        current_date = date_str or datetime.now().strftime('%Y%m%d')
+        if not config_name:
+            raise ValueError("必须提供 config_name 才能定位日期文件夹")
+        folder_path = os.path.join(base_dir, config_name, current_date)
     else:
         folder_path = os.path.join(base_dir, date_folder)
         current_date = os.path.basename(date_folder)
 
-    relative_path = os.path.relpath(folder_path, base_dir)
-    parts = os.path.normpath(relative_path).split(os.sep)
-    batch_name = parts[-2] if len(parts) >= 2 else "default"
+    if config_name:
+        batch_name = config_name
+    else:
+        relative_path = os.path.relpath(folder_path, base_dir)
+        parts = os.path.normpath(relative_path).split(os.sep)
+        batch_name = parts[-2] if len(parts) >= 2 else "default"
 
     # 检查文件夹是否存在
     if not os.path.exists(folder_path):
@@ -480,17 +508,18 @@ def batch_process_images(
         }
 
     # 保存结果到Excel
-    if DETECTION_RESULTS:
+    deduped_results = deduplicate_results(DETECTION_RESULTS)
+    if deduped_results:
         if save_excel:
-            save_results_to_excel(current_date, DETECTION_RESULTS, base_dir, batch_name)
-        save_results_to_mysql(DETECTION_RESULTS, mysql_config, current_date, batch_name)
+            save_results_to_excel(current_date, deduped_results, base_dir, batch_name)
+        save_results_to_mysql(deduped_results, mysql_config, current_date, batch_name)
         print_latest_buy_signals(mysql_config)
     else:
         print("没有有效的检测结果，不生成Excel文件")
-        save_results_to_mysql(DETECTION_RESULTS, mysql_config, current_date, batch_name)
+        save_results_to_mysql(deduped_results, mysql_config, current_date, batch_name)
         print_latest_buy_signals(mysql_config)
 
-    return DETECTION_RESULTS
+    return deduped_results
 
 
 # --- 保存结果到Excel ---
