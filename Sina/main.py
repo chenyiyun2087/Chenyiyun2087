@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import shutil
@@ -14,6 +15,34 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
+
+
+def find_config_path(config_name):
+    if not os.path.splitext(config_name)[1]:
+        candidate = os.path.join(CONFIG_DIR, f"{config_name}.json")
+    else:
+        candidate = os.path.join(CONFIG_DIR, config_name)
+
+    if os.path.exists(candidate):
+        return candidate
+
+    raise FileNotFoundError(f"未找到配置文件: {candidate}")
+
+
+def load_config(config_name):
+    config_path = find_config_path(config_name)
+    with open(config_path, "r", encoding="utf-8") as file_handle:
+        data = json.load(file_handle)
+
+    resolved_name = os.path.splitext(os.path.basename(config_path))[0]
+    return resolved_name, data
+
+
+def resolve_path(value, base_dir):
+    if not value:
+        return value
+    return value if os.path.isabs(value) else os.path.abspath(os.path.join(base_dir, value))
 
 
 def archive_old_folders(base_dir, archive_dir=None, days=30):
@@ -65,18 +94,28 @@ def archive_old_folders(base_dir, archive_dir=None, days=30):
             logger.info("已归档并清理文件夹: %s", folder_path)
 
 
-def run_pipeline(excel_file, screenshot_workers, detect_workers, db_path, archive_days, mysql_config=None):
-    save_dir = capture_main(excel_file, screenshot_workers)
+def run_pipeline(config_name, date_str, config_data, overrides=None):
+    overrides = overrides or {}
+    excel_file = resolve_path(config_data.get("excel_file", "stock_codes.xlsx"), CONFIG_DIR)
+    screenshot_workers = overrides.get("screenshot_workers", config_data.get("screenshot_workers", 20))
+    detect_workers = overrides.get("detect_workers", config_data.get("detect_workers", 4))
+    db_path = resolve_path(
+        overrides.get("db_path", config_data.get("db_path", os.path.join(os.path.dirname(__file__), "bs_detection.db"))),
+        os.path.dirname(__file__),
+    )
+    archive_days = overrides.get("archive_days", config_data.get("archive_days", 30))
+    mysql_config = overrides.get("mysql_config", config_data.get("mysql"))
+
+    save_dir = capture_main(excel_file, config_name, date_str, screenshot_workers)
     if not save_dir:
         logger.error("截图阶段失败，未生成目录")
         return 1
 
-    base_dir = get_base_dir()
-    date_folder = os.path.relpath(save_dir, base_dir)
-    logger.info("开始检测日期文件夹: %s", date_folder)
+    logger.info("开始检测日期文件夹: %s/%s", config_name, date_str)
 
     batch_process_images(
-        date_folder=date_folder,
+        config_name=config_name,
+        date_str=date_str,
         max_workers=detect_workers,
         db_path=db_path,
         mysql_config=mysql_config,
@@ -90,39 +129,47 @@ def run_pipeline(excel_file, screenshot_workers, detect_workers, db_path, archiv
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Sina B/S 点位检测调度入口")
-    parser.add_argument("--excel-file", default="stock_codes.xlsx", help="股票代码Excel文件路径")
-    parser.add_argument("--screenshot-workers", type=int, default=20, help="截图线程数")
-    parser.add_argument("--detect-workers", type=int, default=4, help="检测线程数")
-    parser.add_argument("--db-path", default=os.path.join(os.path.dirname(__file__), "bs_detection.db"), help="数据库路径")
-    parser.add_argument("--archive-days", type=int, default=30, help="归档天数阈值，0表示不归档")
-    parser.add_argument("--mysql-host", help="MySQL主机地址")
+    parser.add_argument("config_name", help="配置文件名称（位于Sina/config）")
+    parser.add_argument("date", help="日期 (YYYYMMDD)")
+    parser.add_argument("--screenshot-workers", type=int, default=3, help="截图线程数")
+    parser.add_argument("--detect-workers", type=int, default=5, help="检测线程数")
+    parser.add_argument("--db-path", help="数据库路径")
+    parser.add_argument("--archive-days", type=int, help="归档天数阈值，0表示不归档")
+    parser.add_argument("--mysql-host", default="localhost", help="MySQL主机地址")
     parser.add_argument("--mysql-port", type=int, default=3306, help="MySQL端口")
-    parser.add_argument("--mysql-user", help="MySQL用户名")
-    parser.add_argument("--mysql-password", help="MySQL密码")
-    parser.add_argument("--mysql-db", help="MySQL数据库名")
+    parser.add_argument("--mysql-user", default="root", help="MySQL用户名")
+    parser.add_argument("--mysql-password", default="19871019", help="MySQL密码")
+    parser.add_argument("--mysql-db", default="chenyiyun", help="MySQL数据库名")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    mysql_config = None
-    if args.mysql_host and args.mysql_user and args.mysql_db:
-        mysql_config = {
-            "host": args.mysql_host,
-            "port": args.mysql_port,
-            "user": args.mysql_user,
-            "password": args.mysql_password or "",
-            "database": args.mysql_db,
-            "charset": "utf8mb4",
-            "autocommit": True,
-        }
+    config_name, config_data = load_config(args.config_name)
+    overrides = {}
+    if args.screenshot_workers is not None:
+        overrides["screenshot_workers"] = args.screenshot_workers
+    if args.detect_workers is not None:
+        overrides["detect_workers"] = args.detect_workers
+    if args.db_path is not None:
+        overrides["db_path"] = args.db_path
+    if args.archive_days is not None:
+        overrides["archive_days"] = args.archive_days
+
+    overrides["mysql_config"] = {
+        "host": args.mysql_host,
+        "port": args.mysql_port,
+        "user": args.mysql_user,
+        "password": args.mysql_password or "",
+        "database": args.mysql_db,
+        "charset": "utf8mb4",
+        "autocommit": True,
+    }
     raise SystemExit(
         run_pipeline(
-            excel_file=args.excel_file,
-            screenshot_workers=args.screenshot_workers,
-            detect_workers=args.detect_workers,
-            db_path=args.db_path,
-            archive_days=args.archive_days,
-            mysql_config=mysql_config,
+            config_name=config_name,
+            date_str=args.date,
+            config_data=config_data,
+            overrides=overrides,
         )
     )
