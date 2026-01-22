@@ -1,0 +1,16 @@
+{
+  "excel_file": "../stock_codes.xlsx",
+  "screenshot_workers": 20,
+  "detect_workers": 4,
+  "db_path": "bs_detection.db",
+  "archive_days": 30,
+  "mysql": {
+    "host": "localhost",
+    "port": 3306,
+    "user": "root",
+    "password": "19871019",
+    "database": "chenyiyun",
+    "charset": "utf8mb4",
+    "autocommit": true
+  }
+}
