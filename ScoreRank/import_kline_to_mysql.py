@@ -57,6 +57,11 @@ def parse_args() -> argparse.Namespace:
         help="MySQL database name",
     )
     parser.add_argument(
+        "--auth-plugin",
+        default="mysql_native_password",
+        help="MySQL auth plugin (e.g. mysql_native_password, caching_sha2_password)",
+    )
+    parser.add_argument(
         "--table",
         default="daily_kline",
         help="目标表名",
@@ -79,10 +84,18 @@ def get_adj_type(file_path: Path) -> str:
     return "raw"
 
 
-def get_mysql_engine(host: str, port: int, user: str, password: str, db_name: str):
+def get_mysql_engine(
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    db_name: str,
+    auth_plugin: str,
+):
     return create_engine(
         f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}?charset=utf8mb4",
         future=True,
+        connect_args={"auth_plugin": auth_plugin},
     )
 
 
@@ -93,15 +106,17 @@ def ensure_database_and_table(
     password: str,
     db_name: str,
     table: str,
+    auth_plugin: str,
 ) -> None:
     root_engine = create_engine(
         f"mysql+pymysql://{user}:{password}@{host}:{port}/?charset=utf8mb4",
         future=True,
+        connect_args={"auth_plugin": auth_plugin},
     )
     with root_engine.begin() as conn:
         conn.execute(text(f"CREATE DATABASE IF NOT EXISTS `{db_name}`"))
 
-    engine = get_mysql_engine(host, port, user, password, db_name)
+    engine = get_mysql_engine(host, port, user, password, db_name, auth_plugin)
     ddl = f"""
     CREATE TABLE IF NOT EXISTS `{table}` (
         trade_date DATE NOT NULL,
@@ -219,6 +234,7 @@ def main() -> None:
         args.db_password,
         args.db_name,
         args.table,
+        args.auth_plugin,
     )
     engine = get_mysql_engine(
         args.db_host,
@@ -226,6 +242,7 @@ def main() -> None:
         args.db_user,
         args.db_password,
         args.db_name,
+        args.auth_plugin,
     )
 
     csv_files = sorted(data_dir.glob("*_daily*.csv"))
