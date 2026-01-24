@@ -33,6 +33,19 @@ def describe_scoring(
     watch_pool: pd.DataFrame,
     scored: pd.DataFrame,
 ) -> None:
+    score_columns = [
+        "symbol",
+        "name",
+        "score",
+        "base_score",
+        "penalty",
+        "s_trend",
+        "s_breakout",
+        "s_volume",
+        "s_rs",
+        "s_contraction",
+        "s_liquidity",
+    ]
     print("\n=== 评分流程摘要 ===")
     print("评测日期:", asof_date.date())
     print("参与评测股票数:", len(symbols))
@@ -43,6 +56,8 @@ def describe_scoring(
     print("观察池股票代码:", ", ".join(watch_pool["symbol"].astype(str).tolist()))
     print("\n评分分布:")
     print(scored["score"].describe())
+    print("\n评分明细表（含综合得分）:")
+    print(scored[score_columns].to_string(index=False))
 
 
 def main():
