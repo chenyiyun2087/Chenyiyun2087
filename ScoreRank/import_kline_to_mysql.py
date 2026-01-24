@@ -27,8 +27,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--data-dir",
-        default=str(Path(__file__).resolve().parent),
-        help="CSV文件所在目录（默认：ScoreRank目录）",
+        default=str(Path(__file__).resolve().parent / "dailyKLine"),
+        help="CSV文件所在目录（默认：ScoreRank/dailyKLine目录）",
     )
     parser.add_argument(
         "--db-host",
@@ -92,10 +92,11 @@ def get_mysql_engine(
     db_name: str,
     auth_plugin: str,
 ):
+    connect_args = build_connect_args(auth_plugin)
     return create_engine(
         f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}?charset=utf8mb4",
         future=True,
-        connect_args={"auth_plugin": auth_plugin},
+        connect_args=connect_args,
     )
 
 
@@ -108,10 +109,11 @@ def ensure_database_and_table(
     table: str,
     auth_plugin: str,
 ) -> None:
+    connect_args = build_connect_args(auth_plugin)
     root_engine = create_engine(
         f"mysql+pymysql://{user}:{password}@{host}:{port}/?charset=utf8mb4",
         future=True,
-        connect_args={"auth_plugin": auth_plugin},
+        connect_args=connect_args,
     )
     with root_engine.begin() as conn:
         conn.execute(text(f"CREATE DATABASE IF NOT EXISTS `{db_name}`"))
@@ -139,6 +141,19 @@ def ensure_database_and_table(
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
+
+
+def build_connect_args(auth_plugin: str) -> dict:
+    if not auth_plugin or auth_plugin == "mysql_native_password":
+        return {}
+    try:
+        import pymysql
+    except ImportError:
+        return {}
+    plugin = getattr(pymysql.auth, auth_plugin, None)
+    if plugin is None:
+        return {}
+    return {"auth_plugin_map": {auth_plugin: plugin}}
 
 
 def read_csv_with_fallback(file_path: Path, chunksize: int):
