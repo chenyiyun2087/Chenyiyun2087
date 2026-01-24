@@ -1,5 +1,5 @@
 CONFIG = {
-    "db_url": "sqlite:///a_share_kline.db",   # 换成你的数据库连接
+    "db_url": "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4",   # 换成你的数据库连接
     "table": "daily_kline",
     "adj_for_signal": "qfq",                  # 信号/评分用 qfq
     "adj_for_liquidity": "raw",               # 流动性用 raw
