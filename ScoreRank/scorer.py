@@ -82,11 +82,14 @@ def attach_liquidity_from_raw(raw: pd.DataFrame) -> pd.DataFrame:
     raw["suspended_20"] = g["is_suspended"].apply(lambda x: x.rolling(20).sum())
     raw["suspended_recent_flag"] = (raw["suspended_20"] > 0).astype(int)
 
-    # 涨停锁死：用pct_chg的话更准；这里用close==high 且 close/open 涨幅近10%近似
-    # 如果你库里有pct_chg列，可以改成 pct_chg>=9.7
+    # 涨停锁死：用收盘=最高 且 close/open 涨幅达到涨停阈值
+    # 20cm：科创板(688)/创业板(300)，主板10cm，其余按10cm处理
+    symbol_series = raw["symbol"].astype(str).str.zfill(6)
+    limit_threshold = pd.Series(0.097, index=raw.index)
+    limit_threshold[symbol_series.str.startswith(("688", "300"))] = 0.197
     raw["limit_up_lock_flag"] = (
         (raw["close"] >= raw["high"] - 1e-9) &
-        ((raw["close"] / raw["open"] - 1.0) >= 0.097)
+        ((raw["close"] / raw["open"] - 1.0) >= limit_threshold)
     ).astype(int)
 
     return raw[["symbol", "trade_date", "avg_amount20", "suspended_recent_flag", "limit_up_lock_flag"]]
