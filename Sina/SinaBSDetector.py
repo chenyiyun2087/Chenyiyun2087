@@ -1,6 +1,7 @@
 import cv2
 import glob
 import os
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -12,12 +13,14 @@ import pytesseract
 
 from SinaLatestBSShow import print_latest_buy_signals
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+_tesseract_cmd = shutil.which("tesseract")
+if _tesseract_cmd:
+    pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
 
 # 全局配置
 THREAD_LOCK = threading.Lock()
 DETECTION_RESULTS = []  # 存储所有检测结果
-COORDINATE_THRESHOLD = 1830  # 横坐标阈值
+COORDINATE_THRESHOLD = 1810  # 横坐标阈值
 MYSQL_CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS bs_detection_results (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -117,36 +120,39 @@ def save_results_to_mysql(results, mysql_config, batch_date, batch_name):
         print("没有检测结果可写入MySQL数据库")
         return
 
-    init_mysql_db(mysql_config)
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        init_mysql_db(mysql_config)
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    rows = [
-        (
-            batch_name,
-            batch_date,
-            result.get('stock_code'),
-            int(bool(result.get('has_buy_signal'))),
-            int(bool(result.get('has_sell_signal'))),
-            result.get('buy_signal_description'),
-            result.get('sell_signal_description'),
-            result.get('total_b_points'),
-            result.get('total_s_points'),
-            result.get('buy_points_count'),
-            result.get('sell_points_count'),
-            result.get('process_time'),
-            result.get('image_path'),
-            now_str,
-        )
-        for result in results
-    ]
+        rows = [
+            (
+                batch_name,
+                batch_date,
+                result.get('stock_code'),
+                int(bool(result.get('has_buy_signal'))),
+                int(bool(result.get('has_sell_signal'))),
+                result.get('buy_signal_description'),
+                result.get('sell_signal_description'),
+                result.get('total_b_points'),
+                result.get('total_s_points'),
+                result.get('buy_points_count'),
+                result.get('sell_points_count'),
+                result.get('process_time'),
+                result.get('image_path'),
+                now_str,
+            )
+            for result in results
+        ]
 
-    import pymysql
+        import pymysql
 
-    with pymysql.connect(**mysql_config) as conn:
-        with conn.cursor() as cursor:
-            cursor.executemany(MYSQL_INSERT_SQL, rows)
-        conn.commit()
-    print("检测结果已写入MySQL数据库")
+        with pymysql.connect(**mysql_config) as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(MYSQL_INSERT_SQL, rows)
+            conn.commit()
+        print("检测结果已写入MySQL数据库")
+    except Exception as exc:
+        print(f"MySQL保存失败，已跳过: {exc}")
 
 
 # --- OCR预处理函数 ---
@@ -512,12 +518,16 @@ def batch_process_images(
     if deduped_results:
         if save_excel:
             save_results_to_excel(current_date, deduped_results, base_dir, batch_name)
-        save_results_to_mysql(deduped_results, mysql_config, current_date, batch_name)
-        print_latest_buy_signals(mysql_config)
     else:
         print("没有有效的检测结果，不生成Excel文件")
+
+    try:
         save_results_to_mysql(deduped_results, mysql_config, current_date, batch_name)
         print_latest_buy_signals(mysql_config)
+    except RuntimeError as exc:
+        print(f"MySQL保存失败，已跳过: {exc}")
+    except Exception as exc:
+        print(f"MySQL保存失败，已跳过: {exc}")
 
     return deduped_results
 
