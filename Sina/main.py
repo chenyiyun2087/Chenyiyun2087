@@ -104,6 +104,10 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
         overrides.get("base_dir", config_data.get("base_dir", get_base_dir())),
         os.path.dirname(__file__),
     )
+    fallback_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "SinaAppBS"))
+    if base_dir != fallback_base_dir and not os.path.isdir(base_dir) and os.path.isdir(fallback_base_dir):
+        logger.warning("基础目录不存在，改用默认目录: %s -> %s", base_dir, fallback_base_dir)
+        base_dir = fallback_base_dir
     db_path = resolve_path(
         overrides.get("db_path", config_data.get("db_path", os.path.join(os.path.dirname(__file__), "bs_detection.db"))),
         os.path.dirname(__file__),
