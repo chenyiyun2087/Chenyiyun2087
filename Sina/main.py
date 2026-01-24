@@ -99,6 +99,7 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     excel_file = resolve_path(config_data.get("excel_file", "stock_codes.xlsx"), CONFIG_DIR)
     screenshot_workers = overrides.get("screenshot_workers", config_data.get("screenshot_workers", 20))
     detect_workers = overrides.get("detect_workers", config_data.get("detect_workers", 4))
+    skip_capture = overrides.get("skip_capture", config_data.get("skip_capture", False))
     db_path = resolve_path(
         overrides.get("db_path", config_data.get("db_path", os.path.join(os.path.dirname(__file__), "bs_detection.db"))),
         os.path.dirname(__file__),
@@ -106,16 +107,22 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     archive_days = overrides.get("archive_days", config_data.get("archive_days", 30))
     mysql_config = overrides.get("mysql_config", config_data.get("mysql"))
 
-    save_dir = capture_main(excel_file, config_name, date_str, screenshot_workers)
-    if not save_dir:
-        logger.error("截图阶段失败，未生成目录")
-        return 1
+    if skip_capture:
+        save_dir = os.path.join(get_base_dir(), config_name, date_str)
+        if not os.path.isdir(save_dir):
+            logger.error("跳过截图时目录不存在: %s", save_dir)
+            return 1
+        logger.info("跳过截图阶段，使用已存在目录: %s", save_dir)
+    else:
+        save_dir = capture_main(excel_file, config_name, date_str, screenshot_workers)
+        if not save_dir:
+            logger.error("截图阶段失败，未生成目录")
+            return 1
 
     logger.info("开始检测日期文件夹: %s/%s", config_name, date_str)
 
     batch_process_images(
-        config_name=config_name,
-        date_str=date_str,
+        date_folder=os.path.join(config_name, date_str),
         max_workers=detect_workers,
         db_path=db_path,
         mysql_config=mysql_config,
@@ -133,6 +140,7 @@ def parse_args():
     parser.add_argument("date", help="日期 (YYYYMMDD)")
     parser.add_argument("--screenshot-workers", type=int, default=3, help="截图线程数")
     parser.add_argument("--detect-workers", type=int, default=5, help="检测线程数")
+    parser.add_argument("--skip-capture", action="store_true", help="跳过截图阶段，直接检测已存在图片")
     parser.add_argument("--db-path", help="数据库路径")
     parser.add_argument("--archive-days", type=int, help="归档天数阈值，0表示不归档")
     parser.add_argument("--mysql-host", default="localhost", help="MySQL主机地址")
@@ -151,6 +159,8 @@ if __name__ == "__main__":
         overrides["screenshot_workers"] = args.screenshot_workers
     if args.detect_workers is not None:
         overrides["detect_workers"] = args.detect_workers
+    if args.skip_capture:
+        overrides["skip_capture"] = True
     if args.db_path is not None:
         overrides["db_path"] = args.db_path
     if args.archive_days is not None:
