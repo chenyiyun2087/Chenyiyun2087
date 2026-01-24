@@ -27,8 +27,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--data-dir",
-        default=str(Path(__file__).resolve().parent),
-        help="CSV文件所在目录（默认：ScoreRank目录）",
+        default=str(Path(__file__).resolve().parent / "dailyKLine"),
+        help="CSV文件所在目录（默认：ScoreRank/dailyKLine目录）",
     )
     parser.add_argument(
         "--db-host",
@@ -92,10 +92,11 @@ def get_mysql_engine(
     db_name: str,
     auth_plugin: str,
 ):
+    connect_args = build_connect_args(auth_plugin)
     return create_engine(
         f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}?charset=utf8mb4",
         future=True,
-        connect_args={"auth_plugin": auth_plugin},
+        connect_args=connect_args,
     )
 
 
@@ -108,10 +109,11 @@ def ensure_database_and_table(
     table: str,
     auth_plugin: str,
 ) -> None:
+    connect_args = build_connect_args(auth_plugin)
     root_engine = create_engine(
         f"mysql+pymysql://{user}:{password}@{host}:{port}/?charset=utf8mb4",
         future=True,
-        connect_args={"auth_plugin": auth_plugin},
+        connect_args=connect_args,
     )
     with root_engine.begin() as conn:
         conn.execute(text(f"CREATE DATABASE IF NOT EXISTS `{db_name}`"))
@@ -141,14 +143,39 @@ def ensure_database_and_table(
         conn.execute(text(ddl))
 
 
+def build_connect_args(auth_plugin: str) -> dict:
+    if not auth_plugin or auth_plugin == "mysql_native_password":
+        return {}
+    try:
+        import pymysql
+    except ImportError:
+        return {}
+    plugin = getattr(pymysql.auth, auth_plugin, None)
+    if plugin is None:
+        return {}
+    return {"auth_plugin_map": {auth_plugin: plugin}}
+
+
+def detect_separator(file_path: Path, encoding: str) -> str:
+    try:
+        with file_path.open("r", encoding=encoding, errors="ignore") as handle:
+            sample = handle.read(4096)
+    except OSError:
+        return "\t"
+    if sample.count("\t") >= sample.count(","):
+        return "\t"
+    return ","
+
+
 def read_csv_with_fallback(file_path: Path, chunksize: int):
     encodings = ["utf-8-sig", "utf-8", "gbk", "gb2312"]
     last_error = None
     for encoding in encodings:
+        sep = detect_separator(file_path, encoding)
         try:
             return pd.read_csv(
                 file_path,
-                sep="\t",
+                sep=sep,
                 encoding=encoding,
                 chunksize=chunksize,
             )
@@ -158,6 +185,7 @@ def read_csv_with_fallback(file_path: Path, chunksize: int):
 
 
 def normalize_chunk(df: pd.DataFrame, adj_type: str) -> pd.DataFrame:
+    df.columns = df.columns.astype(str).str.strip()
     df = df.rename(columns=COLUMN_MAP)
     missing = set(COLUMN_MAP.values()) - set(df.columns)
     if missing:

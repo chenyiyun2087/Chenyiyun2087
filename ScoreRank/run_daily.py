@@ -1,14 +1,55 @@
-import pandas as pd
 from datetime import timedelta
+from pathlib import Path
+import sys
+
+import pandas as pd
+
 from config import CONFIG
 from db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
 from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from Sina.SinaLatestBSShow import DEFAULT_MYSQL_CONFIG, fetch_latest_buy_signals
+
+
+def load_symbols_from_sina_bs() -> list[str]:
+    rows = fetch_latest_buy_signals(DEFAULT_MYSQL_CONFIG)
+    symbols = {
+        str(row["stock_code"]).zfill(6)
+        for row in rows
+        if row.get("stock_code")
+    }
+    return sorted(symbols)
+
+
+def describe_scoring(
+    symbols: list[str],
+    asof_date: pd.Timestamp,
+    trade_pool: pd.DataFrame,
+    watch_pool: pd.DataFrame,
+    scored: pd.DataFrame,
+) -> None:
+    print("\n=== 评分流程摘要 ===")
+    print("评测日期:", asof_date.date())
+    print("参与评测股票数:", len(symbols))
+    print("全部股票代码:", ", ".join(symbols))
+    print("\n进入交易池数量:", len(trade_pool))
+    print("交易池股票代码:", ", ".join(trade_pool["symbol"].astype(str).tolist()))
+    print("\n进入观察池数量:", len(watch_pool))
+    print("观察池股票代码:", ", ".join(watch_pool["symbol"].astype(str).tolist()))
+    print("\n评分分布:")
+    print(scored["score"].describe())
+
+
 def main():
-    # 1) 读取自选（一列symbol）
-    wl = pd.read_csv("watchlist.csv")
-    symbols = wl["symbol"].astype(str).str.zfill(6).tolist()
+    # 1) 使用新浪B点最新买点股票作为观察池子
+    symbols = load_symbols_from_sina_bs()
+    if not symbols:
+        raise RuntimeError("Sina数据库中未找到最近出现B点的股票。")
 
     engine = get_engine()
 
@@ -44,6 +85,8 @@ def main():
     trade_pool = scored[scored["score"] >= CONFIG["trade_threshold"]].head(CONFIG["max_trade_pool"]).copy()
     watch_pool = scored[(scored["score"] >= CONFIG["watch_threshold"]) & (scored["score"] < CONFIG["trade_threshold"])].copy()
     triggers = trade_pool[trade_pool["trigger_today"] == 1].copy()
+
+    describe_scoring(symbols, asof_date, trade_pool, watch_pool, scored)
 
     # 8) 输出
     d = asof_date.strftime("%Y%m%d")
