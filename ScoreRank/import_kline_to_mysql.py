@@ -156,14 +156,26 @@ def build_connect_args(auth_plugin: str) -> dict:
     return {"auth_plugin_map": {auth_plugin: plugin}}
 
 
+def detect_separator(file_path: Path, encoding: str) -> str:
+    try:
+        with file_path.open("r", encoding=encoding, errors="ignore") as handle:
+            sample = handle.read(4096)
+    except OSError:
+        return "\t"
+    if sample.count("\t") >= sample.count(","):
+        return "\t"
+    return ","
+
+
 def read_csv_with_fallback(file_path: Path, chunksize: int):
     encodings = ["utf-8-sig", "utf-8", "gbk", "gb2312"]
     last_error = None
     for encoding in encodings:
+        sep = detect_separator(file_path, encoding)
         try:
             return pd.read_csv(
                 file_path,
-                sep="\t",
+                sep=sep,
                 encoding=encoding,
                 chunksize=chunksize,
             )
@@ -173,6 +185,7 @@ def read_csv_with_fallback(file_path: Path, chunksize: int):
 
 
 def normalize_chunk(df: pd.DataFrame, adj_type: str) -> pd.DataFrame:
+    df.columns = df.columns.astype(str).str.strip()
     df = df.rename(columns=COLUMN_MAP)
     missing = set(COLUMN_MAP.values()) - set(df.columns)
     if missing:
