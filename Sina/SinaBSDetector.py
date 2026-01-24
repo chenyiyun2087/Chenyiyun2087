@@ -1,6 +1,7 @@
 import cv2
 import glob
 import os
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +13,9 @@ import pytesseract
 
 from SinaLatestBSShow import print_latest_buy_signals
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+_tesseract_cmd = shutil.which("tesseract")
+if _tesseract_cmd:
+    pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
 
 # 全局配置
 THREAD_LOCK = threading.Lock()
