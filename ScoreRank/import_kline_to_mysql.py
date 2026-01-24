@@ -27,8 +27,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--data-dir",
-        default=str(Path(__file__).resolve().parent),
-        help="CSV文件所在目录（默认：ScoreRank目录）",
+        default=str(Path(__file__).resolve().parent / "dailyKLine"),
+        help="CSV文件所在目录（默认：ScoreRank/dailyKLine目录）",
     )
     parser.add_argument(
         "--db-host",
