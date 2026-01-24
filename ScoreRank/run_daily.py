@@ -26,6 +26,25 @@ def load_symbols_from_sina_bs() -> list[str]:
     return sorted(symbols)
 
 
+def describe_scoring(
+    symbols: list[str],
+    asof_date: pd.Timestamp,
+    trade_pool: pd.DataFrame,
+    watch_pool: pd.DataFrame,
+    scored: pd.DataFrame,
+) -> None:
+    print("\n=== 评分流程摘要 ===")
+    print("评测日期:", asof_date.date())
+    print("参与评测股票数:", len(symbols))
+    print("全部股票代码:", ", ".join(symbols))
+    print("\n进入交易池数量:", len(trade_pool))
+    print("交易池股票代码:", ", ".join(trade_pool["symbol"].astype(str).tolist()))
+    print("\n进入观察池数量:", len(watch_pool))
+    print("观察池股票代码:", ", ".join(watch_pool["symbol"].astype(str).tolist()))
+    print("\n评分分布:")
+    print(scored["score"].describe())
+
+
 def main():
     # 1) 使用新浪B点最新买点股票作为观察池子
     symbols = load_symbols_from_sina_bs()
@@ -66,6 +85,8 @@ def main():
     trade_pool = scored[scored["score"] >= CONFIG["trade_threshold"]].head(CONFIG["max_trade_pool"]).copy()
     watch_pool = scored[(scored["score"] >= CONFIG["watch_threshold"]) & (scored["score"] < CONFIG["trade_threshold"])].copy()
     triggers = trade_pool[trade_pool["trigger_today"] == 1].copy()
+
+    describe_scoring(symbols, asof_date, trade_pool, watch_pool, scored)
 
     # 8) 输出
     d = asof_date.strftime("%Y%m%d")
