@@ -1,14 +1,36 @@
-import pandas as pd
 from datetime import timedelta
+from pathlib import Path
+import sys
+
+import pandas as pd
+
 from config import CONFIG
 from db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
 from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from Sina.SinaLatestBSShow import DEFAULT_MYSQL_CONFIG, fetch_latest_buy_signals
+
+
+def load_symbols_from_sina_bs() -> list[str]:
+    rows = fetch_latest_buy_signals(DEFAULT_MYSQL_CONFIG)
+    symbols = {
+        str(row["stock_code"]).zfill(6)
+        for row in rows
+        if row.get("stock_code")
+    }
+    return sorted(symbols)
+
+
 def main():
-    # 1) 读取自选（一列symbol）
-    wl = pd.read_csv("watchlist.csv")
-    symbols = wl["symbol"].astype(str).str.zfill(6).tolist()
+    # 1) 使用新浪B点最新买点股票作为观察池子
+    symbols = load_symbols_from_sina_bs()
+    if not symbols:
+        raise RuntimeError("Sina数据库中未找到最近出现B点的股票。")
 
     engine = get_engine()
 
