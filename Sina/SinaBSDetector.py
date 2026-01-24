@@ -17,7 +17,7 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 # 全局配置
 THREAD_LOCK = threading.Lock()
 DETECTION_RESULTS = []  # 存储所有检测结果
-COORDINATE_THRESHOLD = 1830  # 横坐标阈值
+COORDINATE_THRESHOLD = 1810  # 横坐标阈值
 MYSQL_CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS bs_detection_results (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -512,12 +512,16 @@ def batch_process_images(
     if deduped_results:
         if save_excel:
             save_results_to_excel(current_date, deduped_results, base_dir, batch_name)
-        save_results_to_mysql(deduped_results, mysql_config, current_date, batch_name)
-        print_latest_buy_signals(mysql_config)
     else:
         print("没有有效的检测结果，不生成Excel文件")
+
+    try:
         save_results_to_mysql(deduped_results, mysql_config, current_date, batch_name)
         print_latest_buy_signals(mysql_config)
+    except RuntimeError as exc:
+        print(f"MySQL保存失败，已跳过: {exc}")
+    except Exception as exc:
+        print(f"MySQL保存失败，已跳过: {exc}")
 
     return deduped_results
 
