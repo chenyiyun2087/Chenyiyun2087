@@ -114,7 +114,7 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     logger.info("开始检测日期文件夹: %s/%s", config_name, date_str)
 
     batch_process_images(
-        config_name=config_name,
+        date_folder=os.path.join(config_name, date_str),
         date_str=date_str,
         max_workers=detect_workers,
         db_path=db_path,
