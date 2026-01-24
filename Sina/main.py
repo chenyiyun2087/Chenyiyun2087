@@ -100,6 +100,10 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     screenshot_workers = overrides.get("screenshot_workers", config_data.get("screenshot_workers", 20))
     detect_workers = overrides.get("detect_workers", config_data.get("detect_workers", 4))
     skip_capture = overrides.get("skip_capture", config_data.get("skip_capture", False))
+    base_dir = resolve_path(
+        overrides.get("base_dir", config_data.get("base_dir", get_base_dir())),
+        os.path.dirname(__file__),
+    )
     db_path = resolve_path(
         overrides.get("db_path", config_data.get("db_path", os.path.join(os.path.dirname(__file__), "bs_detection.db"))),
         os.path.dirname(__file__),
@@ -108,7 +112,7 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     mysql_config = overrides.get("mysql_config", config_data.get("mysql"))
 
     if skip_capture:
-        save_dir = os.path.join(get_base_dir(), config_name, date_str)
+        save_dir = os.path.join(base_dir, config_name, date_str)
         if not os.path.isdir(save_dir):
             logger.error("跳过截图时目录不存在: %s", save_dir)
             return 1
@@ -123,13 +127,14 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
 
     batch_process_images(
         date_folder=os.path.join(config_name, date_str),
+        base_dir=base_dir,
         max_workers=detect_workers,
         db_path=db_path,
         mysql_config=mysql_config,
     )
 
     if archive_days > 0:
-        archive_old_folders(get_base_dir(), days=archive_days)
+        archive_old_folders(base_dir, days=archive_days)
 
     return 0
 
@@ -141,6 +146,7 @@ def parse_args():
     parser.add_argument("--screenshot-workers", type=int, default=3, help="截图线程数")
     parser.add_argument("--detect-workers", type=int, default=5, help="检测线程数")
     parser.add_argument("--skip-capture", action="store_true", help="跳过截图阶段，直接检测已存在图片")
+    parser.add_argument("--base-dir", help="截图/检测基础目录，默认使用 SinaAppBS")
     parser.add_argument("--db-path", help="数据库路径")
     parser.add_argument("--archive-days", type=int, help="归档天数阈值，0表示不归档")
     parser.add_argument("--mysql-host", default="localhost", help="MySQL主机地址")
@@ -161,6 +167,8 @@ if __name__ == "__main__":
         overrides["detect_workers"] = args.detect_workers
     if args.skip_capture:
         overrides["skip_capture"] = True
+    if args.base_dir is not None:
+        overrides["base_dir"] = args.base_dir
     if args.db_path is not None:
         overrides["db_path"] = args.db_path
     if args.archive_days is not None:
