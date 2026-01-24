@@ -19,13 +19,15 @@ def _resolve_api(ak_module, candidates: List[str]) -> Callable:
     )
 
 
-def fetch_stock_codes(limit: int = 500) -> List[str]:
+def fetch_stock_codes(limit: int | None = 500) -> List[str]:
     import akshare as ak
 
     info_df = ak.stock_info_a_code_name()
     if "code" not in info_df.columns:
         raise ValueError("stock_info_a_code_name 返回数据缺少 code 列")
     codes = info_df["code"].astype(str).str.zfill(6).tolist()
+    if limit is None:
+        return codes
     return codes[:limit]
 
 
