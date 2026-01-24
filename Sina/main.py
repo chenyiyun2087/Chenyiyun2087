@@ -108,10 +108,6 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     if base_dir != fallback_base_dir and not os.path.isdir(base_dir) and os.path.isdir(fallback_base_dir):
         logger.warning("基础目录不存在，改用默认目录: %s -> %s", base_dir, fallback_base_dir)
         base_dir = fallback_base_dir
-    db_path = resolve_path(
-        overrides.get("db_path", config_data.get("db_path", os.path.join(os.path.dirname(__file__), "bs_detection.db"))),
-        os.path.dirname(__file__),
-    )
     archive_days = overrides.get("archive_days", config_data.get("archive_days", 30))
     mysql_config = overrides.get("mysql_config", config_data.get("mysql"))
 
@@ -133,7 +129,6 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
         date_folder=os.path.join(config_name, date_str),
         base_dir=base_dir,
         max_workers=detect_workers,
-        db_path=db_path,
         mysql_config=mysql_config,
     )
 
@@ -151,7 +146,6 @@ def parse_args():
     parser.add_argument("--detect-workers", type=int, default=5, help="检测线程数")
     parser.add_argument("--skip-capture", action="store_true", help="跳过截图阶段，直接检测已存在图片")
     parser.add_argument("--base-dir", help="截图/检测基础目录，默认使用 SinaAppBS")
-    parser.add_argument("--db-path", help="数据库路径")
     parser.add_argument("--archive-days", type=int, help="归档天数阈值，0表示不归档")
     parser.add_argument("--mysql-host", default="localhost", help="MySQL主机地址")
     parser.add_argument("--mysql-port", type=int, default=3306, help="MySQL端口")
@@ -173,8 +167,6 @@ if __name__ == "__main__":
         overrides["skip_capture"] = True
     if args.base_dir is not None:
         overrides["base_dir"] = args.base_dir
-    if args.db_path is not None:
-        overrides["db_path"] = args.db_path
     if args.archive_days is not None:
         overrides["archive_days"] = args.archive_days
 
