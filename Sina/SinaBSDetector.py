@@ -524,8 +524,6 @@ def batch_process_images(
     try:
         save_results_to_mysql(deduped_results, mysql_config, current_date, batch_name)
         print_latest_buy_signals(mysql_config)
-    except RuntimeError as exc:
-        print(f"MySQL保存失败，已跳过: {exc}")
     except Exception as exc:
         print(f"MySQL保存失败，已跳过: {exc}")
 
