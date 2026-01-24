@@ -120,36 +120,39 @@ def save_results_to_mysql(results, mysql_config, batch_date, batch_name):
         print("没有检测结果可写入MySQL数据库")
         return
 
-    init_mysql_db(mysql_config)
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        init_mysql_db(mysql_config)
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    rows = [
-        (
-            batch_name,
-            batch_date,
-            result.get('stock_code'),
-            int(bool(result.get('has_buy_signal'))),
-            int(bool(result.get('has_sell_signal'))),
-            result.get('buy_signal_description'),
-            result.get('sell_signal_description'),
-            result.get('total_b_points'),
-            result.get('total_s_points'),
-            result.get('buy_points_count'),
-            result.get('sell_points_count'),
-            result.get('process_time'),
-            result.get('image_path'),
-            now_str,
-        )
-        for result in results
-    ]
+        rows = [
+            (
+                batch_name,
+                batch_date,
+                result.get('stock_code'),
+                int(bool(result.get('has_buy_signal'))),
+                int(bool(result.get('has_sell_signal'))),
+                result.get('buy_signal_description'),
+                result.get('sell_signal_description'),
+                result.get('total_b_points'),
+                result.get('total_s_points'),
+                result.get('buy_points_count'),
+                result.get('sell_points_count'),
+                result.get('process_time'),
+                result.get('image_path'),
+                now_str,
+            )
+            for result in results
+        ]
 
-    import pymysql
+        import pymysql
 
-    with pymysql.connect(**mysql_config) as conn:
-        with conn.cursor() as cursor:
-            cursor.executemany(MYSQL_INSERT_SQL, rows)
-        conn.commit()
-    print("检测结果已写入MySQL数据库")
+        with pymysql.connect(**mysql_config) as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(MYSQL_INSERT_SQL, rows)
+            conn.commit()
+        print("检测结果已写入MySQL数据库")
+    except Exception as exc:
+        print(f"MySQL保存失败，已跳过: {exc}")
 
 
 # --- OCR预处理函数 ---
