@@ -136,11 +136,11 @@ def derive_exchange(stock_code: str) -> str:
 
 def ensure_mysql_config(args: argparse.Namespace) -> dict:
     return {
-        "host": args.mysql_host,
-        "port": args.mysql_port,
-        "user": args.mysql_user,
-        "password": args.mysql_password or "",
-        "database": args.mysql_db,
+        "host": "localhost",
+        "port": 3306,
+        "user": "root",
+        "password": "19871019",
+        "database": "chenyiyun",
         "charset": "utf8mb4",
         "autocommit": True,
     }
@@ -395,11 +395,6 @@ def parse_args() -> argparse.Namespace:
         help="批次间隔(秒)，用于降低触发限流风险",
     )
     parser.add_argument("--batch-size", type=int, default=50, help="批量股票数量")
-    parser.add_argument("--mysql-host", default="localhost", help="MySQL主机地址")
-    parser.add_argument("--mysql-port", type=int, default=3306, help="MySQL端口")
-    parser.add_argument("--mysql-user", default="root", help="MySQL用户名")
-    parser.add_argument("--mysql-password", default="19871019", help="MySQL密码")
-    parser.add_argument("--mysql-db", default="chenyiyun", help="MySQL数据库名")
     return parser.parse_args()
 
 
