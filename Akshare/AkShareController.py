@@ -27,7 +27,7 @@ class AkShareController:
             sql_text = file_handle.read()
 
         sql_text = sql_text.split("-- 入库示例", 1)[0]
-        sql_text = re.sub(r"/\\*.*?\\*/", "", sql_text, flags=re.DOTALL)
+        sql_text = re.sub(r"/\*.*?\*/", "", sql_text, flags=re.DOTALL)
         statements = [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
 
         with pymysql.connect(**self.mysql_config) as conn:
