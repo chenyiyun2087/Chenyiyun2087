@@ -170,15 +170,48 @@ class AkShareController:
         trade_dates = get_trade_dates(days)
         if not trade_dates:
             return
+        self.backfill_trade_dates(
+            trade_dates=trade_dates,
+            batch_size=batch_size,
+            request_sleep_s=request_sleep_s,
+            batch_sleep_s=batch_sleep_s,
+        )
+
+    def backfill_trade_dates(
+        self,
+        trade_dates: List[date],
+        batch_size: int = 50,
+        request_sleep_s: float = 0.3,
+        batch_sleep_s: float = 2.0,
+    ) -> None:
+        if not self.mysql_config:
+            raise ValueError("mysql_config 不能为空")
+        if not trade_dates:
+            return
         stock_df = fetch_stock_list()
         if stock_df.empty:
             return
         self.upsert_stock_list(stock_df)
         symbols = stock_df["code"].astype(str).str.zfill(6).tolist()
         batches = chunked(symbols, batch_size)
-        total_batches = len(batches)
 
-        trade_dates_set = set(trade_dates)
+        for trade_date in trade_dates:
+            self._backfill_single_date(
+                trade_date=trade_date,
+                batches=batches,
+                request_sleep_s=request_sleep_s,
+                batch_sleep_s=batch_sleep_s,
+            )
+
+    def _backfill_single_date(
+        self,
+        trade_date: date,
+        batches: List[List[str]],
+        request_sleep_s: float,
+        batch_sleep_s: float,
+    ) -> None:
+        total_batches = len(batches)
+        trade_dates_set = {trade_date}
         with pymysql.connect(**self.mysql_config) as conn:
             with conn.cursor() as cursor:
                 for batch_index, batch in enumerate(batches, start=1):
