@@ -336,6 +336,8 @@ class EastmoneyController:
         rows = [item.split(",") for item in klines]
         columns = [
             "trade_date",
+            "close_price",
+            "change_pct",
             "main_net_amount",
             "main_net_pct",
             "super_large_net_amount",
@@ -346,8 +348,6 @@ class EastmoneyController:
             "medium_net_pct",
             "small_net_amount",
             "small_net_pct",
-            "close_price",
-            "change_pct",
         ]
         dataframe = pd.DataFrame(rows, columns=columns)
         return dataframe
