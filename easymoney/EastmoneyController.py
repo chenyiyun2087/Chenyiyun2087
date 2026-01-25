@@ -294,7 +294,7 @@ class EastmoneyController:
             return None
         ratio = float(value)
         if abs(ratio) > 1:
-            for _ in range(3):
+            for _ in range(6):
                 ratio /= 100
                 if abs(ratio) <= 1:
                     break
