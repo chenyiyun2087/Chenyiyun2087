@@ -194,13 +194,16 @@ class EastmoneyController:
 
     def _standardize_dataframe(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         dataframe = dataframe.copy()
+        logger.debug("原始表头: %s", list(dataframe.columns))
         rename_map = {}
         for target, aliases in COLUMN_ALIASES.items():
             for alias in aliases:
                 if alias in dataframe.columns:
                     rename_map[alias] = target
                     break
+        logger.debug("字段映射: %s", rename_map)
         dataframe = dataframe.rename(columns=rename_map)
+        logger.debug("映射后表头: %s", list(dataframe.columns))
         for required in COLUMN_ALIASES:
             if required not in dataframe.columns:
                 raise ValueError(f"缺少字段 {required}，请检查东方财富表结构变更")
