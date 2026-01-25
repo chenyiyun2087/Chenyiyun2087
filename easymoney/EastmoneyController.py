@@ -22,7 +22,7 @@ INSERT INTO em_individual_fund_flow (
     stock_code,
     trade_date,
     close_price,
-    change_pct,
+    pct_change,
     main_net_amount,
     main_net_ratio,
     super_large_net_amount,
@@ -38,7 +38,7 @@ INSERT INTO em_individual_fund_flow (
 )
 ON DUPLICATE KEY UPDATE
     close_price = VALUES(close_price),
-    change_pct = VALUES(change_pct),
+    pct_change = VALUES(pct_change),
     main_net_amount = VALUES(main_net_amount),
     main_net_ratio = VALUES(main_net_ratio),
     super_large_net_amount = VALUES(super_large_net_amount),
@@ -55,7 +55,7 @@ ON DUPLICATE KEY UPDATE
 COLUMN_ALIASES = {
     "trade_date": ["日期"],
     "close_price": ["收盘价"],
-    "change_pct": ["涨跌幅"],
+    "pct_change": ["涨跌幅"],
     "main_net_amount": ["主力净流入_净额"],
     "main_net_pct": ["主力净流入_占比"],
     "super_large_net_amount": ["超大单净流入_净额"],
@@ -201,7 +201,7 @@ class EastmoneyController:
 
         dataframe["trade_date"] = dataframe["trade_date"].apply(self._parse_date)
         dataframe["close_price"] = dataframe["close_price"].apply(self._parse_number)
-        dataframe["change_pct"] = dataframe["change_pct"].apply(self._parse_percent)
+        dataframe["pct_change"] = dataframe["pct_change"].apply(self._parse_percent)
 
         for column in (
             "main_net_amount",
@@ -270,7 +270,7 @@ class EastmoneyController:
             stock_code,
             row["trade_date"],
             row["close_price"],
-            row["change_pct"],
+            row["pct_change"],
             row["main_net_amount"],
             self._pct_to_ratio(row["main_net_pct"]),
             row["super_large_net_amount"],
@@ -323,7 +323,7 @@ class EastmoneyController:
             "small_net_amount",
             "small_net_pct",
             "close_price",
-            "change_pct",
+            "pct_change",
         ]
         dataframe = pd.DataFrame(rows, columns=columns)
         return dataframe
