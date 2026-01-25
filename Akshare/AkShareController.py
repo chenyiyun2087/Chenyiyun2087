@@ -12,6 +12,10 @@ AKSHARE_DOC_URL = "https://akshare.akfamily.xyz/data/nlp/nlp.html"
 class AkShareController:
     """Akshare 常用接口封装，兼容类方式调用。"""
 
+    def __init__(self, mysql_config=None, schema_path: str | None = None) -> None:
+        self.mysql_config = mysql_config
+        self.schema_path = schema_path
+
     @staticmethod
     def resolve_api(ak_module, candidates: List[str]) -> Callable:
         return _resolve_api(ak_module, candidates)
