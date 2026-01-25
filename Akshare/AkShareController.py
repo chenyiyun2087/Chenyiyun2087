@@ -31,7 +31,12 @@ class AkShareController:
         with pymysql.connect(**self.mysql_config) as conn:
             with conn.cursor() as cursor:
                 for statement in statements:
-                    cursor.execute(statement)
+                    try:
+                        cursor.execute(statement)
+                    except pymysql.err.OperationalError as exc:
+                        if exc.args and exc.args[0] == 1061:
+                            continue
+                        raise
             conn.commit()
 
     @staticmethod
