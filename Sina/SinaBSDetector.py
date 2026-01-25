@@ -1,6 +1,7 @@
 import cv2
 import glob
 import os
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -12,12 +13,14 @@ import pytesseract
 
 from SinaLatestBSShow import print_latest_buy_signals
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+_tesseract_cmd = shutil.which("tesseract")
+if _tesseract_cmd:
+    pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
 
 # 全局配置
 THREAD_LOCK = threading.Lock()
 DETECTION_RESULTS = []  # 存储所有检测结果
-COORDINATE_THRESHOLD = 1830  # 横坐标阈值
+COORDINATE_THRESHOLD = 1810  # 横坐标阈值
 MYSQL_CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS bs_detection_results (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -71,144 +74,85 @@ ON DUPLICATE KEY UPDATE
 
 
 def get_base_dir():
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "SinaAppBS"))
-
-
-def init_db(db_path):
-    import sqlite3
-
-    db_dir = os.path.dirname(db_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS bs_detection_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                stock_code TEXT NOT NULL,
-                has_buy_signal INTEGER NOT NULL,
-                has_sell_signal INTEGER NOT NULL,
-                buy_signal_description TEXT,
-                sell_signal_description TEXT,
-                total_b_points INTEGER,
-                total_s_points INTEGER,
-                buy_points_count INTEGER,
-                sell_points_count INTEGER,
-                process_time TEXT,
-                image_path TEXT,
-                batch_date TEXT,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_bs_detection_batch ON bs_detection_results (batch_date)"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_bs_detection_stock ON bs_detection_results (stock_code)"
-        )
-        conn.commit()
-
-
-def save_results_to_db(results, db_path, batch_date):
-    if not results:
-        print("没有检测结果可写入数据库")
-        return
-
-    init_db(db_path)
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-    rows = [
-        (
-            result.get('stock_code'),
-            int(bool(result.get('has_buy_signal'))),
-            int(bool(result.get('has_sell_signal'))),
-            result.get('buy_signal_description'),
-            result.get('sell_signal_description'),
-            result.get('total_b_points'),
-            result.get('total_s_points'),
-            result.get('buy_points_count'),
-            result.get('sell_points_count'),
-            result.get('process_time'),
-            result.get('image_path'),
-            batch_date,
-            now_str,
-        )
-        for result in results
-    ]
-
-    import sqlite3
-
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.executemany(
-            """
-            INSERT INTO bs_detection_results (
-                stock_code,
-                has_buy_signal,
-                has_sell_signal,
-                buy_signal_description,
-                sell_signal_description,
-                total_b_points,
-                total_s_points,
-                buy_points_count,
-                sell_points_count,
-                process_time,
-                image_path,
-                batch_date,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
-        conn.commit()
-    print(f"检测结果已写入数据库: {db_path}")
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "SinaAppBS"))
 
 
 def init_mysql_db(mysql_config):
     import pymysql
+
+    base_config = {k: v for k, v in mysql_config.items() if k != "database"}
+    database = mysql_config.get("database")
+    if not database:
+        raise ValueError("mysql_config 必须包含 database")
+
+    with pymysql.connect(**base_config) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database}` DEFAULT CHARSET utf8mb4")
+        conn.commit()
 
     with pymysql.connect(**mysql_config) as conn:
         with conn.cursor() as cursor:
             cursor.execute(MYSQL_CREATE_TABLE_SQL)
 
 
+def deduplicate_results(results):
+    if not results:
+        return []
+
+    deduped = {}
+    for result in results:
+        if not result:
+            continue
+        stock_code = result.get("stock_code")
+        if not stock_code:
+            continue
+        deduped[stock_code] = result
+
+    if len(deduped) < len(results):
+        print(f"检测结果去重: {len(results)} -> {len(deduped)}")
+
+    return list(deduped.values())
+
+
 def save_results_to_mysql(results, mysql_config, batch_date, batch_name):
+    results = deduplicate_results(results)
     if not results:
         print("没有检测结果可写入MySQL数据库")
         return
 
-    init_mysql_db(mysql_config)
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        init_mysql_db(mysql_config)
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    rows = [
-        (
-            batch_name,
-            batch_date,
-            result.get('stock_code'),
-            int(bool(result.get('has_buy_signal'))),
-            int(bool(result.get('has_sell_signal'))),
-            result.get('buy_signal_description'),
-            result.get('sell_signal_description'),
-            result.get('total_b_points'),
-            result.get('total_s_points'),
-            result.get('buy_points_count'),
-            result.get('sell_points_count'),
-            result.get('process_time'),
-            result.get('image_path'),
-            now_str,
-        )
-        for result in results
-    ]
+        rows = [
+            (
+                batch_name,
+                batch_date,
+                result.get('stock_code'),
+                int(bool(result.get('has_buy_signal'))),
+                int(bool(result.get('has_sell_signal'))),
+                result.get('buy_signal_description'),
+                result.get('sell_signal_description'),
+                result.get('total_b_points'),
+                result.get('total_s_points'),
+                result.get('buy_points_count'),
+                result.get('sell_points_count'),
+                result.get('process_time'),
+                result.get('image_path'),
+                now_str,
+            )
+            for result in results
+        ]
 
-    import pymysql
+        import pymysql
 
-    with pymysql.connect(**mysql_config) as conn:
-        with conn.cursor() as cursor:
-            cursor.executemany(MYSQL_INSERT_SQL, rows)
-        conn.commit()
-    print("检测结果已写入MySQL数据库")
+        with pymysql.connect(**mysql_config) as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(MYSQL_INSERT_SQL, rows)
+            conn.commit()
+        print("检测结果已写入MySQL数据库")
+    except Exception as exc:
+        print(f"MySQL保存失败，已跳过: {exc}")
 
 
 # --- OCR预处理函数 ---
@@ -255,7 +199,14 @@ def preprocess_for_ocr(roi):
 
 
 # --- 标记检测核心函数 ---
-def detect_markers(image, hsv_color_ranges, expected_char, config):
+def detect_markers(
+    image,
+    hsv_color_ranges,
+    expected_char,
+    config,
+    extra_ocr_configs=None,
+    enable_lenient_match=False,
+):
     """
     在图像中检测特定颜色和字符的标记。
     :param image: 原始输入图像 (BGR)
@@ -321,13 +272,9 @@ def detect_markers(image, hsv_color_ranges, expected_char, config):
 
         # 使用Pytesseract进行字符识别
         try:
-            # 尝试多种OCR配置以提高识别率
-            configs = [
-                r'--oem 3 --psm 10 -c tessedit_char_whitelist=BS',
-                r'--oem 3 --psm 8 -c tessedit_char_whitelist=BS',
-                r'--oem 3 --psm 7 -c tessedit_char_whitelist=BS',
-                r'--oem 3 --psm 13 -c tessedit_char_whitelist=BS'
-            ]
+            configs = [config] if config else []
+            if extra_ocr_configs:
+                configs.extend(extra_ocr_configs)
 
             text_found = False
             for cfg in configs:
@@ -337,8 +284,8 @@ def detect_markers(image, hsv_color_ranges, expected_char, config):
                     text_found = True
                     break
 
-            # 如果标准OCR失败，尝试更宽松的匹配
-            if not text_found:
+            # 如果标准OCR失败，按需尝试更宽松的匹配
+            if not text_found and enable_lenient_match:
                 # 尝试识别任何文本并检查是否包含类似字符
                 text = pytesseract.image_to_string(preprocessed_roi, config=r'--oem 3 --psm 10').strip()
                 # 检查是否包含B/S或类似字符（如8、5等可能被误识别的字符）
@@ -435,14 +382,14 @@ def process_single_image(image_path, debug_mode=False):
             original_image,
             [(lower_red1, upper_red1), (lower_red2, upper_red2)],
             'B',
-            ocr_config
+            ocr_config,
         )
 
         s_points, s_scan_areas = detect_markers(
             original_image,
             [(lower_blue, upper_blue)],
             'S',
-            ocr_config
+            ocr_config,
         )
 
         # 分析结果
@@ -462,6 +409,8 @@ def process_single_image(image_path, debug_mode=False):
 
 # --- 批量处理主函数 ---
 def batch_process_images(
+    config_name=None,
+    date_str=None,
     date_folder=None,
     max_workers=4,
     debug_mode=False,
@@ -483,15 +432,20 @@ def batch_process_images(
         base_dir = get_base_dir()
 
     if date_folder is None:
-        current_date = datetime.now().strftime('%Y%m%d')
-        folder_path = os.path.join(base_dir, current_date)
+        current_date = date_str or datetime.now().strftime('%Y%m%d')
+        if not config_name:
+            raise ValueError("必须提供 config_name 才能定位日期文件夹")
+        folder_path = os.path.join(base_dir, config_name, current_date)
     else:
         folder_path = os.path.join(base_dir, date_folder)
         current_date = os.path.basename(date_folder)
 
-    relative_path = os.path.relpath(folder_path, base_dir)
-    parts = os.path.normpath(relative_path).split(os.sep)
-    batch_name = parts[-2] if len(parts) >= 2 else "default"
+    if config_name:
+        batch_name = config_name
+    else:
+        relative_path = os.path.relpath(folder_path, base_dir)
+        parts = os.path.normpath(relative_path).split(os.sep)
+        batch_name = parts[-2] if len(parts) >= 2 else "default"
 
     # 检查文件夹是否存在
     if not os.path.exists(folder_path):
@@ -550,24 +504,30 @@ def batch_process_images(
     print(f"处理时间: {processing_time:.2f} 秒")
     print(f"平均每个文件: {processing_time / len(image_files):.2f} 秒")
 
+    if mysql_config is None:
+        mysql_config = {
+            "host": "localhost",
+            "user": "root",
+            "password": "19871019",
+            "database": "chenyiyun",
+            "charset": "utf8mb4",
+        }
+
     # 保存结果到Excel
-    if DETECTION_RESULTS:
+    deduped_results = deduplicate_results(DETECTION_RESULTS)
+    if deduped_results:
         if save_excel:
-            save_results_to_excel(current_date, DETECTION_RESULTS, base_dir, batch_name)
-        if db_path:
-            save_results_to_db(DETECTION_RESULTS, db_path, current_date)
-        if mysql_config:
-            save_results_to_mysql(DETECTION_RESULTS, mysql_config, current_date, batch_name)
-            print_latest_buy_signals(mysql_config)
+            save_results_to_excel(current_date, deduped_results, base_dir, batch_name)
     else:
         print("没有有效的检测结果，不生成Excel文件")
-        if db_path:
-            save_results_to_db(DETECTION_RESULTS, db_path, current_date)
-        if mysql_config:
-            save_results_to_mysql(DETECTION_RESULTS, mysql_config, current_date, batch_name)
-            print_latest_buy_signals(mysql_config)
 
-    return DETECTION_RESULTS
+    try:
+        save_results_to_mysql(deduped_results, mysql_config, current_date, batch_name)
+        print_latest_buy_signals(mysql_config)
+    except Exception as exc:
+        print(f"MySQL保存失败，已跳过: {exc}")
+
+    return deduped_results
 
 
 # --- 保存结果到Excel ---
@@ -660,11 +620,32 @@ def process_single_chart(image_path):
 
     # 执行检测
     print("正在检测 'B' 点 (红色)...")
-    b_points, b_scan_areas = detect_markers(original_image, [(lower_red1, upper_red1), (lower_red2, upper_red2)], 'B',
-                                            ocr_config)
+    b_points, b_scan_areas = detect_markers(
+        original_image,
+        [(lower_red1, upper_red1), (lower_red2, upper_red2)],
+        'B',
+        ocr_config,
+        extra_ocr_configs=[
+            r'--oem 3 --psm 8 -c tessedit_char_whitelist=BS',
+            r'--oem 3 --psm 7 -c tessedit_char_whitelist=BS',
+            r'--oem 3 --psm 13 -c tessedit_char_whitelist=BS',
+        ],
+        enable_lenient_match=True,
+    )
 
     print("正在检测 'S' 点 (蓝色)...")
-    s_points, s_scan_areas = detect_markers(original_image, [(lower_blue, upper_blue)], 'S', ocr_config)
+    s_points, s_scan_areas = detect_markers(
+        original_image,
+        [(lower_blue, upper_blue)],
+        'S',
+        ocr_config,
+        extra_ocr_configs=[
+            r'--oem 3 --psm 8 -c tessedit_char_whitelist=BS',
+            r'--oem 3 --psm 7 -c tessedit_char_whitelist=BS',
+            r'--oem 3 --psm 13 -c tessedit_char_whitelist=BS',
+        ],
+        enable_lenient_match=True,
+    )
 
     # 提取股票代码
     filename = os.path.basename(image_path)

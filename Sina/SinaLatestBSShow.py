@@ -8,7 +8,7 @@ DEFAULT_MYSQL_CONFIG = {
     "port": 3306,
     "user": "root",
     "password": "19871019",
-    "database": "sina",
+    "database": "chenyiyun",
     "charset": "utf8mb4",
     "autocommit": True,
 }
