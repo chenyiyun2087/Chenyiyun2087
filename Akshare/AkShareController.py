@@ -28,7 +28,15 @@ class AkShareController:
 
         sql_text = sql_text.split("-- 入库示例", 1)[0]
         sql_text = re.sub(r"/\*.*?\*/", "", sql_text, flags=re.DOTALL)
-        statements = [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
+        raw_statements = [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
+        statements = []
+        for statement in raw_statements:
+            cleaned = re.sub(r"/\*.*?\*/", "", statement, flags=re.DOTALL).strip()
+            if not cleaned:
+                continue
+            if cleaned.startswith(("/*", "--", "#")):
+                continue
+            statements.append(cleaned)
 
         with pymysql.connect(**self.mysql_config) as conn:
             with conn.cursor() as cursor:
@@ -48,6 +56,9 @@ class AkShareController:
     @staticmethod
     def fetch_stock_codes(limit: int | None = 500) -> List[str]:
         return fetch_stock_codes(limit=limit)
+
+    def fetch_stock_list(self) -> pd.DataFrame:
+        return fetch_stock_list()
 
     @staticmethod
     def fetch_ths_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
@@ -93,6 +104,12 @@ def fetch_stock_codes(limit: int | None = 500) -> List[str]:
     if limit is None:
         return codes
     return codes[:limit]
+
+
+def fetch_stock_list() -> pd.DataFrame:
+    import akshare as ak
+
+    return ak.stock_info_a_code_name()
 
 
 def fetch_ths_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
