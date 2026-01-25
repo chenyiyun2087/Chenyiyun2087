@@ -22,50 +22,50 @@ INSERT INTO em_individual_fund_flow (
     stock_code,
     trade_date,
     close_price,
-    change_pct,
+    pct_change,
     main_net_amount,
-    main_net_pct,
-    super_large_net_amount,
-    super_large_net_pct,
-    large_net_amount,
-    large_net_pct,
-    medium_net_amount,
-    medium_net_pct,
+    main_net_ratio,
+    super_net_amount,
+    super_net_ratio,
+    big_net_amount,
+    big_net_ratio,
+    mid_net_amount,
+    mid_net_ratio,
     small_net_amount,
-    small_net_pct
+    small_net_ratio
 ) VALUES (
     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
 )
 ON DUPLICATE KEY UPDATE
     close_price = VALUES(close_price),
-    change_pct = VALUES(change_pct),
+    pct_change = VALUES(pct_change),
     main_net_amount = VALUES(main_net_amount),
-    main_net_pct = VALUES(main_net_pct),
-    super_large_net_amount = VALUES(super_large_net_amount),
-    super_large_net_pct = VALUES(super_large_net_pct),
-    large_net_amount = VALUES(large_net_amount),
-    large_net_pct = VALUES(large_net_pct),
-    medium_net_amount = VALUES(medium_net_amount),
-    medium_net_pct = VALUES(medium_net_pct),
+    main_net_ratio = VALUES(main_net_ratio),
+    super_net_amount = VALUES(super_net_amount),
+    super_net_ratio = VALUES(super_net_ratio),
+    big_net_amount = VALUES(big_net_amount),
+    big_net_ratio = VALUES(big_net_ratio),
+    mid_net_amount = VALUES(mid_net_amount),
+    mid_net_ratio = VALUES(mid_net_ratio),
     small_net_amount = VALUES(small_net_amount),
-    small_net_pct = VALUES(small_net_pct),
+    small_net_ratio = VALUES(small_net_ratio),
     updated_at = CURRENT_TIMESTAMP
 """
 
 COLUMN_ALIASES = {
     "trade_date": ["日期"],
     "close_price": ["收盘价"],
-    "change_pct": ["涨跌幅"],
+    "pct_change": ["涨跌幅"],
     "main_net_amount": ["主力净流入_净额"],
-    "main_net_pct": ["主力净流入_占比"],
-    "super_large_net_amount": ["超大单净流入_净额"],
-    "super_large_net_pct": ["超大单净流入_占比"],
-    "large_net_amount": ["大单净流入_净额"],
-    "large_net_pct": ["大单净流入_占比"],
-    "medium_net_amount": ["中单净流入_净额"],
-    "medium_net_pct": ["中单净流入_占比"],
+    "main_net_ratio": ["主力净流入_占比"],
+    "super_net_amount": ["超大单净流入_净额"],
+    "super_net_ratio": ["超大单净流入_占比"],
+    "big_net_amount": ["大单净流入_净额"],
+    "big_net_ratio": ["大单净流入_占比"],
+    "mid_net_amount": ["中单净流入_净额"],
+    "mid_net_ratio": ["中单净流入_占比"],
     "small_net_amount": ["小单净流入_净额"],
-    "small_net_pct": ["小单净流入_占比"],
+    "small_net_ratio": ["小单净流入_占比"],
 }
 
 
@@ -201,23 +201,23 @@ class EastmoneyController:
 
         dataframe["trade_date"] = dataframe["trade_date"].apply(self._parse_date)
         dataframe["close_price"] = dataframe["close_price"].apply(self._parse_number)
-        dataframe["change_pct"] = dataframe["change_pct"].apply(self._parse_percent)
+        dataframe["pct_change"] = dataframe["pct_change"].apply(self._parse_percent)
 
         for column in (
             "main_net_amount",
-            "super_large_net_amount",
-            "large_net_amount",
-            "medium_net_amount",
+            "super_net_amount",
+            "big_net_amount",
+            "mid_net_amount",
             "small_net_amount",
         ):
             dataframe[column] = dataframe[column].apply(self._parse_number)
 
         for column in (
-            "main_net_pct",
-            "super_large_net_pct",
-            "large_net_pct",
-            "medium_net_pct",
-            "small_net_pct",
+            "main_net_ratio",
+            "super_net_ratio",
+            "big_net_ratio",
+            "mid_net_ratio",
+            "small_net_ratio",
         ):
             dataframe[column] = dataframe[column].apply(self._parse_percent)
 
@@ -270,17 +270,17 @@ class EastmoneyController:
             stock_code,
             row["trade_date"],
             row["close_price"],
-            row["change_pct"],
+            row["pct_change"],
             row["main_net_amount"],
-            row["main_net_pct"],
-            row["super_large_net_amount"],
-            row["super_large_net_pct"],
-            row["large_net_amount"],
-            row["large_net_pct"],
-            row["medium_net_amount"],
-            row["medium_net_pct"],
+            row["main_net_ratio"],
+            row["super_net_amount"],
+            row["super_net_ratio"],
+            row["big_net_amount"],
+            row["big_net_ratio"],
+            row["mid_net_amount"],
+            row["mid_net_ratio"],
             row["small_net_amount"],
-            row["small_net_pct"],
+            row["small_net_ratio"],
         )
 
     def _fetch_fund_flow_from_api(self, stock_code: str) -> pd.DataFrame:
@@ -307,17 +307,17 @@ class EastmoneyController:
         columns = [
             "trade_date",
             "main_net_amount",
-            "main_net_pct",
-            "super_large_net_amount",
-            "super_large_net_pct",
-            "large_net_amount",
-            "large_net_pct",
-            "medium_net_amount",
-            "medium_net_pct",
+            "main_net_ratio",
+            "super_net_amount",
+            "super_net_ratio",
+            "big_net_amount",
+            "big_net_ratio",
+            "mid_net_amount",
+            "mid_net_ratio",
             "small_net_amount",
-            "small_net_pct",
+            "small_net_ratio",
             "close_price",
-            "change_pct",
+            "pct_change",
         ]
         dataframe = pd.DataFrame(rows, columns=columns)
         return dataframe
