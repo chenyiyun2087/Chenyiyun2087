@@ -1,12 +1,115 @@
 import argparse
 import akshare as ak
+import re
 import time
 from typing import Callable, Dict, List, Tuple
 
 import pandas as pd
+import pymysql
 
 
 AKSHARE_DOC_URL = "https://akshare.akfamily.xyz/data/nlp/nlp.html"
+
+
+class AkShareController:
+    """Akshare 常用接口封装，兼容类方式调用。"""
+
+    def __init__(self, mysql_config=None, schema_path: str | None = None) -> None:
+        self.mysql_config = mysql_config
+        self.schema_path = schema_path
+
+    def init_db(self) -> None:
+        if not self.mysql_config:
+            raise ValueError("mysql_config 不能为空")
+        if not self.schema_path:
+            raise ValueError("schema_path 不能为空")
+        with open(self.schema_path, "r", encoding="utf-8") as file_handle:
+            sql_text = file_handle.read()
+
+        sql_text = sql_text.split("-- 入库示例", 1)[0]
+        sql_text = re.sub(r"/\*.*?\*/", "", sql_text, flags=re.DOTALL)
+        raw_statements = [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
+        statements = []
+        for statement in raw_statements:
+            cleaned = re.sub(r"/\*.*?\*/", "", statement, flags=re.DOTALL).strip()
+            if not cleaned:
+                continue
+            if cleaned.startswith(("/*", "--", "#")):
+                continue
+            statements.append(cleaned)
+
+        with pymysql.connect(**self.mysql_config) as conn:
+            with conn.cursor() as cursor:
+                for statement in statements:
+                    try:
+                        cursor.execute(statement)
+                    except pymysql.err.OperationalError as exc:
+                        if exc.args and exc.args[0] == 1061:
+                            continue
+                        raise
+            conn.commit()
+
+    @staticmethod
+    def resolve_api(ak_module, candidates: List[str]) -> Callable:
+        return _resolve_api(ak_module, candidates)
+
+    @staticmethod
+    def fetch_stock_codes(limit: int | None = 500) -> List[str]:
+        return fetch_stock_codes(limit=limit)
+
+    def fetch_stock_list(self) -> pd.DataFrame:
+        return fetch_stock_list()
+
+    def upsert_stock_list(self, stock_df: pd.DataFrame) -> None:
+        if not self.mysql_config:
+            raise ValueError("mysql_config 不能为空")
+        if stock_df.empty:
+            return
+        rows = []
+        for _, row in stock_df.iterrows():
+            code = str(row.get("code", "")).zfill(6)
+            name = row.get("name") or row.get("股票简称") or ""
+            exchange = derive_exchange(code)
+            rows.append((code, name, exchange, None, True))
+        if not rows:
+            return
+        sql = """
+        INSERT INTO a_share_stock_list (stock_code, stock_name, exchange, list_date, is_active)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            stock_name = VALUES(stock_name),
+            exchange = VALUES(exchange),
+            list_date = VALUES(list_date),
+            is_active = VALUES(is_active),
+            updated_at = CURRENT_TIMESTAMP
+        """
+        with pymysql.connect(**self.mysql_config) as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(sql, rows)
+            conn.commit()
+
+    @staticmethod
+    def fetch_ths_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
+        return fetch_ths_fund_flow(ak_module, symbol)
+
+    @staticmethod
+    def fetch_em_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
+        return fetch_em_fund_flow(ak_module, symbol)
+
+    @staticmethod
+    def fetch_chip_distribution(ak_module, symbol: str) -> pd.DataFrame:
+        return fetch_chip_distribution(ak_module, symbol)
+
+    @staticmethod
+    def batch_fetch_signals(
+        symbols: List[str],
+        sleep_s: float = 0.2,
+    ) -> Dict[str, List[Tuple[str, int]]]:
+        return batch_fetch_signals(symbols, sleep_s=sleep_s)
+
+    @staticmethod
+    def run_sample(limit: int = 500, sleep_s: float = 0.2) -> None:
+        run_sample(limit=limit, sleep_s=sleep_s)
 
 
 def _resolve_api(ak_module, candidates: List[str]) -> Callable:
@@ -19,14 +122,32 @@ def _resolve_api(ak_module, candidates: List[str]) -> Callable:
     )
 
 
-def fetch_stock_codes(limit: int = 500) -> List[str]:
+def fetch_stock_codes(limit: int | None = 500) -> List[str]:
     import akshare as ak
 
     info_df = ak.stock_info_a_code_name()
     if "code" not in info_df.columns:
         raise ValueError("stock_info_a_code_name 返回数据缺少 code 列")
     codes = info_df["code"].astype(str).str.zfill(6).tolist()
+    if limit is None:
+        return codes
     return codes[:limit]
+
+
+def fetch_stock_list() -> pd.DataFrame:
+    import akshare as ak
+
+    return ak.stock_info_a_code_name()
+
+
+def derive_exchange(stock_code: str) -> str:
+    if stock_code.startswith("6"):
+        return "SH"
+    if stock_code.startswith(("0", "3")):
+        return "SZ"
+    if stock_code.startswith(("4", "8")):
+        return "BJ"
+    return "UNKNOWN"
 
 
 def fetch_ths_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
