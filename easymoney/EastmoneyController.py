@@ -216,7 +216,7 @@ class EastmoneyController:
 
         dataframe["trade_date"] = dataframe["trade_date"].apply(self._parse_date)
         dataframe["close_price"] = dataframe["close_price"].apply(self._parse_number)
-        dataframe["change_pct"] = dataframe["change_pct"].apply(self._parse_percent)
+        dataframe["change_pct"] = dataframe["change_pct"].apply(self._normalize_percent)
 
         for column in (
             "main_net_amount",
@@ -279,6 +279,20 @@ class EastmoneyController:
             return float(text)
         except ValueError:
             return None
+
+    @staticmethod
+    def _normalize_percent(value) -> Optional[float]:
+        percent = EastmoneyController._parse_percent(value)
+        if percent is None:
+            return None
+        if abs(percent) > 1000:
+            for _ in range(3):
+                percent /= 100
+                if abs(percent) <= 1000:
+                    break
+        if abs(percent) > 1000:
+            return None
+        return percent
 
     def _row_from_series(self, stock_code: str, row: pd.Series) -> tuple:
         return (
