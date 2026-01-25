@@ -204,9 +204,15 @@ class EastmoneyController:
         logger.debug("字段映射: %s", rename_map)
         dataframe = dataframe.rename(columns=rename_map)
         logger.debug("映射后表头: %s", list(dataframe.columns))
-        for required in COLUMN_ALIASES:
-            if required not in dataframe.columns:
-                raise ValueError(f"缺少字段 {required}，请检查东方财富表结构变更")
+        required_columns = list(COLUMN_ALIASES.keys())
+        missing = [name for name in required_columns if name not in dataframe.columns]
+        if missing:
+            if len(dataframe.columns) == len(required_columns):
+                logger.debug("按列顺序回退映射字段: %s", required_columns)
+                dataframe = dataframe.copy()
+                dataframe.columns = required_columns
+            else:
+                raise ValueError(f"缺少字段 {missing}，请检查东方财富表结构变更")
 
         dataframe["trade_date"] = dataframe["trade_date"].apply(self._parse_date)
         dataframe["close_price"] = dataframe["close_price"].apply(self._parse_number)
