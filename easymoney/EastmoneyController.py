@@ -236,7 +236,7 @@ class EastmoneyController:
 
     @staticmethod
     def _parse_number(value) -> Optional[float]:
-        if value is None:
+        if value is None or pd.isna(value):
             return None
         text = str(value).strip()
         if text in {"", "-", "--"}:
@@ -256,7 +256,7 @@ class EastmoneyController:
 
     @staticmethod
     def _parse_percent(value) -> Optional[float]:
-        if value is None:
+        if value is None or pd.isna(value):
             return None
         text = str(value).strip()
         if text in {"", "-", "--"}:
@@ -290,9 +290,11 @@ class EastmoneyController:
 
     @staticmethod
     def _pct_to_ratio(value: Optional[float]) -> Optional[float]:
-        if value is None:
+        if value is None or pd.isna(value):
             return None
-        return value / 100
+        if abs(value) > 1:
+            return value / 100
+        return value
 
     def _fetch_fund_flow_from_api(self, stock_code: str) -> pd.DataFrame:
         market = "1" if stock_code.startswith("6") else "0"
