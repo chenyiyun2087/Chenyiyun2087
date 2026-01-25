@@ -2,6 +2,7 @@ import argparse
 import logging
 import time
 from datetime import date, datetime, timedelta
+from io import StringIO
 from typing import Iterable, List, Optional
 
 import pandas as pd
@@ -86,12 +87,19 @@ class EastmoneyController:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
 
-        tables = pd.read_html(response.text, attrs={"id": "table_ls"})
-        if not tables:
+        try:
+            tables = pd.read_html(StringIO(response.text), attrs={"id": "table_ls"})
+        except ValueError:
+            tables = []
+        if tables:
+            raw_df = tables[0]
+            normalized_df = self._normalize_columns(raw_df)
+            return self._standardize_dataframe(normalized_df)
+
+        api_df = self._fetch_fund_flow_from_api(stock_code)
+        if api_df.empty:
             raise ValueError(f"未找到资金流向数据表: {url}")
-        raw_df = tables[0]
-        normalized_df = self._normalize_columns(raw_df)
-        return self._standardize_dataframe(normalized_df)
+        return self._standardize_dataframe(api_df)
 
     def sync_stock(self, stock_code: str) -> int:
         fund_df = self.fetch_fund_flow(stock_code)
@@ -274,6 +282,45 @@ class EastmoneyController:
             row["small_net_amount"],
             row["small_net_pct"],
         )
+
+    def _fetch_fund_flow_from_api(self, stock_code: str) -> pd.DataFrame:
+        market = "1" if stock_code.startswith("6") else "0"
+        secid = f"{market}.{stock_code}"
+        url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+        params = {
+            "secid": secid,
+            "klt": 101,
+            "lmt": 0,
+            "fields1": "f1,f2,f3,f7",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63",
+            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+        }
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") or {}
+        klines = data.get("klines") or []
+        if not klines:
+            return pd.DataFrame()
+
+        rows = [item.split(",") for item in klines]
+        columns = [
+            "trade_date",
+            "main_net_amount",
+            "main_net_pct",
+            "super_large_net_amount",
+            "super_large_net_pct",
+            "large_net_amount",
+            "large_net_pct",
+            "medium_net_amount",
+            "medium_net_pct",
+            "small_net_amount",
+            "small_net_pct",
+            "close_price",
+            "change_pct",
+        ]
+        dataframe = pd.DataFrame(rows, columns=columns)
+        return dataframe
 
 
 def parse_args() -> argparse.Namespace:
