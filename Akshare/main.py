@@ -224,20 +224,44 @@ def prepare_chip_rows(symbol: str, df: pd.DataFrame) -> List[tuple]:
     return rows
 
 
-def fetch_fund_flow(symbol: str) -> pd.DataFrame:
+def _safe_fetch(callable_fn, symbol: str, retries: int, retry_sleep_s: float) -> pd.DataFrame:
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            return callable_fn(symbol)
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= retries:
+                break
+            if retry_sleep_s > 0:
+                time.sleep(retry_sleep_s)
+    logger.warning("请求失败 %s: %s", symbol, last_exc)
+    return pd.DataFrame()
+
+
+def fetch_fund_flow(symbol: str, retries: int = 2, retry_sleep_s: float = 1.0) -> pd.DataFrame:
     import akshare as ak
 
-    try:
-        return fetch_ths_fund_flow(ak, symbol)
-    except Exception as exc:
-        logger.warning("THS 资金流获取失败 %s: %s，尝试 EM 数据源", symbol, exc)
-        return fetch_em_fund_flow(ak, symbol)
+    def ths_call(sym: str) -> pd.DataFrame:
+        return fetch_ths_fund_flow(ak, sym)
+
+    def em_call(sym: str) -> pd.DataFrame:
+        return fetch_em_fund_flow(ak, sym)
+
+    ths_df = _safe_fetch(ths_call, symbol, retries=retries, retry_sleep_s=retry_sleep_s)
+    if not ths_df.empty:
+        return ths_df
+    logger.warning("THS 资金流失败，尝试 EM 数据源: %s", symbol)
+    return _safe_fetch(em_call, symbol, retries=retries, retry_sleep_s=retry_sleep_s)
 
 
-def fetch_chip(symbol: str) -> pd.DataFrame:
+def fetch_chip(symbol: str, retries: int = 2, retry_sleep_s: float = 1.0) -> pd.DataFrame:
     import akshare as ak
 
-    return fetch_chip_distribution(ak, symbol)
+    def chip_call(sym: str) -> pd.DataFrame:
+        return fetch_chip_distribution(ak, sym)
+
+    return _safe_fetch(chip_call, symbol, retries=retries, retry_sleep_s=retry_sleep_s)
 
 
 def chunked(items: Sequence[str], size: int) -> Iterable[List[str]]:
@@ -252,6 +276,8 @@ def process_symbols(
     request_sleep_s: float,
     batch_sleep_s: float,
     batch_size: int,
+    retry_times: int,
+    retry_sleep_s: float,
 ) -> None:
     if batch_size <= 0:
         raise ValueError("batch_size 必须大于 0")
@@ -262,8 +288,8 @@ def process_symbols(
             for batch_index, batch in enumerate(chunked(list(symbols), batch_size), start=1):
                 logger.info("处理批次 %s/%s，股票数 %s", batch_index, total_batches, len(batch))
                 for symbol in batch:
-                    fund_df = fetch_fund_flow(symbol)
-                    chip_df = fetch_chip(symbol)
+                    fund_df = fetch_fund_flow(symbol, retries=retry_times, retry_sleep_s=retry_sleep_s)
+                    chip_df = fetch_chip(symbol, retries=retry_times, retry_sleep_s=retry_sleep_s)
 
                     fund_df = filter_by_dates(fund_df, trade_dates_set)
                     chip_df = filter_by_dates(chip_df, trade_dates_set)
@@ -294,6 +320,8 @@ def run_for_dates(
     request_sleep_s: float,
     batch_sleep_s: float,
     batch_size: int,
+    retry_times: int,
+    retry_sleep_s: float,
 ) -> None:
     stock_df = load_stock_list()
     if stock_df.empty:
@@ -312,6 +340,8 @@ def run_for_dates(
         request_sleep_s=request_sleep_s,
         batch_sleep_s=batch_sleep_s,
         batch_size=batch_size,
+        retry_times=retry_times,
+        retry_sleep_s=retry_sleep_s,
     )
     logger.info("完成交易日 %s 数据入库", trade_dates)
 
@@ -322,6 +352,8 @@ def backfill_recent_days(
     request_sleep_s: float,
     batch_sleep_s: float,
     batch_size: int,
+    retry_times: int,
+    retry_sleep_s: float,
 ) -> None:
     trade_dates = get_trade_dates(days)
     run_for_dates(
@@ -330,6 +362,8 @@ def backfill_recent_days(
         request_sleep_s=request_sleep_s,
         batch_sleep_s=batch_sleep_s,
         batch_size=batch_size,
+        retry_times=retry_times,
+        retry_sleep_s=retry_sleep_s,
     )
 
 
@@ -340,6 +374,8 @@ def run_daily_after_close(
     request_sleep_s: float,
     batch_sleep_s: float,
     batch_size: int,
+    retry_times: int,
+    retry_sleep_s: float,
 ) -> None:
     logger.info("进入每日收盘后调度模式，目标时间 %02d:%02d", close_hour, close_minute)
     while True:
@@ -367,6 +403,8 @@ def run_daily_after_close(
             request_sleep_s=request_sleep_s,
             batch_sleep_s=batch_sleep_s,
             batch_size=batch_size,
+            retry_times=retry_times,
+            retry_sleep_s=retry_sleep_s,
         )
 
 
@@ -395,6 +433,8 @@ def parse_args() -> argparse.Namespace:
         help="批次间隔(秒)，用于降低触发限流风险",
     )
     parser.add_argument("--batch-size", type=int, default=50, help="批量股票数量")
+    parser.add_argument("--retry-times", type=int, default=2, help="请求失败重试次数")
+    parser.add_argument("--retry-sleep", type=float, default=1.0, help="重试等待秒数")
     return parser.parse_args()
 
 
@@ -412,6 +452,8 @@ def main() -> None:
             request_sleep_s=args.request_sleep,
             batch_sleep_s=args.batch_sleep,
             batch_size=args.batch_size,
+            retry_times=args.retry_times,
+            retry_sleep_s=args.retry_sleep,
         )
         return
 
@@ -422,6 +464,8 @@ def main() -> None:
             request_sleep_s=args.request_sleep,
             batch_sleep_s=args.batch_sleep,
             batch_size=args.batch_size,
+            retry_times=args.retry_times,
+            retry_sleep_s=args.retry_sleep,
         )
         return
 
@@ -432,6 +476,8 @@ def main() -> None:
         request_sleep_s=args.request_sleep,
         batch_sleep_s=args.batch_sleep,
         batch_size=args.batch_size,
+        retry_times=args.retry_times,
+        retry_sleep_s=args.retry_sleep,
     )
 
 
