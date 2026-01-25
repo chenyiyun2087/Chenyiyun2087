@@ -37,7 +37,7 @@ def run_daily_processing_pipeline():
 
     # 2. Define filenames based on today's date
     base_name_prefix = "cyy - cyy - "
-    base_dir  = 'D:\\交易\\investingPro\\'
+    base_dir  = '/Users/chenyiyun/Trade/InvestingPro/'
     initial_input_xlsx = base_dir +f"{base_name_prefix}{date_str}.xlsx"
     intermediate_csv = f"{base_name_prefix}{date_str}.csv"
     # Final output name based on discussion (e.g., YYYY-MM-DD-filtered.csv)

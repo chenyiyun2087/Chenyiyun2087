@@ -81,7 +81,7 @@ def select_and_rename_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def main():
 	parser = argparse.ArgumentParser(description='按股票代码匹配 CSV 的 Full Ticker 并导出指定列为 XLS')
-	parser.add_argument('--csv', default='D:/交易/investingPro/cyy - cyy - YYYY-MM-DD-filtered.csv', help='输入CSV路径，可含占位符 YYYY-MM-DD；默认: D:/交易/investingPro/cyy - cyy - YYYY-MM-DD-filtered.csv（自动取最新日期）')
+	parser.add_argument('--csv', default='/Users/chenyiyun/Trade/investingPro/cyy - cyy - YYYY-MM-DD-filtered.csv', help='输入CSV路径，可含占位符 YYYY-MM-DD；默认: D:/交易/investingPro/cyy - cyy - YYYY-MM-DD-filtered.csv（自动取最新日期）')
 	parser.add_argument('--date', help='用于替换占位符 YYYY-MM-DD 的日期，如 2025-08-18；未提供则自动匹配该目录下最新日期文件')
 	parser.add_argument('--codes', help='逗号分隔的一串股票代码，如 000001,000002,000063')
 	parser.add_argument('--codes-file', help='包含股票代码的文本文件路径，每行一个代码')
