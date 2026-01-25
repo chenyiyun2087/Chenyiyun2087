@@ -166,6 +166,8 @@ class EastmoneyController:
             return None
         if isinstance(result[0], datetime):
             return result[0].date()
+        if isinstance(result[0], str):
+            return datetime.strptime(result[0], "%Y-%m-%d").date()
         return result[0]
 
     def _upsert_rows(self, rows: Iterable[tuple]) -> None:
