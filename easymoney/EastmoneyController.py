@@ -33,9 +33,11 @@ INSERT INTO em_individual_fund_flow (
     mid_net_ratio,
     small_net_amount,
     small_net_ratio,
-    raw_json
+    raw_json,
+    created_at,
+    updated_at
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
 )
 ON DUPLICATE KEY UPDATE
     close_price = VALUES(close_price),
