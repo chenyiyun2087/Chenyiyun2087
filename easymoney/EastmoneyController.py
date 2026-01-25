@@ -292,9 +292,15 @@ class EastmoneyController:
     def _pct_to_ratio(value: Optional[float]) -> Optional[float]:
         if value is None or pd.isna(value):
             return None
-        if abs(value) > 1:
-            return value / 100
-        return value
+        ratio = float(value)
+        if abs(ratio) > 1:
+            for _ in range(3):
+                ratio /= 100
+                if abs(ratio) <= 1:
+                    break
+        if abs(ratio) > 1:
+            return None
+        return ratio
 
     def _fetch_fund_flow_from_api(self, stock_code: str) -> pd.DataFrame:
         market = "1" if stock_code.startswith("6") else "0"
