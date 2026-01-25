@@ -4,6 +4,7 @@ import time
 from typing import Callable, Dict, List, Tuple
 
 import pandas as pd
+import pymysql
 
 
 AKSHARE_DOC_URL = "https://akshare.akfamily.xyz/data/nlp/nlp.html"
@@ -15,6 +16,23 @@ class AkShareController:
     def __init__(self, mysql_config=None, schema_path: str | None = None) -> None:
         self.mysql_config = mysql_config
         self.schema_path = schema_path
+
+    def init_db(self) -> None:
+        if not self.mysql_config:
+            raise ValueError("mysql_config 不能为空")
+        if not self.schema_path:
+            raise ValueError("schema_path 不能为空")
+        with open(self.schema_path, "r", encoding="utf-8") as file_handle:
+            sql_text = file_handle.read()
+
+        sql_text = sql_text.split("-- 入库示例", 1)[0]
+        statements = [stmt.strip() for stmt in sql_text.split(";") if stmt.strip()]
+
+        with pymysql.connect(**self.mysql_config) as conn:
+            with conn.cursor() as cursor:
+                for statement in statements:
+                    cursor.execute(statement)
+            conn.commit()
 
     @staticmethod
     def resolve_api(ak_module, candidates: List[str]) -> Callable:
