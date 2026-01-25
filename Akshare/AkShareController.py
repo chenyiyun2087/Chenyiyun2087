@@ -9,6 +9,45 @@ import pandas as pd
 AKSHARE_DOC_URL = "https://akshare.akfamily.xyz/data/nlp/nlp.html"
 
 
+class AkShareController:
+    """Akshare 常用接口封装，兼容类方式调用。"""
+
+    def __init__(self, mysql_config=None, schema_path: str | None = None) -> None:
+        self.mysql_config = mysql_config
+        self.schema_path = schema_path
+
+    @staticmethod
+    def resolve_api(ak_module, candidates: List[str]) -> Callable:
+        return _resolve_api(ak_module, candidates)
+
+    @staticmethod
+    def fetch_stock_codes(limit: int | None = 500) -> List[str]:
+        return fetch_stock_codes(limit=limit)
+
+    @staticmethod
+    def fetch_ths_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
+        return fetch_ths_fund_flow(ak_module, symbol)
+
+    @staticmethod
+    def fetch_em_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
+        return fetch_em_fund_flow(ak_module, symbol)
+
+    @staticmethod
+    def fetch_chip_distribution(ak_module, symbol: str) -> pd.DataFrame:
+        return fetch_chip_distribution(ak_module, symbol)
+
+    @staticmethod
+    def batch_fetch_signals(
+        symbols: List[str],
+        sleep_s: float = 0.2,
+    ) -> Dict[str, List[Tuple[str, int]]]:
+        return batch_fetch_signals(symbols, sleep_s=sleep_s)
+
+    @staticmethod
+    def run_sample(limit: int = 500, sleep_s: float = 0.2) -> None:
+        run_sample(limit=limit, sleep_s=sleep_s)
+
+
 def _resolve_api(ak_module, candidates: List[str]) -> Callable:
     for name in candidates:
         if hasattr(ak_module, name):
@@ -19,13 +58,15 @@ def _resolve_api(ak_module, candidates: List[str]) -> Callable:
     )
 
 
-def fetch_stock_codes(limit: int = 500) -> List[str]:
+def fetch_stock_codes(limit: int | None = 500) -> List[str]:
     import akshare as ak
 
     info_df = ak.stock_info_a_code_name()
     if "code" not in info_df.columns:
         raise ValueError("stock_info_a_code_name 返回数据缺少 code 列")
     codes = info_df["code"].astype(str).str.zfill(6).tolist()
+    if limit is None:
+        return codes
     return codes[:limit]
 
 
