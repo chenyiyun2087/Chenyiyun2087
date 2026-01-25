@@ -60,6 +60,34 @@ class AkShareController:
     def fetch_stock_list(self) -> pd.DataFrame:
         return fetch_stock_list()
 
+    def upsert_stock_list(self, stock_df: pd.DataFrame) -> None:
+        if not self.mysql_config:
+            raise ValueError("mysql_config 不能为空")
+        if stock_df.empty:
+            return
+        rows = []
+        for _, row in stock_df.iterrows():
+            code = str(row.get("code", "")).zfill(6)
+            name = row.get("name") or row.get("股票简称") or ""
+            exchange = derive_exchange(code)
+            rows.append((code, name, exchange, None, True))
+        if not rows:
+            return
+        sql = """
+        INSERT INTO a_share_stock_list (stock_code, stock_name, exchange, list_date, is_active)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            stock_name = VALUES(stock_name),
+            exchange = VALUES(exchange),
+            list_date = VALUES(list_date),
+            is_active = VALUES(is_active),
+            updated_at = CURRENT_TIMESTAMP
+        """
+        with pymysql.connect(**self.mysql_config) as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(sql, rows)
+            conn.commit()
+
     @staticmethod
     def fetch_ths_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
         return fetch_ths_fund_flow(ak_module, symbol)
@@ -110,6 +138,16 @@ def fetch_stock_list() -> pd.DataFrame:
     import akshare as ak
 
     return ak.stock_info_a_code_name()
+
+
+def derive_exchange(stock_code: str) -> str:
+    if stock_code.startswith("6"):
+        return "SH"
+    if stock_code.startswith(("0", "3")):
+        return "SZ"
+    if stock_code.startswith(("4", "8")):
+        return "BJ"
+    return "UNKNOWN"
 
 
 def fetch_ths_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
