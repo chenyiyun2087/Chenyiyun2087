@@ -1,5 +1,6 @@
 import argparse
 import akshare as ak
+import inspect
 import json
 import math
 import re
@@ -185,8 +186,14 @@ class AkShareController:
                         try:
                             fund_df = fetch_ths_fund_flow(ak, symbol)
                         except Exception:
-                            fund_df = fetch_em_fund_flow(ak, symbol)
-                        chip_df = fetch_chip_distribution(ak, symbol)
+                            try:
+                                fund_df = fetch_em_fund_flow(ak, symbol)
+                            except Exception:
+                                fund_df = pd.DataFrame()
+                        try:
+                            chip_df = fetch_chip_distribution(ak, symbol)
+                        except Exception:
+                            chip_df = pd.DataFrame()
 
                         fund_df = filter_by_dates(fund_df, trade_dates_set)
                         chip_df = filter_by_dates(chip_df, trade_dates_set)
@@ -238,6 +245,16 @@ def _resolve_api(ak_module, candidates: List[str]) -> Callable:
         f"无法找到可用的 Akshare API: {', '.join(candidates)}. "
         f"请参考: {AKSHARE_DOC_URL}"
     )
+
+
+def _call_api(api: Callable, symbol: str) -> pd.DataFrame:
+    try:
+        signature = inspect.signature(api)
+    except (TypeError, ValueError):
+        return api(symbol)
+    if "symbol" in signature.parameters:
+        return api(symbol=symbol)
+    return api(symbol)
 
 
 def fetch_stock_codes(limit: int | None = 500) -> List[str]:
@@ -388,7 +405,7 @@ def fetch_ths_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
             "stock_fund_flow_individual_ths",
         ],
     )
-    return api(symbol=symbol)
+    return _call_api(api, symbol)
 
 
 def fetch_em_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
@@ -400,7 +417,7 @@ def fetch_em_fund_flow(ak_module, symbol: str) -> pd.DataFrame:
             "stock_individual_fund_flow_em",
         ],
     )
-    return api(symbol=symbol)
+    return _call_api(api, symbol)
 
 
 def fetch_chip_distribution(ak_module, symbol: str) -> pd.DataFrame:
@@ -412,7 +429,7 @@ def fetch_chip_distribution(ak_module, symbol: str) -> pd.DataFrame:
             "stock_chip_distribution",
         ],
     )
-    return api(symbol=symbol)
+    return _call_api(api, symbol)
 
 
 def batch_fetch_signals(
