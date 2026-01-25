@@ -25,37 +25,39 @@ INSERT INTO em_individual_fund_flow (
     pct_change,
     main_net_amount,
     main_net_ratio,
-    super_large_net_amount,
-    super_large_net_ratio,
-    large_net_amount,
-    large_net_ratio,
-    medium_net_amount,
-    medium_net_ratio,
+    super_net_amount,
+    super_net_ratio,
+    big_net_amount,
+    big_net_ratio,
+    mid_net_amount,
+    mid_net_ratio,
     small_net_amount,
-    small_net_ratio
+    small_net_ratio,
+    raw_json
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
 )
 ON DUPLICATE KEY UPDATE
     close_price = VALUES(close_price),
     pct_change = VALUES(pct_change),
     main_net_amount = VALUES(main_net_amount),
     main_net_ratio = VALUES(main_net_ratio),
-    super_large_net_amount = VALUES(super_large_net_amount),
-    super_large_net_ratio = VALUES(super_large_net_ratio),
-    large_net_amount = VALUES(large_net_amount),
-    large_net_ratio = VALUES(large_net_ratio),
-    medium_net_amount = VALUES(medium_net_amount),
-    medium_net_ratio = VALUES(medium_net_ratio),
+    super_net_amount = VALUES(super_net_amount),
+    super_net_ratio = VALUES(super_net_ratio),
+    big_net_amount = VALUES(big_net_amount),
+    big_net_ratio = VALUES(big_net_ratio),
+    mid_net_amount = VALUES(mid_net_amount),
+    mid_net_ratio = VALUES(mid_net_ratio),
     small_net_amount = VALUES(small_net_amount),
     small_net_ratio = VALUES(small_net_ratio),
+    raw_json = VALUES(raw_json),
     updated_at = CURRENT_TIMESTAMP
 """
 
 COLUMN_ALIASES = {
     "trade_date": ["日期"],
     "close_price": ["收盘价"],
-    "pct_change": ["涨跌幅"],
+    "change_pct": ["涨跌幅"],
     "main_net_amount": ["主力净流入_净额"],
     "main_net_pct": ["主力净流入_占比"],
     "super_large_net_amount": ["超大单净流入_净额"],
@@ -201,7 +203,7 @@ class EastmoneyController:
 
         dataframe["trade_date"] = dataframe["trade_date"].apply(self._parse_date)
         dataframe["close_price"] = dataframe["close_price"].apply(self._parse_number)
-        dataframe["pct_change"] = dataframe["pct_change"].apply(self._parse_percent)
+        dataframe["change_pct"] = dataframe["change_pct"].apply(self._parse_percent)
 
         for column in (
             "main_net_amount",
@@ -270,7 +272,7 @@ class EastmoneyController:
             stock_code,
             row["trade_date"],
             row["close_price"],
-            row["pct_change"],
+            row["change_pct"],
             row["main_net_amount"],
             self._pct_to_ratio(row["main_net_pct"]),
             row["super_large_net_amount"],
@@ -281,6 +283,7 @@ class EastmoneyController:
             self._pct_to_ratio(row["medium_net_pct"]),
             row["small_net_amount"],
             self._pct_to_ratio(row["small_net_pct"]),
+            row.to_json(force_ascii=False),
         )
 
     @staticmethod
@@ -323,7 +326,7 @@ class EastmoneyController:
             "small_net_amount",
             "small_net_pct",
             "close_price",
-            "pct_change",
+            "change_pct",
         ]
         dataframe = pd.DataFrame(rows, columns=columns)
         return dataframe
