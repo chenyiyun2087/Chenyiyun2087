@@ -100,6 +100,7 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     screenshot_workers = overrides.get("screenshot_workers", config_data.get("screenshot_workers", 20))
     detect_workers = overrides.get("detect_workers", config_data.get("detect_workers", 4))
     skip_capture = overrides.get("skip_capture", config_data.get("skip_capture", False))
+    stock_codes = overrides.get("stock_codes")
     base_dir = resolve_path(
         overrides.get("base_dir", config_data.get("base_dir", get_base_dir())),
         os.path.dirname(__file__),
@@ -118,7 +119,13 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
             return 1
         logger.info("跳过截图阶段，使用已存在目录: %s", save_dir)
     else:
-        save_dir = capture_main(excel_file, config_name, date_str, screenshot_workers)
+        save_dir = capture_main(
+            excel_file,
+            config_name,
+            date_str,
+            screenshot_workers,
+            stock_codes=stock_codes,
+        )
         if not save_dir:
             logger.error("截图阶段失败，未生成目录")
             return 1
@@ -130,6 +137,7 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
         base_dir=base_dir,
         max_workers=detect_workers,
         mysql_config=mysql_config,
+        stock_codes=stock_codes,
     )
 
     if archive_days > 0:
@@ -147,6 +155,7 @@ def parse_args():
     parser.add_argument("--skip-capture", action="store_true", help="跳过截图阶段，直接检测已存在图片")
     parser.add_argument("--base-dir", help="截图/检测基础目录，默认使用 SinaAppBS")
     parser.add_argument("--archive-days", type=int, help="归档天数阈值，0表示不归档")
+    parser.add_argument("--stock-codes", help="指定股票代码列表，逗号分隔")
     parser.add_argument("--mysql-host", default="localhost", help="MySQL主机地址")
     parser.add_argument("--mysql-port", type=int, default=3306, help="MySQL端口")
     parser.add_argument("--mysql-user", default="root", help="MySQL用户名")
@@ -169,6 +178,8 @@ if __name__ == "__main__":
         overrides["base_dir"] = args.base_dir
     if args.archive_days is not None:
         overrides["archive_days"] = args.archive_days
+    if args.stock_codes:
+        overrides["stock_codes"] = [code.strip() for code in args.stock_codes.split(",") if code.strip()]
 
     overrides["mysql_config"] = {
         "host": args.mysql_host,
