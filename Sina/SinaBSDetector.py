@@ -77,6 +77,10 @@ def get_base_dir():
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "SinaAppBS"))
 
 
+def normalize_stock_codes(stock_codes):
+    return [code.zfill(6) if len(code) < 6 else code[-6:] for code in stock_codes]
+
+
 def init_mysql_db(mysql_config):
     import pymysql
 
@@ -418,6 +422,7 @@ def batch_process_images(
     db_path=None,
     mysql_config=None,
     save_excel=True,
+    stock_codes=None,
 ):
     """
     批量多线程处理图片
@@ -457,6 +462,15 @@ def batch_process_images(
     image_files = []
     for extension in image_extensions:
         image_files.extend(glob.glob(os.path.join(folder_path, extension)))
+
+    if stock_codes:
+        normalized_codes = normalize_stock_codes([str(code).strip() for code in stock_codes if str(code).strip()])
+        code_set = set(normalized_codes)
+        image_files = [
+            image_path
+            for image_path in image_files
+            if os.path.splitext(os.path.basename(image_path))[0].split('_')[0] in code_set
+        ]
 
     if not image_files:
         print(f"在文件夹 {folder_path} 中未找到图片文件")

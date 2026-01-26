@@ -56,6 +56,10 @@ def setup_directories(config_name, date_str):
     return date_dir
 
 
+def normalize_stock_codes(stock_codes):
+    return [code.zfill(6) if len(code) < 6 else code[-6:] for code in stock_codes]
+
+
 def read_stock_codes(excel_file):
     """
     从Excel文件中读取股票代码列表
@@ -77,9 +81,7 @@ def read_stock_codes(excel_file):
 
         # 提取股票代码列表并转换为字符串
         stock_codes = df['stock_code'].astype(str).tolist()
-
-        # 确保股票代码格式正确（6位数字）
-        stock_codes = [code.zfill(6) if len(code) < 6 else code[-6:] for code in stock_codes]
+        stock_codes = normalize_stock_codes(stock_codes)
 
         logger.info(f"从Excel文件中读取了{len(stock_codes)}个股票代码")
         return stock_codes
@@ -252,7 +254,7 @@ def process_stock_codes_parallel(stock_codes, save_dir, date_str, max_workers=20
     return results
 
 
-def main(excel_file, config_name, date_str=None, max_workers=20):
+def main(excel_file, config_name, date_str=None, max_workers=20, stock_codes=None):
     """
     主函数
 
@@ -267,11 +269,14 @@ def main(excel_file, config_name, date_str=None, max_workers=20):
     save_dir = setup_directories(config_name, date_str)
     logger.info(f"截图将保存在: {save_dir}")
 
-    # 读取股票代码
-    stock_codes = read_stock_codes(excel_file)
-    if not stock_codes:
-        logger.error("未能读取到有效的股票代码，程序退出")
-        return None
+    if stock_codes:
+        stock_codes = normalize_stock_codes([str(code).strip() for code in stock_codes if str(code).strip()])
+        logger.info(f"使用传入的股票代码列表: {len(stock_codes)} 个")
+    else:
+        stock_codes = read_stock_codes(excel_file)
+        if not stock_codes:
+            logger.error("未能读取到有效的股票代码，程序退出")
+            return None
 
     # 并行处理股票代码
     start_time = time.time()
@@ -300,6 +305,11 @@ if __name__ == "__main__":
     parser.add_argument("--config-name", default="default", help="配置文件名称")
     parser.add_argument("--date", help="日期 (YYYYMMDD)，默认当天")
     parser.add_argument("--max-workers", type=int, default=20, help="截图线程数")
+    parser.add_argument("--stock-codes", help="指定股票代码列表，逗号分隔")
     args = parser.parse_args()
 
-    main(args.excel_file, args.config_name, args.date, args.max_workers)
+    stock_codes = None
+    if args.stock_codes:
+        stock_codes = [code.strip() for code in args.stock_codes.split(",") if code.strip()]
+
+    main(args.excel_file, args.config_name, args.date, args.max_workers, stock_codes=stock_codes)
