@@ -23,6 +23,11 @@ def _score_01_from_range(x: float, lo: float, hi: float) -> float:
         return 0.0
     return _clip01((x - lo) / (hi - lo))
 
+def _score_01_centered(x: float, center: float, half_range: float) -> float:
+    if not np.isfinite(x) or half_range <= 0:
+        return 0.0
+    return _clip01(1.0 - abs(x - center) / half_range)
+
 
 def build_features_from_qfq(qfq: pd.DataFrame, breakout_n: int) -> pd.DataFrame:
     """
@@ -38,6 +43,7 @@ def build_features_from_qfq(qfq: pd.DataFrame, breakout_n: int) -> pd.DataFrame:
     qfq["ma20"] = g["close"].apply(lambda x: _ma(x, 20))
     qfq["ma60"] = g["close"].apply(lambda x: _ma(x, 60))
     qfq["ma20_slope"] = g["ma20"].apply(lambda x: x.diff(5))
+    qfq["ma5"] = g["close"].apply(lambda x: _ma(x, 5))
 
     # 突破：用昨日的N日最高，避免未来函数
     qfq["hh_n"] = g["high"].apply(lambda x: _rolling_max(x, breakout_n).shift(1))
@@ -61,6 +67,15 @@ def build_features_from_qfq(qfq: pd.DataFrame, breakout_n: int) -> pd.DataFrame:
         (qfq["ma20_slope"] > 0)
     ).astype(int)
 
+    # 多头排列：MA5 > MA10 > MA20
+    qfq["bull_align"] = (
+        (qfq["ma5"] > qfq["ma10"]) &
+        (qfq["ma10"] > qfq["ma20"])
+    ).astype(int)
+
+    # 乖离率（相对MA20）
+    qfq["bias_ma20"] = qfq["close"] / qfq["ma20"] - 1.0
+
     # 近20日收益（用于RS）
     qfq["ret20"] = g["close"].apply(lambda x: x.pct_change(20))
 
@@ -76,6 +91,9 @@ def attach_liquidity_from_raw(raw: pd.DataFrame) -> pd.DataFrame:
     g = raw.groupby("symbol", group_keys=False)
 
     raw["avg_amount20"] = g["amount"].apply(lambda x: x.rolling(20).mean())
+    raw["amount_sum20"] = g["amount"].apply(lambda x: x.rolling(20).sum())
+    raw["volume_sum20"] = g["volume"].apply(lambda x: x.rolling(20).sum())
+    raw["avg_price20"] = raw["amount_sum20"] / raw["volume_sum20"].replace(0, np.nan)
 
     # 停牌近似：volume<=0
     raw["is_suspended"] = (raw["volume"] <= 0).astype(int)
@@ -92,7 +110,10 @@ def attach_liquidity_from_raw(raw: pd.DataFrame) -> pd.DataFrame:
         ((raw["close"] / raw["open"] - 1.0) >= limit_threshold)
     ).astype(int)
 
-    return raw[["symbol", "trade_date", "avg_amount20", "suspended_recent_flag", "limit_up_lock_flag"]]
+    return raw[[
+        "symbol", "trade_date", "avg_amount20", "avg_price20", "close",
+        "suspended_recent_flag", "limit_up_lock_flag",
+    ]].rename(columns={"close": "raw_close"})
 
 
 def score_asof_date(
@@ -115,9 +136,13 @@ def score_asof_date(
 
     # 缺失处理
     d["avg_amount20"] = d["avg_amount20"].fillna(0.0)
+    d["avg_price20"] = d["avg_price20"].fillna(0.0)
+    d["raw_close"] = d["raw_close"].fillna(0.0)
     d["suspended_recent_flag"] = d["suspended_recent_flag"].fillna(1)  # 缺就当有风险
     d["limit_up_lock_flag"] = d["limit_up_lock_flag"].fillna(0)
     d["name"] = d["name"].fillna("")
+    if "negative_news_flag" not in d.columns:
+        d["negative_news_flag"] = 0
 
     # ---- RS：相对全池中位数（不依赖指数） ----
     # rs = ret20 - median(ret20)
@@ -127,6 +152,7 @@ def score_asof_date(
     # ---- 各分项 0~100（横截面分位数）----
     # 趋势：trend_ok 是0/1，用它做硬门槛 + 也可转分位（这里直接当0或100）
     d["s_trend"] = d["trend_ok"] * 100.0
+    d["s_bull_align"] = d["bull_align"] * 100.0
 
     # 突破：综合 breakout 与 breakout_dist（先做一个breakout_quality再分位）
     # breakout_dist太小是假突破，太大是追高；先线性裁剪到0~1
@@ -137,6 +163,11 @@ def score_asof_date(
     # 量能：vol_ratio（1~2.5更好）
     vr01 = d["vol_ratio"].apply(lambda x: _score_01_from_range(x, 1.0, 2.5))
     d["s_volume"] = _pct_rank_100(vr01.fillna(0.0))
+    mild_center = CONFIG["vol_mild_center"]
+    mild_half_range = CONFIG["vol_mild_half_range"]
+    d["s_vol_mild"] = d["vol_ratio"].apply(
+        lambda x: _score_01_centered(x, mild_center, mild_half_range) * 100.0
+    )
 
     # RS：rs20 分位数
     d["s_rs"] = _pct_rank_100(d["rs20"].fillna(d["rs20"].median()))
@@ -144,19 +175,34 @@ def score_asof_date(
     # 收敛：contraction 越小越好 → 反向分位
     d["s_contraction"] = 100.0 - _pct_rank_100(d["contraction"].replace([np.inf, -np.inf], np.nan).fillna(d["contraction"].median()))
 
+    # 乖离率：绝对乖离率越小越好
+    bias_max = CONFIG["bias_abs_max"]
+    d["bias_abs"] = d["bias_ma20"].abs()
+    d["s_bias"] = d["bias_abs"].apply(
+        lambda x: 0.0 if not np.isfinite(x) else (1.0 - _score_01_from_range(x, 0.0, bias_max)) * 100.0
+    )
+
     # 流动性：avg_amount20 分位数 + 下限硬过滤（下限可以让其分数大幅降低）
     d["s_liquidity"] = _pct_rank_100(d["avg_amount20"].fillna(0.0))
     min_amt = CONFIG["min_avg_amount20"]
     d.loc[d["avg_amount20"] < min_amt, "s_liquidity"] *= 0.3  # 低流动性强制压分（可改为直接过滤）
 
+    # 筹码健康：现价 > 近20日成交额加权均价（近似成本线）
+    d["chip_healthy"] = ((d["raw_close"] > d["avg_price20"]) & (d["avg_price20"] > 0)).astype(int)
+    d["s_chip"] = d["chip_healthy"] * 100.0
+
     # ---- 合成总分 ----
     w = CONFIG["weights"]
     d["base_score"] = (
         w["trend"] * d["s_trend"] +
+        w["bull_align"] * d["s_bull_align"] +
         w["breakout"] * d["s_breakout"] +
         w["volume"] * d["s_volume"] +
+        w["vol_mild"] * d["s_vol_mild"] +
         w["rs"] * d["s_rs"] +
         w["contraction"] * d["s_contraction"] +
+        w["bias"] * d["s_bias"] +
+        w["chip"] * d["s_chip"] +
         w["liquidity"] * d["s_liquidity"]
     )
 
@@ -166,6 +212,7 @@ def score_asof_date(
     d.loc[d["suspended_recent_flag"] == 1, "penalty"] += p["suspended"]
     d.loc[d["limit_up_lock_flag"] == 1, "penalty"] += p["limit_up_lock"]
     d.loc[d["name"].str.contains("ST", na=False), "penalty"] += p["st_name"]
+    d.loc[d["negative_news_flag"] == 1, "penalty"] += p["negative_news"]
 
     d["score"] = (d["base_score"] - d["penalty"]).clip(0, 100)
 
@@ -177,7 +224,9 @@ def score_asof_date(
         "symbol", "name", "trade_date",
         "score", "base_score", "penalty", "trigger_today",
         "is_breakout", "breakout_dist", "vol_ratio", "rs20", "contraction", "avg_amount20",
-        "s_trend", "s_breakout", "s_volume", "s_rs", "s_contraction", "s_liquidity",
+        "bull_align", "bias_ma20", "chip_healthy",
+        "s_trend", "s_bull_align", "s_breakout", "s_volume", "s_vol_mild", "s_rs",
+        "s_contraction", "s_bias", "s_chip", "s_liquidity",
     ]
     out = d[out_cols].sort_values("score", ascending=False).reset_index(drop=True)
     return out
