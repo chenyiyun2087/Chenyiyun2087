@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 
 
 COLUMN_MAP = {
@@ -75,6 +75,16 @@ def parse_args() -> argparse.Namespace:
         default=20000,
         type=int,
         help="每批导入行数",
+    )
+    parser.add_argument(
+        "--adj-type",
+        choices=["raw", "qfq", "hfq"],
+        help="强制指定复权类型（覆盖文件名识别）",
+    )
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="仅导入数据库中不存在的最新交易日期之后的数据",
     )
     return parser.parse_args()
 
@@ -231,16 +241,66 @@ def normalize_chunk(df: pd.DataFrame, adj_type: str) -> pd.DataFrame:
     ]
 
 
+def fetch_latest_trade_dates(engine, table: str, symbols: list[str], adj_type: str) -> dict:
+    if not symbols:
+        return {}
+    query = text(
+        f"""
+        SELECT symbol, MAX(trade_date) AS max_date
+        FROM `{table}`
+        WHERE adj_type = :adj_type AND symbol IN :symbols
+        GROUP BY symbol
+        """
+    ).bindparams(bindparam("symbols", expanding=True))
+    with engine.begin() as conn:
+        result = conn.execute(
+            query,
+            {"adj_type": adj_type, "symbols": symbols},
+        )
+        latest_dates = {}
+        for row in result:
+            latest_dates[row.symbol] = (
+                pd.to_datetime(row.max_date) if row.max_date else pd.NaT
+            )
+        return latest_dates
+
+
+def filter_incremental_rows(
+    df: pd.DataFrame,
+    latest_dates: dict,
+) -> pd.DataFrame:
+    if not latest_dates:
+        return df
+    latest_series = df["symbol"].map(latest_dates)
+    mask = latest_series.isna() | (df["trade_date"] > latest_series)
+    return df.loc[mask]
+
+
 def import_file(
     engine,
     file_path: Path,
     table: str,
     chunksize: int,
+    adj_type_override: str | None = None,
+    incremental: bool = False,
 ) -> int:
-    adj_type = get_adj_type(file_path)
+    adj_type = adj_type_override or get_adj_type(file_path)
     total_rows = 0
+    latest_dates = None
     for chunk in read_csv_with_fallback(file_path, chunksize):
         normalized = normalize_chunk(chunk, adj_type)
+        if incremental:
+            if latest_dates is None:
+                symbols = sorted(normalized["symbol"].unique().tolist())
+                latest_dates = fetch_latest_trade_dates(
+                    engine,
+                    table,
+                    symbols,
+                    adj_type,
+                )
+            normalized = filter_incremental_rows(normalized, latest_dates or {})
+            if normalized.empty:
+                continue
         normalized.to_sql(
             table,
             engine,
@@ -259,12 +319,26 @@ def import_daily_csv(
     table: str,
     chunksize: int,
     adj_type: str = "raw",
+    incremental: bool = False,
 ) -> int:
     if not file_path.exists():
         raise FileNotFoundError(f"CSV文件不存在: {file_path}")
     total_rows = 0
+    latest_dates = None
     for chunk in read_csv_with_fallback(file_path, chunksize):
         normalized = normalize_chunk(chunk, adj_type)
+        if incremental:
+            if latest_dates is None:
+                symbols = sorted(normalized["symbol"].unique().tolist())
+                latest_dates = fetch_latest_trade_dates(
+                    engine,
+                    table,
+                    symbols,
+                    adj_type,
+                )
+            normalized = filter_incremental_rows(normalized, latest_dates or {})
+            if normalized.empty:
+                continue
         normalized.to_sql(
             table,
             engine,
@@ -303,19 +377,34 @@ def main() -> None:
 
     if args.file:
         file_path = Path(args.file)
-        rows = import_daily_csv(engine, file_path, args.table, args.chunksize)
+        rows = import_daily_csv(
+            engine,
+            file_path,
+            args.table,
+            args.chunksize,
+            adj_type=args.adj_type or "raw",
+            incremental=args.incremental,
+        )
         print(f"导入 {file_path.name}: {rows} 行")
         print("完成导入: 1 个文件")
         return
 
-    csv_files = sorted(data_dir.glob("*_daily*.csv"))
+    csv_pattern = "*.csv" if args.adj_type else "*_daily*.csv"
+    csv_files = sorted(data_dir.glob(csv_pattern))
     if not csv_files:
         raise SystemExit(f"未找到CSV文件: {data_dir}")
 
     total_files = 0
     total_rows = 0
     for file_path in csv_files:
-        rows = import_file(engine, file_path, args.table, args.chunksize)
+        rows = import_file(
+            engine,
+            file_path,
+            args.table,
+            args.chunksize,
+            adj_type_override=args.adj_type,
+            incremental=args.incremental,
+        )
         total_files += 1
         total_rows += rows
         print(f"导入 {file_path.name}: {rows} 行")
