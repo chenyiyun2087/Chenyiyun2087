@@ -11,15 +11,22 @@ CONFIG = {
 
     # 资金200万：用成交额门槛过滤小票（单位取决于你库中amount单位）
     "min_avg_amount20": 50_000_000,           # 近20日平均成交额下限（示例：5000万）
+    "bias_abs_max": 0.05,                     # 乖离率绝对值上限（5%）
+    "vol_mild_center": 1.5,                   # 温和放量中心（量比）
+    "vol_mild_half_range": 0.8,               # 温和放量半区间（量比）
 
     # 分项权重（总和=1最好）
     "weights": {
-        "trend": 0.18,
-        "breakout": 0.28,
-        "volume": 0.16,
-        "rs": 0.14,
-        "contraction": 0.12,
-        "liquidity": 0.12,
+        "trend": 0.12,
+        "bull_align": 0.08,
+        "breakout": 0.22,
+        "volume": 0.12,
+        "vol_mild": 0.04,
+        "rs": 0.12,
+        "contraction": 0.10,
+        "bias": 0.07,
+        "chip": 0.03,
+        "liquidity": 0.10,
     },
 
     # 风险扣分（可按你风格调整）
@@ -27,5 +34,6 @@ CONFIG = {
         "suspended": 40,       # 近20天出现 volume<=0
         "limit_up_lock": 20,   # 当日涨停且收在最高（次日常难买）
         "st_name": 25,         # 名称含ST（如果你有name字段；没有就先不扣）
+        "negative_news": 15,   # 重大利空（需要外部舆情标记）
     },
 }
