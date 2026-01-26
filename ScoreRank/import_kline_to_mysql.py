@@ -31,6 +31,10 @@ def parse_args() -> argparse.Namespace:
         help="CSV文件所在目录（默认：ScoreRank/dailyKLine目录）",
     )
     parser.add_argument(
+        "--file",
+        help="指定单个CSV文件路径（例如 daily-2026-01-26.csv），优先于data-dir批量导入",
+    )
+    parser.add_argument(
         "--db-host",
         default="localhost",
         help="MySQL host",
@@ -249,6 +253,30 @@ def import_file(
     return total_rows
 
 
+def import_daily_csv(
+    engine,
+    file_path: Path,
+    table: str,
+    chunksize: int,
+    adj_type: str = "raw",
+) -> int:
+    if not file_path.exists():
+        raise FileNotFoundError(f"CSV文件不存在: {file_path}")
+    total_rows = 0
+    for chunk in read_csv_with_fallback(file_path, chunksize):
+        normalized = normalize_chunk(chunk, adj_type)
+        normalized.to_sql(
+            table,
+            engine,
+            if_exists="append",
+            index=False,
+            chunksize=chunksize,
+            method="multi",
+        )
+        total_rows += len(normalized)
+    return total_rows
+
+
 def main() -> None:
     args = parse_args()
     data_dir = Path(args.data_dir)
@@ -272,6 +300,13 @@ def main() -> None:
         args.db_name,
         args.auth_plugin,
     )
+
+    if args.file:
+        file_path = Path(args.file)
+        rows = import_daily_csv(engine, file_path, args.table, args.chunksize)
+        print(f"导入 {file_path.name}: {rows} 行")
+        print("完成导入: 1 个文件")
+        return
 
     csv_files = sorted(data_dir.glob("*_daily*.csv"))
     if not csv_files:
