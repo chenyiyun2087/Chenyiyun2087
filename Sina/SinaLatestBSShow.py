@@ -1,4 +1,6 @@
 import argparse
+import os
+from datetime import datetime
 
 import pymysql
 
@@ -44,11 +46,23 @@ def fetch_latest_buy_signals(mysql_config):
             return cursor.fetchall()
 
 
+def write_stock_codes(rows, output_dir="result"):
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    output_path = os.path.join(output_dir, f"{timestamp}.txt")
+    with open(output_path, "w", encoding="utf-8") as file_handle:
+        for row in rows:
+            file_handle.write(f"{row['stock_code']}\n")
+    return output_path
+
+
 def print_latest_buy_signals(mysql_config):
     rows = fetch_latest_buy_signals(mysql_config)
+    output_path = write_stock_codes(rows)
     print("\n=== 最近一次出现买点的股票 ===")
     if not rows:
         print("暂无符合条件的股票")
+        print(f"股票代码已输出到: {output_path}")
         return
 
     for row in rows:
@@ -56,6 +70,7 @@ def print_latest_buy_signals(mysql_config):
         buy_points = row.get("buy_points_count") or 0
         description = row.get("buy_signal_description") or ""
         print(f"{row['stock_code']} - {batch_date} (买点数量: {buy_points}) {description}".strip())
+    print(f"股票代码已输出到: {output_path}")
 
 
 def parse_args():
