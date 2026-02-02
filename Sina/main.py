@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import time
 import zipfile
 from datetime import datetime, timedelta
 
@@ -119,6 +120,7 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
             return 1
         logger.info("跳过截图阶段，使用已存在目录: %s", save_dir)
     else:
+        capture_start = time.perf_counter()
         save_dir = capture_main(
             excel_file,
             config_name,
@@ -126,12 +128,14 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
             screenshot_workers,
             stock_codes=stock_codes,
         )
+        logger.info("截图阶段耗时: %.2f 秒", time.perf_counter() - capture_start)
         if not save_dir:
             logger.error("截图阶段失败，未生成目录")
             return 1
 
     logger.info("开始检测日期文件夹: %s/%s", config_name, date_str)
 
+    detect_start = time.perf_counter()
     batch_process_images(
         date_folder=os.path.join(config_name, date_str),
         base_dir=base_dir,
@@ -139,9 +143,12 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
         mysql_config=mysql_config,
         stock_codes=stock_codes,
     )
+    logger.info("检测阶段耗时: %.2f 秒", time.perf_counter() - detect_start)
 
     if archive_days > 0:
+        archive_start = time.perf_counter()
         archive_old_folders(base_dir, days=archive_days)
+        logger.info("归档阶段耗时: %.2f 秒", time.perf_counter() - archive_start)
 
     return 0
 
