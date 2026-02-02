@@ -20,6 +20,8 @@ if _tesseract_cmd:
 # 全局配置
 THREAD_LOCK = threading.Lock()
 DETECTION_RESULTS = []  # 存储所有检测结果
+MORPH_KERNEL_2 = np.ones((2, 2), np.uint8)
+MORPH_KERNEL_3 = np.ones((3, 3), np.uint8)
 COORDINATE_THRESHOLD = 1810  # 横坐标阈值
 MYSQL_CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS bs_detection_results (
@@ -180,24 +182,12 @@ def preprocess_for_ocr(roi):
     # 3. 应用高斯模糊减少噪声
     blurred = cv2.GaussianBlur(gray_roi, (3, 3), 0)
 
-    # 4. 多种二值化方法尝试
-    # 方法1: Otsu's 阈值
-    _, binary1 = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # 方法2: 自适应阈值
-    binary2 = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                    cv2.THRESH_BINARY_INV, 11, 2)
-
-    # 方法3: 固定阈值
-    _, binary3 = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY_INV)
-
-    # 选择最佳的二值化结果（这里使用Otsu方法）
-    binary_roi = binary1
+    # 4. 使用 Otsu 阈值进行二值化
+    _, binary_roi = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     # 5. 形态学操作清理图像
-    kernel = np.ones((2, 2), np.uint8)
-    binary_roi = cv2.morphologyEx(binary_roi, cv2.MORPH_CLOSE, kernel, iterations=1)
-    binary_roi = cv2.morphologyEx(binary_roi, cv2.MORPH_OPEN, kernel, iterations=1)
+    binary_roi = cv2.morphologyEx(binary_roi, cv2.MORPH_CLOSE, MORPH_KERNEL_2, iterations=1)
+    binary_roi = cv2.morphologyEx(binary_roi, cv2.MORPH_OPEN, MORPH_KERNEL_2, iterations=1)
 
     return binary_roi
 
@@ -210,6 +200,7 @@ def detect_markers(
     config,
     extra_ocr_configs=None,
     enable_lenient_match=False,
+    hsv_image=None,
 ):
     """
     在图像中检测特定颜色和字符的标记。
@@ -220,7 +211,8 @@ def detect_markers(
     :return: 一个包含检测到的标记边界框 (x, y, w, h) 的列表
     """
     # 转换为HSV色彩空间
-    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    if hsv_image is None:
+        hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
     # 根据提供的颜色范围创建组合掩码
     combined_mask = None
@@ -235,8 +227,7 @@ def detect_markers(
         return [], []
 
     # 形态学开运算去噪
-    kernel = np.ones((3, 3), np.uint8)
-    cleaned_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    cleaned_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, MORPH_KERNEL_3, iterations=1)
 
     # 寻找轮廓
     contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -381,12 +372,15 @@ def process_single_image(image_path, debug_mode=False):
         # Pytesseract配置
         ocr_config = r'--oem 3 --psm 10 -c tessedit_char_whitelist=BS'
 
+        hsv_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2HSV)
+
         # 执行检测
         b_points, b_scan_areas = detect_markers(
             original_image,
             [(lower_red1, upper_red1), (lower_red2, upper_red2)],
             'B',
             ocr_config,
+            hsv_image=hsv_image,
         )
 
         s_points, s_scan_areas = detect_markers(
@@ -394,6 +388,7 @@ def process_single_image(image_path, debug_mode=False):
             [(lower_blue, upper_blue)],
             'S',
             ocr_config,
+            hsv_image=hsv_image,
         )
 
         # 分析结果
@@ -632,6 +627,8 @@ def process_single_chart(image_path):
     ocr_config = r'--oem 3 --psm 10 -c tessedit_char_whitelist=BS'
     debug_mode = True
 
+    hsv_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2HSV)
+
     # 执行检测
     print("正在检测 'B' 点 (红色)...")
     b_points, b_scan_areas = detect_markers(
@@ -645,6 +642,7 @@ def process_single_chart(image_path):
             r'--oem 3 --psm 13 -c tessedit_char_whitelist=BS',
         ],
         enable_lenient_match=True,
+        hsv_image=hsv_image,
     )
 
     print("正在检测 'S' 点 (蓝色)...")
@@ -659,6 +657,7 @@ def process_single_chart(image_path):
             r'--oem 3 --psm 13 -c tessedit_char_whitelist=BS',
         ],
         enable_lenient_match=True,
+        hsv_image=hsv_image,
     )
 
     # 提取股票代码
