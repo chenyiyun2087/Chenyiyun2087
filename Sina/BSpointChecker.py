@@ -1,6 +1,7 @@
 import concurrent.futures
 import logging
 import os
+import threading
 import time
 from datetime import datetime
 
@@ -9,6 +10,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
@@ -23,6 +25,22 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+_CHROMEDRIVER_LOCK = threading.Lock()
+_CHROMEDRIVER_PATH = None
+
+
+def get_chromedriver_path():
+    global _CHROMEDRIVER_PATH
+    if _CHROMEDRIVER_PATH:
+        return _CHROMEDRIVER_PATH
+    with _CHROMEDRIVER_LOCK:
+        if _CHROMEDRIVER_PATH:
+            return _CHROMEDRIVER_PATH
+        start_time = time.perf_counter()
+        _CHROMEDRIVER_PATH = ChromeDriverManager().install()
+        logger.info("ChromeDriver准备完成: %s (耗时 %.2f 秒)", _CHROMEDRIVER_PATH, time.perf_counter() - start_time)
+        return _CHROMEDRIVER_PATH
 
 
 def get_base_dir():
@@ -115,11 +133,15 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
     chrome_options.add_argument("--disable-notifications")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.page_load_strategy = "eager"
 
     driver = None
     try:
+        capture_start = time.perf_counter()
         # 初始化WebDriver
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+        driver = webdriver.Chrome(service=Service(get_chromedriver_path()), options=chrome_options)
+        driver.set_page_load_timeout(20)
+        driver.set_script_timeout(20)
 
         # 访问新浪财经股票行情页面
         # 判断股票代码是沪市还是深市
@@ -129,11 +151,26 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
             prefix = 'sz'  # 深市
 
         url = f"https://finance.sina.com.cn/realstock/company/{prefix}{stock_code}/nc.shtml"
-        driver.get(url)
-        logger.info(f"访问股票 {stock_code} 行情页面")
+        try:
+            driver.get(url)
+        except TimeoutException:
+            logger.warning("股票 %s: 页面加载超时，尝试停止加载并继续", stock_code)
+            try:
+                driver.execute_script("window.stop();")
+            except Exception:
+                logger.debug("股票 %s: 停止页面加载失败", stock_code)
+        logger.info("访问股票 %s 行情页面", stock_code)
 
         # 等待页面加载完成
-        time.sleep(3)
+        try:
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+        except TimeoutException:
+            logger.warning("股票 %s: 页面未完全加载，尝试继续", stock_code)
+
+        if time.perf_counter() - capture_start > 60:
+            return (stock_code, False, "截图耗时超过60秒，提前结束")
 
         # 关闭可能出现的弹窗
         try:
@@ -157,6 +194,9 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
         except Exception as e:
             logger.error(f"股票 {stock_code}: 切换到B/S点标签页时出现异常: {e}")
             return (stock_code, False, f"切换到B/S点标签页失败: {e}")
+
+        if time.perf_counter() - capture_start > 60:
+            return (stock_code, False, "截图耗时超过60秒，提前结束")
 
         # 点击全屏查看按钮
         try:
@@ -187,6 +227,9 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
         except Exception as e:
             logger.warning(f"股票 {stock_code}: 点击全屏查看按钮时出现异常: {e}")
             # 继续执行，即使全屏按钮点击失败也尝试截图
+
+        if time.perf_counter() - capture_start > 60:
+            return (stock_code, False, "截图耗时超过60秒，提前结束")
 
         # 截取全屏图片
         driver.save_screenshot(screenshot_path)
