@@ -64,13 +64,14 @@ def run_batch(config_data: dict, overrides: dict | None = None) -> list[DuokongS
     if not os.path.isabs(excel_file):
         excel_file = os.path.abspath(os.path.join(CONFIG_DIR, excel_file))
     stock_codes = overrides.get("stock_codes")
+    use_selenium = overrides.get("use_selenium", config_data.get("use_selenium", True))
     if not stock_codes:
         stock_codes = read_stock_codes(excel_file)
 
     snapshots: list[DuokongSnapshot] = []
     for code in stock_codes:
         try:
-            snapshot = fetch_duokong_snapshot(code)
+            snapshot = fetch_duokong_snapshot(code, use_selenium=use_selenium)
         except Exception as exc:
             logger.warning("扫描失败 %s: %s", code, exc)
             continue

@@ -2,6 +2,7 @@
 
 ## 功能
 - 扫描东方财富股吧多空看盘比例（看涨/看跌）。
+- 使用 Selenium 获取页面（`long_short_scanner_selenium.py`），避免被静态请求拦截。
 - 可选解析股票最新价与涨跌幅（页面结构变化时可能为空）。
 - 将结果批量写入 MySQL。
 
@@ -11,6 +12,7 @@
 ```json
 {
   "excel_file": "stock_codes.xlsx",
+  "use_selenium": true,
   "mysql": {
     "host": "localhost",
     "port": 3306,
@@ -22,6 +24,7 @@
 ```
 
 Excel 文件需包含 `stock_code` 列（与 `Sina/config` 方式一致）。
+若环境缺少 Selenium/Chrome 驱动，可将 `use_selenium` 设为 `false`，改为普通 HTTP 抓取（可能会被拦截）。
 
 ## DDL
 表结构见 `easymoney/ddl.sql`。程序会自动建库建表。

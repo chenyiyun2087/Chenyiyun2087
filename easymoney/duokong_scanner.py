@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import datetime as dt
 import re
+import importlib.util
 import urllib.error
 import urllib.request
 
@@ -74,20 +75,18 @@ def _parse_first_float(patterns: list[re.Pattern[str]], html: str) -> float | No
     return None
 
 
-def fetch_duokong_snapshot(code: str, html: str | None = None) -> DuokongSnapshot:
-    """Fetch and parse the multi/short sentiment widget for a stock code."""
+def parse_duokong_snapshot_from_html(code: str, html: str, url: str) -> DuokongSnapshot:
+    """Parse the multi/short sentiment widget for a stock code."""
 
-    url = _build_url(code)
-    page_html = html if html is not None else _fetch_html(url)
-    match = _MULTI_SHORT_RE.search(page_html)
+    match = _MULTI_SHORT_RE.search(html)
     if not match:
         raise ValueError("未找到多空看盘数据，请检查页面结构是否变化。")
     bulls_percent = float(match.group(1))
     bears_percent = float(match.group(2))
-    bulls_votes = _parse_votes(_BULLS_VOTES_RE, page_html)
-    bears_votes = _parse_votes(_BEARS_VOTES_RE, page_html)
-    price = _parse_first_float(_PRICE_PATTERNS, page_html)
-    change_percent = _parse_first_float(_CHANGE_PATTERNS, page_html)
+    bulls_votes = _parse_votes(_BULLS_VOTES_RE, html)
+    bears_votes = _parse_votes(_BEARS_VOTES_RE, html)
+    price = _parse_first_float(_PRICE_PATTERNS, html)
+    change_percent = _parse_first_float(_CHANGE_PATTERNS, html)
     return DuokongSnapshot(
         code=code,
         bulls_percent=bulls_percent,
@@ -99,6 +98,32 @@ def fetch_duokong_snapshot(code: str, html: str | None = None) -> DuokongSnapsho
         snapshot_time=dt.datetime.now(),
         source_url=url,
     )
+
+
+def _selenium_available() -> bool:
+    return importlib.util.find_spec("selenium") is not None
+
+
+def fetch_duokong_snapshot(
+    code: str,
+    html: str | None = None,
+    use_selenium: bool = True,
+) -> DuokongSnapshot:
+    """Fetch and parse the multi/short sentiment widget for a stock code."""
+
+    url = _build_url(code)
+    if html is not None:
+        return parse_duokong_snapshot_from_html(code, html, url)
+
+    page_html: str
+    if use_selenium and _selenium_available():
+        from .long_short_scanner_selenium import fetch_html_with_selenium
+
+        page_html = fetch_html_with_selenium(url)
+    else:
+        page_html = _fetch_html(url)
+
+    return parse_duokong_snapshot_from_html(code, page_html, url)
 
 
 def main() -> None:
