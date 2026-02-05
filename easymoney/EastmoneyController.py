@@ -18,60 +18,56 @@ DEFAULT_MYSQL_CONFIG = {
 }
 
 FUND_FLOW_SQL = """
-INSERT INTO em_individual_fund_flow (
-    stock_code,
-    trade_date,
-    close_price,
-    pct_change,
-    main_net_amount,
-    main_net_ratio,
-    super_net_amount,
-    super_net_ratio,
-    big_net_amount,
-    big_net_ratio,
-    mid_net_amount,
-    mid_net_ratio,
-    small_net_amount,
-    small_net_ratio,
-    raw_json,
-    created_at,
-    updated_at
-) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
-)
-ON DUPLICATE KEY UPDATE
-    close_price = VALUES(close_price),
-    pct_change = VALUES(pct_change),
-    main_net_amount = VALUES(main_net_amount),
-    main_net_ratio = VALUES(main_net_ratio),
-    super_net_amount = VALUES(super_net_amount),
-    super_net_ratio = VALUES(super_net_ratio),
-    big_net_amount = VALUES(big_net_amount),
-    big_net_ratio = VALUES(big_net_ratio),
-    mid_net_amount = VALUES(mid_net_amount),
-    mid_net_ratio = VALUES(mid_net_ratio),
-    small_net_amount = VALUES(small_net_amount),
-    small_net_ratio = VALUES(small_net_ratio),
-    raw_json = VALUES(raw_json),
-    updated_at = CURRENT_TIMESTAMP
-"""
+                INSERT INTO em_individual_fund_flow (stock_code, \
+                                                     trade_date, \
+                                                     close_price, \
+                                                     pct_change, \
+                                                     main_net_amount, \
+                                                     main_net_ratio, \
+                                                     super_net_amount, \
+                                                     super_net_ratio, \
+                                                     big_net_amount, \
+                                                     big_net_ratio, \
+                                                     mid_net_amount, \
+                                                     mid_net_ratio, \
+                                                     small_net_amount, \
+                                                     small_net_ratio, \
+                                                     raw_json, \
+                                                     created_at, \
+                                                     updated_at) \
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                ON DUPLICATE KEY UPDATE close_price      = VALUES(close_price), \
+                                        pct_change       = VALUES(pct_change), \
+                                        main_net_amount  = VALUES(main_net_amount), \
+                                        main_net_ratio   = VALUES(main_net_ratio), \
+                                        super_net_amount = VALUES(super_net_amount), \
+                                        super_net_ratio  = VALUES(super_net_ratio), \
+                                        big_net_amount   = VALUES(big_net_amount), \
+                                        big_net_ratio    = VALUES(big_net_ratio), \
+                                        mid_net_amount   = VALUES(mid_net_amount), \
+                                        mid_net_ratio    = VALUES(mid_net_ratio), \
+                                        small_net_amount = VALUES(small_net_amount), \
+                                        small_net_ratio  = VALUES(small_net_ratio), \
+                                        raw_json         = VALUES(raw_json), \
+                                        updated_at       = CURRENT_TIMESTAMP \
+                """
 
+# 修正：按照实际数据列的顺序定义字段映射
 COLUMN_ALIASES = {
     "trade_date": ["日期"],
     "close_price": ["收盘价"],
     "change_pct": ["涨跌幅"],
-    "main_net_amount": ["主力净流入_净额", "主力净流入净额"],
-    "main_net_pct": ["主力净流入_占比", "主力净流入净占比"],
-    "super_large_net_amount": ["超大单净流入_净额", "超大单净流入净额"],
-    "super_large_net_pct": ["超大单净流入_占比", "超大单净流入净占比"],
-    "large_net_amount": ["大单净流入_净额", "大单净流入净额"],
-    "large_net_pct": ["大单净流入_占比", "大单净流入净占比"],
-    "medium_net_amount": ["中单净流入_净额", "中单净流入净额"],
-    "medium_net_pct": ["中单净流入_占比", "中单净流入净占比"],
-    "small_net_amount": ["小单净流入_净额", "小单净流入净额"],
-    "small_net_pct": ["小单净流入_占比", "小单净流入净占比"],
+    "main_net_amount": ["主力净流入净额", "主力净流入_净额"],
+    "main_net_pct": ["主力净流入净占比", "主力净流入_净占比"],
+    "super_large_net_amount": ["超大单净流入净额", "超大单净流入_净额"],
+    "super_large_net_pct": ["超大单净流入净占比", "超大单净流入_净占比"],
+    "large_net_amount": ["大单净流入净额", "大单净流入_净额"],
+    "large_net_pct": ["大单净流入净占比", "大单净流入_净占比"],
+    "medium_net_amount": ["中单净流入净额", "中单净流入_净额"],
+    "medium_net_pct": ["中单净流入净占比", "中单净流入_净占比"],
+    "small_net_amount": ["小单净流入净额", "小单净流入_净额"],
+    "small_net_pct": ["小单净流入净占比", "小单净流入_净占比"],
 }
-
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +82,7 @@ class EastmoneyController:
         url = f"https://data.eastmoney.com/zjlx/{stock_code}.html"
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
@@ -126,7 +122,7 @@ class EastmoneyController:
         return inserted
 
     def run_daily_after_close(self, close_hour: int = 15, close_minute: int = 30) -> None:
-        logger.info("进入每日收盘后调度模式，目标时间 %02d:%02d", close_hour, close_minute)
+        logger.info("进入每日收盘后调度模式,目标时间 %02d:%02d", close_hour, close_minute)
         while True:
             now = datetime.now()
             target_time = datetime.combine(
@@ -142,11 +138,11 @@ class EastmoneyController:
 
             target_date = target_time.date() - timedelta(days=1)
             if target_date.weekday() >= 5:
-                logger.info("非交易日 %s，跳过执行", target_date)
+                logger.info("非交易日 %s,跳过执行", target_date)
                 continue
 
             inserted = self.sync_existing_stocks()
-            logger.info("本次补充完成，新增 %d 条资金流向记录", inserted)
+            logger.info("本次补充完成,新增 %d 条资金流向记录", inserted)
 
     def _get_existing_stock_codes(self) -> List[str]:
         sql = "SELECT DISTINCT stock_code FROM em_individual_fund_flow"
@@ -212,27 +208,27 @@ class EastmoneyController:
                 dataframe = dataframe.copy()
                 dataframe.columns = required_columns
             else:
-                raise ValueError(f"缺少字段 {missing}，请检查东方财富表结构变更")
+                raise ValueError(f"缺少字段 {missing},请检查东方财富表结构变更")
 
         dataframe["trade_date"] = dataframe["trade_date"].apply(self._parse_date)
         dataframe["close_price"] = dataframe["close_price"].apply(self._parse_number)
         dataframe["change_pct"] = dataframe["change_pct"].apply(self._normalize_percent)
 
         for column in (
-            "main_net_amount",
-            "super_large_net_amount",
-            "large_net_amount",
-            "medium_net_amount",
-            "small_net_amount",
+                "main_net_amount",
+                "super_large_net_amount",
+                "large_net_amount",
+                "medium_net_amount",
+                "small_net_amount",
         ):
             dataframe[column] = dataframe[column].apply(self._parse_number)
 
         for column in (
-            "main_net_pct",
-            "super_large_net_pct",
-            "large_net_pct",
-            "medium_net_pct",
-            "small_net_pct",
+                "main_net_pct",
+                "super_large_net_pct",
+                "large_net_pct",
+                "medium_net_pct",
+                "small_net_pct",
         ):
             dataframe[column] = dataframe[column].apply(self._parse_percent)
 
@@ -328,6 +324,23 @@ class EastmoneyController:
         return ratio
 
     def _fetch_fund_flow_from_api(self, stock_code: str) -> pd.DataFrame:
+        """从API获取资金流向数据
+
+        API返回的字段顺序(共13个字段):
+        0: 日期
+        1: 主力净流入净额
+        2: 主力净流入净占比
+        3: 超大单净流入净额
+        4: 超大单净流入净占比
+        5: 收盘价
+        6: 涨跌幅
+        7: 大单净流入净额
+        8: 大单净流入净占比
+        9: 中单净流入净额
+        10: 中单净流入净占比
+        11: 小单净流入净额
+        12: 小单净流入净占比
+        """
         market = "1" if stock_code.startswith("6") else "0"
         secid = f"{market}.{stock_code}"
         url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
@@ -348,20 +361,21 @@ class EastmoneyController:
             return pd.DataFrame()
 
         rows = [item.split(",") for item in klines]
+        # 修正API返回的字段顺序
         columns = [
-            "trade_date",
-            "close_price",
-            "change_pct",
-            "main_net_amount",
-            "main_net_pct",
-            "super_large_net_amount",
-            "super_large_net_pct",
-            "large_net_amount",
-            "large_net_pct",
-            "medium_net_amount",
-            "medium_net_pct",
-            "small_net_amount",
-            "small_net_pct",
+            "trade_date",  # 0: 日期
+            "main_net_amount",  # 1: 主力净流入净额
+            "main_net_pct",  # 2: 主力净流入净占比
+            "super_large_net_amount",  # 3: 超大单净流入净额
+            "super_large_net_pct",  # 4: 超大单净流入净占比
+            "close_price",  # 5: 收盘价
+            "change_pct",  # 6: 涨跌幅
+            "large_net_amount",  # 7: 大单净流入净额
+            "large_net_pct",  # 8: 大单净流入净占比
+            "medium_net_amount",  # 9: 中单净流入净额
+            "medium_net_pct",  # 10: 中单净流入净占比
+            "small_net_amount",  # 11: 小单净流入净额
+            "small_net_pct",  # 12: 小单净流入净占比
         ]
         dataframe = pd.DataFrame(rows, columns=columns)
         return dataframe
@@ -369,7 +383,7 @@ class EastmoneyController:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="东方财富资金流向抓取")
-    parser.add_argument("--stock", help="股票代码，例如 301251")
+    parser.add_argument("--stock", help="股票代码,例如 301251")
     parser.add_argument(
         "--mode",
         choices=["once", "schedule"],
@@ -390,7 +404,7 @@ def main() -> None:
         if not args.stock:
             raise ValueError("mode=once 需要提供 --stock")
         inserted = controller.sync_stock(args.stock)
-        logger.info("股票 %s 资金流向同步完成，新增 %d 条", args.stock, inserted)
+        logger.info("股票 %s 资金流向同步完成,新增 %d 条", args.stock, inserted)
         return
 
     controller.run_daily_after_close(close_hour=args.close_hour, close_minute=args.close_minute)
