@@ -1,3 +1,3 @@
-"""兼容层：请改用 eastmoney.EastmoneyController。"""
+"""兼容层：请改用 Eastmoney.EastmoneyController。"""
 
-from eastmoney.EastmoneyController import *  # noqa: F401,F403
+from Eastmoney.EastmoneyController import *  # noqa: F401,F403
