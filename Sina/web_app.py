@@ -104,7 +104,7 @@ def fetch_signals(days):
 
 @app.get("/")
 def index():
-    return render_template("signals.html")
+    return render_template("signals.Html")
 
 
 @app.get("/api/signals")

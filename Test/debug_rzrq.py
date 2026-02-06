@@ -59,5 +59,5 @@ if __name__ == "__main__":
     if not test_read_html(code):
         test_api(code)
     else:
-        # even if html works, API is often better for history. Let's test API too.
+        # even if Html works, API is often better for history. Let's test API too.
         test_api(code)
