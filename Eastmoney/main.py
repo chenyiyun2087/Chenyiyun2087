@@ -1,4 +1,4 @@
-"""东方财富多空扫描任务入口（配置方式参考 Sina/main.py）。"""
+"""Eastmoney 多空扫描入口 (Multi-Short Scanner CLI)。"""
 
 from __future__ import annotations
 
@@ -7,133 +7,186 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, date
 
-if __package__:
-    from .long_short_scanner_selenium import save_results_to_mysql, scan_stocks_batch
-else:
-    # 兼容脚本直接运行: python Eastmoney/main.py ...
-    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-    if CURRENT_DIR not in sys.path:
-        sys.path.insert(0, CURRENT_DIR)
-    from long_short_scanner_selenium import save_results_to_mysql, scan_stocks_batch
+# Add project root to sys.path to allow imports
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, os.pardir))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
-CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
+from Eastmoney.long_short_scanner_selenium import scan_stocks_batch, save_results_to_mysql
+
+logger = logging.getLogger("Eastmoney.main")
 
 
-def find_config_path(config_name: str) -> str:
-    if not os.path.splitext(config_name)[1]:
-        candidate = os.path.join(CONFIG_DIR, f"{config_name}.json")
-    else:
-        candidate = os.path.join(CONFIG_DIR, config_name)
-    if not os.path.exists(candidate):
-        raise FileNotFoundError(f"未找到配置文件: {candidate}")
-    return candidate
+def load_stock_codes(file_path: str) -> list[str]:
+    """从文件加载股票代码。"""
+    if not os.path.exists(file_path):
+        # 尝试相对于 config 目录查找
+        config_dir = os.path.join(CURRENT_DIR, "config")
+        alt_path = os.path.join(config_dir, os.path.basename(file_path))
+        if os.path.exists(alt_path):
+            file_path = alt_path
+        else:
+            raise FileNotFoundError(f"股票列表文件未找到: {file_path}")
 
-
-def load_config(config_name: str) -> tuple[str, dict]:
-    config_path = find_config_path(config_name)
-    with open(config_path, "r", encoding="utf-8") as file_handle:
-        data = json.load(file_handle)
-    resolved_name = os.path.splitext(os.path.basename(config_path))[0]
-    return resolved_name, data
-
-
-def _normalize_codes(raw_values) -> list[str]:
     codes = []
-    for value in raw_values:
-        if value is None:
-            continue
-        text = str(value).strip()
-        if not text or text.startswith("#"):
-            continue
-        digits = "".join(ch for ch in text if ch.isdigit())
-        if not digits:
-            continue
-        codes.append(digits[-6:].zfill(6))
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                # 兼容 "688158" 或 "688158.SH" 格式
+                code = line.split(".")[0]
+                codes.append(code)
     return codes
 
 
-def load_stock_codes(config: dict, overrides: list[str] | None = None) -> list[str]:
-    if overrides:
-        return _normalize_codes(overrides)
-
-    inline_codes = config.get("stock_codes")
-    if inline_codes:
-        return _normalize_codes(inline_codes)
-
-    code_file = config.get("stock_codes_file") or config.get("excel_file")
-    if not code_file:
-        raise ValueError("配置中必须提供 stock_codes 或 stock_codes_file/excel_file")
-
-    code_path = code_file if os.path.isabs(code_file) else os.path.abspath(os.path.join(CONFIG_DIR, code_file))
-    extension = os.path.splitext(code_path)[1].lower()
-
-    if extension in {".txt", ".csv"}:
-        with open(code_path, "r", encoding="utf-8") as file_handle:
-            lines = [line.strip() for line in file_handle]
-        if extension == ".csv":
-            values = []
-            for line in lines:
-                if not line:
-                    continue
-                values.extend([part.strip() for part in line.split(",")])
-            return _normalize_codes(values)
-        return _normalize_codes(lines)
-
-    import pandas as pd
-
-    data = pd.read_excel(code_path)
-    first_col = data.columns[0]
-    return _normalize_codes(data[first_col].dropna().tolist())
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="东方财富多空扫描")
-    parser.add_argument("config_name", help="配置文件名称（位于 Eastmoney/config）")
-    parser.add_argument("date", nargs="?", help="交易日期(YYYYMMDD)，兼容旧调用方式")
-    parser.add_argument("--date", dest="date_opt", help="交易日期(YYYYMMDD)，默认今天")
-    parser.add_argument("--stock", help="单只股票代码，例如 688158")
-    parser.add_argument("--stock-codes", nargs="*", help="覆盖配置中的多只股票列表")
-    parser.add_argument("--max-workers", type=int, default=None, help="并发数")
-    parser.add_argument("--debug", action="store_true", help="输出调试日志")
-    return parser.parse_args()
-
-
-def run_pipeline(config_data: dict, args: argparse.Namespace) -> int:
-    date_text = args.date_opt or args.date
-    trade_date = datetime.strptime(date_text, "%Y%m%d").date() if date_text else datetime.now().date()
-    override_codes = None
-    if args.stock:
-        override_codes = [args.stock]
-    elif args.stock_codes:
-        override_codes = args.stock_codes
-
-    stock_codes = load_stock_codes(config_data, override_codes)
-    max_workers = args.max_workers or config_data.get("max_workers", 4)
-
-    logger.info("开始批量扫描，股票数=%d, trade_date=%s", len(stock_codes), trade_date)
-    results = scan_stocks_batch(stock_codes, max_workers=max_workers, debug=args.debug)
-    success_count = sum(1 for r in results if r.snapshot)
-    fail_count = sum(1 for r in results if r.error)
-    logger.info("扫描完成：成功=%d, 失败=%d", success_count, fail_count)
-
-    mysql_config = config_data.get("mysql")
-    if mysql_config:
-        upserted = save_results_to_mysql(results, mysql_config=mysql_config, trade_date=trade_date)
-        logger.info("数据库写入完成，upsert=%d", upserted)
-    else:
-        logger.warning("未配置 mysql，跳过入库")
-
-    return 0 if success_count > 0 else 1
-
-
 def main() -> None:
-    args = parse_args()
-    _, config_data = load_config(args.config_name)
-    raise SystemExit(run_pipeline(config_data, args))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    parser = argparse.ArgumentParser(description="Eastmoney 多空看盘批量扫描")
+    parser.add_argument("config_file", help="配置文件路径 (例如 config_1.json)")
+    parser.add_argument(
+        "trade_date",
+        nargs="?",
+        default=datetime.now().strftime("%Y%m%d"),
+        help="交易日期 YYYYMMDD (默认今日)",
+    )
+    parser.add_argument("--stock", help="指定单只股票代码 (覆盖配置文件)")
+    parser.add_argument("--stock-codes", nargs="+", help="指定多只股票代码 (覆盖配置文件)")
+    parser.add_argument("--max-workers", type=int, default=4, help="并发数量")
+
+    args = parser.parse_args()
+
+    # 1. 解析日期
+    try:
+        trade_date = datetime.strptime(args.trade_date, "%Y%m%d").date()
+    except ValueError:
+        logger.error("日期格式错误 should be YYYYMMDD, got: %s", args.trade_date)
+        sys.exit(1)
+
+    # 2. 加载配置
+    config_path = args.config_file
+    if not os.path.exists(config_path):
+        # 尝试在 Eastmoney/config 下查找
+        alt_path = os.path.join(CURRENT_DIR, "config", config_path)
+        if os.path.exists(alt_path):
+            config_path = alt_path
+        else:
+            logger.error("配置文件未找到: %s", config_path)
+            sys.exit(1)
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    # 3. 确定股票列表
+    stock_codes = []
+    if args.stock:
+        stock_codes = [args.stock]
+    elif args.stock_codes:
+        stock_codes = args.stock_codes
+    else:
+        # 从配置文件读取股票列表文件
+        codes_file = config.get("stock_codes_file")
+        if not codes_file:
+            # 兼容旧配置字段
+            codes_file = config.get("excel_file")
+
+        if not codes_file:
+            logger.error("配置文件中未指定 stock_codes_file")
+            sys.exit(1)
+        
+        # 处理相对路径，配置文件中的路径通常是相对于 Eastmoney/config 的
+        # 或者我们假设它就在 config 目录下
+        if not os.path.isabs(codes_file):
+             # 尝试相对于 config_path 所在目录
+             codes_file = os.path.join(os.path.dirname(config_path), codes_file)
+        
+        try:
+            stock_codes = load_stock_codes(codes_file)
+        except Exception as e:
+            logger.error("加载股票列表失败: %s", e)
+            sys.exit(1)
+
+    logger.info("日期: %s, 股票数量: %d, 并发: %d", trade_date, len(stock_codes), args.max_workers)
+    
+    # 4. 执行扫描
+    import time
+    start_time = time.time()
+    results = scan_stocks_batch(stock_codes, max_workers=args.max_workers)
+    total_duration = time.time() - start_time
+    
+    # 5. 打印结果
+    print("\n" + "=" * 60)
+    print(f"{'Code':<10} | {'Bull %':<10} | {'Bear %':<10} | {'Result':<10} | {'Time(s)':<8}")
+    print("-" * 60)
+    
+    success_count = 0
+    total_item_duration = 0.0
+    failed_codes = []
+    
+    for res in results:
+        duration_str = f"{res.duration_seconds:.2f}"
+        total_item_duration += res.duration_seconds
+        
+        if res.snapshot:
+            success_count += 1
+            bull = f"{res.snapshot.bulls_percent}%"
+            bear = f"{res.snapshot.bears_percent}%"
+            print(f"{res.stock_code:<10} | {bull:<10} | {bear:<10} | {'OK':<10} | {duration_str:<8}")
+        else:
+            failed_codes.append(res.stock_code)
+            error_msg = (res.error[:8] + "..") if res.error and len(res.error) > 10 else (res.error or "Error")
+            print(f"{res.stock_code:<10} | {'-':<10} | {'-':<10} | {error_msg:<10} | {duration_str:<8}")
+            
+    print("-" * 60)
+    avg_time = (total_item_duration / len(results)) if results else 0
+    print(f"Total Time: {total_duration:.2f}s | Avg/Stock: {avg_time:.2f}s | Success: {success_count}/{len(results)}")
+    print("=" * 60 + "\n")
+
+    if failed_codes:
+        print("!!! 部分股票扫描失败，可使用以下命令重试: !!!")
+        print("-" * 20)
+        retry_codes_str = " ".join(failed_codes)
+        # Construct a command line string for the user
+        cmd = f"python -m Eastmoney.main {args.config_file} {args.trade_date} --stock-codes {retry_codes_str}"
+        print(cmd)
+        print("-" * 20 + "\n")
+
+    # 6. 入库
+    mysql_config = config.get("mysql")
+    if mysql_config:
+        try:
+            inserted = save_results_to_mysql(results, mysql_config, trade_date)
+            logger.info("入库完成: 新增/更新 %d 条记录", inserted)
+        except Exception as e:
+            logger.error("入库失败: %s", e)
+    else:
+        logger.warning("未配置 mysql，数据未保存")
+
+    # 7. 资金流向数据同步 (Fund Flow Sync)
+    print("\n" + "=" * 60)
+    logger.info("开始同步资金流向数据 (Fund Flow Data Sync)...")
+    try:
+        from Eastmoney.EastmoneyController import EastmoneyController
+        # Initialize controller with same mysql config
+        controller = EastmoneyController(mysql_config=mysql_config)
+        # Verify if stock_codes are valid for this controller
+        if stock_codes:
+            ff_inserted = controller.sync_batch(stock_codes)
+            logger.info("资金流向数据同步完成: 新增/更新 %d 条记录", ff_inserted)
+        else:
+            logger.warning("没有股票代码，跳过资金流向同步")
+    except ImportError:
+        logger.error("无法导入 EastmoneyController，跳过资金流向同步")
+    except Exception as e:
+        logger.error("资金流向同步失败: %s", e)
+    print("=" * 60 + "\n")
 
 
 if __name__ == "__main__":

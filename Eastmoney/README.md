@@ -25,7 +25,7 @@ python -m Eastmoney.main config_1 20260205 --stock 688158 --max-workers 1
 ```
 兼容旧方式：
 ```bash
-python eastmoney/main.py config_1.json 20260205 --stock 688158 --max-workers 1
+python Eastmoney/main.py config_1.json 20260205 --stock 688158 --max-workers 1
 ```
 
 ## 4) 多只股票检测（命令行指定）

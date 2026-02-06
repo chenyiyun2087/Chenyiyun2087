@@ -1,13 +1,3 @@
-"""Eastmoney data access package."""
+"""兼容包：请迁移到 Eastmoney。"""
 
-from .duokong_scanner import DuokongSnapshot, fetch_duokong_snapshot
-
-__all__ = ["EastmoneyController", "DuokongSnapshot", "fetch_duokong_snapshot"]
-
-
-def __getattr__(name):
-    if name == "EastmoneyController":
-        from .EastmoneyController import EastmoneyController
-
-        return EastmoneyController
-    raise AttributeError(name)
+# from Eastmoney import *  # noqa: F401,F403
