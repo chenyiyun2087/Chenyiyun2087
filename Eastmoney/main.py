@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, date
 
 # Add project root to sys.path to allow imports
@@ -115,27 +116,36 @@ def main() -> None:
 
     logger.info("日期: %s, 股票数量: %d, 并发: %d", trade_date, len(stock_codes), args.max_workers)
     
-    # 4. 执行扫描
-    import time
-    start_time = time.time()
+    # Track stats
+    stats = {
+        "scan": {"time": 0.0, "status": "Skipped"},
+        "fund_flow": {"time": 0.0, "status": "Skipped"},
+        "margin_trading": {"time": 0.0, "status": "Skipped"},
+        "total_time": 0.0
+    }
+    
+    global_start_time = time.time()
+    
+    # 4. 执行扫描 (Sentiment Scan)
+    print("\n" + "=" * 60)
+    logger.info("Step 1: Starting Multi-Short Sentiment Scan...")
+    scan_start_time = time.time()
     results = scan_stocks_batch(stock_codes, max_workers=args.max_workers)
-    total_duration = time.time() - start_time
+    scan_duration = time.time() - scan_start_time
+    stats["scan"]["time"] = scan_duration
     
     # 5. 打印结果
-    print("\n" + "=" * 60)
+    print("-" * 60)
     print(f"{'Code':<10} | {'Bull %':<10} | {'Bear %':<10} | {'Result':<10} | {'Time(s)':<8}")
     print("-" * 60)
     
-    success_count = 0
-    total_item_duration = 0.0
+    scan_success_count = 0
     failed_codes = []
     
     for res in results:
         duration_str = f"{res.duration_seconds:.2f}"
-        total_item_duration += res.duration_seconds
-        
         if res.snapshot:
-            success_count += 1
+            scan_success_count += 1
             bull = f"{res.snapshot.bulls_percent}%"
             bear = f"{res.snapshot.bears_percent}%"
             print(f"{res.stock_code:<10} | {bull:<10} | {bear:<10} | {'OK':<10} | {duration_str:<8}")
@@ -145,49 +155,78 @@ def main() -> None:
             print(f"{res.stock_code:<10} | {'-':<10} | {'-':<10} | {error_msg:<10} | {duration_str:<8}")
             
     print("-" * 60)
-    avg_time = (total_item_duration / len(results)) if results else 0
-    print(f"Total Time: {total_duration:.2f}s | Avg/Stock: {avg_time:.2f}s | Success: {success_count}/{len(results)}")
-    print("=" * 60 + "\n")
+    stats["scan"]["status"] = f"{scan_success_count}/{len(stock_codes)} OK"
 
     if failed_codes:
         print("!!! 部分股票扫描失败，可使用以下命令重试: !!!")
-        print("-" * 20)
         retry_codes_str = " ".join(failed_codes)
-        # Construct a command line string for the user
         cmd = f"python -m Eastmoney.main {args.config_file} {args.trade_date} --stock-codes {retry_codes_str}"
         print(cmd)
-        print("-" * 20 + "\n")
+        print("-" * 60)
 
-    # 6. 入库
+    # 6. 入库 (Sentiment)
     mysql_config = config.get("mysql")
     if mysql_config:
         try:
             inserted = save_results_to_mysql(results, mysql_config, trade_date)
-            logger.info("入库完成: 新增/更新 %d 条记录", inserted)
+            logger.info("Sentiment Data Saved: %d records", inserted)
         except Exception as e:
-            logger.error("入库失败: %s", e)
+            logger.error("Sentiment Save Failed: %s", e)
     else:
-        logger.warning("未配置 mysql，数据未保存")
+        logger.warning("MySQL not configured, skipping save.")
 
-    # 7. 资金流向数据同步 (Fund Flow Sync)
-    print("\n" + "=" * 60)
-    logger.info("开始同步资金流向数据 (Fund Flow Data Sync)...")
+    # Prepare Controller
+    controller = None
     try:
         from Eastmoney.EastmoneyController import EastmoneyController
-        # Initialize controller with same mysql config
         controller = EastmoneyController(mysql_config=mysql_config)
-        # Verify if stock_codes are valid for this controller
-        if stock_codes:
-            ff_inserted = controller.sync_batch(stock_codes)
-            logger.info("资金流向数据同步完成: 新增/更新 %d 条记录", ff_inserted)
-        else:
-            logger.warning("没有股票代码，跳过资金流向同步")
     except ImportError:
-        logger.error("无法导入 EastmoneyController，跳过资金流向同步")
+        logger.error("Cannot import EastmoneyController")
     except Exception as e:
-        logger.error("资金流向同步失败: %s", e)
+        logger.error("Controller Init Failed: %s", e)
+
+    if controller and stock_codes:
+        # 7. 资金流向数据同步 (Fund Flow Sync)
+        print("\n" + "-" * 60)
+        logger.info("Step 2: Syncing Fund Flow Data...")
+        ff_start = time.time()
+        try:
+            ff_inserted = controller.sync_batch(stock_codes)
+            stats["fund_flow"]["status"] = f"{ff_inserted} records"
+        except Exception as e:
+            logger.error("Fund Flow Sync Failed: %s", e)
+            stats["fund_flow"]["status"] = "Failed"
+        stats["fund_flow"]["time"] = time.time() - ff_start
+
+        # 8. 融资融券数据同步 (Margin Trading Sync)
+        print("\n" + "-" * 60)
+        logger.info("Step 3: Syncing Margin Trading Data (RZRQ)...")
+        rzrq_start = time.time()
+        try:
+            rzrq_inserted = controller.sync_batch_margin_trading(stock_codes)
+            stats["margin_trading"]["status"] = f"{rzrq_inserted} records"
+        except Exception as e:
+            logger.error("RZRQ Sync Failed: %s", e)
+            stats["margin_trading"]["status"] = "Failed"
+        stats["margin_trading"]["time"] = time.time() - rzrq_start
+
+    total_time = time.time() - global_start_time
+    stats["total_time"] = total_time
+
+    # 9. Final Execution Summary
+    print("\n" + "=" * 60)
+    print("Execution Summary")
+    print("-" * 60)
+    print(f"{'Step':<20} | {'Time (s)':<10} | {'Status'}")
+    print("-" * 60)
+    print(f"{'Sentiment Scan':<20} | {stats['scan']['time']:<10.2f} | {stats['scan']['status']}")
+    print(f"{'Fund Flow Sync':<20} | {stats['fund_flow']['time']:<10.2f} | {stats['fund_flow']['status']}")
+    print(f"{'Margin Trading':<20} | {stats['margin_trading']['time']:<10.2f} | {stats['margin_trading']['status']}")
+    print("-" * 60)
+    print(f"Total Execution Time  : {total_time:.2f}s")
     print("=" * 60 + "\n")
 
 
 if __name__ == "__main__":
+    import time  # Ensure time is imported if not already at top
     main()

@@ -58,6 +58,47 @@ ON DUPLICATE KEY UPDATE
     updated_at = CURRENT_TIMESTAMP
 """
 
+MARGIN_TRADING_SQL = """
+INSERT INTO em_individual_margin_trading (
+    stock_code,
+    trade_date,
+    close_price,
+    change_pct,
+    rzye,
+    rzye_ratio,
+    rzmre,
+    rzche,
+    rzjme,
+    rqye,
+    rqyl,
+    rqmcl,
+    rqchl,
+    rqjmg,
+    rzrqye,
+    rzrqye_diff,
+    created_at,
+    updated_at
+) VALUES (
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
+)
+ON DUPLICATE KEY UPDATE
+    close_price = VALUES(close_price),
+    change_pct = VALUES(change_pct),
+    rzye = VALUES(rzye),
+    rzye_ratio = VALUES(rzye_ratio),
+    rzmre = VALUES(rzmre),
+    rzche = VALUES(rzche),
+    rzjme = VALUES(rzjme),
+    rqye = VALUES(rqye),
+    rqyl = VALUES(rqyl),
+    rqmcl = VALUES(rqmcl),
+    rqchl = VALUES(rqchl),
+    rqjmg = VALUES(rqjmg),
+    rzrqye = VALUES(rzrqye),
+    rzrqye_diff = VALUES(rzrqye_diff),
+    updated_at = CURRENT_TIMESTAMP
+"""
+
 COLUMN_ALIASES = {
     "trade_date": ["日期"],
     "close_price": ["收盘价"],
@@ -79,7 +120,7 @@ logger = logging.getLogger(__name__)
 
 
 class EastmoneyController:
-    """东方财富资金流向数据抓取与入库。"""
+    """东方财富资金流向与融资融券数据抓取与入库。"""
 
     def __init__(self, mysql_config: Optional[dict] = None) -> None:
         self.mysql_config = mysql_config or DEFAULT_MYSQL_CONFIG
@@ -138,6 +179,138 @@ class EastmoneyController:
         stock_codes = self._get_existing_stock_codes()
         return self.sync_batch(stock_codes)
 
+    # --- Margin Trading Methods ---
+
+    def sync_margin_trading(self, stock_code: str) -> int:
+        """同步单只股票的融资融券数据"""
+        try:
+            df = self.fetch_margin_trading(stock_code)
+        except Exception as e:
+            logger.error("同步股票 %s 融资融券失败: %s", stock_code, e)
+            return 0
+
+        if df.empty:
+            return 0
+        
+        last_date = self._get_latest_rzrq_date(stock_code)
+        if last_date:
+            df = df[df["trade_date"] > last_date]
+        
+        if df.empty:
+            return 0
+            
+        rows = [self._rzrq_row_from_series(stock_code, row) for _, row in df.iterrows()]
+        self._upsert_rzrq_rows(rows)
+        return len(rows)
+
+    def sync_batch_margin_trading(self, stock_codes: Iterable[str]) -> int:
+        """批量同步融资融券数据"""
+        total_inserted = 0
+        for stock_code in stock_codes:
+            inserted = self.sync_margin_trading(stock_code)
+            if inserted > 0:
+                logger.info("股票 %s 融资融券新增 %d 条记录", stock_code, inserted)
+            total_inserted += inserted
+        return total_inserted
+
+    def fetch_margin_trading(self, stock_code: str) -> pd.DataFrame:
+        """从API获取融资融券数据 (15字段)"""
+        url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        params = {
+            "reportName": "RPTA_WEB_RZRQ_GGMX",
+            "columns": "ALL",
+            "source": "WEB",
+            "sortColumns": "DATE",
+            "sortTypes": "1",
+            "p": 1,
+            "ps": 5000,
+            "filter": f'(SCODE="{stock_code}")'
+        }
+        
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        result = data.get("result")
+        if not result or not result.get("data"):
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(result["data"])
+        
+        col_map = {
+            "DATE": "trade_date",
+            "SPJ": "close_price",
+            "ZDF": "change_pct",
+            "RZYE": "rzye",
+            "RZYEZB": "rzye_ratio",
+            "RZMRE": "rzmre",
+            "RZCHE": "rzche",
+            "RZJME": "rzjme",
+            "RQYE": "rqye",
+            "RQYL": "rqyl",
+            "RQMCL": "rqmcl",
+            "RQCHL": "rqchl",
+            "RQJMG": "rqjmg",
+            "RZRQYE": "rzrqye",
+            "RZRQYECZ": "rzrqye_diff",
+        }
+        df = df.rename(columns=col_map)
+        df["trade_date"] = df["trade_date"].apply(self._parse_date)
+        
+        numeric_cols = [
+            "close_price", "change_pct", "rzye", "rzye_ratio", "rzmre", "rzche", "rzjme",
+            "rqye", "rqyl", "rqmcl", "rqchl", "rqjmg", "rzrqye", "rzrqye_diff"
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df.sort_values("trade_date")
+
+    def _get_latest_rzrq_date(self, stock_code: str) -> Optional[date]:
+        sql = "SELECT MAX(trade_date) FROM em_individual_margin_trading WHERE stock_code = %s"
+        with pymysql.connect(**self.mysql_config) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, (stock_code,))
+                result = cursor.fetchone()
+        if not result or not result[0]:
+            return None
+        if isinstance(result[0], datetime):
+            return result[0].date()
+        if isinstance(result[0], str):
+            try:
+                text = result[0].split(" ")[0] if " " in result[0] else result[0]
+                return datetime.strptime(text, "%Y-%m-%d").date()
+            except ValueError:
+                return None 
+        return result[0]
+
+    def _upsert_rzrq_rows(self, rows: Iterable[tuple]) -> None:
+        with pymysql.connect(**self.mysql_config) as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(MARGIN_TRADING_SQL, list(rows))
+            conn.commit()
+
+    def _rzrq_row_from_series(self, stock_code: str, row: pd.Series) -> tuple:
+        return (
+            stock_code,
+            row["trade_date"],
+            row.get("close_price"),
+            row.get("change_pct"),
+            row.get("rzye"),
+            row.get("rzye_ratio"),
+            row.get("rzmre"),
+            row.get("rzche"),
+            row.get("rzjme"),
+            row.get("rqye"),
+            row.get("rqyl"),
+            row.get("rqmcl"),
+            row.get("rqchl"),
+            row.get("rqjmg"),
+            row.get("rzrqye"),
+            row.get("rzrqye_diff"),
+        )
+
     def run_daily_after_close(
         self,
         stock_codes: Optional[List[str]] = None,
@@ -161,15 +334,24 @@ class EastmoneyController:
             time.sleep(sleep_seconds)
 
             target_date = target_time.date() - timedelta(days=1)
-            # if target_date.weekday() >= 5:
-            #     logger.info("非交易日 %s，跳过执行", target_date)
-            #     continue  # Consider removing this if crypto/futures or just allow updates
-
+            
             if stock_codes:
-                inserted = self.sync_batch(stock_codes)
+                # 1. Fund Flow
+                inserted_flow = self.sync_batch(stock_codes)
+                logger.info("资金流向: 新增 %d 条", inserted_flow)
+                
+                # 2. Margin Trading
+                inserted_rzrq = self.sync_batch_margin_trading(stock_codes)
+                logger.info("融资融券: 新增 %d 条", inserted_rzrq)
             else:
-                inserted = self.sync_existing_stocks()
-            logger.info("本次补充完成，新增 %d 条资金流向记录", inserted)
+                inserted_flow = self.sync_existing_stocks()
+                logger.info("资金流向(现有): 新增 %d 条", inserted_flow)
+                
+                codes = self._get_existing_stock_codes()
+                inserted_rzrq = self.sync_batch_margin_trading(codes)
+                logger.info("融资融券(现有): 新增 %d 条", inserted_rzrq)
+            
+            logger.info("本次每日任务全部完成")
 
     def _get_existing_stock_codes(self) -> List[str]:
         sql = "SELECT DISTINCT stock_code FROM em_individual_fund_flow"
@@ -190,7 +372,11 @@ class EastmoneyController:
         if isinstance(result[0], datetime):
             return result[0].date()
         if isinstance(result[0], str):
-            return datetime.strptime(result[0], "%Y-%m-%d").date()
+            try:
+                text = result[0].split(" ")[0] if " " in result[0] else result[0]
+                return datetime.strptime(text, "%Y-%m-%d").date()
+            except ValueError:
+                return datetime.strptime(result[0], "%Y-%m-%d").date()
         return result[0]
 
     def _upsert_rows(self, rows: Iterable[tuple]) -> None:
@@ -264,9 +450,17 @@ class EastmoneyController:
 
     @staticmethod
     def _parse_date(value) -> date:
+        if isinstance(value, datetime):
+            return value.date()
         if isinstance(value, date):
             return value
-        return datetime.strptime(str(value), "%Y-%m-%d").date()
+        text = str(value).strip()
+        if " " in text:
+            text = text.split(" ")[0]
+        try:
+            return datetime.strptime(text, "%Y-%m-%d").date()
+        except ValueError:
+            return datetime.strptime(text, "%Y/%m/%d").date()
 
     @staticmethod
     def _parse_number(value) -> Optional[float]:
@@ -325,7 +519,7 @@ class EastmoneyController:
             row["change_pct"],
             row["main_net_amount"],
             self._pct_to_ratio(row["main_net_pct"]),
-            row["super_net_amount"],  # Corrected from super_large_net_amount to match SQL params order expectation if variable names differ
+            row["super_net_amount"], 
             self._pct_to_ratio(row["super_large_net_pct"]),
             row["large_net_amount"],
             self._pct_to_ratio(row["large_net_pct"]),
@@ -434,9 +628,6 @@ def load_stock_codes_from_config(config_path: str) -> List[str]:
         # Fallback to reading as Excel if binary
         try:
             df = pd.read_excel(codes_file)
-            # Assuming first column or specific column logic if needed. 
-            # For now, let's assume simple list. 
-            # Actually, per existing logic, let's just support text clearly for now as per README.
             pass
         except Exception:
             pass
