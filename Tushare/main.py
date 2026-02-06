@@ -9,7 +9,7 @@ from typing import Iterable, List, Optional, Sequence
 import pandas as pd
 import pymysql
 
-from AkShareController import (
+from TuShareController import (
     fetch_chip_distribution,
     fetch_em_fund_flow,
     fetch_ths_fund_flow,
