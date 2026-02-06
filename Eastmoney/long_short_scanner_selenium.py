@@ -103,36 +103,48 @@ def fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[Duo
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.common.exceptions import TimeoutException, WebDriverException
     except ImportError as exc:
         raise RuntimeError("缺少 selenium 依赖，请先安装: pip install selenium") from exc
 
     url = f"https://guba.eastmoney.com/list,{code}.html"
     
-    driver = _get_driver()
-    driver.get(url)
-    
-    # Wait for the element
-    wait = WebDriverWait(driver, 20)
-    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpContainer")))
+    try:
+        driver = _get_driver()
+        driver.get(url)
+        
+        # Wait for the element
+        wait = WebDriverWait(driver, 20)
+        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpContainer")))
 
-    red_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpRed")))
-    green_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpGreen")))
+        red_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpRed")))
+        green_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpGreen")))
 
-    bulls_percent = float(red_elem.text.strip().rstrip("%"))
-    bears_percent = float(green_elem.text.strip().rstrip("%"))
+        bulls_percent = float(red_elem.text.strip().rstrip("%"))
+        bears_percent = float(green_elem.text.strip().rstrip("%"))
 
-    if debug:
-        logger.info("%s 看涨=%s%% 看跌=%s%%", code, bulls_percent, bears_percent)
+        if debug:
+            logger.info("%s 看涨=%s%% 看跌=%s%%", code, bulls_percent, bears_percent)
 
-    snapshot = DuokongSnapshot(
-        code=code,
-        bulls_percent=bulls_percent,
-        bears_percent=bears_percent,
-        snapshot_time=datetime.now(),
-        source_url=url,
-    )
-    duration = time.time() - start_time
-    return snapshot, duration
+        snapshot = DuokongSnapshot(
+            code=code,
+            bulls_percent=bulls_percent,
+            bears_percent=bears_percent,
+            snapshot_time=datetime.now(),
+            source_url=url,
+        )
+        duration = time.time() - start_time
+        return snapshot, duration
+
+    except TimeoutException:
+        if debug:
+            logger.warning("Timeout fetching %s", code)
+        # Raise specific error so it can be caught or returned as string in worker
+        raise RuntimeError("Timeout")
+    except Exception as e:
+        if debug:
+            logger.error("Error fetching %s: %s", code, e, exc_info=True)
+        raise e
 
 
 def _worker_task(code: str, debug: bool) -> BatchResult:

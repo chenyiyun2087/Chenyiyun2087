@@ -265,6 +265,10 @@ class EastmoneyController:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
+        # Replace NaN with None (NULL) for MySQL
+        # Must cast to object first, otherwise None in float column becomes NaN again
+        df = df.astype(object).where(pd.notnull(df), None)
+        
         return df.sort_values("trade_date")
 
     def _get_latest_rzrq_date(self, stock_code: str) -> Optional[date]:
@@ -519,7 +523,7 @@ class EastmoneyController:
             row["change_pct"],
             row["main_net_amount"],
             self._pct_to_ratio(row["main_net_pct"]),
-            row["super_net_amount"], 
+            row["super_large_net_amount"],
             self._pct_to_ratio(row["super_large_net_pct"]),
             row["large_net_amount"],
             self._pct_to_ratio(row["large_net_pct"]),
