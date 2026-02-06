@@ -1,9 +1,5 @@
 {
-  "stock_codes": [
-    "000001",
-    "600000",
-    "688158"
-  ],
+  "stock_codes_file": "stock_codes.txt",
   "max_workers": 4,
   "mysql": {
     "host": "localhost",

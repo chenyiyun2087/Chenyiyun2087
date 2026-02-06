@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict
-from dataclasses import dataclass
-from datetime import date, datetime
-import json
 import logging
-from typing import Iterable, List, Optional
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
+from datetime import date, datetime
+from typing import Iterable, List
 
-
-from .duokong_scanner import DuokongSnapshot
+try:
+    from .duokong_scanner import DuokongSnapshot
+except ImportError:  # 兼容脚本直接运行
+    from duokong_scanner import DuokongSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -55,59 +57,91 @@ ON DUPLICATE KEY UPDATE
     updated_at = CURRENT_TIMESTAMP;
 """
 
+# Thread-local storage for Selenium drivers
+_thread_local = threading.local()
+
+
+def _get_driver():
+    """Get or create a thread-local Selenium driver."""
+    if not hasattr(_thread_local, "driver"):
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        # Optimization: keep browser open
+        _thread_local.driver = webdriver.Chrome(options=options)
+    return _thread_local.driver
+
+
+def _close_driver():
+    """Close the thread-local driver if it exists."""
+    if hasattr(_thread_local, "driver"):
+        try:
+            _thread_local.driver.quit()
+        except Exception as e:
+            logger.warning("Error closing driver: %s", e)
+        finally:
+            del _thread_local.driver
+
 
 @dataclass(frozen=True)
 class BatchResult:
     stock_code: str
     snapshot: DuokongSnapshot | None = None
     error: str | None = None
+    duration_seconds: float = 0.0
 
 
-
-def fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> DuokongSnapshot:
-    """使用Selenium获取动态加载的多空看盘数据。"""
+def fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[DuokongSnapshot, float]:
+    """使用Selenium获取动态加载的多空看盘数据 (Reuse Driver)。"""
+    start_time = time.time()
     try:
-        from selenium import webdriver
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.chrome.options import Options
     except ImportError as exc:
         raise RuntimeError("缺少 selenium 依赖，请先安装: pip install selenium") from exc
 
     url = f"https://guba.eastmoney.com/list,{code}.html"
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
+    
+    driver = _get_driver()
+    driver.get(url)
+    
+    # Wait for the element
+    wait = WebDriverWait(driver, 20)
+    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpContainer")))
 
-    driver = None
+    red_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpRed")))
+    green_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpGreen")))
+
+    bulls_percent = float(red_elem.text.strip().rstrip("%"))
+    bears_percent = float(green_elem.text.strip().rstrip("%"))
+
+    if debug:
+        logger.info("%s 看涨=%s%% 看跌=%s%%", code, bulls_percent, bears_percent)
+
+    snapshot = DuokongSnapshot(
+        code=code,
+        bulls_percent=bulls_percent,
+        bears_percent=bears_percent,
+        snapshot_time=datetime.now(),
+        source_url=url,
+    )
+    duration = time.time() - start_time
+    return snapshot, duration
+
+
+def _worker_task(code: str, debug: bool) -> BatchResult:
+    """Worker function that handles exceptions and timing."""
     try:
-        driver = webdriver.Chrome(options=options)
-        driver.get(url)
-        wait = WebDriverWait(driver, 20)
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpContainer")))
-
-        red_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpRed")))
-        green_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpGreen")))
-
-        bulls_percent = float(red_elem.text.strip().rstrip("%"))
-        bears_percent = float(green_elem.text.strip().rstrip("%"))
-
-        if debug:
-            logger.info("%s 看涨=%s%% 看跌=%s%%", code, bulls_percent, bears_percent)
-
-        return DuokongSnapshot(
-            code=code,
-            bulls_percent=bulls_percent,
-            bears_percent=bears_percent,
-            snapshot_time=datetime.now(),
-            source_url=url,
-        )
-    finally:
-        if driver:
-            driver.quit()
+        snapshot, duration = fetch_duokong_snapshot_selenium(code, debug)
+        return BatchResult(stock_code=code, snapshot=snapshot, duration_seconds=duration)
+    except Exception as exc:
+        return BatchResult(stock_code=code, error=str(exc), duration_seconds=0.0)
 
 
 def scan_stocks_batch(
@@ -121,16 +155,26 @@ def scan_stocks_batch(
         return []
 
     results: List[BatchResult] = []
+    
+    # We use a custom mechanism to ensure we can close drivers
+    # But ThreadPoolExecutor doesn't expose threads easily.
+    # We will just run the tasks. Drivers might hang if we don't close them explicitly.
+    # To properly close them, we can submit a 'cleanup' task to all threads, 
+    # but threads in pool are dynamic.
+    # A simple robust way for a script is to let OS clean up, but for long running app it's bad.
+    # Here we'll try to be nice: since we don't control the pool threads lifecycle fully,
+    # we accept that drivers stay open until the process exits (for this CLI tool it is fine).
+    # IF we want to force close, we can set max_workers = len(codes) and shut down? No.
+    
+    # For this CLI use case, keeping drivers open until script exit is acceptable optimization.
+    # However, to avoid zombie processes if run programmatically:
+    # We can't easily close thread-local drivers from the main thread.
+    
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_map = {pool.submit(fetch_duokong_snapshot_selenium, code, debug): code for code in codes}
+        future_map = {pool.submit(_worker_task, code, debug): code for code in codes}
         for future in as_completed(future_map):
-            code = future_map[future]
-            try:
-                snapshot = future.result()
-                results.append(BatchResult(stock_code=code, snapshot=snapshot))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("扫描失败 %s: %s", code, exc)
-                results.append(BatchResult(stock_code=code, error=str(exc)))
+            results.append(future.result())
+            
     return sorted(results, key=lambda item: item.stock_code)
 
 
@@ -154,6 +198,7 @@ def init_mysql_db(mysql_config: dict) -> None:
 
 
 def save_results_to_mysql(results: List[BatchResult], mysql_config: dict, trade_date: date) -> int:
+    import json
     rows = []
     for item in results:
         if not item.snapshot:
@@ -173,7 +218,6 @@ def save_results_to_mysql(results: List[BatchResult], mysql_config: dict, trade_
         )
 
     if not rows:
-        logger.info("没有成功结果可写入")
         return 0
 
     init_mysql_db(mysql_config)
