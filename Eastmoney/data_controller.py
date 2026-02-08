@@ -1,15 +1,33 @@
-import argparse
-import json
 import logging
 import os
+import threading
 import time
-from datetime import date, datetime, timedelta
-from io import StringIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
+from datetime import date, datetime
 from typing import Iterable, List, Optional
 
-import pandas as pd
 import pymysql
-import requests
+
+# --- Data Schemas & Constants ---
+
+@dataclass(frozen=True)
+class DuokongSnapshot:
+    """Structured snapshot of the multi/short sentiment widget."""
+    code: str
+    bulls_percent: float
+    bears_percent: float
+    bulls_votes: int | None = None
+    bears_votes: int | None = None
+    snapshot_time: datetime | None = None
+    source_url: str | None = None
+
+@dataclass(frozen=True)
+class BatchResult:
+    stock_code: str
+    snapshot: DuokongSnapshot | None = None
+    error: str | None = None
+    duration_seconds: float = 0.0
 
 DEFAULT_MYSQL_CONFIG = {
     "host": "localhost",
@@ -19,667 +37,221 @@ DEFAULT_MYSQL_CONFIG = {
     "charset": "utf8mb4",
 }
 
-FUND_FLOW_SQL = """
-INSERT INTO em_individual_fund_flow (
-    stock_code,
+MYSQL_CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS em_duokong_sentiment (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    trade_date DATE NOT NULL,
+    stock_code VARCHAR(16) NOT NULL,
+    bulls_percent DECIMAL(7,4) NOT NULL,
+    bears_percent DECIMAL(7,4) NOT NULL,
+    bulls_votes INT NULL,
+    bears_votes INT NULL,
+    source_url VARCHAR(255) NULL,
+    raw_json JSON NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    UNIQUE KEY uniq_date_code (trade_date, stock_code)
+);
+"""
+
+MYSQL_UPSERT_SQL = """
+INSERT INTO em_duokong_sentiment (
     trade_date,
-    close_price,
-    pct_change,
-    main_net_amount,
-    main_net_ratio,
-    super_net_amount,
-    super_net_ratio,
-    big_net_amount,
-    big_net_ratio,
-    mid_net_amount,
-    mid_net_ratio,
-    small_net_amount,
-    small_net_ratio,
+    stock_code,
+    bulls_percent,
+    bears_percent,
+    bulls_votes,
+    bears_votes,
+    source_url,
     raw_json,
     created_at,
     updated_at
-) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
-)
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
 ON DUPLICATE KEY UPDATE
-    close_price = VALUES(close_price),
-    pct_change = VALUES(pct_change),
-    main_net_amount = VALUES(main_net_amount),
-    main_net_ratio = VALUES(main_net_ratio),
-    super_net_amount = VALUES(super_net_amount),
-    super_net_ratio = VALUES(super_net_ratio),
-    big_net_amount = VALUES(big_net_amount),
-    big_net_ratio = VALUES(big_net_ratio),
-    mid_net_amount = VALUES(mid_net_amount),
-    mid_net_ratio = VALUES(mid_net_ratio),
-    small_net_amount = VALUES(small_net_amount),
-    small_net_ratio = VALUES(small_net_ratio),
+    bulls_percent = VALUES(bulls_percent),
+    bears_percent = VALUES(bears_percent),
+    bulls_votes = VALUES(bulls_votes),
+    bears_votes = VALUES(bears_votes),
+    source_url = VALUES(source_url),
     raw_json = VALUES(raw_json),
-    updated_at = CURRENT_TIMESTAMP
+    updated_at = CURRENT_TIMESTAMP;
 """
 
-MARGIN_TRADING_SQL = """
-INSERT INTO em_individual_margin_trading (
-    stock_code,
-    trade_date,
-    close_price,
-    change_pct,
-    rzye,
-    rzye_ratio,
-    rzmre,
-    rzche,
-    rzjme,
-    rqye,
-    rqyl,
-    rqmcl,
-    rqchl,
-    rqjmg,
-    rzrqye,
-    rzrqye_diff,
-    created_at,
-    updated_at
-) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
-)
-ON DUPLICATE KEY UPDATE
-    close_price = VALUES(close_price),
-    change_pct = VALUES(change_pct),
-    rzye = VALUES(rzye),
-    rzye_ratio = VALUES(rzye_ratio),
-    rzmre = VALUES(rzmre),
-    rzche = VALUES(rzche),
-    rzjme = VALUES(rzjme),
-    rqye = VALUES(rqye),
-    rqyl = VALUES(rqyl),
-    rqmcl = VALUES(rqmcl),
-    rqchl = VALUES(rqchl),
-    rqjmg = VALUES(rqjmg),
-    rzrqye = VALUES(rzrqye),
-    rzrqye_diff = VALUES(rzrqye_diff),
-    updated_at = CURRENT_TIMESTAMP
-"""
-
-COLUMN_ALIASES = {
-    "trade_date": ["日期"],
-    "close_price": ["收盘价"],
-    "change_pct": ["涨跌幅"],
-    "main_net_amount": ["主力净流入_净额", "主力净流入净额"],
-    "main_net_pct": ["主力净流入_占比", "主力净流入净占比"],
-    "super_large_net_amount": ["超大单净流入_净额", "超大单净流入净额"],
-    "super_large_net_pct": ["超大单净流入_占比", "超大单净流入净占比"],
-    "large_net_amount": ["大单净流入_净额", "大单净流入净额"],
-    "large_net_pct": ["大单净流入_占比", "大单净流入净占比"],
-    "medium_net_amount": ["中单净流入_净额", "中单净流入净额"],
-    "medium_net_pct": ["中单净流入_占比", "中单净流入净占比"],
-    "small_net_amount": ["小单净流入_净额", "小单净流入净额"],
-    "small_net_pct": ["小单净流入_占比", "小单净流入净占比"],
-}
-
-
+# --- global logger & thread-local storage ---
 logger = logging.getLogger(__name__)
+_thread_local = threading.local()
 
+def _get_driver():
+    """Get or create a thread-local Selenium driver."""
+    if not hasattr(_thread_local, "driver"):
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        _thread_local.driver = webdriver.Chrome(options=options)
+    return _thread_local.driver
+
+def _fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[DuokongSnapshot, float]:
+    """使用Selenium获取动态加载的多空看盘数据 (Internal)."""
+    start_time = time.time()
+    try:
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.common.exceptions import TimeoutException
+    except ImportError as exc:
+        raise RuntimeError("缺少 selenium 依赖，请先安装: pip install selenium") from exc
+
+    url = f"https://guba.eastmoney.com/list,{code}.html"
+    
+    try:
+        driver = _get_driver()
+        driver.get(url)
+        wait = WebDriverWait(driver, 20)
+        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpContainer")))
+
+        red_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpRed")))
+        green_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpGreen")))
+
+        bulls_percent = float(red_elem.text.strip().rstrip("%"))
+        bears_percent = float(green_elem.text.strip().rstrip("%"))
+
+        snapshot = DuokongSnapshot(
+            code=code,
+            bulls_percent=bulls_percent,
+            bears_percent=bears_percent,
+            snapshot_time=datetime.now(),
+            source_url=url,
+        )
+        duration = time.time() - start_time
+        return snapshot, duration
+
+    except TimeoutException:
+        raise RuntimeError("Timeout")
+    except Exception as e:
+        raise e
+
+def _worker_task(code: str, debug: bool) -> BatchResult:
+    """Worker function for threading."""
+    try:
+        snapshot, duration = _fetch_duokong_snapshot_selenium(code, debug)
+        return BatchResult(stock_code=code, snapshot=snapshot, duration_seconds=duration)
+    except Exception as exc:
+        return BatchResult(stock_code=code, error=str(exc), duration_seconds=0.0)
+
+
+# --- Controller Class ---
 
 class DataController:
-    """东方财富资金流向与融资融券数据抓取与入库。"""
+    """东方财富多空情绪数据控制器。集成了 Selenium 扫描与数据库操作。"""
 
     def __init__(self, mysql_config: Optional[dict] = None) -> None:
         self.mysql_config = mysql_config or DEFAULT_MYSQL_CONFIG
 
-    def fetch_fund_flow(self, stock_code: str) -> pd.DataFrame:
-        url = f"https://data.eastmoney.com/zjlx/{stock_code}.html"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    def scan_sentiment(self, stock_codes: Optional[List[str]] = None, max_workers: int = 3, task_type: str = "all") -> dict:
+        """执行多空情绪扫描，并保存结果到数据库。"""
+        if not stock_codes:
+            stock_codes = self.get_all_stock_codes_from_db(task_type)
+        
+        codes = [str(code).zfill(6) for code in stock_codes if code]
+        if not codes:
+            return {"total": 0, "success": 0, "saved": 0, "duration": 0, "results": []}
+
+        logger.info("开始扫描 %d 只股票, 并发: %d", len(codes), max_workers)
+        
+        start_time = time.time()
+        results: List[BatchResult] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_map = {pool.submit(_worker_task, code, False): code for code in codes}
+            for future in as_completed(future_map):
+                results.append(future.result())
+        
+        results = sorted(results, key=lambda item: item.stock_code)
+        scan_duration = time.time() - start_time
+        success_count = sum(1 for res in results if res.snapshot)
+        
+        # Save to DB
+        saved_count = self._save_results_to_mysql(results)
+        
+        return {
+            "total": len(codes),
+            "success": success_count,
+            "saved": saved_count,
+            "duration": scan_duration,
+            "results": results
         }
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
+
+    def get_all_stock_codes_from_db(self, task_type: str = "all") -> List[str]:
+        """从 chenyiyun.a_share_stock_list 获取股票代码。"""
+        sql = "SELECT stock_code FROM a_share_stock_list"
+        if task_type == "custom":
+            sql += " WHERE is_self_selected = 1"
 
         try:
-            tables = pd.read_html(StringIO(response.text), attrs={"id": "table_ls"})
-        except ValueError:
-            tables = []
-        if tables:
-            raw_df = tables[0]
-            normalized_df = self._normalize_columns(raw_df)
-            return self._standardize_dataframe(normalized_df)
-
-        api_df = self._fetch_fund_flow_from_api(stock_code)
-        if api_df.empty:
-            raise ValueError(f"未找到资金流向数据表: {url}")
-        return self._standardize_dataframe(api_df)
-
-    def sync_stock(self, stock_code: str) -> int:
-        try:
-            fund_df = self.fetch_fund_flow(stock_code)
+            with pymysql.connect(**self.mysql_config) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql)
+                    rows = cursor.fetchall()
+            return [str(row[0]).zfill(6) for row in rows]
         except Exception as e:
-            logger.error("同步股票 %s 失败: %s", stock_code, e)
-            return 0
+            logger.error("从数据库获取股票列表失败: %s", e)
+            return []
 
-        if fund_df.empty:
-            return 0
-        last_date = self._get_latest_trade_date(stock_code)
-        if last_date:
-            fund_df = fund_df[fund_df["trade_date"] > last_date]
-        if fund_df.empty:
-            return 0
-        rows = [self._row_from_series(stock_code, row) for _, row in fund_df.iterrows()]
-        self._upsert_rows(rows)
-        return len(rows)
-
-    def sync_batch(self, stock_codes: Iterable[str]) -> int:
-        total_inserted = 0
-        for stock_code in stock_codes:
-            inserted = self.sync_stock(stock_code)
-            if inserted > 0:
-                logger.info("股票 %s 新增 %d 条记录", stock_code, inserted)
-            total_inserted += inserted
-        return total_inserted
-
-    def sync_existing_stocks(self) -> int:
-        stock_codes = self._get_existing_stock_codes()
-        return self.sync_batch(stock_codes)
-
-    # --- Margin Trading Methods ---
-
-    def sync_margin_trading(self, stock_code: str) -> int:
-        """同步单只股票的融资融券数据"""
-        try:
-            df = self.fetch_margin_trading(stock_code)
-        except Exception as e:
-            logger.error("同步股票 %s 融资融券失败: %s", stock_code, e)
-            return 0
-
-        if df.empty:
+    def _save_results_to_mysql(self, results: List[BatchResult]) -> int:
+        """Internal helper to save scan results."""
+        if not self.mysql_config:
             return 0
         
-        last_date = self._get_latest_rzrq_date(stock_code)
-        if last_date:
-            df = df[df["trade_date"] > last_date]
-        
-        if df.empty:
-            return 0
-            
-        rows = [self._rzrq_row_from_series(stock_code, row) for _, row in df.iterrows()]
-        self._upsert_rzrq_rows(rows)
-        return len(rows)
-
-    def sync_batch_margin_trading(self, stock_codes: Iterable[str]) -> int:
-        """批量同步融资融券数据"""
-        total_inserted = 0
-        for stock_code in stock_codes:
-            inserted = self.sync_margin_trading(stock_code)
-            if inserted > 0:
-                logger.info("股票 %s 融资融券新增 %d 条记录", stock_code, inserted)
-            total_inserted += inserted
-        return total_inserted
-
-    def fetch_margin_trading(self, stock_code: str) -> pd.DataFrame:
-        """从API获取融资融券数据 (15字段)"""
-        url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-        params = {
-            "reportName": "RPTA_WEB_RZRQ_GGMX",
-            "columns": "ALL",
-            "source": "WEB",
-            "sortColumns": "DATE",
-            "sortTypes": "1",
-            "p": 1,
-            "ps": 5000,
-            "filter": f'(SCODE="{stock_code}")'
-        }
-        
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        
-        result = data.get("result")
-        if not result or not result.get("data"):
-            return pd.DataFrame()
-            
-        df = pd.DataFrame(result["data"])
-        
-        col_map = {
-            "DATE": "trade_date",
-            "SPJ": "close_price",
-            "ZDF": "change_pct",
-            "RZYE": "rzye",
-            "RZYEZB": "rzye_ratio",
-            "RZMRE": "rzmre",
-            "RZCHE": "rzche",
-            "RZJME": "rzjme",
-            "RQYE": "rqye",
-            "RQYL": "rqyl",
-            "RQMCL": "rqmcl",
-            "RQCHL": "rqchl",
-            "RQJMG": "rqjmg",
-            "RZRQYE": "rzrqye",
-            "RZRQYECZ": "rzrqye_diff",
-        }
-        df = df.rename(columns=col_map)
-        df["trade_date"] = df["trade_date"].apply(self._parse_date)
-        
-        numeric_cols = [
-            "close_price", "change_pct", "rzye", "rzye_ratio", "rzmre", "rzche", "rzjme",
-            "rqye", "rqyl", "rqmcl", "rqchl", "rqjmg", "rzrqye", "rzrqye_diff"
-        ]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        # Replace NaN with None (NULL) for MySQL
-        # Must cast to object first, otherwise None in float column becomes NaN again
-        df = df.astype(object).where(pd.notnull(df), None)
-        
-        return df.sort_values("trade_date")
-
-    def _get_latest_rzrq_date(self, stock_code: str) -> Optional[date]:
-        sql = "SELECT MAX(trade_date) FROM em_individual_margin_trading WHERE stock_code = %s"
-        with pymysql.connect(**self.mysql_config) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, (stock_code,))
-                result = cursor.fetchone()
-        if not result or not result[0]:
-            return None
-        if isinstance(result[0], datetime):
-            return result[0].date()
-        if isinstance(result[0], str):
-            try:
-                text = result[0].split(" ")[0] if " " in result[0] else result[0]
-                return datetime.strptime(text, "%Y-%m-%d").date()
-            except ValueError:
-                return None 
-        return result[0]
-
-    def _upsert_rzrq_rows(self, rows: Iterable[tuple]) -> None:
-        with pymysql.connect(**self.mysql_config) as conn:
-            with conn.cursor() as cursor:
-                cursor.executemany(MARGIN_TRADING_SQL, list(rows))
-            conn.commit()
-
-    def _rzrq_row_from_series(self, stock_code: str, row: pd.Series) -> tuple:
-        return (
-            stock_code,
-            row["trade_date"],
-            row.get("close_price"),
-            row.get("change_pct"),
-            row.get("rzye"),
-            row.get("rzye_ratio"),
-            row.get("rzmre"),
-            row.get("rzche"),
-            row.get("rzjme"),
-            row.get("rqye"),
-            row.get("rqyl"),
-            row.get("rqmcl"),
-            row.get("rqchl"),
-            row.get("rqjmg"),
-            row.get("rzrqye"),
-            row.get("rzrqye_diff"),
-        )
-
-    def run_daily_after_close(
-        self,
-        stock_codes: Optional[List[str]] = None,
-        close_hour: int = 15,
-        close_minute: int = 30,
-    ) -> None:
-        target_str = "现有库存股票" if stock_codes is None else f"指定 {len(stock_codes)} 只股票"
-        logger.info("进入每日收盘后调度模式 (%s)，目标时间 %02d:%02d", target_str, close_hour, close_minute)
-        
-        while True:
-            now = datetime.now()
-            target_time = datetime.combine(
-                now.date(),
-                datetime.min.time().replace(hour=close_hour, minute=close_minute),
+        trade_date = date.today()
+        rows = []
+        import json
+        for item in results:
+            if not item.snapshot:
+                continue
+            snapshot = item.snapshot
+            rows.append(
+                (
+                    trade_date,
+                    item.stock_code,
+                    snapshot.bulls_percent,
+                    snapshot.bears_percent,
+                    snapshot.bulls_votes,
+                    snapshot.bears_votes,
+                    snapshot.source_url,
+                    json.dumps(asdict(snapshot), ensure_ascii=False, default=str),
+                )
             )
-            if now >= target_time:
-                target_time += timedelta(days=1)
 
-            sleep_seconds = max((target_time - now).total_seconds(), 0)
-            logger.info("下一次执行时间: %s (等待 %.0f 秒)", target_time, sleep_seconds)
-            time.sleep(sleep_seconds)
+        if not rows:
+            return 0
 
-            target_date = target_time.date() - timedelta(days=1)
-            
-            if stock_codes:
-                # 1. Fund Flow
-                inserted_flow = self.sync_batch(stock_codes)
-                logger.info("资金流向: 新增 %d 条", inserted_flow)
-                
-                # 2. Margin Trading
-                inserted_rzrq = self.sync_batch_margin_trading(stock_codes)
-                logger.info("融资融券: 新增 %d 条", inserted_rzrq)
-            else:
-                inserted_flow = self.sync_existing_stocks()
-                logger.info("资金流向(现有): 新增 %d 条", inserted_flow)
-                
-                codes = self._get_existing_stock_codes()
-                inserted_rzrq = self.sync_batch_margin_trading(codes)
-                logger.info("融资融券(现有): 新增 %d 条", inserted_rzrq)
-            
-            logger.info("本次每日任务全部完成")
+        try:
+            # Ensure DB/Table initialized
+            self._init_db_if_needed()
+            with pymysql.connect(**self.mysql_config) as conn:
+                with conn.cursor() as cursor:
+                    cursor.executemany(MYSQL_UPSERT_SQL, rows)
+                conn.commit()
+            return len(rows)
+        except Exception as e:
+            logger.error("保存结果到 MySQL 失败: %s", e)
+            return 0
 
-    def _get_existing_stock_codes(self) -> List[str]:
-        sql = "SELECT DISTINCT stock_code FROM em_individual_fund_flow"
-        with pymysql.connect(**self.mysql_config) as conn:
+    def _init_db_if_needed(self):
+        """Ensure database and table exist."""
+        base_config = {k: v for k, v in self.mysql_config.items() if k != "database"}
+        database = self.mysql_config.get("database")
+        
+        with pymysql.connect(**base_config) as conn:
             with conn.cursor() as cursor:
-                cursor.execute(sql)
-                rows = cursor.fetchall()
-        return [str(row[0]).zfill(6) for row in rows]
-
-    def _get_latest_trade_date(self, stock_code: str) -> Optional[date]:
-        sql = "SELECT MAX(trade_date) FROM em_individual_fund_flow WHERE stock_code = %s"
-        with pymysql.connect(**self.mysql_config) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, (stock_code,))
-                result = cursor.fetchone()
-        if not result or not result[0]:
-            return None
-        if isinstance(result[0], datetime):
-            return result[0].date()
-        if isinstance(result[0], str):
-            try:
-                text = result[0].split(" ")[0] if " " in result[0] else result[0]
-                return datetime.strptime(text, "%Y-%m-%d").date()
-            except ValueError:
-                return datetime.strptime(result[0], "%Y-%m-%d").date()
-        return result[0]
-
-    def _upsert_rows(self, rows: Iterable[tuple]) -> None:
-        with pymysql.connect(**self.mysql_config) as conn:
-            with conn.cursor() as cursor:
-                cursor.executemany(FUND_FLOW_SQL, list(rows))
+                cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database}` DEFAULT CHARSET utf8mb4")
             conn.commit()
 
-    def _normalize_columns(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        columns = []
-        for col in dataframe.columns:
-            if isinstance(col, tuple):
-                top, sub = col
-                sub = "" if sub.startswith("Unnamed") else sub
-                if sub:
-                    columns.append(f"{top}_{sub}")
-                else:
-                    columns.append(str(top))
-            else:
-                columns.append(str(col))
-        dataframe = dataframe.copy()
-        dataframe.columns = columns
-        return dataframe
-
-    def _standardize_dataframe(self, dataframe: pd.DataFrame) -> pd.DataFrame:
-        dataframe = dataframe.copy()
-        logger.debug("原始表头: %s", list(dataframe.columns))
-        rename_map = {}
-        for target, aliases in COLUMN_ALIASES.items():
-            for alias in aliases:
-                if alias in dataframe.columns:
-                    rename_map[alias] = target
-                    break
-        logger.debug("字段映射: %s", rename_map)
-        dataframe = dataframe.rename(columns=rename_map)
-        logger.debug("映射后表头: %s", list(dataframe.columns))
-        required_columns = list(COLUMN_ALIASES.keys())
-        missing = [name for name in required_columns if name not in dataframe.columns]
-        if missing:
-            if len(dataframe.columns) == len(required_columns):
-                logger.debug("按列顺序回退映射字段: %s", required_columns)
-                dataframe = dataframe.copy()
-                dataframe.columns = required_columns
-            else:
-                raise ValueError(f"缺少字段 {missing}，请检查东方财富表结构变更")
-
-        dataframe["trade_date"] = dataframe["trade_date"].apply(self._parse_date)
-        dataframe["close_price"] = dataframe["close_price"].apply(self._parse_number)
-        dataframe["change_pct"] = dataframe["change_pct"].apply(self._normalize_percent)
-
-        for column in (
-            "main_net_amount",
-            "super_large_net_amount",
-            "large_net_amount",
-            "medium_net_amount",
-            "small_net_amount",
-        ):
-            dataframe[column] = dataframe[column].apply(self._parse_number)
-
-        for column in (
-            "main_net_pct",
-            "super_large_net_pct",
-            "large_net_pct",
-            "medium_net_pct",
-            "small_net_pct",
-        ):
-            dataframe[column] = dataframe[column].apply(self._parse_percent)
-
-        dataframe = dataframe.sort_values("trade_date")
-        return dataframe
-
-    @staticmethod
-    def _parse_date(value) -> date:
-        if isinstance(value, datetime):
-            return value.date()
-        if isinstance(value, date):
-            return value
-        text = str(value).strip()
-        if " " in text:
-            text = text.split(" ")[0]
-        try:
-            return datetime.strptime(text, "%Y-%m-%d").date()
-        except ValueError:
-            return datetime.strptime(text, "%Y/%m/%d").date()
-
-    @staticmethod
-    def _parse_number(value) -> Optional[float]:
-        if value is None or pd.isna(value):
-            return None
-        text = str(value).strip()
-        if text in {"", "-", "--"}:
-            return None
-        multiplier = 1.0
-        if text.endswith("亿"):
-            multiplier = 1e8
-            text = text[:-1]
-        elif text.endswith("万"):
-            multiplier = 1e4
-            text = text[:-1]
-        text = text.replace(",", "")
-        try:
-            return float(text) * multiplier
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _parse_percent(value) -> Optional[float]:
-        if value is None or pd.isna(value):
-            return None
-        text = str(value).strip()
-        if text in {"", "-", "--"}:
-            return None
-        if text.endswith("%"):
-            text = text[:-1]
-        text = text.replace(",", "")
-        try:
-            return float(text)
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _normalize_percent(value) -> Optional[float]:
-        percent = DataController._parse_percent(value)
-        if percent is None:
-            return None
-        if abs(percent) > 1000:
-            for _ in range(3):
-                percent /= 100
-                if abs(percent) <= 1000:
-                    break
-        if abs(percent) > 1000:
-            return None
-        return percent
-
-    def _row_from_series(self, stock_code: str, row: pd.Series) -> tuple:
-        return (
-            stock_code,
-            row["trade_date"],
-            row["close_price"],
-            row["change_pct"],
-            row["main_net_amount"],
-            self._pct_to_ratio(row["main_net_pct"]),
-            row["super_large_net_amount"],
-            self._pct_to_ratio(row["super_large_net_pct"]),
-            row["large_net_amount"],
-            self._pct_to_ratio(row["large_net_pct"]),
-            row["medium_net_amount"],
-            self._pct_to_ratio(row["medium_net_pct"]),
-            row["small_net_amount"],
-            self._pct_to_ratio(row["small_net_pct"]),
-            row.to_json(force_ascii=False),
-        )
-
-    @staticmethod
-    def _pct_to_ratio(value: Optional[float]) -> Optional[float]:
-        if value is None or pd.isna(value):
-            return None
-        ratio = float(value)
-        if abs(ratio) > 1:
-            for _ in range(6):
-                ratio /= 100
-                if abs(ratio) <= 1:
-                    break
-        if abs(ratio) > 1:
-            return None
-        return ratio
-
-    def _fetch_fund_flow_from_api(self, stock_code: str) -> pd.DataFrame:
-        market = "1" if stock_code.startswith("6") else "0"
-        secid = f"{market}.{stock_code}"
-        url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
-        params = {
-            "secid": secid,
-            "klt": 101,
-            "lmt": 0,
-            "fields1": "f1,f2,f3,f7",
-            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63",
-            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
-        }
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-        payload = response.json()
-        data = payload.get("data") or {}
-        klines = data.get("klines") or []
-        if not klines:
-            return pd.DataFrame()
-
-        rows = [item.split(",") for item in klines]
-        columns = [
-            "trade_date",
-            "main_net_amount",
-            "small_net_amount",
-            "medium_net_amount",
-            "large_net_amount",
-            "super_large_net_amount",
-            "main_net_pct",
-            "small_net_pct",
-            "medium_net_pct",
-            "large_net_pct",
-            "super_large_net_pct",
-            "close_price",
-            "change_pct",
-        ]
-        dataframe = pd.DataFrame(rows, columns=columns)
-        return dataframe
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="东方财富资金流向抓取")
-    parser.add_argument("--stock", help="股票代码，例如 301251")
-    parser.add_argument("--config", help="配置文件路径，例如 Eastmoney/config/config_1.json")
-    parser.add_argument(
-        "--mode",
-        choices=["once", "schedule"],
-        default="schedule",
-        help="执行模式: once(指定股票补全)、schedule(每日收盘后)",
-    )
-    parser.add_argument("--close-hour", type=int, default=15, help="收盘小时")
-    parser.add_argument("--close-minute", type=int, default=30, help="收盘分钟")
-    return parser.parse_args()
-
-
-def load_stock_codes_from_config(config_path: str) -> List[str]:
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"配置文件未找到: {config_path}")
-    
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
-        
-    codes_file = config.get("stock_codes_file") or config.get("excel_file")
-    if not codes_file:
-        raise ValueError("配置文件中未指定 stock_codes_file")
-        
-    if not os.path.isabs(codes_file):
-        codes_file = os.path.join(os.path.dirname(config_path), codes_file)
-        
-    if not os.path.exists(codes_file):
-        raise FileNotFoundError(f"股票列表文件未找到: {codes_file}")
-        
-    codes = []
-    # Try reading as text first, assuming one code per line
-    try:
-        with open(codes_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    codes.append(line.split(".")[0])
-    except UnicodeDecodeError:
-        # Fallback to reading as Excel if binary
-        try:
-            df = pd.read_excel(codes_file)
-            pass
-        except Exception:
-            pass
-            
-    return codes
-
-
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-    args = parse_args()
-    
-    mysql_config = None
-    stock_codes = []
-    
-    if args.config:
-        if not os.path.exists(args.config):
-             raise FileNotFoundError(f"Config file not found: {args.config}")
-        with open(args.config, 'r') as f:
-            cfg = json.load(f)
-            mysql_config = cfg.get('mysql')
-        
-        try:
-            stock_codes = load_stock_codes_from_config(args.config)
-            logger.info("已从配置文件加载 %d 只股票", len(stock_codes))
-        except Exception as e:
-            logger.error("加载配置文件失败: %s", e)
-            return
-
-    controller = EastmoneyController(mysql_config=mysql_config)
-
-    if args.mode == "once":
-        if args.stock:
-            inserted = controller.sync_stock(args.stock)
-            logger.info("股票 %s 资金流向同步完成，新增 %d 条", args.stock, inserted)
-        elif stock_codes:
-            inserted = controller.sync_batch(stock_codes)
-            logger.info("批量同步完成，总新增 %d 条记录", inserted)
-        else:
-            raise ValueError("mode=once 需要提供 --stock 或 --config")
-        return
-
-    # Schedule mode
-    controller.run_daily_after_close(
-        stock_codes=stock_codes if stock_codes else None,
-        close_hour=args.close_hour,
-        close_minute=args.close_minute
-    )
-
-
-if __name__ == "__main__":
-    main()
+        with pymysql.connect(**self.mysql_config) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(MYSQL_CREATE_TABLE_SQL)
+            conn.commit()
