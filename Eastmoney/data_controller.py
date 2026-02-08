@@ -119,7 +119,7 @@ COLUMN_ALIASES = {
 logger = logging.getLogger(__name__)
 
 
-class EastmoneyController:
+class DataController:
     """东方财富资金流向与融资融券数据抓取与入库。"""
 
     def __init__(self, mysql_config: Optional[dict] = None) -> None:
@@ -503,7 +503,7 @@ class EastmoneyController:
 
     @staticmethod
     def _normalize_percent(value) -> Optional[float]:
-        percent = EastmoneyController._parse_percent(value)
+        percent = DataController._parse_percent(value)
         if percent is None:
             return None
         if abs(percent) > 1000:

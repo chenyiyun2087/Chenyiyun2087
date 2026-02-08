@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from Sina.SinaLatestBSShow import DEFAULT_MYSQL_CONFIG, fetch_latest_buy_signals
+from Sina.bs_detection.SinaLatestBSShow import DEFAULT_MYSQL_CONFIG, fetch_latest_buy_signals
 
 
 def load_symbols_from_sina_bs() -> list[str]:

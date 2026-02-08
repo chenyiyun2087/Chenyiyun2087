@@ -16,7 +16,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, os.pardir))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from Eastmoney.long_short_scanner_selenium import scan_stocks_batch, save_results_to_mysql
+from Eastmoney.sentiment_scanner import scan_stocks_batch, save_results_to_mysql
 
 logger = logging.getLogger("Eastmoney.main")
 
@@ -189,10 +189,10 @@ def main() -> None:
         controller = None
         mysql_config = config.get("mysql") # Reload in case skipped scan block
         try:
-            from Eastmoney.EastmoneyController import EastmoneyController
-            controller = EastmoneyController(mysql_config=mysql_config)
+            from Eastmoney.data_controller import DataController
+            controller = DataController(mysql_config=mysql_config)
         except ImportError:
-            logger.error("Cannot import EastmoneyController")
+            logger.error("Cannot import DataController")
         except Exception as e:
             logger.error("Controller Init Failed: %s", e)
 

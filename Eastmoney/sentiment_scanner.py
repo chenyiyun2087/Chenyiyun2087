@@ -10,10 +10,16 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from typing import Iterable, List
 
-try:
-    from .duokong_scanner import DuokongSnapshot
-except ImportError:  # 兼容脚本直接运行
-    from duokong_scanner import DuokongSnapshot
+@dataclass(frozen=True)
+class DuokongSnapshot:
+    """Structured snapshot of the multi/short sentiment widget."""
+    code: str
+    bulls_percent: float
+    bears_percent: float
+    bulls_votes: int | None = None
+    bears_votes: int | None = None
+    snapshot_time: datetime | None = None
+    source_url: str | None = None
 
 logger = logging.getLogger(__name__)
 
