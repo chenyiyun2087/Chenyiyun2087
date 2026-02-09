@@ -178,19 +178,21 @@ def cmd_signals(args):
     if not buy_signals.empty:
         print(f"买入阈值: {LIVE_CONFIG['buy_threshold']}分")
         
-        print(f"\n{'RANK':<4} {'代码':<8} {'名称':<8} {'评分':>8} {'突破':>6} {'量比':>8} {'RS20':>8}")
-        print("-" * 65)
+        print(f"\n{'RANK':<4} {'代码':<8} {'名称':<8} {'评分':>8} {'突破':>6} {'量比':>8} {'RS20':>8} {'状态':<6}")
+        print("-" * 75)
         
         for rank, (idx, row) in enumerate(buy_signals.iterrows(), 1):
+            status = "已持仓" if row.get("is_held") else "未执行"
             print(
                 f"{rank:<4} {row['symbol']:<8} {row.get('name', ''):<8} "
                 f"{row['score']:>8.1f} {row.get('is_breakout', 0):>6} "
-                f"{row.get('vol_ratio', 0):>8.2f} {row.get('rs20', 0):>8.2f}"
+                f"{row.get('vol_ratio', 0):>8.2f} {row.get('rs20', 0):>8.2f} {status:<6}"
             )
             
         print("\n[参考下单命令]")
         for _, row in buy_signals.iterrows():
-            print(f"python Sina/live_tracker/run_live_tracker.py buy -s {row['symbol']} -n 1000 -p 0.0 -r \"TopN信号\"")
+            if not row.get("is_held"):
+                print(f"python Sina/live_tracker/run_live_tracker.py buy -s {row['symbol']} -n 1000 -p 0.0 -r \"TopN信号\"")
     else:
         print("无交易池信号")
         
@@ -198,14 +200,15 @@ def cmd_signals(args):
     if not watch_signals.empty:
         print(f"观察阈值: {LIVE_CONFIG['watch_threshold']}分")
         
-        print(f"\n{'RANK':<4} {'代码':<8} {'名称':<8} {'评分':>8} {'突破':>6} {'量比':>8} {'RS20':>8}")
-        print("-" * 65)
+        print(f"\n{'RANK':<4} {'代码':<8} {'名称':<8} {'评分':>8} {'突破':>6} {'量比':>8} {'RS20':>8} {'状态':<6}")
+        print("-" * 75)
         
         for rank, (idx, row) in enumerate(watch_signals.iterrows(), 1):
+            status = "已持仓" if row.get("is_held") else "未执行"
             print(
                 f"{rank:<4} {row['symbol']:<8} {row.get('name', ''):<8} "
                 f"{row['score']:>8.1f} {row.get('is_breakout', 0):>6} "
-                f"{row.get('vol_ratio', 0):>8.2f} {row.get('rs20', 0):>8.2f}"
+                f"{row.get('vol_ratio', 0):>8.2f} {row.get('rs20', 0):>8.2f} {status:<6}"
             )
     else:
         print("无观察池信号")

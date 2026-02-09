@@ -285,19 +285,25 @@ def insert_signal(
     bs_signal_strength: float = None,
     reason: str = "",
     name: str = "",
+    is_executed: int = 0,
 ) -> None:
     """插入交易信号（忽略重复）"""
     sql = """
-    INSERT IGNORE INTO live_signals 
-    (signal_date, symbol, name, signal_type, score, bs_signal_strength, reason)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
+    INSERT INTO live_signals 
+    (signal_date, symbol, name, signal_type, score, bs_signal_strength, reason, is_executed)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE
+        score = VALUES(score),
+        bs_signal_strength = VALUES(bs_signal_strength),
+        reason = VALUES(reason),
+        is_executed = VALUES(is_executed)
     """
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, (
                 signal_date, symbol, name, signal_type,
-                score, bs_signal_strength, reason
+                score, bs_signal_strength, reason, is_executed
             ))
             conn.commit()
     finally:

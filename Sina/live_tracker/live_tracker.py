@@ -165,6 +165,12 @@ class LiveTracker:
         """
         trade_date = trade_date or date.today()
         
+        # 如果价格为0，从数据库获取最新报价
+        if price == 0:
+            price = db.get_latest_price(symbol)
+            if price <= 0:
+                raise ValueError(f"无法获取股票 {symbol} 的报价，请手动输入价格")
+        
         # 考虑滑点
         actual_price = price * (1 + self.slippage_rate)
         amount = actual_price * shares
@@ -223,6 +229,9 @@ class LiveTracker:
             current_price=pos.current_price,
         )
         
+        # 持久化当前账户状态（包括现金）
+        self.calculate_daily_pnl(trade_date)
+        
         trade = LiveTrade(
             id=trade_id,
             trade_date=trade_date,
@@ -264,6 +273,12 @@ class LiveTracker:
         """
         trade_date = trade_date or date.today()
         
+        # 如果价格为0，从数据库获取最新报价
+        if price == 0:
+            price = db.get_latest_price(symbol)
+            if price <= 0:
+                raise ValueError(f"无法获取股票 {symbol} 的报价，请手动输入价格")
+        
         # 检查持仓
         if symbol not in self.positions:
             raise ValueError(f"没有持仓: {symbol}")
@@ -295,6 +310,9 @@ class LiveTracker:
                 name=pos.name,
                 current_price=pos.current_price,
             )
+        
+        # 持久化当前账户状态（包括现金）
+        self.calculate_daily_pnl(trade_date)
         
         # 保存到数据库
         trade_id = db.insert_trade(
@@ -482,13 +500,13 @@ class LiveTracker:
             
             scored = score_asof_date(qfq_feat, raw_liq, names, asof_date=asof_date)
             
+            # 记录是否已持仓
+            held_symbols = set(self.positions.keys())
+            scored["is_held"] = scored["symbol"].isin(held_symbols)
+            
             # 筛选买入信号和观察池信号
             buy_threshold = LIVE_CONFIG["buy_threshold"]
             watch_threshold = LIVE_CONFIG["watch_threshold"]
-            
-            # 排除已持仓
-            held_symbols = set(self.positions.keys())
-            scored = scored[~scored["symbol"].isin(held_symbols)]
             
             # 交易池
             buy_signals = scored[scored["score"] >= buy_threshold].copy()
@@ -511,7 +529,8 @@ class LiveTracker:
                     score=row["score"],
                     bs_signal_strength=row.get("buy_points", 0), # 假设scorer返回了buy_points
                     reason="Satisfy Buy Threshold",
-                    name=row.get("name", "")
+                    name=row.get("name", ""),
+                    is_executed=1 if row["is_held"] else 0
                 )
                 
             # 保存观察信号
@@ -523,7 +542,8 @@ class LiveTracker:
                     score=row["score"],
                     bs_signal_strength=row.get("buy_points", 0),
                     reason="Satisfy Watch Threshold",
-                    name=row.get("name", "")
+                    name=row.get("name", ""),
+                    is_executed=1 if row["is_held"] else 0
                 )
             
             return signal_date, {"buy": buy_signals.head(10), "watch": watch_signals.head(20)}
