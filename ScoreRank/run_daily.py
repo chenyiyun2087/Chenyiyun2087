@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 import pandas as pd
+from sqlalchemy import text
 
 from config import CONFIG
 from db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
@@ -60,6 +61,61 @@ def describe_scoring(
     print(scored[score_columns].to_string(index=False))
 
 
+def save_scores_to_db(scored: pd.DataFrame, asof_date: pd.Timestamp, trade_pool: pd.DataFrame, watch_pool: pd.DataFrame):
+    """保存评分结果到数据库"""
+    print("\n正在保存评分结果到数据库...")
+    engine = get_engine()
+    
+    # 准备数据
+    df_save = scored.copy()
+    df_save['trade_date'] = asof_date.date()
+    df_save['pool_type'] = 'OTHER'
+    
+    # 标记池类型
+    trade_symbols = set(trade_pool['symbol'])
+    watch_symbols = set(watch_pool['symbol'])
+    
+    def get_pool_type(row):
+        if row['symbol'] in trade_symbols:
+            return 'TRADE'
+        elif row['symbol'] in watch_symbols:
+            return 'WATCH'
+        return 'OTHER'
+    
+    df_save['pool_type'] = df_save.apply(get_pool_type, axis=1)
+    
+    # 选择需要的列并重命名以匹配数据库
+    cols_map = {
+        'symbol': 'symbol',
+        'name': 'name',
+        'score': 'score',
+        'base_score': 'base_score',
+        'penalty': 'penalty',
+        's_trend': 's_trend',
+        's_breakout': 's_breakout',
+        's_volume': 's_volume',
+        's_rs': 's_rs',
+        's_contraction': 's_contraction',
+        's_liquidity': 's_liquidity',
+        'trade_date': 'trade_date',
+        'pool_type': 'pool_type'
+    }
+    
+    df_save = df_save[list(cols_map.keys())].rename(columns=cols_map)
+    
+    # 删除旧数据 (幂等性)
+    date_str = asof_date.strftime('%Y-%m-%d')
+    with engine.begin() as conn:
+        conn.execute(text(f"DELETE FROM score_rank_daily WHERE trade_date = '{date_str}'"))
+    
+    # 写入新数据
+    try:
+        df_save.to_sql('score_rank_daily', engine, if_exists='append', index=False, chunksize=1000)
+        print(f"成功保存 {len(df_save)} 条记录到 score_rank_daily")
+    except Exception as e:
+        print(f"保存数据库失败: {e}")
+
+
 def main():
     # 1) 使用新浪B点最新买点股票作为观察池子
     symbols = load_symbols_from_sina_bs()
@@ -109,6 +165,9 @@ def main():
     trade_pool.to_csv(f"trade_pool_{d}.csv", index=False, encoding="utf-8-sig")
     watch_pool.to_csv(f"watch_pool_{d}.csv", index=False, encoding="utf-8-sig")
     triggers.to_csv(f"triggers_{d}.csv", index=False, encoding="utf-8-sig")
+    
+    # 保存到数据库
+    save_scores_to_db(scored, asof_date, trade_pool, watch_pool)
 
     print("asof:", asof_date.date())
     print("trade_pool:", len(trade_pool), "watch_pool:", len(watch_pool), "triggers:", len(triggers))
