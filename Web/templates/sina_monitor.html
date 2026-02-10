@@ -1,171 +1,46 @@
-{% extends "layout.html" %}
-
+{% extends 'layout.html' %}
+{% block title %}B/S 监控{% endblock %}
+{% block page_title %}Sina 买卖点监控{% endblock %}
 {% block content %}
-<div class="monitor-container">
-    <!-- Header Controls -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="m-0 border-0 pl-0">B/S Signal Monitor</h2>
-        <form class="form-inline" method="get" action="{{ url_for('sina_monitor') }}">
-            <div class="input-group">
-                <input type="text" name="date" class="form-control form-control-sm bg-dark text-light border-secondary"
-                    placeholder="YYYYMMDD" value="{{ query_date }}">
-                <div class="input-group-append">
-                    <button type="submit" class="btn btn-primary btn-sm">Search</button>
-                </div>
-            </div>
-        </form>
-    </div>
+<form method="get" class="form-inline panel">
+    <label>查询日期(YYYYMMDD)</label>
+    <input type="text" name="date" value="{{ query_date }}">
+    <button class="btn">查询</button>
+    <span class="muted">最近有数据日期：{{ last_completed_date }}</span>
+</form>
 
-    <!-- Top Metrics Cards -->
-    <div class="row mb-4">
-        <!-- Card 1: Total Scanned -->
-        <div class="col-md-3">
-            <div class="card metric-card">
-                <div class="metric-label">Total Scanned</div>
-                <div class="metric-value">{{ daily_stats.total }}</div>
-                <div class="d-flex align-items-center mt-2">
-                    <span class="text-light small">Status: {{ 'Completed' if daily_stats.total > 0 else 'Pending'
-                        }}</span>
-                </div>
-            </div>
-        </div>
-        <!-- Card 2: Buy Signals -->
-        <div class="col-md-3">
-            <div class="card metric-card">
-                <div class="metric-label">Buy Signals (B)</div>
-                <div class="metric-value text-danger">{{ daily_stats.buy_count or 0 }}</div>
-                <div class="d-flex align-items-center mt-2">
-                    <span class="text-light small">New Opportunities</span>
-                </div>
-            </div>
-        </div>
-        <!-- Card 3: Sell Signals -->
-        <div class="col-md-3">
-            <div class="card metric-card">
-                <div class="metric-label">Sell Signals (S)</div>
-                <div class="metric-value text-success">{{ daily_stats.sell_count or 0 }}</div>
-                <div class="d-flex align-items-center mt-2">
-                    <span class="text-light small">Exit Warnings</span>
-                </div>
-            </div>
-        </div>
-        <!-- Card 4: Last Update -->
-        <div class="col-md-3">
-            <div class="card metric-card">
-                <div class="metric-label">Last Update</div>
-                <div class="metric-value" style="font-size: 1.1rem;">{{ daily_stats.last_update or 'N/A' }}</div>
-                <div class="d-flex align-items-center mt-2">
-                    <span class="text-muted small">Latest Batch</span>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Middle Section: Recent Lists -->
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <div class="card">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="m-0">Recent Discovery Feed</h5>
-                    <span class="badge badge-secondary">{{ recent_signals|length }} Items</span>
-                </div>
-                <div class="table-responsive" style="max_height: 300px; overflow-y: auto;">
-                    <table class="table table-sm table-borderless">
-                        <thead>
-                            <tr style="position: sticky; top: 0; background: var(--card-bg); z-index: 1;">
-                                <th>Time</th>
-                                <th>Code</th>
-                                <th>Signal</th>
-                                <th>Date</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for row in recent_signals[:10] %}
-                            <tr>
-                                <td class="text-muted">{{ row.created_at.strftime('%H:%M:%S') }}</td>
-                                <td>
-                                    <span class="font-weight-bold">{{ row.stock_code }}</span>
-                                </td>
-                                <td>
-                                    {% if row.has_buy_signal %}
-                                    <span class="text-danger">Buy</span>
-                                    {% elif row.has_sell_signal %}
-                                    <span class="text-success">Sell</span>
-                                    {% endif %}
-                                </td>
-                                <td class="text-muted">{{ row.batch_date }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Main Data Table -->
-    <div class="card">
-        <div
-            class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center pl-0 pr-0 pt-0">
-            <h5 class="m-0">Daily Signal Analysis</h5>
-            <div class="btn-group btn-group-sm">
-                <button type="button" class="btn btn-outline-secondary active">All</button>
-                <button type="button" class="btn btn-outline-danger">Buy Only</button>
-                <button type="button" class="btn btn-outline-success">Sell Only</button>
-            </div>
-        </div>
-        <div class="table-responsive">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Stock Code</th>
-                        <th>Signal Type</th>
-                        <th>Buy Points</th>
-                        <th>Sell Points</th>
-                        <th>Date</th>
-                        <th>Description</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in daily_signals %}
-                    <tr>
-                        <td>{{ loop.index }}</td>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <span class="font-weight-bold mr-2">{{ row.stock_code }}</span>
-                                <a href="https://finance.sina.com.cn/realstock/company/{{ 'sh' if row.stock_code.startswith('6') else 'sz' }}{{ row.stock_code }}/nc.shtml"
-                                    target="_blank" class="text-muted small">🔗</a>
-                            </div>
-                        </td>
-                        <td>
-                            {% if row.has_buy_signal %}
-                            <span class="text-danger font-weight-bold">BUY</span>
-                            {% endif %}
-                            {% if row.has_sell_signal %}
-                            <span class="text-success font-weight-bold ml-2">SELL</span>
-                            {% endif %}
-                        </td>
-                        <td class="{{ 'text-danger' if row.buy_points_count > 0 else 'text-muted' }}">
-                            {{ row.buy_points_count }}
-                        </td>
-                        <td class="{{ 'text-success' if row.sell_points_count > 0 else 'text-muted' }}">
-                            {{ row.sell_points_count }}
-                        </td>
-                        <td>{{ row.batch_date }}</td>
-                        <td class="text-muted small">{{ row.buy_signal_description }} {{ row.sell_signal_description }}
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="7" class="text-center text-muted py-5">
-                            No signals found for {{ query_date }}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
+<div class="metrics-grid">
+    <div class="metric-card"><div class="label">总股票数</div><div class="value">{{ daily_stats.total or 0 }}</div></div>
+    <div class="metric-card"><div class="label">买点数量</div><div class="value text-up">{{ daily_stats.buy_count or 0 }}</div></div>
+    <div class="metric-card"><div class="label">卖点数量</div><div class="value text-down">{{ daily_stats.sell_count or 0 }}</div></div>
+    <div class="metric-card"><div class="label">最后更新</div><div class="value small">{{ daily_stats.last_update or '-' }}</div></div>
 </div>
+
+<section class="panel">
+    <div class="panel-title">当日信号</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>买点</th><th>卖点</th><th>更新时间</th></tr></thead>
+        <tbody>
+        {% for item in daily_signals %}
+            <tr><td>{{ item.stock_code }}</td><td>{{ item.stock_name }}</td><td>{{ item.has_buy_signal }}</td><td>{{ item.has_sell_signal }}</td><td>{{ item.created_at }}</td></tr>
+        {% else %}
+            <tr><td colspan="5" class="empty">当日无信号</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <div class="panel-title">最近50条信号</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>买点</th><th>卖点</th><th>批次日期</th><th>更新时间</th></tr></thead>
+        <tbody>
+        {% for item in recent_signals %}
+            <tr><td>{{ item.stock_code }}</td><td>{{ item.stock_name }}</td><td>{{ item.has_buy_signal }}</td><td>{{ item.has_sell_signal }}</td><td>{{ item.batch_date }}</td><td>{{ item.created_at }}</td></tr>
+        {% else %}
+            <tr><td colspan="6" class="empty">暂无历史信号</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
 {% endblock %}

@@ -25,7 +25,7 @@
 ## 环境准备
 确保已安装 `flask`:
 ```bash
-pip install flask pymysql
+pip install -r Web/requirements.txt
 ```
 
 ## 运行看板

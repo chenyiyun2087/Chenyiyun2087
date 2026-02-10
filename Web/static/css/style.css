@@ -16,14 +16,27 @@ body {
     color: var(--text);
     font-family: Inter, system-ui, -apple-system, sans-serif;
 }
-.app-shell { display: flex; min-height: 100vh; }
+.app-shell {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    min-height: 100vh;
+}
 .sidebar {
-    width: 220px;
     padding: 20px 12px;
     border-right: 1px solid var(--border);
     background: #0a1120;
 }
-.brand { font-size: 14px; font-weight: 700; margin-bottom: 18px; color: #c0d3ff; }
+.brand {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 18px;
+    color: #c0d3ff;
+}
+.sidebar-group-title {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 14px 8px 8px;
+}
 .sidebar nav { display: grid; gap: 8px; }
 .sidebar nav a {
     color: var(--muted);
@@ -32,15 +45,44 @@ body {
     border-radius: 8px;
     border: 1px solid transparent;
 }
-.sidebar nav a:hover, .sidebar nav a.active {
+.sidebar nav a:hover,
+.sidebar nav a.active {
     background: #17223b;
     color: var(--text);
     border-color: #2f4671;
 }
-.main-content { flex: 1; padding: 24px; }
-.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.main-content { padding: 20px 24px; }
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
 .topbar h1 { margin: 0; font-size: 22px; }
 .timestamp, .muted { color: var(--muted); font-size: 13px; }
+.tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+.tab {
+    text-decoration: none;
+    color: #b9cff4;
+    border: 1px solid #2d4368;
+    background: #111d33;
+    border-radius: 9px;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+.tab:hover { background: #1a2a47; }
+.tab.active {
+    background: #1b3a66;
+    color: #eaf2ff;
+    border-color: #3f6ca8;
+}
 .panel {
     background: linear-gradient(180deg, var(--panel), var(--panel-2));
     border: 1px solid var(--border);
@@ -98,3 +140,8 @@ tr:hover { background: #15213a; }
 .flash.danger { background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.5); }
 .pagination { display: flex; gap: 12px; align-items: center; margin: 8px 0 18px; color: var(--muted); }
 .pagination a { color: #99c1ff; text-decoration: none; }
+
+@media (max-width: 960px) {
+    .app-shell { grid-template-columns: 1fr; }
+    .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+}

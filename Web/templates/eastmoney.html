@@ -1,64 +1,25 @@
-{% extends "layout.html" %}
-
-{% block header %}Eastmoney 超跌反弹策略 (Oversold Bounce){% endblock %}
-
+{% extends 'layout.html' %}
+{% block title %}Eastmoney 策略{% endblock %}
+{% block page_title %}Eastmoney 超跌反弹策略{% endblock %}
 {% block content %}
-<div class="card">
-    <div class="section-header">
-        <h2>策略筛选结果</h2>
-        <span class="timestamp">数据日期: {{ date }}</span>
-    </div>
-
-    <!-- Scoring Formula Explanation -->
-    <div class="alert alert-info"
-        style="background-color: #e0f2fe; color: #0369a1; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-        <h4>📋 评分公式说明 (Scoring Formula)</h4>
-        <p><strong>综合得分 = (筹码分析 * 0.4) + (超跌程度 * 0.3) + (量能配合 * 0.2) + (空方情绪 * 0.1)</strong></p>
-        <ul>
-            <li><strong>筹码分析 (40%)</strong>: 核心看筹码集中度 (<15%优) 和获利盘比例 (<5%优)。</li>
-            <li><strong>超跌程度 (30%)</strong>: 结合 BIAS(10,20), RSI(<30), KDJ(J<0) 判断是否严重超跌。</li>
-            <li><strong>量能配合 (20%)</strong>: 下跌缩量、底部放量为优。</li>
-            <li><strong>空方情绪 (10%)</strong>: 空方占比越高，反转潜力越大 (通过情绪阈值筛选)。</li>
-        </ul>
-    </div>
-
-    <div style="overflow-x: auto;">
-        <table>
-            <thead>
-                <tr>
-                    <th>代码</th>
-                    <th>名称</th>
-                    <th>综合得分</th>
-                    <th>空方情绪</th>
-                    <th>超跌分</th>
-                    <th>筹码集中度</th>
-                    <th>获利盘</th>
-                    <th>RSI</th>
-                    <th>BIAS(10)</th>
-                    <th>目标涨幅</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in results %}
-                <tr>
-                    <td>{{ row.stock_code }}</td>
-                    <td>{{ row.stock_name }}</td>
-                    <td class="score-high">{{ row.comprehensive_score }}</td>
-                    <td>{{ row.bears_percent }}%</td>
-                    <td>{{ row.oversold_score }}</td>
-                    <td>{{ row.chip_concentration }}%</td>
-                    <td>{{ row.profit_ratio }}%</td>
-                    <td>{{ row.details.RSI }}</td>
-                    <td>{{ row.details.BIAS_10 }}%</td>
-                    <td>{{ row.details.target_gain }}%</td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td colspan="10">暂无该日期的筛选结果</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</div>
+<section class="panel">
+    <div class="panel-title">最新交易日：{{ date or '-' }}</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>综合分</th><th>空方情绪</th><th>超跌分</th><th>RSI</th><th>BIAS10</th><th>目标涨幅</th></tr></thead>
+        <tbody>
+        {% for row in results %}
+            <tr>
+                <td>{{ row.stock_code }}</td><td>{{ row.stock_name }}</td><td class="text-up">{{ row.comprehensive_score }}</td>
+                <td>{{ row.bears_percent }}%</td><td>{{ row.oversold_score }}</td>
+                <td>{{ row.details.RSI if row.details else '-' }}</td>
+                <td>{{ row.details.BIAS_10 if row.details else '-' }}</td>
+                <td>{{ row.details.target_gain if row.details else '-' }}%</td>
+            </tr>
+        {% else %}
+            <tr><td colspan="8" class="empty">暂无策略数据</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% include 'partials/pagination.html' %}
 {% endblock %}

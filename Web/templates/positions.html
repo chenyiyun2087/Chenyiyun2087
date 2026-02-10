@@ -1,89 +1,38 @@
-{% extends "layout.html" %}
-
-{% block header %}Sina 实盘持仓 (Live Positions){% endblock %}
-
+{% extends 'layout.html' %}
+{% block title %}Sina 持仓{% endblock %}
+{% block page_title %}Sina 实盘持仓{% endblock %}
 {% block content %}
-<!-- Asset Overview -->
-<div class="asset-dashboard">
-    <div class="asset-card">
-        <div class="asset-label">资产总值 (Total Assets)</div>
-        <div class="asset-value">¥{{ "{:,.2f}".format(assets.total_equity|float) if assets else "0.00" }}</div>
-        <div class="asset-sub">
-            日盈亏: <span class="{% if assets and assets.daily_pnl|float >= 0 %}score-high{% else %}score-low{% endif %}">
-                {{ "{:+.2f}".format(assets.daily_pnl|float) if assets else "0.00" }}
-                ({{ "{:+.2f}%".format(assets.daily_return_pct|float) if assets else "0.00%" }})
-            </span>
-        </div>
-    </div>
-    <div class="asset-card">
-        <div class="asset-label">持仓市值 (Market Value)</div>
-        <div class="asset-value">¥{{ "{:,.2f}".format(assets.positions_value|float) if assets else "0.00" }}</div>
-        <div class="asset-sub">仓位: {{ "{:.1f}%".format((assets.positions_value|float / assets.total_equity|float * 100))
-            if assets and assets.total_equity|float > 0 else "0.0%" }}</div>
-    </div>
-    <div class="asset-card">
-        <div class="asset-label">现金资产 (Cash)</div>
-        <div class="asset-value">¥{{ "{:,.2f}".format(assets.cash|float) if assets else "0.00" }}</div>
-        <div class="asset-sub">可用资金</div>
-    </div>
+<div class="metrics-grid">
+    <div class="metric-card"><div class="label">总权益</div><div class="value">¥{{ '%.2f'|format(assets.total_equity if assets else 0) }}</div></div>
+    <div class="metric-card"><div class="label">持仓市值</div><div class="value">¥{{ '%.2f'|format(assets.positions_value if assets else 0) }}</div></div>
+    <div class="metric-card"><div class="label">可用现金</div><div class="value">¥{{ '%.2f'|format(assets.cash if assets else 0) }}</div></div>
+    <div class="metric-card"><div class="label">当日盈亏</div><div class="value {% if assets and assets.daily_pnl >= 0 %}text-up{% else %}text-down{% endif %}">¥{{ '%.2f'|format(assets.daily_pnl if assets else 0) }} ({{ '%.2f'|format(assets.daily_return_pct if assets else 0) }}%)</div></div>
 </div>
 
-<div class="card">
-    <div class="section-header">
-        <h2>持仓详情</h2>
-        <span class="badge badge-blue">{{ positions|length }} Positions</span>
-        <a href="{{ url_for('admin') }}" class="button small">Manage</a>
-    </div>
-    <div style="overflow-x: auto;">
-        <table>
-            <thead>
-                <tr>
-                    <th>代码</th>
-                    <th>名称</th>
-                    <th>买入日期</th>
-                    <th>买入价格</th>
-                    <th>当前价格</th>
-                    <th>昨收</th>
-                    <th>当前数量</th>
-                    <th>市值</th>
-                    <th>持仓成本</th>
-                    <th>浮动盈亏</th>
-                    <th>收益率</th>
-                    <th>策略</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for pos in positions %}
-                <tr>
-                    <td>{{ pos.symbol }}</td>
-                    <td>{{ pos.name }}</td>
-                    <td>{{ pos.entry_date }}</td>
-                    <td>{{ pos.entry_price or '-' }}</td> <!-- buy price needed? avg_cost is cost -->
-                    <td>{{ pos.current_price }}</td>
-                    <td>{{ pos.prev_close }}</td>
-                    <td>{{ pos.shares }}</td>
-                    <td>{{ "%.2f"|format(pos.market_value) }}</td>
-                    <td>{{ pos.avg_cost }}</td>
-                    <td class="{% if pos.profit > 0 %}score-high{% else %}score-low{% endif %}">
-                        {{ "%.2f"|format(pos.profit) }}
-                    </td>
-                    <td class="{% if pos.profit_rate > 0 %}score-high{% else %}score-low{% endif %}">
-                        {{ "%.2f"|format(pos.profit_rate) }}%
-                    </td>
-                    <td>{{ pos.strategy_id or 'N/A' }}</td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td colspan="11">当前无持仓</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <!-- Manual Order Button (Link to Admin or Modal) -->
-    <div style="margin-top: 20px;">
-        <button onclick="window.location.href='{{ url_for('admin') }}#manual-order';" class="btn-primary">手动补单</button>
-    </div>
-</div>
+<section class="panel">
+    <table>
+        <thead>
+        <tr>
+            <th>代码</th><th>名称</th><th>持仓数量</th><th>成本价</th><th>现价</th><th>市值</th><th>浮盈亏</th><th>收益率</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for pos in positions %}
+            <tr>
+                <td>{{ pos.symbol }}</td>
+                <td>{{ pos.name }}</td>
+                <td>{{ pos.shares }}</td>
+                <td>{{ '%.2f'|format(pos.avg_cost) }}</td>
+                <td>{{ '%.2f'|format(pos.current_price or 0) }}</td>
+                <td>{{ '%.2f'|format(pos.market_value) }}</td>
+                <td class="{% if pos.profit >= 0 %}text-up{% else %}text-down{% endif %}">{{ '%.2f'|format(pos.profit) }}</td>
+                <td class="{% if pos.profit_rate >= 0 %}text-up{% else %}text-down{% endif %}">{{ '%.2f'|format(pos.profit_rate) }}%</td>
+            </tr>
+        {% else %}
+            <tr><td colspan="8" class="empty">暂无持仓数据</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% include 'partials/pagination.html' %}
 {% endblock %}

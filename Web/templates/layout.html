@@ -1,83 +1,51 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}量化策略看板{% endblock %}</title>
+    <title>{% block title %}量化看板{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
-
 <body>
-    <div class="sidebar">
-        <div class="logo">
-            <h2>📈 QuantBoard</h2>
-        </div>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="brand">量化交易控制台</div>
+        <div class="sidebar-group-title">侧边栏</div>
         <nav>
-            <a href="{{ url_for('positions') }}" class="{% if request.endpoint == 'positions' %}active{% endif %}">
-                📊 Sina 实盘持仓
-            </a>
-            <a href="{{ url_for('eastmoney_scores') }}"
-                class="{% if request.endpoint == 'eastmoney_scores' %}active{% endif %}">
-                🐂 Eastmoney 策略
-            </a>
-            <a href="{{ url_for('sina_scores') }}" class="{% if request.endpoint == 'sina_scores' %}active{% endif %}">
-                ⭐ Sina 每日评分
-            </a>
-            <a href="{{ url_for('sina_monitor') }}"
-                class="{% if request.endpoint == 'sina_monitor' %}active{% endif %}">
-                📡 Sina B/S 监控
-            </a>
-            <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">
-                🛠️ 后台管理
-            </a>
+            <a href="{{ url_for('sina_monitor') }}" class="{% if request.endpoint == 'sina_monitor' %}active{% endif %}">Sina B/S 监控</a>
+            <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
         </nav>
-    </div>
+    </aside>
 
-    <div class="main-content">
-        <header>
-            <h1>{% block header %}{% endblock %}</h1>
-            <div class="user-info">
-                <span>Data Updated: {% block timestamp %}{{ now }}{% endblock %}</span>
-            </div>
+    <main class="main-content">
+        <header class="topbar">
+            <h1>{% block page_title %}量化策略看板{% endblock %}</h1>
+            <div class="timestamp">更新时间：{{ now }}</div>
         </header>
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        <div class="flash-messages">
-            {% for category, message in messages %}
-            <div class="alert alert-{{ category }}">{{ message }}</div>
-            {% endfor %}
+        <div class="tabs" role="tablist" aria-label="数据页签">
+            <a href="{{ url_for('positions') }}" class="tab {% if request.endpoint == 'positions' %}active{% endif %}">Sina 持仓</a>
+            <a href="{{ url_for('eastmoney_scores') }}" class="tab {% if request.endpoint == 'eastmoney_scores' %}active{% endif %}">Eastmoney 策略</a>
+            <a href="{{ url_for('sina_scores') }}" class="tab {% if request.endpoint == 'sina_scores' %}active{% endif %}">Sina 评分</a>
+            <a href="{{ url_for('sina_monitor') }}" class="tab {% if request.endpoint == 'sina_monitor' %}active{% endif %}">B/S 监控</a>
+            <a href="{{ url_for('admin') }}" class="tab {% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
         </div>
-        {% endif %}
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-wrap">
+                    {% for category, message in messages %}
+                        <div class="flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
         {% endwith %}
 
-        <div class="content">
-            {% block content %}{% endblock %}
-        </div>
-
-        <footer>
-            {% if pagination %}
-            <div class="pagination">
-                {% if pagination.has_prev %}
-                <a href="{{ url_for(request.endpoint, page=pagination.prev_num) }}">« Prev</a>
-                {% else %}
-                <span class="disabled">« Prev</span>
-                {% endif %}
-
-                <span class="current">Page {{ pagination.page }} of {{ pagination.pages }}</span>
-
-                {% if pagination.has_next %}
-                <a href="{{ url_for(request.endpoint, page=pagination.next_num) }}">Next »</a>
-                {% else %}
-                <span class="disabled">Next »</span>
-                {% endif %}
-            </div>
-            {% endif %}
-        </footer>
-    </div>
+        {% block content %}{% endblock %}
+    </main>
+</div>
 </body>
-
 </html>
