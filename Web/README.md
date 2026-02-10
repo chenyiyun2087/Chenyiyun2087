@@ -1,9 +1,26 @@
 # Quant Strategy Dashboard
 
-基于 Flask 的量化策略看板，用于展示：
-1.  **Sina 实盘持仓** (Live Positions)
-2.  **Sina 每日评分排行** (Daily Scores)
-3.  **Eastmoney 超跌反弹策略结果** (Oversold Bounce)
+基于 Flask 的量化策略看板，集成多维度数据展示与后台管理功能。
+
+## 功能特性 (v2)
+
+### 1. 数据看板
+*   **Sina 实盘持仓** (Live Positions):
+    *   展示持仓明细：买入价格、当前数量、持仓成本、浮动盈亏、收益率。
+    *   自动计算市值与盈亏。
+*   **Eastmoney 策略** (Oversold Bounce):
+    *   展示超跌反弹策略筛选结果。
+    *   **附带评分公式说明**：详细解释综合得分的计算逻辑。
+*   **Sina 每日评分** (Daily Scores):
+    *   展示每日个股评分排行 (Top 20)。
+    *   **附带评分公式说明**：解释基础分、趋势分、量能分等构成。
+
+### 2. 后台管理 (Admin)
+*   **任务调度**:
+    *   手动触发 Sina / Eastmoney 定时任务。
+    *   查看任务执行状态、上次执行时间。
+*   **手动补单**:
+    *   支持手动录入或修正 Sina 实盘持仓数据 (买入操作)。
 
 ## 环境准备
 确保已安装 `flask`:
@@ -17,19 +34,12 @@ python Web/app.py
 ```
 默认访问地址: [http://localhost:5001](http://localhost:5001)
 
-## 数据更新
-看板展示的是数据库中的静态数据，请确保运行以下脚本以更新数据：
-
-1.  **更新 Sina 评分**:
-    ```bash
-    python ScoreRank/run_daily.py
-    ```
-2.  **更新 Eastmoney 策略结果**:
-    ```bash
-    python Eastmoney/run_strategy.py
-    ```
-
 ## 目录结构
-*   `app.py`: Flask 主程序
-*   `templates/`: HTML 模板
+*   `app.py`: Flask 主程序 (包含路由、分页、数据库逻辑)
+*   `templates/`:
+    *   `layout.html`: 基础布局 (侧边栏导航)
+    *   `positions.html`: 持仓页面
+    *   `eastmoney.html`: 策略页面
+    *   `scores.html`: 评分页面
+    *   `admin.html`: 管理页面
 *   `static/`: CSS/JS 静态文件

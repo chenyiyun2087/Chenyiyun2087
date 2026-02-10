@@ -166,27 +166,30 @@ def cmd_signals(args):
     print("=" * 60)
     
     # 买入信号
+    # 买入信号
     print("\n=== 交易池信号 (Trade Pool) ===")
     signal_date, signals_dict = tracker.get_buy_signals()
     buy_signals = signals_dict.get("buy", pd.DataFrame())
     watch_signals = signals_dict.get("watch", pd.DataFrame())
+    delayed_df = signals_dict.get("delayed", pd.DataFrame())
     
     if signal_date:
-        print(f"基准日期: {signal_date}")
+        print(f"评估日期 (As Of): {signal_date}")
         print(f"操作建议: 请在下一交易日 ({signal_date} 之后) 开盘时市价买入")
     
     if not buy_signals.empty:
         print(f"买入阈值: {LIVE_CONFIG['buy_threshold']}分")
         
-        print(f"\n{'RANK':<4} {'代码':<8} {'名称':<8} {'评分':>8} {'突破':>6} {'量比':>8} {'RS20':>8} {'状态':<6}")
-        print("-" * 75)
+        print(f"\n{'RANK':<4} {'代码':<8} {'名称':<8} {'评分':>8} {'突破':>6} {'量比':>8} {'RS20':>8} {'数据日期':<12} {'状态':<6}")
+        print("-" * 85)
         
         for rank, (idx, row) in enumerate(buy_signals.iterrows(), 1):
             status = "已持仓" if row.get("is_held") else "未执行"
+            data_date = str(row.get("data_date", "-"))
             print(
                 f"{rank:<4} {row['symbol']:<8} {row.get('name', ''):<8} "
                 f"{row['score']:>8.1f} {row.get('is_breakout', 0):>6} "
-                f"{row.get('vol_ratio', 0):>8.2f} {row.get('rs20', 0):>8.2f} {status:<6}"
+                f"{row.get('vol_ratio', 0):>8.2f} {row.get('rs20', 0):>8.2f} {data_date:<12} {status:<6}"
             )
             
         print("\n[参考下单命令]")
@@ -200,18 +203,28 @@ def cmd_signals(args):
     if not watch_signals.empty:
         print(f"观察阈值: {LIVE_CONFIG['watch_threshold']}分")
         
-        print(f"\n{'RANK':<4} {'代码':<8} {'名称':<8} {'评分':>8} {'突破':>6} {'量比':>8} {'RS20':>8} {'状态':<6}")
-        print("-" * 75)
+        print(f"\n{'RANK':<4} {'代码':<8} {'名称':<8} {'评分':>8} {'突破':>6} {'量比':>8} {'RS20':>8} {'数据日期':<12} {'状态':<6}")
+        print("-" * 85)
         
         for rank, (idx, row) in enumerate(watch_signals.iterrows(), 1):
             status = "已持仓" if row.get("is_held") else "未执行"
+            data_date = str(row.get("data_date", "-"))
             print(
                 f"{rank:<4} {row['symbol']:<8} {row.get('name', ''):<8} "
                 f"{row['score']:>8.1f} {row.get('is_breakout', 0):>6} "
-                f"{row.get('vol_ratio', 0):>8.2f} {row.get('rs20', 0):>8.2f} {status:<6}"
+                f"{row.get('vol_ratio', 0):>8.2f} {row.get('rs20', 0):>8.2f} {data_date:<12} {status:<6}"
             )
     else:
         print("无观察池信号")
+
+    # 数据滞后警告
+    if not delayed_df.empty:
+        print("\n=== ⚠️ 数据未就绪/滞后警告 (Delayed Data) ===")
+        print(f"总计: {len(delayed_df)} 只股票")
+        print(f"\n{'代码':<8} {'最新可用日期':<12} {'原因':<15}")
+        print("-" * 40)
+        for _, row in delayed_df.iterrows():
+            print(f"{row['symbol']:<8} {str(row['latest_date']):<12} {row['reason']:<15}")
     
     # 卖出信号
     print("\n=== 卖出信号 ===")

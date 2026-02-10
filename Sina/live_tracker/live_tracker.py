@@ -465,6 +465,10 @@ class LiveTracker:
             score_rank_path = str(REPO_ROOT / "ScoreRank")
             if score_rank_path not in sys.path:
                 sys.path.insert(0, score_rank_path)
+            
+            # 临时添加项目根目录到 path，以便 ScoreRank 内部可以 import Sina
+            if str(REPO_ROOT) not in sys.path:
+                sys.path.insert(0, str(REPO_ROOT))
 
             from ScoreRank.run_daily import load_symbols_from_sina_bs
             from ScoreRank.db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
@@ -516,6 +520,41 @@ class LiveTracker:
                 (scored["score"] >= watch_threshold) & 
                 (scored["score"] < buy_threshold)
             ].copy()
+
+            # --- Data Readiness Validation ---
+            # Identify symbols that are in `symbols` (had B-point) but not in `scored`.
+            # These were likely dropped due to missing data for `asof_date` in `score_asof_date`.
+            scored_symbols = set(scored["symbol"])
+            missing_symbols = set(symbols) - scored_symbols
+            
+            # For missing symbols, find their latest trade_date from qfq
+            delayed_data = []
+            if missing_symbols:
+                # Group by symbol to get max date
+                latest_dates = qfq.groupby("symbol")["trade_date"].max()
+                for sym in missing_symbols:
+                    if sym in latest_dates:
+                        last_dt = latest_dates[sym]
+                        delayed_data.append({
+                            "symbol": sym,
+                            "latest_date": last_dt.date(),
+                            "reason": "Data Lagging"
+                        })
+                    else:
+                        delayed_data.append({
+                            "symbol": sym, 
+                            "latest_date": None, 
+                            "reason": "No Data Found"
+                        })
+            
+            delayed_df = pd.DataFrame(delayed_data)
+            
+            # Add data_date column to signals
+            if not buy_signals.empty:
+                buy_signals["data_date"] = asof_date.date()
+                
+            if not watch_signals.empty:
+                watch_signals["data_date"] = asof_date.date()
             
             # 保存信号到数据库
             signal_date = asof_date.date()
@@ -546,7 +585,11 @@ class LiveTracker:
                     is_executed=1 if row["is_held"] else 0
                 )
             
-            return signal_date, {"buy": buy_signals.head(10), "watch": watch_signals.head(20)}
+            return signal_date, {
+                "buy": buy_signals.head(10), 
+                "watch": watch_signals.head(20),
+                "delayed": delayed_df
+            }
             
         except ImportError as e:
             print(f"无法导入评分模块: {e}")

@@ -58,13 +58,25 @@ def main() -> None:
     # 2. 加载配置
     config_path = args.config_file
     if not os.path.exists(config_path):
-        # 尝试在 Eastmoney/config 下查找
-        alt_path = os.path.join(CURRENT_DIR, "config", config_path)
-        if os.path.exists(alt_path):
-            config_path = alt_path
+        # 尝试追加 .json
+        if not config_path.endswith(".json") and os.path.exists(config_path + ".json"):
+            config_path += ".json"
         else:
-            logger.error("配置文件未找到: %s", config_path)
-            sys.exit(1)
+            # 尝试在 Eastmoney/config 下查找
+            alt_paths = [
+                os.path.join(CURRENT_DIR, "config", config_path),
+                os.path.join(CURRENT_DIR, "config", config_path + ".json")
+            ]
+            found = False
+            for p in alt_paths:
+                if os.path.exists(p):
+                    config_path = p
+                    found = True
+                    break
+            
+            if not found:
+                logger.error("配置文件未找到: %s", args.config_file)
+                sys.exit(1)
 
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
