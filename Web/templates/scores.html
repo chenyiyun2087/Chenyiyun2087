@@ -1,22 +1,69 @@
-{% extends 'layout.html' %}
-{% block title %}Sina 评分{% endblock %}
-{% block page_title %}Sina 每日评分排行{% endblock %}
+{% extends "layout.html" %}
+
+{% block header %}Sina 每日评分 (Daily Scores){% endblock %}
+
 {% block content %}
-<section class="panel">
-    <div class="panel-title">最新交易日：{{ date or '-' }}</div>
+<div class="card">
+    <div class="section-header">
+        <h2>评分排行</h2>
+        <span class="timestamp">数据日期: {{ date }}</span>
+    </div>
+
+    <!-- Scoring Formula Explanation -->
+    <div class="alert alert-info"
+        style="background-color: #f3e8ff; color: #6b21a8; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+        <h4>📋 评分公式说明 (Scoring Formula)</h4>
+        <p><strong>总分 = 基础分 (Base) + 趋势分 + 量能分 + (RS强度 + 缩量回调) - 惩罚项</strong></p>
+        <ul>
+            <li><strong>基础分</strong>: 来源于 B 点信号质量、均线排列等。</li>
+            <li><strong>趋势分 (s_trend)</strong>: 长期均线向上发散程度。</li>
+            <li><strong>量能分 (s_volume)</strong>: 近期成交量活跃度与资金流入。</li>
+            <li><strong>相对强度 (s_rs)</strong>: 强于大盘 (RP) 的程度。</li>
+            <li><strong>缩量回调 (s_contraction)</strong>: 上涨后缩量回调是买入良机。</li>
+        </ul>
+    </div>
+
     <table>
-        <thead><tr><th>代码</th><th>名称</th><th>总分</th><th>基础分</th><th>趋势分</th><th>量能分</th><th>池类型</th></tr></thead>
-        <tbody>
-        {% for row in scores %}
+        <thead>
             <tr>
-                <td>{{ row.symbol }}</td><td>{{ row.name }}</td><td class="text-up">{{ row.score }}</td><td>{{ row.base_score }}</td><td>{{ row.s_trend }}</td><td>{{ row.s_volume }}</td>
-                <td><span class="tag {{ row.pool_type|lower }}">{{ row.pool_type }}</span></td>
+                <th>代码</th>
+                <th>名称</th>
+                <th>总分</th>
+                <th>基础分</th>
+                <th>趋势分</th>
+                <th>量能分</th>
+                <th>相对强度</th>
+                <th>缩量分</th>
+                <th>池类型</th>
             </tr>
-        {% else %}
-            <tr><td colspan="7" class="empty">暂无评分数据</td></tr>
-        {% endfor %}
+        </thead>
+        <tbody>
+            {% for row in scores %}
+            <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.name }}</td>
+                <td class="score-high">{{ row.score }}</td>
+                <td>{{ row.base_score }}</td>
+                <td>{{ row.s_trend }}</td>
+                <td>{{ row.s_volume }}</td>
+                <td>{{ row.s_rs }}</td>
+                <td>{{ row.s_contraction }}</td>
+                <td>
+                    {% if row.pool_type == 'TRADE' %}
+                    <span class="badge badge-success">交易池</span>
+                    {% elif row.pool_type == 'WATCH' %}
+                    <span class="badge badge-warning">观察池</span>
+                    {% else %}
+                    <span class="badge">{{ row.pool_type }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="9">暂无评分数据</td>
+            </tr>
+            {% endfor %}
         </tbody>
     </table>
-</section>
-{% include 'partials/pagination.html' %}
+</div>
 {% endblock %}

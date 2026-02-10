@@ -1,39 +1,110 @@
-{% extends 'layout.html' %}
-{% block title %}后台管理{% endblock %}
-{% block page_title %}任务调度与手动补单{% endblock %}
+{% extends "layout.html" %}
+
+{% block header %}后台管理 (Admin Dashboard){% endblock %}
+
 {% block content %}
-<section class="panel">
-    <div class="panel-title">任务调度</div>
+<div class="card">
+    <div class="section-header">
+        <h2>任务调度 (Task Scheduler)</h2>
+    </div>
     <table>
-        <thead><tr><th>任务</th><th>状态</th><th>上次执行</th><th>切日状态</th><th>操作</th></tr></thead>
-        <tbody>
-        {% for name, task in tasks.items() %}
+        <thead>
             <tr>
-                <td>{{ name }}</td>
-                <td>{{ task.status }}</td>
-                <td>{{ task.last_run or '-' }}</td>
-                <td>{{ '已切日' if task.switched_day else '未切日' }}</td>
+                <th>任务名称</th>
+                <th>上次执行时间</th>
+                <th>状态</th>
+                <th>是否切日</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Sina 策略扫描</td>
+                <td>{{ tasks.sina.last_run or 'Never' }}</td>
+                <td><span class="badge {{ 'badge-success' if tasks.sina.status == 'Success' else 'badge-warning' }}">{{
+                        tasks.sina.status }}</span></td>
+                <td>{{ 'Yes' if tasks.sina.switched_day else 'No' }}</td>
                 <td>
-                    <form method="post" action="{{ url_for('run_task', task_name=name) }}">
-                        <button class="btn">立即运行</button>
+                    <form action="{{ url_for('run_task', task_name='sina') }}" method="post" style="display:inline;">
+                        <button type="submit" class="button small">立即执行</button>
                     </form>
                 </td>
             </tr>
-        {% endfor %}
+            <tr>
+                <td>Eastmoney 策略扫描</td>
+                <td>{{ tasks.eastmoney.last_run or 'Never' }}</td>
+                <td><span
+                        class="badge {{ 'badge-success' if tasks.eastmoney.status == 'Success' else 'badge-warning' }}">{{
+                        tasks.eastmoney.status }}</span></td>
+                <td>{{ 'Yes' if tasks.eastmoney.switched_day else 'No' }}</td>
+                <td>
+                    <form action="{{ url_for('run_task', task_name='eastmoney') }}" method="post"
+                        style="display:inline;">
+                        <button type="submit" class="button small">立即执行</button>
+                    </form>
+                </td>
+            </tr>
         </tbody>
     </table>
-</section>
+</div>
 
-<section class="panel">
-    <div class="panel-title">手动补单</div>
-    <form method="post" action="{{ url_for('add_position') }}" class="form-grid">
-        <input name="symbol" placeholder="股票代码" required>
-        <input name="name" placeholder="股票名称" required>
-        <input name="price" type="number" step="0.01" placeholder="买入价" required>
-        <input name="shares" type="number" placeholder="股数" required>
-        <input name="date" value="{{ now_date }}" placeholder="日期 YYYY-MM-DD" required>
-        <input name="strategy_id" placeholder="策略ID(可选)">
-        <button class="btn">提交</button>
+<div class="card" id="manual-order">
+    <div class="section-header">
+        <h2>手动补单 (Supplement Order for Sina)</h2>
+    </div>
+    <form action="{{ url_for('add_position') }}" method="post" class="form-grid">
+        <div class="form-group">
+            <label>股票代码 (Symbol)</label>
+            <input type="text" name="symbol" required placeholder="e.g. 600519">
+        </div>
+        <div class="form-group">
+            <label>股票名称 (Name)</label>
+            <input type="text" name="name" required>
+        </div>
+        <div class="form-group">
+            <label>买入价格 (Price)</label>
+            <input type="number" step="0.01" name="price" required>
+        </div>
+        <div class="form-group">
+            <label>买入数量 (Shares)</label>
+            <input type="number" name="shares" required>
+        </div>
+        <div class="form-group">
+            <label>买入日期 (Date)</label>
+            <input type="date" name="date" required value="{{ now_date }}">
+        </div>
+        <div class="form-group">
+            <label>策略ID (Strategy)</label>
+            <input type="text" name="strategy_id" value="manual">
+        </div>
+        <div class="form-group" style="align-self: end;">
+            <button type="submit" class="button btn-primary">提交补单</button>
+        </div>
     </form>
-</section>
+</div>
+
+<style>
+    .form-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .form-group label {
+        margin-bottom: 4px;
+        font-weight: 500;
+        font-size: 0.875rem;
+    }
+
+    .form-group input {
+        padding: 8px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+    }
+</style>
 {% endblock %}
