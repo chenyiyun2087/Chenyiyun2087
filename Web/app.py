@@ -348,8 +348,9 @@ def add_position():
         VALUES (%s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             shares = shares + VALUES(shares),
-            # Simple weighted average for cost update
-            avg_cost = (avg_cost * shares + VALUES(avg_cost) * VALUES(shares)) / (shares + VALUES(shares))
+            avg_cost = (avg_cost * shares + VALUES(avg_cost) * VALUES(shares)) / (shares + VALUES(shares)),
+            current_price = VALUES(current_price),
+            entry_date = VALUES(entry_date)
         """
         try:
             cursor.execute(sql, (symbol, name, date, shares, price, price))
