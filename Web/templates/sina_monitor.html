@@ -1,0 +1,46 @@
+{% extends 'layout.html' %}
+{% block title %}B/S 监控{% endblock %}
+{% block page_title %}Sina 买卖点监控{% endblock %}
+{% block content %}
+<form method="get" class="form-inline panel">
+    <label>查询日期(YYYYMMDD)</label>
+    <input type="text" name="date" value="{{ query_date }}">
+    <button class="btn">查询</button>
+    <span class="muted">最近有数据日期：{{ last_completed_date }}</span>
+</form>
+
+<div class="metrics-grid">
+    <div class="metric-card"><div class="label">总股票数</div><div class="value">{{ daily_stats.total or 0 }}</div></div>
+    <div class="metric-card"><div class="label">买点数量</div><div class="value text-up">{{ daily_stats.buy_count or 0 }}</div></div>
+    <div class="metric-card"><div class="label">卖点数量</div><div class="value text-down">{{ daily_stats.sell_count or 0 }}</div></div>
+    <div class="metric-card"><div class="label">最后更新</div><div class="value small">{{ daily_stats.last_update or '-' }}</div></div>
+</div>
+
+<section class="panel">
+    <div class="panel-title">当日信号</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>买点</th><th>卖点</th><th>更新时间</th></tr></thead>
+        <tbody>
+        {% for item in daily_signals %}
+            <tr><td>{{ item.stock_code }}</td><td>{{ item.stock_name }}</td><td>{{ item.has_buy_signal }}</td><td>{{ item.has_sell_signal }}</td><td>{{ item.created_at }}</td></tr>
+        {% else %}
+            <tr><td colspan="5" class="empty">当日无信号</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <div class="panel-title">最近50条信号</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>买点</th><th>卖点</th><th>批次日期</th><th>更新时间</th></tr></thead>
+        <tbody>
+        {% for item in recent_signals %}
+            <tr><td>{{ item.stock_code }}</td><td>{{ item.stock_name }}</td><td>{{ item.has_buy_signal }}</td><td>{{ item.has_sell_signal }}</td><td>{{ item.batch_date }}</td><td>{{ item.created_at }}</td></tr>
+        {% else %}
+            <tr><td colspan="6" class="empty">暂无历史信号</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

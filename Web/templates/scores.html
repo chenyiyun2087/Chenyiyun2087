@@ -1,0 +1,22 @@
+{% extends 'layout.html' %}
+{% block title %}Sina 评分{% endblock %}
+{% block page_title %}Sina 每日评分排行{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="panel-title">最新交易日：{{ date or '-' }}</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>总分</th><th>基础分</th><th>趋势分</th><th>量能分</th><th>池类型</th></tr></thead>
+        <tbody>
+        {% for row in scores %}
+            <tr>
+                <td>{{ row.symbol }}</td><td>{{ row.name }}</td><td class="text-up">{{ row.score }}</td><td>{{ row.base_score }}</td><td>{{ row.s_trend }}</td><td>{{ row.s_volume }}</td>
+                <td><span class="tag {{ row.pool_type|lower }}">{{ row.pool_type }}</span></td>
+            </tr>
+        {% else %}
+            <tr><td colspan="7" class="empty">暂无评分数据</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% include 'partials/pagination.html' %}
+{% endblock %}
