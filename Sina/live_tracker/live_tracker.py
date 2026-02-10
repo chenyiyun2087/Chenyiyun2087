@@ -30,8 +30,8 @@ if str(SINA_DIR) not in sys.path:
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from .live_tracker_config import LIVE_CONFIG
-from . import live_tracker_db as db
+from live_tracker_config import LIVE_CONFIG
+import live_tracker_db as db
 
 
 # ==================== 数据类 ====================

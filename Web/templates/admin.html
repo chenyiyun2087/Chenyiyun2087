@@ -18,32 +18,24 @@
             </tr>
         </thead>
         <tbody>
+            {% for id, task in tasks.items() %}
             <tr>
-                <td>Sina 策略扫描</td>
-                <td>{{ tasks.sina.last_run or 'Never' }}</td>
-                <td><span class="badge {{ 'badge-success' if tasks.sina.status == 'Success' else 'badge-warning' }}">{{
-                        tasks.sina.status }}</span></td>
-                <td>{{ 'Yes' if tasks.sina.switched_day else 'No' }}</td>
+                <td>{{ task.name }}</td>
+                <td>{{ task.last_run or 'Never' }}</td>
                 <td>
-                    <form action="{{ url_for('run_task', task_name='sina') }}" method="post" style="display:inline;">
+                    <span
+                        class="badge {{ 'badge-success' if task.status == 'Success' else 'badge-warning' if task.status == 'Idle' else 'badge-info' if task.status == 'Running...' else 'badge-danger' }}">
+                        {{ task.status }}
+                    </span>
+                </td>
+                <td>{{ 'Yes' if task.switched_day else 'No' }}</td>
+                <td>
+                    <form action="{{ url_for('run_task', task_name=id) }}" method="post" style="display:inline;">
                         <button type="submit" class="button small">立即执行</button>
                     </form>
                 </td>
             </tr>
-            <tr>
-                <td>Eastmoney 策略扫描</td>
-                <td>{{ tasks.eastmoney.last_run or 'Never' }}</td>
-                <td><span
-                        class="badge {{ 'badge-success' if tasks.eastmoney.status == 'Success' else 'badge-warning' }}">{{
-                        tasks.eastmoney.status }}</span></td>
-                <td>{{ 'Yes' if tasks.eastmoney.switched_day else 'No' }}</td>
-                <td>
-                    <form action="{{ url_for('run_task', task_name='eastmoney') }}" method="post"
-                        style="display:inline;">
-                        <button type="submit" class="button small">立即执行</button>
-                    </form>
-                </td>
-            </tr>
+            {% endfor %}
         </tbody>
     </table>
 </div>

@@ -58,8 +58,14 @@ logger = logging.getLogger("Scheduler")
 
 # Database Utils
 # ------------------------------------------------------------------------------
+# Global Engine
+_ENGINE = None
+
 def get_engine():
-    return create_engine(DB_URL, future=True)
+    global _ENGINE
+    if _ENGINE is None:
+        _ENGINE = create_engine(DB_URL, future=True, pool_size=5, max_overflow=10, pool_recycle=3600)
+    return _ENGINE
 
 
 def is_trade_day(target_date):
