@@ -1,0 +1,132 @@
+{
+  "strategy_config": {
+    "name": "A股超跌反弹策略",
+    "version": "1.0.0",
+    "description": "基于多空情绪、量化指标与筹码结构的综合择时体系",
+    
+    "sentiment_config": {
+      "bearish_threshold": 70,
+      "extreme_bearish_threshold": 85,
+      "comment": "空方情绪阈值: 70-85%之间"
+    },
+    
+    "technical_config": {
+      "bias": {
+        "periods": {
+          "short": 5,
+          "medium": 10,
+          "long": 20
+        },
+        "thresholds": {
+          "short": -10,
+          "medium": -15
+        }
+      },
+      "rsi": {
+        "period": 6,
+        "threshold": 20
+      },
+      "kdj": {
+        "n": 9,
+        "m1": 3,
+        "m2": 3,
+        "j_threshold": 0
+      },
+      "boll": {
+        "period": 20,
+        "std_multiple": 2
+      }
+    },
+    
+    "chip_config": {
+      "concentration_threshold": 15,
+      "ideal_concentration": 12,
+      "profit_ratio_threshold": 10,
+      "bottom_chip_stable_ratio": 10
+    },
+    
+    "scoring_weights": {
+      "chip_concentration": 0.40,
+      "profit_ratio": 0.20,
+      "tech_deviation": 0.20,
+      "volume_verify": 0.20,
+      "comment": "四个因子权重总和必须为1.0"
+    },
+    
+    "risk_filter": {
+      "st_rules": {
+        "main_board": {
+          "dividend_ratio_threshold": 0.30,
+          "total_dividend_threshold": 50000000
+        },
+        "gem_board": {
+          "dividend_ratio_threshold": 0.30,
+          "total_dividend_threshold": 30000000
+        }
+      },
+      "fraud_filter": {
+        "price_drop_threshold": 50,
+        "strong_buyback_threshold": 50000000
+      }
+    },
+    
+    "signal_config": {
+      "entry_signals": {
+        "breakthrough_volume_multiple": 1.5,
+        "shrink_volume_threshold": 0.7,
+        "expand_volume_threshold": 1.2
+      },
+      "exit_signals": {
+        "resistance_tolerance": 0.98,
+        "stop_loss_peak_ratio": 0.95,
+        "bias_deteriorate_threshold": -8
+      }
+    }
+  },
+  
+  "backtest_config": {
+    "initial_capital": 1000000,
+    "max_positions": 5,
+    "position_size_ratio": 0.20,
+    "commission_rate": 0.0003,
+    "slippage_rate": 0.001,
+    "min_shares": 100
+  },
+  
+  "scanner_config": {
+    "scan_frequency": "daily",
+    "scan_time": "15:30",
+    "output_formats": ["excel", "json"],
+    "output_directory": "/data/scans",
+    "alert_enabled": true
+  },
+  
+  "alert_config": {
+    "rules": {
+      "high_score_threshold": 80,
+      "extreme_bearish_threshold": 85,
+      "strong_oversold_threshold": 85,
+      "ideal_chip_threshold": 12
+    },
+    "notification": {
+      "email_enabled": false,
+      "wechat_enabled": false,
+      "console_enabled": true
+    }
+  },
+  
+  "data_source": {
+    "provider": "tushare",
+    "api_token": "YOUR_TUSHARE_TOKEN_HERE",
+    "backup_provider": "akshare",
+    "cache_enabled": true,
+    "cache_directory": "/data/cache"
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "file_path": "/logs/strategy.log",
+    "max_file_size": "10MB",
+    "backup_count": 5
+  }
+}

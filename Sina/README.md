@@ -19,12 +19,18 @@ Sina 项目使用了基于 **B/S 点位检测 (图像识别)** 与 **技术面�
 
 ### 1.2 执行流程 (Execution Flow)
 
-每日的标准执行顺序如下：
+根据 `scheduler.py` 的自动化配置，每日的标准执行顺序如下：
 
-1.  **[15:30+] 数据同步**: 确保 `dwd_stock_daily_standard` 表已更新当日收盘数据。
-2.  **[16:00+] B/S 信号检测**: 运行 `Sina/bs_detection/main.py`，抓取新浪财经网页数据，识别 B/S 信号并存入 `bs_detection_results` 表。
-3.  **[17:00+] 策略评分与选股**: (通常集成在 Backtest 或 Live Tracker 中) 读取 B/S 信号与行情数据，生成评分与交易信号。
-4.  **[盘后/盘前] 实盘/回测**: 运行回测验证策略，或使用实盘工具记录交易计划。
+1.  **[15:20] B/S 信号检测**: 
+    *   运行 `Sina/bs_detection/main.py`。
+    *   此任务在收盘后立即运行，抓取网页信号。**不依赖**行情数据库的更新。
+2.  **[21:00+] 数据就绪检查**: 
+    *   系统等待 `tushare_stock.dwd_stock_daily_standard` 数据同步完成（通常在 21:00 后）。
+3.  **[21:00+] 策略评分与同步**:
+    *   **评分**: 运行 `ScoreRank/run_daily.py`，结合 B/S 信号与当日行情进行量化分配，生成交易池。
+    *   **同步**: 运行 `Sina/live_tracker/run_live_tracker.py sync`，更新实盘追踪器的现价。
+4.  **[次日开盘] 执行交易**:
+    *   根据前一晚生成的 `signals` 在集合竞价或开盘时进行实盘操作。
 
 ---
 
@@ -55,7 +61,30 @@ Sina 项目使用了基于 **B/S 点位检测 (图像识别)** 与 **技术面�
 .venv/bin/python Sina/bs_detection/main.py config_1 20260210 --screenshot-workers 5 --detect-workers 10
 ```
 
-### 2.2 回测框架 (Backtest)
+### 2.2 如何确认程序状态 (Verification)
+
+当 `bs_detection/main.py` 运行完成后，可以通过以下三种方式确认程序执行状态与结果：
+
+1.  **检查日志文件**:
+    *   **路径**: `Sina/sina_bs_capture.log`
+    *   **关注内容**: 搜索 "处理完成" 或 "检测阶段耗时"，日志末尾会输出成功与失败的统计信息。
+
+2.  **检查 Excel 结果表**:
+    *   **路径**: `Sina/SinaAppBS/result/`
+    *   **文件名**: `<配置名>_<日期>.xlsx` (如 `config_1_20260210.xlsx`)
+    *   **内容**: 该表汇总了所有股票的 B/S 信号检测结果。如果文件存在且包含当日数据，说明检测逻辑已完成。
+
+3.  **检查数据库内容**:
+    *   **表名**: `chenyiyun.bs_detection_results`
+    *   **查询语句**:
+        ```sql
+        SELECT * FROM bs_detection_results WHERE batch_date = '20260210' LIMIT 10;
+        ```
+    *   **意义**: 这是后端评分系统真正的取数来源。确保 `has_buy_signal` 和 `has_sell_signal` 字段有数据且符合预期。
+
+---
+
+### 2.3 回测框架 (Backtest)
 
 用于验证策略在历史数据上的表现。
 

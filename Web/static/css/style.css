@@ -1,15 +1,19 @@
 :root {
-    --primary-color: #2563eb;
-    --secondary-color: #1e3a8a;
-    --accent-color: #3b82f6;
-    --background-color: #f3f4f6;
-    --card-bg: #ffffff;
-    --text-color: #1f2937;
-    --text-light: #6b7280;
-    --border-color: #e5e7eb;
-    --success-color: #10b981;
-    --warning-color: #f59e0b;
-    --danger-color: #ef4444;
+    --primary-color: #3b82f6;
+    /* Blue for logic/links */
+    --background-color: #0b0e11;
+    /* Very dark bg */
+    --card-bg: #151a1e;
+    /* Slightly lighter card bg */
+    --text-color: #ffffff;
+    --text-light: #848e9c;
+    /* Muted text */
+    --border-color: #262d33;
+    --success-color: #00c087;
+    /* CoinGlass Green */
+    --danger-color: #fd3f4b;
+    /* CoinGlass Red */
+    --hover-bg: #1e2329;
 }
 
 body {
@@ -18,7 +22,6 @@ body {
     color: var(--text-color);
     margin: 0;
     padding: 0;
-    /* Removed padding */
     display: flex;
     min-height: 100vh;
 }
@@ -33,82 +36,77 @@ body {
     flex-shrink: 0;
 }
 
-.logo {
-    padding: 0 24px 20px;
-    border-bottom: 1px solid var(--border-color);
-    margin-bottom: 20px;
-}
-
-.logo h2 {
-    margin: 0;
-    color: var(--primary-color);
-    font-size: 1.25rem;
-}
-
+/* ... existing sidebar styles need updating for dark mode ... */
 .sidebar nav a {
-    display: block;
-    padding: 12px 24px;
-    color: var(--text-color);
-    text-decoration: none;
-    font-weight: 500;
-    transition: all 0.2s;
+    color: var(--text-light);
 }
 
-.sidebar nav a:hover {
-    background-color: #f3f4f6;
-    color: var(--primary-color);
-}
-
+.sidebar nav a:hover,
 .sidebar nav a.active {
-    background-color: #eff6ff;
-    color: var(--primary-color);
-    border-right: 3px solid var(--primary-color);
-}
-
-.main-content {
-    flex: 1;
-    padding: 32px;
-    overflow-y: auto;
-}
-
-/* Old container removed, replaced by main-content layout */
-
-header {
-    background: transparent;
-    padding: 0 0 20px 0;
-    border-radius: 0;
-    box-shadow: none;
-    margin-bottom: 24px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid var(--border-color);
-}
-
-h1 {
-    margin: 0;
-    font-size: 1.5rem;
-    color: var(--primary-color);
-}
-
-h2 {
-    font-size: 1.25rem;
-    margin-bottom: 16px;
-    border-left: 4px solid var(--accent-color);
-    padding-left: 12px;
+    background-color: var(--hover-bg);
+    color: var(--text-color);
+    border-right-color: var(--primary-color);
 }
 
 .card {
     background: var(--card-bg);
-    border-radius: 12px;
-    padding: 24px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    margin-bottom: 24px;
-    transition: transform 0.2s;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 20px;
 }
 
-.card:hover {
-    transform: translateY(-2px);
+.metric-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.metric-label {
+    color: var(--text-light);
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.text-success {
+    color: var(--success-color) !important;
+}
+
+.text-danger {
+    color: var(--danger-color) !important;
+}
+
+/* Table Styling matching CoinGlass */
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th {
+    background-color: var(--card-bg);
+    color: var(--text-light);
+    font-weight: 500;
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.85rem;
+}
+
+td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-color);
+    font-size: 0.9rem;
+}
+
+tr:hover {
+    background-color: var(--hover-bg);
 }
 
 table {

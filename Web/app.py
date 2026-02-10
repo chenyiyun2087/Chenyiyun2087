@@ -208,6 +208,65 @@ def sina_scores():
                            date=latest_date,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
+@app.route('/sina/monitor')
+def sina_monitor():
+    conn = get_db()
+    
+    # 1. 默认查询日期（参数或今天）
+    query_date = request.args.get('date', datetime.now().strftime('%Y%m%d'))
+    
+    # 2. 获取当日 B/S 数据
+    with conn.cursor() as cursor:
+        # 统计概览
+        sql_stats = """
+            SELECT 
+                COUNT(*) as total,
+                SUM(has_buy_signal) as buy_count,
+                SUM(has_sell_signal) as sell_count,
+                MAX(created_at) as last_update
+            FROM bs_detection_results 
+            WHERE batch_date = %s
+        """
+        cursor.execute(sql_stats, (query_date,))
+        daily_stats = cursor.fetchone()
+        
+        # 3. 获取明细列表 (只显示有信号的)
+        sql_details = """
+            SELECT * FROM bs_detection_results 
+            WHERE batch_date = %s AND (has_buy_signal=1 OR has_sell_signal=1)
+            ORDER BY stock_code
+        """
+        cursor.execute(sql_details, (query_date,))
+        daily_signals = cursor.fetchall()
+
+        # 4. 获取最近发现的买点/卖点 (按发现时间倒序，显示前50条)
+        # 这可以帮助用户看到"实时"新发现的信号
+        sql_recent = """
+            SELECT * FROM bs_detection_results 
+            WHERE has_buy_signal=1 OR has_sell_signal=1
+            ORDER BY created_at DESC
+            LIMIT 50
+        """
+        cursor.execute(sql_recent)
+        recent_signals = cursor.fetchall()
+        
+        # 5. 为了"默认显示上一次完成的日期"，查找最近有数据的日期
+        if daily_stats['total'] == 0:
+            cursor.execute("SELECT MAX(batch_date) as last_date FROM bs_detection_results")
+            res = cursor.fetchone()
+            last_completed_date = res['last_date']
+        else:
+            last_completed_date = query_date
+
+    return render_template('sina_monitor.html',
+                           query_date=query_date,
+                           daily_stats=daily_stats,
+                           daily_signals=daily_signals,
+                           recent_signals=recent_signals,
+                           last_completed_date=last_completed_date,
+                           now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+
 @app.route('/admin')
 def admin():
     return render_template('admin.html', 
