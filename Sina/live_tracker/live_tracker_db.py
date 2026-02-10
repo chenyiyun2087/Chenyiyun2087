@@ -11,7 +11,7 @@ import pandas as pd
 import pymysql
 from sqlalchemy import create_engine, text
 
-from .live_tracker_config import LIVE_CONFIG
+from live_tracker_config import LIVE_CONFIG
 
 
 def get_db_connection():

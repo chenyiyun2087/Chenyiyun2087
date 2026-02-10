@@ -1,4 +1,5 @@
 from flask import Flask, render_template, g, request, redirect, url_for, flash
+import sys
 import pymysql
 import json
 from datetime import datetime
@@ -19,11 +20,33 @@ DB_CONFIG = {
     "cursorclass": pymysql.cursors.DictCursor
 }
 
-# Task Status Storage (In-memory for simplicity)
+# Task Status Storage (Loaded from DB on start)
 TASKS = {
-    "sina": {"last_run": None, "status": "Idle", "switched_day": False},
-    "eastmoney": {"last_run": None, "status": "Idle", "switched_day": False}
+    "sina_bs": {"name": "Sina B/S 扫描", "script": "Sina/bs_detection/main.py", "last_run": "Never", "status": "Idle", "switched_day": False},
+    "sina_score": {"name": "Sina 每日评分", "script": "ScoreRank/run_daily.py", "last_run": "Never", "status": "Idle", "switched_day": False},
+    "sina_snapshot": {"name": "Sina 实盘快照", "script": "Sina/live_tracker/live_tracker.py", "last_run": "Never", "status": "Idle", "switched_day": False},
+    "eastmoney": {"name": "Eastmoney 策略扫描", "script": "Eastmoney/run_strategy.py", "last_run": "Never", "status": "Idle", "switched_day": False}
 }
+
+def init_tasks():
+    """Load task status from database"""
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM app_task_status")
+            rows = cursor.fetchall()
+            for row in rows:
+                name = row['task_name']
+                if name in TASKS:
+                    TASKS[name]['last_run'] = row['last_run'].strftime('%Y-%m-%d %H:%M:%S') if row['last_run'] else "Never"
+                    TASKS[name]['status'] = row['status'] or "Idle"
+                    TASKS[name]['switched_day'] = bool(row['switched_day'])
+        conn.close()
+    except Exception as e:
+        print(f"Failed to load task status: {e}")
+
+# Initialize tasks from DB
+init_tasks()
 
 def get_db():
     if 'db' not in g:
@@ -274,17 +297,40 @@ def admin():
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            now_date=datetime.now().strftime('%Y-%m-%d'))
 
-def run_script(script_path, task_name):
+def update_task_db(task_name):
+    """Save task status to database"""
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            last_run = TASKS[task_name]['last_run']
+            if last_run == "Never":
+                last_run_db = None
+            else:
+                last_run_db = last_run
+                
+            sql = """
+            INSERT INTO app_task_status (task_name, last_run, status, switched_day)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                last_run = VALUES(last_run),
+                status = VALUES(status),
+                switched_day = VALUES(switched_day)
+            """
+            cursor.execute(sql, (task_name, last_run_db, TASKS[task_name]['status'], int(TASKS[task_name]['switched_day'])))
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Failed to update task DB: {e}")
+
+def run_script(script_parts, task_name):
     """Run a script in background and update status"""
     TASKS[task_name]['status'] = "Running..."
     TASKS[task_name]['last_run'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    update_task_db(task_name)
     
     try:
-        # Check day switch (simple logic: if run after 3pm, consider switched for next day?)
-        # Or just update the flag purely based on success
-        
-        # Use full python path
-        cmd = [".venv/bin/python", script_path]
+        # Construct full command
+        cmd = [sys.executable] + script_parts
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode == 0:
@@ -292,33 +338,40 @@ def run_script(script_path, task_name):
             TASKS[task_name]['switched_day'] = True # Mock logic
         else:
             TASKS[task_name]['status'] = f"Failed (Code {result.returncode})"
+            # Log error details
             print(f"Task {task_name} stderr: {result.stderr}")
+            TASKS[task_name]['error_log'] = result.stderr[:500] # Keep recent error
             
     except Exception as e:
         TASKS[task_name]['status'] = f"Error: {str(e)}"
+    
+    update_task_db(task_name)
 
 @app.route('/admin/run_task/<task_name>', methods=['POST'])
 def run_task(task_name):
-    if task_name == 'sina':
-        script = 'Sina/live_tracker/live_tracker.py' # Example script
-        # Actually user said "Call Sina package scheduled task". 
-        # If there is no single entry script, we might need to point to one.
-        # Assuming `Sina/live_tracker/live_tracker.py` or `ScoreRank/run_daily.py`?
-        # Let's assume `ScoreRank/run_daily.py` for "daily update" or similar.
-        # Based on context: "Sina包的定时任务" usually implies the live tracker or scoring.
-        # Let's use `ScoreRank/run_daily.py` for now as it updates scores.
-        script = 'ScoreRank/run_daily.py' 
-    elif task_name == 'eastmoney':
-        script = 'Eastmoney/run_strategy.py'
-    else:
+    if task_name not in TASKS:
         flash(f"Unknown task: {task_name}", 'danger')
         return redirect(url_for('admin'))
     
+    task_config = TASKS[task_name]
+    script = task_config['script']
+    
+    # Special handling for Sina BS scan which needs config and date
+    if task_name == 'sina_bs':
+        today = datetime.now().strftime('%Y%m%d')
+        # We need to split if we want to pass as list, but subprocess likes list for args
+        # Actually run_script uses subprocess.run([sys.executable, script])
+        # So we better handle args in run_script or here.
+        # Let's adjust run_script to handle a list of command parts.
+        script_parts = [script, "config_1", today]
+    else:
+        script_parts = [script]
+    
     # Run in thread to not block
-    thread = threading.Thread(target=run_script, args=(script, task_name))
+    thread = threading.Thread(target=run_script, args=(script_parts, task_name))
     thread.start()
     
-    flash(f"Task {task_name} started in background.", 'success')
+    flash(f"Task {TASKS[task_name]['name']} started in background.", 'success')
     return redirect(url_for('admin'))
 
 @app.route('/admin/add_position', methods=['POST'])
