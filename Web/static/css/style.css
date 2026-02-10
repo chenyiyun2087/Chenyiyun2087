@@ -17,24 +17,72 @@ body {
     background-color: var(--background-color);
     color: var(--text-color);
     margin: 0;
-    padding: 20px;
-    line-height: 1.5;
+    padding: 0;
+    /* Removed padding */
+    display: flex;
+    min-height: 100vh;
 }
 
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
+.sidebar {
+    width: 250px;
+    background: var(--card-bg);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 0;
+    flex-shrink: 0;
 }
+
+.logo {
+    padding: 0 24px 20px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 20px;
+}
+
+.logo h2 {
+    margin: 0;
+    color: var(--primary-color);
+    font-size: 1.25rem;
+}
+
+.sidebar nav a {
+    display: block;
+    padding: 12px 24px;
+    color: var(--text-color);
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.sidebar nav a:hover {
+    background-color: #f3f4f6;
+    color: var(--primary-color);
+}
+
+.sidebar nav a.active {
+    background-color: #eff6ff;
+    color: var(--primary-color);
+    border-right: 3px solid var(--primary-color);
+}
+
+.main-content {
+    flex: 1;
+    padding: 32px;
+    overflow-y: auto;
+}
+
+/* Old container removed, replaced by main-content layout */
 
 header {
-    background: var(--card-bg);
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    background: transparent;
+    padding: 0 0 20px 0;
+    border-radius: 0;
+    box-shadow: none;
     margin-bottom: 24px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    border-bottom: 1px solid var(--border-color);
 }
 
 h1 {
@@ -69,7 +117,8 @@ table {
     margin-top: 12px;
 }
 
-th, td {
+th,
+td {
     padding: 12px 16px;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
@@ -96,10 +145,25 @@ tr:hover {
     font-weight: 500;
 }
 
-.badge-success { background-color: #d1fae5; color: #065f46; }
-.badge-warning { background-color: #fef3c7; color: #92400e; }
-.badge-danger { background-color: #fee2e2; color: #991b1b; }
-.badge-blue { background-color: #dbeafe; color: #1e40af; }
+.badge-success {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.badge-warning {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.badge-danger {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+.badge-blue {
+    background-color: #dbeafe;
+    color: #1e40af;
+}
 
 .section-header {
     display: flex;
@@ -113,6 +177,72 @@ tr:hover {
     color: var(--text-light);
 }
 
-.score-high { color: var(--success-color); font-weight: bold; }
-.score-med { color: var(--warning-color); }
-.score-low { color: var(--text-light); }
+.score-high {
+    color: var(--success-color);
+    font-weight: bold;
+}
+
+.score-med {
+    color: var(--warning-color);
+}
+
+.score-low {
+    color: var(--danger-color);
+}
+
+/* Asset Dashboard Styles */
+.asset-dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+    margin-bottom: 24px;
+}
+
+.asset-card {
+    background: linear-gradient(135deg, var(--card-bg) 0%, #f8fafc 100%);
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--border-color);
+    transition: transform 0.2s;
+}
+
+.asset-card:hover {
+    transform: translateY(-2px);
+}
+
+.asset-label {
+    font-size: 0.875rem;
+    color: var(--text-light);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.asset-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    margin-bottom: 8px;
+}
+
+.asset-sub {
+    font-size: 0.875rem;
+    color: var(--text-light);
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+    background-color: var(--secondary-color);
+}
