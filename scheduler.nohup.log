@@ -1,0 +1,4 @@
+2026-02-10 15:30:57,888 - INFO - Scheduler started.
+2026-02-10 16:30:29,890 - INFO - Triggering task: eastmoney_data
+2026-02-10 16:30:29,894 - INFO - Starting eastmoney_data: /Users/chenyiyun/PycharmProjects/Chenyiyun2087/.venv/bin/python /Users/chenyiyun/PycharmProjects/Chenyiyun2087/Eastmoney/main.py config_1 20260210
+2026-02-10 16:54:09,783 - INFO - Finished eastmoney_data successfully.
