@@ -1,7 +1,7 @@
 import pandas as pd
 from sqlalchemy import create_engine, text
 from typing import List, Optional, Tuple
-from config import CONFIG
+from .config import CONFIG
 
 
 def get_engine():
