@@ -8,8 +8,13 @@ from sqlalchemy import text
 
 from config import CONFIG
 from db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
-from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date
+# from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date  # DEPRECATED
 from perf_utils import enrich_scored_with_market_metrics
+
+# Strategy Imports
+from ScoreRank.strategies.technical import TechnicalScorer
+# from ScoreRank.strategies.fama import FamaScorer
+# from ScoreRank.strategies.claude import ClaudeScorer
 
 # Import Factor Optimizer components
 try:
@@ -297,29 +302,71 @@ def main():
             print("No symbols to score.")
             return
 
-        # 5) Fetch Data & Build Features
+        # 5) Fetch Data & Score using Strategies
+        # [REFACTORED] Use Strategy Pattern
+        
+        # Initialize Scorers
+        technical_scorer = TechnicalScorer()
+        
+        # Execute Scoring
+        # The scorer handles data fetching internally now (or we could pass data if we want to optimize shared data)
+        # For now, let TechnicalScorer handle its own data to be fully modular
+        print("Running TechnicalScorer...")
+        scored = technical_scorer.score(all_symbols, asof_date, engine)
+        
+        if scored.empty:
+            print("No scores generated.")
+            return
+
+        # 5.5) Calculate Features for Enrichment (Optional, if needed for other logic)
+        # If enrich_scored_with_market_metrics needs features, we might need to fetch them or 
+        # have the scorer return them. 
+        # Currently TechnicalScorer returns the scored DF. 
+        # Let's inspect perf_utils.py. It needs 'features' (qfq).
+        # To avoid double fetching, we might want to refactor TechnicalScorer to return features or allow passing data.
+        # OR: We just re-fetch for now, or rely on what's in 'scored'? 
+        # 'scored' contains many columns but maybe not all raw features?
+        # Actually TechnicalScorer returns the result of score_asof_date which has many columns.
+        
+        # However, enrich_scored_with_market_metrics merges with 'features' to get 'close_price' etc.
+        # The 'scored' dataframe ALREADY has 'raw_close' (renamed to close_price in db_io?)
+        # Let's check db_io.attach_liquidity_from_raw returns 'raw_close'.
+        # And score_asof_date keeps it.
+        
+        # To be safe and minimal change:
+        # We can re-fetch raw data here for enrichment if strictly necessary, 
+        # OR better: Refactor TechnicalScorer to allow passing raw_data?
+        # For this step, let's keep it simple. TechnicalScorer fetches its own data.
+        # We need 'features' mainly for 'close' to calculate 'is_limit_up' in perf_utils.
+        
+        # Optimization: We can just use the data we have in 'scored' if it has 'close'
+        # The 'scored' df from TechnicalScorer (via score_asof_date) has 'raw_close'.
+        # Let's check perf_utils to see what it needs.
+        
+        # [Quick Fix] 
+        # fetch_bars_batch is fast from local DB.
+        # But to match previous logic perfectly for 'features' used in 'enrich_scored_with_market_metrics':
+         
         raw_data = fetch_bars_batch(
             engine, all_symbols, adj_type=CONFIG["adj_for_signal"],
             start_date=(asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d"), 
             end_date=asof_date.strftime("%Y-%m-%d")
         )
-        if raw_data.empty:
-            print("No market data found for symbols.")
-            return
-            
-        # Also need raw for liquidity
-        raw_liq_data = fetch_bars_batch(
-            engine, all_symbols, adj_type=CONFIG["adj_for_liquidity"],
-            start_date=(asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d"), 
-            end_date=asof_date.strftime("%Y-%m-%d")
-        )
-
-        features = build_features_from_qfq(raw_data, breakout_n=CONFIG["breakout_n"])
-        raw_liq = attach_liquidity_from_raw(raw_liq_data)
-
-        # 6) Scoring
-        names = get_symbol_names_if_exist(engine, all_symbols)
-        scored = score_asof_date(features, raw_liq, names, asof_date=asof_date)
+        # We only need this for 'enrich_scored_with_market_metrics' relying on 'features'
+        # 'features' is qfq with technical indicators.
+        # This seems redundant. 
+        
+        # Let's look at perf_utils.enrich_scored_with_market_metrics
+        # It merges with 'features' (latest_qfq) to get 'close' and 'ret1'.
+        # We can construct a minimal 'features' dataframe from 'raw_data' here.
+        # Or better: Update TechnicalScorer to default return everything needed.
+        
+        from scorer import build_features_from_qfq # Temporarily import for compatibility if needed
+        features = build_features_from_qfq(raw_data, breakout_n=CONFIG["breakout_n"]) # Re-calculate for enrichment compatibility
+        
+        # 6) Scoring (Done above via TechnicalScorer)
+        # names = get_symbol_names_if_exist(engine, all_symbols) # Done inside Scorer
+        # scored = score_asof_date(features, raw_liq, names, asof_date=asof_date) # Done inside Scorer
 
         # 6.5) Merge B/S Signal Data (Strength, Freshness)
         engine = get_engine()

@@ -1,0 +1,594 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票交易信号分析报告 | 2025年8月11日-15日</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'serif': ['Crimson Text', 'serif'],
+                        'sans': ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'sage': '#87a96b',
+                        'graphite': '#2c3e50',
+                        'stone': '#95a5a6',
+                        'cream': '#faf8f5',
+                        'navy': '#1a365d',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .gradient-overlay {
+            background: linear-gradient(135deg, rgba(26, 54, 93, 0.9) 0%, rgba(44, 62, 80, 0.8) 100%);
+        }
+        .text-shadow {
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .hover-lift {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .hover-lift:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+        }
+        .stock-code {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+        }
+        .toc-fixed {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            width: 280px;
+            z-index: 50;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+        .main-content {
+            margin-left: 320px;
+        }
+        @media (max-width: 1024px) {
+            .toc-fixed {
+                display: none;
+            }
+            .main-content {
+                margin-left: 0;
+            }
+        }
+    </style>
+  </head>
+
+  <body class="bg-cream font-sans">
+    <!-- Fixed Table of Contents -->
+    <nav class="toc-fixed bg-white rounded-lg shadow-lg p-6 border border-stone-200">
+      <h3 class="font-serif font-semibold text-lg text-graphite mb-4">目录导航</h3>
+      <ul class="space-y-2 text-sm">
+        <li>
+          <a href="#hero" class="text-stone-600 hover:text-sage transition-colors duration-200 block py-1">封面概览</a>
+        </li>
+        <li>
+          <a href="#executive-summary" class="text-stone-600 hover:text-sage transition-colors duration-200 block py-1">核心发现</a>
+        </li>
+        <li>
+          <a href="#buy-signals" class="text-stone-600 hover:text-sage transition-colors duration-200 block py-1">买点信号分析</a>
+        </li>
+        <li>
+          <a href="#sell-signals" class="text-stone-600 hover:text-sage transition-colors duration-200 block py-1">卖点信号分析</a>
+        </li>
+        <li>
+          <a href="#signal-transitions" class="text-stone-600 hover:text-sage transition-colors duration-200 block py-1">信号转换追踪</a>
+        </li>
+        <li>
+          <a href="#methodology" class="text-stone-600 hover:text-sage transition-colors duration-200 block py-1">数据处理方法</a>
+        </li>
+      </ul>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <!-- Hero Section -->
+      <section id="hero" class="relative min-h-screen bg-gradient-to-br from-navy via-graphite to-slate-800 overflow-hidden">
+        <div class="absolute inset-0 gradient-overlay"></div>
+        <img src="https://kimi-img.moonshot.cn/pub/icon/spinner.svg" alt="股票交易大厅内景" class="absolute inset-0 w-full h-full object-cover opacity-20" size="wallpaper" aspect="wide" style="photo" query="股票交易大厅" referrerpolicy="no-referrer" />
+
+        <div class="relative z-10 container mx-auto px-4 sm:px-8 py-16 h-full flex items-center">
+          <div class="grid lg:grid-cols-2 gap-12 items-center w-full">
+            <!-- Title Section -->
+            <div class="space-y-8">
+              <div class="space-y-4">
+                <h1 class="font-serif text-5xl lg:text-7xl font-bold text-white leading-tight text-shadow">
+                  股票交易信号
+                  <span class="italic text-sage block text-4xl lg:text-6xl mt-2">深度分析报告</span>
+                </h1>
+                <div class="w-24 h-1 bg-sage"></div>
+                <p class="text-xl text-stone-200 font-light leading-relaxed">
+                  基于2025年8月11日至15日市场数据的系统性整理与洞察
+                </p>
+              </div>
+
+              <div class="flex flex-wrap gap-4 text-stone-300">
+                <span class="flex items-center space-x-2">
+                  <i class="fas fa-calendar-alt text-sage"></i>
+                  <span>2025年8月17日</span>
+                </span>
+                <span class="flex items-center space-x-2">
+                  <i class="fas fa-chart-line text-sage"></i>
+                  <span>5个交易日</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div class="bg-white/10 backdrop-blur-sm rounded-lg p-6 border border-white/20">
+                <div class="text-3xl font-bold text-sage mb-2">74</div>
+                <div class="text-white font-medium">买点信号股票</div>
+                <div class="text-stone-300 text-sm mt-1">去重后总数</div>
+              </div>
+              <div class="bg-white/10 backdrop-blur-sm rounded-lg p-6 border border-white/20">
+                <div class="text-3xl font-bold text-red-400 mb-2">53</div>
+                <div class="text-white font-medium">卖点信号股票</div>
+                <div class="text-stone-300 text-sm mt-1">去重后总数</div>
+              </div>
+              <div class="bg-white/10 backdrop-blur-sm rounded-lg p-6 border border-white/20">
+                <div class="text-3xl font-bold text-yellow-400 mb-2">4</div>
+                <div class="text-white font-medium">关键转换信号</div>
+                <div class="text-stone-300 text-sm mt-1">买点到卖点</div>
+              </div>
+              <div class="bg-white/10 backdrop-blur-sm rounded-lg p-6 border border-white/20">
+                <div class="text-3xl font-bold text-blue-400 mb-2">15</div>
+                <div class="text-white font-medium">持续信号股票</div>
+                <div class="text-stone-300 text-sm mt-1">多日重复出现</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Executive Summary -->
+      <section id="executive-summary" class="py-16 bg-white">
+        <div class="container mx-auto px-4 sm:px-8">
+          <div class="max-w-4xl mx-auto">
+            <h2 class="font-serif text-4xl font-bold text-graphite mb-8 text-center">核心发现概览</h2>
+            <div class="prose prose-lg max-w-none">
+              <div class="bg-sage/5 border-l-4 border-sage p-8 rounded-r-lg mb-12">
+                <p class="text-lg text-graphite leading-relaxed mb-6">
+                  本报告对2025年8月11日至15日期间的股票交易信号进行了系统性整理与分析。通过对每日买点和卖点信号的汇总、去重和排序，我们识别出市场中的关键趋势和重要转折点。
+                </p>
+                <div class="grid md:grid-cols-2 gap-8 mt-8">
+                  <div class="space-y-4">
+                    <h4 class="font-semibold text-graphite flex items-center">
+                      <i class="fas fa-arrow-trend-up text-sage mr-3"></i>
+                      买点信号特征
+                    </h4>
+                    <ul class="space-y-2 text-graphite">
+                      <li>• 总计74只不同股票出现买点信号</li>
+                      <li>• 600058连续两日出现买点信号</li>
+                      <li>• 002128、002237等多只股票重复出现</li>
+                    </ul>
+                  </div>
+                  <div class="space-y-4">
+                    <h4 class="font-semibold text-graphite flex items-center">
+                      <i class="fas fa-arrow-trend-down text-red-500 mr-3"></i>
+                      卖点信号特征
+                    </h4>
+                    <ul class="space-y-2 text-graphite">
+                      <li>• 总计53只不同股票出现卖点信号</li>
+                      <li>• 002903、002573连续两日出现卖点</li>
+                      <li>• 8月15日卖点信号数量达到高峰</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <blockquote class="border-l-4 border-sage pl-6 py-4 bg-stone-50 rounded-r-lg mb-8">
+                <p class="text-lg italic text-graphite font-medium">
+                  "部分股票在短期内经历了从买点到卖点的快速切换，例如000831和300084，这反映了市场情绪的剧烈波动。"
+                </p>
+              </blockquote>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Buy Signals Analysis -->
+      <section id="buy-signals" class="py-16 bg-stone-50">
+        <div class="container mx-auto px-4 sm:px-8">
+          <h2 class="font-serif text-4xl font-bold text-graphite mb-12 text-center">买点信号深度分析</h2>
+
+          <!-- Daily Breakdown -->
+          <div class="grid lg:grid-cols-2 gap-8 mb-12">
+            <div class="bg-white rounded-lg shadow-lg p-8 hover-lift">
+              <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+                <i class="fas fa-calendar-day text-sage mr-3"></i>
+                2025-08-11 买点信号
+              </h3>
+              <div class="grid grid-cols-3 gap-2 text-sm">
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000596</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000529</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300084</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000831</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300769</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002035</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601877</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000025</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002239</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002460</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300496</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600558</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300529</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601990</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603260</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300842</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000739</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002183</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300020</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000011</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300316</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000021</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002358</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000821</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300444</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600">共25只股票</div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-lg p-8 hover-lift">
+              <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+                <i class="fas fa-calendar-day text-sage mr-3"></i>
+                2025-08-12 买点信号
+              </h3>
+              <div class="grid grid-cols-3 gap-2 text-sm">
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002104</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603893</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300458</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002545</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600754</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002475</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000858</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600724</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600055</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601086</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600702</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">688063</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600408</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002128</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300751</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600292</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601933</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002130</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601010</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600">共19只股票</div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-lg p-8 hover-lift">
+              <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+                <i class="fas fa-calendar-day text-sage mr-3"></i>
+                2025-08-13 买点信号
+              </h3>
+              <div class="grid grid-cols-3 gap-2 text-sm">
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600058</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300628</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600536</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601136</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300355</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603239</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603881</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300741</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">605117</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">688099</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000555</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300705</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002237</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002185</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601778</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000686</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603259</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300343</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600">共18只股票</div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-lg p-8 hover-lift">
+              <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+                <i class="fas fa-calendar-day text-sage mr-3"></i>
+                2025-08-15 买点信号
+              </h3>
+              <div class="grid grid-cols-3 gap-2 text-sm">
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600206</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600058</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600176</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300963</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300383</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300674</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300339</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601216</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300061</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300180</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300450</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603601</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600">共12只股票</div>
+            </div>
+          </div>
+
+          <!-- Consolidated List -->
+          <div class="bg-white rounded-lg shadow-lg p-8">
+            <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+              <i class="fas fa-list-check text-sage mr-3"></i>
+              汇总后的买点信号股票列表（去重并排序）
+            </h3>
+            <div class="bg-stone-50 rounded-lg p-6">
+              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 text-sm">
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000011</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000021</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000025</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000529</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000555</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000596</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000686</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000739</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000821</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000831</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">000858</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002035</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002104</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002128</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002130</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002183</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002185</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002237</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002239</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002358</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002460</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002475</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">002545</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300020</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300061</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300084</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300180</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300316</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300339</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300343</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300355</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300383</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300444</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300450</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300458</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300496</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300529</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300628</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300674</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300705</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300741</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300751</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300769</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300842</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">300963</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600055</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600058</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600176</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600206</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600292</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600408</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600536</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600558</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600702</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600724</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">600754</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601010</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601086</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601136</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601216</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601778</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601877</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601933</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">601990</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603239</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603259</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603260</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603601</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603881</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">603893</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">605117</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">688063</span>
+                <span class="stock-code bg-sage/10 px-2 py-1 rounded">688099</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600 font-medium">总计74只股票</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sell Signals Analysis -->
+      <section id="sell-signals" class="py-16 bg-white">
+        <div class="container mx-auto px-4 sm:px-8">
+          <h2 class="font-serif text-4xl font-bold text-graphite mb-12 text-center">卖点信号深度分析</h2>
+
+          <!-- Daily Breakdown -->
+          <div class="grid lg:grid-cols-2 gap-8 mb-12">
+            <div class="bg-stone-50 rounded-lg shadow-lg p-8 hover-lift">
+              <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+                <i class="fas fa-calendar-day text-red-500 mr-3"></i>
+                2025-08-11 卖点信号
+              </h3>
+              <div class="grid grid-cols-3 gap-2 text-sm">
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300454</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">001337</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600584</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002128</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000661</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300467</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000066</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603259</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600">共8只股票</div>
+            </div>
+
+            <div class="bg-stone-50 rounded-lg shadow-lg p-8 hover-lift">
+              <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+                <i class="fas fa-calendar-day text-red-500 mr-3"></i>
+                2025-08-12 卖点信号
+              </h3>
+              <div class="grid grid-cols-3 gap-2 text-sm">
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000831</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300084</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002903</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300525</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300618</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002167</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300676</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002320</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002573</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600764</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300122</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300601</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600089</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002237</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000738</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603168</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">688070</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600">共17只股票</div>
+            </div>
+
+            <div class="bg-stone-50 rounded-lg shadow-lg p-8 hover-lift">
+              <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+                <i class="fas fa-calendar-day text-red-500 mr-3"></i>
+                2025-08-13 卖点信号
+              </h3>
+              <div class="grid grid-cols-3 gap-2 text-sm">
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">601000</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">688556</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603810</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002903</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600588</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002573</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300636</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603316</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603260</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600724</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002908</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300569</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300705</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600408</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002555</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000932</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600">共16只股票</div>
+            </div>
+
+            <div class="bg-stone-50 rounded-lg shadow-lg p-8 hover-lift">
+              <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+                <i class="fas fa-calendar-day text-red-500 mr-3"></i>
+                2025-08-15 卖点信号
+              </h3>
+              <div class="grid grid-cols-3 gap-2 text-sm">
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600271</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603880</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300807</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600053</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600976</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">001259</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">605001</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300710</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000526</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">601566</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">605177</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002112</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603030</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">001299</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600">共14只股票</div>
+            </div>
+          </div>
+
+          <!-- Consolidated List -->
+          <div class="bg-stone-50 rounded-lg shadow-lg p-8">
+            <h3 class="font-serif text-2xl font-semibold text-graphite mb-6 flex items-center">
+              <i class="fas fa-list-check text-red-500 mr-3"></i>
+              汇总后的卖点信号股票列表（去重并排序）
+            </h3>
+            <div class="bg-white rounded-lg p-6">
+              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 text-sm">
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000066</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000526</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000661</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000738</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000831</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">000932</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">001259</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">001299</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">001337</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002112</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002128</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002167</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002237</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002320</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002555</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002573</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002903</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">002908</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300084</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300122</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300454</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300467</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300525</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300569</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300601</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300618</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300636</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300676</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300705</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300710</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">300807</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600053</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600089</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600271</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600408</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600524</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600584</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600588</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600724</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600764</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">600976</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">601000</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">601566</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603030</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603168</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603259</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603260</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603316</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603810</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">603880</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">605001</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">605177</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">688070</span>
+                <span class="stock-code bg-red-50 px-2 py-1 rounded">688556</span>
+              </div>
+              <div class="mt-4 text-right text-stone-600 font-medium">总计53只股票</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Signal Transitions -->
+      <section id="signal-transitions" class="py-16 bg-stone-50">
+        <div class="container mx-auto px-4 sm:px-8">
+          <h2 class="font-serif text-4xl font-bold text-graphite mb-12 text-center">信号转换追踪</h2>
+
+          <div class="grid lg:grid-cols-2 gap-8">
+            <!-- Quick Transitions -->
+   
