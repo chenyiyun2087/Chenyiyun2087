@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backtest-engine"
+version = "0.1.0"
+description = "Lightweight backtest framework MVP"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["backtest_engine/tests"]
