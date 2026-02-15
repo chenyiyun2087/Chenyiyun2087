@@ -1,20 +1,96 @@
 {% extends 'layout.html' %}
-{% block title %}Sina 评分{% endblock %}
-{% block page_title %}Sina 每日评分排行{% endblock %}
+{% block title %}Sina B点股票评分{% endblock %}
+{% block page_title %}Sina B点股票监控评分排行{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">最新交易日：{{ date or '-' }}</div>
+    <div class="panel-title">
+        最新交易日：{{ date or '-' }}
+        <span style="float: right; font-weight: normal; font-size: 0.8em;">当前更新时间：{{ now }}</span>
+    </div>
+
+    <!-- Filter Section -->
+    <div style="margin-bottom: 20px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+        <form method="GET" action="{{ url_for(request.endpoint) }}" class="flex-row"
+            style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label>总分 >= </label>
+                <input type="number" name="min_s" step="0.1" value="{{ min_s or '' }}"
+                    style="width: 80px; padding: 4px; background: #2a2a2a; border: 1px solid #444; color: white;">
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label>因子分 >= </label>
+                <input type="number" name="min_o" step="0.1" value="{{ min_o or '' }}"
+                    style="width: 80px; padding: 4px; background: #2a2a2a; border: 1px solid #444; color: white;">
+            </div>
+
+            <!-- Preserve Sort and Order -->
+            <input type="hidden" name="sort" value="{{ sort_by }}">
+            <input type="hidden" name="order" value="{{ order }}">
+
+            <button type="submit" class="tag trade"
+                style="border: none; cursor: pointer; padding: 6px 15px;">应用筛选</button>
+            <a href="{{ url_for(request.endpoint) }}"
+                style="color: #aaa; text-decoration: none; font-size: 0.9em;">重置</a>
+        </form>
+    </div>
+
     <table>
-        <thead><tr><th>代码</th><th>名称</th><th>总分</th><th>基础分</th><th>趋势分</th><th>量能分</th><th>池类型</th></tr></thead>
+        <thead>
+            <thead>
+                <tr>
+                    <th>代码</th>
+                    <th>名称</th>
+                    <th>
+                        <a href="{{ url_for(request.endpoint, sort='score', order='asc' if sort_by=='score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o) }}"
+                            style="text-decoration: none; color: inherit;">
+                            总分 {{ '▲' if sort_by=='score' and order=='ASC' else ('▼' if sort_by=='score' and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
+                    <th>
+                        <a href="{{ url_for(request.endpoint, sort='opt_score', order='asc' if sort_by=='opt_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o) }}"
+                            style="text-decoration: none; color: inherit;">
+                            因子分 {{ '▲' if sort_by=='opt_score' and order=='ASC' else ('▼' if sort_by=='opt_score' and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
+                    <th>现价</th>
+                    <th>买点价格</th>
+                    <th>涨幅</th>
+                    <th>涨停</th>
+                    <th>基础分</th>
+                    <th>趋势分</th>
+                    <th>量能分</th>
+                    <th>池类型</th>
+                </tr>
+            </thead>
         <tbody>
-        {% for row in scores %}
+            {% for row in scores %}
             <tr>
-                <td>{{ row.symbol }}</td><td>{{ row.name }}</td><td class="text-up">{{ row.score }}</td><td>{{ row.base_score }}</td><td>{{ row.s_trend }}</td><td>{{ row.s_volume }}</td>
+                <td><a href="{{ row.symbol | eastmoney_guba_url }}" target="_blank">{{ row.symbol }}</a></td>
+                <td><a href="{{ row.symbol | sina_finance_url }}" target="_blank">{{ row.name }}</a></td>
+                <td class="text-up">{{ row.score }}</td>
+                <td><span class="tag {{ 'text-up' if row.opt_score > 60 else '' }}">{{ "%.1f"|format(row.opt_score) if
+                        row.opt_score else '-' }}</span></td>
+                <td>{{ row.close_price }}</td>
+                <td>{{ row.buy_point_close or '-' }}</td>
+                <td class="{{ 'text-up' if row.price_change_ratio > 0 else 'text-down' }}">{{ row.price_change_ratio }}%
+                </td>
+                <td>
+                    {% if row.is_limit_up == 1 %}
+                    <span class="tag trade">涨停</span>
+                    {% endif %}
+                </td>
+                <td>{{ row.base_score }}</td>
+                <td>{{ row.s_trend }}</td>
+                <td>{{ row.s_volume }}</td>
                 <td><span class="tag {{ row.pool_type|lower }}">{{ row.pool_type }}</span></td>
             </tr>
-        {% else %}
-            <tr><td colspan="7" class="empty">暂无评分数据</td></tr>
-        {% endfor %}
+            {% else %}
+            <tr>
+                <td colspan="11" class="empty">暂无评分数据</td>
+            </tr>
+            {% endfor %}
         </tbody>
     </table>
 </section>

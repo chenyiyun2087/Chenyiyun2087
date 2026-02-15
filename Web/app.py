@@ -79,6 +79,28 @@ def get_pagination(cursor, table_name, page, per_page, where_clause="", params=N
     }
     return pagination, offset
 
+@app.template_filter('sina_finance_url')
+def sina_finance_url(symbol):
+    """Generate Sina Finance URL for a stock symbol"""
+    if not symbol:
+        return "#"
+    symbol = str(symbol)
+    if symbol.startswith('6'):
+        market = 'sh'
+    elif symbol.startswith('8') or symbol.startswith('4'):
+        market = 'bj' 
+    else:
+        market = 'sz'
+    return f"http://finance.sina.com.cn/realstock/company/{market}{symbol}/nc.shtml"
+
+@app.template_filter('eastmoney_guba_url')
+def eastmoney_guba_url(symbol):
+    """Generate Eastmoney Guba URL for a stock symbol"""
+    if not symbol:
+        return "#"
+    return f"http://guba.eastmoney.com/list,{symbol}.html"
+
+
 @app.route('/')
 def index():
     return redirect(url_for('positions'))
@@ -197,6 +219,13 @@ def eastmoney_scores():
 @app.route('/sina/scores')
 def sina_scores():
     page = request.args.get('page', 1, type=int)
+    sort_by = request.args.get('sort', 'default')  # default, score, opt_score
+    order = request.args.get('order', 'desc').upper()
+    if order not in ['ASC', 'DESC']: order = 'DESC'
+    
+    min_score = request.args.get('min_s', type=float)
+    min_opt_score = request.args.get('min_o', type=float)
+    
     per_page = 20
     conn = get_db()
     
@@ -210,26 +239,123 @@ def sina_scores():
         pagination = None
         
         if latest_date:
-            where_clause = "WHERE trade_date = %s"
-            pagination, offset = get_pagination(cursor, "score_rank_daily", page, per_page, where_clause, (latest_date,))
+            where_clauses = ["trade_date = %s"]
+            params = [latest_date]
             
-            # Prioritize TRADE pool, then score
+            if min_score is not None:
+                where_clauses.append("score >= %s")
+                params.append(min_score)
+            if min_opt_score is not None:
+                where_clauses.append("opt_score >= %s")
+                params.append(min_opt_score)
+                
+            where_stmt = " WHERE " + " AND ".join(where_clauses)
+            
+            # Count for pagination
+            pagination, offset = get_pagination(cursor, "score_rank_daily", page, per_page, where_stmt, tuple(params))
+            
+            # Build ORDER BY
+            if sort_by == 'score':
+                order_stmt = f"ORDER BY score {order}"
+            elif sort_by == 'opt_score':
+                order_stmt = f"ORDER BY opt_score {order}"
+            else:
+                # Default: Prioritize TRADE pool, then score desc
+                order_stmt = "ORDER BY CASE WHEN pool_type='TRADE' THEN 1 WHEN pool_type='WATCH' THEN 2 ELSE 3 END, score DESC"
+
             sql = f"""
-            SELECT * FROM score_rank_daily 
-            {where_clause} 
-            ORDER BY 
-                CASE WHEN pool_type='TRADE' THEN 1 WHEN pool_type='WATCH' THEN 2 ELSE 3 END,
-                score DESC 
+            SELECT 
+                *, 
+                COALESCE(opt_score, 0) as opt_score 
+            FROM score_rank_daily 
+            {where_stmt}
+            AND (is_bs_candidate = 1)
+            {order_stmt}
             LIMIT %s OFFSET %s
             """
-            cursor.execute(sql, (latest_date, per_page, offset))
+            
+            final_params = params + [per_page, offset]
+            cursor.execute(sql, tuple(final_params))
             scores = cursor.fetchall()
 
     return render_template('scores.html', 
                            scores=scores, 
                            pagination=pagination,
                            date=latest_date,
-                           now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                           sort_by=sort_by,
+                           order=order,
+                           min_s=min_score,
+                           min_o=min_opt_score,
+                           now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                           page_title="Sina B点股票评分")
+
+@app.route('/sina/self_selected')
+def sina_self_selected():
+    page = request.args.get('page', 1, type=int)
+    sort_by = request.args.get('sort', 'default')
+    order = request.args.get('order', 'desc').upper()
+    if order not in ['ASC', 'DESC']: order = 'DESC'
+    
+    min_score = request.args.get('min_s', type=float)
+    min_opt_score = request.args.get('min_o', type=float)
+    
+    per_page = 20
+    conn = get_db()
+    
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
+        res = cursor.fetchone()
+        latest_date = res['max_date']
+        
+        scores = []
+        pagination = None
+        
+        if latest_date:
+            where_clauses = ["trade_date = %s", "is_self_selected = 1"]
+            params = [latest_date]
+            
+            if min_score is not None:
+                where_clauses.append("score >= %s")
+                params.append(min_score)
+            if min_opt_score is not None:
+                where_clauses.append("opt_score >= %s")
+                params.append(min_opt_score)
+                
+            where_stmt = " WHERE " + " AND ".join(where_clauses)
+            
+            pagination, offset = get_pagination(cursor, "score_rank_daily", page, per_page, where_stmt, tuple(params))
+            
+            if sort_by == 'score':
+                order_stmt = f"ORDER BY score {order}"
+            elif sort_by == 'opt_score':
+                order_stmt = f"ORDER BY opt_score {order}"
+            else:
+                order_stmt = "ORDER BY score DESC"
+
+            sql = f"""
+            SELECT 
+                *, 
+                COALESCE(opt_score, 0) as opt_score 
+            FROM score_rank_daily 
+            {where_stmt}
+            {order_stmt}
+            LIMIT %s OFFSET %s
+            """
+            
+            final_params = params + [per_page, offset]
+            cursor.execute(sql, tuple(final_params))
+            scores = cursor.fetchall()
+
+    return render_template('scores.html', 
+                           scores=scores, 
+                           pagination=pagination,
+                           date=latest_date,
+                           sort_by=sort_by,
+                           order=order,
+                           min_s=min_score,
+                           min_o=min_opt_score,
+                           now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                           page_title="自选股评分")
 
 @app.route('/sina/monitor')
 def sina_monitor():

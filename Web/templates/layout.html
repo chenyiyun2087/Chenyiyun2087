@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,43 +10,53 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
+
 <body>
-<div class="app-shell">
-    <aside class="sidebar">
-        <div class="brand">量化交易控制台</div>
-        <div class="sidebar-group-title">侧边栏</div>
-        <nav>
-            <a href="{{ url_for('sina_monitor') }}" class="{% if request.endpoint == 'sina_monitor' %}active{% endif %}">Sina B/S 监控</a>
-            <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
-        </nav>
-    </aside>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand">量化交易控制台</div>
+            <div class="sidebar-group-title">侧边栏</div>
+            <nav>
+                <a href="{{ url_for('sina_monitor') }}"
+                    class="{% if request.endpoint == 'sina_monitor' %}active{% endif %}">Sina B/S 监控</a>
+                <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
+            </nav>
+        </aside>
 
-    <main class="main-content">
-        <header class="topbar">
-            <h1>{% block page_title %}量化策略看板{% endblock %}</h1>
-            <div class="timestamp">更新时间：{{ now }}</div>
-        </header>
+        <main class="main-content">
+            <header class="topbar">
+                <h1>{% block page_title %}量化策略看板{% endblock %}</h1>
+                <div class="timestamp">更新时间：{{ now }}</div>
+            </header>
 
-        <div class="tabs" role="tablist" aria-label="数据页签">
-            <a href="{{ url_for('positions') }}" class="tab {% if request.endpoint == 'positions' %}active{% endif %}">Sina 持仓</a>
-            <a href="{{ url_for('eastmoney_scores') }}" class="tab {% if request.endpoint == 'eastmoney_scores' %}active{% endif %}">Eastmoney 策略</a>
-            <a href="{{ url_for('sina_scores') }}" class="tab {% if request.endpoint == 'sina_scores' %}active{% endif %}">Sina 评分</a>
-            <a href="{{ url_for('sina_monitor') }}" class="tab {% if request.endpoint == 'sina_monitor' %}active{% endif %}">B/S 监控</a>
-            <a href="{{ url_for('admin') }}" class="tab {% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
-        </div>
+            <div class="tabs" role="tablist" aria-label="数据页签">
+                <a href="{{ url_for('positions') }}"
+                    class="tab {% if request.endpoint == 'positions' %}active{% endif %}">Sina 持仓</a>
+                <a href="{{ url_for('eastmoney_scores') }}"
+                    class="tab {% if request.endpoint == 'eastmoney_scores' %}active{% endif %}">Eastmoney 策略</a>
+                <a href="{{ url_for('sina_scores') }}"
+                    class="tab {% if request.endpoint == 'sina_scores' %}active{% endif %}">Sina B点股票评分</a>
+                <a href="{{ url_for('sina_self_selected') }}"
+                    class="tab {% if request.endpoint == 'sina_self_selected' %}active{% endif %}">自选股评分</a>
+                <a href="{{ url_for('sina_monitor') }}"
+                    class="tab {% if request.endpoint == 'sina_monitor' %}active{% endif %}">B/S 监控</a>
+                <a href="{{ url_for('admin') }}"
+                    class="tab {% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
+            </div>
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
-                <div class="flash-wrap">
-                    {% for category, message in messages %}
-                        <div class="flash {{ category }}">{{ message }}</div>
-                    {% endfor %}
-                </div>
+            <div class="flash-wrap">
+                {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            </div>
             {% endif %}
-        {% endwith %}
+            {% endwith %}
 
-        {% block content %}{% endblock %}
-    </main>
-</div>
+            {% block content %}{% endblock %}
+        </main>
+    </div>
 </body>
+
 </html>

@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -81,8 +82,15 @@ ON DUPLICATE KEY UPDATE
 logger = logging.getLogger(__name__)
 _thread_local = threading.local()
 
-def _get_driver():
-    """Get or create a thread-local Selenium driver."""
+def _get_driver(force_refresh: bool = False):
+    """Get or create a thread-local Selenium driver with rotation support."""
+    if force_refresh and hasattr(_thread_local, "driver"):
+        try:
+            _thread_local.driver.quit()
+        except Exception:
+            pass
+        delattr(_thread_local, "driver")
+
     if not hasattr(_thread_local, "driver"):
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
@@ -92,7 +100,11 @@ def _get_driver():
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        # Add realistic User-Agent
+        options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        
         _thread_local.driver = webdriver.Chrome(options=options)
+        _thread_local.request_count = 0
     return _thread_local.driver
 
 def _fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[DuokongSnapshot, float]:
@@ -106,12 +118,37 @@ def _fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[Du
     except ImportError as exc:
         raise RuntimeError("缺少 selenium 依赖，请先安装: pip install selenium") from exc
 
+    # 1. Randomized Delay to evade detection
+    time.sleep(random.uniform(0.5, 1.5))
+
+    # 2. Driver Rotation: Refresh every 50 requests in this thread
+    if not hasattr(_thread_local, "request_count"):
+        _thread_local.request_count = 0
+    
+    _thread_local.request_count += 1
+    force_refresh = (_thread_local.request_count > 50)
+    
     url = f"https://guba.eastmoney.com/list,{code}.html"
     
     try:
-        driver = _get_driver()
+        driver = _get_driver(force_refresh=force_refresh)
+        # Set Referrer for the request
+        driver.execute_cdp_cmd("Network.setExtraHTTPHeaders", {"headers": {"Referer": "https://guba.eastmoney.com/"}})
+        
         driver.get(url)
-        wait = WebDriverWait(driver, 20)
+        
+        # Try to close popups if they appear
+        try:
+            # Look for common close buttons or "关闭" text
+            popups = driver.find_elements(By.XPATH, "//div[contains(@class, 'popup')]//div[text()='关闭'] | //div[contains(@id, 'popup')]//div[text()='关闭'] | //a[contains(@class, 'close')]")
+            for p in popups:
+                if p.is_displayed():
+                    p.click()
+                    logger.info("Closed popup for %s", code)
+        except Exception:
+            pass
+
+        wait = WebDriverWait(driver, 15) 
         wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpContainer")))
 
         red_elem = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "dkkpRed")))
@@ -131,17 +168,29 @@ def _fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[Du
         return snapshot, duration
 
     except TimeoutException:
-        raise RuntimeError("Timeout")
+        # Save screenshot for debugging
+        try:
+            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "debug_screenshots")
+            os.makedirs(log_dir, exist_ok=True)
+            screenshot_path = os.path.join(log_dir, f"timeout_{code}_{datetime.now().strftime('%H%M%S')}.png")
+            _thread_local.driver.save_screenshot(screenshot_path)
+            logger.warning("Timeout for %s, screenshot saved to %s", code, screenshot_path)
+        except Exception as e:
+            logger.debug("Failed to save debug screenshot: %s", e)
+        
+        raise RuntimeError(f"Timeout (elapsed: {time.time() - start_time:.2f}s)")
     except Exception as e:
         raise e
 
 def _worker_task(code: str, debug: bool) -> BatchResult:
     """Worker function for threading."""
+    start_time = time.time()
     try:
         snapshot, duration = _fetch_duokong_snapshot_selenium(code, debug)
         return BatchResult(stock_code=code, snapshot=snapshot, duration_seconds=duration)
     except Exception as exc:
-        return BatchResult(stock_code=code, error=str(exc), duration_seconds=0.0)
+        duration = time.time() - start_time
+        return BatchResult(stock_code=code, error=str(exc), duration_seconds=duration)
 
 
 # --- Controller Class ---

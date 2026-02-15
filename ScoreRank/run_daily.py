@@ -9,12 +9,32 @@ from config import CONFIG
 from db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
 from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date
 
+# Import Factor Optimizer components
+try:
+    from score.factor_optimizer.data_loader import load_category_scores
+    from score.factor_optimizer.config import OptimizerConfig
+except ImportError:
+    # Handle case where score package might not be in path
+    import sys
+    # Try to find AShareDataCenter relative to Chenyiyun2087
+    # Assuming they are side-by-side in PycharmProjects
+    ashare_path = Path(__file__).resolve().parents[2] / "AShareDataCenter"
+    if ashare_path.exists():
+         sys.path.append(str(ashare_path))
+    else:
+         # Fallback to hardcoded path if relative path fails (e.g. symlinks)
+         sys.path.append("/Users/chenyiyun/PycharmProjects/AShareDataCenter")
+         
+    from score.factor_optimizer.data_loader import load_category_scores
+    from score.factor_optimizer.config import OptimizerConfig
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from Sina.bs_detection import DEFAULT_MYSQL_CONFIG, fetch_latest_buy_signals
+from Sina.backtest import bs_scorer
 
 
 def load_symbols_from_sina_bs() -> list[str]:
@@ -61,30 +81,21 @@ def describe_scoring(
     print(scored[score_columns].to_string(index=False))
 
 
-def save_scores_to_db(scored: pd.DataFrame, asof_date: pd.Timestamp, trade_pool: pd.DataFrame, watch_pool: pd.DataFrame):
-    """保存评分结果到数据库"""
-    print("\n正在保存评分结果到数据库...")
+def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
+    """
+    Saves the scored dataframe to database.
+    Assumes df_save has 'pool_type' and 'is_self_selected' columns.
+    """
+    if df_save.empty:
+        print("No records to save.")
+        return
+        
     engine = get_engine()
     
-    # 准备数据
-    df_save = scored.copy()
     df_save['trade_date'] = asof_date.date()
-    df_save['pool_type'] = 'OTHER'
+    # Drop duplicates to prevent database constraint violation
+    df_save = df_save.drop_duplicates(subset=['symbol'])
     
-    # 标记池类型
-    trade_symbols = set(trade_pool['symbol'])
-    watch_symbols = set(watch_pool['symbol'])
-    
-    def get_pool_type(row):
-        if row['symbol'] in trade_symbols:
-            return 'TRADE'
-        elif row['symbol'] in watch_symbols:
-            return 'WATCH'
-        return 'OTHER'
-    
-    df_save['pool_type'] = df_save.apply(get_pool_type, axis=1)
-    
-    # 选择需要的列并重命名以匹配数据库
     cols_map = {
         'symbol': 'symbol',
         'name': 'name',
@@ -93,85 +104,294 @@ def save_scores_to_db(scored: pd.DataFrame, asof_date: pd.Timestamp, trade_pool:
         'penalty': 'penalty',
         's_trend': 's_trend',
         's_breakout': 's_breakout',
-        's_volume': 's_volume',
+        's_volume': 's_volume', 
         's_rs': 's_rs',
         's_contraction': 's_contraction',
         's_liquidity': 's_liquidity',
         'trade_date': 'trade_date',
-        'pool_type': 'pool_type'
+        'pool_type': 'pool_type',
+        'is_limit_up': 'is_limit_up',
+        'close_price': 'close_price',
+        'buy_point_close': 'buy_point_close',
+        'price_change_ratio': 'price_change_ratio',
+        'opt_score': 'opt_score',
+        'is_self_selected': 'is_self_selected',
+        'is_bs_candidate': 'is_bs_candidate'
     }
     
-    df_save = df_save[list(cols_map.keys())].rename(columns=cols_map)
+    # Ensure all cols exist
+    for c in cols_map.keys():
+        if c not in df_save.columns:
+            if c == 'is_limit_up': df_save[c] = 0
+            elif c == 'is_self_selected': df_save[c] = 0
+            else: df_save[c] = None
+
+    df_db = df_save[list(cols_map.keys())].rename(columns=cols_map)
     
-    # 删除旧数据 (幂等性)
-    date_str = asof_date.strftime('%Y-%m-%d')
+    # Delete existing records for this date
     with engine.begin() as conn:
-        conn.execute(text(f"DELETE FROM score_rank_daily WHERE trade_date = '{date_str}'"))
+        conn.execute(text(f"DELETE FROM score_rank_daily WHERE trade_date = '{asof_date.date()}'"))
     
-    # 写入新数据
+    print("正在保存评分结果到数据库...")
+    df_db.to_sql('score_rank_daily', engine, if_exists='append', index=False, chunksize=1000)
+    print(f"成功保存 {len(df_db)} 条记录到 score_rank_daily")
+
+
+def calculate_opt_score(scored: pd.DataFrame, asof_date: pd.Timestamp) -> pd.DataFrame:
+    """
+    计算 Factor Optimizer 评分 (7大类因子等权平均)
+    """
+    print("正在计算 Factor Optimizer 评分...")
     try:
-        df_save.to_sql('score_rank_daily', engine, if_exists='append', index=False, chunksize=1000)
-        print(f"成功保存 {len(df_save)} 条记录到 score_rank_daily")
+        # Load category scores for the specific date
+        config = OptimizerConfig(
+            backtest_start=asof_date.strftime("%Y%m%d"),
+            backtest_end=asof_date.strftime("%Y%m%d")
+        )
+        
+        # Use 'tushare_stock' database for factor scores
+        # We need to create a temporary engine for tushare_stock if not available, 
+        # but load_category_scores uses _get_engine which reads etl.ini
+        # We can pass the existing engine if it points to the right place, 
+        # or let it create its own. run_daily.py's engine points to 'chenyiyun' by default
+        # but fetch_bars_batch uses 'tushare_stock.dwd_stock_daily_standard'.
+        # Let's let load_category_scores manage its own connection to be safe.
+        
+        cat_scores = load_category_scores(config)
+        
+        if cat_scores.empty:
+            print(f"警告: {asof_date.date()} 无 Factor Optimizer 分数数据")
+            scored["opt_score"] = None
+            return scored
+            
+        # Calculate weighted average score of the 7 categories
+        # [ADJUSTED] Decreased Value/Quality, Increased Technical/Capital
+        weights = {
+            "momentum": 0.15,
+            "value": 0.05,
+            "quality": 0.05,
+            "technical": 0.25,
+            "capital": 0.25,
+            "chip": 0.15,
+            "size": 0.10
+        }
+        
+        # Ensure columns exist and fill NaNs
+        for f in weights.keys():
+            if f not in cat_scores.columns:
+                cat_scores[f] = 0.0
+            cat_scores[f] = cat_scores[f].fillna(0.0)
+            
+        # Weighted sum
+        cat_scores["opt_score"] = sum(cat_scores[f] * w for f, w in weights.items())
+        
+        # Merge back to scored DataFrame
+        # scored has 'symbol' (6 digits), cat_scores has 'ts_code' (6 digits + suffix)
+        # We need to match efficiently. 
+        # load_category_scores returns ts_code.
+        
+        cat_scores["symbol"] = cat_scores["ts_code"].astype(str).str.slice(0, 6)
+        
+        # Merge
+        merged = scored.merge(
+            cat_scores[["symbol", "opt_score"]],
+            on="symbol",
+            how="left"
+        )
+        
+        print(f"Factor Optimizer 评分计算完成，覆盖率: {merged['opt_score'].count()} / {len(merged)}")
+        return merged
+        
     except Exception as e:
-        print(f"保存数据库失败: {e}")
+        print(f"计算 Factor Optimizer 评分失败: {e}")
+        scored["opt_score"] = None
+        return scored
 
 
 def main():
-    # 1) 使用新浪B点最新买点股票作为观察池子
-    symbols = load_symbols_from_sina_bs()
-    if not symbols:
-        raise RuntimeError("Sina数据库中未找到最近出现B点的股票。")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true", help="Force run ignoring time check")
+    args = parser.parse_args()
 
-    engine = get_engine()
+    try:
+        current_time = datetime.now()
+        # 判断当前时间是否在16:30之后 (Unless forced)
+        if not args.force:
+            if current_time.hour < 16 or (current_time.hour == 16 and current_time.minute < 30):
+                print(f"当前时间 {current_time} 未到收盘后处理时间(16:30)，程序退出")
+                return
 
-    # 2) 找最新交易日（以qfq为准，因为评分用qfq）
-    max_date_str = get_latest_trade_date(engine, symbols, adj_type=CONFIG["adj_for_signal"])
-    if not max_date_str:
-        raise RuntimeError("数据库里找不到qfq数据，请检查导入。")
+        print("Step 1: Get latest B/S signals...")
+        engine = get_engine()
+        with engine.connect() as conn:
+            # Get latest batch_date from bs_detection_results
+            res = conn.execute(text("SELECT MAX(batch_date) FROM bs_detection_results")).fetchone()
+            latest_bs_date = res[0]
+            
+            # Get latest trade_date from monthly data as a reference for today
+            res_td = conn.execute(text("SELECT MAX(trade_date) FROM tushare_stock.dwd_stock_daily_standard")).fetchone()
+            latest_data_date = res_td[0]
+            
+        if not latest_bs_date:
+            print("No B/S detection results found.")
+            return
 
-    asof_date = pd.to_datetime(max_date_str)
-    start_date = (asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d")
+        asof_date = pd.to_datetime(latest_bs_date)
+        print(f"Latest B/S Date: {asof_date.date()}")
+        print(f"Latest Data Date: {latest_data_date}")
 
-    # 3) 批量拉取 qfq 与 raw（只拉需要的日期范围）
-    qfq = fetch_bars_batch(
-        engine, symbols, adj_type=CONFIG["adj_for_signal"],
-        start_date=start_date, end_date=asof_date.strftime("%Y-%m-%d")
-    )
-    raw = fetch_bars_batch(
-        engine, symbols, adj_type=CONFIG["adj_for_liquidity"],
-        start_date=start_date, end_date=asof_date.strftime("%Y-%m-%d")
-    )
+        # 2) Load Symbols from B/S Detection (Candidates for TRADE/WATCH)
+        sql_bs = """
+        SELECT
+            latest_buy.stock_code
+        FROM bs_detection_results AS latest_buy
+        INNER JOIN (
+            SELECT
+                stock_code,
+                MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
+                MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
+            FROM bs_detection_results
+            GROUP BY stock_code
+        ) AS summary
+            ON latest_buy.stock_code = summary.stock_code
+            AND latest_buy.batch_date = summary.latest_buy_date
+        WHERE latest_buy.has_buy_signal = 1
+          AND (summary.latest_sell_date IS NULL
+               OR summary.latest_buy_date > summary.latest_sell_date)
+        """
+        df_bs = pd.read_sql(sql_bs, engine)
+        bs_symbols = df_bs['stock_code'].tolist()
+        print(f"Found {len(bs_symbols)} B/S candidate symbols.")
 
-    # 4) 生成特征：qfq做技术特征；raw做流动性/风险
-    qfq_feat = build_features_from_qfq(qfq, breakout_n=CONFIG["breakout_n"])
-    raw_liq = attach_liquidity_from_raw(raw)
+        # 3) Load Self-selected Stocks (Candidates for Self-selected Monitor)
+        sql_ss = """
+        SELECT stock_code 
+        FROM a_share_stock_list 
+        WHERE is_self_selected = 1
+        """
+        df_ss = pd.read_sql(sql_ss, engine)
+        ss_symbols = df_ss['stock_code'].tolist()
+        print(f"Found {len(ss_symbols)} self-selected symbols.")
+        
+        # 4) Union Symbols for Scoring
+        all_symbols = list(set(bs_symbols + ss_symbols))
+        print(f"Total unique symbols to score: {len(all_symbols)}")
 
-    # 5) 取名称（若库里没name字段也不影响）
-    names = get_symbol_names_if_exist(engine, symbols)
+        if not all_symbols:
+            print("No symbols to score.")
+            return
 
-    # 6) 打分
-    scored = score_asof_date(qfq_feat, raw_liq, names, asof_date=asof_date)
+        # 5) Fetch Data & Build Features
+        raw_data = fetch_bars_batch(
+            engine, all_symbols, adj_type=CONFIG["adj_for_signal"],
+            start_date=(asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d"), 
+            end_date=asof_date.strftime("%Y-%m-%d")
+        )
+        if raw_data.empty:
+            print("No market data found for symbols.")
+            return
+            
+        # Also need raw for liquidity
+        raw_liq_data = fetch_bars_batch(
+            engine, all_symbols, adj_type=CONFIG["adj_for_liquidity"],
+            start_date=(asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d"), 
+            end_date=asof_date.strftime("%Y-%m-%d")
+        )
 
-    # 7) 分池
-    trade_pool = scored[scored["score"] >= CONFIG["trade_threshold"]].head(CONFIG["max_trade_pool"]).copy()
-    watch_pool = scored[(scored["score"] >= CONFIG["watch_threshold"]) & (scored["score"] < CONFIG["trade_threshold"])].copy()
-    triggers = trade_pool[trade_pool["trigger_today"] == 1].copy()
+        features = build_features_from_qfq(raw_data, breakout_n=CONFIG["breakout_n"])
+        raw_liq = attach_liquidity_from_raw(raw_liq_data)
 
-    describe_scoring(symbols, asof_date, trade_pool, watch_pool, scored)
+        # 6) Scoring
+        names = get_symbol_names_if_exist(engine, all_symbols)
+        scored = score_asof_date(features, raw_liq, names, asof_date=asof_date)
 
-    # 8) 输出
-    d = asof_date.strftime("%Y%m%d")
-    scored.to_csv(f"scored_{d}.csv", index=False, encoding="utf-8-sig")
-    trade_pool.to_csv(f"trade_pool_{d}.csv", index=False, encoding="utf-8-sig")
-    watch_pool.to_csv(f"watch_pool_{d}.csv", index=False, encoding="utf-8-sig")
-    triggers.to_csv(f"triggers_{d}.csv", index=False, encoding="utf-8-sig")
-    
-    # 保存到数据库
-    save_scores_to_db(scored, asof_date, trade_pool, watch_pool)
+        # 6.5) Merge B/S Signal Data (Strength, Freshness)
+        engine = get_engine()
+        bs_signals = bs_scorer.fetch_bs_signals(engine, asof_date, all_symbols)
+        
+        if not bs_signals.empty and "buy_point_close" in bs_signals.columns:
+            scored["symbol"] = scored["symbol"].astype(str)
+            bs_signals["symbol"] = bs_signals["symbol"].astype(str)
+            
+            scored = scored.merge(
+                bs_signals[["symbol", "buy_point_close"]],
+                on="symbol",
+                how="left"
+            )
+        else:
+            scored["buy_point_close"] = None
+        
+        # Calculate extra fields (close, is_limit_up, etc.)
+        # Calculate extra fields (close, is_limit_up, etc.)
+        latest_qfq = features.sort_values('trade_date').groupby('symbol').tail(1).set_index('symbol')
+        
+        def get_close(row):
+            return latest_qfq.loc[row['symbol'], 'close'] if row['symbol'] in latest_qfq.index else 0.0
+        
+        def get_is_limit_up(row):
+            if row['symbol'] in latest_qfq.index:
+                 val = latest_qfq.loc[row['symbol'], 'ret1']
+                 if pd.notnull(val):
+                     return 1 if (val * 100) > 9.5 else 0
+            return 0
 
-    print("asof:", asof_date.date())
-    print("trade_pool:", len(trade_pool), "watch_pool:", len(watch_pool), "triggers:", len(triggers))
+        scored['close_price'] = scored.apply(get_close, axis=1)
+        scored['is_limit_up'] = scored.apply(get_is_limit_up, axis=1)
+        
+        scored['buy_point_close'] = scored['buy_point_close'].apply(lambda x: float(x) if pd.notnull(x) else None)
+        
+        def calc_ratio(row):
+            if row['buy_point_close'] and row['buy_point_close'] > 0:
+                return (row['close_price'] - row['buy_point_close']) / row['buy_point_close'] * 100
+            return 0.0
+
+        scored['price_change_ratio'] = scored.apply(calc_ratio, axis=1)
+
+        # 6.6) Calculate Factor Optimizer Score [NEW]
+        scored = calculate_opt_score(scored, asof_date)
+
+        # 7) Determine Pool Types and Self-selected Status
+        
+        scored['is_bs_candidate'] = scored['symbol'].isin(bs_symbols).astype(int)
+        scored['is_self_selected'] = scored['symbol'].isin(ss_symbols).astype(int)
+        
+        # Logic for Pool Type (Only for B/S candidates)
+        scored['pool_type'] = None
+        
+        mask_bs = (scored['is_bs_candidate'] == 1)
+        mask_trade = mask_bs & (scored['score'] >= CONFIG["trade_threshold"])
+        scored.loc[mask_trade, 'pool_type'] = 'TRADE'
+        
+        mask_watch = mask_bs & (~mask_trade) & (scored['score'] >= CONFIG["watch_threshold"])
+        scored.loc[mask_watch, 'pool_type'] = 'WATCH'
+        
+        # Filter for saving
+        # Save if (pool_type is NOT None) OR (is_self_selected == 1) OR (is_bs_candidate == 1)
+        df_to_save = scored[ (scored['pool_type'].notna()) | (scored['is_self_selected'] == 1) | (scored['is_bs_candidate'] == 1) ].copy()
+        
+        print("--------------------------------------------------")
+        print("Scoring Summary:")
+        print(f"  Total Scored: {len(scored)}")
+        print(f"  TRADE Pool  : {len(scored[scored['pool_type']=='TRADE'])}")
+        print(f"  WATCH Pool  : {len(scored[scored['pool_type']=='WATCH'])}")
+        print(f"  Self-Select : {len(scored[scored['is_self_selected']==1])}")
+        print("--------------------------------------------------")
+        
+        # Limit pools logic (optional, respecting config if needed)
+        # For simplicity, we save all qualifying.
+        
+        # 保存到数据库
+        # Need to pass dfs but save_scores_to_db was designed for separate DFs / params.
+        # We repurposed it to take the final DF.
+        save_scores_to_db(df_to_save, asof_date)
+
+    except Exception as e:
+        print(f"Execution failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
+    from datetime import datetime
     main()

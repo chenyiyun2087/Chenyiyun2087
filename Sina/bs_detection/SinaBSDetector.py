@@ -11,7 +11,10 @@ import numpy as np
 import pandas as pd
 import pytesseract
 
-from .SinaLatestBSShow import print_latest_buy_signals
+try:
+    from .SinaLatestBSShow import print_latest_buy_signals
+except ImportError:
+    from SinaLatestBSShow import print_latest_buy_signals
 
 _tesseract_cmd = shutil.which("tesseract")
 if _tesseract_cmd:
@@ -22,6 +25,7 @@ THREAD_LOCK = threading.Lock()
 DETECTION_RESULTS = []  # 存储所有检测结果
 MORPH_KERNEL_2 = np.ones((2, 2), np.uint8)
 MORPH_KERNEL_3 = np.ones((3, 3), np.uint8)
+# COORDINATE_THRESHOLD = 1730  # 横坐标阈值
 COORDINATE_THRESHOLD = 1810  # 横坐标阈值
 MYSQL_CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS bs_detection_results (

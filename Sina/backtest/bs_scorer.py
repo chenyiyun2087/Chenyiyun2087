@@ -16,7 +16,7 @@ import pandas as pd
 import pymysql
 from sqlalchemy import create_engine, text
 
-from backtest_config import CONFIG
+from .backtest_config import CONFIG
 
 
 def _pct_rank_100(s: pd.Series) -> pd.Series:
@@ -54,16 +54,28 @@ def fetch_bs_signals(engine, asof_date: pd.Timestamp, symbols: List[str]) -> pd.
     placeholders = ",".join([f":s{i}" for i in range(len(symbols))])
     sql = f"""
     SELECT 
-        stock_code AS symbol,
-        MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
-        MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date,
-        MAX(CASE WHEN has_buy_signal = 1 AND batch_date = (
-            SELECT MAX(batch_date) FROM {CONFIG['bs_table']} b2 
-            WHERE b2.stock_code = {CONFIG['bs_table']}.stock_code AND b2.has_buy_signal = 1
-        ) THEN buy_points_count END) AS buy_points_count
-    FROM {CONFIG['bs_table']}
-    WHERE stock_code IN ({placeholders})
-    GROUP BY stock_code
+        latest.stock_code as symbol,
+        latest.max_buy_date as latest_buy_date,
+        latest_s.max_sell_date as latest_sell_date,
+        bs.buy_points_count,
+        k.adj_close as buy_point_close
+    FROM (
+        SELECT stock_code, MAX(batch_date) as max_buy_date
+        FROM {CONFIG['bs_table']}
+        WHERE has_buy_signal = 1 AND stock_code IN ({placeholders})
+        GROUP BY stock_code
+    ) latest
+    LEFT JOIN (
+        SELECT stock_code, MAX(batch_date) as max_sell_date
+        FROM {CONFIG['bs_table']}
+        WHERE has_sell_signal = 1 AND stock_code IN ({placeholders})
+        GROUP BY stock_code
+    ) latest_s ON latest.stock_code = latest_s.stock_code
+    JOIN {CONFIG['bs_table']} bs 
+        ON latest.stock_code = bs.stock_code AND latest.max_buy_date = bs.batch_date
+    LEFT JOIN tushare_stock.dwd_stock_daily_standard k 
+        ON SUBSTR(k.ts_code, 1, 6) = latest.stock_code 
+        AND k.trade_date = latest.max_buy_date
     """
     
     params = {f"s{i}": symbols[i] for i in range(len(symbols))}
@@ -110,7 +122,7 @@ def calculate_bs_factors(
     if not bs_signals.empty:
         df = df.merge(
             bs_signals[["symbol", "latest_buy_date", "latest_sell_date", 
-                       "buy_points_count", "has_active_buy"]],
+                       "buy_points_count", "has_active_buy", "buy_point_close"]],
             on="symbol",
             how="left"
         )
