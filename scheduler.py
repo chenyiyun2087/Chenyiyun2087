@@ -167,7 +167,8 @@ def run_pipeline(target_date):
 
     # 2. Run Eastmoney Strategy
     # Note: Eastmoney/run_strategy.py usually takes no args (uses current date/DB)
-    if not run_script("Eastmoney/run_strategy.py", [], "eastmoney_strategy"):
+    # [UPDATED] Export to result/ directory
+    if not run_script("Eastmoney/run_strategy.py", ["--export", "result"], "eastmoney_strategy"):
         logger.error("Pipeline aborted at Eastmoney Strategy.")
         return
 

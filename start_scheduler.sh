@@ -4,7 +4,7 @@
 PROJECT_DIR="/Users/chenyiyun/PycharmProjects/Chenyiyun2087"
 VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 SCRIPT="scheduler.py"
-LOG_FILE="scheduler.nohup.log"
+LOG_FILE="logs/scheduler/scheduler.nohup.log"
 
 cd "$PROJECT_DIR" || exit
 

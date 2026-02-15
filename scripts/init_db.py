@@ -1,4 +1,5 @@
 import pymysql
+import os
 
 def init_db():
     conn = pymysql.connect(
@@ -10,7 +11,11 @@ def init_db():
     )
     cursor = conn.cursor()
     
-    with open('web_schema.sql', 'r') as f:
+    # Locate web_schema.sql in project root
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    schema_path = os.path.join(project_root, 'web_schema.sql')
+    
+    with open(schema_path, 'r') as f:
         sql_content = f.read()
         
     commands = sql_content.split(';')

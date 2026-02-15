@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import date
 
 # Add project root to sys.path
-sys.path.append(str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from Sina.live_tracker.live_tracker import LiveTracker
 from Sina.live_tracker import live_tracker_db as db

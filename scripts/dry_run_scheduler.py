@@ -1,7 +1,11 @@
 import datetime
 import logging
 import sys
+import os
 from unittest.mock import MagicMock, patch
+
+# Add parent directory to path to import scheduler
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Mock modules before importing scheduler
 sys.modules['sqlalchemy'] = MagicMock()

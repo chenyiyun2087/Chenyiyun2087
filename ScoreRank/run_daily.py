@@ -1,6 +1,7 @@
 from datetime import timedelta
 from pathlib import Path
 import sys
+import os
 
 import pandas as pd
 from sqlalchemy import text
@@ -271,8 +272,21 @@ def main():
         WHERE is_self_selected = 1
         """
         df_ss = pd.read_sql(sql_ss, engine)
-        ss_symbols = df_ss['stock_code'].tolist()
-        print(f"Found {len(ss_symbols)} self-selected symbols.")
+        db_ss_symbols = df_ss['stock_code'].tolist()
+        
+        # Also load from Sina/stock_codes.xlsx for consistency
+        excel_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Sina", "stock_codes.xlsx")
+        try:
+            df_excel = pd.read_excel(excel_path)
+            col_name = 'stock_code' if 'stock_code' in df_excel.columns else df_excel.columns[0]
+            excel_symbols = df_excel[col_name].astype(str).str.replace('sh', '').str.replace('sz', '').tolist()
+            print(f"Loaded {len(excel_symbols)} symbols from {excel_path}")
+        except Exception as e:
+            print(f"Warning: Failed to load {excel_path}: {e}")
+            excel_symbols = []
+
+        ss_symbols = list(set(db_ss_symbols + excel_symbols))
+        print(f"Found {len(ss_symbols)} total self-selected symbols (DB: {len(db_ss_symbols)}, Excel: {len(excel_symbols)}).")
         
         # 4) Union Symbols for Scoring
         all_symbols = list(set(bs_symbols + ss_symbols))
