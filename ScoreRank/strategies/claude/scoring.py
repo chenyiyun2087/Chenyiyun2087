@@ -4,7 +4,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, Tuple
-from src.utils import normalize_weights, rank_to_percentile
+from .utils import normalize_weights, rank_to_percentile
 
 
 class ScoringEngine:

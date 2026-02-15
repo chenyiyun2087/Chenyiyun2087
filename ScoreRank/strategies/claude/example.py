@@ -9,13 +9,17 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import sys
-import os
 
-# 添加src目录到路径
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from .engine import DailyReviewEngine
 
-from src.engine import DailyReviewEngine
+
+def _print_pool_results(label: str, pool_df: pd.DataFrame):
+    """打印Trade/Watch结果"""
+    print(f"{label} ({len(pool_df)} 只):")
+    if len(pool_df) == 0:
+        print("无")
+        return
+    print(pool_df[['symbol', 'score_adjusted', 'ret_since_in']].head(10))
 
 
 def generate_mock_data(symbols: list, days: int = 150) -> dict:
@@ -83,7 +87,7 @@ def example_single_day_review():
     
     # 2. 初始化引擎
     print("初始化引擎...")
-    engine = DailyReviewEngine('configs/config.yaml')
+    engine = DailyReviewEngine()
     
     # 3. 运行复盘
     trade_date = datetime.now().strftime('%Y-%m-%d')
@@ -93,18 +97,10 @@ def example_single_day_review():
     print("\n" + "="*60)
     print("复盘结果:")
     print("="*60 + "\n")
-    
-    print(f"Trade候选 ({len(results['trade'])} 只):")
-    if len(results['trade']) > 0:
-        print(results['trade'][['symbol', 'score_adjusted', 'ret_since_in']].head(10))
-    else:
-        print("无")
-    
-    print(f"\nWatch观察 ({len(results['watch'])} 只):")
-    if len(results['watch']) > 0:
-        print(results['watch'][['symbol', 'score_adjusted', 'ret_since_in']].head(10))
-    else:
-        print("无")
+
+    _print_pool_results('Trade候选', results['trade'])
+    print()
+    _print_pool_results('Watch观察', results['watch'])
     
     return engine, results
 
@@ -122,7 +118,7 @@ def example_multi_day_review():
     
     # 2. 初始化引擎
     print("初始化引擎...")
-    engine = DailyReviewEngine('configs/config.yaml')
+    engine = DailyReviewEngine()
     
     # 3. 连续5天复盘
     end_date = datetime.now()
@@ -209,7 +205,7 @@ def example_with_real_data():
     
     # 运行复盘
     print("\n运行复盘...")
-    engine = DailyReviewEngine('configs/config.yaml')
+    engine = DailyReviewEngine()
     
     trade_date = datetime.now().strftime('%Y-%m-%d')
     results = engine.run_daily_review(trade_date, market_data)

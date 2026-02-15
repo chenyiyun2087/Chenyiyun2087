@@ -3,22 +3,22 @@
 """
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 from datetime import datetime
+from pathlib import Path
 import yaml
-import os
 
-from src.indicators import FactorCalculator
-from src.signals import MultiStockSignalGenerator
-from src.inventory import InventoryStateMachine, InventoryAnalyzer
-from src.scoring import ScoringEngine, TradeWatchClassifier, ScoreExplainer
-from src.utils import detect_st_stocks, check_limit_price
+from .indicators import FactorCalculator
+from .signals import MultiStockSignalGenerator
+from .inventory import InventoryStateMachine, InventoryAnalyzer
+from .scoring import ScoringEngine, TradeWatchClassifier, ScoreExplainer
+from .utils import check_limit_price
 
 
 class DailyReviewEngine:
     """每日收盘复盘引擎"""
     
-    def __init__(self, config_path: str = 'configs/config.yaml'):
+    def __init__(self, config_path: Optional[str] = None):
         """
         初始化引擎
         
@@ -26,6 +26,8 @@ class DailyReviewEngine:
             config_path: 配置文件路径
         """
         # 加载配置
+        if config_path is None:
+            config_path = Path(__file__).with_name('config.yaml')
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
         
@@ -39,10 +41,11 @@ class DailyReviewEngine:
         )
         
         # 输出目录
-        self.output_dir = self.config['system']['base_dir']
-        os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(f"{self.output_dir}/daily", exist_ok=True)
-        os.makedirs(f"{self.output_dir}/charts", exist_ok=True)
+        self.output_dir = Path(self.config['system']['base_dir'])
+        self.daily_output_dir = self.output_dir / 'daily'
+        self.chart_output_dir = self.output_dir / 'charts'
+        self.daily_output_dir.mkdir(parents=True, exist_ok=True)
+        self.chart_output_dir.mkdir(parents=True, exist_ok=True)
     
     def run_daily_review(self, trade_date: str, market_data: Dict[str, pd.DataFrame]):
         """
@@ -83,7 +86,7 @@ class DailyReviewEngine:
         
         # 7. 生成报表和可视化
         print("步骤7: 生成报表...")
-        self._generate_reports(trade_date, trade_df, watch_df, scores_df)
+        self._generate_reports(trade_date, trade_df, watch_df)
         
         print(f"\n{'='*60}")
         print(f"完成 {trade_date} 收盘复盘")
@@ -284,51 +287,51 @@ class DailyReviewEngine:
         
         return trade_df, watch_df
     
-    def _generate_reports(self, trade_date: str, 
+    def _generate_reports(self, trade_date: str,
                          trade_df: pd.DataFrame,
-                         watch_df: pd.DataFrame,
-                         scores_df: pd.DataFrame):
+                         watch_df: pd.DataFrame):
         """生成报表"""
         date_str = trade_date.replace('-', '')
         
-        # 保存trade列表
-        if len(trade_df) > 0:
-            output_cols = ['symbol', 'score_adjusted', 'score_total', 'rank',
-                          's_breakout', 's_trend', 's_volume', 's_rs', 
-                          's_liquidity', 's_contraction',
-                          'in_date', 'in_price', 'ret_since_in',
-                          'score_explanation']
-            
-            trade_output = trade_df[[col for col in output_cols if col in trade_df.columns]]
-            trade_output.to_csv(
-                f"{self.output_dir}/daily/trade_{date_str}.csv", 
-                index=False, 
-                encoding='utf-8-sig'
-            )
-        
-        # 保存watch列表
-        if len(watch_df) > 0:
-            output_cols = ['symbol', 'score_adjusted', 'score_total', 'rank',
-                          's_breakout', 's_trend', 's_volume', 's_rs',
-                          's_liquidity', 's_contraction',
-                          'in_date', 'in_price', 'ret_since_in',
-                          'score_explanation']
-            
-            watch_output = watch_df[[col for col in output_cols if col in watch_df.columns]]
-            watch_output.to_csv(
-                f"{self.output_dir}/daily/watch_{date_str}.csv",
-                index=False,
-                encoding='utf-8-sig'
-            )
+        output_cols = [
+            'symbol', 'score_adjusted', 'score_total', 'rank',
+            's_breakout', 's_trend', 's_volume', 's_rs',
+            's_liquidity', 's_contraction',
+            'in_date', 'in_price', 'ret_since_in',
+            'score_explanation',
+        ]
+
+        self._save_pool_csv(trade_df, output_cols, self.daily_output_dir / f"trade_{date_str}.csv")
+        self._save_pool_csv(watch_df, output_cols, self.daily_output_dir / f"watch_{date_str}.csv")
         
         # 保存库状态
         self.inventory.save_state(
-            f"{self.output_dir}/daily/inventory_{date_str}.xlsx"
+            str(self.daily_output_dir / f"inventory_{date_str}.xlsx")
         )
         
         # 生成摘要报告
         self._generate_summary_report(trade_date, trade_df, watch_df)
     
+    def _save_pool_csv(self, pool_df: pd.DataFrame, output_cols: list[str], output_path: Path):
+        """保存分层结果到CSV"""
+        if len(pool_df) == 0:
+            return
+        pool_output = pool_df[[col for col in output_cols if col in pool_df.columns]]
+        pool_output.to_csv(output_path, index=False, encoding='utf-8-sig')
+
+    def _append_top_candidates(self, report: list[str], title: str, df: pd.DataFrame):
+        """追加Top10候选摘要到报告"""
+        report.append(f"## {title} (Top 10)\n")
+        if len(df) == 0:
+            report.append("- 无\n")
+            return
+        for _, row in df.head(10).iterrows():
+            report.append(
+                f"- {row['symbol']}: "
+                f"评分{row['score_adjusted']:.1f}, "
+                f"入库收益{row.get('ret_since_in', 0)*100:.2f}%\n"
+            )
+
     def _generate_summary_report(self, trade_date: str,
                                 trade_df: pd.DataFrame,
                                 watch_df: pd.DataFrame):
@@ -355,35 +358,13 @@ class DailyReviewEngine:
         
         report.append("\n")
         
-        # Trade候选
-        report.append("## Trade候选 (Top 10)\n")
-        if len(trade_df) > 0:
-            for idx, row in trade_df.head(10).iterrows():
-                report.append(
-                    f"- {row['symbol']}: "
-                    f"评分{row['score_adjusted']:.1f}, "
-                    f"入库收益{row.get('ret_since_in', 0)*100:.2f}%\n"
-                )
-        else:
-            report.append("- 无\n")
-        
+        self._append_top_candidates(report, 'Trade候选', trade_df)
         report.append("\n")
-        
-        # Watch观察
-        report.append("## Watch观察 (Top 10)\n")
-        if len(watch_df) > 0:
-            for idx, row in watch_df.head(10).iterrows():
-                report.append(
-                    f"- {row['symbol']}: "
-                    f"评分{row['score_adjusted']:.1f}, "
-                    f"入库收益{row.get('ret_since_in', 0)*100:.2f}%\n"
-                )
-        else:
-            report.append("- 无\n")
+        self._append_top_candidates(report, 'Watch观察', watch_df)
         
         # 保存报告
         date_str = trade_date.replace('-', '')
-        with open(f"{self.output_dir}/daily/summary_{date_str}.txt", 'w', encoding='utf-8') as f:
+        with open(self.daily_output_dir / f"summary_{date_str}.txt", 'w', encoding='utf-8') as f:
             f.writelines(report)
         
         # 打印到控制台
