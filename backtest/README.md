@@ -16,42 +16,43 @@
 backtest/
   README.md
   pyproject.toml
-  backtest_engine/
-    __init__.py
-    config.py
-    datafeed/
+  src/
+    backtest_engine/
       __init__.py
-      base.py
-      warehouse_feed.py
-      mock_feed.py
-    core/
-      __init__.py
-      clock.py
-      broker.py
-      portfolio.py
-      engine.py
-      strategy.py
-      types.py
-    metrics/
-      __init__.py
-      performance.py
-    reporting/
-      __init__.py
-      schema.py
-      exporter.py
-    examples/
-      demo_strategy.py
-      run_demo.py
-    tests/
-      test_metrics.py
-      test_engine_smoke.py
+      config.py
+      datafeed/
+        __init__.py
+        base.py
+        warehouse_feed.py
+        mock_feed.py
+      core/
+        __init__.py
+        clock.py
+        broker.py
+        portfolio.py
+        engine.py
+        strategy.py
+        types.py
+      metrics/
+        __init__.py
+        performance.py
+      reporting/
+        __init__.py
+        schema.py
+        exporter.py
+      examples/
+        demo_strategy.py
+        run_demo.py
+  tests/
+    test_metrics.py
+    test_engine_smoke.py
 ```
 
 ## 快速开始
 
 ```bash
 cd backtest
-python -m backtest_engine.examples.run_demo
+PYTHONPATH=src python -m backtest_engine.examples.run_demo
 ```
 
 执行后将产出：
