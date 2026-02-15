@@ -17,20 +17,20 @@
 - visualization: 可视化和报表
 
 快速开始:
->>> from src.engine import DailyReviewEngine
->>> engine = DailyReviewEngine('configs/config.yaml')
+>>> from ScoreRank.strategies.claude import DailyReviewEngine
+>>> engine = DailyReviewEngine()
 >>> results = engine.run_daily_review(trade_date, market_data)
 """
 
 __version__ = '1.0.0'
 __author__ = 'Stock Review System'
 
-from src.engine import DailyReviewEngine
-from src.inventory import InventoryStateMachine, InventoryAnalyzer
-from src.scoring import ScoringEngine, TradeWatchClassifier
-from src.signals import SignalGenerator, MultiStockSignalGenerator
-from src.indicators import FactorCalculator, TechnicalIndicators
-from src.visualization import ChartGenerator
+from .engine import DailyReviewEngine
+from .inventory import InventoryStateMachine, InventoryAnalyzer
+from .scoring import ScoringEngine, TradeWatchClassifier
+from .signals import SignalGenerator, MultiStockSignalGenerator
+from .indicators import FactorCalculator, TechnicalIndicators
+from .visualization import ChartGenerator
 
 __all__ = [
     'DailyReviewEngine',
