@@ -5,9 +5,9 @@ from datetime import date
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from Sina.live_tracker.live_tracker import LiveTracker
-from Sina.live_tracker import live_tracker_db as db
-from Sina.live_tracker.live_tracker_config import LIVE_CONFIG
+from sina.live_tracker.live_tracker import LiveTracker
+from sina.live_tracker import live_tracker_db as db
+from sina.live_tracker.live_tracker_config import LIVE_CONFIG
 
 def reconcile():
     print("Starting reconciliation...")
@@ -43,7 +43,7 @@ def reconcile():
                 pos.avg_cost = new_cost / new_shares
                 pos.shares = new_shares
             else:
-                from Sina.live_tracker.live_tracker import LivePosition
+                from sina.live_tracker.live_tracker import LivePosition
                 tracker.positions[symbol] = LivePosition(
                     symbol=symbol,
                     name=db.get_stock_name(symbol),

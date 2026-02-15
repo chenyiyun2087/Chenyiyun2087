@@ -34,9 +34,9 @@ def main() -> None:
 
         print("\nVerifying calls:")
         expected_calls = [
-            "Eastmoney/run_strategy.py",
-            "ScoreRank/run_daily.py",
-            "Sina/live_tracker/run_live_tracker.py",
+            "eastmoney/run_strategy.py",
+            "scoreRank/run_daily.py",
+            "sina/live_tracker/run_live_tracker.py",
         ]
 
         calls = [args[0][0] for args in mock_run_script.call_args_list]

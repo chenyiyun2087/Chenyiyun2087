@@ -107,8 +107,8 @@ Chenyiyun2087/
 3. 安装依赖（按子模块分别安装）
 
 ```bash
-pip install -r Web/requirements.txt
-pip install -r Eastmoney/requirements.txt
+pip install -r web/requirements.txt
+pip install -r eastmoney/requirements.txt
 ```
 
 > `Sina`、`ScoreRank` 还依赖 `pandas/sqlalchemy/pymysql/openpyxl` 等，请根据实际执行脚本补齐。
@@ -122,23 +122,23 @@ python scripts/init_db.py
 ### 5.3 手动运行核心任务（推荐先逐个验证）
 
 ```bash
-# 1) Sina B/S 检测
-python Sina/bs_detection/main.py config_1 20260210
+# 1) sina B/S 检测
+python sina/bs_detection/main.py config_1 20260210
 
-# 2) Eastmoney 数据抓取
-python Eastmoney/main.py config_1 20260210
+# 2) eastmoney 数据抓取
+python eastmoney/main.py config_1 20260210
 
-# 3) Eastmoney 盘后策略扫描
-python Eastmoney/run_strategy.py --date 2026-02-10 --threshold 70 --export result
+# 3) eastmoney 盘后策略扫描
+python eastmoney/run_strategy.py --date 2026-02-10 --threshold 70 --export result
 
-# 4) ScoreRank 每日评分
-python ScoreRank/run_daily.py --force
+# 4) scoreRank 每日评分
+python scoreRank/run_daily.py --force
 
 # 5) Live Tracker 同步
-python Sina/live_tracker/run_live_tracker.py sync
+python sina/live_tracker/run_live_tracker.py sync
 
 # 6) 启动看板
-python Web/app.py
+python web/app.py
 ```
 
 ---

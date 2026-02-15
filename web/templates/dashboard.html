@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>量化策略看板</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📈 量化策略看板 (Quant Dashboard)</h1>
+            <div class="timestamp">更新时间: {{ st_date }}</div>
+        </header>
+
+        <!-- sina 当前持仓 -->
+        <section class="card">
+            <div class="section-header">
+                <h2>Sina 实盘持仓 (Live Positions)</h2>
+                <span class="badge badge-blue">{{ positions|length }} Positions</span>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>代码</th>
+                        <th>买入日期</th>
+                        <th>买入价格</th>
+                        <th>当前数量</th>
+                        <th>策略</th>
+                        <th>状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pos in positions %}
+                    <tr>
+                        <td>{{ pos.symbol }}</td>
+                        <td>{{ pos.entry_date }}</td>
+                        <td>{{ pos.entry_price }}</td>
+                        <td>{{ pos.quantity }}</td>
+                        <td>{{ pos.strategy_id }}</td>
+                        <td><span class="badge badge-success">持仓中</span></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6">当前无持仓</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+
+        <!-- eastmoney 超跌反弹策略 -->
+        <section class="card">
+            <div class="section-header">
+                <h2>Eastmoney 超跌反弹筛选 (Oversold Bounce)</h2>
+                <span class="timestamp">数据日期: {{ em_date }}</span>
+            </div>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>代码</th>
+                            <th>名称</th>
+                            <th>综合得分</th>
+                            <th>空方情绪</th>
+                            <th>超跌分</th>
+                            <th>RSI</th>
+                            <th>BIAS(10)</th>
+                            <th>目标涨幅</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in em_results %}
+                        <tr>
+                            <td>{{ row.stock_code }}</td>
+                            <td>{{ row.stock_name }}</td>
+                            <td class="score-high">{{ row.comprehensive_score }}</td>
+                            <td>{{ row.bears_percent }}%</td>
+                            <td>{{ row.oversold_score }}</td>
+                            <td>{{ row.details.RSI }}</td>
+                            <td>{{ row.details.BIAS_10 }}%</td>
+                            <td>{{ row.details.target_gain }}%</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="8">暂无该日期的筛选结果</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- sina 评分排行 -->
+        <section class="card">
+            <div class="section-header">
+                <h2>Sina 每日评分排行 (Top 20)</h2>
+                <span class="timestamp">数据日期: {{ st_date }}</span>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>代码</th>
+                        <th>名称</th>
+                        <th>总分</th>
+                        <th>基础分</th>
+                        <th>趋势分</th>
+                        <th>量能分</th>
+                        <th>池类型</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in sina_scores %}
+                    <tr>
+                        <td>{{ row.symbol }}</td>
+                        <td>{{ row.name }}</td>
+                        <td class="score-high">{{ row.score }}</td>
+                        <td>{{ row.base_score }}</td>
+                        <td>{{ row.s_trend }}</td>
+                        <td>{{ row.s_volume }}</td>
+                        <td>
+                            {% if row.pool_type == 'TRADE' %}
+                            <span class="badge badge-success">交易池</span>
+                            {% elif row.pool_type == 'WATCH' %}
+                            <span class="badge badge-warning">观察池</span>
+                            {% else %}
+                            <span class="badge">{{ row.pool_type }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7">暂无评分数据</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </div>
+</body>
+</html>

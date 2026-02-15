@@ -24,16 +24,16 @@ PYTHON_EXE = sys.executable
 TASKS = {
     "sina_bs": {
         "time": "15:20",
-        "script": "Sina/bs_detection/main.py",
+        "script": "sina/bs_detection/main.py",
         "args": ["config_1"],
-        "description": "Sina B/S Detection",
+        "description": "sina B/S Detection",
         "type": "script"
     },
     "eastmoney_data": {
         "time": "16:30",
-        "script": "Eastmoney/main.py",
+        "script": "eastmoney/main.py",
         "args": ["config_1"],
-        "description": "Eastmoney Data Fetch",
+        "description": "eastmoney Data Fetch",
         "type": "script"
     },
     "daily_pipeline": {
@@ -165,21 +165,21 @@ def run_pipeline(target_date):
     
     logger.info("Data is ready! Starting pipeline tasks...")
 
-    # 2. Run Eastmoney Strategy
-    # Note: Eastmoney/run_strategy.py usually takes no args (uses current date/DB)
+    # 2. Run eastmoney Strategy
+    # Note: eastmoney/run_strategy.py usually takes no args (uses current date/DB)
     # [UPDATED] Export to result/ directory
-    if not run_script("Eastmoney/run_strategy.py", ["--export", "result"], "eastmoney_strategy"):
-        logger.error("Pipeline aborted at Eastmoney Strategy.")
+    if not run_script("eastmoney/run_strategy.py", ["--export", "result"], "eastmoney_strategy"):
+        logger.error("Pipeline aborted at eastmoney Strategy.")
         return
 
-    # 3. Run ScoreRank
-    # ScoreRank/run_daily.py runs for "latest available date".
-    if not run_script("ScoreRank/run_daily.py", [], "score_rank"):
-        logger.error("Pipeline aborted at ScoreRank.")
+    # 3. Run scoreRank
+    # scoreRank/run_daily.py runs for "latest available date".
+    if not run_script("scoreRank/run_daily.py", [], "score_rank"):
+        logger.error("Pipeline aborted at scoreRank.")
         return
 
     # 4. Run Live Sync
-    if not run_script("Sina/live_tracker/run_live_tracker.py", ["sync"], "live_sync"):
+    if not run_script("sina/live_tracker/run_live_tracker.py", ["sync"], "live_sync"):
         logger.error("Pipeline aborted at Live Sync.")
         return
         
@@ -224,7 +224,7 @@ def main():
                     run_pipeline(today)
                 else:
                     # Run Script Task
-                    # For Sina and Eastmoney main, append date argument
+                    # For sina and eastmoney main, append date argument
                     args = config["args"] + [date_str]
                     run_script(config["script"], args, task_name)
                 
