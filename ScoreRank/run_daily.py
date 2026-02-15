@@ -9,6 +9,7 @@ from sqlalchemy import text
 from config import CONFIG
 from db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
 from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date
+from perf_utils import enrich_scored_with_market_metrics
 
 # Import Factor Optimizer components
 try:
@@ -131,7 +132,7 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
     
     # Delete existing records for this date
     with engine.begin() as conn:
-        conn.execute(text(f"DELETE FROM score_rank_daily WHERE trade_date = '{asof_date.date()}'"))
+        conn.execute(text("DELETE FROM score_rank_daily WHERE trade_date = :trade_date"), {"trade_date": asof_date.date()})
     
     print("正在保存评分结果到数据库...")
     df_db.to_sql('score_rank_daily', engine, if_exists='append', index=False, chunksize=1000)
@@ -336,31 +337,8 @@ def main():
         else:
             scored["buy_point_close"] = None
         
-        # Calculate extra fields (close, is_limit_up, etc.)
-        # Calculate extra fields (close, is_limit_up, etc.)
-        latest_qfq = features.sort_values('trade_date').groupby('symbol').tail(1).set_index('symbol')
-        
-        def get_close(row):
-            return latest_qfq.loc[row['symbol'], 'close'] if row['symbol'] in latest_qfq.index else 0.0
-        
-        def get_is_limit_up(row):
-            if row['symbol'] in latest_qfq.index:
-                 val = latest_qfq.loc[row['symbol'], 'ret1']
-                 if pd.notnull(val):
-                     return 1 if (val * 100) > 9.5 else 0
-            return 0
-
-        scored['close_price'] = scored.apply(get_close, axis=1)
-        scored['is_limit_up'] = scored.apply(get_is_limit_up, axis=1)
-        
-        scored['buy_point_close'] = scored['buy_point_close'].apply(lambda x: float(x) if pd.notnull(x) else None)
-        
-        def calc_ratio(row):
-            if row['buy_point_close'] and row['buy_point_close'] > 0:
-                return (row['close_price'] - row['buy_point_close']) / row['buy_point_close'] * 100
-            return 0.0
-
-        scored['price_change_ratio'] = scored.apply(calc_ratio, axis=1)
+        # Vectorized enrichment (replace row-wise apply for better performance)
+        scored = enrich_scored_with_market_metrics(scored, features)
 
         # 6.6) Calculate Factor Optimizer Score [NEW]
         scored = calculate_opt_score(scored, asof_date)
