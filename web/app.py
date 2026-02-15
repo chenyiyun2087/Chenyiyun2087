@@ -226,7 +226,9 @@ def sina_scores():
     min_score = request.args.get('min_s', type=float)
     min_opt_score = request.args.get('min_o', type=float)
     
-    per_page = 20
+    per_page = request.args.get('per_page', 50, type=int)
+    if per_page not in [50, 100, 200]: per_page = 50
+
     conn = get_db()
     
     with conn.cursor() as cursor:
@@ -259,6 +261,8 @@ def sina_scores():
                 order_stmt = f"ORDER BY score {order}"
             elif sort_by == 'opt_score':
                 order_stmt = f"ORDER BY opt_score {order}"
+            elif sort_by == 'claude_score':
+                order_stmt = f"ORDER BY claude_score {order}"
             else:
                 # Default: Prioritize TRADE pool, then score desc
                 order_stmt = "ORDER BY CASE WHEN pool_type='TRADE' THEN 1 WHEN pool_type='WATCH' THEN 2 ELSE 3 END, score DESC"
@@ -266,7 +270,8 @@ def sina_scores():
             sql = f"""
             SELECT 
                 *, 
-                COALESCE(opt_score, 0) as opt_score 
+                COALESCE(opt_score, 0) as opt_score,
+                COALESCE(claude_score, 0) as claude_score 
             FROM score_rank_daily 
             {where_stmt}
             AND (is_bs_candidate = 1)
@@ -286,6 +291,7 @@ def sina_scores():
                            order=order,
                            min_s=min_score,
                            min_o=min_opt_score,
+                           per_page=per_page,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            page_title="sina B点股票评分")
 
@@ -299,7 +305,9 @@ def sina_self_selected():
     min_score = request.args.get('min_s', type=float)
     min_opt_score = request.args.get('min_o', type=float)
     
-    per_page = 20
+    per_page = request.args.get('per_page', 50, type=int)
+    if per_page not in [50, 100, 200]: per_page = 50
+
     conn = get_db()
     
     with conn.cursor() as cursor:
@@ -329,13 +337,16 @@ def sina_self_selected():
                 order_stmt = f"ORDER BY score {order}"
             elif sort_by == 'opt_score':
                 order_stmt = f"ORDER BY opt_score {order}"
+            elif sort_by == 'claude_score':
+                order_stmt = f"ORDER BY claude_score {order}"
             else:
                 order_stmt = "ORDER BY score DESC"
 
             sql = f"""
             SELECT 
                 *, 
-                COALESCE(opt_score, 0) as opt_score 
+                COALESCE(opt_score, 0) as opt_score,
+                COALESCE(claude_score, 0) as claude_score 
             FROM score_rank_daily 
             {where_stmt}
             {order_stmt}
@@ -354,6 +365,7 @@ def sina_self_selected():
                            order=order,
                            min_s=min_score,
                            min_o=min_opt_score,
+                           per_page=per_page,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            page_title="自选股评分")
 

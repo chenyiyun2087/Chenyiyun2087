@@ -122,6 +122,7 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'buy_point_close': 'buy_point_close',
         'price_change_ratio': 'price_change_ratio',
         'opt_score': 'opt_score',
+        'claude_score': 'claude_score',
         'is_self_selected': 'is_self_selected',
         'is_bs_candidate': 'is_bs_candidate'
     }
@@ -219,6 +220,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--force", action="store_true", help="Force run ignoring time check")
+    parser.add_argument("--strategy", type=str, default="technical", choices=["technical", "claude"], help="Scoring strategy")
     args = parser.parse_args()
 
     try:
@@ -307,17 +309,42 @@ def main():
         # [REFACTORED] Use Strategy Pattern
         
         # Initialize Scorers
-        technical_scorer = TechnicalScorer()
+        if args.strategy == "claude":
+            from scoreRank.strategies.claude import ClaudeScorer
+            scorer = ClaudeScorer()
+            print("Running ClaudeScorer...")
+        else:
+            scorer = TechnicalScorer()
+            print("Running TechnicalScorer...")
         
         # Execute Scoring
-        # The scorer handles data fetching internally now (or we could pass data if we want to optimize shared data)
-        # For now, let TechnicalScorer handle its own data to be fully modular
-        print("Running TechnicalScorer...")
-        scored = technical_scorer.score(all_symbols, asof_date, engine)
+        scored = scorer.score(all_symbols, asof_date, engine)
         
         if scored.empty:
             print("No scores generated.")
             return
+
+        # [NEW] Always calculate Claude Score for display if not already main strategy
+        if args.strategy != "claude":
+            try:
+                print("Calculating Claude Score for display...")
+                from scoreRank.strategies.claude import ClaudeScorer
+                claude_scorer = ClaudeScorer()
+                claude_scored = claude_scorer.score(all_symbols, asof_date, engine)
+                
+                if not claude_scored.empty:
+                    # Keep only symbol and score, rename to claude_score
+                    claude_scored = claude_scored[['symbol', 'score']].rename(columns={'score': 'claude_score'})
+                    # Merge
+                    scored = scored.merge(claude_scored, on='symbol', how='left')
+                else:
+                    scored['claude_score'] = None
+            except Exception as e:
+                print(f"Error calculating Claude Score: {e}")
+                scored['claude_score'] = None
+        else:
+            # If main strategy is claude, claude_score is the score
+            scored['claude_score'] = scored['score']
 
         # 5.5) Calculate Features for Enrichment (Optional, if needed for other logic)
         # If enrich_scored_with_market_metrics needs features, we might need to fetch them or 

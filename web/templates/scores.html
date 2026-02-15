@@ -34,36 +34,68 @@
         </form>
     </div>
 
+    <!-- Top Controls Section -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div style="font-size: 0.9em; opacity: 0.8;">共 {{ pagination.total }} 条数据</div>
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <div class="top-pagination">
+                {% include 'partials/pagination.html' %}
+            </div>
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <label style="font-size: 0.9em;">每页显示:</label>
+                <select onchange="window.location.href=this.value"
+                    style="background: #2a2a2a; color: white; border: 1px solid #444; padding: 2px 5px; border-radius: 4px;">
+                    <option
+                        value="{{ url_for(request.endpoint, per_page=50, sort=sort_by, order=order, min_s=min_s, min_o=min_o) }}"
+                        {{ 'selected' if per_page==50 else '' }}>50</option>
+                    <option
+                        value="{{ url_for(request.endpoint, per_page=100, sort=sort_by, order=order, min_s=min_s, min_o=min_o) }}"
+                        {{ 'selected' if per_page==100 else '' }}>100</option>
+                    <option
+                        value="{{ url_for(request.endpoint, per_page=200, sort=sort_by, order=order, min_s=min_s, min_o=min_o) }}"
+                        {{ 'selected' if per_page==200 else '' }}>200</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
     <table>
         <thead>
-            <thead>
-                <tr>
-                    <th>代码</th>
-                    <th>名称</th>
-                    <th>
-                        <a href="{{ url_for(request.endpoint, sort='score', order='asc' if sort_by=='score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o) }}"
-                            style="text-decoration: none; color: inherit;">
-                            总分 {{ '▲' if sort_by=='score' and order=='ASC' else ('▼' if sort_by=='score' and
-                            order=='DESC' else '⇅') }}
-                        </a>
-                    </th>
-                    <th>
-                        <a href="{{ url_for(request.endpoint, sort='opt_score', order='asc' if sort_by=='opt_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o) }}"
-                            style="text-decoration: none; color: inherit;">
-                            因子分 {{ '▲' if sort_by=='opt_score' and order=='ASC' else ('▼' if sort_by=='opt_score' and
-                            order=='DESC' else '⇅') }}
-                        </a>
-                    </th>
-                    <th>现价</th>
-                    <th>买点价格</th>
-                    <th>涨幅</th>
-                    <th>涨停</th>
-                    <th>基础分</th>
-                    <th>趋势分</th>
-                    <th>量能分</th>
-                    <th>池类型</th>
-                </tr>
-            </thead>
+            <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>
+                    <a href="{{ url_for(request.endpoint, sort='score', order='asc' if sort_by=='score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o) }}"
+                        style="text-decoration: none; color: inherit;">
+                        总分 {{ '▲' if sort_by=='score' and order=='ASC' else ('▼' if sort_by=='score' and
+                        order=='DESC' else '⇅') }}
+                    </a>
+                </th>
+                <th>
+                    <a href="{{ url_for(request.endpoint, sort='opt_score', order='asc' if sort_by=='opt_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o) }}"
+                        style="text-decoration: none; color: inherit;">
+                        因子分 {{ '▲' if sort_by=='opt_score' and order=='ASC' else ('▼' if sort_by=='opt_score' and
+                        order=='DESC' else '⇅') }}
+                    </a>
+                </th>
+                <th>
+                    <a href="{{ url_for(request.endpoint, sort='claude_score', order='asc' if sort_by=='claude_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, per_page=per_page) }}"
+                        style="text-decoration: none; color: inherit;">
+                        Claude分 {{ '▲' if sort_by=='claude_score' and order=='ASC' else ('▼' if sort_by=='claude_score'
+                        and
+                        order=='DESC' else '⇅') }}
+                    </a>
+                </th>
+                <th>现价</th>
+                <th>买点价格</th>
+                <th>涨幅</th>
+                <th>涨停</th>
+                <th>基础分</th>
+                <th>趋势分</th>
+                <th>量能分</th>
+                <th>池类型</th>
+            </tr>
+        </thead>
         <tbody>
             {% for row in scores %}
             <tr>
@@ -72,6 +104,8 @@
                 <td class="text-up">{{ row.score }}</td>
                 <td><span class="tag {{ 'text-up' if row.opt_score > 60 else '' }}">{{ "%.1f"|format(row.opt_score) if
                         row.opt_score else '-' }}</span></td>
+                <td><span class="tag {{ 'text-up' if row.claude_score > 60 else '' }}">{{
+                        "%.1f"|format(row.claude_score) if row.claude_score else '-' }}</span></td>
                 <td>{{ row.close_price }}</td>
                 <td>{{ row.buy_point_close or '-' }}</td>
                 <td class="{{ 'text-up' if row.price_change_ratio > 0 else 'text-down' }}">{{ row.price_change_ratio }}%
@@ -88,7 +122,7 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="11" class="empty">暂无评分数据</td>
+                <td colspan="13" class="empty">暂无评分数据</td>
             </tr>
             {% endfor %}
         </tbody>
