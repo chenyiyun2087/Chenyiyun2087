@@ -21,7 +21,7 @@ from scoreRank.strategies.technical import TechnicalScorer
 # We still need build_features_from_qfq and attach_liquidity_from_raw to verify intermediate steps 
 # if we want white-box testing, OR we can trust TechnicalScorer to call them.
 # Let's test TechnicalScorer.score() primarily, mocking data fetching.
-from scoreRank.scorer import build_features_from_qfq
+from scoreRank.core.scorer import build_features_from_qfq
 
 class TestTechnicalScorer(unittest.TestCase):
     def setUp(self):

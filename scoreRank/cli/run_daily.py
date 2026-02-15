@@ -281,7 +281,8 @@ def main():
         db_ss_symbols = df_ss['stock_code'].tolist()
         
         # Also load from sina/stock_codes.xlsx for consistency
-        excel_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sina", "stock_codes.xlsx")
+        # __file__ is scoreRank/cli/run_daily.py -> project_root is parents[2]
+        excel_path = os.path.join(str(Path(__file__).resolve().parents[2]), "sina", "stock_codes.xlsx")
         try:
             df_excel = pd.read_excel(excel_path)
             col_name = 'stock_code' if 'stock_code' in df_excel.columns else df_excel.columns[0]
@@ -361,7 +362,7 @@ def main():
         # We can construct a minimal 'features' dataframe from 'raw_data' here.
         # Or better: Update TechnicalScorer to default return everything needed.
         
-        from scorer import build_features_from_qfq # Temporarily import for compatibility if needed
+        from scoreRank.core.scorer import build_features_from_qfq # Temporarily import for compatibility if needed
         features = build_features_from_qfq(raw_data, breakout_n=CONFIG["breakout_n"]) # Re-calculate for enrichment compatibility
         
         # 6) Scoring (Done above via TechnicalScorer)

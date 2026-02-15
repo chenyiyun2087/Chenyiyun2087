@@ -5,7 +5,7 @@ from pathlib import Path
 class TestRunDailyOptimization(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.path = Path('scoreRank/run_daily.py')
+        cls.path = Path('scoreRank/cli/run_daily.py')
         cls.content = cls.path.read_text(encoding='utf-8')
 
     def test_vectorized_enrichment_is_used(self):

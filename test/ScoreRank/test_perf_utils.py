@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from scoreRank.perf_utils import enrich_scored_with_market_metrics
+from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
 
 class TestPerfUtils(unittest.TestCase):
     def setUp(self):
