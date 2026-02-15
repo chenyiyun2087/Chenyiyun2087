@@ -51,3 +51,100 @@ ScoreRank 是一个基于多因子量化模型的股票筛选与评分系统。�
 python ScoreRank/run_daily.py
 ```
 生成的报告会包含各分因子的得分（如 `s_breakout`, `s_rs` 等），便于复盘分析扣分原因。
+
+## 6. 评分公式复核（按 `scorer.py` 实现）
+
+以下是对代码中评分公式的逐项复核，便于将“策略描述”落到可计算口径。
+
+### 6.1 特征定义
+
+- `hh_n = rolling_max(high, N).shift(1)`：突破基准取“昨日之前 N 日最高价”，避免未来函数。
+- `is_breakout = 1(close > hh_n)`。
+- `breakout_dist = close / hh_n - 1`。
+- `vol_ratio = volume / MA5(volume)`。
+- `ret1 = pct_change(close, 1)`。
+- `contraction = std(ret1, 5) / std(ret1, 20)`（越小越好）。
+- `trend_ok = 1(close > MA20 and MA10 > MA20 and MA20_slope_5d > 0)`。
+- `bull_align = 1(MA5 > MA10 > MA20)`。
+- `bias_ma20 = close / MA20 - 1`，并用 `bias_abs = |bias_ma20|` 打分。
+- `ret20 = pct_change(close, 20)`，`rs20 = ret20 - median(ret20)`（同日横截面）。
+- `chip_healthy = 1(raw_close > avg_price20 and avg_price20 > 0)`。
+
+### 6.2 分项得分（0~100）
+
+记 `PctRank(x)` 为横截面百分位（0~100），`clip01(z)=min(max(z,0),1)`。
+
+1) **趋势分**
+
+`s_trend = 100 * trend_ok`
+
+2) **多头排列分**
+
+`s_bull_align = 100 * bull_align`
+
+3) **突破分**
+
+- `dist01 = clip01((breakout_dist - 0.003) / (0.06 - 0.003))`
+- `breakout_quality = is_breakout * dist01`
+- `s_breakout = PctRank(breakout_quality)`
+
+4) **量能分（分位）**
+
+- `vr01 = clip01((vol_ratio - 1.0) / (2.5 - 1.0))`
+- `s_volume = PctRank(vr01)`
+
+5) **温和放量分（中心型）**
+
+- `s_vol_mild = 100 * clip01(1 - |vol_ratio - vol_mild_center| / vol_mild_half_range)`
+- 默认参数：`vol_mild_center=1.5`，`vol_mild_half_range=0.8`。
+
+6) **相对强度分**
+
+`s_rs = PctRank(rs20)`
+
+7) **收敛分（反向分位）**
+
+`s_contraction = 100 - PctRank(contraction)`
+
+8) **乖离分（绝对值惩罚）**
+
+`s_bias = 100 * (1 - clip01((bias_abs - 0) / bias_abs_max))`
+
+默认 `bias_abs_max=0.05`，即绝对乖离率达到 5% 及以上时该项趋近 0 分。
+
+9) **筹码健康分**
+
+`s_chip = 100 * chip_healthy`
+
+10) **流动性分**
+
+- `s_liquidity = PctRank(avg_amount20)`
+- 若 `avg_amount20 < min_avg_amount20`，则 `s_liquidity = 0.3 * s_liquidity`
+
+默认 `min_avg_amount20 = 50,000,000`。
+
+### 6.3 合成公式
+
+`base_score = Σ(w_i * s_i)`，其中默认权重为：
+
+- `trend 0.12`
+- `bull_align 0.08`
+- `breakout 0.22`
+- `volume 0.12`
+- `vol_mild 0.04`
+- `rs 0.12`
+- `contraction 0.10`
+- `bias 0.07`
+- `chip 0.03`
+- `liquidity 0.10`
+
+总和为 1.00。
+
+### 6.4 风险扣分与最终分
+
+- `penalty = I(suspended_recent_flag)*40 + I(limit_up_lock_flag)*20 + I(name含ST)*25 + I(negative_news_flag)*15`
+- `score = clip(base_score - penalty, 0, 100)`
+
+其中触发信号定义为：
+
+- `trigger_today = 1(trend_ok == 1 and is_breakout == 1)`
