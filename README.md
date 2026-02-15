@@ -31,9 +31,13 @@ Chenyiyun2087/
 ├── start_scheduler.sh            # 后台启动脚本（本地路径示例）
 ├── web_schema.sql                # Web 相关 MySQL 表结构
 ├── scripts/
-│   ├── init_db.py                # 初始化 web_schema.sql 中的表
-│   ├── dry_run_scheduler.py      # 调度流程模拟脚本
-│   └── ...
+│   ├── db/                       # 数据库运维脚本
+│   │   ├── init_db.py
+│   │   └── debug_bs_table.py
+│   ├── ops/                      # 任务与账户运维脚本
+│   │   ├── dry_run_scheduler.py
+│   │   └── reconcile_account.py
+│   └── *.py                      # 向后兼容入口脚本
 ├── Sina/
 │   ├── bs_detection/             # B/S 点检测（抓图+识别）
 │   ├── live_tracker/             # 实盘持仓与信号管理

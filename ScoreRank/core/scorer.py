@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple
-from config import CONFIG
+from .config import CONFIG
 
 
 def _ma(s: pd.Series, n: int) -> pd.Series:

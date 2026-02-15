@@ -39,10 +39,20 @@ ScoreRank 是一个基于多因子量化模型的股票筛选与评分系统。�
 
 ## 4. 文件结构
 
-- `scorer.py`: 核心算法实现，包含特征构建和打分逻辑。
-- `config.py`: 因子权重、阈值和数据库配置。
-- `run_daily.py`: 每日全量扫描与导出脚本。
-- `db_io.py`: 数据库读写与 K 线数据抓取。
+```text
+ScoreRank/
+├── core/
+│   ├── config.py        # 评分配置与阈值
+│   ├── db_io.py         # 数据库访问与行情读取
+│   ├── scorer.py        # 因子构建与打分逻辑
+│   └── perf_utils.py    # 评分结果后处理
+├── cli/
+│   ├── run_daily.py     # 日常评分流水线入口
+│   └── import_kline_to_mysql.py
+├── run_daily.py         # 兼容入口（转发到 cli）
+└── import_kline_to_mysql.py # 兼容入口（转发到 cli）
+```
+
 
 ## 5. 使用方法
 
