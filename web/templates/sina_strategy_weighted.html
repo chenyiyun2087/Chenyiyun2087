@@ -1,0 +1,55 @@
+{% extends 'layout.html' %}
+{% block title %}策略二：综合加权评分法{% endblock %}
+{% block page_title %}策略二：综合加权评分法{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="panel-title">最新交易日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+
+    <div class="tabs" style="margin-bottom:14px;">
+        <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
+        <a href="{{ url_for('sina_strategy_weighted') }}" class="tab active">策略二 加权</a>
+        <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
+    </div>
+
+    <form method="GET" action="{{ url_for('sina_strategy_weighted') }}" class="strategy-form">
+        <div class="strategy-grid">
+            <div class="strategy-card">
+                <h3>参数化控制</h3>
+                <p>最终分 = 总分×A + 因子分排名百分比×B + Claude分×C</p>
+                <div class="form-grid">
+                    <label>策略预设
+                        <select name="weighted_profile">
+                            <option value="balanced" {{ 'selected' if params.weighted_profile=='balanced' else '' }}>均衡</option>
+                            <option value="aggressive" {{ 'selected' if params.weighted_profile=='aggressive' else '' }}>激进</option>
+                            <option value="conservative" {{ 'selected' if params.weighted_profile=='conservative' else '' }}>保守</option>
+                        </select>
+                    </label>
+                    <label>权重A（总分）<input type="number" min="0" max="1" step="0.01" name="weight_a" value="{{ params.weight_a }}"></label>
+                    <label>权重B（因子分排名百分比）<input type="number" min="0" max="1" step="0.01" name="weight_b" value="{{ params.weight_b }}"></label>
+                    <label>权重C（Claude分）<input type="number" min="0" max="1" step="0.01" name="weight_c" value="{{ params.weight_c }}"></label>
+                    <label>展示Top N<input type="number" min="1" max="200" step="1" name="weighted_top_n" value="{{ params.weighted_top_n }}"></label>
+                </div>
+                <ul class="strategy-note">
+                    <li>候选总数：{{ total_candidates }}</li>
+                    <li>当前权重和：{{ weights_sum }}（建议≈1）</li>
+                </ul>
+            </div>
+        </div>
+        <div style="margin-top: 12px;"><button class="btn" type="submit">应用参数</button></div>
+    </form>
+</section>
+
+<section class="panel">
+    <div class="panel-title">筛选结果股票池（按最终分排序）</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>最终分</th><th>总分</th><th>因子分排名百分比</th><th>Claude分</th></tr></thead>
+        <tbody>
+            {% for row in weighted_rank %}
+            <tr><td>{{ row.symbol }}</td><td>{{ row.name }}</td><td class="text-up">{{ row.weighted_final_score }}</td><td>{{ row.score }}</td><td>{{ row.opt_rank_pct }}</td><td>{{ row.claude_score }}</td></tr>
+            {% else %}
+            <tr><td colspan="6" class="empty">暂无可计算数据</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}
