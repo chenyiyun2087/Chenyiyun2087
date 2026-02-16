@@ -35,3 +35,45 @@ CREATE TABLE IF NOT EXISTS score_rank_daily (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_date_symbol (trade_date, symbol)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- B事件事实表（M1）
+CREATE TABLE IF NOT EXISTS b_event_fact (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_date DATE NOT NULL,
+    symbol VARCHAR(10) NOT NULL,
+    name VARCHAR(64),
+    score DECIMAL(10,2),
+    opt_score DECIMAL(10,2),
+    claude_score DECIMAL(10,2),
+    pool_type VARCHAR(20),
+    is_st TINYINT DEFAULT 0,
+    is_suspended_event TINYINT DEFAULT 0,
+    is_suspended_window10 TINYINT DEFAULT 0,
+    is_high_risk TINYINT DEFAULT 0,
+    is_eligible TINYINT DEFAULT 1,
+    source VARCHAR(32) DEFAULT 'sina_b_close_confirmed',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_event_symbol (event_date, symbol),
+    KEY idx_symbol_date (symbol, event_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- B事件绩效表（M1）
+CREATE TABLE IF NOT EXISTS b_event_kpi (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_date DATE NOT NULL,
+    symbol VARCHAR(10) NOT NULL,
+    ret_3 DECIMAL(10,6),
+    ret_5 DECIMAL(10,6),
+    ret_10 DECIMAL(10,6),
+    hit_3_10pct TINYINT,
+    hit_5_10pct TINYINT,
+    hit_10_10pct TINYINT,
+    mdd_3 DECIMAL(10,6),
+    mdd_5 DECIMAL(10,6),
+    mdd_10 DECIMAL(10,6),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_event_symbol (event_date, symbol),
+    KEY idx_symbol_date (symbol, event_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
