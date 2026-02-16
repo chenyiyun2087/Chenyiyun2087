@@ -1,0 +1,75 @@
+{% extends 'layout.html' %}
+{% block title %}策略M6：净值回测（成本/滑点）{% endblock %}
+{% block page_title %}策略M6：净值回测（成本/滑点）{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+
+    <div class="tabs" style="margin-bottom:14px;">
+        <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
+        <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
+        <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
+        <a href="{{ url_for('sina_strategy_m2') }}" class="tab">策略M2 回归</a>
+        <a href="{{ url_for('sina_strategy_m3') }}" class="tab">策略M3 优化</a>
+        <a href="{{ url_for('sina_strategy_m4') }}" class="tab">策略M4 落地</a>
+        <a href="{{ url_for('sina_strategy_m5') }}" class="tab">策略M5 滚动</a>
+        <a href="{{ url_for('sina_strategy_m6') }}" class="tab active">策略M6 净值</a>
+    </div>
+
+    {% if m1_summary %}
+    <div class="m1-summary">
+        <strong>M1事件复盘（{{ m1_summary.latest_date }}）</strong>
+        <span>事件总数：{{ m1_summary.total_events }}</span>
+        <span>可交易：{{ m1_summary.eligible_events }}</span>
+        <span>高风险：{{ m1_summary.high_risk_events }}</span>
+    </div>
+    {% endif %}
+
+    <form method="GET" action="{{ url_for('sina_strategy_m6') }}" class="strategy-form">
+        <div class="form-grid">
+            <label>回看事件日数
+                <input type="number" min="5" max="240" step="1" name="lookback_dates" value="{{ params.lookback_dates }}">
+            </label>
+            <label>每期持仓数
+                <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
+            </label>
+            <label>手续费（bps）
+                <input type="number" min="0" max="200" step="0.1" name="cost_bps" value="{{ params.cost_bps }}">
+            </label>
+            <label>滑点（bps）
+                <input type="number" min="0" max="200" step="0.1" name="slippage_bps" value="{{ params.slippage_bps }}">
+            </label>
+        </div>
+        <div style="margin-top:12px;"><button class="btn" type="submit">执行净值回测</button></div>
+    </form>
+
+    <div class="m2-summary-grid" style="margin-top:12px;">
+        <div class="m2-kpi-card"><div class="k">可交易事件</div><div class="v">{{ m6_eval.eligible_total }}</div></div>
+        <div class="m2-kpi-card"><div class="k">回测事件日数</div><div class="v">{{ m6_eval.dates_total }}</div></div>
+        <div class="m2-kpi-card"><div class="k">毛收益(%)</div><div class="v">{{ m6_eval.gross_final_ret_pct }}</div></div>
+        <div class="m2-kpi-card"><div class="k">净收益(%)</div><div class="v">{{ m6_eval.net_final_ret_pct }}</div></div>
+        <div class="m2-kpi-card"><div class="k">最大回撤(%)</div><div class="v">{{ m6_eval.max_drawdown_pct if m6_eval.max_drawdown_pct is not none else '-' }}</div></div>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="panel-title">M6 净值序列明细</div>
+    <table>
+        <thead><tr><th>事件日</th><th>持仓数</th><th>毛收益%</th><th>净收益%</th><th>毛净值</th><th>净净值</th></tr></thead>
+        <tbody>
+            {% for row in m6_eval.nav_points %}
+            <tr>
+                <td>{{ row.event_date }}</td>
+                <td>{{ row.pick_count }}</td>
+                <td>{{ row.gross_ret_pct }}</td>
+                <td>{{ row.net_ret_pct }}</td>
+                <td>{{ row.gross_nav }}</td>
+                <td class="text-up">{{ row.net_nav }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty">暂无足够数据进行净值回测</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

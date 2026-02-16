@@ -1,0 +1,94 @@
+{% extends 'layout.html' %}
+{% block title %}策略M5：滚动窗口稳定性验证{% endblock %}
+{% block page_title %}策略M5：滚动窗口稳定性验证{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+
+    <div class="tabs" style="margin-bottom:14px;">
+        <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
+        <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
+        <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
+        <a href="{{ url_for('sina_strategy_m2') }}" class="tab">策略M2 回归</a>
+        <a href="{{ url_for('sina_strategy_m3') }}" class="tab">策略M3 优化</a>
+        <a href="{{ url_for('sina_strategy_m4') }}" class="tab">策略M4 落地</a>
+        <a href="{{ url_for('sina_strategy_m5') }}" class="tab active">策略M5 滚动</a>
+        <a href="{{ url_for('sina_strategy_m6') }}" class="tab">策略M6 净值</a>
+    </div>
+
+    {% if m1_summary %}
+    <div class="m1-summary">
+        <strong>M1事件复盘（{{ m1_summary.latest_date }}）</strong>
+        <span>事件总数：{{ m1_summary.total_events }}</span>
+        <span>可交易：{{ m1_summary.eligible_events }}</span>
+        <span>高风险：{{ m1_summary.high_risk_events }}</span>
+    </div>
+    {% endif %}
+
+    <form method="GET" action="{{ url_for('sina_strategy_m5') }}" class="strategy-form">
+        <div class="form-grid">
+            <label>滚动窗口大小（事件日）
+                <input type="number" min="2" max="30" step="1" name="window_size" value="{{ params.window_size }}">
+            </label>
+            <label>回看事件日数
+                <input type="number" min="5" max="120" step="1" name="lookback_dates" value="{{ params.lookback_dates }}">
+            </label>
+            <label>每窗建议持仓数
+                <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
+            </label>
+        </div>
+        <div style="margin-top:12px;"><button class="btn" type="submit">执行滚动验证</button></div>
+    </form>
+
+    <div class="m2-summary-grid" style="margin-top:12px;">
+        <div class="m2-kpi-card"><div class="k">可交易事件</div><div class="v">{{ m5_eval.eligible_total }}</div></div>
+        <div class="m2-kpi-card"><div class="k">滚动窗口数</div><div class="v">{{ m5_eval.windows_total }}</div></div>
+        <div class="m2-kpi-card"><div class="k">窗口大小</div><div class="v">{{ m5_eval.window_size }}</div></div>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="panel-title">M5 稳定性汇总（10日维度）</div>
+    <table>
+        <thead><tr><th>指标</th><th>均值</th><th>标准差</th><th>最小值</th><th>最大值</th></tr></thead>
+        <tbody>
+            <tr>
+                <td>10日平均收益(%)</td>
+                <td>{{ m5_eval.summary_ret_10.mean if m5_eval.summary_ret_10.mean is not none else '-' }}</td>
+                <td>{{ m5_eval.summary_ret_10.std if m5_eval.summary_ret_10.std is not none else '-' }}</td>
+                <td>{{ m5_eval.summary_ret_10.min if m5_eval.summary_ret_10.min is not none else '-' }}</td>
+                <td>{{ m5_eval.summary_ret_10.max if m5_eval.summary_ret_10.max is not none else '-' }}</td>
+            </tr>
+            <tr>
+                <td>10日命中率(%)</td>
+                <td>{{ m5_eval.summary_hit_10.mean if m5_eval.summary_hit_10.mean is not none else '-' }}</td>
+                <td>{{ m5_eval.summary_hit_10.std if m5_eval.summary_hit_10.std is not none else '-' }}</td>
+                <td>{{ m5_eval.summary_hit_10.min if m5_eval.summary_hit_10.min is not none else '-' }}</td>
+                <td>{{ m5_eval.summary_hit_10.max if m5_eval.summary_hit_10.max is not none else '-' }}</td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <div class="panel-title">M5 窗口明细</div>
+    <table>
+        <thead><tr><th>窗口起止</th><th>样本数</th><th>持仓数</th><th>10日均收益%</th><th>10日命中率%</th><th>5日均收益%</th><th>5日命中率%</th></tr></thead>
+        <tbody>
+            {% for row in m5_eval.windows %}
+            <tr>
+                <td>{{ row.start_date }} ~ {{ row.end_date }}</td>
+                <td>{{ row.sample_events }}</td>
+                <td>{{ row.pick_count }}</td>
+                <td class="text-up">{{ row.avg_ret_10 if row.avg_ret_10 is not none else '-' }}</td>
+                <td>{{ row.hit_10 if row.hit_10 is not none else '-' }}</td>
+                <td>{{ row.avg_ret_5 if row.avg_ret_5 is not none else '-' }}</td>
+                <td>{{ row.hit_5 if row.hit_5 is not none else '-' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="empty">暂无足够历史事件数据进行滚动验证</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}
