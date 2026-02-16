@@ -7,6 +7,25 @@ import subprocess
 import threading
 import time
 
+try:
+    from web.strategy_playbook import (
+        DEFAULT_PARAMS,
+        WEIGHTED_PROFILES,
+        build_pyramid,
+        build_quadrants,
+        build_weighted,
+        clamp,
+    )
+except ImportError:
+    from strategy_playbook import (  # type: ignore
+        DEFAULT_PARAMS,
+        WEIGHTED_PROFILES,
+        build_pyramid,
+        build_quadrants,
+        build_weighted,
+        clamp,
+    )
+
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here' # Needed for flash messages
 
@@ -426,6 +445,137 @@ def sina_monitor():
                            recent_signals=recent_signals,
                            last_completed_date=last_completed_date,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+
+@app.route('/sina/strategy')
+def sina_strategy():
+    return redirect(url_for('sina_strategy_pyramid'))
+
+
+def _fetch_latest_bs_scores(conn):
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
+        res = cursor.fetchone()
+        latest_date = res['max_date']
+
+        rows = []
+        if latest_date:
+            sql = """
+            SELECT
+                symbol,
+                name,
+                score,
+                COALESCE(opt_score, 0) as opt_score,
+                COALESCE(claude_score, 0) as claude_score,
+                pool_type
+            FROM score_rank_daily
+            WHERE trade_date = %s AND is_bs_candidate = 1
+            """
+            cursor.execute(sql, (latest_date,))
+            rows = cursor.fetchall()
+    return latest_date, rows
+
+
+@app.route('/sina/strategy/pyramid')
+def sina_strategy_pyramid():
+    conn = get_db()
+    pyramid_min_score = request.args.get('pyramid_min_score', DEFAULT_PARAMS['pyramid_min_score'], type=float)
+    pyramid_top_pct = request.args.get('pyramid_top_pct', DEFAULT_PARAMS['pyramid_top_pct'], type=float)
+    pyramid_min_claude = request.args.get('pyramid_min_claude', DEFAULT_PARAMS['pyramid_min_claude'], type=float)
+
+    pyramid_min_score = clamp(pyramid_min_score or DEFAULT_PARAMS['pyramid_min_score'], 0.0, 100.0)
+    pyramid_top_pct = clamp(pyramid_top_pct or DEFAULT_PARAMS['pyramid_top_pct'], 0.0, 100.0)
+    pyramid_min_claude = clamp(pyramid_min_claude or DEFAULT_PARAMS['pyramid_min_claude'], 0.0, 100.0)
+
+    latest_date, rows = _fetch_latest_bs_scores(conn)
+
+    pyramid = build_pyramid(rows, pyramid_min_score, pyramid_top_pct, pyramid_min_claude)
+
+    return render_template(
+        'sina_strategy_pyramid.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        params={
+            'pyramid_min_score': pyramid_min_score,
+            'pyramid_top_pct': pyramid_top_pct,
+            'pyramid_min_claude': pyramid_min_claude,
+        },
+        total_candidates=len(rows),
+        pyramid=pyramid,
+        page_title="策略一：金字塔筛选法",
+    )
+
+
+@app.route('/sina/strategy/weighted')
+def sina_strategy_weighted():
+    conn = get_db()
+
+    weighted_profile = request.args.get('weighted_profile', DEFAULT_PARAMS['weighted_profile'], type=str)
+    if weighted_profile not in WEIGHTED_PROFILES:
+        weighted_profile = DEFAULT_PARAMS['weighted_profile']
+
+    profile_a, profile_b, profile_c = WEIGHTED_PROFILES[weighted_profile]
+    weight_a = request.args.get('weight_a', profile_a, type=float)
+    weight_b = request.args.get('weight_b', profile_b, type=float)
+    weight_c = request.args.get('weight_c', profile_c, type=float)
+    weighted_top_n = request.args.get('weighted_top_n', DEFAULT_PARAMS['weighted_top_n'], type=int)
+
+    weight_a = clamp(weight_a if weight_a is not None else profile_a, 0.0, 1.0)
+    weight_b = clamp(weight_b if weight_b is not None else profile_b, 0.0, 1.0)
+    weight_c = clamp(weight_c if weight_c is not None else profile_c, 0.0, 1.0)
+    weighted_top_n = int(clamp(weighted_top_n or DEFAULT_PARAMS['weighted_top_n'], 1, 200))
+
+    latest_date, rows = _fetch_latest_bs_scores(conn)
+    weighted_rank = build_weighted(rows, weight_a, weight_b, weight_c)
+
+    return render_template(
+        'sina_strategy_weighted.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        params={
+            'weighted_profile': weighted_profile,
+            'weight_a': weight_a,
+            'weight_b': weight_b,
+            'weight_c': weight_c,
+            'weighted_top_n': weighted_top_n,
+        },
+        weights_sum=round(weight_a + weight_b + weight_c, 4),
+        total_candidates=len(rows),
+        weighted_rank=weighted_rank[:weighted_top_n],
+        page_title="策略二：综合加权评分法",
+    )
+
+
+@app.route('/sina/strategy/quadrant')
+def sina_strategy_quadrant():
+    conn = get_db()
+
+    quadrant_min_score = request.args.get('quadrant_min_score', DEFAULT_PARAMS['quadrant_min_score'], type=float)
+    quadrant_opt_cut = request.args.get('quadrant_opt_cut', DEFAULT_PARAMS['quadrant_opt_cut'], type=float)
+    quadrant_claude_cut = request.args.get('quadrant_claude_cut', DEFAULT_PARAMS['quadrant_claude_cut'], type=float)
+
+    quadrant_min_score = clamp(quadrant_min_score or DEFAULT_PARAMS['quadrant_min_score'], 0.0, 100.0)
+    quadrant_opt_cut = clamp(quadrant_opt_cut or DEFAULT_PARAMS['quadrant_opt_cut'], 0.0, 100.0)
+    quadrant_claude_cut = clamp(quadrant_claude_cut or DEFAULT_PARAMS['quadrant_claude_cut'], 0.0, 100.0)
+
+    latest_date, rows = _fetch_latest_bs_scores(conn)
+    quadrants, quadrant_base = build_quadrants(rows, quadrant_min_score, quadrant_opt_cut, quadrant_claude_cut)
+
+    return render_template(
+        'sina_strategy_quadrant.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        params={
+            'quadrant_min_score': quadrant_min_score,
+            'quadrant_opt_cut': quadrant_opt_cut,
+            'quadrant_claude_cut': quadrant_claude_cut,
+        },
+        total_candidates=len(rows),
+        quadrants=quadrants,
+        quadrant_base_count=len(quadrant_base),
+        quadrant_points=quadrant_base,
+        page_title="策略三：四象限矩阵法",
+    )
 
 
 @app.route('/admin')
