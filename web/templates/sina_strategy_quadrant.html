@@ -15,10 +15,10 @@
         <div class="strategy-grid">
             <div class="strategy-card">
                 <h3>参数化控制</h3>
-                <p>先按总分过滤，再基于 X轴=Claude分 / Y轴=因子分进行四象限分类。</p>
+                <p>先按总分过滤，再基于 X轴=Claude分（0-100） / Y轴=因子分（0-10）进行四象限分类。</p>
                 <div class="form-grid">
                     <label>总分过滤阈值（>）<input type="number" min="0" max="100" step="0.1" name="quadrant_min_score" value="{{ params.quadrant_min_score }}"></label>
-                    <label>Y轴分界（因子分）<input type="number" min="0" max="100" step="0.1" name="quadrant_opt_cut" value="{{ params.quadrant_opt_cut }}"></label>
+                    <label>Y轴分界（因子分，0-10）<input type="number" min="0" max="10" step="0.1" name="quadrant_opt_cut" value="{{ params.quadrant_opt_cut }}"></label>
                     <label>X轴分界（Claude分）<input type="number" min="0" max="100" step="0.1" name="quadrant_claude_cut" value="{{ params.quadrant_claude_cut }}"></label>
                 </div>
                 <ul class="strategy-note">
@@ -33,7 +33,7 @@
 </section>
 
 <section class="panel">
-    <div class="panel-title">四象限坐标图（X=Claude分, Y=因子分）</div>
+    <div class="panel-title">四象限坐标图（X=Claude分 0-100, Y=因子分×10 归一化到 0-100）</div>
     <div class="quadrant-plot-wrap">
         <div id="quadrant-tooltip" class="quadrant-tooltip" style="display:none;"></div>
         <svg class="quadrant-plot" viewBox="0 0 820 520" preserveAspectRatio="xMidYMid meet" role="img" aria-label="四象限图">
@@ -50,7 +50,7 @@
 
             <!-- 分界线 -->
             {% set cut_x = 60 + (params.quadrant_claude_cut * 7.2) %}
-            {% set cut_y = 450 - (params.quadrant_opt_cut * 4.2) %}
+            {% set cut_y = 450 - ((params.quadrant_opt_cut * 10) * 4.2 / 10) %}
             <line x1="{{ cut_x }}" y1="30" x2="{{ cut_x }}" y2="450" stroke="#fbbf24" stroke-width="2" stroke-dasharray="6 6" />
             <line x1="60" y1="{{ cut_y }}" x2="780" y2="{{ cut_y }}" stroke="#fbbf24" stroke-width="2" stroke-dasharray="6 6" />
 
@@ -58,7 +58,7 @@
             <line x1="60" y1="450" x2="780" y2="450" stroke="#7aa2d8" stroke-width="2" />
             <line x1="60" y1="450" x2="60" y2="30" stroke="#7aa2d8" stroke-width="2" />
             <text x="785" y="466" fill="#bcd0f0" font-size="12">Claude分</text>
-            <text x="14" y="24" fill="#bcd0f0" font-size="12">因子分</text>
+            <text x="14" y="24" fill="#bcd0f0" font-size="12">因子分(×10)</text>
 
             <!-- 象限标题 -->
             <text x="610" y="52" fill="#22c55e" font-size="12">第一象限 明星股</text>
@@ -69,7 +69,7 @@
             <!-- 点 -->
             {% for row in quadrant_points %}
             {% set x = 60 + ((row.claude_score or 0) * 7.2) %}
-            {% set y = 450 - ((row.opt_score or 0) * 4.2) %}
+            {% set y = 450 - (((row.opt_score or 0) * 10) * 4.2 / 10) %}
             {% set color = '#9ca3af' %}
             {% if (row.opt_score or 0) >= params.quadrant_opt_cut and (row.claude_score or 0) >= params.quadrant_claude_cut %}
             {% set color = '#22c55e' %}

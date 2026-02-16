@@ -9,7 +9,7 @@ DEFAULT_PARAMS = {
     "weight_b": 0.3,
     "weight_c": 0.3,
     "quadrant_min_score": 60.0,
-    "quadrant_opt_cut": 60.0,
+    "quadrant_opt_cut": 6.0,
     "quadrant_claude_cut": 50.0,
     "weighted_top_n": 30,
 }

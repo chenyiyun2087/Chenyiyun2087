@@ -555,7 +555,7 @@ def sina_strategy_quadrant():
     quadrant_claude_cut = request.args.get('quadrant_claude_cut', DEFAULT_PARAMS['quadrant_claude_cut'], type=float)
 
     quadrant_min_score = clamp(quadrant_min_score or DEFAULT_PARAMS['quadrant_min_score'], 0.0, 100.0)
-    quadrant_opt_cut = clamp(quadrant_opt_cut or DEFAULT_PARAMS['quadrant_opt_cut'], 0.0, 100.0)
+    quadrant_opt_cut = clamp(quadrant_opt_cut or DEFAULT_PARAMS['quadrant_opt_cut'], 0.0, 10.0)
     quadrant_claude_cut = clamp(quadrant_claude_cut or DEFAULT_PARAMS['quadrant_claude_cut'], 0.0, 100.0)
 
     latest_date, rows = _fetch_latest_bs_scores(conn)
