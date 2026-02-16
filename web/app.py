@@ -17,6 +17,7 @@ try:
         clamp,
         evaluate_m2_presets,
         evaluate_m3_optimizer,
+        evaluate_m4_allocation,
     )
 except ImportError:
     from strategy_playbook import (  # type: ignore
@@ -28,6 +29,7 @@ except ImportError:
         clamp,
         evaluate_m2_presets,
         evaluate_m3_optimizer,
+        evaluate_m4_allocation,
     )
 
 app = Flask(__name__)
@@ -800,6 +802,42 @@ def sina_strategy_m3():
         m1_summary=m1_summary,
         m3_eval=m3_eval,
         page_title="策略M3：参数优化与冠军方案",
+    )
+
+
+@app.route('/sina/strategy/m4')
+def sina_strategy_m4():
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_m4: {e}")
+        conn = None
+
+    max_positions = request.args.get('max_positions', 5, type=int)
+    max_positions = int(clamp(max_positions or 5, 1, 20))
+
+    latest_date = None
+    rows = []
+    try:
+        latest_date, rows = _fetch_latest_m1_rows(conn)
+    except Exception as e:
+        print(f"Failed to load M4 rows: {e}")
+
+    m4_eval = evaluate_m4_allocation(rows, max_positions=max_positions)
+    m1_summary = None
+    try:
+        m1_summary = _fetch_m1_event_summary(conn) if conn else None
+    except Exception as e:
+        print(f"Failed to load M1 summary in M4 page: {e}")
+
+    return render_template(
+        'sina_strategy_m4.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        m1_summary=m1_summary,
+        m4_eval=m4_eval,
+        max_positions=max_positions,
+        page_title="策略M4：组合落地与仓位建议",
     )
 
 

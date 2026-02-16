@@ -239,3 +239,69 @@ def evaluate_m3_optimizer(rows):
         "searched_total": len(candidates),
         "winners": winners,
     }
+
+
+
+def evaluate_m4_allocation(rows, max_positions=5):
+    """Build M4 suggested allocation from M1 event rows.
+
+    Rule: blend three strategy-family votes into a single m4_score.
+    """
+    eligible = [r for r in rows if int(r.get("is_eligible") or 0) == 1]
+    scored = []
+
+    for row in eligible:
+        score = _safe_float(row.get("score")) or 0.0
+        opt = _safe_float(row.get("opt_score")) or 0.0
+        claude = _safe_float(row.get("claude_score")) or 0.0
+
+        # family votes (0/1)
+        vote_pyramid = 1 if (score > 60 and claude > 50) else 0
+        vote_weighted = 1 if (0.4 * score + 0.3 * (opt * 10) + 0.3 * claude) >= 65 else 0
+        vote_quadrant = 1 if (opt >= 6 and claude >= 50 and score > 60) else 0
+
+        consensus = vote_pyramid + vote_weighted + vote_quadrant
+
+        # blended score (0-100-ish)
+        m4_score = 0.35 * score + 0.25 * (opt * 10) + 0.30 * claude + 10 * consensus
+
+        scored.append(
+            {
+                "symbol": row.get("symbol"),
+                "name": row.get("name"),
+                "score": round(score, 2),
+                "opt_score": round(opt, 2),
+                "claude_score": round(claude, 2),
+                "consensus": consensus,
+                "vote_pyramid": vote_pyramid,
+                "vote_weighted": vote_weighted,
+                "vote_quadrant": vote_quadrant,
+                "m4_score": round(m4_score, 2),
+            }
+        )
+
+    scored.sort(key=lambda x: (x["consensus"], x["m4_score"]), reverse=True)
+    picks = scored[: max(1, int(max_positions or 5))] if scored else []
+
+    total = len(picks)
+    allocations = []
+    if total > 0:
+        # linear-decay weights then normalize
+        raw = [max(total - i, 1) for i in range(total)]
+        rs = sum(raw)
+        for i, item in enumerate(picks):
+            w = round(raw[i] / rs * 100, 2)
+            alloc = dict(item)
+            alloc["weight_pct"] = w
+            allocations.append(alloc)
+
+        # adjust rounding residue to first position
+        residue = round(100 - sum(x["weight_pct"] for x in allocations), 2)
+        allocations[0]["weight_pct"] = round(allocations[0]["weight_pct"] + residue, 2)
+
+    return {
+        "eligible_total": len(eligible),
+        "candidates_total": len(scored),
+        "picked_total": len(allocations),
+        "allocations": allocations,
+    }
