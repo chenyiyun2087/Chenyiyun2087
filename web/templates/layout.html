@@ -22,7 +22,7 @@
                 <a href="{{ url_for('sina_strategy') }}"
                     class="{% if request.endpoint == 'sina_strategy' %}active{% endif %}">策略中心</a>
                 <a href="{{ url_for('sina_strategy_pyramid') }}"
-                    class="{% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2'] %}active{% endif %}">评分策略</a>
+                    class="{% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3'] %}active{% endif %}">评分策略</a>
                 <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </nav>
         </aside>
@@ -47,7 +47,7 @@
                 <a href="{{ url_for('sina_strategy') }}"
                     class="tab {% if request.endpoint == 'sina_strategy' %}active{% endif %}">评分策略</a>
                 <a href="{{ url_for('sina_strategy_pyramid') }}"
-                    class="tab {% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2'] %}active{% endif %}">策略分栏</a>
+                    class="tab {% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3'] %}active{% endif %}">策略分栏</a>
                 <a href="{{ url_for('admin') }}"
                     class="tab {% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </div>

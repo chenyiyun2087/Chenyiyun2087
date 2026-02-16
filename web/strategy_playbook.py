@@ -174,3 +174,68 @@ def evaluate_m2_presets(rows):
         "quadrant_base_total": len(q_base),
         "results": results,
     }
+
+
+
+def _strategy_sort_key(item):
+    return (
+        item.get("avg_ret_10") if item.get("avg_ret_10") is not None else -10**9,
+        item.get("hit_10") if item.get("hit_10") is not None else -10**9,
+    )
+
+
+def evaluate_m3_optimizer(rows):
+    """Grid-search simple parameter sets and return best config per strategy family."""
+    eligible = [r for r in rows if int(r.get("is_eligible") or 0) == 1]
+
+    candidates = []
+
+    # Pyramid grid
+    for min_score in (55.0, 60.0, 65.0):
+        for top_pct in (20.0, 30.0, 40.0):
+            for min_claude in (45.0, 50.0, 60.0):
+                py = build_pyramid(eligible, min_score, top_pct, min_claude)
+                item = {
+                    "family": "pyramid",
+                    "params": f"score>{min_score}, top={top_pct}%, claude>{min_claude}",
+                    **_calc_bucket_stats(py["layer3"]),
+                }
+                candidates.append(item)
+
+    # Weighted grid
+    for a, b, c in ((0.5, 0.2, 0.3), (0.4, 0.3, 0.3), (0.3, 0.2, 0.5), (0.6, 0.2, 0.2)):
+        ranked = build_weighted(eligible, a, b, c)
+        pick = ranked[: max(1, len(ranked) // 3)] if ranked else []
+        item = {
+            "family": "weighted",
+            "params": f"A/B/C={a}/{b}/{c}, top33%",
+            **_calc_bucket_stats(pick),
+        }
+        candidates.append(item)
+
+    # Quadrant grid
+    for min_score in (55.0, 60.0, 65.0):
+        for opt_cut in (5.5, 6.0, 7.0):
+            for claude_cut in (45.0, 50.0, 60.0):
+                q, _ = build_quadrants(eligible, min_score, opt_cut, claude_cut)
+                item = {
+                    "family": "quadrant",
+                    "params": f"score>{min_score}, opt>={opt_cut}, claude>={claude_cut}",
+                    **_calc_bucket_stats(q["star"]),
+                }
+                candidates.append(item)
+
+    winners = []
+    for family in ("pyramid", "weighted", "quadrant"):
+        fam_items = [x for x in candidates if x["family"] == family]
+        fam_items.sort(key=_strategy_sort_key, reverse=True)
+        if fam_items:
+            winners.append(fam_items[0])
+
+    winners.sort(key=_strategy_sort_key, reverse=True)
+
+    return {
+        "eligible_total": len(eligible),
+        "searched_total": len(candidates),
+        "winners": winners,
+    }

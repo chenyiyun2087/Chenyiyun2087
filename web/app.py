@@ -16,6 +16,7 @@ try:
         build_weighted,
         clamp,
         evaluate_m2_presets,
+        evaluate_m3_optimizer,
     )
 except ImportError:
     from strategy_playbook import (  # type: ignore
@@ -26,6 +27,7 @@ except ImportError:
         build_weighted,
         clamp,
         evaluate_m2_presets,
+        evaluate_m3_optimizer,
     )
 
 app = Flask(__name__)
@@ -766,6 +768,38 @@ def sina_strategy_m2():
         m1_summary=m1_summary,
         m2_eval=m2_eval,
         page_title="策略M2：预设策略效果回归",
+    )
+
+
+@app.route('/sina/strategy/m3')
+def sina_strategy_m3():
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_m3: {e}")
+        conn = None
+
+    latest_date = None
+    rows = []
+    try:
+        latest_date, rows = _fetch_latest_m1_rows(conn)
+    except Exception as e:
+        print(f"Failed to load M3 rows: {e}")
+
+    m3_eval = evaluate_m3_optimizer(rows)
+    m1_summary = None
+    try:
+        m1_summary = _fetch_m1_event_summary(conn) if conn else None
+    except Exception as e:
+        print(f"Failed to load M1 summary in M3 page: {e}")
+
+    return render_template(
+        'sina_strategy_m3.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        m1_summary=m1_summary,
+        m3_eval=m3_eval,
+        page_title="策略M3：参数优化与冠军方案",
     )
 
 
