@@ -356,3 +356,155 @@ python -m unittest \
   1) `scoreRank/cli/build_b_event_kpi.py`
   2) `scoreRank/cli/run_m8_cycle.py --lookback-dates 60`
 - Web 管理台任务新增 `sina_m8`，可手动触发 M8 落库任务。
+
+---
+
+## 13. 组件说明与使用说明（按当前代码校对）
+
+> 本节基于当前仓库入口脚本与路由实现整理，便于按组件独立调试。
+
+### 13.1 Scheduler（任务编排层）
+
+**组件职责**
+- 统一调度交易日任务（15:20 / 16:30 / 21:00）。
+- 在 21:00 pipeline 中串联：`eastmoney/run_strategy.py` → `scoreRank/run_daily.py` → `scoreRank/cli/build_b_event_kpi.py` → `scoreRank/cli/run_m8_cycle.py` → `sina/live_tracker/run_live_tracker.py sync`。
+
+**使用说明**
+```bash
+# 前台运行（便于观察日志）
+python scheduler.py
+
+# 日志位置
+# logs/scheduler/scheduler.log
+```
+
+---
+
+### 13.2 Sina B/S 检测组件（`sina/bs_detection`）
+
+**组件职责**
+- 识别 B/S 图形信号并产出候选事件，供 ScoreRank 评分与后续策略复盘使用。
+
+**使用说明**
+```bash
+# 指定配置+交易日执行
+python sina/bs_detection/main.py config_1 20260210
+```
+
+---
+
+### 13.3 ScoreRank 每日评分组件（`scoreRank/run_daily.py`）
+
+**组件职责**
+- 对候选股票执行多因子评分并写入 `score_rank_daily`。
+- 输出交易池/观察池分层评分结果，供 Web 看板与策略页读取。
+
+**使用说明**
+```bash
+# 强制执行当日评分
+python scoreRank/run_daily.py --force
+```
+
+---
+
+### 13.4 M1 事件复盘构建组件（`scoreRank/cli/build_b_event_kpi.py`）
+
+**组件职责**
+- 基于 `score_rank_daily` 构建 `b_event_fact`（事件事实）与 `b_event_kpi`（绩效标签）。
+- 提供 M2～M8 的统一历史样本底座。
+
+**使用说明**
+```bash
+python scoreRank/cli/build_b_event_kpi.py
+```
+
+---
+
+### 13.5 M8 参数搜索+回归落库组件（`scoreRank/cli/run_m8_cycle.py`）
+
+**组件职责**
+- 读取最近 N 个事件日样本（M1）。
+- 运行：
+  - `evaluate_m2_presets`（预设策略回归）
+  - `evaluate_m3_optimizer`（参数网格搜索）
+- 落库：
+  - `strategy_m8_runs`（run 维度）
+  - `strategy_m8_items`（明细维度）
+
+**使用说明**
+```bash
+# 默认 lookback=60
+python scoreRank/cli/run_m8_cycle.py
+
+# 自定义回看事件日数量
+python scoreRank/cli/run_m8_cycle.py --lookback-dates 90
+```
+
+---
+
+### 13.6 Eastmoney 组件（数据采集 + 盘后策略）
+
+**组件职责**
+- `eastmoney/main.py`：盘后数据拉取。
+- `eastmoney/run_strategy.py`：执行超跌反弹策略并可导出结果。
+
+**使用说明**
+```bash
+# 数据采集
+python eastmoney/main.py config_1 20260210
+
+# 策略执行+导出
+python eastmoney/run_strategy.py --date 2026-02-10 --threshold 70 --export result
+```
+
+---
+
+### 13.7 Live Tracker 组件（`sina/live_tracker`）
+
+**组件职责**
+- 同步持仓价格、维护实盘快照与交易状态。
+- 为 Web 持仓页和 M7 调仓页提供当前持仓快照数据。
+
+**使用说明**
+```bash
+python sina/live_tracker/run_live_tracker.py sync
+```
+
+---
+
+### 13.8 Web 看板组件（`web/app.py`）
+
+**组件职责**
+- 展示持仓、评分、策略、管理台；支持后台任务触发。
+- 策略页包含：`/sina/strategy/pyramid|weighted|quadrant|m2|m3|m4|m5|m6|m7`。
+- 管理台可手动触发：`sina_bs`、`sina_score`、`sina_m8`、`sina_snapshot`、`eastmoney`。
+
+**使用说明**
+```bash
+python web/app.py
+# 默认: http://127.0.0.1:5001
+```
+
+---
+
+### 13.9 常见执行顺序（手工联调）
+
+```bash
+# 1) 信号检测
+python sina/bs_detection/main.py config_1 20260210
+
+# 2) 评分
+python scoreRank/run_daily.py --force
+
+# 3) 事件复盘表构建（M1）
+python scoreRank/cli/build_b_event_kpi.py
+
+# 4) 参数搜索与回归落库（M8）
+python scoreRank/cli/run_m8_cycle.py --lookback-dates 60
+
+# 5) 实盘同步
+python sina/live_tracker/run_live_tracker.py sync
+
+# 6) Web 检查
+python web/app.py
+```
