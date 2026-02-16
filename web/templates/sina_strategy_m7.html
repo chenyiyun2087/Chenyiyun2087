@@ -1,0 +1,78 @@
+{% extends 'layout.html' %}
+{% block title %}策略M7：模拟调仓与下单流水{% endblock %}
+{% block page_title %}策略M7：模拟调仓与下单流水{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+
+    <div class="tabs" style="margin-bottom:14px;">
+        <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
+        <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
+        <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
+        <a href="{{ url_for('sina_strategy_m2') }}" class="tab">策略M2 回归</a>
+        <a href="{{ url_for('sina_strategy_m3') }}" class="tab">策略M3 优化</a>
+        <a href="{{ url_for('sina_strategy_m4') }}" class="tab">策略M4 落地</a>
+        <a href="{{ url_for('sina_strategy_m5') }}" class="tab">策略M5 滚动</a>
+        <a href="{{ url_for('sina_strategy_m6') }}" class="tab">策略M6 净值</a>
+        <a href="{{ url_for('sina_strategy_m7') }}" class="tab active">策略M7 调仓</a>
+    </div>
+
+    {% if m1_summary %}
+    <div class="m1-summary">
+        <strong>M1事件复盘（{{ m1_summary.latest_date }}）</strong>
+        <span>事件总数：{{ m1_summary.total_events }}</span>
+        <span>可交易：{{ m1_summary.eligible_events }}</span>
+        <span>高风险：{{ m1_summary.high_risk_events }}</span>
+    </div>
+    {% endif %}
+
+    <form method="GET" action="{{ url_for('sina_strategy_m7') }}" class="strategy-form">
+        <div class="form-grid">
+            <label>目标持仓数
+                <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
+            </label>
+            <label>组合资金（仅无快照时使用）
+                <input type="number" min="10000" max="100000000" step="1000" name="capital" value="{{ params.capital }}">
+            </label>
+            <label>最小调仓权重阈值(%)
+                <input type="number" min="0" max="20" step="0.1" name="min_trade_weight" value="{{ params.min_trade_weight }}">
+            </label>
+        </div>
+        <div style="margin-top:12px;"><button class="btn" type="submit">生成模拟调仓单</button></div>
+    </form>
+
+    <div class="m2-summary-grid" style="margin-top:12px;">
+        <div class="m2-kpi-card"><div class="k">目标标的数</div><div class="v">{{ m7_eval.target_count }}</div></div>
+        <div class="m2-kpi-card"><div class="k">当前持仓数</div><div class="v">{{ m7_eval.current_count }}</div></div>
+        <div class="m2-kpi-card"><div class="k">模拟订单数</div><div class="v">{{ m7_eval.orders_total }}</div></div>
+        <div class="m2-kpi-card"><div class="k">买入/卖出</div><div class="v">{{ m7_eval.buy_total }}/{{ m7_eval.sell_total }}</div></div>
+        <div class="m2-kpi-card"><div class="k">预计换手额</div><div class="v">{{ m7_eval.turnover_notional }}</div></div>
+    </div>
+    <div style="margin-top:8px;color:#9fb8dd;font-size:12px;">估算资金基数：{{ params.capital_used }}</div>
+</section>
+
+<section class="panel">
+    <div class="panel-title">M7 模拟下单流水</div>
+    <table>
+        <thead><tr><th>订单ID</th><th>代码</th><th>名称</th><th>方向</th><th>当前权重%</th><th>目标权重%</th><th>变动%</th><th>金额</th><th>状态</th><th>原因</th></tr></thead>
+        <tbody>
+            {% for o in m7_eval.orders %}
+            <tr>
+                <td>{{ o.order_id }}</td>
+                <td>{{ o.symbol }}</td>
+                <td>{{ o.name }}</td>
+                <td class="text-up">{{ o.action }}</td>
+                <td>{{ o.current_weight }}</td>
+                <td>{{ o.target_weight }}</td>
+                <td>{{ o.delta_weight }}</td>
+                <td>{{ o.notional }}</td>
+                <td>{{ o.status }}</td>
+                <td>{{ o.reason }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="10" class="empty">暂无需执行的调仓单（可能已接近目标权重）</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

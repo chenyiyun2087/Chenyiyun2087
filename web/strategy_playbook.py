@@ -456,3 +456,91 @@ def evaluate_m6_nav(rows, cost_bps=20, slippage_bps=10, max_positions=5):
         "max_drawdown_pct": max_dd,
         "nav_points": nav_points,
     }
+
+
+
+def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=100000.0, min_trade_weight=1.0):
+    """Generate simulated rebalance orders from target vs current weights."""
+    total_capital = float(total_capital or 0)
+    if total_capital <= 0:
+        total_capital = 100000.0
+
+    # normalize current holdings weight
+    current = []
+    for p in current_positions or []:
+        symbol = str(p.get("symbol") or "").zfill(6) if p.get("symbol") else ""
+        if not symbol:
+            continue
+        market_value = _safe_float(p.get("market_value"))
+        weight_pct = _safe_float(p.get("weight_pct"))
+        if weight_pct is None and market_value is not None and total_capital > 0:
+            weight_pct = market_value / total_capital * 100
+        if weight_pct is None:
+            weight_pct = 0.0
+        current.append(
+            {
+                "symbol": symbol,
+                "name": p.get("name"),
+                "weight_pct": float(weight_pct),
+            }
+        )
+
+    target_map = {}
+    for t in target_allocations or []:
+        symbol = str(t.get("symbol") or "").zfill(6) if t.get("symbol") else ""
+        if not symbol:
+            continue
+        target_map[symbol] = {
+            "symbol": symbol,
+            "name": t.get("name"),
+            "target_weight": float(_safe_float(t.get("weight_pct")) or 0.0),
+            "m4_score": _safe_float(t.get("m4_score")),
+        }
+
+    current_map = {x["symbol"]: x for x in current}
+
+    all_symbols = sorted(set(target_map.keys()) | set(current_map.keys()))
+    orders = []
+
+    for idx, symbol in enumerate(all_symbols, start=1):
+        tw = float(target_map.get(symbol, {}).get("target_weight", 0.0))
+        cw = float(current_map.get(symbol, {}).get("weight_pct", 0.0))
+        delta = round(tw - cw, 2)
+
+        if abs(delta) < float(min_trade_weight or 0):
+            continue
+
+        notional = round(total_capital * abs(delta) / 100.0, 2)
+        action = "BUY" if delta > 0 else "SELL"
+        reason = "目标权重提升" if delta > 0 else "目标权重下调"
+
+        orders.append(
+            {
+                "order_id": f"SIM-{idx:04d}",
+                "symbol": symbol,
+                "name": target_map.get(symbol, {}).get("name") or current_map.get(symbol, {}).get("name"),
+                "action": action,
+                "current_weight": round(cw, 2),
+                "target_weight": round(tw, 2),
+                "delta_weight": delta,
+                "notional": notional,
+                "status": "SIMULATED",
+                "reason": reason,
+                "m4_score": target_map.get(symbol, {}).get("m4_score"),
+            }
+        )
+
+    orders.sort(key=lambda x: abs(x["delta_weight"]), reverse=True)
+
+    buy_orders = [o for o in orders if o["action"] == "BUY"]
+    sell_orders = [o for o in orders if o["action"] == "SELL"]
+
+    return {
+        "target_count": len(target_map),
+        "current_count": len(current_map),
+        "orders_total": len(orders),
+        "buy_total": len(buy_orders),
+        "sell_total": len(sell_orders),
+        "turnover_notional": round(sum(o["notional"] for o in orders), 2),
+        "orders": orders,
+    }

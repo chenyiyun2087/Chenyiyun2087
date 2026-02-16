@@ -20,6 +20,7 @@ try:
         evaluate_m4_allocation,
         evaluate_m5_rolling,
         evaluate_m6_nav,
+        evaluate_m7_rebalance,
     )
 except ImportError:
     from strategy_playbook import (  # type: ignore
@@ -34,6 +35,7 @@ except ImportError:
         evaluate_m4_allocation,
         evaluate_m5_rolling,
         evaluate_m6_nav,
+        evaluate_m7_rebalance,
     )
 
 app = Flask(__name__)
@@ -656,6 +658,55 @@ def _fetch_recent_m1_rows(conn, lookback_dates=20):
         """
         cursor.execute(sql, tuple(ds))
         return cursor.fetchall()
+
+
+def _fetch_live_positions_snapshot(conn):
+    """Fetch current live positions as current portfolio snapshot."""
+    if conn is None:
+        return [], None
+
+    with conn.cursor() as cursor:
+        cursor.execute("SHOW TABLES LIKE 'live_positions'")
+        has_pos = cursor.fetchone() is not None
+        if not has_pos:
+            return [], None
+
+        cursor.execute(
+            """
+            SELECT symbol, name, shares, avg_cost, current_price
+            FROM live_positions
+            """
+        )
+        rows = cursor.fetchall()
+
+        positions = []
+        positions_mv = 0.0
+        for r in rows:
+            shares = float(r.get('shares') or 0)
+            px = float(r.get('current_price') or r.get('avg_cost') or 0)
+            mv = round(shares * px, 2)
+            positions_mv += mv
+            positions.append(
+                {
+                    'symbol': str(r.get('symbol') or '').zfill(6),
+                    'name': r.get('name'),
+                    'market_value': mv,
+                }
+            )
+
+        total_equity = None
+        cursor.execute("SHOW TABLES LIKE 'live_daily_snapshots'")
+        has_snap = cursor.fetchone() is not None
+        if has_snap:
+            cursor.execute("SELECT total_equity FROM live_daily_snapshots ORDER BY snapshot_date DESC LIMIT 1")
+            row = cursor.fetchone()
+            if row and row.get('total_equity') is not None:
+                total_equity = float(row.get('total_equity'))
+
+    if total_equity is None:
+        total_equity = positions_mv if positions_mv > 0 else None
+
+    return positions, total_equity
 def _fetch_latest_bs_scores(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
@@ -995,6 +1046,68 @@ def sina_strategy_m6():
             'slippage_bps': slippage_bps,
         },
         page_title="策略M6：净值回测（成本/滑点）",
+    )
+
+
+@app.route('/sina/strategy/m7')
+def sina_strategy_m7():
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_m7: {e}")
+        conn = None
+
+    max_positions = request.args.get('max_positions', 5, type=int)
+    capital = request.args.get('capital', 100000, type=float)
+    min_trade_weight = request.args.get('min_trade_weight', 1.0, type=float)
+
+    max_positions = int(clamp(max_positions or 5, 1, 20))
+    capital = clamp(capital if capital is not None else 100000, 10000.0, 100000000.0)
+    min_trade_weight = clamp(min_trade_weight if min_trade_weight is not None else 1.0, 0.0, 20.0)
+
+    latest_date = None
+    rows = []
+    try:
+        latest_date, rows = _fetch_latest_m1_rows(conn)
+    except Exception as e:
+        print(f"Failed to load M7 rows: {e}")
+
+    m4_eval = evaluate_m4_allocation(rows, max_positions=max_positions)
+
+    current_positions, total_equity = [], None
+    try:
+        current_positions, total_equity = _fetch_live_positions_snapshot(conn)
+    except Exception as e:
+        print(f"Failed to load live positions for M7: {e}")
+
+    capital_used = total_equity if (total_equity and total_equity > 0) else capital
+    m7_eval = evaluate_m7_rebalance(
+        target_allocations=m4_eval.get('allocations') or [],
+        current_positions=current_positions,
+        total_capital=capital_used,
+        min_trade_weight=min_trade_weight,
+    )
+
+    m1_summary = None
+    try:
+        m1_summary = _fetch_m1_event_summary(conn) if conn else None
+    except Exception as e:
+        print(f"Failed to load M1 summary in M7 page: {e}")
+
+    return render_template(
+        'sina_strategy_m7.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        m1_summary=m1_summary,
+        m4_eval=m4_eval,
+        m7_eval=m7_eval,
+        params={
+            'max_positions': max_positions,
+            'capital': capital,
+            'capital_used': capital_used,
+            'min_trade_weight': min_trade_weight,
+        },
+        page_title="策略M7：模拟调仓与下单流水",
     )
 
 
