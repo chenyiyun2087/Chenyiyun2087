@@ -1,0 +1,182 @@
+{% extends 'layout.html' %}
+{% block title %}Sina 评分策略中心{% endblock %}
+{% block page_title %}Sina 评分策略中心{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="panel-title">
+        最新交易日：{{ date or '-' }}
+        <span style="float: right; font-weight: normal; font-size: 0.8em;">当前更新时间：{{ now }}</span>
+    </div>
+
+    <form method="GET" action="{{ url_for('sina_strategy') }}" class="strategy-form">
+        <div class="strategy-grid">
+            <div class="strategy-card">
+                <h3>策略一：金字塔筛选法 (Pyramid Screening)</h3>
+                <p>流程：先做风险排查（总分）→ 再做质量筛选（因子分）→ 最后看短期爆发（Claude分）。</p>
+                <div class="form-grid">
+                    <label>第一层：总分阈值（>）
+                        <input type="number" min="0" max="100" step="0.1" name="pyramid_min_score"
+                            value="{{ params.pyramid_min_score }}">
+                    </label>
+                    <label>第二层：因子分前 N%（Top）
+                        <input type="number" min="0" max="100" step="0.1" name="pyramid_top_pct"
+                            value="{{ params.pyramid_top_pct }}">
+                    </label>
+                    <label>第三层：Claude 分阈值（>）
+                        <input type="number" min="0" max="100" step="0.1" name="pyramid_min_claude"
+                            value="{{ params.pyramid_min_claude }}">
+                    </label>
+                </div>
+                <ul class="strategy-note">
+                    <li>第一层通过：{{ pyramid.layer1|length }} / {{ total_candidates }}</li>
+                    <li>第二层通过（Top {{ params.pyramid_top_pct }}%）：{{ pyramid.layer2|length }}</li>
+                    <li>第三层最终池（Claude > {{ params.pyramid_min_claude }}）：{{ pyramid.layer3|length }}</li>
+                </ul>
+            </div>
+
+            <div class="strategy-card">
+                <h3>策略二：综合加权评分法 (Weighted Score Model)</h3>
+                <p>公式：最终分 = 总分×A + 因子分排名百分比×B + Claude分×C</p>
+                <div class="form-grid">
+                    <label>策略预设
+                        <select name="weighted_profile">
+                            <option value="balanced" {{ 'selected' if params.weighted_profile=='balanced' else '' }}>均衡</option>
+                            <option value="aggressive" {{ 'selected' if params.weighted_profile=='aggressive' else '' }}>激进</option>
+                            <option value="conservative" {{ 'selected' if params.weighted_profile=='conservative' else '' }}>保守</option>
+                        </select>
+                    </label>
+                    <label>权重A（总分）
+                        <input type="number" min="0" max="1" step="0.01" name="weight_a" value="{{ params.weight_a }}">
+                    </label>
+                    <label>权重B（因子分排名百分比）
+                        <input type="number" min="0" max="1" step="0.01" name="weight_b" value="{{ params.weight_b }}">
+                    </label>
+                    <label>权重C（Claude分）
+                        <input type="number" min="0" max="1" step="0.01" name="weight_c" value="{{ params.weight_c }}">
+                    </label>
+                    <label>展示Top N
+                        <input type="number" min="1" max="200" step="1" name="weighted_top_n" value="{{ params.weighted_top_n }}">
+                    </label>
+                </div>
+                <p class="muted">当前权重和：{{ weights_sum }}（建议接近 1.0）</p>
+            </div>
+
+            <div class="strategy-card">
+                <h3>策略三：四象限矩阵法 (Four-Quadrant Matrix)</h3>
+                <p>X轴：Claude分（短期动能），Y轴：因子分（内在质量）。先过滤总分，再分象限。</p>
+                <div class="form-grid">
+                    <label>基础过滤：总分阈值（>）
+                        <input type="number" min="0" max="100" step="0.1" name="quadrant_min_score"
+                            value="{{ params.quadrant_min_score }}">
+                    </label>
+                    <label>Y轴分界：因子分阈值
+                        <input type="number" min="0" max="100" step="0.1" name="quadrant_opt_cut"
+                            value="{{ params.quadrant_opt_cut }}">
+                    </label>
+                    <label>X轴分界：Claude分阈值
+                        <input type="number" min="0" max="100" step="0.1" name="quadrant_claude_cut"
+                            value="{{ params.quadrant_claude_cut }}">
+                    </label>
+                </div>
+                <ul class="strategy-note">
+                    <li>总分过滤后样本：{{ quadrant_base_count }}</li>
+                    <li>第一象限 明星股（高因子/高Claude）：{{ quadrants.star|length }}</li>
+                    <li>第二象限 潜力股（高因子/低Claude）：{{ quadrants.potential|length }}</li>
+                    <li>第三象限 投机股（低因子/高Claude）：{{ quadrants.speculative|length }}</li>
+                    <li>第四象限 回避股（低因子/低Claude）：{{ quadrants.avoid|length }}</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="margin-top: 14px;">
+            <button type="submit" class="btn">应用动态参数</button>
+        </div>
+    </form>
+</section>
+
+<section class="panel">
+    <div class="panel-title">策略一结果：金字塔第三层（最终候选）</div>
+    <table>
+        <thead>
+            <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>总分</th>
+                <th>因子分</th>
+                <th>Claude分</th>
+                <th>池类型</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in pyramid.layer3 %}
+            <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.name }}</td>
+                <td>{{ row.score }}</td>
+                <td>{{ row.opt_score }}</td>
+                <td>{{ row.claude_score }}</td>
+                <td>{{ row.pool_type or '-' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty">暂无符合条件的股票</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <div class="panel-title">策略二结果：综合加权评分 Top {{ params.weighted_top_n }}</div>
+    <table>
+        <thead>
+            <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>最终分</th>
+                <th>总分</th>
+                <th>因子分排名百分比</th>
+                <th>Claude分</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in weighted_rank %}
+            <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.name }}</td>
+                <td class="text-up">{{ row.weighted_final_score }}</td>
+                <td>{{ row.score }}</td>
+                <td>{{ row.opt_rank_pct }}</td>
+                <td>{{ row.claude_score }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty">暂无可计算数据</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <div class="panel-title">策略三结果：四象限分类</div>
+    <div class="quadrant-grid">
+        <div class="quadrant-card">
+            <h4>第一象限：明星股</h4>
+            <p class="muted">高因子分 + 高Claude分，优先关注与买入。</p>
+            <div>数量：{{ quadrants.star|length }}</div>
+        </div>
+        <div class="quadrant-card">
+            <h4>第二象限：潜力股</h4>
+            <p class="muted">高因子分 + 低Claude分，纳入观察池等待动能确认。</p>
+            <div>数量：{{ quadrants.potential|length }}</div>
+        </div>
+        <div class="quadrant-card">
+            <h4>第三象限：投机股</h4>
+            <p class="muted">低因子分 + 高Claude分，适合短线、严控仓位与止损。</p>
+            <div>数量：{{ quadrants.speculative|length }}</div>
+        </div>
+        <div class="quadrant-card">
+            <h4>第四象限：回避股</h4>
+            <p class="muted">低因子分 + 低Claude分，直接忽略。</p>
+            <div>数量：{{ quadrants.avoid|length }}</div>
+        </div>
+    </div>
+</section>
+{% endblock %}
