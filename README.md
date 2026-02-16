@@ -311,6 +311,8 @@ python scheduler.py
 - `test_m4_functional_no_db.py`
 - `test_m5_functional_no_db.py`
 - `test_m6_functional_no_db.py`
+- `test_m7_functional_no_db.py`
+- `test_m8_functional_no_db.py`
 
 推荐一次性运行：
 
@@ -322,7 +324,9 @@ python -m unittest \
   test.ScoreRank.test_m3_functional_no_db \
   test.ScoreRank.test_m4_functional_no_db \
   test.ScoreRank.test_m5_functional_no_db \
-  test.ScoreRank.test_m6_functional_no_db -v
+  test.ScoreRank.test_m6_functional_no_db \
+  test.ScoreRank.test_m7_functional_no_db \
+  test.ScoreRank.test_m8_functional_no_db -v
 ```
 
 关键验证点：
@@ -337,4 +341,18 @@ python -m unittest \
 - **M5**：引入滚动窗口验证（避免仅看单日事件）；
 - **M6**：加入交易成本/滑点后的净值回测；
 - **M7**：把 M4 建议仓位打通到实盘跟踪（模拟下单流水）；
-- **M8**：将参数搜索与回归任务纳入调度器定时执行并落库。
+- **M8（已实施）**：将参数搜索（M3）与回归评估（M2）纳入调度器定时执行并落库（`strategy_m8_runs` / `strategy_m8_items`）。
+
+
+---
+
+## 12. M8 调度落库（新增）
+
+- 新增 CLI：`scoreRank/cli/run_m8_cycle.py`
+  - 从 `b_event_fact` + `b_event_kpi` 读取最近 N 个事件日样本
+  - 运行 `evaluate_m2_presets`（回归）与 `evaluate_m3_optimizer`（参数搜索）
+  - 结果写入 `strategy_m8_runs`（run 级）和 `strategy_m8_items`（条目级）
+- 调度器 `scheduler.py` 的 `daily_pipeline` 新增：
+  1) `scoreRank/cli/build_b_event_kpi.py`
+  2) `scoreRank/cli/run_m8_cycle.py --lookback-dates 60`
+- Web 管理台任务新增 `sina_m8`，可手动触发 M8 落库任务。

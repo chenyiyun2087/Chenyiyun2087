@@ -55,6 +55,7 @@ DB_CONFIG = {
 TASKS = {
     "sina_bs": {"name": "sina B/S 扫描", "script": "sina/bs_detection/main.py", "last_run": "Never", "status": "Idle", "switched_day": False},
     "sina_score": {"name": "sina 每日评分", "script": "scoreRank/run_daily.py", "last_run": "Never", "status": "Idle", "switched_day": False},
+    "sina_m8": {"name": "策略M8 回归落库", "script": "scoreRank/cli/run_m8_cycle.py", "last_run": "Never", "status": "Idle", "switched_day": False},
     "sina_snapshot": {"name": "sina 实盘快照", "script": "sina/live_tracker/live_tracker.py", "last_run": "Never", "status": "Idle", "switched_day": False},
     "eastmoney": {"name": "eastmoney 策略扫描", "script": "eastmoney/run_strategy.py", "last_run": "Never", "status": "Idle", "switched_day": False}
 }
@@ -1185,6 +1186,8 @@ def run_task(task_name):
         # So we better handle args in run_script or here.
         # Let's adjust run_script to handle a list of command parts.
         script_parts = [script, "config_1", today]
+    elif task_name == 'sina_m8':
+        script_parts = [script, '--lookback-dates', '60']
     else:
         script_parts = [script]
     

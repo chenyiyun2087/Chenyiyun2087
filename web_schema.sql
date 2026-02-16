@@ -77,3 +77,38 @@ CREATE TABLE IF NOT EXISTS b_event_kpi (
     UNIQUE KEY uniq_event_symbol (event_date, symbol),
     KEY idx_symbol_date (symbol, event_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- M8 参数搜索/回归调度运行记录
+CREATE TABLE IF NOT EXISTS strategy_m8_runs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    as_of_date DATE,
+    lookback_dates INT NOT NULL,
+    sample_rows INT NOT NULL,
+    eligible_rows INT,
+    searched_total INT,
+    status VARCHAR(20) NOT NULL DEFAULT 'SUCCESS',
+    summary_json JSON,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_created_at (created_at),
+    KEY idx_as_of_date (as_of_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS strategy_m8_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    run_id BIGINT NOT NULL,
+    item_type VARCHAR(16) NOT NULL,
+    strategy VARCHAR(64) NOT NULL,
+    params VARCHAR(255),
+    description VARCHAR(255),
+    avg_ret_3 DECIMAL(10,2),
+    avg_ret_5 DECIMAL(10,2),
+    avg_ret_10 DECIMAL(10,2),
+    hit_3 DECIMAL(10,2),
+    hit_5 DECIMAL(10,2),
+    hit_10 DECIMAL(10,2),
+    sample_count INT,
+    rank_no INT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_run_type (run_id, item_type),
+    CONSTRAINT fk_m8_item_run FOREIGN KEY (run_id) REFERENCES strategy_m8_runs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
