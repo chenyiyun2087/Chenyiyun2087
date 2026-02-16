@@ -204,6 +204,21 @@ tr:hover { background: #15213a; }
     margin: 0 0 6px;
 }
 
+.quadrant-plot-wrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #0b1426;
+    padding: 8px;
+}
+
+.quadrant-plot {
+    width: 100%;
+    min-width: 760px;
+    height: auto;
+}
+
 @media (max-width: 960px) {
     .app-shell { grid-template-columns: 1fr; }
     .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
