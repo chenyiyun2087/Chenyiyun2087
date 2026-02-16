@@ -104,3 +104,73 @@ def build_quadrants(rows, min_score, opt_cut, claude_cut):
             q["avoid"].append(row)
 
     return q, base
+
+
+def _safe_float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _calc_bucket_stats(rows):
+    out = {"count": len(rows)}
+    for h in (3, 5, 10):
+        rets = [_safe_float(r.get(f"ret_{h}")) for r in rows]
+        rets = [v for v in rets if v is not None]
+        hits = [_safe_float(r.get(f"hit_{h}_10pct")) for r in rows]
+        hits = [v for v in hits if v is not None]
+        out[f"avg_ret_{h}"] = round(sum(rets) / len(rets) * 100, 2) if rets else None
+        out[f"hit_{h}"] = round(sum(hits) / len(hits) * 100, 2) if hits else None
+    return out
+
+
+def evaluate_m2_presets(rows):
+    """Evaluate strategy presets using M1 event+kpi merged rows.
+
+    Input row keys expected:
+    score/opt_score/claude_score/is_eligible + ret_3/5/10 + hit_3_10pct/5/10
+    """
+    eligible = [r for r in rows if int(r.get("is_eligible") or 0) == 1]
+
+    py = build_pyramid(eligible, 60.0, 30.0, 50.0)
+    py_rows = py["layer3"]
+
+    w = build_weighted(eligible, 0.4, 0.3, 0.3)
+    wd_rows = w[: max(1, len(w) // 3)] if w else []
+
+    q, q_base = build_quadrants(eligible, 60.0, 6.0, 50.0)
+    q_rows = q["star"]
+
+    results = [
+        {
+            "strategy": "pyramid_default",
+            "description": "总分>60 + 因子前30% + Claude>50",
+            **_calc_bucket_stats(py_rows),
+        },
+        {
+            "strategy": "weighted_balanced_top33pct",
+            "description": "A/B/C=0.4/0.3/0.3，取前33%",
+            **_calc_bucket_stats(wd_rows),
+        },
+        {
+            "strategy": "quadrant_star_only",
+            "description": "四象限仅明星股",
+            **_calc_bucket_stats(q_rows),
+        },
+    ]
+
+    # rank by 10-day avg return, then 10-day hit
+    results.sort(
+        key=lambda x: (
+            x.get("avg_ret_10") if x.get("avg_ret_10") is not None else -10**9,
+            x.get("hit_10") if x.get("hit_10") is not None else -10**9,
+        ),
+        reverse=True,
+    )
+
+    return {
+        "eligible_total": len(eligible),
+        "quadrant_base_total": len(q_base),
+        "results": results,
+    }

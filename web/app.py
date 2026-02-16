@@ -15,6 +15,7 @@ try:
         build_quadrants,
         build_weighted,
         clamp,
+        evaluate_m2_presets,
     )
 except ImportError:
     from strategy_playbook import (  # type: ignore
@@ -24,6 +25,7 @@ except ImportError:
         build_quadrants,
         build_weighted,
         clamp,
+        evaluate_m2_presets,
     )
 
 app = Flask(__name__)
@@ -547,6 +549,53 @@ def _safe_fetch_strategy_context(conn):
 
     return latest_date, rows, m1_summary
 
+
+
+def _fetch_latest_m1_rows(conn):
+    """Fetch latest eligible b_event merged rows for M2 evaluation."""
+    if conn is None:
+        return None, []
+
+    with conn.cursor() as cursor:
+        cursor.execute("SHOW TABLES LIKE 'b_event_fact'")
+        has_fact = cursor.fetchone() is not None
+        cursor.execute("SHOW TABLES LIKE 'b_event_kpi'")
+        has_kpi = cursor.fetchone() is not None
+        if not (has_fact and has_kpi):
+            return None, []
+
+        cursor.execute("SELECT MAX(event_date) AS latest_date FROM b_event_fact")
+        latest = cursor.fetchone() or {}
+        latest_date = latest.get('latest_date')
+        if not latest_date:
+            return None, []
+
+        cursor.execute(
+            """
+            SELECT
+                f.event_date,
+                f.symbol,
+                f.name,
+                f.score,
+                COALESCE(f.opt_score, 0) AS opt_score,
+                COALESCE(f.claude_score, 0) AS claude_score,
+                COALESCE(f.is_eligible, 0) AS is_eligible,
+                k.ret_3,
+                k.ret_5,
+                k.ret_10,
+                k.hit_3_10pct,
+                k.hit_5_10pct,
+                k.hit_10_10pct
+            FROM b_event_fact f
+            LEFT JOIN b_event_kpi k
+              ON f.event_date = k.event_date AND f.symbol = k.symbol
+            WHERE f.event_date = %s
+            """,
+            (latest_date,),
+        )
+        rows = cursor.fetchall()
+
+    return latest_date, rows
 def _fetch_latest_bs_scores(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
@@ -685,6 +734,38 @@ def sina_strategy_quadrant():
         quadrant_points=quadrant_base,
         page_title="策略三：四象限矩阵法",
         m1_summary=m1_summary,
+    )
+
+
+@app.route('/sina/strategy/m2')
+def sina_strategy_m2():
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_m2: {e}")
+        conn = None
+
+    latest_date = None
+    rows = []
+    try:
+        latest_date, rows = _fetch_latest_m1_rows(conn)
+    except Exception as e:
+        print(f"Failed to load M2 rows: {e}")
+
+    m2_eval = evaluate_m2_presets(rows)
+    m1_summary = None
+    try:
+        m1_summary = _fetch_m1_event_summary(conn) if conn else None
+    except Exception as e:
+        print(f"Failed to load M1 summary in M2 page: {e}")
+
+    return render_template(
+        'sina_strategy_m2.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        m1_summary=m1_summary,
+        m2_eval=m2_eval,
+        page_title="策略M2：预设策略效果回归",
     )
 
 

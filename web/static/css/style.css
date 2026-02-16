@@ -265,3 +265,28 @@ tr:hover { background: #15213a; }
 .m1-summary strong {
     color: #f5d57c;
 }
+
+.m2-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.m2-kpi-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: #111d34;
+}
+
+.m2-kpi-card .k {
+    color: #9fb8dd;
+    font-size: 12px;
+}
+
+.m2-kpi-card .v {
+    margin-top: 6px;
+    font-size: 24px;
+    font-weight: 700;
+    color: #dbeafe;
+}
