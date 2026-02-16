@@ -120,6 +120,17 @@ def eastmoney_guba_url(symbol):
     return f"http://guba.eastmoney.com/list,{symbol}.html"
 
 
+@app.route('/api/prompt_template')
+def get_prompt_template():
+    """API to get the prompt template content"""
+    try:
+        with open('Web/templates/prompt.txt', 'r', encoding='utf-8') as f:
+            content = f.read()
+        return {"content": content}
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
 @app.route('/')
 def index():
     return redirect(url_for('positions'))
