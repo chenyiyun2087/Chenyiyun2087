@@ -1,0 +1,172 @@
+{% extends 'layout.html' %}
+{% block title %}策略三：四象限矩阵法{% endblock %}
+{% block page_title %}策略三：四象限矩阵法{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="panel-title">最新交易日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+
+    <div class="tabs" style="margin-bottom:14px;">
+        <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
+        <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
+        <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab active">策略三 四象限</a>
+    </div>
+
+
+    {% if m1_summary %}
+    <div class="m1-summary">
+        <strong>M1事件复盘（{{ m1_summary.latest_date }}）</strong>
+        <span>事件总数：{{ m1_summary.total_events }}</span>
+        <span>可交易：{{ m1_summary.eligible_events }}</span>
+        <span>高风险：{{ m1_summary.high_risk_events }}</span>
+        <span>Hit@10%（3/5/10日）：{{ m1_summary.hit_3_10pct if m1_summary.hit_3_10pct is not none else '-' }}% / {{ m1_summary.hit_5_10pct if m1_summary.hit_5_10pct is not none else '-' }}% / {{ m1_summary.hit_10_10pct if m1_summary.hit_10_10pct is not none else '-' }}%</span>
+    </div>
+    {% endif %}
+    <form method="GET" action="{{ url_for('sina_strategy_quadrant') }}" class="strategy-form">
+        <div class="strategy-grid">
+            <div class="strategy-card">
+                <h3>参数化控制</h3>
+                <p>先按总分过滤，再基于 X轴=Claude分（0-100） / Y轴=因子分（0-10）进行四象限分类。</p>
+                <div class="form-grid">
+                    <label>总分过滤阈值（>）<input type="number" min="0" max="100" step="0.1" name="quadrant_min_score" value="{{ params.quadrant_min_score }}"></label>
+                    <label>Y轴分界（因子分，0-10）<input type="number" min="0" max="10" step="0.1" name="quadrant_opt_cut" value="{{ params.quadrant_opt_cut }}"></label>
+                    <label>X轴分界（Claude分）<input type="number" min="0" max="100" step="0.1" name="quadrant_claude_cut" value="{{ params.quadrant_claude_cut }}"></label>
+                </div>
+                <ul class="strategy-note">
+                    <li>候选总数：{{ total_candidates }}</li>
+                    <li>总分过滤后：{{ quadrant_base_count }}</li>
+                    <li>明星股：{{ quadrants.star|length }} / 潜力股：{{ quadrants.potential|length }} / 投机股：{{ quadrants.speculative|length }} / 回避股：{{ quadrants.avoid|length }}</li>
+                </ul>
+            </div>
+        </div>
+        <div style="margin-top: 12px;"><button class="btn" type="submit">应用参数</button></div>
+    </form>
+</section>
+
+<section class="panel">
+    <div class="panel-title">四象限坐标图（X=Claude分 0-100, Y=因子分×10 归一化到 0-100）</div>
+    <div class="quadrant-plot-wrap">
+        <div id="quadrant-tooltip" class="quadrant-tooltip" style="display:none;"></div>
+        <svg class="quadrant-plot" viewBox="0 0 820 520" preserveAspectRatio="xMidYMid meet" role="img" aria-label="四象限图">
+            <rect x="0" y="0" width="820" height="520" fill="#0f1727" />
+            <rect x="60" y="30" width="720" height="420" fill="#101a2f" stroke="#2d4368" />
+
+            <!-- 网格 -->
+            {% for g in [0, 20, 40, 60, 80, 100] %}
+            {% set gx = 60 + (g * 7.2) %}
+            {% set gy = 450 - (g * 4.2) %}
+            <line x1="{{ gx }}" y1="30" x2="{{ gx }}" y2="450" stroke="#1e2d49" stroke-width="1" />
+            <line x1="60" y1="{{ gy }}" x2="780" y2="{{ gy }}" stroke="#1e2d49" stroke-width="1" />
+            {% endfor %}
+
+            <!-- 分界线 -->
+            {% set cut_x = 60 + (params.quadrant_claude_cut * 7.2) %}
+            {% set cut_y = 450 - (params.quadrant_opt_cut * 42) %}
+            <line x1="{{ cut_x }}" y1="30" x2="{{ cut_x }}" y2="450" stroke="#fbbf24" stroke-width="2" stroke-dasharray="6 6" />
+            <line x1="60" y1="{{ cut_y }}" x2="780" y2="{{ cut_y }}" stroke="#fbbf24" stroke-width="2" stroke-dasharray="6 6" />
+
+            <!-- 坐标轴 -->
+            <line x1="60" y1="450" x2="780" y2="450" stroke="#7aa2d8" stroke-width="2" />
+            <line x1="60" y1="450" x2="60" y2="30" stroke="#7aa2d8" stroke-width="2" />
+            <text x="785" y="466" fill="#bcd0f0" font-size="12">Claude分</text>
+            <text x="14" y="24" fill="#bcd0f0" font-size="12">因子分(0-10，按×10绘制)</text>
+
+            <!-- 象限标题 -->
+            <text x="610" y="52" fill="#22c55e" font-size="12">第一象限 明星股</text>
+            <text x="130" y="52" fill="#60a5fa" font-size="12">第二象限 潜力股</text>
+            <text x="610" y="440" fill="#f59e0b" font-size="12">第三象限 投机股</text>
+            <text x="130" y="440" fill="#9ca3af" font-size="12">第四象限 回避股</text>
+
+            <!-- 点 -->
+            {% for row in quadrant_points %}
+            {% set x = 60 + ((row.claude_score or 0) * 7.2) %}
+            {% set y = 450 - ((row.opt_score or 0) * 42) %}
+            {% set color = '#9ca3af' %}
+            {% if (row.opt_score or 0) >= params.quadrant_opt_cut and (row.claude_score or 0) >= params.quadrant_claude_cut %}
+            {% set color = '#22c55e' %}
+            {% elif (row.opt_score or 0) >= params.quadrant_opt_cut and (row.claude_score or 0) < params.quadrant_claude_cut %}
+            {% set color = '#60a5fa' %}
+            {% elif (row.opt_score or 0) < params.quadrant_opt_cut and (row.claude_score or 0) >= params.quadrant_claude_cut %}
+            {% set color = '#f59e0b' %}
+            {% endif %}
+            <circle
+                class="quadrant-point"
+                cx="{{ x }}"
+                cy="{{ y }}"
+                r="4.5"
+                fill="{{ color }}"
+                data-symbol="{{ row.symbol }}"
+                data-name="{{ row.name }}"
+                data-score="{{ row.score }}"
+                data-opt="{{ row.opt_score }}"
+                data-claude="{{ row.claude_score }}"
+            >
+                <title>{{ row.symbol }} {{ row.name }} | 总分={{ row.score }} 因子分={{ row.opt_score }} Claude分={{ row.claude_score }}</title>
+            </circle>
+            {% endfor %}
+        </svg>
+    </div>
+</section>
+
+<script>
+(() => {
+    const wrap = document.querySelector('.quadrant-plot-wrap');
+    const tooltip = document.getElementById('quadrant-tooltip');
+    const points = document.querySelectorAll('.quadrant-point');
+    if (!wrap || !tooltip || points.length === 0) return;
+
+    const setContent = (point) => {
+        tooltip.innerHTML = [
+            `<strong>${point.dataset.symbol || ''} ${point.dataset.name || ''}</strong>`,
+            `总分: ${point.dataset.score || '-'}`,
+            `因子分: ${point.dataset.opt || '-'}`,
+            `Claude分: ${point.dataset.claude || '-'}`
+        ].join('<br>');
+    };
+
+    const move = (evt) => {
+        const rect = wrap.getBoundingClientRect();
+        tooltip.style.left = `${evt.clientX - rect.left + 12}px`;
+        tooltip.style.top = `${evt.clientY - rect.top + 12}px`;
+    };
+
+    points.forEach((point) => {
+        point.addEventListener('mouseenter', (evt) => {
+            setContent(point);
+            tooltip.style.display = 'block';
+            move(evt);
+        });
+        point.addEventListener('mousemove', move);
+        point.addEventListener('mouseleave', () => {
+            tooltip.style.display = 'none';
+        });
+    });
+})();
+</script>
+
+<section class="panel">
+    <div class="panel-title">筛选结果股票池（总分过滤后）</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>总分</th><th>因子分</th><th>Claude分</th><th>分类</th></tr></thead>
+        <tbody>
+            {% for row in quadrant_points %}
+            <tr>
+                <td>{{ row.symbol }}</td><td>{{ row.name }}</td><td>{{ row.score }}</td><td>{{ row.opt_score }}</td><td>{{ row.claude_score }}</td>
+                <td>
+                    {% if (row.opt_score or 0) >= params.quadrant_opt_cut and (row.claude_score or 0) >= params.quadrant_claude_cut %}
+                    明星股
+                    {% elif (row.opt_score or 0) >= params.quadrant_opt_cut and (row.claude_score or 0) < params.quadrant_claude_cut %}
+                    潜力股
+                    {% elif (row.opt_score or 0) < params.quadrant_opt_cut and (row.claude_score or 0) >= params.quadrant_claude_cut %}
+                    投机股
+                    {% else %}
+                    回避股
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty">暂无符合条件的股票</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

@@ -141,7 +141,127 @@ tr:hover { background: #15213a; }
 .pagination { display: flex; gap: 12px; align-items: center; margin: 8px 0 18px; color: var(--muted); }
 .pagination a { color: #99c1ff; text-decoration: none; }
 
+.strategy-form .strategy-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.strategy-card {
+    background: linear-gradient(180deg, #111a2e, #0d1627);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+}
+
+.strategy-card h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+}
+
+.strategy-card p {
+    margin: 0 0 10px;
+    color: #bdd0f0;
+    font-size: 13px;
+}
+
+.strategy-card label {
+    display: grid;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.strategy-card input,
+.strategy-card select {
+    background: #0d182c;
+    border: 1px solid #2d4368;
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px;
+}
+
+.strategy-note {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: #bfd2f2;
+    font-size: 13px;
+}
+
+.quadrant-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+
+.quadrant-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    background: #101a2f;
+}
+
+.quadrant-card h4 {
+    margin: 0 0 6px;
+}
+
+.quadrant-plot-wrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #0b1426;
+    padding: 8px;
+}
+
+.quadrant-plot {
+    width: 100%;
+    min-width: 760px;
+    height: auto;
+}
+
+.quadrant-tooltip {
+    position: absolute;
+    z-index: 20;
+    pointer-events: none;
+    background: rgba(8, 14, 24, 0.95);
+    color: #e8f0ff;
+    border: 1px solid #2f4671;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.quadrant-point {
+    cursor: pointer;
+}
+
+.quadrant-point:hover {
+    stroke: #f8fafc;
+    stroke-width: 1.2;
+}
+
 @media (max-width: 960px) {
     .app-shell { grid-template-columns: 1fr; }
     .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+}
+
+
+.m1-summary {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid #2f4671;
+    border-radius: 10px;
+    background: rgba(31, 52, 89, 0.35);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    color: #d3e4ff;
+    font-size: 13px;
+}
+
+.m1-summary strong {
+    color: #f5d57c;
 }
