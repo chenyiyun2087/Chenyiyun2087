@@ -860,7 +860,8 @@ def sina_strategy_m2():
     latest_date = None
     rows = []
     try:
-        latest_date, rows = _fetch_latest_m1_rows(conn)
+        latest_date, _ = _fetch_latest_m1_rows(conn)
+        rows = _fetch_recent_m1_rows(conn, lookback_dates=20)
     except Exception as e:
         print(f"Failed to load M2 rows: {e}")
 
@@ -892,7 +893,8 @@ def sina_strategy_m3():
     latest_date = None
     rows = []
     try:
-        latest_date, rows = _fetch_latest_m1_rows(conn)
+        latest_date, _ = _fetch_latest_m1_rows(conn)
+        rows = _fetch_recent_m1_rows(conn, lookback_dates=20)
     except Exception as e:
         print(f"Failed to load M3 rows: {e}")
 
@@ -1087,6 +1089,7 @@ def sina_strategy_m7():
         current_positions=current_positions,
         total_capital=capital_used,
         min_trade_weight=min_trade_weight,
+        conn=conn
     )
 
     m1_summary = None

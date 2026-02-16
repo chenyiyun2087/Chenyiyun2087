@@ -459,37 +459,17 @@ def evaluate_m6_nav(rows, cost_bps=20, slippage_bps=10, max_positions=5):
 
 
 
-def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=100000.0, min_trade_weight=1.0):
+def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=100000.0, min_trade_weight=1.0, conn=None):
     """Generate simulated rebalance orders from target vs current weights."""
     total_capital = float(total_capital or 0)
     if total_capital <= 0:
         total_capital = 100000.0
 
-    # normalize current holdings weight
-    current = []
-    for p in current_positions or []:
-        symbol = str(p.get("symbol") or "").zfill(6) if p.get("symbol") else ""
-        if not symbol:
-            continue
-        market_value = _safe_float(p.get("market_value"))
-        weight_pct = _safe_float(p.get("weight_pct"))
-        if weight_pct is None and market_value is not None and total_capital > 0:
-            weight_pct = market_value / total_capital * 100
-        if weight_pct is None:
-            weight_pct = 0.0
-        current.append(
-            {
-                "symbol": symbol,
-                "name": p.get("name"),
-                "weight_pct": float(weight_pct),
-            }
-        )
-
+    # 1. Collect all symbols
     target_map = {}
     for t in target_allocations or []:
         symbol = str(t.get("symbol") or "").zfill(6) if t.get("symbol") else ""
-        if not symbol:
-            continue
+        if not symbol: continue
         target_map[symbol] = {
             "symbol": symbol,
             "name": t.get("name"),
@@ -497,40 +477,132 @@ def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=1
             "m4_score": _safe_float(t.get("m4_score")),
         }
 
-    current_map = {x["symbol"]: x for x in current}
+    current_map = {}
+    for p in current_positions or []:
+        symbol = str(p.get("symbol") or "").zfill(6) if p.get("symbol") else ""
+        if not symbol: continue
+        
+        # Calculate weight if missing
+        market_value = _safe_float(p.get("market_value"))
+        weight_pct = _safe_float(p.get("weight_pct"))
+        if weight_pct is None and market_value is not None and total_capital > 0:
+            weight_pct = market_value / total_capital * 100
+        
+        current_map[symbol] = {
+            "symbol": symbol,
+            "name": p.get("name"),
+            "current_weight": float(weight_pct or 0.0),
+            "shares": int(p.get("shares") or 0),
+        }
 
     all_symbols = sorted(set(target_map.keys()) | set(current_map.keys()))
+    
+    # 2. Fetch latest prices for rounding
+    prices = {}
+    if conn and all_symbols:
+        try:
+            from sqlalchemy import text
+            placeholders = ",".join([f"'{s}'" for s in all_symbols])
+            # Fetch latest close from tushare_stock
+            sql = f"""
+                SELECT symbol, close 
+                FROM tushare_stock.dwd_stock_daily_standard 
+                WHERE symbol IN ({placeholders}) 
+                  AND trade_date = (SELECT MAX(trade_date) FROM tushare_stock.dwd_stock_daily_standard)
+            """
+            
+            # Use raw connection cursor if possible, or handle sqlalchemy engine
+            # app.py passes a pymysql connection often, checking...
+            # app.py uses get_db() -> pymysql connection.
+            with conn.cursor() as cursor:
+                 cursor.execute(sql)
+                 for row in cursor.fetchall():
+                     # row is dict if DictCursor, else tuple
+                     if isinstance(row, dict):
+                         prices[row['symbol']] = float(row['close'])
+                     else:
+                         # fallback assuming tuple (symbol, close)
+                         prices[row[0]] = float(row[1])
+        except Exception as e:
+            print(f"Failed to fetch prices for M7 rounding: {e}")
+
     orders = []
 
     for idx, symbol in enumerate(all_symbols, start=1):
-        tw = float(target_map.get(symbol, {}).get("target_weight", 0.0))
-        cw = float(current_map.get(symbol, {}).get("weight_pct", 0.0))
-        delta = round(tw - cw, 2)
+        t_info = target_map.get(symbol, {})
+        c_info = current_map.get(symbol, {})
+        
+        tw = float(t_info.get("target_weight", 0.0))
+        cw = float(c_info.get("current_weight", 0.0))
+        delta_w = round(tw - cw, 2)
 
-        if abs(delta) < float(min_trade_weight or 0):
+        if abs(delta_w) < float(min_trade_weight or 0):
             continue
 
-        notional = round(total_capital * abs(delta) / 100.0, 2)
-        action = "BUY" if delta > 0 else "SELL"
-        reason = "目标权重提升" if delta > 0 else "目标权重下调"
+        price = prices.get(symbol, 0.0)
+        # If price not found in DB, try to infer from current position
+        if price <= 0 and c_info.get("shares") and c_info.get("current_weight"):
+             # rough estimate
+             # market_value = shares * price
+             # weight = market_value / capital * 100
+             # price = (weight / 100 * capital) / shares
+             pass 
+
+        notional_diff = total_capital * delta_w / 100.0
+        
+        # Round logic
+        shares_delta = 0
+        if price > 0:
+             # Round to nearest 100
+             raw_shares = notional_diff / price
+             shares_delta = int(round(raw_shares / 100.0) * 100)
+             
+             # Re-adjust notional based on rounded shares
+             final_notional = shares_delta * price
+        else:
+             final_notional = notional_diff
+             shares_delta = 0 # Cannot calculate without price
+
+        if shares_delta == 0 and abs(final_notional) < 100: 
+             # Too small after rounding or no price
+             continue
+
+        action = "BUY" if final_notional > 0 else "SELL"
+        reason = "目标权重提升" if final_notional > 0 else "目标权重下调"
+        
+        abs_shares = abs(shares_delta)
+        abs_amt = abs(final_notional)
+        
+        # Determine name
+        name = t_info.get("name") or c_info.get("name") or symbol
+
+        # CLI Command Generation
+        # python sina/live_tracker/run_live_tracker.py buy -s 000001 -p 12.34 -n 1000
+        cmd_action = "buy" if action == "BUY" else "sell"
+        cli_cmd = ""
+        if price > 0:
+            cli_cmd = f"python sina/live_tracker/run_live_tracker.py {cmd_action} -s {symbol} -p {price:.2f} -n {abs_shares}"
 
         orders.append(
             {
                 "order_id": f"SIM-{idx:04d}",
                 "symbol": symbol,
-                "name": target_map.get(symbol, {}).get("name") or current_map.get(symbol, {}).get("name"),
+                "name": name,
                 "action": action,
+                "price": price,
                 "current_weight": round(cw, 2),
                 "target_weight": round(tw, 2),
-                "delta_weight": delta,
-                "notional": notional,
+                "delta_weight": delta_w,
+                "shares": abs_shares,
+                "notional": round(abs_amt, 2),
                 "status": "SIMULATED",
                 "reason": reason,
-                "m4_score": target_map.get(symbol, {}).get("m4_score"),
+                "m4_score": t_info.get("m4_score"),
+                "cli_cmd": cli_cmd
             }
         )
 
-    orders.sort(key=lambda x: abs(x["delta_weight"]), reverse=True)
+    orders.sort(key=lambda x: x["notional"], reverse=True)
 
     buy_orders = [o for o in orders if o["action"] == "BUY"]
     sell_orders = [o for o in orders if o["action"] == "SELL"]

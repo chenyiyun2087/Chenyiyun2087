@@ -54,8 +54,12 @@ def ensure_tables(engine):
 
 
 def _to_float(v):
+    import math
     try:
-        return float(v) if v is not None else None
+        if v is None:
+            return None
+        f = float(v)
+        return None if math.isnan(f) else f
     except (TypeError, ValueError):
         return None
 
@@ -150,7 +154,17 @@ def build_item_rows(m2_eval: dict, m3_eval: dict):
 def persist_results(engine, latest_date, lookback_dates: int, sample_rows: int, m2_eval: dict, m3_eval: dict):
     from sqlalchemy import text
 
-    summary = {
+    import math
+    def clean_nans(obj):
+        if isinstance(obj, float):
+            return None if math.isnan(obj) else obj
+        if isinstance(obj, dict):
+            return {k: clean_nans(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [clean_nans(v) for v in obj]
+        return obj
+
+    summary = clean_nans({
         "m2": {
             "eligible_total": m2_eval.get("eligible_total"),
             "quadrant_base_total": m2_eval.get("quadrant_base_total"),
@@ -162,7 +176,7 @@ def persist_results(engine, latest_date, lookback_dates: int, sample_rows: int, 
             "winners": m3_eval.get("winners") or [],
         },
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
+    })
 
     with engine.begin() as conn:
         run_id = conn.execute(

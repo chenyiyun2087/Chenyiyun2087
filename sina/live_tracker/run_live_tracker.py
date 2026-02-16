@@ -52,17 +52,13 @@ import pandas as pd
 
 # 添加项目路径
 SCRIPT_DIR = Path(__file__).resolve().parent
-SINA_DIR = SCRIPT_DIR.parent
-REPO_ROOT = SINA_DIR.parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-if str(SINA_DIR) not in sys.path:
-    sys.path.insert(0, str(SINA_DIR))
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
 
-from live_tracker.live_tracker import LiveTracker
-from live_tracker.live_tracker_config import LIVE_CONFIG
+# 使用绝对路径导入，避免与当前目录下的 live_tracker.py 冲突
+from sina.live_tracker.live_tracker import LiveTracker
+from sina.live_tracker.live_tracker_config import LIVE_CONFIG
 
 
 def parse_date(date_str: str) -> date:

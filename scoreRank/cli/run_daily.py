@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
 from pathlib import Path
 import sys
 import os
@@ -221,36 +221,48 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--force", action="store_true", help="Force run ignoring time check")
     parser.add_argument("--strategy", type=str, default="technical", choices=["technical", "claude"], help="Scoring strategy")
+    parser.add_argument("--date", type=str, help="Target date YYYYMMDD or YYYY-MM-DD")
     args = parser.parse_args()
 
     try:
         current_time = datetime.now()
-        # 判断当前时间是否在16:30之后 (Unless forced)
-        if not args.force:
+        # 判断当前时间是否在16:30之后 (Unless forced or specific date provided)
+        if not args.force and not args.date:
             if current_time.hour < 16 or (current_time.hour == 16 and current_time.minute < 30):
                 print(f"当前时间 {current_time} 未到收盘后处理时间(16:30)，程序退出")
                 return
 
-        print("Step 1: Get latest B/S signals...")
         engine = get_engine()
+        
+        target_date_str = None
+        if args.date:
+             # Standardize input date
+             dt = pd.to_datetime(args.date)
+             target_date_str = dt.strftime("%Y%m%d")
+             asof_date = dt
+        else:
+             print("Step 1: Get latest B/S signals...")
+             with engine.connect() as conn:
+                # Get latest batch_date from bs_detection_results
+                res = conn.execute(text("SELECT MAX(batch_date) FROM bs_detection_results")).fetchone()
+                latest_bs_date = res[0]
+                
+             if not latest_bs_date:
+                print("No B/S detection results found.")
+                return
+             target_date_str = latest_bs_date
+             asof_date = pd.to_datetime(latest_bs_date)
+
+        # Get latest trade_date from monthly data as a reference
         with engine.connect() as conn:
-            # Get latest batch_date from bs_detection_results
-            res = conn.execute(text("SELECT MAX(batch_date) FROM bs_detection_results")).fetchone()
-            latest_bs_date = res[0]
-            
-            # Get latest trade_date from monthly data as a reference for today
             res_td = conn.execute(text("SELECT MAX(trade_date) FROM tushare_stock.dwd_stock_daily_standard")).fetchone()
             latest_data_date = res_td[0]
             
-        if not latest_bs_date:
-            print("No B/S detection results found.")
-            return
-
-        asof_date = pd.to_datetime(latest_bs_date)
-        print(f"Latest B/S Date: {asof_date.date()}")
+        print(f"Target B/S Date: {asof_date.date()}")
         print(f"Latest Data Date: {latest_data_date}")
 
         # 2) Load Symbols from B/S Detection (Candidates for TRADE/WATCH)
+        # Modified to support time-travel (snapshot at target_date)
         sql_bs = """
         SELECT
             latest_buy.stock_code
@@ -261,6 +273,7 @@ def main():
                 MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
                 MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
             FROM bs_detection_results
+            WHERE batch_date <= %(target_date)s
             GROUP BY stock_code
         ) AS summary
             ON latest_buy.stock_code = summary.stock_code
@@ -269,9 +282,13 @@ def main():
           AND (summary.latest_sell_date IS NULL
                OR summary.latest_buy_date > summary.latest_sell_date)
         """
-        df_bs = pd.read_sql(sql_bs, engine)
+        
+        # Use simple string replacement or param binding depending on read_sql support
+        # pandas read_sql supports params.
+        
+        df_bs = pd.read_sql(sql_bs, engine, params={"target_date": target_date_str})
         bs_symbols = df_bs['stock_code'].tolist()
-        print(f"Found {len(bs_symbols)} B/S candidate symbols.")
+        print(f"Found {len(bs_symbols)} B/S candidate symbols as of {target_date_str}.")
 
         # 3) Load Self-selected Stocks (Candidates for Self-selected Monitor)
         sql_ss = """

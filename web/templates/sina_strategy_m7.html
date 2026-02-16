@@ -3,7 +3,8 @@
 {% block page_title %}策略M7：模拟调仓与下单流水{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span>
+    </div>
 
     <div class="tabs" style="margin-bottom:14px;">
         <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
@@ -32,21 +33,38 @@
                 <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
             </label>
             <label>组合资金（仅无快照时使用）
-                <input type="number" min="10000" max="100000000" step="1000" name="capital" value="{{ params.capital }}">
+                <input type="number" min="10000" max="100000000" step="1000" name="capital"
+                    value="{{ params.capital }}">
             </label>
             <label>最小调仓权重阈值(%)
-                <input type="number" min="0" max="20" step="0.1" name="min_trade_weight" value="{{ params.min_trade_weight }}">
+                <input type="number" min="0" max="20" step="0.1" name="min_trade_weight"
+                    value="{{ params.min_trade_weight }}">
             </label>
         </div>
         <div style="margin-top:12px;"><button class="btn" type="submit">生成模拟调仓单</button></div>
     </form>
 
     <div class="m2-summary-grid" style="margin-top:12px;">
-        <div class="m2-kpi-card"><div class="k">目标标的数</div><div class="v">{{ m7_eval.target_count }}</div></div>
-        <div class="m2-kpi-card"><div class="k">当前持仓数</div><div class="v">{{ m7_eval.current_count }}</div></div>
-        <div class="m2-kpi-card"><div class="k">模拟订单数</div><div class="v">{{ m7_eval.orders_total }}</div></div>
-        <div class="m2-kpi-card"><div class="k">买入/卖出</div><div class="v">{{ m7_eval.buy_total }}/{{ m7_eval.sell_total }}</div></div>
-        <div class="m2-kpi-card"><div class="k">预计换手额</div><div class="v">{{ m7_eval.turnover_notional }}</div></div>
+        <div class="m2-kpi-card">
+            <div class="k">目标标的数</div>
+            <div class="v">{{ m7_eval.target_count }}</div>
+        </div>
+        <div class="m2-kpi-card">
+            <div class="k">当前持仓数</div>
+            <div class="v">{{ m7_eval.current_count }}</div>
+        </div>
+        <div class="m2-kpi-card">
+            <div class="k">模拟订单数</div>
+            <div class="v">{{ m7_eval.orders_total }}</div>
+        </div>
+        <div class="m2-kpi-card">
+            <div class="k">买入/卖出</div>
+            <div class="v">{{ m7_eval.buy_total }}/{{ m7_eval.sell_total }}</div>
+        </div>
+        <div class="m2-kpi-card">
+            <div class="k">预计换手额</div>
+            <div class="v">{{ m7_eval.turnover_notional }}</div>
+        </div>
     </div>
     <div style="margin-top:8px;color:#9fb8dd;font-size:12px;">估算资金基数：{{ params.capital_used }}</div>
 </section>
@@ -54,7 +72,21 @@
 <section class="panel">
     <div class="panel-title">M7 模拟下单流水</div>
     <table>
-        <thead><tr><th>订单ID</th><th>代码</th><th>名称</th><th>方向</th><th>当前权重%</th><th>目标权重%</th><th>变动%</th><th>金额</th><th>状态</th><th>原因</th></tr></thead>
+        <thead>
+            <tr>
+                <th>订单ID</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th>方向</th>
+                <th>价格</th>
+                <th>当前%</th>
+                <th>目标%</th>
+                <th>变动%</th>
+                <th>股数</th>
+                <th>金额</th>
+                <th>操作</th>
+            </tr>
+        </thead>
         <tbody>
             {% for o in m7_eval.orders %}
             <tr>
@@ -62,17 +94,37 @@
                 <td>{{ o.symbol }}</td>
                 <td>{{ o.name }}</td>
                 <td class="text-up">{{ o.action }}</td>
+                <td>{{ o.price or '-' }}</td>
                 <td>{{ o.current_weight }}</td>
                 <td>{{ o.target_weight }}</td>
                 <td>{{ o.delta_weight }}</td>
+                <td>{{ o.shares }}</td>
                 <td>{{ o.notional }}</td>
-                <td>{{ o.status }}</td>
-                <td>{{ o.reason }}</td>
+                <td>
+                    {% if o.cli_cmd %}
+                    <button class="btn-small" onclick="copyCmd('{{ o.cli_cmd }}')">复制指令</button>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
             </tr>
             {% else %}
-            <tr><td colspan="10" class="empty">暂无需执行的调仓单（可能已接近目标权重）</td></tr>
+            <tr>
+                <td colspan="11" class="empty">暂无需执行的调仓单（可能已接近目标权重）</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>
 </section>
+
+<script>
+    function copyCmd(cmd) {
+        navigator.clipboard.writeText(cmd).then(function () {
+            alert('指令已复制到剪贴板：\n' + cmd);
+        }, function (err) {
+            console.error('Async: Could not copy text: ', err);
+            prompt("请手动复制:", cmd);
+        });
+    }
+</script>
 {% endblock %}
