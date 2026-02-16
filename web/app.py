@@ -18,6 +18,7 @@ try:
         evaluate_m2_presets,
         evaluate_m3_optimizer,
         evaluate_m4_allocation,
+        evaluate_m5_rolling,
     )
 except ImportError:
     from strategy_playbook import (  # type: ignore
@@ -30,6 +31,7 @@ except ImportError:
         evaluate_m2_presets,
         evaluate_m3_optimizer,
         evaluate_m4_allocation,
+        evaluate_m5_rolling,
     )
 
 app = Flask(__name__)
@@ -600,6 +602,58 @@ def _fetch_latest_m1_rows(conn):
         rows = cursor.fetchall()
 
     return latest_date, rows
+
+
+def _fetch_recent_m1_rows(conn, lookback_dates=20):
+    """Fetch merged M1 rows across recent N event dates for rolling validation."""
+    if conn is None:
+        return []
+
+    with conn.cursor() as cursor:
+        cursor.execute("SHOW TABLES LIKE 'b_event_fact'")
+        has_fact = cursor.fetchone() is not None
+        cursor.execute("SHOW TABLES LIKE 'b_event_kpi'")
+        has_kpi = cursor.fetchone() is not None
+        if not (has_fact and has_kpi):
+            return []
+
+        cursor.execute(
+            """
+            SELECT event_date
+            FROM b_event_fact
+            GROUP BY event_date
+            ORDER BY event_date DESC
+            LIMIT %s
+            """,
+            (int(lookback_dates),),
+        )
+        ds = [r['event_date'] for r in cursor.fetchall()]
+        if not ds:
+            return []
+
+        placeholders = ','.join(['%s'] * len(ds))
+        sql = f"""
+            SELECT
+                f.event_date,
+                f.symbol,
+                f.name,
+                f.score,
+                COALESCE(f.opt_score, 0) AS opt_score,
+                COALESCE(f.claude_score, 0) AS claude_score,
+                COALESCE(f.is_eligible, 0) AS is_eligible,
+                k.ret_3,
+                k.ret_5,
+                k.ret_10,
+                k.hit_3_10pct,
+                k.hit_5_10pct,
+                k.hit_10_10pct
+            FROM b_event_fact f
+            LEFT JOIN b_event_kpi k
+              ON f.event_date = k.event_date AND f.symbol = k.symbol
+            WHERE f.event_date IN ({placeholders})
+        """
+        cursor.execute(sql, tuple(ds))
+        return cursor.fetchall()
 def _fetch_latest_bs_scores(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
@@ -838,6 +892,52 @@ def sina_strategy_m4():
         m4_eval=m4_eval,
         max_positions=max_positions,
         page_title="策略M4：组合落地与仓位建议",
+    )
+
+
+@app.route('/sina/strategy/m5')
+def sina_strategy_m5():
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_m5: {e}")
+        conn = None
+
+    window_size = request.args.get('window_size', 5, type=int)
+    lookback_dates = request.args.get('lookback_dates', 20, type=int)
+    max_positions = request.args.get('max_positions', 5, type=int)
+
+    window_size = int(clamp(window_size or 5, 2, 30))
+    lookback_dates = int(clamp(lookback_dates or 20, 5, 120))
+    max_positions = int(clamp(max_positions or 5, 1, 20))
+
+    latest_date = None
+    rows = []
+    try:
+        latest_date, _ = _fetch_latest_m1_rows(conn)
+        rows = _fetch_recent_m1_rows(conn, lookback_dates=lookback_dates)
+    except Exception as e:
+        print(f"Failed to load M5 rows: {e}")
+
+    m5_eval = evaluate_m5_rolling(rows, window_size=window_size, max_positions=max_positions)
+    m1_summary = None
+    try:
+        m1_summary = _fetch_m1_event_summary(conn) if conn else None
+    except Exception as e:
+        print(f"Failed to load M1 summary in M5 page: {e}")
+
+    return render_template(
+        'sina_strategy_m5.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        m1_summary=m1_summary,
+        m5_eval=m5_eval,
+        params={
+            'window_size': window_size,
+            'lookback_dates': lookback_dates,
+            'max_positions': max_positions,
+        },
+        page_title="策略M5：滚动窗口稳定性验证",
     )
 
 

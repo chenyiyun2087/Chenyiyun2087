@@ -277,6 +277,12 @@ def evaluate_m4_allocation(rows, max_positions=5):
                 "vote_weighted": vote_weighted,
                 "vote_quadrant": vote_quadrant,
                 "m4_score": round(m4_score, 2),
+                "ret_3": _safe_float(row.get("ret_3")),
+                "ret_5": _safe_float(row.get("ret_5")),
+                "ret_10": _safe_float(row.get("ret_10")),
+                "hit_3_10pct": _safe_float(row.get("hit_3_10pct")),
+                "hit_5_10pct": _safe_float(row.get("hit_5_10pct")),
+                "hit_10_10pct": _safe_float(row.get("hit_10_10pct")),
             }
         )
 
@@ -304,4 +310,74 @@ def evaluate_m4_allocation(rows, max_positions=5):
         "candidates_total": len(scored),
         "picked_total": len(allocations),
         "allocations": allocations,
+    }
+
+
+
+def _calc_dispersion(values):
+    vals = [v for v in values if v is not None]
+    if not vals:
+        return {"mean": None, "std": None, "min": None, "max": None}
+    n = len(vals)
+    mean_v = sum(vals) / n
+    var = sum((x - mean_v) ** 2 for x in vals) / n
+    return {
+        "mean": round(mean_v, 2),
+        "std": round(var ** 0.5, 2),
+        "min": round(min(vals), 2),
+        "max": round(max(vals), 2),
+    }
+
+
+def evaluate_m5_rolling(rows, window_size=5, max_positions=5):
+    """Rolling-window validation based on recent event_date slices."""
+    eligible = [r for r in rows if int(r.get("is_eligible") or 0) == 1]
+    by_date = {}
+    for r in eligible:
+        d = str(r.get("event_date") or "")
+        if not d:
+            continue
+        by_date.setdefault(d, []).append(r)
+
+    dates = sorted(by_date.keys())
+    windows = []
+
+    if window_size < 1:
+        window_size = 1
+
+    for end in range(window_size - 1, len(dates)):
+        d_slice = dates[end - window_size + 1: end + 1]
+        pool = []
+        for d in d_slice:
+            pool.extend(by_date.get(d, []))
+
+        alloc = evaluate_m4_allocation(pool, max_positions=max_positions)
+        picks = alloc.get("allocations") or []
+
+        # compute realized stats using available horizon fields from selected picks
+        stats = _calc_bucket_stats(picks)
+        windows.append(
+            {
+                "end_date": d_slice[-1],
+                "start_date": d_slice[0],
+                "window_dates": len(d_slice),
+                "sample_events": len(pool),
+                "pick_count": len(picks),
+                "avg_ret_10": stats.get("avg_ret_10"),
+                "hit_10": stats.get("hit_10"),
+                "avg_ret_5": stats.get("avg_ret_5"),
+                "hit_5": stats.get("hit_5"),
+            }
+        )
+
+    ret_series = [w.get("avg_ret_10") for w in windows]
+    hit_series = [w.get("hit_10") for w in windows]
+
+    return {
+        "eligible_total": len(eligible),
+        "window_size": int(window_size),
+        "windows_total": len(windows),
+        "summary_ret_10": _calc_dispersion(ret_series),
+        "summary_hit_10": _calc_dispersion(hit_series),
+        "windows": windows,
     }
