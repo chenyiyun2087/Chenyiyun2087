@@ -35,6 +35,7 @@
 <section class="panel">
     <div class="panel-title">四象限坐标图（X=Claude分, Y=因子分）</div>
     <div class="quadrant-plot-wrap">
+        <div id="quadrant-tooltip" class="quadrant-tooltip" style="display:none;"></div>
         <svg class="quadrant-plot" viewBox="0 0 820 520" preserveAspectRatio="xMidYMid meet" role="img" aria-label="四象限图">
             <rect x="0" y="0" width="820" height="520" fill="#0f1727" />
             <rect x="60" y="30" width="720" height="420" fill="#101a2f" stroke="#2d4368" />
@@ -77,13 +78,60 @@
             {% elif (row.opt_score or 0) < params.quadrant_opt_cut and (row.claude_score or 0) >= params.quadrant_claude_cut %}
             {% set color = '#f59e0b' %}
             {% endif %}
-            <circle cx="{{ x }}" cy="{{ y }}" r="4" fill="{{ color }}">
+            <circle
+                class="quadrant-point"
+                cx="{{ x }}"
+                cy="{{ y }}"
+                r="4.5"
+                fill="{{ color }}"
+                data-symbol="{{ row.symbol }}"
+                data-name="{{ row.name }}"
+                data-score="{{ row.score }}"
+                data-opt="{{ row.opt_score }}"
+                data-claude="{{ row.claude_score }}"
+            >
                 <title>{{ row.symbol }} {{ row.name }} | 总分={{ row.score }} 因子分={{ row.opt_score }} Claude分={{ row.claude_score }}</title>
             </circle>
             {% endfor %}
         </svg>
     </div>
 </section>
+
+<script>
+(() => {
+    const wrap = document.querySelector('.quadrant-plot-wrap');
+    const tooltip = document.getElementById('quadrant-tooltip');
+    const points = document.querySelectorAll('.quadrant-point');
+    if (!wrap || !tooltip || points.length === 0) return;
+
+    const setContent = (point) => {
+        tooltip.innerHTML = [
+            `<strong>${point.dataset.symbol || ''} ${point.dataset.name || ''}</strong>`,
+            `总分: ${point.dataset.score || '-'}`,
+            `因子分: ${point.dataset.opt || '-'}`,
+            `Claude分: ${point.dataset.claude || '-'}`
+        ].join('<br>');
+    };
+
+    const move = (evt) => {
+        const rect = wrap.getBoundingClientRect();
+        tooltip.style.left = `${evt.clientX - rect.left + 12}px`;
+        tooltip.style.top = `${evt.clientY - rect.top + 12}px`;
+    };
+
+    points.forEach((point) => {
+        point.addEventListener('mouseenter', (evt) => {
+            setContent(point);
+            tooltip.style.display = 'block';
+            move(evt);
+        });
+        point.addEventListener('mousemove', move);
+        point.addEventListener('mouseleave', () => {
+            tooltip.style.display = 'none';
+        });
+    });
+})();
+</script>
 
 <section class="panel">
     <div class="panel-title">筛选结果股票池（总分过滤后）</div>
