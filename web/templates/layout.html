@@ -19,6 +19,8 @@
             <nav>
                 <a href="{{ url_for('sina_monitor') }}"
                     class="{% if request.endpoint == 'sina_monitor' %}active{% endif %}">Sina B/S 监控</a>
+                <a href="{{ url_for('sina_strategy') }}"
+                    class="{% if request.endpoint == 'sina_strategy' %}active{% endif %}">策略中心</a>
                 <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </nav>
         </aside>
@@ -40,6 +42,8 @@
                     class="tab {% if request.endpoint == 'sina_self_selected' %}active{% endif %}">自选股评分</a>
                 <a href="{{ url_for('sina_monitor') }}"
                     class="tab {% if request.endpoint == 'sina_monitor' %}active{% endif %}">B/S 监控</a>
+                <a href="{{ url_for('sina_strategy') }}"
+                    class="tab {% if request.endpoint == 'sina_strategy' %}active{% endif %}">评分策略</a>
                 <a href="{{ url_for('admin') }}"
                     class="tab {% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </div>
