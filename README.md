@@ -176,3 +176,146 @@ python scheduler.py
 - **晚间**：确认 `ScoreRank` 成功写入当日评分、`Live Tracker` 完成同步。
 - **次日盘前**：通过 Web 看板查看 `TRADE/WATCH`、持仓盈亏与策略结果，再做交易决策。
 
+
+---
+
+## 9. 最新阶段开发补充（M1 → M4）
+
+> 本节用于补充最新开发内容，重点说明新增组件功能、业务逻辑与验证方式。
+
+### 9.1 M1：事件事实表与绩效表（B 事件复盘）
+
+**新增组件**
+- `scoreRank/cli/build_b_event_kpi.py`
+- `web_schema.sql` 中新增：`b_event_fact`、`b_event_kpi`
+
+**业务逻辑**
+1. 从 `score_rank_daily` 提取 `is_bs_candidate=1` 的事件样本（`event_date + symbol`）。
+2. 从 `tushare_stock.dwd_stock_daily_standard` 读取复权收盘价/成交量，按事件日对齐。
+3. 计算 3/5/10 日：
+   - 收益率 `ret_3/ret_5/ret_10`
+   - 命中率标签 `hit_*_10pct`（收益率>=10%）
+   - 最大回撤 `mdd_3/mdd_5/mdd_10`
+4. 计算风控标签：`is_st`、事件日停牌、10 日窗口停牌、`is_high_risk`、`is_eligible`。
+5. 写入 `b_event_fact`（事件事实）与 `b_event_kpi`（事件绩效）。
+
+---
+
+### 9.2 M2：预设策略回归页（策略对比）
+
+**新增组件**
+- `web/strategy_playbook.py`：`evaluate_m2_presets`
+- `web/app.py`：`/sina/strategy/m2`
+- `web/templates/sina_strategy_m2.html`
+
+**业务逻辑**
+- 使用 M1 可交易样本（`is_eligible=1`）对三类预设方案做横向比较：
+  - 金字塔默认参数
+  - 加权均衡参数（取前 33%）
+  - 四象限明星股
+- 输出样本数、3/5/10 日平均收益与命中率，并按 10 日收益排序。
+- 作为“阶段回归页面”，用于比较策略家族在统一样本集下的效果差异。
+
+---
+
+### 9.3 M3：参数优化页（家族冠军方案）
+
+**新增组件**
+- `web/strategy_playbook.py`：`evaluate_m3_optimizer`
+- `web/app.py`：`/sina/strategy/m3`
+- `web/templates/sina_strategy_m3.html`
+
+**业务逻辑**
+- 对三大策略家族分别做小规模网格搜索：
+  - Pyramid：`min_score/top_pct/min_claude`
+  - Weighted：多组 `A/B/C` 权重
+  - Quadrant：`min_score/opt_cut/claude_cut`
+- 每个家族取冠军参数（优先 10 日平均收益，再看 10 日命中率）。
+- 页面展示：可交易样本数、搜索组合总数、各家族冠军参数及绩效。
+
+---
+
+### 9.4 M4：组合落地页（持仓建议）
+
+**新增组件**
+- `web/strategy_playbook.py`：`evaluate_m4_allocation`
+- `web/app.py`：`/sina/strategy/m4`
+- `web/templates/sina_strategy_m4.html`
+
+**业务逻辑**
+1. 对每个可交易标的计算三家族投票：
+   - `vote_pyramid`
+   - `vote_weighted`
+   - `vote_quadrant`
+2. 融合形成 `m4_score`（含共识加分）。
+3. 按 `consensus + m4_score` 排序，选出前 `max_positions`。
+4. 使用线性递减并归一化到 100% 的方式给出建议权重 `weight_pct`。
+5. 页面可通过 `max_positions` 参数调节建议持仓数量。
+
+---
+
+### 9.5 M5：滚动窗口稳定性验证
+
+**新增组件**
+- `web/strategy_playbook.py`：`evaluate_m5_rolling`
+- `web/app.py`：`/sina/strategy/m5`
+- `web/templates/sina_strategy_m5.html`
+
+**业务逻辑**
+1. 按最近 N 个事件日拉取 M1 样本，按窗口大小滚动切片。
+2. 每个窗口内复用 M4 组合建议逻辑，得到窗口内候选组合。
+3. 统计窗口级 5/10 日均收益与命中率，形成窗口序列。
+4. 汇总序列的均值/标准差/极值，用于判断稳定性而非单点收益。
+
+---
+
+### 9.5 Web 策略分栏演进
+
+当前策略分栏（`/sina/strategy/*`）包含：
+- `pyramid`：策略一金字塔
+- `weighted`：策略二加权
+- `quadrant`：策略三四象限
+- `m2`：预设策略回归
+- `m3`：参数优化冠军
+- `m4`：组合落地建议
+- `m5`：滚动窗口验证
+
+> 各页面均支持在 DB 不可用时降级展示（返回空数据但页面可访问），便于本地开发与联调。
+
+---
+
+## 10. 无外部 DB 自动化测试（新增）
+
+新增测试位于 `test/ScoreRank/`：
+- `test_m1_regression_no_db.py`
+- `test_m1_functional_no_db.py`
+- `test_m2_functional_no_db.py`
+- `test_m3_functional_no_db.py`
+- `test_m4_functional_no_db.py`
+- `test_m5_functional_no_db.py`
+
+推荐一次性运行：
+
+```bash
+python -m unittest \
+  test.ScoreRank.test_m1_regression_no_db \
+  test.ScoreRank.test_m1_functional_no_db \
+  test.ScoreRank.test_m2_functional_no_db \
+  test.ScoreRank.test_m3_functional_no_db \
+  test.ScoreRank.test_m4_functional_no_db \
+  test.ScoreRank.test_m5_functional_no_db -v
+```
+
+关键验证点：
+- 策略逻辑纯函数行为（无 DB）
+- M2/M3/M4/M5 页面在无 DB 条件下可访问（HTTP 200）
+- M1 关键 DDL/路由接线存在性回归
+
+---
+
+## 11. 里程碑建议（后续）
+
+- **M5**：引入滚动窗口验证（避免仅看单日事件）；
+- **M6**：加入交易成本/滑点后的净值回测；
+- **M7**：把 M4 建议仓位打通到实盘跟踪（模拟下单流水）；
+- **M8**：将参数搜索与回归任务纳入调度器定时执行并落库。
