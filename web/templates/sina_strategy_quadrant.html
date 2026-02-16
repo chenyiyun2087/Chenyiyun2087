@@ -11,6 +11,16 @@
         <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab active">策略三 四象限</a>
     </div>
 
+
+    {% if m1_summary %}
+    <div class="m1-summary">
+        <strong>M1事件复盘（{{ m1_summary.latest_date }}）</strong>
+        <span>事件总数：{{ m1_summary.total_events }}</span>
+        <span>可交易：{{ m1_summary.eligible_events }}</span>
+        <span>高风险：{{ m1_summary.high_risk_events }}</span>
+        <span>Hit@10%（3/5/10日）：{{ m1_summary.hit_3_10pct if m1_summary.hit_3_10pct is not none else '-' }}% / {{ m1_summary.hit_5_10pct if m1_summary.hit_5_10pct is not none else '-' }}% / {{ m1_summary.hit_10_10pct if m1_summary.hit_10_10pct is not none else '-' }}%</span>
+    </div>
+    {% endif %}
     <form method="GET" action="{{ url_for('sina_strategy_quadrant') }}" class="strategy-form">
         <div class="strategy-grid">
             <div class="strategy-card">

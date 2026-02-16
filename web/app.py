@@ -463,6 +463,90 @@ def sina_strategy():
     return redirect(url_for('sina_strategy_pyramid'))
 
 
+def _fetch_m1_event_summary(conn):
+    """Fetch lightweight M1 research summary from b_event tables."""
+    with conn.cursor() as cursor:
+        cursor.execute("SHOW TABLES LIKE 'b_event_fact'")
+        has_fact = cursor.fetchone() is not None
+        cursor.execute("SHOW TABLES LIKE 'b_event_kpi'")
+        has_kpi = cursor.fetchone() is not None
+        if not (has_fact and has_kpi):
+            return None
+
+        cursor.execute("SELECT MAX(event_date) AS latest_date FROM b_event_fact")
+        latest = cursor.fetchone() or {}
+        latest_date = latest.get('latest_date')
+        if not latest_date:
+            return None
+
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_events,
+                SUM(CASE WHEN is_eligible = 1 THEN 1 ELSE 0 END) AS eligible_events,
+                SUM(CASE WHEN is_high_risk = 1 THEN 1 ELSE 0 END) AS high_risk_events
+            FROM b_event_fact
+            WHERE event_date = %s
+            """,
+            (latest_date,),
+        )
+        fact_stats = cursor.fetchone() or {}
+
+        cursor.execute(
+            """
+            SELECT
+                AVG(hit_3_10pct) AS hit_3_10pct,
+                AVG(hit_5_10pct) AS hit_5_10pct,
+                AVG(hit_10_10pct) AS hit_10_10pct,
+                AVG(ret_3) AS ret_3,
+                AVG(ret_5) AS ret_5,
+                AVG(ret_10) AS ret_10
+            FROM b_event_kpi k
+            JOIN b_event_fact f
+              ON f.event_date = k.event_date AND f.symbol = k.symbol
+            WHERE k.event_date = %s
+              AND f.is_eligible = 1
+            """,
+            (latest_date,),
+        )
+        kpi_stats = cursor.fetchone() or {}
+
+    def _p(v):
+        return None if v is None else round(float(v) * 100, 2)
+
+    return {
+        'latest_date': latest_date,
+        'total_events': int(fact_stats.get('total_events') or 0),
+        'eligible_events': int(fact_stats.get('eligible_events') or 0),
+        'high_risk_events': int(fact_stats.get('high_risk_events') or 0),
+        'hit_3_10pct': _p(kpi_stats.get('hit_3_10pct')),
+        'hit_5_10pct': _p(kpi_stats.get('hit_5_10pct')),
+        'hit_10_10pct': _p(kpi_stats.get('hit_10_10pct')),
+        'ret_3': _p(kpi_stats.get('ret_3')),
+        'ret_5': _p(kpi_stats.get('ret_5')),
+        'ret_10': _p(kpi_stats.get('ret_10')),
+    }
+
+
+def _safe_fetch_strategy_context(conn):
+    """Read strategy rows and M1 summary; degrade gracefully when DB is unavailable."""
+    if conn is None:
+        return None, [], None
+
+    try:
+        latest_date, rows = _fetch_latest_bs_scores(conn)
+    except Exception as e:
+        print(f"Failed to load strategy rows: {e}")
+        latest_date, rows = None, []
+
+    try:
+        m1_summary = _fetch_m1_event_summary(conn)
+    except Exception as e:
+        print(f"Failed to load M1 summary: {e}")
+        m1_summary = None
+
+    return latest_date, rows, m1_summary
+
 def _fetch_latest_bs_scores(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
@@ -489,7 +573,11 @@ def _fetch_latest_bs_scores(conn):
 
 @app.route('/sina/strategy/pyramid')
 def sina_strategy_pyramid():
-    conn = get_db()
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_pyramid: {e}")
+        conn = None
     pyramid_min_score = request.args.get('pyramid_min_score', DEFAULT_PARAMS['pyramid_min_score'], type=float)
     pyramid_top_pct = request.args.get('pyramid_top_pct', DEFAULT_PARAMS['pyramid_top_pct'], type=float)
     pyramid_min_claude = request.args.get('pyramid_min_claude', DEFAULT_PARAMS['pyramid_min_claude'], type=float)
@@ -498,7 +586,7 @@ def sina_strategy_pyramid():
     pyramid_top_pct = clamp(pyramid_top_pct or DEFAULT_PARAMS['pyramid_top_pct'], 0.0, 100.0)
     pyramid_min_claude = clamp(pyramid_min_claude or DEFAULT_PARAMS['pyramid_min_claude'], 0.0, 100.0)
 
-    latest_date, rows = _fetch_latest_bs_scores(conn)
+    latest_date, rows, m1_summary = _safe_fetch_strategy_context(conn)
 
     pyramid = build_pyramid(rows, pyramid_min_score, pyramid_top_pct, pyramid_min_claude)
 
@@ -514,12 +602,17 @@ def sina_strategy_pyramid():
         total_candidates=len(rows),
         pyramid=pyramid,
         page_title="策略一：金字塔筛选法",
+        m1_summary=m1_summary,
     )
 
 
 @app.route('/sina/strategy/weighted')
 def sina_strategy_weighted():
-    conn = get_db()
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_weighted: {e}")
+        conn = None
 
     weighted_profile = request.args.get('weighted_profile', DEFAULT_PARAMS['weighted_profile'], type=str)
     if weighted_profile not in WEIGHTED_PROFILES:
@@ -536,7 +629,7 @@ def sina_strategy_weighted():
     weight_c = clamp(weight_c if weight_c is not None else profile_c, 0.0, 1.0)
     weighted_top_n = int(clamp(weighted_top_n or DEFAULT_PARAMS['weighted_top_n'], 1, 200))
 
-    latest_date, rows = _fetch_latest_bs_scores(conn)
+    latest_date, rows, m1_summary = _safe_fetch_strategy_context(conn)
     weighted_rank = build_weighted(rows, weight_a, weight_b, weight_c)
 
     return render_template(
@@ -554,12 +647,17 @@ def sina_strategy_weighted():
         total_candidates=len(rows),
         weighted_rank=weighted_rank[:weighted_top_n],
         page_title="策略二：综合加权评分法",
+        m1_summary=m1_summary,
     )
 
 
 @app.route('/sina/strategy/quadrant')
 def sina_strategy_quadrant():
-    conn = get_db()
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_quadrant: {e}")
+        conn = None
 
     quadrant_min_score = request.args.get('quadrant_min_score', DEFAULT_PARAMS['quadrant_min_score'], type=float)
     quadrant_opt_cut = request.args.get('quadrant_opt_cut', DEFAULT_PARAMS['quadrant_opt_cut'], type=float)
@@ -569,7 +667,7 @@ def sina_strategy_quadrant():
     quadrant_opt_cut = clamp(quadrant_opt_cut or DEFAULT_PARAMS['quadrant_opt_cut'], 0.0, 10.0)
     quadrant_claude_cut = clamp(quadrant_claude_cut or DEFAULT_PARAMS['quadrant_claude_cut'], 0.0, 100.0)
 
-    latest_date, rows = _fetch_latest_bs_scores(conn)
+    latest_date, rows, m1_summary = _safe_fetch_strategy_context(conn)
     quadrants, quadrant_base = build_quadrants(rows, quadrant_min_score, quadrant_opt_cut, quadrant_claude_cut)
 
     return render_template(
@@ -586,6 +684,7 @@ def sina_strategy_quadrant():
         quadrant_base_count=len(quadrant_base),
         quadrant_points=quadrant_base,
         page_title="策略三：四象限矩阵法",
+        m1_summary=m1_summary,
     )
 
 

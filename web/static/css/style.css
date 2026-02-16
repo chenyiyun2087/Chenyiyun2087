@@ -247,3 +247,21 @@ tr:hover { background: #15213a; }
     .app-shell { grid-template-columns: 1fr; }
     .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
 }
+
+
+.m1-summary {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid #2f4671;
+    border-radius: 10px;
+    background: rgba(31, 52, 89, 0.35);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    color: #d3e4ff;
+    font-size: 13px;
+}
+
+.m1-summary strong {
+    color: #f5d57c;
+}
