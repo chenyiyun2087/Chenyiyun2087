@@ -269,7 +269,23 @@ python scheduler.py
 
 ---
 
-### 9.5 Web 策略分栏演进
+
+### 9.6 M6：净值回测（成本/滑点）
+
+**新增组件**
+- `web/strategy_playbook.py`：`evaluate_m6_nav`
+- `web/app.py`：`/sina/strategy/m6`
+- `web/templates/sina_strategy_m6.html`
+
+**业务逻辑**
+1. 按事件日进行组合收益串联，生成毛净值序列（Gross NAV）。
+2. 按参数注入交易成本与滑点（bps，按买卖往返近似），得到净收益与净净值（Net NAV）。
+3. 输出毛收益、净收益、最大回撤、逐事件日净值路径，评估策略可交易性。
+4. 支持参数化：`lookback_dates`、`max_positions`、`cost_bps`、`slippage_bps`。
+
+---
+
+### 9.7 Web 策略分栏演进
 
 当前策略分栏（`/sina/strategy/*`）包含：
 - `pyramid`：策略一金字塔
@@ -279,6 +295,7 @@ python scheduler.py
 - `m3`：参数优化冠军
 - `m4`：组合落地建议
 - `m5`：滚动窗口验证
+- `m6`：净值回测（成本/滑点）
 
 > 各页面均支持在 DB 不可用时降级展示（返回空数据但页面可访问），便于本地开发与联调。
 
@@ -293,6 +310,7 @@ python scheduler.py
 - `test_m3_functional_no_db.py`
 - `test_m4_functional_no_db.py`
 - `test_m5_functional_no_db.py`
+- `test_m6_functional_no_db.py`
 
 推荐一次性运行：
 
@@ -303,12 +321,13 @@ python -m unittest \
   test.ScoreRank.test_m2_functional_no_db \
   test.ScoreRank.test_m3_functional_no_db \
   test.ScoreRank.test_m4_functional_no_db \
-  test.ScoreRank.test_m5_functional_no_db -v
+  test.ScoreRank.test_m5_functional_no_db \
+  test.ScoreRank.test_m6_functional_no_db -v
 ```
 
 关键验证点：
 - 策略逻辑纯函数行为（无 DB）
-- M2/M3/M4/M5 页面在无 DB 条件下可访问（HTTP 200）
+- M2/M3/M4/M5/M6 页面在无 DB 条件下可访问（HTTP 200）
 - M1 关键 DDL/路由接线存在性回归
 
 ---

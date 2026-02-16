@@ -19,6 +19,7 @@ try:
         evaluate_m3_optimizer,
         evaluate_m4_allocation,
         evaluate_m5_rolling,
+        evaluate_m6_nav,
     )
 except ImportError:
     from strategy_playbook import (  # type: ignore
@@ -32,6 +33,7 @@ except ImportError:
         evaluate_m3_optimizer,
         evaluate_m4_allocation,
         evaluate_m5_rolling,
+        evaluate_m6_nav,
     )
 
 app = Flask(__name__)
@@ -938,6 +940,61 @@ def sina_strategy_m5():
             'max_positions': max_positions,
         },
         page_title="策略M5：滚动窗口稳定性验证",
+    )
+
+
+@app.route('/sina/strategy/m6')
+def sina_strategy_m6():
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_strategy_m6: {e}")
+        conn = None
+
+    lookback_dates = request.args.get('lookback_dates', 30, type=int)
+    max_positions = request.args.get('max_positions', 5, type=int)
+    cost_bps = request.args.get('cost_bps', 20, type=float)
+    slippage_bps = request.args.get('slippage_bps', 10, type=float)
+
+    lookback_dates = int(clamp(lookback_dates or 30, 5, 240))
+    max_positions = int(clamp(max_positions or 5, 1, 20))
+    cost_bps = clamp(cost_bps if cost_bps is not None else 20, 0.0, 200.0)
+    slippage_bps = clamp(slippage_bps if slippage_bps is not None else 10, 0.0, 200.0)
+
+    latest_date = None
+    rows = []
+    try:
+        latest_date, _ = _fetch_latest_m1_rows(conn)
+        rows = _fetch_recent_m1_rows(conn, lookback_dates=lookback_dates)
+    except Exception as e:
+        print(f"Failed to load M6 rows: {e}")
+
+    m6_eval = evaluate_m6_nav(
+        rows,
+        cost_bps=cost_bps,
+        slippage_bps=slippage_bps,
+        max_positions=max_positions,
+    )
+
+    m1_summary = None
+    try:
+        m1_summary = _fetch_m1_event_summary(conn) if conn else None
+    except Exception as e:
+        print(f"Failed to load M1 summary in M6 page: {e}")
+
+    return render_template(
+        'sina_strategy_m6.html',
+        date=latest_date,
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        m1_summary=m1_summary,
+        m6_eval=m6_eval,
+        params={
+            'lookback_dates': lookback_dates,
+            'max_positions': max_positions,
+            'cost_bps': cost_bps,
+            'slippage_bps': slippage_bps,
+        },
+        page_title="策略M6：净值回测（成本/滑点）",
     )
 
 

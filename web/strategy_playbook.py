@@ -381,3 +381,78 @@ def evaluate_m5_rolling(rows, window_size=5, max_positions=5):
         "summary_hit_10": _calc_dispersion(hit_series),
         "windows": windows,
     }
+
+
+
+def _calc_max_drawdown(nav_points):
+    if not nav_points:
+        return None
+    peak = nav_points[0]["net_nav"]
+    mdd = 0.0
+    for p in nav_points:
+        v = p["net_nav"]
+        if v > peak:
+            peak = v
+        dd = (v / peak - 1.0) if peak > 0 else 0.0
+        if dd < mdd:
+            mdd = dd
+    return round(mdd * 100, 2)
+
+
+def evaluate_m6_nav(rows, cost_bps=20, slippage_bps=10, max_positions=5):
+    """Build gross/net NAV series with transaction cost & slippage."""
+    eligible = [r for r in rows if int(r.get("is_eligible") or 0) == 1]
+    by_date = {}
+    for r in eligible:
+        d = str(r.get("event_date") or "")
+        if not d:
+            continue
+        by_date.setdefault(d, []).append(r)
+
+    dates = sorted(by_date.keys())
+    nav_points = []
+    gross_nav = 1.0
+    net_nav = 1.0
+
+    # roundtrip cost approximation: buy + sell
+    rt_cost = (float(cost_bps or 0) + float(slippage_bps or 0)) * 2 / 10000.0
+
+    for d in dates:
+        alloc = evaluate_m4_allocation(by_date[d], max_positions=max_positions)
+        picks = alloc.get("allocations") or []
+
+        if not picks:
+            gross_ret = 0.0
+        else:
+            gross_ret = sum((float(x.get("ret_10") or 0.0) * float(x.get("weight_pct") or 0.0) / 100.0) for x in picks)
+
+        net_ret = gross_ret - rt_cost if picks else gross_ret
+
+        gross_nav *= (1.0 + gross_ret)
+        net_nav *= (1.0 + net_ret)
+
+        nav_points.append(
+            {
+                "event_date": d,
+                "pick_count": len(picks),
+                "gross_ret_pct": round(gross_ret * 100, 2),
+                "net_ret_pct": round(net_ret * 100, 2),
+                "gross_nav": round(gross_nav, 4),
+                "net_nav": round(net_nav, 4),
+            }
+        )
+
+    gross_final = round((gross_nav - 1.0) * 100, 2)
+    net_final = round((net_nav - 1.0) * 100, 2)
+    max_dd = _calc_max_drawdown(nav_points)
+
+    return {
+        "eligible_total": len(eligible),
+        "dates_total": len(dates),
+        "cost_bps": float(cost_bps or 0),
+        "slippage_bps": float(slippage_bps or 0),
+        "gross_final_ret_pct": gross_final,
+        "net_final_ret_pct": net_final,
+        "max_drawdown_pct": max_dd,
+        "nav_points": nav_points,
+    }
