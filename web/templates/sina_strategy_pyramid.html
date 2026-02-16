@@ -1,0 +1,71 @@
+{% extends 'layout.html' %}
+{% block title %}策略一：金字塔筛选法{% endblock %}
+{% block page_title %}策略一：金字塔筛选法{% endblock %}
+{% block content %}
+<section class="panel">
+    <div class="panel-title">最新交易日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+
+    <div class="tabs" style="margin-bottom:14px;">
+        <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab active">策略一 金字塔</a>
+        <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
+        <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
+        <a href="{{ url_for('sina_strategy_m2') }}" class="tab">策略M2 回归</a>
+        <a href="{{ url_for('sina_strategy_m3') }}" class="tab">策略M3 优化</a>
+        <a href="{{ url_for('sina_strategy_m4') }}" class="tab">策略M4 落地</a>
+        <a href="{{ url_for('sina_strategy_m5') }}" class="tab">策略M5 滚动</a>
+        <a href="{{ url_for('sina_strategy_m6') }}" class="tab">策略M6 净值</a>
+        <a href="{{ url_for('sina_strategy_m7') }}" class="tab">策略M7 调仓</a>
+    </div>
+
+
+    {% if m1_summary %}
+    <div class="m1-summary">
+        <strong>M1事件复盘（{{ m1_summary.latest_date }}）</strong>
+        <span>事件总数：{{ m1_summary.total_events }}</span>
+        <span>可交易：{{ m1_summary.eligible_events }}</span>
+        <span>高风险：{{ m1_summary.high_risk_events }}</span>
+        <span>Hit@10%（3/5/10日）：{{ m1_summary.hit_3_10pct if m1_summary.hit_3_10pct is not none else '-' }}% / {{ m1_summary.hit_5_10pct if m1_summary.hit_5_10pct is not none else '-' }}% / {{ m1_summary.hit_10_10pct if m1_summary.hit_10_10pct is not none else '-' }}%</span>
+    </div>
+    {% endif %}
+    <form method="GET" action="{{ url_for('sina_strategy_pyramid') }}" class="strategy-form">
+        <div class="strategy-grid">
+            <div class="strategy-card">
+                <h3>参数化控制</h3>
+                <p>第一层总分过滤 → 第二层因子分Top百分比 → 第三层Claude分确认。</p>
+                <div class="form-grid">
+                    <label>总分阈值（>）
+                        <input type="number" min="0" max="100" step="0.1" name="pyramid_min_score" value="{{ params.pyramid_min_score }}">
+                    </label>
+                    <label>因子分前N%（Top）
+                        <input type="number" min="0" max="100" step="0.1" name="pyramid_top_pct" value="{{ params.pyramid_top_pct }}">
+                    </label>
+                    <label>Claude分阈值（>）
+                        <input type="number" min="0" max="100" step="0.1" name="pyramid_min_claude" value="{{ params.pyramid_min_claude }}">
+                    </label>
+                </div>
+                <ul class="strategy-note">
+                    <li>候选总数：{{ total_candidates }}</li>
+                    <li>第一层通过：{{ pyramid.layer1|length }}</li>
+                    <li>第二层通过：{{ pyramid.layer2|length }}</li>
+                    <li>第三层通过：{{ pyramid.layer3|length }}</li>
+                </ul>
+            </div>
+        </div>
+        <div style="margin-top: 12px;"><button class="btn" type="submit">应用参数</button></div>
+    </form>
+</section>
+
+<section class="panel">
+    <div class="panel-title">筛选结果股票池（第三层）</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>总分</th><th>因子分</th><th>Claude分</th><th>池类型</th></tr></thead>
+        <tbody>
+            {% for row in pyramid.layer3 %}
+            <tr><td>{{ row.symbol }}</td><td>{{ row.name }}</td><td>{{ row.score }}</td><td>{{ row.opt_score }}</td><td>{{ row.claude_score }}</td><td>{{ row.pool_type or '-' }}</td></tr>
+            {% else %}
+            <tr><td colspan="6" class="empty">暂无符合条件的股票</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}
