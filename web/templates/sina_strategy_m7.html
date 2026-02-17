@@ -84,25 +84,45 @@
                 <th>变动%</th>
                 <th>股数</th>
                 <th>金额</th>
+                <th>状态</th>
                 <th>操作</th>
             </tr>
         </thead>
         <tbody>
             {% for o in m7_eval.orders %}
-            <tr>
+            <tr id="row-{{ o.symbol }}" style="{% if o.is_executed %}opacity:0.5;{% endif %}">
                 <td>{{ o.order_id }}</td>
                 <td>{{ o.symbol }}</td>
                 <td>{{ o.name }}</td>
-                <td class="text-up">{{ o.action }}</td>
+                <td class="action-cell {% if o.action == 'BUY' %}text-up{% else %}text-down{% endif %}">{{ o.action }}
+                </td>
                 <td>{{ o.price or '-' }}</td>
                 <td>{{ o.current_weight }}</td>
                 <td>{{ o.target_weight }}</td>
                 <td>{{ o.delta_weight }}</td>
                 <td>{{ o.shares }}</td>
                 <td>{{ o.notional }}</td>
+                <td class="status-cell">
+                    {% if o.is_executed %}
+                    <span class="tag trade">已执行</span>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
                 <td>
                     {% if o.cli_cmd %}
-                    <button class="btn-small" onclick="copyCmd('{{ o.cli_cmd }}')">复制指令</button>
+                    <div style="display: flex; gap: 5px;">
+                        <button class="btn-small" onclick="copyCmd('{{ o.cli_cmd }}')">复制</button>
+                        <button class="btn-small trade" onclick="openExecuteModal({
+                            symbol: '{{ o.symbol }}',
+                            name: '{{ o.name }}',
+                            action: '{{ o.action }}',
+                            price: {{ o.price or 0 }},
+                            shares: {{ o.shares or 0 }},
+                            notional: {{ o.notional or 0 }},
+                            score: {{ o.m4_score or 'null' }}
+                        })">执行</button>
+                    </div>
                     {% else %}
                     -
                     {% endif %}
@@ -117,7 +137,58 @@
     </table>
 </section>
 
+<!-- Modal for Trade Execution -->
+<div id="executeModal"
+    style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8);">
+    <div
+        style="background: #1e1e1e; margin: 10% auto; padding: 25px; border: 1px solid #444; width: 400px; border-radius: 8px; position: relative; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+        <h3 id="modalTitle" style="margin-top: 0; color: #4CAF50; border-bottom: 1px solid #444; padding-bottom: 10px;">
+            确认执行交易</h3>
+        <div id="modalBody" style="margin: 20px 0; line-height: 2;">
+            <div><strong>股票：</strong> <span id="m_name"></span> (<span id="m_symbol"></span>)</div>
+            <div><strong>操作：</strong> <span id="m_action"></span></div>
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
+                <strong>价格：</strong>
+                <input type="number" id="m_price" step="0.01"
+                    style="width: 100px; background: #2a2a2a; color: white; border: 1px solid #444; padding: 4px; border-radius: 4px;">
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
+                <strong>股数：</strong>
+                <input type="number" id="m_shares" step="100"
+                    style="width: 100px; background: #2a2a2a; color: white; border: 1px solid #444; padding: 4px; border-radius: 4px;">
+            </div>
+            <div style="margin-top: 5px;"><strong>总额：</strong> ¥<span id="m_notional">0</span></div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button id="confirmBtn" onclick="confirmExecute()" class="tag trade"
+                style="border: none; cursor: pointer; padding: 8px 20px; font-weight: bold;">确认执行</button>
+            <button onclick="closeExecuteModal()" class="tag"
+                style="border: none; cursor: pointer; padding: 8px 20px; background: #666; color: white;">取消</button>
+        </div>
+    </div>
+</div>
+
 <script>
+    let currentTradeData = null;
+
+    // Load execution status on page load
+    document.addEventListener('DOMContentLoaded', () => {
+        const saved = JSON.parse(localStorage.getItem('m7_executed') || '{}');
+        const today = new Date().toISOString().split('T')[0];
+        if (saved.date !== today) {
+            localStorage.removeItem('m7_executed');
+        } else if (saved.symbols) {
+            saved.symbols.forEach(sym => {
+                const row = document.getElementById('row-' + sym);
+                if (row) {
+                    row.style.opacity = '0.5';
+                    const statusCell = row.querySelector('.status-cell');
+                    if (statusCell) statusCell.innerHTML = '<span class="tag trade">已执行</span>';
+                }
+            });
+        }
+    });
+
     function copyCmd(cmd) {
         navigator.clipboard.writeText(cmd).then(function () {
             alert('指令已复制到剪贴板：\n' + cmd);
@@ -125,6 +196,106 @@
             console.error('Async: Could not copy text: ', err);
             prompt("请手动复制:", cmd);
         });
+    }
+
+    function openExecuteModal(data) {
+        currentTradeData = data;
+
+        document.getElementById('m_name').innerText = data.name;
+        document.getElementById('m_symbol').innerText = data.symbol;
+        const actionSpan = document.getElementById('m_action');
+        actionSpan.innerHTML = data.action === 'BUY' ? '<span class="text-up">买入</span>' : '<span class="text-down">卖出</span>';
+
+        const priceInput = document.getElementById('m_price');
+        const sharesInput = document.getElementById('m_shares');
+        const notionalSpan = document.getElementById('m_notional');
+
+        priceInput.value = data.price.toFixed(2);
+        sharesInput.value = data.shares;
+        notionalSpan.innerText = data.notional.toLocaleString();
+
+        // Update notional on input change
+        const updateNotional = () => {
+            const p = parseFloat(priceInput.value) || 0;
+            const s = parseInt(sharesInput.value) || 0;
+            notionalSpan.innerText = (p * s).toLocaleString();
+        };
+
+        priceInput.oninput = updateNotional;
+        sharesInput.oninput = updateNotional;
+
+        document.getElementById('executeModal').style.display = 'block';
+    }
+
+    function closeExecuteModal() {
+        document.getElementById('executeModal').style.display = 'none';
+        currentTradeData = null;
+    }
+
+    async function confirmExecute() {
+        if (!currentTradeData) return;
+
+        const price = parseFloat(document.getElementById('m_price').value);
+        const shares = parseInt(document.getElementById('m_shares').value);
+
+        if (isNaN(price) || price <= 0 || isNaN(shares) || shares <= 0) {
+            alert('请输入有效的价格和数量');
+            return;
+        }
+
+        const btn = document.getElementById('confirmBtn');
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = '执行中...';
+
+        try {
+            const response = await fetch('/api/live/execute_trade', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    symbol: currentTradeData.symbol,
+                    action: currentTradeData.action.toLowerCase(),
+                    price: price,
+                    shares: shares,
+                    score: currentTradeData.score,
+                    reason: 'M7 策略调仓 (Web交互)'
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                // Save to localStorage before reload
+                const saved = JSON.parse(localStorage.getItem('m7_executed') || '{}');
+                const today = new Date().toISOString().split('T')[0];
+                if (saved.date !== today) {
+                    saved.date = today;
+                    saved.symbols = [];
+                }
+                if (!saved.symbols.includes(currentTradeData.symbol)) {
+                    saved.symbols.push(currentTradeData.symbol);
+                }
+                localStorage.setItem('m7_executed', JSON.stringify(saved));
+
+                alert('交易执行成功！');
+                location.reload();
+            } else {
+                alert('执行失败: ' + (result.error || '未知错误'));
+            }
+        } catch (e) {
+            alert('请求出错: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalText;
+            closeExecuteModal();
+        }
+    }
+
+    // Close on outside click
+    window.onclick = function (event) {
+        const modal = document.getElementById('executeModal');
+        if (event.target == modal) {
+            closeExecuteModal();
+        }
     }
 </script>
 {% endblock %}

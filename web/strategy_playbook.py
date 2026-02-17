@@ -503,26 +503,20 @@ def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=1
         try:
             from sqlalchemy import text
             placeholders = ",".join([f"'{s}'" for s in all_symbols])
-            # Fetch latest close from tushare_stock
+            # Corrected query: join dim_stock to match 6-digit symbols and fetch raw close from ods_daily
             sql = f"""
-                SELECT symbol, close 
-                FROM tushare_stock.dwd_stock_daily_standard 
-                WHERE symbol IN ({placeholders}) 
-                  AND trade_date = (SELECT MAX(trade_date) FROM tushare_stock.dwd_stock_daily_standard)
+                SELECT s.symbol, t.close 
+                FROM tushare_stock.ods_daily t
+                JOIN tushare_stock.dim_stock s ON t.ts_code = s.ts_code
+                WHERE s.symbol IN ({placeholders}) 
+                  AND t.trade_date = (SELECT MAX(trade_date) FROM tushare_stock.ods_daily)
             """
             
-            # Use raw connection cursor if possible, or handle sqlalchemy engine
-            # app.py passes a pymysql connection often, checking...
-            # app.py uses get_db() -> pymysql connection.
             with conn.cursor() as cursor:
                  cursor.execute(sql)
                  for row in cursor.fetchall():
-                     # row is dict if DictCursor, else tuple
-                     if isinstance(row, dict):
-                         prices[row['symbol']] = float(row['close'])
-                     else:
-                         # fallback assuming tuple (symbol, close)
-                         prices[row[0]] = float(row[1])
+                     # Since app.py uses DictCursor
+                     prices[row['symbol']] = float(row['close'])
         except Exception as e:
             print(f"Failed to fetch prices for M7 rounding: {e}")
 

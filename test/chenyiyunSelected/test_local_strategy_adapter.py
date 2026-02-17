@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from chenyiyunSelected.local_strategy_adapter import LocalHighDividendStrategy
+from chenyiyunSelected.strategy.local_strategy_adapter import LocalHighDividendStrategy
 
 
 def test_filter_kcbj():

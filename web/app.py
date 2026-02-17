@@ -6,6 +6,7 @@ from datetime import datetime
 import subprocess
 import threading
 import time
+from sina.live_tracker.live_tracker import LiveTracker
 
 try:
     from web.strategy_playbook import (
@@ -469,6 +470,52 @@ def sina_monitor():
                            recent_signals=recent_signals,
                            last_completed_date=last_completed_date,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+
+@app.route('/api/live/execute_trade', methods=['POST'])
+def execute_trade():
+    """Execute a trade from the web interface using LiveTracker"""
+    try:
+        data = request.json
+        if not data:
+            return {"error": "No data provided"}, 400
+        
+        symbol = str(data.get('symbol') or "").zfill(6)
+        action = str(data.get('action') or "").lower()
+        price = float(data.get('price') or 0)
+        shares = int(data.get('shares') or 0)
+        reason = data.get('reason') or "Web 执行"
+        score = data.get('score')
+        
+        if not symbol or not action or price <= 0 or shares <= 0:
+            return {"error": "Invalid parameters"}, 400
+        
+        tracker = LiveTracker()
+        
+        if action == "buy":
+            tracker.record_buy(
+                symbol=symbol,
+                price=price,
+                shares=shares,
+                reason=reason,
+                score=score
+            )
+        elif action == "sell":
+            tracker.record_sell(
+                symbol=symbol,
+                price=price,
+                shares=shares,
+                reason=reason,
+                score=score
+            )
+        else:
+            return {"error": f"Unsupported action: {action}"}, 400
+            
+        return {"success": True, "message": f"{action.upper()} {symbol} 执行成功"}
+        
+    except Exception as e:
+        print(f"Failed to execute trade: {e}")
+        return {"error": str(e)}, 500
 
 
 @app.route('/sina/strategy')
@@ -1093,10 +1140,24 @@ def sina_strategy_m7():
     )
 
     m1_summary = None
+    executed_symbols = set()
     try:
-        m1_summary = _fetch_m1_event_summary(conn) if conn else None
+        if conn:
+            m1_summary = _fetch_m1_event_summary(conn)
+            # Fetch symbols traded today to mark as executed
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT DISTINCT symbol FROM live_trades WHERE trade_date = %s", (today_str,))
+                executed_symbols = {r['symbol'] for r in cursor.fetchall()}
     except Exception as e:
-        print(f"Failed to load M1 summary in M7 page: {e}")
+        print(f"Failed to load M1 summary or executed symbols in M7 page: {e}")
+
+    # Mark orders as executed based on DB history
+    for o in m7_eval.get('orders', []):
+        if o.get('symbol') in executed_symbols:
+            o['is_executed'] = True
+        else:
+            o['is_executed'] = False
 
     return render_template(
         'sina_strategy_m7.html',
