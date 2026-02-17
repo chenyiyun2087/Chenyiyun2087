@@ -8,6 +8,21 @@
 
 ---
 
+
+## 0. 本次整理（基于最新代码）
+
+本次对 `chenyiyunSelected/` 做了代码整理与对齐：
+
+- 强化 `local_strategy_adapter.py` 的结构：
+  - 增加 `validate_schema()`，对稳定字段做 fail-fast 校验；
+  - 精简为稳定字段主路径（`mlev`、`is_st`、`list_days`）；
+  - 增加信号落库表名校验（仅字母/数字/下划线）。
+- 优化 `run_local_backtest.py`：
+  - 支持参数化 `--stock-num`、`--commission-rate`、`--slippage-bps`；
+  - 周度选股失败时输出具体 warn，便于排查。
+
+---
+
 ## 1. 目录组件总览
 
 ### 1.1 策略核心组件

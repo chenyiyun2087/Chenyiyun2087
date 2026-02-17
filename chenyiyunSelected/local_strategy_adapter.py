@@ -1,14 +1,17 @@
-"""Local adapter for JoinQuant strategy `chenyiyun1.py`.
+"""JoinQuant 策略本地化适配器（chenyiyun1.py）。
 
-目标：把聚宽平台接口（get_price/get_fundamentals/get_factor_values）
-迁移为本地 MySQL `tushare_stock` 数仓读取。
+核心目标：
+1) 从 `tushare_stock` 数仓读取稳定字段；
+2) 保留原策略选股链路（高股息→高波动→低杠杆→小市值）；
+3) 支持离线信号输出及落库。
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Optional
 
 import pandas as pd
 import pymysql
@@ -34,11 +37,15 @@ class StrategyConfig:
 
 
 class TushareWarehouseProvider:
-    """Read-only provider against tushare_stock warehouse tables.
+    """Read-only provider for tushare_stock warehouse."""
 
-    说明：由于不同环境字段可能略有差异，这里优先使用信息_schema探测字段，
-    能取到就取，取不到就降级（避免一次性强耦合导致策略无法启动）。
-    """
+    REQUIRED_TABLE_COLUMNS: dict[str, set[str]] = {
+        "dwd_daily": {"trade_date"},
+        "dwd_stock_label_daily": {"ts_code", "trade_date", "is_st", "list_days"},
+        "dwd_daily_basic": {"ts_code", "trade_date", "circ_mv", "dv_ratio"},
+        "dwd_fina_indicator": {"ts_code", "ann_date", "mlev"},
+        "dws_liquidity_factor": {"ts_code", "trade_date", "turnover_volatility"},
+    }
 
     def __init__(self, cfg: DBConfig):
         self.cfg = cfg
@@ -62,8 +69,15 @@ class TushareWarehouseProvider:
             df = pd.read_sql(sql, conn, params=[self.cfg.database, table])
         return set(df["COLUMN_NAME"].tolist())
 
+    def validate_schema(self) -> None:
+        """Fail-fast schema validation for stable warehouse fields."""
+        for table, required_cols in self.REQUIRED_TABLE_COLUMNS.items():
+            got = self._columns(table)
+            missing = sorted(required_cols - got)
+            if missing:
+                raise RuntimeError(f"表 {table} 缺少字段: {missing}")
+
     def get_trade_date(self, input_date: Optional[date] = None) -> date:
-        """Return latest trade_date <= input_date in dwd_daily."""
         input_date = input_date or date.today()
         sql = "SELECT MAX(trade_date) AS d FROM dwd_daily WHERE trade_date<=%s"
         with self._conn() as conn:
@@ -73,95 +87,52 @@ class TushareWarehouseProvider:
         return pd.Timestamp(df.iloc[0]["d"]).date()
 
     def get_universe(self, trade_date: date) -> pd.DataFrame:
-        """Universe with listing and ST flags.
-
-        优先 dwd_stock_label_daily；若不可用降级为 dwd_daily_basic + ts_code。
-        """
-        label_cols = self._columns("dwd_stock_label_daily")
-        if {"ts_code", "trade_date"}.issubset(label_cols):
-            sel = ["ts_code", "trade_date"]
-            for c in ("is_st", "is_new", "list_days"):
-                if c in label_cols:
-                    sel.append(c)
-            sql = f"SELECT {','.join(sel)} FROM dwd_stock_label_daily WHERE trade_date=%s"
-            with self._conn() as conn:
-                return pd.read_sql(sql, conn, params=[trade_date])
-
-        basic_cols = self._columns("dwd_daily_basic")
-        if "ts_code" not in basic_cols:
-            raise RuntimeError("无法构建股票池：dwd_stock_label_daily/dwd_daily_basic 都缺少 ts_code")
-
-        sql = "SELECT ts_code, trade_date FROM dwd_daily_basic WHERE trade_date=%s"
+        sql = (
+            "SELECT ts_code, trade_date, is_st, list_days "
+            "FROM dwd_stock_label_daily WHERE trade_date=%s"
+        )
         with self._conn() as conn:
-            df = pd.read_sql(sql, conn, params=[trade_date])
-        df["is_st"] = 0
-        df["is_new"] = 0
-        df["list_days"] = 9999
-        return df
+            return pd.read_sql(sql, conn, params=[trade_date])
 
     def get_factor_frame(self, trade_date: date) -> pd.DataFrame:
-        """Build factor frame for selection chain.
-
-        mapping to JQ factors:
-        - dividend_ratio -> dwd_daily_basic.dv_ratio 或 dws_value_score.dividend_yield
-        - turnover_volatility -> dws_liquidity_factor.turnover_volatility
-        - MLEV -> dwd_fina_indicator.mlev
-        - circulating_market_cap -> dwd_daily_basic.circ_mv
-        """
-        parts: List[pd.DataFrame] = []
-
-        # market cap + dividend
-        basic_cols = self._columns("dwd_daily_basic")
-        basic_fields = ["ts_code", "trade_date"]
-        for c in ("circ_mv", "dv_ratio"):
-            if c in basic_cols:
-                basic_fields.append(c)
+        # 市值 + 股息率
         with self._conn() as conn:
-            parts.append(pd.read_sql(
-                f"SELECT {','.join(basic_fields)} FROM dwd_daily_basic WHERE trade_date=%s",
+            basic = pd.read_sql(
+                "SELECT ts_code, trade_date, circ_mv, dv_ratio "
+                "FROM dwd_daily_basic WHERE trade_date=%s",
                 conn,
                 params=[trade_date],
-            ))
+            )
 
-        # leverage
-        fina_cols = self._columns("dwd_fina_indicator")
-        if {"ts_code", "ann_date"}.issubset(fina_cols):
-            chosen = ["ts_code", "ann_date"]
-            if "mlev" in fina_cols:
-                chosen.append("mlev")
-            elif "debt_to_assets" in fina_cols:
-                chosen.append("debt_to_assets")
-            with self._conn() as conn:
-                fdf = pd.read_sql(
-                    f"SELECT {','.join(chosen)} FROM dwd_fina_indicator WHERE ann_date<=%s",
-                    conn,
-                    params=[trade_date],
-                )
-            if not fdf.empty:
-                fdf = fdf.sort_values(["ts_code", "ann_date"]).groupby("ts_code").tail(1)
-                if "mlev" not in fdf.columns and "debt_to_assets" in fdf.columns:
-                    fdf = fdf.rename(columns={"debt_to_assets": "mlev"})
-                parts.append(fdf[["ts_code", "mlev"]])
+            # 杠杆因子取截至 trade_date 最新披露
+            fina = pd.read_sql(
+                "SELECT ts_code, ann_date, mlev "
+                "FROM dwd_fina_indicator WHERE ann_date<=%s",
+                conn,
+                params=[trade_date],
+            )
 
-        # turnover volatility
-        liq_cols = self._columns("dws_liquidity_factor")
-        if {"ts_code", "trade_date", "turnover_volatility"}.issubset(liq_cols):
-            with self._conn() as conn:
-                parts.append(pd.read_sql(
-                    "SELECT ts_code, turnover_volatility FROM dws_liquidity_factor WHERE trade_date=%s",
-                    conn,
-                    params=[trade_date],
-                ))
+            # 换手波动
+            liq = pd.read_sql(
+                "SELECT ts_code, turnover_volatility "
+                "FROM dws_liquidity_factor WHERE trade_date=%s",
+                conn,
+                params=[trade_date],
+            )
 
-        # merge
-        out = parts[0]
-        for p in parts[1:]:
-            out = out.merge(p, on="ts_code", how="left")
+        fina_latest = (
+            fina.sort_values(["ts_code", "ann_date"]).groupby("ts_code", as_index=False).tail(1)[["ts_code", "mlev"]]
+            if not fina.empty
+            else pd.DataFrame(columns=["ts_code", "mlev"])
+        )
 
-        if "dv_ratio" in out.columns and "dividend_ratio" not in out.columns:
-            out = out.rename(columns={"dv_ratio": "dividend_ratio"})
-        if "circ_mv" in out.columns and "circulating_market_cap" not in out.columns:
-            out = out.rename(columns={"circ_mv": "circulating_market_cap"})
+        out = basic.merge(fina_latest, on="ts_code", how="left").merge(liq, on="ts_code", how="left")
+        out = out.rename(
+            columns={
+                "dv_ratio": "dividend_ratio",
+                "circ_mv": "circulating_market_cap",
+            }
+        )
         return out
 
 
@@ -171,13 +142,13 @@ class LocalHighDividendStrategy:
         self.config = config or StrategyConfig()
 
     @staticmethod
-    def _filter_kcbj(ts_codes: List[str]) -> List[str]:
-        out = []
-        for c in ts_codes:
-            raw = c.split(".")[0]
+    def _filter_kcbj(ts_codes: list[str]) -> list[str]:
+        out: list[str] = []
+        for code in ts_codes:
+            raw = code.split(".")[0]
             if raw.startswith(("4", "8", "68")):
                 continue
-            out.append(c)
+            out.append(code)
         return out
 
     @staticmethod
@@ -188,16 +159,14 @@ class LocalHighDividendStrategy:
         return x.iloc[int(start * len(x)): int(end * len(x))]
 
     def pick(self, asof: Optional[date] = None) -> pd.DataFrame:
+        self.provider.validate_schema()
         trade_date = self.provider.get_trade_date(asof)
         universe = self.provider.get_universe(trade_date)
-        fac = self.provider.get_factor_frame(trade_date)
+        factors = self.provider.get_factor_frame(trade_date)
 
-        df = universe.merge(fac, on=["ts_code", "trade_date"], how="inner")
-        if "is_st" in df.columns:
-            df = df[df["is_st"] == 0]
-        if "list_days" in df.columns:
-            df = df[df["list_days"] >= self.config.new_stock_days]
-
+        df = universe.merge(factors, on=["ts_code", "trade_date"], how="inner")
+        df = df[df["is_st"] == 0]
+        df = df[df["list_days"] >= self.config.new_stock_days]
         df = df[df["ts_code"].isin(self._filter_kcbj(df["ts_code"].tolist()))]
 
         dr = self._pct_slice(df, "dividend_ratio", ascending=False, start=0, end=self.config.dividend_top_pct)
@@ -211,24 +180,15 @@ class LocalHighDividendStrategy:
             .sort_values("circulating_market_cap", ascending=True)
             .head(self.config.preselect_size)
             .loc[:, ["trade_date", "ts_code", "dividend_ratio", "turnover_volatility", "mlev", "circulating_market_cap"]]
+            .reset_index(drop=True)
         )
-        return final.reset_index(drop=True)
+        return final
 
     def build_daily_signals(self, asof: Optional[date] = None) -> pd.DataFrame:
-        """Generate local daily signals (Phase-B) from selected candidates.
-
-        Output schema:
-        - trade_date
-        - ts_code
-        - signal (BUY/HOLD)
-        - target_weight
-        - rank
-        """
         picked = self.pick(asof).head(self.config.stock_num).copy()
         if picked.empty:
-            return pd.DataFrame(
-                columns=["trade_date", "ts_code", "signal", "target_weight", "rank"]
-            )
+            return pd.DataFrame(columns=["trade_date", "ts_code", "signal", "target_weight", "rank"])
+
         picked["rank"] = range(1, len(picked) + 1)
         picked["signal"] = "BUY"
         picked["target_weight"] = 1.0 / len(picked)
@@ -237,6 +197,8 @@ class LocalHighDividendStrategy:
     def save_daily_signals(self, signals: pd.DataFrame, table: str = "ads_local_strategy_signals") -> None:
         if signals is None or signals.empty:
             return
+        if not re.match(r"^[A-Za-z0-9_]+$", table):
+            raise ValueError("signal table 名称仅允许字母/数字/下划线")
 
         with self.provider._conn() as conn:
             with conn.cursor() as cur:
@@ -267,7 +229,7 @@ class LocalHighDividendStrategy:
             conn.commit()
 
 
-def main():
+def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Run local-adapted high-dividend strategy")
@@ -283,9 +245,9 @@ def main():
     args = parser.parse_args()
 
     cfg = DBConfig(args.host, args.port, args.user, args.password, args.database)
-    scfg = StrategyConfig(stock_num=args.top)
-    strategy = LocalHighDividendStrategy(TushareWarehouseProvider(cfg), scfg)
+    strategy = LocalHighDividendStrategy(TushareWarehouseProvider(cfg), StrategyConfig(stock_num=args.top))
     asof = datetime.strptime(args.date, "%Y-%m-%d").date() if args.date else None
+
     picked = strategy.pick(asof)
     print(picked.head(args.top).to_string(index=False))
 
