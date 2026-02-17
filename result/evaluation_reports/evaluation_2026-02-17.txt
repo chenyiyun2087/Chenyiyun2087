@@ -1,0 +1,56 @@
+Evaluation Run: 2026-02-17 00:09:49
+==================================================
+Fetching M1 Data...
+Loaded 739 event rows.
+
+=== M2: Strategy Presets (Recent 60 Days) ===
+Strategy: pyramid_default
+  Desc: 总分>60 + 因子前30% + Claude>50
+  Avg Ret (10d): None%
+  Hit Rate (10d): None%
+------------------------------
+Strategy: weighted_balanced_top33pct
+  Desc: A/B/C=0.4/0.3/0.3，取前33%
+  Avg Ret (10d): None%
+  Hit Rate (10d): None%
+------------------------------
+Strategy: quadrant_star_only
+  Desc: 四象限仅明星股
+  Avg Ret (10d): None%
+  Hit Rate (10d): None%
+------------------------------
+
+=== M3: Parameter Optimization ===
+Tested 58 combinations.
+Top Winners:
+  Family: weighted
+  Params: A/B/C=0.6/0.2/0.2, top33%
+  Avg Ret (10d): -8.47% | Hit (10d): 0.0%
+  Family: pyramid
+  Params: score>55.0, top=20.0%, claude>45.0
+  Avg Ret (10d): None% | Hit (10d): None%
+  Family: quadrant
+  Params: score>55.0, opt>=5.5, claude>=45.0
+  Avg Ret (10d): None% | Hit (10d): None%
+
+=== M5: Rolling Validation (Window=5) ===
+Windows Tested: 11
+Avg Return Distribution: Mean=-5.87% [Min=-5.87%, Max=-5.87%]
+Hit Rate Distribution: Mean=0.0% [Min=0.0%, Max=0.0%]
+
+=== M6: Net Asset Value (NAV) ===
+Total Trading Days: 15
+Gross Return: -22.75%
+Net Return (after cost/slip): -29.53%
+Max Drawdown: -25.79%
+
+=== 综合投资建议 (Investment Conclusion) ===
+信号分析:
+  ❌ M6 净值回撤 (Negative NAV: -29.53%)
+  ❌ M5 滚动窗口亏损 (Avg Ret: -5.87%)
+  ❌ M3 最优参数仍亏损 (Best: -8.47%)
+
+最终结论:
+  建议仓位: 0.0%
+  操作指令: 【空仓 (Empty Position)】
+  执行建议: 市场环境极差，建议完全空仓观望，停止所有买入操作。
