@@ -73,6 +73,7 @@ UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
     UPLOAD_BACKTEST_DIR,
     Path('backtest/result'),
+    Path('backtest/results'),
     Path('sina/backtest/result'),
 ]
 
@@ -91,12 +92,14 @@ def _extract_equity_points(payload):
     if isinstance(payload, list):
         source = payload
     elif isinstance(payload, dict):
+        timeseries = payload.get('timeseries') if isinstance(payload.get('timeseries'), dict) else {}
         source = (
             payload.get('equity_curve')
             or payload.get('equity')
             or payload.get('nav_curve')
             or payload.get('curve')
             or payload.get('daily_equity')
+            or timeseries.get('nav')
             or []
         )
     else:
@@ -140,17 +143,95 @@ def _extract_trade_rows(payload):
         if not isinstance(item, dict):
             continue
 
-        rows.append({
-            'datetime': item.get('datetime') or item.get('date') or item.get('time') or item.get('timestamp') or '-',
+        row = {
+            'datetime': item.get('datetime') or item.get('date') or item.get('time') or item.get('timestamp') or item.get('ts') or '-',
+            'buy_date': item.get('buy_date') or item.get('entry_date') or '-',
             'symbol': item.get('symbol') or item.get('code') or item.get('stock_code') or '-',
-            'side': item.get('side') or item.get('action') or item.get('type') or '-',
+            'side': str(item.get('side') or item.get('action') or item.get('type') or '-').upper(),
             'price': item.get('price') if item.get('price') is not None else item.get('trade_price') or '-',
-            'quantity': item.get('quantity') if item.get('quantity') is not None else item.get('shares') or item.get('volume') or '-',
+            'quantity': item.get('quantity') if item.get('quantity') is not None else item.get('qty') if item.get('qty') is not None else item.get('shares') or item.get('volume') or '-',
             'amount': item.get('amount') if item.get('amount') is not None else item.get('trade_value') or '-',
             'reason': item.get('reason') or item.get('note') or '-',
-        })
+        }
+        try:
+            row['price_num'] = float(row['price'])
+        except (TypeError, ValueError):
+            row['price_num'] = 0.0
+        try:
+            row['quantity_num'] = int(float(row['quantity']))
+        except (TypeError, ValueError):
+            row['quantity_num'] = 0
+        if row['amount'] in (None, '-', ''):
+            row['amount'] = round(row['price_num'] * row['quantity_num'], 2) if row['price_num'] and row['quantity_num'] else '-'
+        rows.append(row)
 
     return rows
+
+
+def _build_symbol_performance(trade_rows):
+    stats = {}
+    for row in trade_rows:
+        symbol = row.get('symbol') or '-'
+        side = str(row.get('side') or '').upper()
+        qty = row.get('quantity_num', 0)
+        price = row.get('price_num', 0.0)
+        dt = row.get('datetime')
+
+        if symbol not in stats:
+            stats[symbol] = {
+                'symbol': symbol,
+                'buy_qty': 0,
+                'sell_qty': 0,
+                'buy_amount': 0.0,
+                'sell_amount': 0.0,
+                'realized_pnl': 0.0,
+                'open_qty': 0,
+                'avg_cost': 0.0,
+                'first_buy_date': '-',
+                '_lots': [],
+            }
+
+        st = stats[symbol]
+
+        if side == 'BUY' and qty > 0:
+            st['buy_qty'] += qty
+            st['buy_amount'] += qty * price
+            st['open_qty'] += qty
+            st['_lots'].append({'qty': qty, 'price': price, 'buy_date': dt})
+            if st['first_buy_date'] == '-' and dt:
+                st['first_buy_date'] = dt
+
+        elif side == 'SELL' and qty > 0:
+            st['sell_qty'] += qty
+            st['sell_amount'] += qty * price
+            remain = qty
+            matched_buy_date = '-'
+            while remain > 0 and st['_lots']:
+                lot = st['_lots'][0]
+                take = min(remain, lot['qty'])
+                st['realized_pnl'] += take * (price - lot['price'])
+                remain -= take
+                lot['qty'] -= take
+                if matched_buy_date == '-' and lot.get('buy_date'):
+                    matched_buy_date = lot['buy_date']
+                if lot['qty'] <= 0:
+                    st['_lots'].pop(0)
+            st['open_qty'] = max(st['open_qty'] - qty, 0)
+            row['buy_date'] = row.get('buy_date') if row.get('buy_date') not in (None, '', '-') else matched_buy_date
+
+    result = []
+    for symbol, st in stats.items():
+        open_cost = sum(l['qty'] * l['price'] for l in st['_lots'])
+        open_qty = sum(l['qty'] for l in st['_lots'])
+        st['open_qty'] = open_qty
+        st['avg_cost'] = (open_cost / open_qty) if open_qty > 0 else 0.0
+        base = st['buy_amount'] if st['buy_amount'] > 0 else 0.0
+        st['realized_return_pct'] = (st['realized_pnl'] / base * 100) if base > 0 else 0.0
+        st.pop('_lots', None)
+        result.append(st)
+
+    result.sort(key=lambda x: x['realized_pnl'], reverse=True)
+    return result
 
 def init_tasks():
     """Load task status from database"""
@@ -1309,6 +1390,7 @@ def backtest_results():
     chart_labels = []
     chart_values = []
     trade_rows = []
+    symbol_stats = []
     error_msg = None
 
     if selected_file:
@@ -1316,6 +1398,7 @@ def backtest_results():
             payload = json.loads(selected_file.read_text(encoding='utf-8'))
             equity_points = _extract_equity_points(payload)
             trade_rows = _extract_trade_rows(payload)
+            symbol_stats = _build_symbol_performance(trade_rows)
             chart_labels = [p['date'] for p in equity_points]
             chart_values = [p['value'] for p in equity_points]
         except Exception as e:
@@ -1329,6 +1412,7 @@ def backtest_results():
         chart_labels=chart_labels,
         chart_values=chart_values,
         trade_rows=trade_rows,
+        symbol_stats=symbol_stats,
         error_msg=error_msg,
     )
 @app.route('/admin')

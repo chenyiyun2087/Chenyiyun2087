@@ -44,6 +44,7 @@
         <thead>
             <tr>
                 <th>时间</th>
+                <th>购买日期</th>
                 <th>标的</th>
                 <th>方向</th>
                 <th>价格</th>
@@ -57,6 +58,7 @@
             {% for row in trade_rows %}
             <tr>
                 <td>{{ row.datetime }}</td>
+                <td>{{ row.buy_date }}</td>
                 <td>{{ row.symbol }}</td>
                 <td>{{ row.side }}</td>
                 <td>{{ row.price }}</td>
@@ -67,8 +69,49 @@
             {% endfor %}
             {% else %}
             <tr>
-                <td colspan="7" class="empty">当前文件没有交易记录。</td>
+                <td colspan="8" class="empty">当前文件没有交易记录。</td>
             </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+
+
+<div class="panel">
+    <div class="panel-title">个股收益统计（按已实现收益）</div>
+    <table>
+        <thead>
+            <tr>
+                <th>标的</th>
+                <th>首次买入日</th>
+                <th>买入数量</th>
+                <th>卖出数量</th>
+                <th>买入金额</th>
+                <th>卖出金额</th>
+                <th>已实现收益</th>
+                <th>已实现收益率</th>
+                <th>剩余持仓</th>
+                <th>剩余成本价</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if symbol_stats %}
+            {% for row in symbol_stats %}
+            <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.first_buy_date }}</td>
+                <td>{{ row.buy_qty }}</td>
+                <td>{{ row.sell_qty }}</td>
+                <td>{{ '%.2f'|format(row.buy_amount) }}</td>
+                <td>{{ '%.2f'|format(row.sell_amount) }}</td>
+                <td class="{% if row.realized_pnl >= 0 %}text-up{% else %}text-down{% endif %}">{{ '%.2f'|format(row.realized_pnl) }}</td>
+                <td class="{% if row.realized_return_pct >= 0 %}text-up{% else %}text-down{% endif %}">{{ '%.2f'|format(row.realized_return_pct) }}%</td>
+                <td>{{ row.open_qty }}</td>
+                <td>{{ '%.4f'|format(row.avg_cost) }}</td>
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr><td colspan="10" class="empty">暂无可统计收益的交易数据。</td></tr>
             {% endif %}
         </tbody>
     </table>
