@@ -2,6 +2,7 @@ from flask import Flask, render_template, g, request, redirect, url_for, flash
 import sys
 import pymysql
 import json
+from pathlib import Path
 from datetime import datetime
 import subprocess
 import threading
@@ -60,6 +61,87 @@ TASKS = {
     "sina_snapshot": {"name": "sina 实盘快照", "script": "sina/live_tracker/live_tracker.py", "last_run": "Never", "status": "Idle", "switched_day": False},
     "eastmoney": {"name": "eastmoney 策略扫描", "script": "eastmoney/run_strategy.py", "last_run": "Never", "status": "Idle", "switched_day": False}
 }
+
+BACKTEST_RESULT_DIRS = [
+    Path('backtest/result'),
+    Path('sina/backtest/result'),
+]
+
+
+def _get_backtest_json_files():
+    files = []
+    for result_dir in BACKTEST_RESULT_DIRS:
+        if not result_dir.exists() or not result_dir.is_dir():
+            continue
+        for path in sorted(result_dir.glob('*.json'), reverse=True):
+            files.append(path)
+    return files
+
+
+def _extract_equity_points(payload):
+    if isinstance(payload, list):
+        source = payload
+    elif isinstance(payload, dict):
+        source = (
+            payload.get('equity_curve')
+            or payload.get('equity')
+            or payload.get('nav_curve')
+            or payload.get('curve')
+            or payload.get('daily_equity')
+            or []
+        )
+    else:
+        source = []
+
+    points = []
+    for item in source:
+        if isinstance(item, dict):
+            date = item.get('date') or item.get('datetime') or item.get('time') or item.get('timestamp')
+            value = item.get('equity')
+            if value is None:
+                value = item.get('nav')
+            if value is None:
+                value = item.get('value')
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            date, value = item[0], item[1]
+        else:
+            continue
+
+        if date is None or value is None:
+            continue
+
+        try:
+            points.append({'date': str(date), 'value': float(value)})
+        except (TypeError, ValueError):
+            continue
+
+    return points
+
+
+def _extract_trade_rows(payload):
+    if isinstance(payload, dict):
+        source = payload.get('trades') or payload.get('transactions') or payload.get('orders') or []
+    elif isinstance(payload, list):
+        source = payload
+    else:
+        source = []
+
+    rows = []
+    for item in source:
+        if not isinstance(item, dict):
+            continue
+
+        rows.append({
+            'datetime': item.get('datetime') or item.get('date') or item.get('time') or item.get('timestamp') or '-',
+            'symbol': item.get('symbol') or item.get('code') or item.get('stock_code') or '-',
+            'side': item.get('side') or item.get('action') or item.get('type') or '-',
+            'price': item.get('price') if item.get('price') is not None else item.get('trade_price') or '-',
+            'quantity': item.get('quantity') if item.get('quantity') is not None else item.get('shares') or item.get('volume') or '-',
+            'amount': item.get('amount') if item.get('amount') is not None else item.get('trade_value') or '-',
+            'reason': item.get('reason') or item.get('note') or '-',
+        })
+
+    return rows
 
 def init_tasks():
     """Load task status from database"""
@@ -1176,6 +1258,50 @@ def sina_strategy_m7():
     )
 
 
+
+
+@app.route('/backtest/results')
+def backtest_results():
+    json_files = _get_backtest_json_files()
+    selected = request.args.get('file')
+
+    selected_file = None
+    if selected:
+        selected_path = Path(selected)
+        for item in json_files:
+            if item == selected_path or item.as_posix() == selected:
+                selected_file = item
+                break
+
+    if selected_file is None and json_files:
+        selected_file = json_files[0]
+
+    file_options = [f.as_posix() for f in json_files]
+    chart_labels = []
+    chart_values = []
+    trade_rows = []
+    error_msg = None
+
+    if selected_file:
+        try:
+            payload = json.loads(selected_file.read_text(encoding='utf-8'))
+            equity_points = _extract_equity_points(payload)
+            trade_rows = _extract_trade_rows(payload)
+            chart_labels = [p['date'] for p in equity_points]
+            chart_values = [p['value'] for p in equity_points]
+        except Exception as e:
+            error_msg = f'读取回测结果失败: {e}'
+
+    return render_template(
+        'backtest_results.html',
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        file_options=file_options,
+        selected_file=selected_file.as_posix() if selected_file else '',
+        chart_labels=chart_labels,
+        chart_values=chart_values,
+        trade_rows=trade_rows,
+        error_msg=error_msg,
+    )
 @app.route('/admin')
 def admin():
     return render_template('admin.html', 
