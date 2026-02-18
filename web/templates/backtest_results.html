@@ -1,0 +1,115 @@
+{% extends "layout.html" %}
+
+{% block title %}回测结果浏览{% endblock %}
+{% block page_title %}回测结果浏览{% endblock %}
+
+{% block content %}
+<div class="panel">
+    <div class="panel-title">上传并选择回测 JSON 文件</div>
+    <form method="post" class="form-inline" enctype="multipart/form-data">
+        <input type="file" name="backtest_file" accept=".json,application/json" class="backtest-file-input">
+        <button class="btn" type="submit">上传并解析</button>
+    </form>
+    <div style="height: 10px;"></div>
+    <form method="get" class="form-inline">
+        <select name="file" class="backtest-select" onchange="this.form.submit()">
+            {% if not file_options %}
+            <option value="">未发现 JSON 文件</option>
+            {% endif %}
+            {% for path in file_options %}
+            <option value="{{ path }}" {% if path == selected_file %}selected{% endif %}>{{ path }}</option>
+            {% endfor %}
+        </select>
+        <noscript><button class="btn" type="submit">加载</button></noscript>
+    </form>
+    {% if error_msg %}
+    <p class="text-down">{{ error_msg }}</p>
+    {% endif %}
+</div>
+
+<div class="panel">
+    <div class="panel-title">净值曲线</div>
+    {% if chart_labels and chart_values %}
+    <div class="chart-wrap">
+        <canvas id="equityChart" height="130"></canvas>
+    </div>
+    {% else %}
+    <p class="muted">当前文件没有可展示的净值曲线数据。</p>
+    {% endif %}
+</div>
+
+<div class="panel">
+    <div class="panel-title">交易记录</div>
+    <table>
+        <thead>
+            <tr>
+                <th>时间</th>
+                <th>标的</th>
+                <th>方向</th>
+                <th>价格</th>
+                <th>数量</th>
+                <th>金额</th>
+                <th>备注</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if trade_rows %}
+            {% for row in trade_rows %}
+            <tr>
+                <td>{{ row.datetime }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.side }}</td>
+                <td>{{ row.price }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ row.amount }}</td>
+                <td>{{ row.reason }}</td>
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+                <td colspan="7" class="empty">当前文件没有交易记录。</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    const labels = {{ chart_labels | tojson }};
+    const values = {{ chart_values | tojson }};
+
+    if (labels.length && values.length) {
+        const ctx = document.getElementById('equityChart');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: '净值',
+                    data: values,
+                    borderColor: '#60a5fa',
+                    backgroundColor: 'rgba(96,165,250,0.15)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.2,
+                    pointRadius: 0,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#e5ecf8' }
+                    }
+                },
+                scales: {
+                    x: { ticks: { color: '#93a4c3' }, grid: { color: 'rgba(147,164,195,0.12)' } },
+                    y: { ticks: { color: '#93a4c3' }, grid: { color: 'rgba(147,164,195,0.12)' } }
+                }
+            }
+        });
+    }
+</script>
+{% endblock %}
