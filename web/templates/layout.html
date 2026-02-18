@@ -23,6 +23,7 @@
                     class="{% if request.endpoint == 'sina_strategy' %}active{% endif %}">策略中心</a>
                 <a href="{{ url_for('sina_strategy_pyramid') }}"
                     class="{% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7'] %}active{% endif %}">评分策略</a>
+                <a href="{{ url_for('backtest_results') }}" class="{% if request.endpoint == 'backtest_results' %}active{% endif %}">回测结果</a>
                 <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </nav>
         </aside>
@@ -48,6 +49,8 @@
                     class="tab {% if request.endpoint == 'sina_strategy' %}active{% endif %}">评分策略</a>
                 <a href="{{ url_for('sina_strategy_pyramid') }}"
                     class="tab {% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7'] %}active{% endif %}">策略分栏</a>
+                <a href="{{ url_for('backtest_results') }}"
+                    class="tab {% if request.endpoint == 'backtest_results' %}active{% endif %}">回测结果</a>
                 <a href="{{ url_for('admin') }}"
                     class="tab {% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </div>

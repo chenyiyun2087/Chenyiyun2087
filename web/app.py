@@ -2,11 +2,19 @@ from flask import Flask, render_template, g, request, redirect, url_for, flash
 import sys
 import pymysql
 import json
+from pathlib import Path
 from datetime import datetime
 import subprocess
 import threading
 import time
-from sina.live_tracker.live_tracker import LiveTracker
+from werkzeug.utils import secure_filename
+
+try:
+    from sina.live_tracker.live_tracker import LiveTracker
+    LIVE_TRACKER_IMPORT_ERROR = None
+except ModuleNotFoundError as e:
+    LiveTracker = None  # type: ignore
+    LIVE_TRACKER_IMPORT_ERROR = str(e)
 
 try:
     from web.strategy_playbook import (
@@ -60,6 +68,170 @@ TASKS = {
     "sina_snapshot": {"name": "sina 实盘快照", "script": "sina/live_tracker/live_tracker.py", "last_run": "Never", "status": "Idle", "switched_day": False},
     "eastmoney": {"name": "eastmoney 策略扫描", "script": "eastmoney/run_strategy.py", "last_run": "Never", "status": "Idle", "switched_day": False}
 }
+
+UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
+BACKTEST_RESULT_DIRS = [
+    UPLOAD_BACKTEST_DIR,
+    Path('backtest/result'),
+    Path('backtest/results'),
+    Path('sina/backtest/result'),
+]
+
+
+def _get_backtest_json_files():
+    files = []
+    for result_dir in BACKTEST_RESULT_DIRS:
+        if not result_dir.exists() or not result_dir.is_dir():
+            continue
+        for path in sorted(result_dir.glob('*.json'), reverse=True):
+            files.append(path)
+    return files
+
+
+def _extract_equity_points(payload):
+    if isinstance(payload, list):
+        source = payload
+    elif isinstance(payload, dict):
+        timeseries = payload.get('timeseries') if isinstance(payload.get('timeseries'), dict) else {}
+        source = (
+            payload.get('equity_curve')
+            or payload.get('equity')
+            or payload.get('nav_curve')
+            or payload.get('curve')
+            or payload.get('daily_equity')
+            or timeseries.get('nav')
+            or []
+        )
+    else:
+        source = []
+
+    points = []
+    for item in source:
+        if isinstance(item, dict):
+            date = item.get('date') or item.get('datetime') or item.get('time') or item.get('timestamp')
+            value = item.get('equity')
+            if value is None:
+                value = item.get('nav')
+            if value is None:
+                value = item.get('value')
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            date, value = item[0], item[1]
+        else:
+            continue
+
+        if date is None or value is None:
+            continue
+
+        try:
+            points.append({'date': str(date), 'value': float(value)})
+        except (TypeError, ValueError):
+            continue
+
+    return points
+
+
+def _extract_trade_rows(payload):
+    if isinstance(payload, dict):
+        source = payload.get('trades') or payload.get('transactions') or payload.get('orders') or []
+    elif isinstance(payload, list):
+        source = payload
+    else:
+        source = []
+
+    rows = []
+    for item in source:
+        if not isinstance(item, dict):
+            continue
+
+        row = {
+            'datetime': item.get('datetime') or item.get('date') or item.get('time') or item.get('timestamp') or item.get('ts') or '-',
+            'buy_date': item.get('buy_date') or item.get('entry_date') or '-',
+            'symbol': item.get('symbol') or item.get('code') or item.get('stock_code') or '-',
+            'side': str(item.get('side') or item.get('action') or item.get('type') or '-').upper(),
+            'price': item.get('price') if item.get('price') is not None else item.get('trade_price') or '-',
+            'quantity': item.get('quantity') if item.get('quantity') is not None else item.get('qty') if item.get('qty') is not None else item.get('shares') or item.get('volume') or '-',
+            'amount': item.get('amount') if item.get('amount') is not None else item.get('trade_value') or '-',
+            'reason': item.get('reason') or item.get('note') or '-',
+        }
+        try:
+            row['price_num'] = float(row['price'])
+        except (TypeError, ValueError):
+            row['price_num'] = 0.0
+        try:
+            row['quantity_num'] = int(float(row['quantity']))
+        except (TypeError, ValueError):
+            row['quantity_num'] = 0
+        if row['amount'] in (None, '-', ''):
+            row['amount'] = round(row['price_num'] * row['quantity_num'], 2) if row['price_num'] and row['quantity_num'] else '-'
+        rows.append(row)
+
+    return rows
+
+
+def _build_symbol_performance(trade_rows):
+    stats = {}
+    for row in trade_rows:
+        symbol = row.get('symbol') or '-'
+        side = str(row.get('side') or '').upper()
+        qty = row.get('quantity_num', 0)
+        price = row.get('price_num', 0.0)
+        dt = row.get('datetime')
+
+        if symbol not in stats:
+            stats[symbol] = {
+                'symbol': symbol,
+                'buy_qty': 0,
+                'sell_qty': 0,
+                'buy_amount': 0.0,
+                'sell_amount': 0.0,
+                'realized_pnl': 0.0,
+                'open_qty': 0,
+                'avg_cost': 0.0,
+                'first_buy_date': '-',
+                '_lots': [],
+            }
+
+        st = stats[symbol]
+
+        if side == 'BUY' and qty > 0:
+            st['buy_qty'] += qty
+            st['buy_amount'] += qty * price
+            st['open_qty'] += qty
+            st['_lots'].append({'qty': qty, 'price': price, 'buy_date': dt})
+            if st['first_buy_date'] == '-' and dt:
+                st['first_buy_date'] = dt
+
+        elif side == 'SELL' and qty > 0:
+            st['sell_qty'] += qty
+            st['sell_amount'] += qty * price
+            remain = qty
+            matched_buy_date = '-'
+            while remain > 0 and st['_lots']:
+                lot = st['_lots'][0]
+                take = min(remain, lot['qty'])
+                st['realized_pnl'] += take * (price - lot['price'])
+                remain -= take
+                lot['qty'] -= take
+                if matched_buy_date == '-' and lot.get('buy_date'):
+                    matched_buy_date = lot['buy_date']
+                if lot['qty'] <= 0:
+                    st['_lots'].pop(0)
+            st['open_qty'] = max(st['open_qty'] - qty, 0)
+            row['buy_date'] = row.get('buy_date') if row.get('buy_date') not in (None, '', '-') else matched_buy_date
+
+    result = []
+    for symbol, st in stats.items():
+        open_cost = sum(l['qty'] * l['price'] for l in st['_lots'])
+        open_qty = sum(l['qty'] for l in st['_lots'])
+        st['open_qty'] = open_qty
+        st['avg_cost'] = (open_cost / open_qty) if open_qty > 0 else 0.0
+        base = st['buy_amount'] if st['buy_amount'] > 0 else 0.0
+        st['realized_return_pct'] = (st['realized_pnl'] / base * 100) if base > 0 else 0.0
+        st.pop('_lots', None)
+        result.append(st)
+
+    result.sort(key=lambda x: x['realized_pnl'], reverse=True)
+    return result
 
 def init_tasks():
     """Load task status from database"""
@@ -475,6 +647,9 @@ def sina_monitor():
 @app.route('/api/live/execute_trade', methods=['POST'])
 def execute_trade():
     """Execute a trade from the web interface using LiveTracker"""
+    if LiveTracker is None:
+        return {"error": f"LiveTracker 不可用: {LIVE_TRACKER_IMPORT_ERROR}"}, 503
+
     try:
         data = request.json
         if not data:
@@ -1176,6 +1351,75 @@ def sina_strategy_m7():
     )
 
 
+
+
+@app.route('/backtest/results', methods=['GET', 'POST'])
+def backtest_results():
+    if request.method == 'POST':
+        upload_file = request.files.get('backtest_file')
+        if not upload_file or not upload_file.filename:
+            flash('请选择需要上传的 JSON 文件。', 'danger')
+            return redirect(url_for('backtest_results'))
+
+        filename = secure_filename(upload_file.filename)
+        if not filename.lower().endswith('.json'):
+            flash('仅支持上传 .json 文件。', 'danger')
+            return redirect(url_for('backtest_results'))
+
+        UPLOAD_BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
+        save_path = UPLOAD_BACKTEST_DIR / filename
+        upload_file.save(save_path)
+        flash(f'上传成功：{save_path.as_posix()}', 'success')
+        return redirect(url_for('backtest_results', file=save_path.as_posix()))
+
+    json_files = _get_backtest_json_files()
+    selected = request.args.get('file')
+
+    selected_file = None
+    if selected:
+        selected_path = Path(selected)
+        for item in json_files:
+            if item == selected_path or item.as_posix() == selected:
+                selected_file = item
+                break
+
+    if selected_file is None and json_files:
+        selected_file = json_files[0]
+
+    file_options = [f.as_posix() for f in json_files]
+    chart_labels = []
+    chart_values = []
+    trade_rows = []
+    symbol_stats = []
+    error_msg = None
+
+    if selected_file:
+        try:
+            payload = json.loads(selected_file.read_text(encoding='utf-8'))
+            equity_points = _extract_equity_points(payload)
+            trade_rows = _extract_trade_rows(payload)
+            symbol_stats = _build_symbol_performance(trade_rows)
+            chart_labels = [p['date'] for p in equity_points]
+            raw_values = [p['value'] for p in equity_points]
+            if raw_values and raw_values[0] not in (0, None):
+                base_value = float(raw_values[0])
+                chart_values = [round(float(v) / base_value, 6) for v in raw_values]
+            else:
+                chart_values = raw_values
+        except Exception as e:
+            error_msg = f'读取回测结果失败: {e}'
+
+    return render_template(
+        'backtest_results.html',
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        file_options=file_options,
+        selected_file=selected_file.as_posix() if selected_file else '',
+        chart_labels=chart_labels,
+        chart_values=chart_values,
+        trade_rows=trade_rows,
+        symbol_stats=symbol_stats,
+        error_msg=error_msg,
+    )
 @app.route('/admin')
 def admin():
     return render_template('admin.html', 
