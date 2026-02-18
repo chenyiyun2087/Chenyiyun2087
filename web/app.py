@@ -7,7 +7,14 @@ from datetime import datetime
 import subprocess
 import threading
 import time
-from sina.live_tracker.live_tracker import LiveTracker
+from werkzeug.utils import secure_filename
+
+try:
+    from sina.live_tracker.live_tracker import LiveTracker
+    LIVE_TRACKER_IMPORT_ERROR = None
+except ModuleNotFoundError as e:
+    LiveTracker = None  # type: ignore
+    LIVE_TRACKER_IMPORT_ERROR = str(e)
 
 try:
     from web.strategy_playbook import (
@@ -62,7 +69,9 @@ TASKS = {
     "eastmoney": {"name": "eastmoney 策略扫描", "script": "eastmoney/run_strategy.py", "last_run": "Never", "status": "Idle", "switched_day": False}
 }
 
+UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
+    UPLOAD_BACKTEST_DIR,
     Path('backtest/result'),
     Path('sina/backtest/result'),
 ]
@@ -557,6 +566,9 @@ def sina_monitor():
 @app.route('/api/live/execute_trade', methods=['POST'])
 def execute_trade():
     """Execute a trade from the web interface using LiveTracker"""
+    if LiveTracker is None:
+        return {"error": f"LiveTracker 不可用: {LIVE_TRACKER_IMPORT_ERROR}"}, 503
+
     try:
         data = request.json
         if not data:
@@ -1260,8 +1272,25 @@ def sina_strategy_m7():
 
 
 
-@app.route('/backtest/results')
+@app.route('/backtest/results', methods=['GET', 'POST'])
 def backtest_results():
+    if request.method == 'POST':
+        upload_file = request.files.get('backtest_file')
+        if not upload_file or not upload_file.filename:
+            flash('请选择需要上传的 JSON 文件。', 'danger')
+            return redirect(url_for('backtest_results'))
+
+        filename = secure_filename(upload_file.filename)
+        if not filename.lower().endswith('.json'):
+            flash('仅支持上传 .json 文件。', 'danger')
+            return redirect(url_for('backtest_results'))
+
+        UPLOAD_BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
+        save_path = UPLOAD_BACKTEST_DIR / filename
+        upload_file.save(save_path)
+        flash(f'上传成功：{save_path.as_posix()}', 'success')
+        return redirect(url_for('backtest_results', file=save_path.as_posix()))
+
     json_files = _get_backtest_json_files()
     selected = request.args.get('file')
 

@@ -305,3 +305,8 @@ tr:hover { background: #15213a; }
     width: 100%;
     height: 320px;
 }
+
+.backtest-file-input {
+    min-width: 260px;
+    color: var(--muted);
+}

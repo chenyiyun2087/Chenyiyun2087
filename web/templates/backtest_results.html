@@ -5,7 +5,12 @@
 
 {% block content %}
 <div class="panel">
-    <div class="panel-title">选择回测 JSON 文件</div>
+    <div class="panel-title">上传并选择回测 JSON 文件</div>
+    <form method="post" class="form-inline" enctype="multipart/form-data">
+        <input type="file" name="backtest_file" accept=".json,application/json" class="backtest-file-input">
+        <button class="btn" type="submit">上传并解析</button>
+    </form>
+    <div style="height: 10px;"></div>
     <form method="get" class="form-inline">
         <select name="file" class="backtest-select" onchange="this.form.submit()">
             {% if not file_options %}
