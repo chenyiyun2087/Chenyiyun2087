@@ -38,6 +38,24 @@
     {% endif %}
 </div>
 
+
+<div class="panel">
+    <div class="panel-title">策略总体信息</div>
+    <div class="metrics-grid">
+        <div class="metric-card"><div class="label">总盈利</div><div class="value small">{{ ('%.2f'|format(strategy_summary.total_profit)) if strategy_summary.total_profit is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">总收益率</div><div class="value small">{{ ('%.2f%%'|format(strategy_summary.total_return * 100)) if strategy_summary.total_return is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">年化盈利</div><div class="value small">{{ ('%.2f%%'|format(strategy_summary.annualized_return * 100)) if strategy_summary.annualized_return is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">夏普</div><div class="value small">{{ ('%.4f'|format(strategy_summary.sharpe)) if strategy_summary.sharpe is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">Beta</div><div class="value small">{{ ('%.4f'|format(strategy_summary.beta)) if strategy_summary.beta is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">Alpha</div><div class="value small">{{ ('%.4f'|format(strategy_summary.alpha)) if strategy_summary.alpha is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">胜率</div><div class="value small">{{ ('%.2f%%'|format(strategy_summary.win_rate * 100)) if strategy_summary.win_rate is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">盈利次数</div><div class="value small">{{ strategy_summary.win_count if strategy_summary.win_count is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">亏损次数</div><div class="value small">{{ strategy_summary.loss_count if strategy_summary.loss_count is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">IC</div><div class="value small">{{ ('%.4f'|format(strategy_summary.ic)) if strategy_summary.ic is not none else '-' }}</div></div>
+        <div class="metric-card"><div class="label">波动率</div><div class="value small">{{ ('%.2f%%'|format(strategy_summary.volatility * 100)) if strategy_summary.volatility is not none else '-' }}</div></div>
+    </div>
+</div>
+
 <div class="panel">
     <div class="panel-title">交易记录</div>
     <table>

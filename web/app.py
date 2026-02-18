@@ -233,6 +233,53 @@ def _build_symbol_performance(trade_rows):
     result.sort(key=lambda x: x['realized_pnl'], reverse=True)
     return result
 
+
+def _extract_strategy_summary(payload, symbol_stats):
+    metrics = payload.get('metrics') if isinstance(payload, dict) and isinstance(payload.get('metrics'), dict) else {}
+
+    def _pick(*keys):
+        for k in keys:
+            if k in metrics and metrics.get(k) is not None:
+                return metrics.get(k)
+        return None
+
+    win_count = sum(1 for x in symbol_stats if x.get('realized_pnl', 0) > 0 and x.get('sell_qty', 0) > 0)
+    loss_count = sum(1 for x in symbol_stats if x.get('realized_pnl', 0) < 0 and x.get('sell_qty', 0) > 0)
+    total_closed = win_count + loss_count
+    win_rate = (win_count / total_closed) if total_closed > 0 else None
+
+    return {
+        'total_profit': _pick('total_profit', 'total_pnl', 'pnl', 'net_profit'),
+        'total_return': _pick('total_return', 'return', 'cum_return'),
+        'annualized_return': _pick('annualized_return', 'annual_return', 'cagr'),
+        'sharpe': _pick('sharpe', 'sharpe_ratio'),
+        'beta': _pick('beta'),
+        'alpha': _pick('alpha'),
+        'win_rate': _pick('win_rate') if _pick('win_rate') is not None else win_rate,
+        'win_count': _pick('win_count', 'wins') if _pick('win_count', 'wins') is not None else win_count,
+        'loss_count': _pick('loss_count', 'losses') if _pick('loss_count', 'losses') is not None else loss_count,
+        'ic': _pick('ic', 'information_coefficient'),
+        'volatility': _pick('volatility', 'annualized_volatility', 'vol'),
+    }
+
+
+def _fmt_ratio(v):
+    if v is None:
+        return '-'
+    try:
+        return f"{float(v) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return '-'
+
+
+def _fmt_num(v, ndigits=4):
+    if v is None:
+        return '-'
+    try:
+        return f"{float(v):.{ndigits}f}"
+    except (TypeError, ValueError):
+        return '-'
+
 def init_tasks():
     """Load task status from database"""
     try:
@@ -1391,6 +1438,7 @@ def backtest_results():
     chart_values = []
     trade_rows = []
     symbol_stats = []
+    strategy_summary = {}
     error_msg = None
 
     if selected_file:
@@ -1399,6 +1447,7 @@ def backtest_results():
             equity_points = _extract_equity_points(payload)
             trade_rows = _extract_trade_rows(payload)
             symbol_stats = _build_symbol_performance(trade_rows)
+            strategy_summary = _extract_strategy_summary(payload, symbol_stats)
             chart_labels = [p['date'] for p in equity_points]
             raw_values = [p['value'] for p in equity_points]
             if raw_values and raw_values[0] not in (0, None):
@@ -1418,6 +1467,7 @@ def backtest_results():
         chart_values=chart_values,
         trade_rows=trade_rows,
         symbol_stats=symbol_stats,
+        strategy_summary=strategy_summary,
         error_msg=error_msg,
     )
 @app.route('/admin')
