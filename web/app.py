@@ -1400,7 +1400,12 @@ def backtest_results():
             trade_rows = _extract_trade_rows(payload)
             symbol_stats = _build_symbol_performance(trade_rows)
             chart_labels = [p['date'] for p in equity_points]
-            chart_values = [p['value'] for p in equity_points]
+            raw_values = [p['value'] for p in equity_points]
+            if raw_values and raw_values[0] not in (0, None):
+                base_value = float(raw_values[0])
+                chart_values = [round(float(v) / base_value, 6) for v in raw_values]
+            else:
+                chart_values = raw_values
         except Exception as e:
             error_msg = f'读取回测结果失败: {e}'
 

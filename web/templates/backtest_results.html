@@ -28,7 +28,7 @@
 </div>
 
 <div class="panel">
-    <div class="panel-title">净值曲线</div>
+    <div class="panel-title">净值曲线（归一化，首日=1）</div>
     {% if chart_labels and chart_values %}
     <div class="chart-wrap">
         <canvas id="equityChart" height="130"></canvas>
@@ -129,7 +129,7 @@
             data: {
                 labels,
                 datasets: [{
-                    label: '净值',
+                    label: '归一化净值',
                     data: values,
                     borderColor: '#60a5fa',
                     backgroundColor: 'rgba(96,165,250,0.15)',
