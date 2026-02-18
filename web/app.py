@@ -248,8 +248,12 @@ def _extract_strategy_summary(payload, symbol_stats):
     total_closed = win_count + loss_count
     win_rate = (win_count / total_closed) if total_closed > 0 else None
 
+    total_profit = _pick('total_profit', 'total_pnl', 'pnl', 'net_profit')
+    if total_profit is None:
+        total_profit = sum(float(x.get('realized_pnl', 0) or 0) for x in symbol_stats)
+
     return {
-        'total_profit': _pick('total_profit', 'total_pnl', 'pnl', 'net_profit'),
+        'total_profit': total_profit,
         'total_return': _pick('total_return', 'return', 'cum_return'),
         'annualized_return': _pick('annualized_return', 'annual_return', 'cagr'),
         'sharpe': _pick('sharpe', 'sharpe_ratio'),
