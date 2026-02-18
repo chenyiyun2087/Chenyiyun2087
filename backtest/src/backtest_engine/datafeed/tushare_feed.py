@@ -62,7 +62,7 @@ class TushareDailyFeed(DataFeed):
                     "high": "high",
                     "low": "low",
                     "close": "close",
-                    "vol": "volume" if "vol" in cols else ("volume" if "volume" in cols else None),
+                    "vol": "vol" if "vol" in cols else ("volume" if "volume" in cols else None),
                 }
                 return t, mapping
         raise RuntimeError("无法解析行情表，至少需要 ts_code/trade_date/open/high/low/close")
@@ -91,15 +91,19 @@ class TushareDailyFeed(DataFeed):
             "ORDER BY trade_date, ts_code"
         )
 
+        # Date conversion for integer trade_date column
+        start_int = int(pd.Timestamp(start).strftime("%Y%m%d"))
+        end_int = int(pd.Timestamp(end).strftime("%Y%m%d"))
+        
         with self._conn() as conn:
-            df = pd.read_sql(sql, conn, params=[start, end, *universe])
+            df = pd.read_sql(sql, conn, params=[start_int, end_int, *universe])
 
         if df.empty:
             return
 
         for r in df.itertuples(index=False):
             yield Bar(
-                ts=str(pd.Timestamp(r.trade_date).date()),
+                ts=str(pd.to_datetime(str(r.trade_date), format="%Y%m%d").date()),
                 symbol=r.ts_code,
                 open=float(r.open),
                 high=float(r.high),

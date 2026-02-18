@@ -545,3 +545,35 @@ python sina/live_tracker/run_live_tracker.py sync
 # 6) Web 检查
 python web/app.py
 ```
+---
+
+## 14. Local High Dividend Strategy (chenyiyunSelected)
+
+本策略（`chenyiyunSelected`）是一个 **高股息低市值** 的量化选股方案，旨在通过多重维度筛选具备安全边际与交易活跃度的优质标的。
+
+### 14.1 选股范围 (Stock Pool Selection)
+
+策略不局限于沪深 300 或中证 500 成员，而是从 **全 A 股市场** 进行筛选，其核心偏向于 **小市值/微盘股**。
+
+#### 核心过滤逻辑：
+- **负面剔除**：
+  - 自动剔除 **ST/退市风险** 标的。
+  - 剔除上市不满 **365 天** 的次新股。
+  - 剔除 **科创板 (688...)** 与 **北交所 (4.../8...)**，专注于主板与创业板。
+- **三重因子切片**：
+  - **高股息**：选取全市场分红率最高的 **Top 10%** 标的。
+  - **高活跃 (波动)**：在上述标的中，选取换手率波动率（`turnover_volatility`）最高的 **Top 50%**。
+  - **低杠杆**：在剩余标的中，选取资产负债率（`debt_to_assets`）最低的 **Bottom 50%**。
+- **最终入选**：
+  - 对最终留存的标的按 **流通市值 (Circulating Market Cap)** 从小到大排序。
+  - 选取排名最靠前的 **Top 10** 只股票作为持仓。
+
+### 14.2 回测表现 (Backtest Results 2020-2026)
+
+经过 6 年（2020.01 - 2026.02）跨市场周期验证：
+- **总收益 (Total Return)**: **217.0%**
+- **年化收益 (Annualized Return)**: **21.6%**
+- **夏普比率 (Sharpe Ratio)**: **0.96**
+- **最大回撤 (Max Drawdown)**: **-28.8%**
+
+详细报告见：`backtest/results/chenyiyun_full_2020_2026.json`
