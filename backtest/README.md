@@ -1,67 +1,34 @@
-# 轻量级回测框架（MVP）
+# backtest 引擎说明
 
-本项目提供一个可快速落地的、事件驱动的轻量级回测框架，包含：
+`backtest/` 是可复用的通用回测引擎，服务于本仓库多个策略模块。
 
-- 统一数据喂入接口（`DataFeed`）
-- 策略接口（`Strategy`）
-- 回测主循环（`Engine`）
-- 撮合器（`Broker`）
-- 账户与持仓（`Portfolio`）
-- 指标计算（收益、夏普、最大回撤、换手）
-- 标准化结果导出 JSON（供后台直接渲染）
+## 结构回顾
 
-## 目录结构
+- `src/backtest_engine/core/`
+  - `engine.py`：回测主引擎
+  - `broker.py`：撮合与成交逻辑
+  - `portfolio.py`：组合与仓位管理
+  - `clock.py` / `types.py` / `strategy.py`：基础抽象
+- `src/backtest_engine/datafeed/`
+  - `tushare_feed.py` / `warehouse_feed.py` / `mock_feed.py`
+- `src/backtest_engine/metrics/`
+  - 收益、回撤、胜率等绩效指标
+- `src/backtest_engine/reporting/`
+  - 回测结果结构定义与导出
+- `src/backtest_engine/examples/`
+  - demo 策略与运行示例
+- `tests/`
+  - `test_engine_smoke.py`、`test_metrics.py`
 
-```text
-backtest/
-  README.md
-  pyproject.toml
-  src/
-    backtest_engine/
-      __init__.py
-      config.py
-      datafeed/
-        __init__.py
-        base.py
-        warehouse_feed.py
-        mock_feed.py
-      core/
-        __init__.py
-        clock.py
-        broker.py
-        portfolio.py
-        engine.py
-        strategy.py
-        types.py
-      metrics/
-        __init__.py
-        performance.py
-      reporting/
-        __init__.py
-        schema.py
-        exporter.py
-      examples/
-        demo_strategy.py
-        run_demo.py
-  tests/
-    test_metrics.py
-    test_engine_smoke.py
-```
-
-## 快速开始
+## 安装与测试
 
 ```bash
 cd backtest
-PYTHONPATH=src python -m backtest_engine.examples.run_demo
+pytest -q
 ```
 
-执行后将产出：
+## 可改进点（待统一实施）
 
-- `backtest/results/demo_result.json`
-
-## 测试
-
-```bash
-cd backtest
-pytest
-```
+- 扩展交易成本模型（滑点、冲击成本分层）。
+- 增加多资产 / 多频率统一时钟支持。
+- 提供标准化报告模板（JSON + HTML）。
