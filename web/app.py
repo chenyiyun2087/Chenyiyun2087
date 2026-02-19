@@ -738,6 +738,7 @@ def sina_monitor():
     signals = []
     pagination = None
     last_completed_date = None
+    signal_stats_rows = []
 
     with conn.cursor() as cursor:
         # Always fetch stats for the summary cards
@@ -775,26 +776,32 @@ def sina_monitor():
             signals = cursor.fetchall()
 
         elif active_tab == 'holding_b':
-            # Logic: Latest signal is a B signal
-            # We use a subquery as the table name for get_pagination
+            # Latest buy date must be newer than latest sell date (as-of state)
             subquery = """
-                (SELECT t1.*
-                 FROM bs_detection_results t1
-                 INNER JOIN (
-                     SELECT stock_code, MAX(created_at) as max_created
-                     FROM bs_detection_results
-                     WHERE has_buy_signal = 1 OR has_sell_signal = 1
-                     GROUP BY stock_code
-                 ) t2 ON t1.stock_code = t2.stock_code AND t1.created_at = t2.max_created
-                 WHERE t1.has_buy_signal = 1)
+                (
+                    SELECT latest_buy.*
+                    FROM bs_detection_results AS latest_buy
+                    INNER JOIN (
+                        SELECT
+                            stock_code,
+                            MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
+                            MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
+                        FROM bs_detection_results
+                        GROUP BY stock_code
+                    ) AS summary
+                        ON latest_buy.stock_code = summary.stock_code
+                        AND latest_buy.batch_date = summary.latest_buy_date
+                    WHERE latest_buy.has_buy_signal = 1
+                      AND (summary.latest_sell_date IS NULL OR summary.latest_buy_date > summary.latest_sell_date)
+                )
             """
             pagination, offset = get_pagination(cursor, f"{subquery} as sub", page, per_page)
-            
+
             sql_holding = f"""
                 SELECT sub.*, t_name.stock_name
                 FROM {subquery} as sub
                 LEFT JOIN a_share_stock_list t_name ON sub.stock_code = t_name.stock_code COLLATE utf8mb4_general_ci
-                ORDER BY sub.created_at DESC
+                ORDER BY sub.batch_date DESC, sub.stock_code ASC
                 LIMIT %s OFFSET %s
             """
             cursor.execute(sql_holding, (per_page, offset))
@@ -830,6 +837,37 @@ def sina_monitor():
             cursor.execute(sql_sell, (per_page, offset))
             signals = cursor.fetchall()
 
+        elif active_tab == 'signal_stats':
+            where_stmt = ""
+            params = []
+            if query_date:
+                where_stmt = "WHERE batch_date <= %s"
+                params = [query_date]
+
+            sub_table = f"""
+                (
+                    SELECT
+                        batch_date,
+                        COUNT(*) AS total,
+                        SUM(has_buy_signal) AS buy_count,
+                        SUM(has_sell_signal) AS sell_count,
+                        MAX(created_at) AS last_update
+                    FROM bs_detection_results
+                    {where_stmt}
+                    GROUP BY batch_date
+                )
+            """
+            pagination, offset = get_pagination(cursor, f"{sub_table} as t", page, per_page, "", tuple(params) if params else None)
+
+            sql_stats_rows = f"""
+                SELECT *
+                FROM {sub_table} AS t
+                ORDER BY batch_date DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(sql_stats_rows, tuple(params + [per_page, offset]))
+            signal_stats_rows = cursor.fetchall()
+
     return render_template('sina_monitor.html',
                            active_tab=active_tab,
                            query_date=query_date,
@@ -838,6 +876,7 @@ def sina_monitor():
                            signals=signals,
                            pagination=pagination,
                            last_completed_date=last_completed_date,
+                           signal_stats_rows=signal_stats_rows,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 
@@ -2036,10 +2075,28 @@ def delete_stock_pool_item(item_id):
 @app.route('/admin')
 def admin():
     now_date_iso = datetime.now().strftime('%Y-%m-%d')
+    m8_pools = []
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_stock_pool_schema(cursor)
+            _ensure_seed_pools(cursor)
+            cursor.execute(
+                """
+                SELECT id, pool_name, pool_key, is_editable
+                FROM stock_pools
+                ORDER BY is_system DESC, id ASC
+                """
+            )
+            m8_pools = cursor.fetchall()
+    except Exception as e:
+        print(f"Failed to load stock pools in admin: {e}")
+
     return render_template('admin.html', 
                            tasks=TASKS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           now_date=now_date_iso)
+                           now_date=now_date_iso,
+                           m8_pools=m8_pools)
 
 def update_task_db(task_name):
     """Save task status to database"""
@@ -2109,7 +2166,10 @@ def run_task(task_name):
         # Let's adjust run_script to handle a list of command parts.
         script_parts = [script, "config_1", today]
     elif task_name == 'sina_m8':
+        m8_pool_id = request.form.get('m8_pool_id', type=int)
         script_parts = [script, '--lookback-dates', '60']
+        if m8_pool_id:
+            script_parts.extend(['--pool-id', str(m8_pool_id)])
     else:
         script_parts = [script]
     
