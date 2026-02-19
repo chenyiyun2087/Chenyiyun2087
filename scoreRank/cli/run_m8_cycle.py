@@ -64,7 +64,7 @@ def _to_float(v):
         return None
 
 
-def fetch_recent_m1_rows(engine, lookback_dates: int = 60):
+def fetch_recent_m1_rows(engine, lookback_dates: int = 60, pool_id: int | None = None):
     from sqlalchemy import text
     import pandas as pd
 
@@ -94,10 +94,25 @@ def fetch_recent_m1_rows(engine, lookback_dates: int = 60):
         LEFT JOIN b_event_kpi k
           ON f.event_date = k.event_date AND f.symbol = k.symbol
         WHERE f.event_date IN (SELECT event_date FROM recent_dates)
+          AND (
+            :pool_id IS NULL OR EXISTS (
+                SELECT 1
+                FROM stock_pool_items spi
+                WHERE spi.pool_id = :pool_id
+                  AND spi.symbol = f.symbol
+            )
+          )
         """
     )
     with engine.begin() as conn:
-        df = pd.read_sql(sql, conn, params={"lookback_dates": int(max(1, lookback_dates))})
+        df = pd.read_sql(
+            sql,
+            conn,
+            params={
+                "lookback_dates": int(max(1, lookback_dates)),
+                "pool_id": int(pool_id) if pool_id else None,
+            },
+        )
 
     if df.empty:
         return None, []
@@ -221,13 +236,13 @@ def persist_results(engine, latest_date, lookback_dates: int, sample_rows: int, 
     return run_id, len(items)
 
 
-def run_cycle(lookback_dates: int = 60):
+def run_cycle(lookback_dates: int = 60, pool_id: int | None = None):
     from scoreRank.core.db_io import get_engine
 
     engine = get_engine()
     ensure_tables(engine)
 
-    latest_date, rows = fetch_recent_m1_rows(engine, lookback_dates=lookback_dates)
+    latest_date, rows = fetch_recent_m1_rows(engine, lookback_dates=lookback_dates, pool_id=pool_id)
     if not rows:
         print("[M8] No rows in b_event_fact/b_event_kpi. Skip.")
         return 0
@@ -244,16 +259,17 @@ def run_cycle(lookback_dates: int = 60):
         m3_eval=m3_eval,
     )
 
-    print(f"[M8] run_id={run_id}, as_of={latest_date}, sample_rows={len(rows)}, items={item_count}")
+    print(f"[M8] run_id={run_id}, as_of={latest_date}, sample_rows={len(rows)}, items={item_count}, pool_id={pool_id or 'ALL'}")
     return run_id
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run M8 strategy regression + optimizer and persist results")
     parser.add_argument("--lookback-dates", type=int, default=60, help="Recent event_date count from M1 tables")
+    parser.add_argument("--pool-id", type=int, default=None, help="Optional stock_pools.id filter for M8 samples")
     args = parser.parse_args()
 
-    run_cycle(lookback_dates=max(1, args.lookback_dates))
+    run_cycle(lookback_dates=max(1, args.lookback_dates), pool_id=args.pool_id)
 
 
 if __name__ == "__main__":
