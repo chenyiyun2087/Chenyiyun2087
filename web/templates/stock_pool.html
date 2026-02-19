@@ -102,7 +102,7 @@
                 <td>{{ row.note or '-' }}</td>
                 <td>{{ row.updated_at }}</td>
                 <td>
-                    {% if selected_pool.is_editable %}
+                    {% if selected_pool.pool_key == 'SELF_SELECTED' %}
                     <form method="post" action="{{ url_for('delete_stock_pool_item', item_id=row.id) }}" onsubmit="return confirm('确认删除该记录?')">
                         <button class="btn">删除</button>
                     </form>
