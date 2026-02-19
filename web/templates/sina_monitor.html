@@ -34,6 +34,11 @@
         style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         信号统计
     </a>
+    <a href="{{ url_for('sina_monitor', tab='signal_stats', date=query_date) }}"
+        class="tab-btn {% if active_tab == 'signal_stats' %}active{% endif %}"
+        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
+        信号统计
+    </a>
 </div>
 
 {% if active_tab == 'summary' %}
