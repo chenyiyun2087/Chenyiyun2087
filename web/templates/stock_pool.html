@@ -1,0 +1,100 @@
+{% extends 'layout.html' %}
+{% block title %}股票池管理{% endblock %}
+{% block page_title %}股票池管理{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <div class="panel-title">股票池列表</div>
+    <form method="post" action="{{ url_for('add_stock_pool') }}" class="form-grid" style="margin-bottom: 12px;">
+        <input name="pool_name" placeholder="新股票池名称" required>
+        <button class="btn">新增股票池</button>
+    </form>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>股票池名称</th>
+                <th>来源</th>
+                <th>可手工管理</th>
+                <th>股票数</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for pool in pools %}
+            <tr>
+                <td>{{ pool.id }}</td>
+                <td>{{ pool.pool_name }}</td>
+                <td>{{ pool.source_type }}</td>
+                <td>{{ '是' if pool.is_editable else '否' }}</td>
+                <td>{{ pool.stock_count }}</td>
+                <td>
+                    <a class="btn" href="{{ url_for('stock_pool', pool_id=pool.id) }}">查看</a>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">暂无股票池</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+{% if selected_pool %}
+<section class="panel">
+    <div class="panel-title">当前股票池：{{ selected_pool.pool_name }}</div>
+
+    <form method="post" action="{{ url_for('rename_stock_pool', pool_id=selected_pool.id) }}" class="form-grid" style="margin-bottom: 12px;">
+        <input name="pool_name" value="{{ selected_pool.pool_name }}" required>
+        <button class="btn">更改股票池名称</button>
+    </form>
+
+    {% if selected_pool.is_editable %}
+    <form method="post" action="{{ url_for('add_stock_pool_item') }}" class="form-grid" style="margin-bottom: 12px;">
+        <input type="hidden" name="pool_id" value="{{ selected_pool.id }}">
+        <input name="symbol" placeholder="股票代码(6位)" required>
+        <input name="stock_name" placeholder="股票名称" required>
+        <input name="note" placeholder="备注(可选)">
+        <button class="btn">新增/更新池内股票</button>
+    </form>
+    {% else %}
+    <div class="flash danger">该股票池不允许手动管理：只能由定时任务同步买点/卖点信号。</div>
+    {% endif %}
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th>备注</th>
+                <th>更新时间</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in stocks %}
+            <tr>
+                <td>{{ row.id }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.stock_name }}</td>
+                <td>{{ row.note or '-' }}</td>
+                <td>{{ row.updated_at }}</td>
+                <td>
+                    {% if selected_pool.is_editable %}
+                    <form method="post" action="{{ url_for('delete_stock_pool_item', item_id=row.id) }}" onsubmit="return confirm('确认删除该记录?')">
+                        <button class="btn">删除</button>
+                    </form>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6">暂无数据</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+{% endblock %}

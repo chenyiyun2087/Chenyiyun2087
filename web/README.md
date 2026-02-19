@@ -9,6 +9,7 @@
 - `eastmoney.html`：Eastmoney 策略结果
 - `scores.html`：Sina/ScoreRank 评分结果
 - `admin.html`：任务触发、状态查看、人工操作入口
+- `stock_pool.html`：股票池管理（新增、筛选、删除）
 - `sina_strategy_*.html`：M2~M7 等策略页面
 
 ## 运行
@@ -28,3 +29,7 @@ python web/app.py
 
 
 - 新增页面：`/chenyiyun/selected`（陈依云精选策略），展示每日信号与当前持仓。
+
+- 新增页面：`/stock_pool`（股票池管理），支持按池类型/状态过滤并维护自选池。
+
+- 股票池管理规则：初始池为“自选股池（可手动增删）”和“最近有买点股票池（只读，由定时任务同步）”；支持新增股票池、修改股票池名称、管理池内股票。

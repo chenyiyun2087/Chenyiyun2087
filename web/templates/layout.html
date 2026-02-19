@@ -37,6 +37,7 @@
 
             <div class="sidebar-group-title">系统设置</div>
             <nav>
+                <a href="{{ url_for('stock_pool') }}" class="{% if request.endpoint in ['stock_pool','add_stock_pool','rename_stock_pool','add_stock_pool_item','delete_stock_pool_item'] %}active{% endif %}">股票池管理</a>
                 <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </nav>
         </aside>
