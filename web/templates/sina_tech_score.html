@@ -1,0 +1,64 @@
+{% extends 'layout.html' %}
+{% block title %}技术评分{% endblock %}
+{% block page_title %}技术评分{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <div class="panel-title">技术评分筛选</div>
+    <form method="get" class="form-grid" style="margin-bottom:12px;">
+        <input name="symbol" value="{{ symbol_input }}" placeholder="指定股票：代码/名称，支持逗号分隔">
+        <select name="pool_id">
+            <option value="">指定股票池（可选）</option>
+            {% for p in pools %}
+            <option value="{{ p.id }}" {% if pool_id == p.id %}selected{% endif %}>{{ p.pool_name }} (ID:{{ p.id }})</option>
+            {% endfor %}
+        </select>
+        <button class="btn">执行评分</button>
+    </form>
+    <div class="muted">数据日期：{{ date or '-' }}；命中股票数：{{ total_candidates }}</div>
+</section>
+
+<section class="panel">
+    <div class="panel-title">策略1：金字塔</div>
+    <table>
+        <thead><tr><th>层级</th><th>数量</th></tr></thead>
+        <tbody>
+            <tr><td>核心层</td><td>{{ pyramid.core|length if pyramid and pyramid.core else 0 }}</td></tr>
+            <tr><td>观察层</td><td>{{ pyramid.watch|length if pyramid and pyramid.watch else 0 }}</td></tr>
+            <tr><td>排除层</td><td>{{ pyramid.exclude|length if pyramid and pyramid.exclude else 0 }}</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <div class="panel-title">策略2：加权 Top20</div>
+    <table>
+        <thead><tr><th>代码</th><th>名称</th><th>总分</th><th>因子分</th><th>Claude分</th></tr></thead>
+        <tbody>
+            {% for r in weighted_rank[:20] %}
+            <tr>
+                <td>{{ r.symbol }}</td>
+                <td>{{ r.name }}</td>
+                <td>{{ '%.2f'|format(r.score or 0) }}</td>
+                <td>{{ '%.2f'|format(r.opt_score or 0) }}</td>
+                <td>{{ '%.2f'|format(r.claude_score or 0) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="empty">暂无数据</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel">
+    <div class="panel-title">策略3：象限</div>
+    <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr); gap:10px;">
+        {% for key, label in [('leader','领涨象限'),('quality','质量象限'),('rebound','反转象限'),('observe','观察象限')] %}
+        <div class="metric-card" style="padding:8px;">
+            <div class="label">{{ label }}</div>
+            <div class="value">{{ quadrants[key]|length if quadrants and quadrants[key] else 0 }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}
