@@ -93,3 +93,11 @@ Chenyiyun2087/
 
 如果你确认，我会按“**先低风险、再结构性改造**”的顺序，先实施：
 1) 日志与配置统一，2) 健康检查与最小回归，3) CLI 统一入口与目录重构兼容层。
+
+
+## 7) chenyiyunSelected 实盘日频执行（新增）
+
+已新增 `chenyiyunSelected/strategy/daily_signal_runner.py` 与 `scripts/run_chenyiyun_daily.py`：
+- 每日读取策略目标持仓；
+- 与当前持仓比较后生成 `BUY/SELL` 指令；
+- 支持订单落库和 webhook 推送提醒。
