@@ -44,3 +44,10 @@ python -m chenyiyunSelected.strategy.daily_signal_runner \
 - 读取当日目标股票池并归一化目标权重。
 - 对比 `live_positions` 当前持仓，生成 `BUY/SELL` 调仓指令。
 - 指令落库到 `ads_local_strategy_orders`，可选 webhook 推送。
+
+
+信号快照表（供 Web 展示）：`ads_chenyiyun_selected_signals`，包含：
+- `signal_time`（信号时间点）
+- `ts_code` / `stock_name`（股票代码/名称）
+- `open_price`（开仓参考价）
+- `allocated_shares`（分配购买数量）

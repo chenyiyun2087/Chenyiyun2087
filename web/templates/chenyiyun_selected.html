@@ -1,0 +1,88 @@
+{% extends "layout.html" %}
+
+{% block title %}陈依云精选策略{% endblock %}
+{% block page_title %}陈依云精选策略{% endblock %}
+
+{% block content %}
+<div class="panel">
+    <div class="panel-title">每日信号</div>
+    <table>
+        <thead>
+            <tr>
+                <th>信号时间</th>
+                <th>交易日</th>
+                <th>股票代码</th>
+                <th>股票名称</th>
+                <th>方向</th>
+                <th>开仓价格</th>
+                <th>分配购买数量</th>
+                <th>当前持仓</th>
+                <th>目标持仓</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in signals %}
+            <tr>
+                <td>{{ row.signal_time }}</td>
+                <td>{{ row.trade_date }}</td>
+                <td>{{ row.ts_code }}</td>
+                <td>{{ row.stock_name }}</td>
+                <td>
+                    {% if row.side == 'BUY' %}
+                    <span class="tag trade">BUY</span>
+                    {% else %}
+                    <span class="tag watch">SELL</span>
+                    {% endif %}
+                </td>
+                <td>{{ '%.2f'|format(row.open_price|float) }}</td>
+                <td>{{ row.allocated_shares }}</td>
+                <td>{{ row.current_shares }}</td>
+                <td>{{ row.target_shares }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="9" class="empty">暂无信号数据</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination">
+    {% if pagination.has_prev %}
+    <a href="{{ url_for('chenyiyun_selected_dashboard', page=pagination.prev_num) }}">上一页</a>
+    {% endif %}
+    <span>第 {{ pagination.page }} / {{ pagination.pages if pagination.pages > 0 else 1 }} 页（共 {{ pagination.total }} 条）</span>
+    {% if pagination.has_next %}
+    <a href="{{ url_for('chenyiyun_selected_dashboard', page=pagination.next_num) }}">下一页</a>
+    {% endif %}
+</div>
+
+<div class="panel">
+    <div class="panel-title">当前持仓</div>
+    <table>
+        <thead>
+            <tr>
+                <th>股票代码</th>
+                <th>股票名称</th>
+                <th>建仓日期</th>
+                <th>持仓数量</th>
+                <th>成本价</th>
+                <th>最新价</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for pos in positions %}
+            <tr>
+                <td>{{ pos.ts_code }}</td>
+                <td>{{ pos.stock_name }}</td>
+                <td>{{ pos.entry_date }}</td>
+                <td>{{ pos.shares }}</td>
+                <td>{{ '%.2f'|format((pos.avg_cost or 0)|float) }}</td>
+                <td>{{ '%.2f'|format((pos.current_price or 0)|float) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty">暂无持仓数据</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

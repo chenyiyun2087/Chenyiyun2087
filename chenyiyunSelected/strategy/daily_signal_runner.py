@@ -22,12 +22,6 @@ from .local_strategy_adapter import DBConfig, LocalHighDividendStrategy, Strateg
 
 
 @dataclass
-class Position:
-    ts_code: str
-    shares: int
-
-
-@dataclass
 class OrderInstruction:
     trade_date: date
     ts_code: str
@@ -219,6 +213,83 @@ class DailySignalRunner:
                 )
             conn.commit()
 
+    def _resolve_stock_name_expr(self) -> str:
+        cols = self.strategy.provider._columns("dim_stock")
+        for name_col in ("name", "stock_name", "ts_name"):
+            if name_col in cols:
+                return name_col
+        return ""
+
+    def save_signal_snapshot(
+        self,
+        orders: list[OrderInstruction],
+        table: str = "ads_chenyiyun_selected_signals",
+        signal_time: Optional[datetime] = None,
+    ) -> None:
+        """Save daily rebalance signals for web query."""
+        if not table.replace("_", "").isalnum():
+            raise ValueError("invalid table name")
+
+        signal_time = signal_time or datetime.now()
+
+        with self.strategy.provider._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {table} (
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        signal_time DATETIME NOT NULL,
+                        trade_date DATE NOT NULL,
+                        ts_code VARCHAR(16) NOT NULL,
+                        stock_name VARCHAR(64) NOT NULL,
+                        side VARCHAR(8) NOT NULL,
+                        open_price DOUBLE NOT NULL,
+                        allocated_shares INT NOT NULL,
+                        current_shares INT NOT NULL,
+                        target_shares INT NOT NULL,
+                        create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE KEY uk_signal (trade_date, ts_code, side)
+                    )
+                    """
+                )
+
+                if not orders:
+                    conn.commit()
+                    return
+
+                names: dict[str, str] = {}
+                name_col = self._resolve_stock_name_expr()
+                codes = sorted({o.ts_code for o in orders})
+                if codes and name_col:
+                    placeholders = ",".join(["%s"] * len(codes))
+                    sql_name = f"SELECT ts_code, COALESCE({name_col}, ts_code) AS stock_name FROM dim_stock WHERE ts_code IN ({placeholders})"
+                    df = pd.read_sql(sql_name, conn, params=codes)
+                    names = {str(r.ts_code): str(r.stock_name) for r in df.itertuples(index=False)}
+
+                sql = (
+                    f"INSERT INTO {table} (signal_time, trade_date, ts_code, stock_name, side, open_price, allocated_shares, "
+                    "current_shares, target_shares) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE signal_time=VALUES(signal_time), stock_name=VALUES(stock_name), "
+                    "open_price=VALUES(open_price), allocated_shares=VALUES(allocated_shares), "
+                    "current_shares=VALUES(current_shares), target_shares=VALUES(target_shares)"
+                )
+                rows = [
+                    (
+                        signal_time,
+                        o.trade_date,
+                        o.ts_code,
+                        names.get(o.ts_code, o.ts_code),
+                        o.side,
+                        o.price,
+                        abs(int(o.delta_shares)),
+                        int(o.current_shares),
+                        int(o.target_shares),
+                    )
+                    for o in orders
+                ]
+                cur.executemany(sql, rows)
+            conn.commit()
+
 
 def format_signal_message(trade_date: date, orders: list[OrderInstruction]) -> str:
     if not orders:
@@ -254,6 +325,7 @@ def main() -> None:
     parser.add_argument("--total-equity", type=float, required=True, help="account total equity in CNY")
     parser.add_argument("--position-table", default="live_positions")
     parser.add_argument("--order-table", default="ads_local_strategy_orders")
+    parser.add_argument("--signal-snapshot-table", default="ads_chenyiyun_selected_signals")
     parser.add_argument("--lot-size", type=int, default=100)
     parser.add_argument("--min-trade-value", type=float, default=500.0)
     parser.add_argument("--webhook-url", default=None, help="optional webhook url for signal push")
@@ -290,6 +362,7 @@ def main() -> None:
     if args.emit_signals:
         runner.strategy.save_daily_signals(signals, table=args.signal_table)
     runner.save_orders(orders, table=args.order_table)
+    runner.save_signal_snapshot(orders, table=args.signal_snapshot_table)
 
     text = format_signal_message(trade_date, orders)
     print(text)

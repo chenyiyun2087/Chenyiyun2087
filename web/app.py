@@ -448,6 +448,78 @@ def positions():
                            pagination=pagination,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
+
+
+@app.route('/chenyiyun/selected')
+def chenyiyun_selected_dashboard():
+    page = request.args.get('page', 1, type=int)
+    per_page = 20
+    signals = []
+    positions = []
+    pagination = {
+        'page': page,
+        'per_page': per_page,
+        'total': 0,
+        'pages': 0,
+        'has_prev': False,
+        'has_next': False,
+        'prev_num': page - 1,
+        'next_num': page + 1,
+    }
+
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ads_chenyiyun_selected_signals (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    signal_time DATETIME NOT NULL,
+                    trade_date DATE NOT NULL,
+                    ts_code VARCHAR(16) NOT NULL,
+                    stock_name VARCHAR(64) NOT NULL,
+                    side VARCHAR(8) NOT NULL,
+                    open_price DOUBLE NOT NULL,
+                    allocated_shares INT NOT NULL,
+                    current_shares INT NOT NULL,
+                    target_shares INT NOT NULL,
+                    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_signal (trade_date, ts_code, side)
+                )
+                """
+            )
+            conn.commit()
+
+            pagination, offset = get_pagination(cursor, "ads_chenyiyun_selected_signals", page, per_page)
+            cursor.execute(
+                """
+                SELECT signal_time, trade_date, ts_code, stock_name, side, open_price, allocated_shares, current_shares, target_shares
+                FROM ads_chenyiyun_selected_signals
+                ORDER BY signal_time DESC, ts_code ASC
+                LIMIT %s OFFSET %s
+                """,
+                (per_page, offset),
+            )
+            signals = cursor.fetchall()
+
+            cursor.execute(
+                """
+                SELECT symbol AS ts_code, name AS stock_name, entry_date, avg_cost, current_price, shares
+                FROM live_positions
+                ORDER BY id DESC
+                """
+            )
+            positions = cursor.fetchall()
+    except Exception as e:
+        flash(f"陈依云精选策略页面数据库不可用: {e}", "danger")
+
+    return render_template(
+        'chenyiyun_selected.html',
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        signals=signals,
+        positions=positions,
+        pagination=pagination,
+    )
 @app.route('/eastmoney')
 def eastmoney_scores():
     page = request.args.get('page', 1, type=int)
