@@ -1831,28 +1831,7 @@ def _sync_recent_buy_pool(cursor):
 
 @app.route('/stock_pool/pool/add', methods=['POST'])
 def add_stock_pool():
-    pool_name = (request.form.get('pool_name') or '').strip()
-    if not pool_name:
-        flash('股票池名称不能为空。', 'danger')
-        return redirect(url_for('stock_pool'))
-
-    pool_key = f"CUSTOM_{int(time.time())}"
-    conn = get_db()
-    with conn.cursor() as cursor:
-        _ensure_stock_pool_schema(cursor)
-        try:
-            cursor.execute(
-                """
-                INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
-                VALUES (%s, %s, 'MANUAL', 0, 1)
-                """,
-                (pool_key, pool_name),
-            )
-            conn.commit()
-            flash(f'已新增股票池：{pool_name}', 'success')
-        except Exception as e:
-            flash(f'新增股票池失败: {e}', 'danger')
-
+    flash('当前版本仅允许管理【自选股池】，不支持新增其他股票池。', 'danger')
     return redirect(url_for('stock_pool'))
 
 
@@ -1926,7 +1905,7 @@ def add_stock_pool_item():
 
     conn = get_db()
     with conn.cursor() as cursor:
-        cursor.execute("SELECT pool_name, is_editable FROM stock_pools WHERE id = %s", (pool_id,))
+        cursor.execute("SELECT pool_name, pool_key, is_editable FROM stock_pools WHERE id = %s", (pool_id,))
         pool = cursor.fetchone()
         if not pool:
             flash('股票池不存在。', 'danger')
@@ -1966,7 +1945,7 @@ def delete_stock_pool_item(item_id):
     with conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT i.id, i.pool_id, p.is_editable
+            SELECT i.id, i.pool_id, p.is_editable, p.pool_key
             FROM stock_pool_items i
             JOIN stock_pools p ON p.id = i.pool_id
             WHERE i.id = %s
