@@ -712,6 +712,101 @@ def sina_self_selected():
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            page_title="自选股评分")
 
+@app.route('/sina/tech_score')
+def sina_tech_score():
+    symbol_input = (request.args.get('symbol') or '').strip()
+    pool_id = request.args.get('pool_id', type=int)
+
+    latest_date = None
+    rows = []
+    pools = []
+    selected_symbols = []
+
+    weighted_profile = DEFAULT_PARAMS['weighted_profile']
+    profile_a, profile_b, profile_c = WEIGHTED_PROFILES[weighted_profile]
+
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"Failed to connect DB in sina_tech_score: {e}")
+        conn = None
+
+    if conn:
+        with conn.cursor() as cursor:
+            try:
+                _ensure_stock_pool_schema(cursor)
+                _ensure_seed_pools(cursor)
+                cursor.execute("SELECT id, pool_name FROM stock_pools ORDER BY is_system DESC, id ASC")
+                pools = cursor.fetchall()
+            except Exception as e:
+                print(f"Failed to load pools in sina_tech_score: {e}")
+
+            token_symbols = []
+            if symbol_input:
+                tokens = symbol_input.replace('，', ',').replace(';', ',').replace('；', ',').replace(' ', ',').split(',')
+                for token in tokens:
+                    t = token.strip()
+                    if not t:
+                        continue
+                    if t.isdigit():
+                        token_symbols.append(t.zfill(6))
+                    else:
+                        cursor.execute(
+                            "SELECT stock_code FROM a_share_stock_list WHERE stock_name = %s LIMIT 1",
+                            (t,),
+                        )
+                        row = cursor.fetchone()
+                        if row and row.get('stock_code'):
+                            token_symbols.append(str(row['stock_code']).zfill(6))
+
+            pool_symbols = []
+            if pool_id:
+                cursor.execute("SELECT symbol FROM stock_pool_items WHERE pool_id = %s", (pool_id,))
+                pool_symbols = [str(r.get('symbol') or '').zfill(6) for r in cursor.fetchall() if r.get('symbol')]
+
+            selected_symbols = sorted({x for x in (token_symbols + pool_symbols) if x and len(x) == 6})
+
+            cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
+            res = cursor.fetchone() or {}
+            latest_date = res.get('max_date')
+
+            if latest_date and selected_symbols:
+                placeholders = ','.join(['%s'] * len(selected_symbols))
+                sql = f"""
+                SELECT
+                    symbol,
+                    name,
+                    score,
+                    COALESCE(opt_score, 0) as opt_score,
+                    COALESCE(claude_score, 0) as claude_score,
+                    pool_type
+                FROM score_rank_daily
+                WHERE trade_date = %s
+                  AND symbol IN ({placeholders})
+                """
+                cursor.execute(sql, tuple([latest_date] + selected_symbols))
+                rows = cursor.fetchall()
+
+    pyramid = build_pyramid(rows, DEFAULT_PARAMS['pyramid_min_score'], DEFAULT_PARAMS['pyramid_top_pct'], DEFAULT_PARAMS['pyramid_min_claude'])
+    weighted_rank = build_weighted(rows, profile_a, profile_b, profile_c)
+    quadrants, quadrant_base = build_quadrants(rows, DEFAULT_PARAMS['quadrant_min_score'], DEFAULT_PARAMS['quadrant_opt_cut'], DEFAULT_PARAMS['quadrant_claude_cut'])
+
+    return render_template(
+        'sina_tech_score.html',
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        date=latest_date,
+        pools=pools,
+        pool_id=pool_id,
+        symbol_input=symbol_input,
+        selected_symbols=selected_symbols,
+        total_candidates=len(rows),
+        pyramid=pyramid,
+        weighted_rank=weighted_rank,
+        quadrants=quadrants,
+        quadrant_base_count=len(quadrant_base),
+    )
+
+
 @app.route('/sina/monitor')
 def sina_monitor():
     conn = get_db()
@@ -738,6 +833,7 @@ def sina_monitor():
     signals = []
     pagination = None
     last_completed_date = None
+    signal_stats_rows = []
 
     with conn.cursor() as cursor:
         # Always fetch stats for the summary cards
@@ -775,26 +871,32 @@ def sina_monitor():
             signals = cursor.fetchall()
 
         elif active_tab == 'holding_b':
-            # Logic: Latest signal is a B signal
-            # We use a subquery as the table name for get_pagination
+            # Latest buy date must be newer than latest sell date (as-of state)
             subquery = """
-                (SELECT t1.*
-                 FROM bs_detection_results t1
-                 INNER JOIN (
-                     SELECT stock_code, MAX(created_at) as max_created
-                     FROM bs_detection_results
-                     WHERE has_buy_signal = 1 OR has_sell_signal = 1
-                     GROUP BY stock_code
-                 ) t2 ON t1.stock_code = t2.stock_code AND t1.created_at = t2.max_created
-                 WHERE t1.has_buy_signal = 1)
+                (
+                    SELECT latest_buy.*
+                    FROM bs_detection_results AS latest_buy
+                    INNER JOIN (
+                        SELECT
+                            stock_code,
+                            MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
+                            MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
+                        FROM bs_detection_results
+                        GROUP BY stock_code
+                    ) AS summary
+                        ON latest_buy.stock_code = summary.stock_code
+                        AND latest_buy.batch_date = summary.latest_buy_date
+                    WHERE latest_buy.has_buy_signal = 1
+                      AND (summary.latest_sell_date IS NULL OR summary.latest_buy_date > summary.latest_sell_date)
+                )
             """
             pagination, offset = get_pagination(cursor, f"{subquery} as sub", page, per_page)
-            
+
             sql_holding = f"""
                 SELECT sub.*, t_name.stock_name
                 FROM {subquery} as sub
                 LEFT JOIN a_share_stock_list t_name ON sub.stock_code = t_name.stock_code COLLATE utf8mb4_general_ci
-                ORDER BY sub.created_at DESC
+                ORDER BY sub.batch_date DESC, sub.stock_code ASC
                 LIMIT %s OFFSET %s
             """
             cursor.execute(sql_holding, (per_page, offset))
@@ -830,6 +932,37 @@ def sina_monitor():
             cursor.execute(sql_sell, (per_page, offset))
             signals = cursor.fetchall()
 
+        elif active_tab == 'signal_stats':
+            where_stmt = ""
+            params = []
+            if query_date:
+                where_stmt = "WHERE batch_date <= %s"
+                params = [query_date]
+
+            sub_table = f"""
+                (
+                    SELECT
+                        batch_date,
+                        COUNT(*) AS total,
+                        SUM(has_buy_signal) AS buy_count,
+                        SUM(has_sell_signal) AS sell_count,
+                        MAX(created_at) AS last_update
+                    FROM bs_detection_results
+                    {where_stmt}
+                    GROUP BY batch_date
+                )
+            """
+            pagination, offset = get_pagination(cursor, f"{sub_table} as t", page, per_page, "", tuple(params) if params else None)
+
+            sql_stats_rows = f"""
+                SELECT *
+                FROM {sub_table} AS t
+                ORDER BY batch_date DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(sql_stats_rows, tuple(params + [per_page, offset]))
+            signal_stats_rows = cursor.fetchall()
+
     return render_template('sina_monitor.html',
                            active_tab=active_tab,
                            query_date=query_date,
@@ -838,6 +971,7 @@ def sina_monitor():
                            signals=signals,
                            pagination=pagination,
                            last_completed_date=last_completed_date,
+                           signal_stats_rows=signal_stats_rows,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 
@@ -1625,6 +1759,8 @@ def backtest_results():
 @app.route('/stock_pool')
 def stock_pool():
     selected_pool_id = request.args.get('pool_id', type=int)
+    page = max(request.args.get('page', default=1, type=int), 1)
+    page_size = 20
 
     conn = get_db()
     with conn.cursor() as cursor:
@@ -1656,14 +1792,22 @@ def stock_pool():
         cursor.execute("SELECT * FROM stock_pools WHERE id = %s", (selected_pool_id,))
         selected_pool = cursor.fetchone()
 
+        cursor.execute("SELECT COUNT(*) AS c FROM stock_pool_items WHERE pool_id = %s", (selected_pool_id,))
+        total_stocks = int((cursor.fetchone() or {}).get('c') or 0)
+        total_pages = max((total_stocks + page_size - 1) // page_size, 1)
+        if page > total_pages:
+            page = total_pages
+        offset = (page - 1) * page_size
+
         cursor.execute(
             """
             SELECT id, symbol, stock_name, note, created_at, updated_at
             FROM stock_pool_items
             WHERE pool_id = %s
             ORDER BY updated_at DESC, symbol ASC
+            LIMIT %s OFFSET %s
             """,
-            (selected_pool_id,),
+            (selected_pool_id, page_size, offset),
         )
         stocks = cursor.fetchall()
 
@@ -1673,6 +1817,10 @@ def stock_pool():
         pools=pools,
         selected_pool=selected_pool,
         stocks=stocks,
+        page=page,
+        page_size=page_size,
+        total_stocks=total_stocks,
+        total_pages=total_pages,
     )
 
 
@@ -1815,6 +1963,60 @@ def _sync_recent_buy_pool(cursor):
         )
 
 
+def _lookup_stock_by_code(cursor, symbol):
+    cursor.execute(
+        """
+        SELECT stock_code, stock_name
+        FROM a_share_stock_list
+        WHERE stock_code = %s
+        LIMIT 1
+        """,
+        (symbol,),
+    )
+    return cursor.fetchone()
+
+
+def _lookup_stock_by_name(cursor, stock_name):
+    cursor.execute(
+        """
+        SELECT stock_code, stock_name
+        FROM a_share_stock_list
+        WHERE stock_name = %s
+        LIMIT 2
+        """,
+        (stock_name,),
+    )
+    return cursor.fetchall()
+
+
+def _resolve_stock_entry(cursor, symbol, stock_name):
+    symbol = str(symbol or '').strip()
+    stock_name = str(stock_name or '').strip()
+
+    if symbol:
+        code = symbol.zfill(6)
+        if not code.isdigit() or len(code) != 6:
+            return None, None, f'股票代码格式无效: {symbol}'
+        row = _lookup_stock_by_code(cursor, code)
+        if not row:
+            return None, None, f'股票代码不存在: {code}'
+        db_name = str(row.get('stock_name') or '').strip()
+        if stock_name and stock_name != db_name:
+            return None, None, f'股票代码与名称不匹配: {code} / {stock_name}'
+        return code, db_name, None
+
+    if stock_name:
+        rows = _lookup_stock_by_name(cursor, stock_name)
+        if not rows:
+            return None, None, f'股票名称不存在: {stock_name}'
+        if len(rows) > 1:
+            return None, None, f'股票名称存在多条，请改用代码录入: {stock_name}'
+        row = rows[0]
+        return str(row.get('stock_code') or '').zfill(6), str(row.get('stock_name') or '').strip(), None
+
+    return None, None, '请至少输入股票代码或股票名称。'
+
+
 @app.route('/stock_pool/pool/add', methods=['POST'])
 def add_stock_pool():
     pool_name = (request.form.get('pool_name') or '').strip()
@@ -1852,12 +2054,18 @@ def rename_stock_pool(pool_id):
     conn = get_db()
     with conn.cursor() as cursor:
         try:
+            cursor.execute("SELECT is_editable FROM stock_pools WHERE id = %s", (pool_id,))
+            pool = cursor.fetchone()
+            if not pool:
+                flash('未找到要更新的股票池。', 'danger')
+                return redirect(url_for('stock_pool', pool_id=pool_id))
+            if int(pool.get('is_editable') or 0) != 1:
+                flash('该股票池为只读属性，不允许手动管理。', 'danger')
+                return redirect(url_for('stock_pool', pool_id=pool_id))
+
             cursor.execute("UPDATE stock_pools SET pool_name = %s WHERE id = %s", (pool_name, pool_id))
             conn.commit()
-            if cursor.rowcount > 0:
-                flash('股票池名称已更新。', 'success')
-            else:
-                flash('未找到要更新的股票池。', 'danger')
+            flash('股票池名称已更新。', 'success')
         except Exception as e:
             flash(f'更新股票池名称失败: {e}', 'danger')
 
@@ -1867,21 +2075,22 @@ def rename_stock_pool(pool_id):
 @app.route('/stock_pool/item/add', methods=['POST'])
 def add_stock_pool_item():
     pool_id = request.form.get('pool_id', type=int)
-    symbol = str(request.form.get('symbol') or '').strip().zfill(6)
+    symbol = str(request.form.get('symbol') or '').strip()
     stock_name = (request.form.get('stock_name') or '').strip()
     note = (request.form.get('note') or '').strip()
+    symbols_batch = (request.form.get('symbols_batch') or '').strip()
 
     if not pool_id:
         flash('缺少股票池参数。', 'danger')
         return redirect(url_for('stock_pool'))
 
-    if not symbol.isdigit() or len(symbol) != 6:
-        flash('股票代码必须为 6 位数字。', 'danger')
-        return redirect(url_for('stock_pool', pool_id=pool_id))
+    raw_codes = []
+    if symbol:
+        raw_codes.append(symbol)
 
-    if not stock_name:
-        flash('股票名称不能为空。', 'danger')
-        return redirect(url_for('stock_pool', pool_id=pool_id))
+    if symbols_batch:
+        normalized = symbols_batch.replace('\n', ',').replace('\t', ',').replace('，', ',').replace('；', ',').replace(';', ',').replace(' ', ',')
+        raw_codes.extend([item.strip() for item in normalized.split(',') if item.strip()])
 
     conn = get_db()
     with conn.cursor() as cursor:
@@ -1892,23 +2101,55 @@ def add_stock_pool_item():
             return redirect(url_for('stock_pool'))
 
         if int(pool.get('is_editable') or 0) != 1:
-            flash('该股票池不允许手动管理，请通过定时任务同步。', 'danger')
+            flash('该股票池为只读属性，不允许手动管理。', 'danger')
+            return redirect(url_for('stock_pool', pool_id=pool_id))
+
+        resolved = []
+        invalid_msgs = []
+        seen = set()
+
+        if raw_codes:
+            for i, code_raw in enumerate(raw_codes):
+                name_hint = stock_name if (i == 0 and len(raw_codes) == 1 and not symbols_batch) else ''
+                code, resolved_name, err = _resolve_stock_entry(cursor, code_raw, name_hint)
+                if err:
+                    invalid_msgs.append(err)
+                    continue
+                if code in seen:
+                    continue
+                seen.add(code)
+                resolved.append((code, resolved_name))
+        else:
+            code, resolved_name, err = _resolve_stock_entry(cursor, '', stock_name)
+            if err:
+                flash(err, 'danger')
+                return redirect(url_for('stock_pool', pool_id=pool_id))
+            resolved.append((code, resolved_name))
+
+        if not resolved:
+            flash('没有可保存的有效股票，请检查代码或名称是否真实存在。', 'danger')
             return redirect(url_for('stock_pool', pool_id=pool_id))
 
         try:
-            cursor.execute(
-                """
-                INSERT INTO stock_pool_items (pool_id, symbol, stock_name, note)
-                VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    stock_name = VALUES(stock_name),
-                    note = VALUES(note),
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (pool_id, symbol, stock_name, note or None),
-            )
+            for code, resolved_name in resolved:
+                final_name = resolved_name
+                cursor.execute(
+                    """
+                    INSERT INTO stock_pool_items (pool_id, symbol, stock_name, note)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        stock_name = VALUES(stock_name),
+                        note = VALUES(note),
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (pool_id, code, final_name, note or None),
+                )
             conn.commit()
-            flash(f"已保存到【{pool['pool_name']}】：{symbol} {stock_name}", 'success')
+            flash(f"已保存到【{pool['pool_name']}】：{len(resolved)} 只股票", 'success')
+            for msg in invalid_msgs[:10]:
+                flash(msg, 'danger')
+            if len(invalid_msgs) > 10:
+                flash(f'另有 {len(invalid_msgs)-10} 条无效输入未展示。', 'danger')
         except Exception as e:
             flash(f'保存股票失败: {e}', 'danger')
 
@@ -1934,7 +2175,7 @@ def delete_stock_pool_item(item_id):
             return redirect(url_for('stock_pool'))
 
         if int(row.get('is_editable') or 0) != 1:
-            flash('该股票池不允许手动删除，请通过定时任务同步。', 'danger')
+            flash('该股票池为只读属性，不允许手动管理。', 'danger')
             return redirect(url_for('stock_pool', pool_id=row['pool_id']))
 
         try:
@@ -1950,10 +2191,28 @@ def delete_stock_pool_item(item_id):
 @app.route('/admin')
 def admin():
     now_date_iso = datetime.now().strftime('%Y-%m-%d')
+    m8_pools = []
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_stock_pool_schema(cursor)
+            _ensure_seed_pools(cursor)
+            cursor.execute(
+                """
+                SELECT id, pool_name, pool_key, is_editable
+                FROM stock_pools
+                ORDER BY is_system DESC, id ASC
+                """
+            )
+            m8_pools = cursor.fetchall()
+    except Exception as e:
+        print(f"Failed to load stock pools in admin: {e}")
+
     return render_template('admin.html', 
                            tasks=TASKS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           now_date=now_date_iso)
+                           now_date=now_date_iso,
+                           m8_pools=m8_pools)
 
 def update_task_db(task_name):
     """Save task status to database"""
@@ -2023,7 +2282,10 @@ def run_task(task_name):
         # Let's adjust run_script to handle a list of command parts.
         script_parts = [script, "config_1", today]
     elif task_name == 'sina_m8':
+        m8_pool_id = request.form.get('m8_pool_id', type=int)
         script_parts = [script, '--lookback-dates', '60']
+        if m8_pool_id:
+            script_parts.extend(['--pool-id', str(m8_pool_id)])
     else:
         script_parts = [script]
     
