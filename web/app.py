@@ -165,6 +165,7 @@ def _extract_trade_rows(payload):
             row['amount'] = round(row['price_num'] * row['quantity_num'], 2) if row['price_num'] and row['quantity_num'] else '-'
         rows.append(row)
 
+    rows.sort(key=lambda x: str(x.get('datetime') or ''))
     return rows
 
 
