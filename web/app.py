@@ -1867,20 +1867,41 @@ def rename_stock_pool(pool_id):
 @app.route('/stock_pool/item/add', methods=['POST'])
 def add_stock_pool_item():
     pool_id = request.form.get('pool_id', type=int)
-    symbol = str(request.form.get('symbol') or '').strip().zfill(6)
+    symbol = str(request.form.get('symbol') or '').strip()
     stock_name = (request.form.get('stock_name') or '').strip()
     note = (request.form.get('note') or '').strip()
+    symbols_batch = (request.form.get('symbols_batch') or '').strip()
 
     if not pool_id:
         flash('缺少股票池参数。', 'danger')
         return redirect(url_for('stock_pool'))
 
-    if not symbol.isdigit() or len(symbol) != 6:
-        flash('股票代码必须为 6 位数字。', 'danger')
+    raw_codes = []
+    if symbol:
+        raw_codes.append(symbol)
+
+    if symbols_batch:
+        normalized = symbols_batch.replace('\n', ',').replace('\t', ',').replace('，', ',').replace('；', ',').replace(';', ',').replace(' ', ',')
+        raw_codes.extend([item.strip() for item in normalized.split(',') if item.strip()])
+
+    if not raw_codes:
+        flash('请至少输入一个股票代码。', 'danger')
         return redirect(url_for('stock_pool', pool_id=pool_id))
 
-    if not stock_name:
-        flash('股票名称不能为空。', 'danger')
+    valid_symbols = []
+    invalid_symbols = []
+    seen = set()
+    for code in raw_codes:
+        normalized_code = code.zfill(6)
+        if normalized_code.isdigit() and len(normalized_code) == 6:
+            if normalized_code not in seen:
+                seen.add(normalized_code)
+                valid_symbols.append(normalized_code)
+        else:
+            invalid_symbols.append(code)
+
+    if not valid_symbols:
+        flash('股票代码必须为 6 位数字。', 'danger')
         return redirect(url_for('stock_pool', pool_id=pool_id))
 
     conn = get_db()
@@ -1896,19 +1917,23 @@ def add_stock_pool_item():
             return redirect(url_for('stock_pool', pool_id=pool_id))
 
         try:
-            cursor.execute(
-                """
-                INSERT INTO stock_pool_items (pool_id, symbol, stock_name, note)
-                VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    stock_name = VALUES(stock_name),
-                    note = VALUES(note),
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (pool_id, symbol, stock_name, note or None),
-            )
+            for code in valid_symbols:
+                current_name = stock_name if (stock_name and len(valid_symbols) == 1) else code
+                cursor.execute(
+                    """
+                    INSERT INTO stock_pool_items (pool_id, symbol, stock_name, note)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        stock_name = VALUES(stock_name),
+                        note = VALUES(note),
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (pool_id, code, current_name, note or None),
+                )
             conn.commit()
-            flash(f"已保存到【{pool['pool_name']}】：{symbol} {stock_name}", 'success')
+            flash(f"已保存到【{pool['pool_name']}】：{len(valid_symbols)} 只股票", 'success')
+            if invalid_symbols:
+                flash(f"以下代码格式无效，已跳过：{', '.join(invalid_symbols)}", 'danger')
         except Exception as e:
             flash(f'保存股票失败: {e}', 'danger')
 
