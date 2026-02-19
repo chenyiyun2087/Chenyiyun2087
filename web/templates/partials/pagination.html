@@ -1,17 +1,16 @@
 {% if pagination and pagination.pages > 1 %}
 <div class="pagination">
-    {% set args = request.args.copy() %}
+    {# Use pagination_params if provided, otherwise fallback to request.args #}
+    {% set base_args = (pagination_params if pagination_params is defined else request.args.to_dict()) %}
 
     {% if pagination.has_prev %}
-    {% set _ = args.update({'page': pagination.prev_num}) %}
-    <a href="{{ url_for(request.endpoint, **args) }}">上一页</a>
+    <a href="{{ url_for(request.endpoint, **dict(base_args, page=pagination.prev_num)) }}">上一页</a>
     {% endif %}
 
     <span>第 {{ pagination.page }} / {{ pagination.pages }} 页</span>
 
     {% if pagination.has_next %}
-    {% set _ = args.update({'page': pagination.next_num}) %}
-    <a href="{{ url_for(request.endpoint, **args) }}">下一页</a>
+    <a href="{{ url_for(request.endpoint, **dict(base_args, page=pagination.next_num)) }}">下一页</a>
     {% endif %}
 </div>
 {% endif %}

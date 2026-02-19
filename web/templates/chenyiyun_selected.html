@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 
-{% block title %}陈依云精选策略{% endblock %}
-{% block page_title %}陈依云精选策略{% endblock %}
+{% block title %}核心精选{% endblock %}
+{% block page_title %}核心精选{% endblock %}
 
 {% block content %}
 <div class="panel">
@@ -40,7 +40,9 @@
                 <td>{{ row.target_shares }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="9" class="empty">暂无信号数据</td></tr>
+            <tr>
+                <td colspan="9" class="empty">暂无信号数据</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>
@@ -50,7 +52,8 @@
     {% if pagination.has_prev %}
     <a href="{{ url_for('chenyiyun_selected_dashboard', page=pagination.prev_num) }}">上一页</a>
     {% endif %}
-    <span>第 {{ pagination.page }} / {{ pagination.pages if pagination.pages > 0 else 1 }} 页（共 {{ pagination.total }} 条）</span>
+    <span>第 {{ pagination.page }} / {{ pagination.pages if pagination.pages > 0 else 1 }} 页（共 {{ pagination.total }}
+        条）</span>
     {% if pagination.has_next %}
     <a href="{{ url_for('chenyiyun_selected_dashboard', page=pagination.next_num) }}">下一页</a>
     {% endif %}
@@ -80,7 +83,9 @@
                 <td>{{ '%.2f'|format((pos.current_price or 0)|float) }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="6" class="empty">暂无持仓数据</td></tr>
+            <tr>
+                <td colspan="6" class="empty">暂无持仓数据</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>

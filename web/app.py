@@ -617,7 +617,7 @@ def sina_scores():
                 COALESCE(claude_score, 0) as claude_score 
             FROM score_rank_daily 
             {where_stmt}
-            AND (is_bs_candidate = 1)
+            AND (is_bs_candidate = 1 OR is_self_selected = 1 OR pool_type IS NOT NULL)
             {order_stmt}
             LIMIT %s OFFSET %s
             """
@@ -636,7 +636,7 @@ def sina_scores():
                            min_o=min_opt_score,
                            per_page=per_page,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           page_title="sina B点股票评分")
+                           page_title="股票池评分")
 
 @app.route('/sina/self_selected')
 def sina_self_selected():
@@ -812,7 +812,7 @@ def sina_monitor():
     conn = get_db()
     
     # Parameters
-    active_tab = request.args.get('tab', 'summary')
+    active_tab = request.args.get('tab', 'latest_b') # Default to 'latest_b'
     page = request.args.get('page', 1, type=int)
     per_page = 50
     
@@ -832,6 +832,7 @@ def sina_monitor():
     daily_stats = {}
     signals = []
     pagination = None
+    chart_data = [] # Initialize to avoid UnboundLocalError
     last_completed_date = None
     signal_stats_rows = []
 
@@ -902,35 +903,21 @@ def sina_monitor():
             cursor.execute(sql_holding, (per_page, offset))
             signals = cursor.fetchall()
 
-        elif active_tab == 'recent_buy':
-            where_stmt = "WHERE has_buy_signal=1"
-            pagination, offset = get_pagination(cursor, "bs_detection_results", page, per_page, where_stmt)
-            
-            sql_buy = f"""
-                SELECT t1.*, t2.stock_name 
-                FROM bs_detection_results t1
-                LEFT JOIN a_share_stock_list t2 ON t1.stock_code = t2.stock_code COLLATE utf8mb4_general_ci
-                {where_stmt}
-                ORDER BY t1.created_at DESC
-                LIMIT %s OFFSET %s
+        elif active_tab == 'stats':
+            # Fetch historical stats for Chart.js
+            days = request.args.get('days', 30, type=int)
+            sql_history = """
+                SELECT batch_date, 
+                       COUNT(*) as total,
+                       SUM(has_buy_signal) as buy_count,
+                       SUM(has_sell_signal) as sell_count
+                FROM bs_detection_results
+                GROUP BY batch_date
+                ORDER BY batch_date DESC
+                LIMIT %s
             """
-            cursor.execute(sql_buy, (per_page, offset))
-            signals = cursor.fetchall()
-
-        elif active_tab == 'recent_sell':
-            where_stmt = "WHERE has_sell_signal=1"
-            pagination, offset = get_pagination(cursor, "bs_detection_results", page, per_page, where_stmt)
-            
-            sql_sell = f"""
-                SELECT t1.*, t2.stock_name 
-                FROM bs_detection_results t1
-                LEFT JOIN a_share_stock_list t2 ON t1.stock_code = t2.stock_code COLLATE utf8mb4_general_ci
-                {where_stmt}
-                ORDER BY t1.created_at DESC
-                LIMIT %s OFFSET %s
-            """
-            cursor.execute(sql_sell, (per_page, offset))
-            signals = cursor.fetchall()
+            cursor.execute(sql_history, (days,))
+            chart_data = cursor.fetchall()[::-1] # Order chronologically for chart
 
         elif active_tab == 'signal_stats':
             where_stmt = ""
@@ -970,6 +957,7 @@ def sina_monitor():
                            daily_stats=daily_stats,
                            signals=signals,
                            pagination=pagination,
+                           chart_data=chart_data,
                            last_completed_date=last_completed_date,
                            signal_stats_rows=signal_stats_rows,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -2024,23 +2012,51 @@ def add_stock_pool():
         flash('股票池名称不能为空。', 'danger')
         return redirect(url_for('stock_pool'))
 
-    pool_key = f"CUSTOM_{int(time.time())}"
-    conn = get_db()
-    with conn.cursor() as cursor:
-        _ensure_stock_pool_schema(cursor)
-        try:
-            cursor.execute(
-                """
-                INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
-                VALUES (%s, %s, 'MANUAL', 0, 1)
-                """,
-                (pool_key, pool_name),
-            )
-            conn.commit()
-            flash(f'已新增股票池：{pool_name}', 'success')
-        except Exception as e:
-            flash(f'新增股票池失败: {e}', 'danger')
 
+def _lookup_stock_by_name(cursor, stock_name):
+    cursor.execute(
+        """
+        SELECT stock_code, stock_name
+        FROM a_share_stock_list
+        WHERE stock_name = %s
+        LIMIT 2
+        """,
+        (stock_name,),
+    )
+    return cursor.fetchall()
+
+
+def _resolve_stock_entry(cursor, symbol, stock_name):
+    symbol = str(symbol or '').strip()
+    stock_name = str(stock_name or '').strip()
+
+    if symbol:
+        code = symbol.zfill(6)
+        if not code.isdigit() or len(code) != 6:
+            return None, None, f'股票代码格式无效: {symbol}'
+        row = _lookup_stock_by_code(cursor, code)
+        if not row:
+            return None, None, f'股票代码不存在: {code}'
+        db_name = str(row.get('stock_name') or '').strip()
+        if stock_name and stock_name != db_name:
+            return None, None, f'股票代码与名称不匹配: {code} / {stock_name}'
+        return code, db_name, None
+
+    if stock_name:
+        rows = _lookup_stock_by_name(cursor, stock_name)
+        if not rows:
+            return None, None, f'股票名称不存在: {stock_name}'
+        if len(rows) > 1:
+            return None, None, f'股票名称存在多条，请改用代码录入: {stock_name}'
+        row = rows[0]
+        return str(row.get('stock_code') or '').zfill(6), str(row.get('stock_name') or '').strip(), None
+
+    return None, None, '请至少输入股票代码或股票名称。'
+
+
+@app.route('/stock_pool/pool/add', methods=['POST'])
+def add_stock_pool():
+    flash('当前版本仅允许管理【自选股池】，不支持新增其他股票池。', 'danger')
     return redirect(url_for('stock_pool'))
 
 
@@ -2094,7 +2110,7 @@ def add_stock_pool_item():
 
     conn = get_db()
     with conn.cursor() as cursor:
-        cursor.execute("SELECT pool_name, is_editable FROM stock_pools WHERE id = %s", (pool_id,))
+        cursor.execute("SELECT pool_name, pool_key, is_editable FROM stock_pools WHERE id = %s", (pool_id,))
         pool = cursor.fetchone()
         if not pool:
             flash('股票池不存在。', 'danger')
@@ -2162,7 +2178,7 @@ def delete_stock_pool_item(item_id):
     with conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT i.id, i.pool_id, p.is_editable
+            SELECT i.id, i.pool_id, p.is_editable, p.pool_key
             FROM stock_pool_items i
             JOIN stock_pools p ON p.id = i.pool_id
             WHERE i.id = %s
