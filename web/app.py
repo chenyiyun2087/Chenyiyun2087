@@ -1,4 +1,4 @@
-from flask import Flask, render_template, g, request, redirect, url_for, flash
+from flask import Flask, render_template, g, request, redirect, url_for, flash, jsonify
 import sys
 import os
 import pymysql
@@ -871,7 +871,7 @@ def sina_monitor():
             cursor.execute(sql_details, (query_date, per_page, offset))
             signals = cursor.fetchall()
 
-        elif active_tab == 'holding_b':
+        elif active_tab == 'latest_b':
             # Latest buy date must be newer than latest sell date (as-of state)
             subquery = """
                 (
@@ -1054,6 +1054,34 @@ def sina_monitor():
                            last_completed_date=last_completed_date,
                            signal_stats_rows=signal_stats_rows,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+
+@app.route('/api/signal_stats')
+def api_signal_stats():
+    conn = get_db()
+    with conn.cursor() as cursor:
+        sql = """
+            SELECT 
+                batch_date, 
+                COUNT(*) AS total,
+                SUM(has_buy_signal) AS buy_count,
+                SUM(has_sell_signal) AS sell_count,
+                MAX(created_at) AS last_update
+            FROM bs_detection_results
+            GROUP BY batch_date
+            ORDER BY batch_date ASC
+            LIMIT 30
+        """
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+        # Convert datetime to string for JSON serialization
+        for row in rows:
+            if row.get('last_update'):
+                row['last_update'] = str(row['last_update'])
+            # Also ensure batch_date is string if it's a date object
+            if row.get('batch_date') and hasattr(row['batch_date'], 'isoformat'):
+                row['batch_date'] = row['batch_date'].isoformat()
+        return jsonify(rows)
 
 
 @app.route('/api/live/execute_trade', methods=['POST'])

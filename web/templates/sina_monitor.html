@@ -24,21 +24,6 @@
         style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         信号统计
     </a>
-    <a href="{{ url_for('sina_monitor', tab='signal_stats', date=query_date) }}"
-        class="tab-btn {% if active_tab == 'signal_stats' %}active{% endif %}"
-        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
-        信号统计
-    </a>
-    <a href="{{ url_for('sina_monitor', tab='signal_stats', date=query_date) }}"
-        class="tab-btn {% if active_tab == 'signal_stats' %}active{% endif %}"
-        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
-        信号统计
-    </a>
-    <a href="{{ url_for('sina_monitor', tab='signal_stats', date=query_date) }}"
-        class="tab-btn {% if active_tab == 'signal_stats' %}active{% endif %}"
-        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
-        信号统计
-    </a>
 </div>
 
 {% if active_tab == 'summary' %}
@@ -158,6 +143,75 @@
     </div>
 </section>
 
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const ctx = document.getElementById('signalChart')?.getContext('2d');
+        if (!ctx) return;
+
+        fetch('/api/signal_stats')
+            .then(response => response.json())
+            .then(data => {
+                const labels = data.map(d => d.batch_date);
+                const buyCounts = data.map(d => d.buy_count);
+                const sellCounts = data.map(d => d.sell_count);
+                const totals = data.map(d => d.total);
+
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: '买点 (B)',
+                                data: buyCounts,
+                                backgroundColor: 'rgba(76, 175, 80, 0.6)',
+                                borderColor: '#4CAF50',
+                                borderWidth: 1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: '卖点 (S)',
+                                data: sellCounts,
+                                backgroundColor: 'rgba(244, 67, 54, 0.6)',
+                                borderColor: '#f44336',
+                                borderWidth: 1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: '扫描总量',
+                                data: totals,
+                                type: 'line',
+                                borderColor: '#2196F3',
+                                backgroundColor: 'transparent',
+                                borderWidth: 2,
+                                pointRadius: 3,
+                                yAxisID: 'y1',
+                                tension: 0.1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { grid: { display: false } },
+                            y: {
+                                beginAtZero: true,
+                                position: 'left',
+                                title: { display: true, text: '信号数量' }
+                            },
+                            y1: {
+                                beginAtZero: true,
+                                position: 'right',
+                                grid: { drawOnChartArea: false },
+                                title: { display: true, text: '扫描总数' }
+                            }
+                        }
+                    }
+                });
+            });
+    });
+</script>
 {% elif active_tab == 'recent_sell' %}
 <!-- Recent Sell Tab Content -->
 <section class="panel">
@@ -213,76 +267,14 @@
                 <td>{{ row.last_update or '-' }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="5" class="empty">暂无统计数据</td></tr>
+            <tr>
+                <td colspan="5" class="empty">暂无统计数据</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>
 </section>
 
-{% endif %}
-
-    const labels = data.map(d => d.batch_date);
-    const buyCounts = data.map(d => d.buy_count);
-    const sellCounts = data.map(d => d.sell_count);
-    const totals = data.map(d => d.total);
-
-    new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: '买点 (B)',
-                    data: buyCounts,
-                    backgroundColor: 'rgba(76, 175, 80, 0.6)',
-                    borderColor: '#4CAF50',
-                    borderWidth: 1,
-                    yAxisID: 'y'
-                },
-                {
-                    label: '卖点 (S)',
-                    data: sellCounts,
-                    backgroundColor: 'rgba(244, 67, 54, 0.6)',
-                    borderColor: '#f44336',
-                    borderWidth: 1,
-                    yAxisID: 'y'
-                },
-                {
-                    label: '扫描总量',
-                    data: totals,
-                    type: 'line',
-                    borderColor: '#2196F3',
-                    backgroundColor: 'transparent',
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    yAxisID: 'y1',
-                    tension: 0.1
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: {
-                    grid: { display: false }
-                },
-                y: {
-                    beginAtZero: true,
-                    position: 'left',
-                    title: { display: true, text: '信号数量' }
-                },
-                y1: {
-                    beginAtZero: true,
-                    position: 'right',
-                    grid: { drawOnChartArea: false },
-                    title: { display: true, text: '扫描总数' }
-                }
-            }
-        }
-    });
-    });
-</script>
 {% endif %}
 
 <!-- Removed Unified Pagination for all tabs as it's now in the header -->
