@@ -1625,6 +1625,8 @@ def backtest_results():
 @app.route('/stock_pool')
 def stock_pool():
     selected_pool_id = request.args.get('pool_id', type=int)
+    page = max(request.args.get('page', default=1, type=int), 1)
+    page_size = 20
 
     conn = get_db()
     with conn.cursor() as cursor:
@@ -1656,14 +1658,22 @@ def stock_pool():
         cursor.execute("SELECT * FROM stock_pools WHERE id = %s", (selected_pool_id,))
         selected_pool = cursor.fetchone()
 
+        cursor.execute("SELECT COUNT(*) AS c FROM stock_pool_items WHERE pool_id = %s", (selected_pool_id,))
+        total_stocks = int((cursor.fetchone() or {}).get('c') or 0)
+        total_pages = max((total_stocks + page_size - 1) // page_size, 1)
+        if page > total_pages:
+            page = total_pages
+        offset = (page - 1) * page_size
+
         cursor.execute(
             """
             SELECT id, symbol, stock_name, note, created_at, updated_at
             FROM stock_pool_items
             WHERE pool_id = %s
             ORDER BY updated_at DESC, symbol ASC
+            LIMIT %s OFFSET %s
             """,
-            (selected_pool_id,),
+            (selected_pool_id, page_size, offset),
         )
         stocks = cursor.fetchall()
 
@@ -1673,6 +1683,10 @@ def stock_pool():
         pools=pools,
         selected_pool=selected_pool,
         stocks=stocks,
+        page=page,
+        page_size=page_size,
+        total_stocks=total_stocks,
+        total_pages=total_pages,
     )
 
 
@@ -1817,28 +1831,7 @@ def _sync_recent_buy_pool(cursor):
 
 @app.route('/stock_pool/pool/add', methods=['POST'])
 def add_stock_pool():
-    pool_name = (request.form.get('pool_name') or '').strip()
-    if not pool_name:
-        flash('股票池名称不能为空。', 'danger')
-        return redirect(url_for('stock_pool'))
-
-    pool_key = f"CUSTOM_{int(time.time())}"
-    conn = get_db()
-    with conn.cursor() as cursor:
-        _ensure_stock_pool_schema(cursor)
-        try:
-            cursor.execute(
-                """
-                INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
-                VALUES (%s, %s, 'MANUAL', 0, 1)
-                """,
-                (pool_key, pool_name),
-            )
-            conn.commit()
-            flash(f'已新增股票池：{pool_name}', 'success')
-        except Exception as e:
-            flash(f'新增股票池失败: {e}', 'danger')
-
+    flash('当前版本仅允许管理【自选股池】，不支持新增其他股票池。', 'danger')
     return redirect(url_for('stock_pool'))
 
 
@@ -1852,12 +1845,18 @@ def rename_stock_pool(pool_id):
     conn = get_db()
     with conn.cursor() as cursor:
         try:
+            cursor.execute("SELECT pool_key FROM stock_pools WHERE id = %s", (pool_id,))
+            pool = cursor.fetchone()
+            if not pool:
+                flash('未找到要更新的股票池。', 'danger')
+                return redirect(url_for('stock_pool', pool_id=pool_id))
+            if pool.get('pool_key') != 'SELF_SELECTED':
+                flash('仅允许对【自选股池】进行管理。', 'danger')
+                return redirect(url_for('stock_pool', pool_id=pool_id))
+
             cursor.execute("UPDATE stock_pools SET pool_name = %s WHERE id = %s", (pool_name, pool_id))
             conn.commit()
-            if cursor.rowcount > 0:
-                flash('股票池名称已更新。', 'success')
-            else:
-                flash('未找到要更新的股票池。', 'danger')
+            flash('股票池名称已更新。', 'success')
         except Exception as e:
             flash(f'更新股票池名称失败: {e}', 'danger')
 
@@ -1906,14 +1905,14 @@ def add_stock_pool_item():
 
     conn = get_db()
     with conn.cursor() as cursor:
-        cursor.execute("SELECT pool_name, is_editable FROM stock_pools WHERE id = %s", (pool_id,))
+        cursor.execute("SELECT pool_name, pool_key, is_editable FROM stock_pools WHERE id = %s", (pool_id,))
         pool = cursor.fetchone()
         if not pool:
             flash('股票池不存在。', 'danger')
             return redirect(url_for('stock_pool'))
 
-        if int(pool.get('is_editable') or 0) != 1:
-            flash('该股票池不允许手动管理，请通过定时任务同步。', 'danger')
+        if pool.get('pool_key') != 'SELF_SELECTED':
+            flash('仅允许对【自选股池】进行管理。', 'danger')
             return redirect(url_for('stock_pool', pool_id=pool_id))
 
         try:
@@ -1946,7 +1945,7 @@ def delete_stock_pool_item(item_id):
     with conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT i.id, i.pool_id, p.is_editable
+            SELECT i.id, i.pool_id, p.is_editable, p.pool_key
             FROM stock_pool_items i
             JOIN stock_pools p ON p.id = i.pool_id
             WHERE i.id = %s
@@ -1958,8 +1957,8 @@ def delete_stock_pool_item(item_id):
             flash('未找到待删除记录。', 'danger')
             return redirect(url_for('stock_pool'))
 
-        if int(row.get('is_editable') or 0) != 1:
-            flash('该股票池不允许手动删除，请通过定时任务同步。', 'danger')
+        if row.get('pool_key') != 'SELF_SELECTED':
+            flash('仅允许对【自选股池】进行管理。', 'danger')
             return redirect(url_for('stock_pool', pool_id=row['pool_id']))
 
         try:

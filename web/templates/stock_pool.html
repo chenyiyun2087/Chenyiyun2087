@@ -5,10 +5,7 @@
 {% block content %}
 <section class="panel">
     <div class="panel-title">股票池列表</div>
-    <form method="post" action="{{ url_for('add_stock_pool') }}" class="form-grid" style="margin-bottom: 12px;">
-        <input name="pool_name" placeholder="新股票池名称" required>
-        <button class="btn">新增股票池</button>
-    </form>
+    <div class="flash" style="margin-bottom:12px;">当前版本仅支持管理【自选股池】，其他股票池仅可查看。</div>
 
     <table>
         <thead>
@@ -30,7 +27,11 @@
                 <td>{{ '是' if pool.is_editable else '否' }}</td>
                 <td>{{ pool.stock_count }}</td>
                 <td>
-                    <a class="btn" href="{{ url_for('stock_pool', pool_id=pool.id) }}">查看</a>
+                    {% if selected_pool and selected_pool.id == pool.id %}
+                    <span class="tab active">当前管理</span>
+                    {% else %}
+                    <a class="btn" href="{{ url_for('stock_pool', pool_id=pool.id) }}">切换管理</a>
+                    {% endif %}
                 </td>
             </tr>
             {% else %}
@@ -44,12 +45,12 @@
 <section class="panel">
     <div class="panel-title">当前股票池：{{ selected_pool.pool_name }}</div>
 
+    {% if selected_pool.pool_key == 'SELF_SELECTED' %}
     <form method="post" action="{{ url_for('rename_stock_pool', pool_id=selected_pool.id) }}" class="form-grid" style="margin-bottom: 12px;">
         <input name="pool_name" value="{{ selected_pool.pool_name }}" required>
         <button class="btn">更改股票池名称</button>
     </form>
 
-    {% if selected_pool.is_editable %}
     <form method="post" action="{{ url_for('add_stock_pool_item') }}" class="form-grid" style="margin-bottom: 12px;">
         <input type="hidden" name="pool_id" value="{{ selected_pool.id }}">
         <input name="symbol" placeholder="单条录入：股票代码(6位)">
@@ -61,8 +62,20 @@
         <button class="btn">新增/更新池内股票</button>
     </form>
     {% else %}
-    <div class="flash danger">该股票池不允许手动管理：只能由定时任务同步买点/卖点信号。</div>
+    <div class="flash danger">当前仅支持对【自选股池】进行增删改管理，其他股票池只读。</div>
     {% endif %}
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">
+        <div>共 {{ total_stocks }} 条，当前第 {{ page }}/{{ total_pages }} 页</div>
+        <div>
+            {% if page > 1 %}
+            <a class="btn" href="{{ url_for('stock_pool', pool_id=selected_pool.id, page=page-1) }}">上一页</a>
+            {% endif %}
+            {% if page < total_pages %}
+            <a class="btn" href="{{ url_for('stock_pool', pool_id=selected_pool.id, page=page+1) }}">下一页</a>
+            {% endif %}
+        </div>
+    </div>
 
     <table>
         <thead>
@@ -84,7 +97,7 @@
                 <td>{{ row.note or '-' }}</td>
                 <td>{{ row.updated_at }}</td>
                 <td>
-                    {% if selected_pool.is_editable %}
+                    {% if selected_pool.pool_key == 'SELF_SELECTED' %}
                     <form method="post" action="{{ url_for('delete_stock_pool_item', item_id=row.id) }}" onsubmit="return confirm('确认删除该记录?')">
                         <button class="btn">删除</button>
                     </form>
