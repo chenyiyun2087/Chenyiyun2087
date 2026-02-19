@@ -7,7 +7,7 @@
     <div class="panel-title">股票池列表</div>
     <div class="flash" style="margin-bottom:12px;">仅“最近有买点股票池”为只读属性；其他股票池均可进行更新修改。</div>
 
-    <form method="post" action="{{ url_for('add_stock_pool') }}" class="form-grid" style="margin-bottom: 12px;">
+    <form method="post" action="{{ url_for('stock_pool_add') }}" class="form-grid" style="margin-bottom: 12px;">
         <input name="pool_name" placeholder="新股票池名称" required>
         <button class="btn">新增股票池</button>
     </form>

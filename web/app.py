@@ -950,6 +950,37 @@ def sina_monitor():
             cursor.execute(sql_stats_rows, tuple(params + [per_page, offset]))
             signal_stats_rows = cursor.fetchall()
 
+        elif active_tab == 'signal_stats':
+            where_stmt = ""
+            params = []
+            if query_date:
+                where_stmt = "WHERE batch_date <= %s"
+                params = [query_date]
+
+            sub_table = f"""
+                (
+                    SELECT
+                        batch_date,
+                        COUNT(*) AS total,
+                        SUM(has_buy_signal) AS buy_count,
+                        SUM(has_sell_signal) AS sell_count,
+                        MAX(created_at) AS last_update
+                    FROM bs_detection_results
+                    {where_stmt}
+                    GROUP BY batch_date
+                )
+            """
+            pagination, offset = get_pagination(cursor, f"{sub_table} as t", page, per_page, "", tuple(params) if params else None)
+
+            sql_stats_rows = f"""
+                SELECT *
+                FROM {sub_table} AS t
+                ORDER BY batch_date DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(sql_stats_rows, tuple(params + [per_page, offset]))
+            signal_stats_rows = cursor.fetchall()
+
     return render_template('sina_monitor.html',
                            active_tab=active_tab,
                            query_date=query_date,
@@ -2005,8 +2036,8 @@ def _resolve_stock_entry(cursor, symbol, stock_name):
     return None, None, '请至少输入股票代码或股票名称。'
 
 
-@app.route('/stock_pool/pool/add', methods=['POST'])
-def add_stock_pool():
+@app.route('/stock_pool/pool/add', methods=['POST'], endpoint='stock_pool_add')
+def add_stock_pool_handler():
     pool_name = (request.form.get('pool_name') or '').strip()
     if not pool_name:
         flash('股票池名称不能为空。', 'danger')
