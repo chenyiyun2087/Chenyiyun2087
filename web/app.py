@@ -1620,6 +1620,333 @@ def backtest_results():
         strategy_summary=strategy_summary,
         error_msg=error_msg,
     )
+
+
+@app.route('/stock_pool')
+def stock_pool():
+    selected_pool_id = request.args.get('pool_id', type=int)
+
+    conn = get_db()
+    with conn.cursor() as cursor:
+        _ensure_stock_pool_schema(cursor)
+        _ensure_seed_pools(cursor)
+        _sync_recent_buy_pool(cursor)
+        _seed_self_selected_if_empty(cursor)
+        conn.commit()
+
+        cursor.execute(
+            """
+            SELECT p.id, p.pool_name, p.pool_key, p.is_editable, p.source_type,
+                   COUNT(i.id) AS stock_count
+            FROM stock_pools p
+            LEFT JOIN stock_pool_items i ON i.pool_id = p.id
+            GROUP BY p.id, p.pool_name, p.pool_key, p.is_editable, p.source_type
+            ORDER BY p.is_system DESC, p.id ASC
+            """
+        )
+        pools = cursor.fetchall()
+
+        if not pools:
+            flash('股票池未初始化成功。', 'danger')
+            return render_template('stock_pool.html', now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'), pools=[], selected_pool=None, stocks=[])
+
+        if selected_pool_id is None or selected_pool_id not in {x['id'] for x in pools}:
+            selected_pool_id = pools[0]['id']
+
+        cursor.execute("SELECT * FROM stock_pools WHERE id = %s", (selected_pool_id,))
+        selected_pool = cursor.fetchone()
+
+        cursor.execute(
+            """
+            SELECT id, symbol, stock_name, note, created_at, updated_at
+            FROM stock_pool_items
+            WHERE pool_id = %s
+            ORDER BY updated_at DESC, symbol ASC
+            """,
+            (selected_pool_id,),
+        )
+        stocks = cursor.fetchall()
+
+    return render_template(
+        'stock_pool.html',
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        pools=pools,
+        selected_pool=selected_pool,
+        stocks=stocks,
+    )
+
+
+def _ensure_stock_pool_schema(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stock_pools (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            pool_key VARCHAR(32) NOT NULL,
+            pool_name VARCHAR(64) NOT NULL,
+            source_type VARCHAR(32) NOT NULL DEFAULT 'MANUAL',
+            is_system TINYINT NOT NULL DEFAULT 0,
+            is_editable TINYINT NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_pool_key (pool_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stock_pool_items (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            pool_id BIGINT NOT NULL,
+            symbol VARCHAR(10) NOT NULL,
+            stock_name VARCHAR(64) NOT NULL,
+            note VARCHAR(255) DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_pool_symbol (pool_id, symbol),
+            KEY idx_pool_id (pool_id),
+            CONSTRAINT fk_pool_items_pool FOREIGN KEY (pool_id) REFERENCES stock_pools(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def _ensure_seed_pools(cursor):
+    cursor.execute(
+        """
+        INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
+        VALUES
+            ('SELF_SELECTED', '自选股池', 'MANUAL', 1, 1),
+            ('RECENT_BUY', '最近有买点股票池', 'SIGNAL_SYNC', 1, 0)
+        ON DUPLICATE KEY UPDATE
+            pool_name = VALUES(pool_name),
+            source_type = VALUES(source_type),
+            is_system = VALUES(is_system),
+            is_editable = VALUES(is_editable),
+            updated_at = CURRENT_TIMESTAMP
+        """
+    )
+
+
+def _seed_self_selected_if_empty(cursor):
+    cursor.execute("SELECT id FROM stock_pools WHERE pool_key='SELF_SELECTED' LIMIT 1")
+    row = cursor.fetchone()
+    if not row:
+        return
+    pool_id = row['id']
+
+    cursor.execute("SELECT COUNT(*) AS c FROM stock_pool_items WHERE pool_id = %s", (pool_id,))
+    if (cursor.fetchone() or {}).get('c', 0) > 0:
+        return
+
+    cursor.execute("SHOW TABLES LIKE 'score_rank_daily'")
+    if cursor.fetchone() is None:
+        return
+
+    cursor.execute("SELECT MAX(trade_date) AS d FROM score_rank_daily")
+    d = (cursor.fetchone() or {}).get('d')
+    if not d:
+        return
+
+    cursor.execute(
+        """
+        INSERT INTO stock_pool_items (pool_id, symbol, stock_name)
+        SELECT %s, symbol, COALESCE(name, symbol)
+        FROM score_rank_daily
+        WHERE trade_date = %s AND is_self_selected = 1
+        ON DUPLICATE KEY UPDATE
+            stock_name = VALUES(stock_name),
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (pool_id, d),
+    )
+
+
+def _sync_recent_buy_pool(cursor):
+    cursor.execute("SELECT id FROM stock_pools WHERE pool_key='RECENT_BUY' LIMIT 1")
+    row = cursor.fetchone()
+    if not row:
+        return
+    pool_id = row['id']
+
+    cursor.execute("SHOW TABLES LIKE 'bs_detection_results'")
+    if cursor.fetchone() is None:
+        return
+
+    cursor.execute("SELECT MAX(batch_date) AS d FROM bs_detection_results")
+    latest_date = (cursor.fetchone() or {}).get('d')
+    if not latest_date:
+        return
+
+    cursor.execute(
+        """
+        SELECT b.stock_code AS symbol, COALESCE(a.stock_name, b.stock_code) AS stock_name
+        FROM bs_detection_results b
+        LEFT JOIN a_share_stock_list a ON b.stock_code = a.stock_code COLLATE utf8mb4_general_ci
+        WHERE b.batch_date = %s AND b.has_buy_signal = 1
+        """,
+        (latest_date,),
+    )
+    rows = cursor.fetchall()
+    symbols = {str(r.get('symbol') or '').zfill(6) for r in rows if r.get('symbol')}
+
+    if symbols:
+        placeholders = ','.join(['%s'] * len(symbols))
+        cursor.execute(
+            f"DELETE FROM stock_pool_items WHERE pool_id = %s AND symbol NOT IN ({placeholders})",
+            tuple([pool_id] + list(symbols)),
+        )
+    else:
+        cursor.execute("DELETE FROM stock_pool_items WHERE pool_id = %s", (pool_id,))
+
+    for r in rows:
+        symbol = str(r.get('symbol') or '').zfill(6)
+        if not symbol.isdigit():
+            continue
+        cursor.execute(
+            """
+            INSERT INTO stock_pool_items (pool_id, symbol, stock_name, note)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                stock_name = VALUES(stock_name),
+                note = VALUES(note),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (pool_id, symbol, r.get('stock_name') or symbol, f'同步日期: {latest_date}'),
+        )
+
+
+@app.route('/stock_pool/pool/add', methods=['POST'])
+def add_stock_pool():
+    pool_name = (request.form.get('pool_name') or '').strip()
+    if not pool_name:
+        flash('股票池名称不能为空。', 'danger')
+        return redirect(url_for('stock_pool'))
+
+    pool_key = f"CUSTOM_{int(time.time())}"
+    conn = get_db()
+    with conn.cursor() as cursor:
+        _ensure_stock_pool_schema(cursor)
+        try:
+            cursor.execute(
+                """
+                INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
+                VALUES (%s, %s, 'MANUAL', 0, 1)
+                """,
+                (pool_key, pool_name),
+            )
+            conn.commit()
+            flash(f'已新增股票池：{pool_name}', 'success')
+        except Exception as e:
+            flash(f'新增股票池失败: {e}', 'danger')
+
+    return redirect(url_for('stock_pool'))
+
+
+@app.route('/stock_pool/pool/<int:pool_id>/rename', methods=['POST'])
+def rename_stock_pool(pool_id):
+    pool_name = (request.form.get('pool_name') or '').strip()
+    if not pool_name:
+        flash('股票池名称不能为空。', 'danger')
+        return redirect(url_for('stock_pool', pool_id=pool_id))
+
+    conn = get_db()
+    with conn.cursor() as cursor:
+        try:
+            cursor.execute("UPDATE stock_pools SET pool_name = %s WHERE id = %s", (pool_name, pool_id))
+            conn.commit()
+            if cursor.rowcount > 0:
+                flash('股票池名称已更新。', 'success')
+            else:
+                flash('未找到要更新的股票池。', 'danger')
+        except Exception as e:
+            flash(f'更新股票池名称失败: {e}', 'danger')
+
+    return redirect(url_for('stock_pool', pool_id=pool_id))
+
+
+@app.route('/stock_pool/item/add', methods=['POST'])
+def add_stock_pool_item():
+    pool_id = request.form.get('pool_id', type=int)
+    symbol = str(request.form.get('symbol') or '').strip().zfill(6)
+    stock_name = (request.form.get('stock_name') or '').strip()
+    note = (request.form.get('note') or '').strip()
+
+    if not pool_id:
+        flash('缺少股票池参数。', 'danger')
+        return redirect(url_for('stock_pool'))
+
+    if not symbol.isdigit() or len(symbol) != 6:
+        flash('股票代码必须为 6 位数字。', 'danger')
+        return redirect(url_for('stock_pool', pool_id=pool_id))
+
+    if not stock_name:
+        flash('股票名称不能为空。', 'danger')
+        return redirect(url_for('stock_pool', pool_id=pool_id))
+
+    conn = get_db()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT pool_name, is_editable FROM stock_pools WHERE id = %s", (pool_id,))
+        pool = cursor.fetchone()
+        if not pool:
+            flash('股票池不存在。', 'danger')
+            return redirect(url_for('stock_pool'))
+
+        if int(pool.get('is_editable') or 0) != 1:
+            flash('该股票池不允许手动管理，请通过定时任务同步。', 'danger')
+            return redirect(url_for('stock_pool', pool_id=pool_id))
+
+        try:
+            cursor.execute(
+                """
+                INSERT INTO stock_pool_items (pool_id, symbol, stock_name, note)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    stock_name = VALUES(stock_name),
+                    note = VALUES(note),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (pool_id, symbol, stock_name, note or None),
+            )
+            conn.commit()
+            flash(f"已保存到【{pool['pool_name']}】：{symbol} {stock_name}", 'success')
+        except Exception as e:
+            flash(f'保存股票失败: {e}', 'danger')
+
+    return redirect(url_for('stock_pool', pool_id=pool_id))
+
+
+@app.route('/stock_pool/item/delete/<int:item_id>', methods=['POST'])
+def delete_stock_pool_item(item_id):
+    conn = get_db()
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT i.id, i.pool_id, p.is_editable
+            FROM stock_pool_items i
+            JOIN stock_pools p ON p.id = i.pool_id
+            WHERE i.id = %s
+            """,
+            (item_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            flash('未找到待删除记录。', 'danger')
+            return redirect(url_for('stock_pool'))
+
+        if int(row.get('is_editable') or 0) != 1:
+            flash('该股票池不允许手动删除，请通过定时任务同步。', 'danger')
+            return redirect(url_for('stock_pool', pool_id=row['pool_id']))
+
+        try:
+            cursor.execute("DELETE FROM stock_pool_items WHERE id = %s", (item_id,))
+            conn.commit()
+            flash('股票池记录已删除。', 'success')
+        except Exception as e:
+            flash(f'删除失败: {e}', 'danger')
+
+    return redirect(url_for('stock_pool', pool_id=row['pool_id']))
+
+
 @app.route('/admin')
 def admin():
     now_date_iso = datetime.now().strftime('%Y-%m-%d')

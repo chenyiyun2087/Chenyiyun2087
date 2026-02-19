@@ -112,3 +112,42 @@ CREATE TABLE IF NOT EXISTS strategy_m8_items (
     KEY idx_run_type (run_id, item_type),
     CONSTRAINT fk_m8_item_run FOREIGN KEY (run_id) REFERENCES strategy_m8_runs(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 股票池定义表
+CREATE TABLE IF NOT EXISTS stock_pools (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    pool_key VARCHAR(32) NOT NULL,
+    pool_name VARCHAR(64) NOT NULL,
+    source_type VARCHAR(32) NOT NULL DEFAULT 'MANUAL', -- MANUAL/SIGNAL_SYNC
+    is_system TINYINT NOT NULL DEFAULT 0,
+    is_editable TINYINT NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_pool_key (pool_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 股票池成分表
+CREATE TABLE IF NOT EXISTS stock_pool_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    pool_id BIGINT NOT NULL,
+    symbol VARCHAR(10) NOT NULL,
+    stock_name VARCHAR(64) NOT NULL,
+    note VARCHAR(255) DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_pool_symbol (pool_id, symbol),
+    KEY idx_pool_id (pool_id),
+    CONSTRAINT fk_pool_items_pool FOREIGN KEY (pool_id) REFERENCES stock_pools(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 初始化系统股票池
+INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
+VALUES
+    ('SELF_SELECTED', '自选股池', 'MANUAL', 1, 1),
+    ('RECENT_BUY', '最近有买点股票池', 'SIGNAL_SYNC', 1, 0)
+ON DUPLICATE KEY UPDATE
+    pool_name = VALUES(pool_name),
+    source_type = VALUES(source_type),
+    is_system = VALUES(is_system),
+    is_editable = VALUES(is_editable),
+    updated_at = CURRENT_TIMESTAMP;
