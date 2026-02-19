@@ -1625,6 +1625,8 @@ def backtest_results():
 @app.route('/stock_pool')
 def stock_pool():
     selected_pool_id = request.args.get('pool_id', type=int)
+    page = max(request.args.get('page', default=1, type=int), 1)
+    page_size = 20
 
     conn = get_db()
     with conn.cursor() as cursor:
@@ -1656,14 +1658,22 @@ def stock_pool():
         cursor.execute("SELECT * FROM stock_pools WHERE id = %s", (selected_pool_id,))
         selected_pool = cursor.fetchone()
 
+        cursor.execute("SELECT COUNT(*) AS c FROM stock_pool_items WHERE pool_id = %s", (selected_pool_id,))
+        total_stocks = int((cursor.fetchone() or {}).get('c') or 0)
+        total_pages = max((total_stocks + page_size - 1) // page_size, 1)
+        if page > total_pages:
+            page = total_pages
+        offset = (page - 1) * page_size
+
         cursor.execute(
             """
             SELECT id, symbol, stock_name, note, created_at, updated_at
             FROM stock_pool_items
             WHERE pool_id = %s
             ORDER BY updated_at DESC, symbol ASC
+            LIMIT %s OFFSET %s
             """,
-            (selected_pool_id,),
+            (selected_pool_id, page_size, offset),
         )
         stocks = cursor.fetchall()
 
@@ -1673,6 +1683,10 @@ def stock_pool():
         pools=pools,
         selected_pool=selected_pool,
         stocks=stocks,
+        page=page,
+        page_size=page_size,
+        total_stocks=total_stocks,
+        total_pages=total_pages,
     )
 
 
@@ -1815,6 +1829,60 @@ def _sync_recent_buy_pool(cursor):
         )
 
 
+def _lookup_stock_by_code(cursor, symbol):
+    cursor.execute(
+        """
+        SELECT stock_code, stock_name
+        FROM a_share_stock_list
+        WHERE stock_code = %s
+        LIMIT 1
+        """,
+        (symbol,),
+    )
+    return cursor.fetchone()
+
+
+def _lookup_stock_by_name(cursor, stock_name):
+    cursor.execute(
+        """
+        SELECT stock_code, stock_name
+        FROM a_share_stock_list
+        WHERE stock_name = %s
+        LIMIT 2
+        """,
+        (stock_name,),
+    )
+    return cursor.fetchall()
+
+
+def _resolve_stock_entry(cursor, symbol, stock_name):
+    symbol = str(symbol or '').strip()
+    stock_name = str(stock_name or '').strip()
+
+    if symbol:
+        code = symbol.zfill(6)
+        if not code.isdigit() or len(code) != 6:
+            return None, None, f'股票代码格式无效: {symbol}'
+        row = _lookup_stock_by_code(cursor, code)
+        if not row:
+            return None, None, f'股票代码不存在: {code}'
+        db_name = str(row.get('stock_name') or '').strip()
+        if stock_name and stock_name != db_name:
+            return None, None, f'股票代码与名称不匹配: {code} / {stock_name}'
+        return code, db_name, None
+
+    if stock_name:
+        rows = _lookup_stock_by_name(cursor, stock_name)
+        if not rows:
+            return None, None, f'股票名称不存在: {stock_name}'
+        if len(rows) > 1:
+            return None, None, f'股票名称存在多条，请改用代码录入: {stock_name}'
+        row = rows[0]
+        return str(row.get('stock_code') or '').zfill(6), str(row.get('stock_name') or '').strip(), None
+
+    return None, None, '请至少输入股票代码或股票名称。'
+
+
 @app.route('/stock_pool/pool/add', methods=['POST'])
 def add_stock_pool():
     pool_name = (request.form.get('pool_name') or '').strip()
@@ -1852,12 +1920,18 @@ def rename_stock_pool(pool_id):
     conn = get_db()
     with conn.cursor() as cursor:
         try:
+            cursor.execute("SELECT is_editable FROM stock_pools WHERE id = %s", (pool_id,))
+            pool = cursor.fetchone()
+            if not pool:
+                flash('未找到要更新的股票池。', 'danger')
+                return redirect(url_for('stock_pool', pool_id=pool_id))
+            if int(pool.get('is_editable') or 0) != 1:
+                flash('该股票池为只读属性，不允许手动管理。', 'danger')
+                return redirect(url_for('stock_pool', pool_id=pool_id))
+
             cursor.execute("UPDATE stock_pools SET pool_name = %s WHERE id = %s", (pool_name, pool_id))
             conn.commit()
-            if cursor.rowcount > 0:
-                flash('股票池名称已更新。', 'success')
-            else:
-                flash('未找到要更新的股票池。', 'danger')
+            flash('股票池名称已更新。', 'success')
         except Exception as e:
             flash(f'更新股票池名称失败: {e}', 'danger')
 
@@ -1867,21 +1941,22 @@ def rename_stock_pool(pool_id):
 @app.route('/stock_pool/item/add', methods=['POST'])
 def add_stock_pool_item():
     pool_id = request.form.get('pool_id', type=int)
-    symbol = str(request.form.get('symbol') or '').strip().zfill(6)
+    symbol = str(request.form.get('symbol') or '').strip()
     stock_name = (request.form.get('stock_name') or '').strip()
     note = (request.form.get('note') or '').strip()
+    symbols_batch = (request.form.get('symbols_batch') or '').strip()
 
     if not pool_id:
         flash('缺少股票池参数。', 'danger')
         return redirect(url_for('stock_pool'))
 
-    if not symbol.isdigit() or len(symbol) != 6:
-        flash('股票代码必须为 6 位数字。', 'danger')
-        return redirect(url_for('stock_pool', pool_id=pool_id))
+    raw_codes = []
+    if symbol:
+        raw_codes.append(symbol)
 
-    if not stock_name:
-        flash('股票名称不能为空。', 'danger')
-        return redirect(url_for('stock_pool', pool_id=pool_id))
+    if symbols_batch:
+        normalized = symbols_batch.replace('\n', ',').replace('\t', ',').replace('，', ',').replace('；', ',').replace(';', ',').replace(' ', ',')
+        raw_codes.extend([item.strip() for item in normalized.split(',') if item.strip()])
 
     conn = get_db()
     with conn.cursor() as cursor:
@@ -1892,23 +1967,55 @@ def add_stock_pool_item():
             return redirect(url_for('stock_pool'))
 
         if int(pool.get('is_editable') or 0) != 1:
-            flash('该股票池不允许手动管理，请通过定时任务同步。', 'danger')
+            flash('该股票池为只读属性，不允许手动管理。', 'danger')
+            return redirect(url_for('stock_pool', pool_id=pool_id))
+
+        resolved = []
+        invalid_msgs = []
+        seen = set()
+
+        if raw_codes:
+            for i, code_raw in enumerate(raw_codes):
+                name_hint = stock_name if (i == 0 and len(raw_codes) == 1 and not symbols_batch) else ''
+                code, resolved_name, err = _resolve_stock_entry(cursor, code_raw, name_hint)
+                if err:
+                    invalid_msgs.append(err)
+                    continue
+                if code in seen:
+                    continue
+                seen.add(code)
+                resolved.append((code, resolved_name))
+        else:
+            code, resolved_name, err = _resolve_stock_entry(cursor, '', stock_name)
+            if err:
+                flash(err, 'danger')
+                return redirect(url_for('stock_pool', pool_id=pool_id))
+            resolved.append((code, resolved_name))
+
+        if not resolved:
+            flash('没有可保存的有效股票，请检查代码或名称是否真实存在。', 'danger')
             return redirect(url_for('stock_pool', pool_id=pool_id))
 
         try:
-            cursor.execute(
-                """
-                INSERT INTO stock_pool_items (pool_id, symbol, stock_name, note)
-                VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    stock_name = VALUES(stock_name),
-                    note = VALUES(note),
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (pool_id, symbol, stock_name, note or None),
-            )
+            for code, resolved_name in resolved:
+                final_name = resolved_name
+                cursor.execute(
+                    """
+                    INSERT INTO stock_pool_items (pool_id, symbol, stock_name, note)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        stock_name = VALUES(stock_name),
+                        note = VALUES(note),
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (pool_id, code, final_name, note or None),
+                )
             conn.commit()
-            flash(f"已保存到【{pool['pool_name']}】：{symbol} {stock_name}", 'success')
+            flash(f"已保存到【{pool['pool_name']}】：{len(resolved)} 只股票", 'success')
+            for msg in invalid_msgs[:10]:
+                flash(msg, 'danger')
+            if len(invalid_msgs) > 10:
+                flash(f'另有 {len(invalid_msgs)-10} 条无效输入未展示。', 'danger')
         except Exception as e:
             flash(f'保存股票失败: {e}', 'danger')
 
@@ -1934,7 +2041,7 @@ def delete_stock_pool_item(item_id):
             return redirect(url_for('stock_pool'))
 
         if int(row.get('is_editable') or 0) != 1:
-            flash('该股票池不允许手动删除，请通过定时任务同步。', 'danger')
+            flash('该股票池为只读属性，不允许手动管理。', 'danger')
             return redirect(url_for('stock_pool', pool_id=row['pool_id']))
 
         try:
