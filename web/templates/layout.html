@@ -16,26 +16,22 @@
         <aside class="sidebar">
             <div class="brand">量化交易控制台</div>
 
-            <div class="sidebar-group-title">监控看板</div>
+            <div class="sidebar-group-title">Sina B/S策略中心</div>
             <nav>
                 <a href="{{ url_for('sina_monitor') }}"
                     class="{% if request.endpoint == 'sina_monitor' %}active{% endif %}">B/S 监控</a>
+                <a href="{{ url_for('sina_scores') }}"
+                    class="{% if request.endpoint in ['sina_scores', 'eastmoney_scores', 'sina_self_selected'] %}active{% endif %}">股票池评分</a>
+                <a href="{{ url_for('sina_strategy_pyramid') }}"
+                    class="{% if request.endpoint in ['sina_strategy','sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7'] %}active{% endif %}">M8评分策略</a>
                 <a href="{{ url_for('positions') }}"
-                    class="{% if request.endpoint == 'positions' %}active{% endif %}">实时持仓</a>
+                    class="{% if request.endpoint == 'positions' %}active{% endif %}">Sina策略实时持仓</a>
             </nav>
 
-            <div class="sidebar-group-title">策略中心</div>
+            <div class="sidebar-group-title">陈依云精选</div>
             <nav>
                 <a href="{{ url_for('chenyiyun_selected_dashboard') }}"
                     class="{% if request.endpoint == 'chenyiyun_selected_dashboard' %}active{% endif %}">核心精选</a>
-                <a href="{{ url_for('sina_strategy_pyramid') }}"
-                    class="{% if request.endpoint in ['sina_strategy','sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7'] %}active{% endif %}">M8评分策略</a>
-            </nav>
-
-            <div class="sidebar-group-title">数据分析</div>
-            <nav>
-                <a href="{{ url_for('sina_scores') }}"
-                    class="{% if request.endpoint in ['sina_scores', 'eastmoney_scores', 'sina_self_selected'] %}active{% endif %}">股票池评分</a>
                 <a href="{{ url_for('backtest_results') }}"
                     class="{% if request.endpoint == 'backtest_results' %}active{% endif %}">回测中心</a>
             </nav>
@@ -55,34 +51,22 @@
             </header>
 
             <div class="tabs" role="tablist" aria-label="数据页签">
-                {% if request.endpoint in ['sina_scores', 'eastmoney_scores', 'sina_self_selected'] %}
+                {% if request.endpoint in ['sina_monitor', 'sina_scores', 'eastmoney_scores', 'sina_self_selected',
+                'sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7',
+                'positions'] %}
+                <a href="{{ url_for('sina_monitor') }}"
+                    class="tab {% if request.endpoint == 'sina_monitor' %}active{% endif %}">B/S监控</a>
                 <a href="{{ url_for('sina_scores') }}"
-                    class="tab {% if request.endpoint == 'sina_scores' %}active{% endif %}">股票池评分</a>
-                <a href="{{ url_for('eastmoney_scores') }}"
-                    class="tab {% if request.endpoint == 'eastmoney_scores' %}active{% endif %}">Eastmoney 评分</a>
-                <a href="{{ url_for('sina_self_selected') }}"
-                    class="tab {% if request.endpoint == 'sina_self_selected' %}active{% endif %}">自选股评分</a>
-                {% elif request.endpoint in
-                ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7']
-                %}
+                    class="tab {% if request.endpoint in ['sina_scores', 'eastmoney_scores', 'sina_self_selected'] %}active{% endif %}">股票池评分</a>
                 <a href="{{ url_for('sina_strategy_pyramid') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_pyramid' %}active{% endif %}">金字塔</a>
-                <a href="{{ url_for('sina_strategy_weighted') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_weighted' %}active{% endif %}">加权</a>
-                <a href="{{ url_for('sina_strategy_quadrant') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_quadrant' %}active{% endif %}">象限仪</a>
-                <a href="{{ url_for('sina_strategy_m2') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_m2' %}active{% endif %}">M2</a>
-                <a href="{{ url_for('sina_strategy_m3') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_m3' %}active{% endif %}">M3</a>
-                <a href="{{ url_for('sina_strategy_m4') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_m4' %}active{% endif %}">M4</a>
-                <a href="{{ url_for('sina_strategy_m5') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_m5' %}active{% endif %}">M5</a>
-                <a href="{{ url_for('sina_strategy_m6') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_m6' %}active{% endif %}">M6</a>
-                <a href="{{ url_for('sina_strategy_m7') }}"
-                    class="tab {% if request.endpoint == 'sina_strategy_m7' %}active{% endif %}">M7</a>
+                    class="tab {% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7'] %}active{% endif %}">M8评分策略</a>
+                <a href="{{ url_for('positions') }}"
+                    class="tab {% if request.endpoint == 'positions' %}active{% endif %}">实时持仓</a>
+                {% elif request.endpoint in ['chenyiyun_selected_dashboard', 'backtest_results'] %}
+                <a href="{{ url_for('chenyiyun_selected_dashboard') }}"
+                    class="tab {% if request.endpoint == 'chenyiyun_selected_dashboard' %}active{% endif %}">核心精选</a>
+                <a href="{{ url_for('backtest_results') }}"
+                    class="tab {% if request.endpoint == 'backtest_results' %}active{% endif %}">回测中心</a>
                 {% else %}
                 <!-- Contextual sub-navigation or empty -->
                 {% endif %}
