@@ -125,13 +125,55 @@ body {
     margin-bottom: 24px;
 }
 
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    border-bottom: 2px solid #000000;
+    padding-bottom: 5px;
+}
+
 .panel-title {
     font-family: 'Lexend', sans-serif;
     font-size: 18px;
     font-weight: 800;
-    margin-bottom: 15px;
-    border-bottom: 2px solid #000000;
-    padding-bottom: 5px;
+    margin-bottom: 0px;
+    border-bottom: none;
+    padding-bottom: 0px;
+}
+
+/* Pagination Placement & Stability */
+.top-pagination {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.pagination {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-family: 'Lexend', sans-serif;
+    font-weight: 700;
+    font-size: 11px;
+}
+
+.pagination a {
+    text-decoration: none;
+    padding: 2px 8px;
+    border: 2px solid #000000;
+}
+
+.pagination a:hover {
+    background: #000000 !important;
+    color: #ffffff !important;
+}
+
+.table-container {
+    min-height: 600px;
+    /* Prevent layout jump/jitter on load */
+    width: 100%;
 }
 
 .btn,

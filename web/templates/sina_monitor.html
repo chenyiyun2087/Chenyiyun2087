@@ -5,29 +5,18 @@
 
 <!-- Tab Navigation -->
 <div class="tabs" style="margin-bottom: 20px; display: flex; gap: 5px; border-bottom: 1px solid #000;">
+    <a href="{{ url_for('sina_monitor', tab='latest_b') }}"
+        class="tab-btn {% if active_tab == 'latest_b' %}active{% endif %}"
+        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'latest_b' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'latest_b' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
+        B点股票（最新）
+    </a>
     <a href="{{ url_for('sina_monitor', tab='summary', date=query_date) }}"
         class="tab-btn {% if active_tab == 'summary' %}active{% endif %}"
         style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'summary' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'summary' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         当日汇总
     </a>
-    <a href="{{ url_for('sina_monitor', tab='holding_b') }}"
-        class="tab-btn {% if active_tab == 'holding_b' %}active{% endif %}"
-        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'holding_b' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'holding_b' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
-        持仓B点
-    </a>
-    <a href="{{ url_for('sina_monitor', tab='recent_buy') }}"
-        class="tab-btn {% if active_tab == 'recent_buy' %}active{% endif %}"
-        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'recent_buy' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'recent_buy' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
-        最近买点 (B)
-    </a>
-    <a href="{{ url_for('sina_monitor', tab='recent_sell') }}"
-        class="tab-btn {% if active_tab == 'recent_sell' %}active{% endif %}"
-        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'recent_sell' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'recent_sell' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
-        最近卖点 (S)
-    </a>
-    <a href="{{ url_for('sina_monitor', tab='signal_stats', date=query_date) }}"
-        class="tab-btn {% if active_tab == 'signal_stats' %}active{% endif %}"
-        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
+    <a href="{{ url_for('sina_monitor', tab='stats') }}" class="tab-btn {% if active_tab == 'stats' %}active{% endif %}"
+        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         信号统计
     </a>
 </div>
@@ -63,171 +52,162 @@
 </div>
 
 <section class="panel">
-    <div class="panel-title">当日信号 ({{ pagination.total if pagination else 0 }})</div>
-    <table>
-        <thead>
-            <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>买点</th>
-                <th>卖点</th>
-                <th>更新时间</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in signals %}
-            <tr>
-                <td>{{ item.stock_code }}</td>
-                <td>{{ item.stock_name or '-' }}</td>
-                <td class="{{ 'text-up' if item.has_buy_signal else '' }}">{{ 'B' if item.has_buy_signal else '-' }}
-                </td>
-                <td class="{{ 'text-down' if item.has_sell_signal else '' }}">{{ 'S' if item.has_sell_signal else '-' }}
-                </td>
-                <td>{{ item.created_at }}</td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="5" class="empty">当日无信号</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="panel-header">
+        <div class="panel-title">当日信号 ({{ pagination.total if pagination else 0 }})</div>
+        <div class="top-pagination">
+            {% include 'partials/pagination.html' %}
+        </div>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>代码</th>
+                    <th>名称</th>
+                    <th>买点</th>
+                    <th>卖点</th>
+                    <th>更新时间</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in signals %}
+                <tr>
+                    <td>{{ item.stock_code }}</td>
+                    <td>{{ item.stock_name or '-' }}</td>
+                    <td class="{{ 'text-up' if item.has_buy_signal else '' }}">{{ 'B' if item.has_buy_signal else '-' }}
+                    </td>
+                    <td class="{{ 'text-down' if item.has_sell_signal else '' }}">{{ 'S' if item.has_sell_signal else
+                        '-' }}
+                    </td>
+                    <td>{{ item.created_at }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="empty">当日无信号</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </section>
 
-{% elif active_tab == 'holding_b' %}
-<!-- Holding B Tab Content -->
+{% elif active_tab == 'latest_b' %}
+<!-- Latest B Tab Content (State-based) -->
 <section class="panel">
-    <div class="panel-title">持仓 B 点股票 ({{ pagination.total if pagination else 0 }})</div>
-    <table>
-        <thead>
-            <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>批次日期</th>
-                <th>检测日期</th>
-                <th>更新时间</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in signals %}
-            <tr>
-                <td>{{ item.stock_code }}</td>
-                <td>{{ item.stock_name or '-' }}</td>
-                <td>{{ item.batch_date }}</td>
-                <td>{{ item.batch_date }}</td>
-                <td>{{ item.created_at }}</td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="5" class="empty">当前无持有 B 点信号的股票</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="panel-header">
+        <div class="panel-title">B点股票（最新） ({{ pagination.total if pagination else 0 }})</div>
+        <div class="top-pagination">
+            {% include 'partials/pagination.html' %}
+        </div>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>代码</th>
+                    <th>名称</th>
+                    <th>最近信号日期</th>
+                    <th>更新时间</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in signals %}
+                <tr>
+                    <td>{{ item.stock_code }}</td>
+                    <td>{{ item.stock_name or '-' }}</td>
+                    <td><span class="tag trade">{{ item.batch_date }}</span></td>
+                    <td>{{ item.created_at }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" class="empty">当前无持有 B 点信号的股票</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </section>
 
-{% elif active_tab == 'recent_buy' %}
-<!-- Recent Buy Tab Content -->
+{% elif active_tab == 'stats' %}
+<!-- Stats Tab Content with Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <section class="panel">
-    <div class="panel-title">最近买点信号 ({{ pagination.total if pagination else 0 }})</div>
-    <table>
-        <thead>
-            <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>批次日期</th>
-                <th>检测日期</th>
-                <th>更新时间</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in signals %}
-            <tr>
-                <td>{{ item.stock_code }}</td>
-                <td>{{ item.stock_name or '-' }}</td>
-                <td>{{ item.batch_date }}</td>
-                <td>{{ item.batch_date }}</td>
-                <td>{{ item.created_at }}</td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="5" class="empty">暂无买点信号</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="panel-title">信号历史统计 (最近30个交易日)</div>
+    <div style="height: 400px; width: 100%;">
+        <canvas id="signalChart"></canvas>
+    </div>
 </section>
 
-{% elif active_tab == 'recent_sell' %}
-<!-- Recent Sell Tab Content -->
-<section class="panel">
-    <div class="panel-title">最近卖点信号 ({{ pagination.total if pagination else 0 }})</div>
-    <table>
-        <thead>
-            <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>批次日期</th>
-                <th>检测日期</th>
-                <th>更新时间</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in signals %}
-            <tr>
-                <td>{{ item.stock_code }}</td>
-                <td>{{ item.stock_name or '-' }}</td>
-                <td>{{ item.batch_date }}</td>
-                <td>{{ item.batch_date }}</td>
-                <td>{{ item.created_at }}</td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="5" class="empty">暂无卖点信号</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</section>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const ctx = document.getElementById('signalChart').getContext('2d');
+        const data = {{ chart_data | tojson
+    }};
 
-{% elif active_tab == 'signal_stats' %}
-<section class="panel">
-    <div class="panel-title">信号统计（按批次日期）</div>
-    <table>
-        <thead>
-            <tr>
-                <th>批次日期</th>
-                <th>总股票数</th>
-                <th>B点数量</th>
-                <th>S点数量</th>
-                <th>最后更新</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for row in signal_stats_rows %}
-            <tr>
-                <td>{{ row.batch_date }}</td>
-                <td>{{ row.total or 0 }}</td>
-                <td class="text-up">{{ row.buy_count or 0 }}</td>
-                <td class="text-down">{{ row.sell_count or 0 }}</td>
-                <td>{{ row.last_update or '-' }}</td>
-            </tr>
-            {% else %}
-            <tr><td colspan="5" class="empty">暂无统计数据</td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</section>
+    const labels = data.map(d => d.batch_date);
+    const buyCounts = data.map(d => d.buy_count);
+    const sellCounts = data.map(d => d.sell_count);
+    const totals = data.map(d => d.total);
 
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: '买点 (B)',
+                    data: buyCounts,
+                    backgroundColor: 'rgba(76, 175, 80, 0.6)',
+                    borderColor: '#4CAF50',
+                    borderWidth: 1,
+                    yAxisID: 'y'
+                },
+                {
+                    label: '卖点 (S)',
+                    data: sellCounts,
+                    backgroundColor: 'rgba(244, 67, 54, 0.6)',
+                    borderColor: '#f44336',
+                    borderWidth: 1,
+                    yAxisID: 'y'
+                },
+                {
+                    label: '扫描总量',
+                    data: totals,
+                    type: 'line',
+                    borderColor: '#2196F3',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    yAxisID: 'y1',
+                    tension: 0.1
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    grid: { display: false }
+                },
+                y: {
+                    beginAtZero: true,
+                    position: 'left',
+                    title: { display: true, text: '信号数量' }
+                },
+                y1: {
+                    beginAtZero: true,
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    title: { display: true, text: '扫描总数' }
+                }
+            }
+        }
+    });
+    });
+</script>
 {% endif %}
 
-<!-- Unified Pagination for all tabs -->
-{% if pagination %}
-<div class="pagination-container" style="margin-top: 20px;">
-    {% set pagination_endpoint = 'sina_monitor' %}
-    {% set pagination_params = {'tab': active_tab, 'date': query_date if active_tab == 'summary' else None} %}
-    {% include 'partials/pagination.html' %}
-</div>
-{% endif %}
+<!-- Removed Unified Pagination for all tabs as it's now in the header -->
 
 {% endblock %}

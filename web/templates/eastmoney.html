@@ -3,23 +3,46 @@
 {% block page_title %}Eastmoney 超跌反弹策略{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">最新交易日：{{ date or '-' }}</div>
-    <table>
-        <thead><tr><th>代码</th><th>名称</th><th>综合分</th><th>空方情绪</th><th>超跌分</th><th>RSI</th><th>BIAS10</th><th>目标涨幅</th></tr></thead>
-        <tbody>
-        {% for row in results %}
-            <tr>
-                <td>{{ row.stock_code }}</td><td>{{ row.stock_name }}</td><td class="text-up">{{ row.comprehensive_score }}</td>
-                <td>{{ row.bears_percent }}%</td><td>{{ row.oversold_score }}</td>
-                <td>{{ row.details.RSI if row.details else '-' }}</td>
-                <td>{{ row.details.BIAS_10 if row.details else '-' }}</td>
-                <td>{{ row.details.target_gain if row.details else '-' }}%</td>
-            </tr>
-        {% else %}
-            <tr><td colspan="8" class="empty">暂无策略数据</td></tr>
-        {% endfor %}
-        </tbody>
-    </table>
+    <div class="panel-header">
+        <div class="panel-title">最新交易日：{{ date or '-' }}</div>
+        <div class="top-pagination">
+            {% include 'partials/pagination.html' %}
+        </div>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>代码</th>
+                    <th>名称</th>
+                    <th>综合分</th>
+                    <th>空方情绪</th>
+                    <th>超跌分</th>
+                    <th>RSI</th>
+                    <th>BIAS10</th>
+                    <th>目标涨幅</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in results %}
+                <tr>
+                    <td>{{ row.stock_code }}</td>
+                    <td>{{ row.stock_name }}</td>
+                    <td class="text-up">{{ row.comprehensive_score }}</td>
+                    <td>{{ row.bears_percent }}%</td>
+                    <td>{{ row.oversold_score }}</td>
+                    <td>{{ row.details.RSI if row.details else '-' }}</td>
+                    <td>{{ row.details.BIAS_10 if row.details else '-' }}</td>
+                    <td>{{ row.details.target_gain if row.details else '-' }}%</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" class="empty">暂无策略数据</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </section>
-{% include 'partials/pagination.html' %}
+<!-- Removed bottom pagination -->
 {% endblock %}

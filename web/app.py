@@ -617,7 +617,7 @@ def sina_scores():
                 COALESCE(claude_score, 0) as claude_score 
             FROM score_rank_daily 
             {where_stmt}
-            AND (is_bs_candidate = 1)
+            AND (is_bs_candidate = 1 OR is_self_selected = 1 OR pool_type IS NOT NULL)
             {order_stmt}
             LIMIT %s OFFSET %s
             """
@@ -636,7 +636,7 @@ def sina_scores():
                            min_o=min_opt_score,
                            per_page=per_page,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           page_title="sina B点股票评分")
+                           page_title="股票池评分")
 
 @app.route('/sina/self_selected')
 def sina_self_selected():
@@ -717,7 +717,7 @@ def sina_monitor():
     conn = get_db()
     
     # Parameters
-    active_tab = request.args.get('tab', 'summary')
+    active_tab = request.args.get('tab', 'latest_b') # Default to 'latest_b'
     page = request.args.get('page', 1, type=int)
     per_page = 50
     
@@ -737,6 +737,7 @@ def sina_monitor():
     daily_stats = {}
     signals = []
     pagination = None
+    chart_data = [] # Initialize to avoid UnboundLocalError
     last_completed_date = None
     signal_stats_rows = []
 
@@ -775,28 +776,23 @@ def sina_monitor():
             cursor.execute(sql_details, (query_date, per_page, offset))
             signals = cursor.fetchall()
 
-        elif active_tab == 'holding_b':
-            # Latest buy date must be newer than latest sell date (as-of state)
+        elif active_tab == 'latest_b':
+            # Logic: Latest signal is a B signal (State-based)
             subquery = """
                 (
-                    SELECT latest_buy.*
-                    FROM bs_detection_results AS latest_buy
+                    SELECT t1.*
+                    FROM bs_detection_results t1
                     INNER JOIN (
-                        SELECT
-                            stock_code,
-                            MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
-                            MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
+                        SELECT stock_code, MAX(batch_date) as max_batch
                         FROM bs_detection_results
+                        WHERE has_buy_signal = 1 OR has_sell_signal = 1
                         GROUP BY stock_code
-                    ) AS summary
-                        ON latest_buy.stock_code = summary.stock_code
-                        AND latest_buy.batch_date = summary.latest_buy_date
-                    WHERE latest_buy.has_buy_signal = 1
-                      AND (summary.latest_sell_date IS NULL OR summary.latest_buy_date > summary.latest_sell_date)
+                    ) t2 ON t1.stock_code = t2.stock_code AND t1.batch_date = t2.max_batch
+                    WHERE t1.has_buy_signal = 1
                 )
             """
             pagination, offset = get_pagination(cursor, f"{subquery} as sub", page, per_page)
-
+            
             sql_holding = f"""
                 SELECT sub.*, t_name.stock_name
                 FROM {subquery} as sub
@@ -807,66 +803,21 @@ def sina_monitor():
             cursor.execute(sql_holding, (per_page, offset))
             signals = cursor.fetchall()
 
-        elif active_tab == 'recent_buy':
-            where_stmt = "WHERE has_buy_signal=1"
-            pagination, offset = get_pagination(cursor, "bs_detection_results", page, per_page, where_stmt)
-            
-            sql_buy = f"""
-                SELECT t1.*, t2.stock_name 
-                FROM bs_detection_results t1
-                LEFT JOIN a_share_stock_list t2 ON t1.stock_code = t2.stock_code COLLATE utf8mb4_general_ci
-                {where_stmt}
-                ORDER BY t1.created_at DESC
-                LIMIT %s OFFSET %s
-            """
-            cursor.execute(sql_buy, (per_page, offset))
-            signals = cursor.fetchall()
-
-        elif active_tab == 'recent_sell':
-            where_stmt = "WHERE has_sell_signal=1"
-            pagination, offset = get_pagination(cursor, "bs_detection_results", page, per_page, where_stmt)
-            
-            sql_sell = f"""
-                SELECT t1.*, t2.stock_name 
-                FROM bs_detection_results t1
-                LEFT JOIN a_share_stock_list t2 ON t1.stock_code = t2.stock_code COLLATE utf8mb4_general_ci
-                {where_stmt}
-                ORDER BY t1.created_at DESC
-                LIMIT %s OFFSET %s
-            """
-            cursor.execute(sql_sell, (per_page, offset))
-            signals = cursor.fetchall()
-
-        elif active_tab == 'signal_stats':
-            where_stmt = ""
-            params = []
-            if query_date:
-                where_stmt = "WHERE batch_date <= %s"
-                params = [query_date]
-
-            sub_table = f"""
-                (
-                    SELECT
-                        batch_date,
-                        COUNT(*) AS total,
-                        SUM(has_buy_signal) AS buy_count,
-                        SUM(has_sell_signal) AS sell_count,
-                        MAX(created_at) AS last_update
-                    FROM bs_detection_results
-                    {where_stmt}
-                    GROUP BY batch_date
-                )
-            """
-            pagination, offset = get_pagination(cursor, f"{sub_table} as t", page, per_page, "", tuple(params) if params else None)
-
-            sql_stats_rows = f"""
-                SELECT *
-                FROM {sub_table} AS t
+        elif active_tab == 'stats':
+            # Fetch historical stats for Chart.js
+            days = request.args.get('days', 30, type=int)
+            sql_history = """
+                SELECT batch_date, 
+                       COUNT(*) as total,
+                       SUM(has_buy_signal) as buy_count,
+                       SUM(has_sell_signal) as sell_count
+                FROM bs_detection_results
+                GROUP BY batch_date
                 ORDER BY batch_date DESC
-                LIMIT %s OFFSET %s
+                LIMIT %s
             """
-            cursor.execute(sql_stats_rows, tuple(params + [per_page, offset]))
-            signal_stats_rows = cursor.fetchall()
+            cursor.execute(sql_history, (days,))
+            chart_data = cursor.fetchall()[::-1] # Order chronologically for chart
 
     return render_template('sina_monitor.html',
                            active_tab=active_tab,
@@ -875,8 +826,8 @@ def sina_monitor():
                            daily_stats=daily_stats,
                            signals=signals,
                            pagination=pagination,
+                           chart_data=chart_data,
                            last_completed_date=last_completed_date,
-                           signal_stats_rows=signal_stats_rows,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 
