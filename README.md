@@ -9,13 +9,12 @@ Chenyiyun2087 是一个面向 A 股策略研究与执行的多模块仓库，覆
 | 组件 | 目录 | 主要职责 | 典型入口 |
 |---|---|---|---|
 | 调度中枢 | `scheduler.py`、`scripts/ops/` | 串联交易日任务（Sina / Eastmoney / 夜间流程） | `python scheduler.py` |
-| Sina B/S 检测 | `sina/bs_detection/` | 识别图像中的 B/S 点，输出候选信号 | `python -m sina.bs_detection.main` |
-| Sina 实盘跟踪 | `sina/live_tracker/` | 管理持仓、同步价格、生成日报 | `python -m sina.live_tracker.run_live_tracker` |
+| Sina B/S 策略中心 | `sina/` | **B/S 监控**、实盘跟踪、M8评分策略、持仓管理 | `python -m sina.bs_detection.main` |
 | ScoreRank 评分 | `scoreRank/` | 多策略打分（M1~M8、Technical/Claude） | `python -m scoreRank.cli.run_daily` |
 | M8 回归与参数搜索 | `scoreRank/cli/run_m8_cycle.py` | M8 回归、参数搜索、结果落库（支持按股票池过滤） | `python -m scoreRank.cli.run_m8_cycle --lookback-dates 60 [--pool-id <id>]` |
 | Eastmoney 盘后策略 | `eastmoney/` | 盘后扫描、触发池与交易池生成 | `python eastmoney/main.py` |
 | 回测引擎 | `backtest/src/backtest_engine/` | 数据源、撮合、组合、指标与报告导出 | `pytest backtest/tests -q` |
-| chenyiyunSelected 策略迁移 | `chenyiyunSelected/` | 聚宽策略本地化、信号落库、本地回测对接 | `python chenyiyunSelected/strategy/run_local_backtest.py` |
+| 陈依云精选 (Local) | `chenyiyunSelected/` | 聚宽策略本地化、信号落库、本地回测对接 | `python chenyiyunSelected/strategy/run_local_backtest.py` |
 | InvestingPro 数据处理 | `investingPro/` | InvestingPro 导出文件清洗、解析、入库 | 各 `InvestingPro*.py` |
 | Web 看板 | `web/` | Flask 可视化、策略页、管理页、手工操作入口 | `python web/app.py` |
 
@@ -23,13 +22,24 @@ Chenyiyun2087 是一个面向 A 股策略研究与执行的多模块仓库，覆
 
 ## 2) Web 看板关键功能（已对齐当前实现）
 
-### 2.1 左侧核心栏目
-- 监控看板：`/sina/monitor`（当日汇总 / 持仓B点 / 最近买点 / 最近卖点 / 信号统计）
-- 策略中心：`/sina/strategy/*`（金字塔、加权、象限、M2~M7）
-- 数据分析：`/sina/scores`、`/backtest/results`、`/sina/tech_score`
-- 系统设置：`/stock_pool`、`/admin`
+### 2.1 左侧核心栏目（三层结构）
+- **Sina B/S策略中心**：
+  - B/S监控：`/sina/monitor`（B点股票[最新] / 当日汇总 / 信号统计）
+  - 股票池评分：`/sina/scores`
+  - M8评分策略：`/sina/strategy/*`（金字塔、加权、象限、M2~M7）
+  - Sina策略实时持仓：`/positions`
+- **陈依云精选**：
+  - 核心精选：`/chenyiyun/selected`（每日信号与持仓）
+  - 回测中心：`/backtest/results`
+  - 技术评分：`/sina/tech_score`
+- **系统设置**：
+  - 股票池管理：`/stock_pool`
+  - 管理台：`/admin`
 
 ### 2.2 新增/更新能力
+- **B/S 监控增强**（`/sina/monitor`）：
+  - **B点股票（最新）**：实时展示最新发出 B 点信号的股票（修正数据加载逻辑）；
+  - **信号统计**：集成近 30 日买卖信号趋势图（Chart.js）。
 - **技术评分**（`/sina/tech_score`）：
   - 可按“指定股票 + 指定股票池（并集）”筛选样本；
   - 抽取总分/因子分/Claude分；

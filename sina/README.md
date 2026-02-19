@@ -13,16 +13,22 @@
 - `backtest/`
   - Sina 场景下的回测执行器、评分器与结果导出。
   - 主要入口：`python -m sina.backtest.run_backtest`
-- `schemas/`
-  - MySQL 表结构文件（检测与跟踪相关）。
 - `config/`
   - 股票池与策略配置 JSON / Excel。
+
+## B/S 监控看板 (Web)
+
+访问 `/sina/monitor` 可查看实时信号监控：
+1. **B点股票（最新）**：实时展示最新发出 B 点信号的股票（无需刷新，实时计算）。
+2. **当日汇总**：显示当日所有 B/S 信号的统计概览。
+3. **信号统计**：展示近 30 日全市场 B/S 信号数量趋势图（Chart.js 可视化）。
 
 ## 推荐使用流程
 
 1. 先跑 `bs_detection` 生成候选信号。  
 2. 再由 `live_tracker` 同步持仓与价格。  
-3. 用 `backtest` 做历史验证，比较参数方案。
+3. 在 Web 端 `/sina/monitor` 确认信号质量。
+4. 用 `backtest` 做历史验证，比较参数方案。
 
 ## 可改进点（待统一实施）
 
