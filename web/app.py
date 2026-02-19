@@ -1,5 +1,6 @@
 from flask import Flask, render_template, g, request, redirect, url_for, flash
 import sys
+import os
 import pymysql
 import json
 from pathlib import Path
@@ -361,12 +362,14 @@ def eastmoney_guba_url(symbol):
 @app.route('/api/prompt_template')
 def get_prompt_template():
     """API to get the prompt template content"""
+    # Use absolute path relative to the app's root directory
+    template_path = os.path.join(app.root_path, 'templates', 'prompt.txt')
     try:
-        with open('Web/templates/prompt.txt', 'r', encoding='utf-8') as f:
+        with open(template_path, 'r', encoding='utf-8') as f:
             content = f.read()
         return {"content": content}
     except Exception as e:
-        return {"error": str(e)}, 500
+        return {"error": f"Could not find template at {template_path}: {str(e)}"}, 500
 
 
 @app.route('/')
@@ -713,12 +716,31 @@ def sina_self_selected():
 def sina_monitor():
     conn = get_db()
     
-    # 1. 默认查询日期（参数或今天）
-    query_date = request.args.get('date', datetime.now().strftime('%Y%m%d'))
+    # Parameters
+    active_tab = request.args.get('tab', 'summary')
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
     
-    # 2. 获取当日 B/S 数据
+    # 1. 默认查询日期（参数或今天）
+    date_param = request.args.get('date')
+    if date_param:
+        query_date = date_param.replace('-', '') # Handle YYYY-MM-DD from date picker
+    else:
+        query_date = datetime.now().strftime('%Y%m%d')
+    
+    # ISO date for <input type="date">
+    try:
+        query_date_iso = datetime.strptime(query_date, '%Y%m%d').strftime('%Y-%m-%d')
+    except:
+        query_date_iso = ''
+    
+    daily_stats = {}
+    signals = []
+    pagination = None
+    last_completed_date = None
+
     with conn.cursor() as cursor:
-        # 统计概览
+        # Always fetch stats for the summary cards
         sql_stats = """
             SELECT 
                 COUNT(*) as total,
@@ -730,40 +752,91 @@ def sina_monitor():
         """
         cursor.execute(sql_stats, (query_date,))
         daily_stats = cursor.fetchone()
-        
-        # 3. 获取明细列表 (只显示有信号的)
-        sql_details = """
-            SELECT * FROM bs_detection_results 
-            WHERE batch_date = %s AND (has_buy_signal=1 OR has_sell_signal=1)
-            ORDER BY stock_code
-        """
-        cursor.execute(sql_details, (query_date,))
-        daily_signals = cursor.fetchall()
 
-        # 4. 获取最近发现的买点/卖点 (按发现时间倒序，显示前50条)
-        # 这可以帮助用户看到"实时"新发现的信号
-        sql_recent = """
-            SELECT * FROM bs_detection_results 
-            WHERE has_buy_signal=1 OR has_sell_signal=1
-            ORDER BY created_at DESC
-            LIMIT 50
-        """
-        cursor.execute(sql_recent)
-        recent_signals = cursor.fetchall()
-        
-        # 5. 为了"默认显示上一次完成的日期"，查找最近有数据的日期
-        if daily_stats['total'] == 0:
-            cursor.execute("SELECT MAX(batch_date) as last_date FROM bs_detection_results")
-            res = cursor.fetchone()
-            last_completed_date = res['last_date']
-        else:
-            last_completed_date = query_date
+        # Find latest date if current query has no data
+        cursor.execute("SELECT MAX(batch_date) as last_date FROM bs_detection_results")
+        res = cursor.fetchone()
+        last_completed_date = res['last_date'] if res else None
+
+        if active_tab == 'summary':
+            where_stmt = "WHERE batch_date = %s AND (has_buy_signal=1 OR has_sell_signal=1)"
+            params = (query_date,)
+            pagination, offset = get_pagination(cursor, "bs_detection_results", page, per_page, where_stmt, params)
+            
+            sql_details = f"""
+                SELECT t1.*, t2.stock_name 
+                FROM bs_detection_results t1
+                LEFT JOIN a_share_stock_list t2 ON t1.stock_code = t2.stock_code COLLATE utf8mb4_general_ci
+                {where_stmt}
+                ORDER BY t1.stock_code
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(sql_details, (query_date, per_page, offset))
+            signals = cursor.fetchall()
+
+        elif active_tab == 'holding_b':
+            # Logic: Latest signal is a B signal
+            # We use a subquery as the table name for get_pagination
+            subquery = """
+                (SELECT t1.*
+                 FROM bs_detection_results t1
+                 INNER JOIN (
+                     SELECT stock_code, MAX(created_at) as max_created
+                     FROM bs_detection_results
+                     WHERE has_buy_signal = 1 OR has_sell_signal = 1
+                     GROUP BY stock_code
+                 ) t2 ON t1.stock_code = t2.stock_code AND t1.created_at = t2.max_created
+                 WHERE t1.has_buy_signal = 1)
+            """
+            pagination, offset = get_pagination(cursor, f"{subquery} as sub", page, per_page)
+            
+            sql_holding = f"""
+                SELECT sub.*, t_name.stock_name
+                FROM {subquery} as sub
+                LEFT JOIN a_share_stock_list t_name ON sub.stock_code = t_name.stock_code COLLATE utf8mb4_general_ci
+                ORDER BY sub.created_at DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(sql_holding, (per_page, offset))
+            signals = cursor.fetchall()
+
+        elif active_tab == 'recent_buy':
+            where_stmt = "WHERE has_buy_signal=1"
+            pagination, offset = get_pagination(cursor, "bs_detection_results", page, per_page, where_stmt)
+            
+            sql_buy = f"""
+                SELECT t1.*, t2.stock_name 
+                FROM bs_detection_results t1
+                LEFT JOIN a_share_stock_list t2 ON t1.stock_code = t2.stock_code COLLATE utf8mb4_general_ci
+                {where_stmt}
+                ORDER BY t1.created_at DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(sql_buy, (per_page, offset))
+            signals = cursor.fetchall()
+
+        elif active_tab == 'recent_sell':
+            where_stmt = "WHERE has_sell_signal=1"
+            pagination, offset = get_pagination(cursor, "bs_detection_results", page, per_page, where_stmt)
+            
+            sql_sell = f"""
+                SELECT t1.*, t2.stock_name 
+                FROM bs_detection_results t1
+                LEFT JOIN a_share_stock_list t2 ON t1.stock_code = t2.stock_code COLLATE utf8mb4_general_ci
+                {where_stmt}
+                ORDER BY t1.created_at DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(sql_sell, (per_page, offset))
+            signals = cursor.fetchall()
 
     return render_template('sina_monitor.html',
+                           active_tab=active_tab,
                            query_date=query_date,
+                           query_date_iso=query_date_iso,
                            daily_stats=daily_stats,
-                           daily_signals=daily_signals,
-                           recent_signals=recent_signals,
+                           signals=signals,
+                           pagination=pagination,
                            last_completed_date=last_completed_date,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
@@ -1549,10 +1622,11 @@ def backtest_results():
     )
 @app.route('/admin')
 def admin():
+    now_date_iso = datetime.now().strftime('%Y-%m-%d')
     return render_template('admin.html', 
                            tasks=TASKS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           now_date=datetime.now().strftime('%Y-%m-%d'))
+                           now_date=now_date_iso)
 
 def update_task_db(task_name):
     """Save task status to database"""
@@ -1639,8 +1713,8 @@ def add_position():
     name = request.form.get('name')
     price = request.form.get('price')
     shares = request.form.get('shares')
-    date = request.form.get('date')
-    strategy_id = request.form.get('strategy_id')
+    date_str = request.form.get('date', '').replace('-', '') # Handle YYYY-MM-DD
+    strategy_id = request.form.get('strategy_id') or 'Manual'
     
     conn = get_db()
     with conn.cursor() as cursor:
@@ -1665,7 +1739,7 @@ def add_position():
             entry_date = VALUES(entry_date)
         """
         try:
-            cursor.execute(sql, (symbol, name, date, shares, price, price))
+            cursor.execute(sql, (symbol, name, date_str, shares, price, price))
             conn.commit()
             flash(f"Position {symbol} added/updated.", 'success')
         except Exception as e:

@@ -5,9 +5,17 @@
 <section class="panel">
     <div class="panel-title">任务调度</div>
     <table>
-        <thead><tr><th>任务</th><th>状态</th><th>上次执行</th><th>切日状态</th><th>操作</th></tr></thead>
+        <thead>
+            <tr>
+                <th>任务</th>
+                <th>状态</th>
+                <th>上次执行</th>
+                <th>切日状态</th>
+                <th>操作</th>
+            </tr>
+        </thead>
         <tbody>
-        {% for name, task in tasks.items() %}
+            {% for name, task in tasks.items() %}
             <tr>
                 <td>{{ name }}</td>
                 <td>{{ task.status }}</td>
@@ -19,7 +27,7 @@
                     </form>
                 </td>
             </tr>
-        {% endfor %}
+            {% endfor %}
         </tbody>
     </table>
 </section>
@@ -31,7 +39,7 @@
         <input name="name" placeholder="股票名称" required>
         <input name="price" type="number" step="0.01" placeholder="买入价" required>
         <input name="shares" type="number" placeholder="股数" required>
-        <input name="date" value="{{ now_date }}" placeholder="日期 YYYY-MM-DD" required>
+        <input name="date" type="date" value="{{ now_date }}" required>
         <input name="strategy_id" placeholder="策略ID(可选)">
         <button class="btn">提交</button>
     </form>
