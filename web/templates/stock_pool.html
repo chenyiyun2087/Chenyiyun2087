@@ -5,7 +5,9 @@
 {% block content %}
 <section class="panel">
     <div class="panel-title">股票池列表</div>
-    <form method="post" action="{{ url_for('add_stock_pool') }}" class="form-grid" style="margin-bottom: 12px;">
+    <div class="flash" style="margin-bottom:12px;">仅“最近有买点股票池”为只读属性；其他股票池均可进行更新修改。</div>
+
+    <form method="post" action="{{ url_for('stock_pool_add') }}" class="form-grid" style="margin-bottom: 12px;">
         <input name="pool_name" placeholder="新股票池名称" required>
         <button class="btn">新增股票池</button>
     </form>
@@ -30,7 +32,11 @@
                 <td>{{ '是' if pool.is_editable else '否' }}</td>
                 <td>{{ pool.stock_count }}</td>
                 <td>
-                    <a class="btn" href="{{ url_for('stock_pool', pool_id=pool.id) }}">查看</a>
+                    {% if selected_pool and selected_pool.id == pool.id %}
+                    <span class="tab active">当前管理</span>
+                    {% else %}
+                    <a class="btn" href="{{ url_for('stock_pool', pool_id=pool.id) }}">切换管理</a>
+                    {% endif %}
                 </td>
             </tr>
             {% else %}
@@ -41,25 +47,40 @@
 </section>
 
 {% if selected_pool %}
-<section class="panel">
+<section class="panel" id="stock-pool-detail">
     <div class="panel-title">当前股票池：{{ selected_pool.pool_name }}</div>
 
+    {% if selected_pool.is_editable %}
     <form method="post" action="{{ url_for('rename_stock_pool', pool_id=selected_pool.id) }}" class="form-grid" style="margin-bottom: 12px;">
         <input name="pool_name" value="{{ selected_pool.pool_name }}" required>
         <button class="btn">更改股票池名称</button>
     </form>
 
-    {% if selected_pool.is_editable %}
     <form method="post" action="{{ url_for('add_stock_pool_item') }}" class="form-grid" style="margin-bottom: 12px;">
         <input type="hidden" name="pool_id" value="{{ selected_pool.id }}">
-        <input name="symbol" placeholder="股票代码(6位)" required>
-        <input name="stock_name" placeholder="股票名称" required>
+        <input name="symbol" placeholder="单条录入：股票代码(6位，自动反查名称)">
+        <input name="stock_name" placeholder="单条录入：股票名称（可不填，或仅填名称反查代码）">
         <input name="note" placeholder="备注(可选)">
+        <textarea name="symbols_batch" placeholder="批量录入：每行/逗号/空格分隔多个股票代码，如
+600519
+000001, 300750" rows="4"></textarea>
         <button class="btn">新增/更新池内股票</button>
     </form>
     {% else %}
-    <div class="flash danger">该股票池不允许手动管理：只能由定时任务同步买点/卖点信号。</div>
+    <div class="flash danger">该股票池为只读属性（系统按B点信号同步），不支持手动增删改。</div>
     {% endif %}
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">
+        <div>共 {{ total_stocks }} 条，当前第 {{ page }}/{{ total_pages }} 页</div>
+        <div>
+            {% if page > 1 %}
+            <a class="btn pagination-link" href="{{ url_for('stock_pool', pool_id=selected_pool.id, page=page-1) }}#stock-pool-detail">上一页</a>
+            {% endif %}
+            {% if page < total_pages %}
+            <a class="btn pagination-link" href="{{ url_for('stock_pool', pool_id=selected_pool.id, page=page+1) }}#stock-pool-detail">下一页</a>
+            {% endif %}
+        </div>
+    </div>
 
     <table>
         <thead>
@@ -98,3 +119,19 @@
 </section>
 {% endif %}
 {% endblock %}
+
+<script>
+(function () {
+    const key = 'stock-pool-pagination-scroll-y';
+    const saved = sessionStorage.getItem(key);
+    if (saved !== null) {
+        window.scrollTo(0, parseInt(saved, 10) || 0);
+        sessionStorage.removeItem(key);
+    }
+    document.querySelectorAll('.pagination-link').forEach((link) => {
+        link.addEventListener('click', () => {
+            sessionStorage.setItem(key, String(window.scrollY || 0));
+        });
+    });
+})();
+</script>

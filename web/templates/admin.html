@@ -22,7 +22,15 @@
                 <td>{{ task.last_run or '-' }}</td>
                 <td>{{ '已切日' if task.switched_day else '未切日' }}</td>
                 <td>
-                    <form method="post" action="{{ url_for('run_task', task_name=name) }}">
+                    <form method="post" action="{{ url_for('run_task', task_name=name) }}" style="display:flex;gap:8px;align-items:center;">
+                        {% if name == 'sina_m8' %}
+                        <select name="m8_pool_id">
+                            <option value="">全部股票池（默认）</option>
+                            {% for p in m8_pools %}
+                            <option value="{{ p.id }}">{{ p.pool_name }} (ID:{{ p.id }})</option>
+                            {% endfor %}
+                        </select>
+                        {% endif %}
                         <button class="btn">立即运行</button>
                     </form>
                 </td>

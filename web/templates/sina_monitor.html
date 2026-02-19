@@ -25,6 +25,11 @@
         style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'recent_sell' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'recent_sell' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         最近卖点 (S)
     </a>
+    <a href="{{ url_for('sina_monitor', tab='signal_stats', date=query_date) }}"
+        class="tab-btn {% if active_tab == 'signal_stats' %}active{% endif %}"
+        style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
+        信号统计
+    </a>
 </div>
 
 {% if active_tab == 'summary' %}
@@ -184,6 +189,36 @@
         </tbody>
     </table>
 </section>
+
+{% elif active_tab == 'signal_stats' %}
+<section class="panel">
+    <div class="panel-title">信号统计（按批次日期）</div>
+    <table>
+        <thead>
+            <tr>
+                <th>批次日期</th>
+                <th>总股票数</th>
+                <th>B点数量</th>
+                <th>S点数量</th>
+                <th>最后更新</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in signal_stats_rows %}
+            <tr>
+                <td>{{ row.batch_date }}</td>
+                <td>{{ row.total or 0 }}</td>
+                <td class="text-up">{{ row.buy_count or 0 }}</td>
+                <td class="text-down">{{ row.sell_count or 0 }}</td>
+                <td>{{ row.last_update or '-' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="empty">暂无统计数据</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
 {% endif %}
 
 <!-- Unified Pagination for all tabs -->

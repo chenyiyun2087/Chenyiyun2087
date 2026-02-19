@@ -24,15 +24,15 @@
 
             <div class="sidebar-group-title">策略中心</div>
             <nav>
-                <a href="{{ url_for('sina_strategy') }}" class="{% if request.endpoint == 'sina_strategy' %}active{% endif %}">策略引擎</a>
                 <a href="{{ url_for('chenyiyun_selected_dashboard') }}" class="{% if request.endpoint == 'chenyiyun_selected_dashboard' %}active{% endif %}">核心精选</a>
-                <a href="{{ url_for('sina_strategy_pyramid') }}" class="{% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7'] %}active{% endif %}">评分策略</a>
+                <a href="{{ url_for('sina_strategy_pyramid') }}" class="{% if request.endpoint in ['sina_strategy','sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7'] %}active{% endif %}">M8评分策略</a>
             </nav>
 
             <div class="sidebar-group-title">数据分析</div>
             <nav>
                 <a href="{{ url_for('sina_scores') }}" class="{% if request.endpoint in ['sina_scores', 'eastmoney_scores', 'sina_self_selected'] %}active{% endif %}">因子评分</a>
                 <a href="{{ url_for('backtest_results') }}" class="{% if request.endpoint == 'backtest_results' %}active{% endif %}">回测中心</a>
+                <a href="{{ url_for('sina_tech_score') }}" class="{% if request.endpoint == 'sina_tech_score' %}active{% endif %}">技术评分</a>
             </nav>
 
             <div class="sidebar-group-title">系统设置</div>
