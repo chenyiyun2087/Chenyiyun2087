@@ -5,7 +5,12 @@
 {% block content %}
 <section class="panel">
     <div class="panel-title">股票池列表</div>
-    <div class="flash" style="margin-bottom:12px;">当前版本仅支持管理【自选股池】，其他股票池仅可查看。</div>
+    <div class="flash" style="margin-bottom:12px;">仅“最近有买点股票池”为只读属性；其他股票池均可进行更新修改。</div>
+
+    <form method="post" action="{{ url_for('add_stock_pool') }}" class="form-grid" style="margin-bottom: 12px;">
+        <input name="pool_name" placeholder="新股票池名称" required>
+        <button class="btn">新增股票池</button>
+    </form>
 
     <table>
         <thead>
@@ -45,7 +50,7 @@
 <section class="panel">
     <div class="panel-title">当前股票池：{{ selected_pool.pool_name }}</div>
 
-    {% if selected_pool.pool_key == 'SELF_SELECTED' %}
+    {% if selected_pool.is_editable %}
     <form method="post" action="{{ url_for('rename_stock_pool', pool_id=selected_pool.id) }}" class="form-grid" style="margin-bottom: 12px;">
         <input name="pool_name" value="{{ selected_pool.pool_name }}" required>
         <button class="btn">更改股票池名称</button>
@@ -62,7 +67,7 @@
         <button class="btn">新增/更新池内股票</button>
     </form>
     {% else %}
-    <div class="flash danger">当前仅支持对【自选股池】进行增删改管理，其他股票池只读。</div>
+    <div class="flash danger">该股票池为只读属性（系统按B点信号同步），不支持手动增删改。</div>
     {% endif %}
 
     <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">

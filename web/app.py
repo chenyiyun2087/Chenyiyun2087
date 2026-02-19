@@ -1845,13 +1845,13 @@ def rename_stock_pool(pool_id):
     conn = get_db()
     with conn.cursor() as cursor:
         try:
-            cursor.execute("SELECT pool_key FROM stock_pools WHERE id = %s", (pool_id,))
+            cursor.execute("SELECT is_editable FROM stock_pools WHERE id = %s", (pool_id,))
             pool = cursor.fetchone()
             if not pool:
                 flash('未找到要更新的股票池。', 'danger')
                 return redirect(url_for('stock_pool', pool_id=pool_id))
-            if pool.get('pool_key') != 'SELF_SELECTED':
-                flash('仅允许对【自选股池】进行管理。', 'danger')
+            if int(pool.get('is_editable') or 0) != 1:
+                flash('该股票池为只读属性，不允许手动管理。', 'danger')
                 return redirect(url_for('stock_pool', pool_id=pool_id))
 
             cursor.execute("UPDATE stock_pools SET pool_name = %s WHERE id = %s", (pool_name, pool_id))
@@ -1911,8 +1911,8 @@ def add_stock_pool_item():
             flash('股票池不存在。', 'danger')
             return redirect(url_for('stock_pool'))
 
-        if pool.get('pool_key') != 'SELF_SELECTED':
-            flash('仅允许对【自选股池】进行管理。', 'danger')
+        if int(pool.get('is_editable') or 0) != 1:
+            flash('该股票池为只读属性，不允许手动管理。', 'danger')
             return redirect(url_for('stock_pool', pool_id=pool_id))
 
         try:
@@ -1957,8 +1957,8 @@ def delete_stock_pool_item(item_id):
             flash('未找到待删除记录。', 'danger')
             return redirect(url_for('stock_pool'))
 
-        if row.get('pool_key') != 'SELF_SELECTED':
-            flash('仅允许对【自选股池】进行管理。', 'danger')
+        if int(row.get('is_editable') or 0) != 1:
+            flash('该股票池为只读属性，不允许手动管理。', 'danger')
             return redirect(url_for('stock_pool', pool_id=row['pool_id']))
 
         try:
