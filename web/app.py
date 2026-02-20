@@ -639,6 +639,7 @@ def sina_scores():
 
 @app.route('/sina/scores/all')
 def sina_all_scores():
+    pool_id = request.args.get('pool_id', 'all')
     page = request.args.get('page', 1, type=int)
     sort_by = request.args.get('sort', 'default')  # default, score, opt_score
     order = request.args.get('order', 'desc').upper()
@@ -653,6 +654,22 @@ def sina_all_scores():
     conn = get_db()
     
     with conn.cursor() as cursor:
+        _ensure_stock_pool_schema(cursor)
+        _ensure_seed_pools(cursor)
+        cursor.execute(
+            """
+            SELECT id, pool_name, pool_key
+            FROM stock_pools
+            ORDER BY is_system DESC, id ASC
+            """
+        )
+        stock_pools = cursor.fetchall()
+
+        if pool_id != 'all' and str(pool_id).isdigit():
+            valid_pool_ids = [str(p['id']) for p in stock_pools]
+            if str(pool_id) not in valid_pool_ids:
+                pool_id = 'all'
+
         # Get latest date
         cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
         res = cursor.fetchone()
@@ -662,38 +679,57 @@ def sina_all_scores():
         pagination = None
         
         if latest_date:
-            where_clauses = ["trade_date = %s"]
+            where_clauses = ["srd.trade_date = %s"]
             params = [latest_date]
             
             if min_score is not None:
-                where_clauses.append("score >= %s")
+                where_clauses.append("srd.score >= %s")
                 params.append(min_score)
             if min_opt_score is not None:
-                where_clauses.append("opt_score >= %s")
+                where_clauses.append("srd.opt_score >= %s")
                 params.append(min_opt_score)
                 
             where_stmt = " WHERE " + " AND ".join(where_clauses)
             
-            # Count for pagination
-            pagination, offset = get_pagination(cursor, "score_rank_daily", page, per_page, where_stmt, tuple(params))
-            
             # Build ORDER BY
             if sort_by == 'score':
-                order_stmt = f"ORDER BY score {order}"
+                order_stmt = f"ORDER BY srd.score {order}"
             elif sort_by == 'opt_score':
-                order_stmt = f"ORDER BY opt_score {order}"
+                order_stmt = f"ORDER BY srd.opt_score {order}"
             elif sort_by == 'claude_score':
-                order_stmt = f"ORDER BY claude_score {order}"
+                order_stmt = f"ORDER BY srd.claude_score {order}"
             else:
-                order_stmt = "ORDER BY score DESC"
+                order_stmt = "ORDER BY srd.score DESC"
 
-            # Removing the AND (is_bs_candidate = 1 OR is_self_selected = 1 OR pool_type IS NOT NULL)
+            join_stmt = ""
+            if pool_id != 'all':
+                join_stmt = "INNER JOIN stock_pool_items spi ON srd.symbol = spi.symbol AND spi.pool_id = %s"
+                count_sql = f"SELECT COUNT(*) as total FROM score_rank_daily srd {join_stmt} {where_stmt}"
+                count_params = [int(pool_id)] + params
+                cursor.execute(count_sql, tuple(count_params))
+                total = cursor.fetchone()['total']
+                offset = (page - 1) * per_page
+                pagination = {
+                    'page': page,
+                    'per_page': per_page,
+                    'total': total,
+                    'pages': (total + per_page - 1) // per_page,
+                    'has_prev': page > 1,
+                    'has_next': page * per_page < total,
+                    'prev_num': page - 1,
+                    'next_num': page + 1
+                }
+                params = [int(pool_id)] + params
+            else:
+                pagination, offset = get_pagination(cursor, "score_rank_daily srd", page, per_page, where_stmt, tuple(params))
+
             sql = f"""
             SELECT 
-                *, 
-                COALESCE(opt_score, 0) as opt_score,
-                COALESCE(claude_score, 0) as claude_score 
-            FROM score_rank_daily 
+                srd.*, 
+                COALESCE(srd.opt_score, 0) as opt_score,
+                COALESCE(srd.claude_score, 0) as claude_score 
+            FROM score_rank_daily srd
+            {join_stmt}
             {where_stmt}
             {order_stmt}
             LIMIT %s OFFSET %s
@@ -712,8 +748,11 @@ def sina_all_scores():
                            min_s=min_score,
                            min_o=min_opt_score,
                            per_page=per_page,
+                           pool_id=pool_id,
+                           stock_pools=stock_pools,
+                           is_all_scores_page=True,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           page_title="全量股票评分")
+                           page_title="系统全量评分")
 
 @app.route('/sina/self_selected')
 def sina_self_selected():
@@ -2250,57 +2289,30 @@ def _resolve_stock_entry(cursor, symbol, stock_name):
 
 
 @app.route('/stock_pool/pool/add', methods=['POST'], endpoint='stock_pool_add')
-def add_stock_pool_handler():
+def add_stock_pool():
     pool_name = (request.form.get('pool_name') or '').strip()
     if not pool_name:
         flash('股票池名称不能为空。', 'danger')
         return redirect(url_for('stock_pool'))
 
+    conn = get_db()
+    with conn.cursor() as cursor:
+        try:
+            # Generate a unique key for the custom pool
+            pool_key = f"CUSTOM_{int(time.time())}"
+            
+            cursor.execute(
+                """
+                INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (pool_key, pool_name, 'MANUAL', 0, 1)
+            )
+            conn.commit()
+            flash(f'成功创建股票池：{pool_name}', 'success')
+        except Exception as e:
+            flash(f'创建股票池失败: {e}', 'danger')
 
-def _lookup_stock_by_name(cursor, stock_name):
-    cursor.execute(
-        """
-        SELECT stock_code, stock_name
-        FROM a_share_stock_list
-        WHERE stock_name = %s
-        LIMIT 2
-        """,
-        (stock_name,),
-    )
-    return cursor.fetchall()
-
-
-def _resolve_stock_entry(cursor, symbol, stock_name):
-    symbol = str(symbol or '').strip()
-    stock_name = str(stock_name or '').strip()
-
-    if symbol:
-        code = symbol.zfill(6)
-        if not code.isdigit() or len(code) != 6:
-            return None, None, f'股票代码格式无效: {symbol}'
-        row = _lookup_stock_by_code(cursor, code)
-        if not row:
-            return None, None, f'股票代码不存在: {code}'
-        db_name = str(row.get('stock_name') or '').strip()
-        if stock_name and stock_name != db_name:
-            return None, None, f'股票代码与名称不匹配: {code} / {stock_name}'
-        return code, db_name, None
-
-    if stock_name:
-        rows = _lookup_stock_by_name(cursor, stock_name)
-        if not rows:
-            return None, None, f'股票名称不存在: {stock_name}'
-        if len(rows) > 1:
-            return None, None, f'股票名称存在多条，请改用代码录入: {stock_name}'
-        row = rows[0]
-        return str(row.get('stock_code') or '').zfill(6), str(row.get('stock_name') or '').strip(), None
-
-    return None, None, '请至少输入股票代码或股票名称。'
-
-
-@app.route('/stock_pool/pool/add', methods=['POST'])
-def add_stock_pool():
-    flash('当前版本仅允许管理【自选股池】，不支持新增其他股票池。', 'danger')
     return redirect(url_for('stock_pool'))
 
 

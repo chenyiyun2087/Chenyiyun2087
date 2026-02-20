@@ -56,7 +56,6 @@
 
             <div class="tabs" role="tablist" aria-label="数据页签">
                 {% if request.endpoint in ['sina_monitor', 'sina_scores', 'eastmoney_scores', 'sina_self_selected',
-                'sina_all_scores',
                 'sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7',
                 'positions'] %}
                 <a href="{{ url_for('sina_monitor') }}"
@@ -82,6 +81,13 @@
                 <a href="javascript:void(0)"
                     class="tab {% if request.endpoint == 'stock_pool_items' %}active{% endif %}" {% if request.endpoint
                     !='stock_pool_items' %}style="pointer-events:none; opacity:0.6;" {% endif %}>股票池股票管理</a>
+                {% elif is_all_scores_page %}
+                {% for pool in stock_pools %}
+                <a href="{{ url_for('sina_all_scores', pool_id=pool.id) }}"
+                    class="tab {% if pool_id|string == pool.id|string %}active{% endif %}">{{ pool.pool_name }}</a>
+                {% endfor %}
+                <a href="{{ url_for('sina_all_scores', pool_id='all') }}"
+                    class="tab {% if pool_id == 'all' %}active{% endif %}">全量股票池评分</a>
                 {% else %}
                 <!-- Contextual sub-navigation or empty -->
                 {% endif %}
