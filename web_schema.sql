@@ -151,3 +151,32 @@ ON DUPLICATE KEY UPDATE
     is_system = VALUES(is_system),
     is_editable = VALUES(is_editable),
     updated_at = CURRENT_TIMESTAMP;
+
+-- 任务管理状态表
+CREATE TABLE IF NOT EXISTS app_task_status (
+    task_name VARCHAR(64) PRIMARY KEY,
+    last_run DATETIME NULL,
+    status VARCHAR(64) NOT NULL DEFAULT 'Idle',
+    switched_day TINYINT(1) NOT NULL DEFAULT 0,
+    schedule_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    schedule_time VARCHAR(5) NOT NULL DEFAULT '00:00',
+    next_run DATETIME NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 任务执行历史表
+CREATE TABLE IF NOT EXISTS app_task_history (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_name VARCHAR(64) NOT NULL,
+    task_display_name VARCHAR(128) NOT NULL,
+    trigger_type VARCHAR(16) NOT NULL DEFAULT 'manual',
+    started_at DATETIME NOT NULL,
+    finished_at DATETIME NULL,
+    status VARCHAR(32) NOT NULL,
+    exit_code INT NULL,
+    duration_seconds INT NULL,
+    message TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_task_started (task_name, started_at),
+    KEY idx_started (started_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
