@@ -1,0 +1,102 @@
+{% extends 'layout.html' %}
+{% block title %}股票池股票管理{% endblock %}
+{% block page_title %}股票池股票管理{% endblock %}
+
+{% block content %}
+<div class="flash" style="margin-bottom:12px;">请在上方或左侧[股票池管理]先查看/建组，再在此页选中特定池进行股票增删。</div>
+
+{% if selected_pool %}
+<section class="panel" id="stock-pool-detail">
+    <div class="panel-title">当前股票池：{{ selected_pool.pool_name }}</div>
+
+    {% if selected_pool.is_editable %}
+    <form method="post" action="{{ url_for('rename_stock_pool', pool_id=selected_pool.id) }}" class="form-grid"
+        style="margin-bottom: 12px;">
+        <input name="pool_name" value="{{ selected_pool.pool_name }}" required>
+        <button class="btn">更改股票池名称</button>
+    </form>
+
+    <form method="post" action="{{ url_for('add_stock_pool_item') }}" class="form-grid" style="margin-bottom: 12px;">
+        <input type="hidden" name="pool_id" value="{{ selected_pool.id }}">
+        <input name="symbol" placeholder="单条录入：股票代码(6位，自动反查名称)">
+        <input name="stock_name" placeholder="单条录入：股票名称（可不填，或仅填名称反查代码）">
+        <input name="note" placeholder="备注(可选)">
+        <textarea name="symbols_batch" placeholder="批量录入：每行/逗号/空格分隔多个股票代码，如
+600519
+000001, 300750" rows="4"></textarea>
+        <button class="btn">新增/更新池内股票</button>
+    </form>
+    {% else %}
+    <div class="flash danger">该股票池为只读属性（系统按B点信号同步），不支持手动增删改。</div>
+    {% endif %}
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">
+        <div>共 {{ total_stocks }} 条，当前第 {{ page }}/{{ total_pages }} 页</div>
+        <div>
+            {% if page > 1 %}
+            <a class="btn pagination-link"
+                href="{{ url_for('stock_pool_items', pool_id=selected_pool.id, page=page-1) }}#stock-pool-detail">上一页</a>
+            {% endif %}
+            {% if page < total_pages %} <a class="btn pagination-link"
+                href="{{ url_for('stock_pool_items', pool_id=selected_pool.id, page=page+1) }}#stock-pool-detail">
+                下一页</a>
+                {% endif %}
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th>备注</th>
+                <th>更新时间</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in stocks %}
+            <tr>
+                <td>{{ row.id }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.stock_name }}</td>
+                <td>{{ row.note or '-' }}</td>
+                <td>{{ row.updated_at }}</td>
+                <td>
+                    {% if selected_pool.pool_key == 'SELF_SELECTED' %}
+                    <form method="post" action="{{ url_for('delete_stock_pool_item', item_id=row.id) }}"
+                        onsubmit="return confirm('确认删除该记录?')">
+                        <button class="btn">删除</button>
+                    </form>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6">暂无数据</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+{% endblock %}
+
+<script>
+    (function () {
+        const key = 'stock-pool-pagination-scroll-y';
+        const saved = sessionStorage.getItem(key);
+        if (saved !== null) {
+            window.scrollTo(0, parseInt(saved, 10) || 0);
+            sessionStorage.removeItem(key);
+        }
+        document.querySelectorAll('.pagination-link').forEach((link) => {
+            link.addEventListener('click', () => {
+                sessionStorage.setItem(key, String(window.scrollY || 0));
+            });
+        });
+    })();
+</script>

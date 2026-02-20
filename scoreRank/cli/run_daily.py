@@ -314,8 +314,18 @@ def main():
         ss_symbols = list(set(db_ss_symbols + excel_symbols))
         print(f"Found {len(ss_symbols)} total self-selected symbols (DB: {len(db_ss_symbols)}, Excel: {len(excel_symbols)}).")
         
-        # 4) Union Symbols for Scoring
-        all_symbols = list(set(bs_symbols + ss_symbols))
+        # 4) Fetch All A-Share Symbols
+        sql_all = """
+        SELECT stock_code 
+        FROM a_share_stock_list 
+        WHERE is_active = 1
+        """
+        df_all = pd.read_sql(sql_all, engine)
+        all_listed_symbols = df_all['stock_code'].astype(str).str.zfill(6).tolist()
+        print(f"Found {len(all_listed_symbols)} total listed A-shares.")
+
+        # 4.5) Union Symbols for Scoring (Score ALL listed A-shares)
+        all_symbols = list(set(bs_symbols + ss_symbols + all_listed_symbols))
         print(f"Total unique symbols to score: {len(all_symbols)}")
 
         if not all_symbols:
@@ -363,58 +373,22 @@ def main():
             # If main strategy is claude, claude_score is the score
             scored['claude_score'] = scored['score']
 
-        # 5.5) Calculate Features for Enrichment (Optional, if needed for other logic)
-        # If enrich_scored_with_market_metrics needs features, we might need to fetch them or 
-        # have the scorer return them. 
-        # Currently TechnicalScorer returns the scored DF. 
-        # Let's inspect perf_utils.py. It needs 'features' (qfq).
-        # To avoid double fetching, we might want to refactor TechnicalScorer to return features or allow passing data.
-        # OR: We just re-fetch for now, or rely on what's in 'scored'? 
-        # 'scored' contains many columns but maybe not all raw features?
-        # Actually TechnicalScorer returns the result of score_asof_date which has many columns.
+        # 5) Fetch Raw Data & Build Features for enrichment
+        engine = get_engine()
+        start_date = (asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d")
+        end_date = asof_date.strftime("%Y-%m-%d")
         
-        # However, enrich_scored_with_market_metrics merges with 'features' to get 'close_price' etc.
-        # The 'scored' dataframe ALREADY has 'raw_close' (renamed to close_price in db_io?)
-        # Let's check db_io.attach_liquidity_from_raw returns 'raw_close'.
-        # And score_asof_date keeps it.
-        
-        # To be safe and minimal change:
-        # We can re-fetch raw data here for enrichment if strictly necessary, 
-        # OR better: Refactor TechnicalScorer to allow passing raw_data?
-        # For this step, let's keep it simple. TechnicalScorer fetches its own data.
-        # We need 'features' mainly for 'close' to calculate 'is_limit_up' in perf_utils.
-        
-        # Optimization: We can just use the data we have in 'scored' if it has 'close'
-        # The 'scored' df from TechnicalScorer (via score_asof_date) has 'raw_close'.
-        # Let's check perf_utils to see what it needs.
-        
-        # [Quick Fix] 
-        # fetch_bars_batch is fast from local DB.
-        # But to match previous logic perfectly for 'features' used in 'enrich_scored_with_market_metrics':
-         
+        print("Fetching raw data for enrichment...")
         raw_data = fetch_bars_batch(
             engine, all_symbols, adj_type=CONFIG["adj_for_signal"],
-            start_date=(asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d"), 
-            end_date=asof_date.strftime("%Y-%m-%d")
+            start_date=start_date, end_date=end_date
         )
-        # We only need this for 'enrich_scored_with_market_metrics' relying on 'features'
-        # 'features' is qfq with technical indicators.
-        # This seems redundant. 
         
-        # Let's look at perf_utils.enrich_scored_with_market_metrics
-        # It merges with 'features' (latest_qfq) to get 'close' and 'ret1'.
-        # We can construct a minimal 'features' dataframe from 'raw_data' here.
-        # Or better: Update TechnicalScorer to default return everything needed.
-        
-        from scoreRank.core.scorer import build_features_from_qfq # Temporarily import for compatibility if needed
-        features = build_features_from_qfq(raw_data, breakout_n=CONFIG["breakout_n"]) # Re-calculate for enrichment compatibility
-        
-        # 6) Scoring (Done above via TechnicalScorer)
-        # names = get_symbol_names_if_exist(engine, all_symbols) # Done inside Scorer
-        # scored = score_asof_date(features, raw_liq, names, asof_date=asof_date) # Done inside Scorer
-
-        # 6.5) Merge B/S Signal Data (Strength, Freshness)
-        engine = get_engine()
+        from scoreRank.core.scorer import build_features_from_qfq
+        if not raw_data.empty:
+            features = build_features_from_qfq(raw_data, breakout_n=CONFIG["breakout_n"])
+        else:
+            features = pd.DataFrame()
         bs_signals = bs_scorer.fetch_bs_signals(engine, asof_date, all_symbols)
         
         if not bs_signals.empty and "buy_point_close" in bs_signals.columns:
@@ -451,8 +425,9 @@ def main():
         scored.loc[mask_watch, 'pool_type'] = 'WATCH'
         
         # Filter for saving
-        # Save if (pool_type is NOT None) OR (is_self_selected == 1) OR (is_bs_candidate == 1)
-        df_to_save = scored[ (scored['pool_type'].notna()) | (scored['is_self_selected'] == 1) | (scored['is_bs_candidate'] == 1) ].copy()
+        # [MODIFIED] Now saving ALL scored symbols instead of filtering.
+        # This supports the 'All A-Shares' scoring tab logic.
+        df_to_save = scored.copy()
         
         print("--------------------------------------------------")
         print("Scoring Summary:")

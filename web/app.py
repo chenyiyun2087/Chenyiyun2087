@@ -584,7 +584,7 @@ def sina_scores():
         pagination = None
         
         if latest_date:
-            where_clauses = ["trade_date = %s"]
+            where_clauses = ["trade_date = %s", "is_bs_candidate = 1"]
             params = [latest_date]
             
             if min_score is not None:
@@ -617,7 +617,6 @@ def sina_scores():
                 COALESCE(claude_score, 0) as claude_score 
             FROM score_rank_daily 
             {where_stmt}
-            AND (is_bs_candidate = 1 OR is_self_selected = 1 OR pool_type IS NOT NULL)
             {order_stmt}
             LIMIT %s OFFSET %s
             """
@@ -636,7 +635,85 @@ def sina_scores():
                            min_o=min_opt_score,
                            per_page=per_page,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                           page_title="股票池评分")
+                           page_title="最近有B点股票评分")
+
+@app.route('/sina/scores/all')
+def sina_all_scores():
+    page = request.args.get('page', 1, type=int)
+    sort_by = request.args.get('sort', 'default')  # default, score, opt_score
+    order = request.args.get('order', 'desc').upper()
+    if order not in ['ASC', 'DESC']: order = 'DESC'
+    
+    min_score = request.args.get('min_s', type=float)
+    min_opt_score = request.args.get('min_o', type=float)
+    
+    per_page = request.args.get('per_page', 50, type=int)
+    if per_page not in [50, 100, 200]: per_page = 50
+
+    conn = get_db()
+    
+    with conn.cursor() as cursor:
+        # Get latest date
+        cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
+        res = cursor.fetchone()
+        latest_date = res['max_date']
+        
+        scores = []
+        pagination = None
+        
+        if latest_date:
+            where_clauses = ["trade_date = %s"]
+            params = [latest_date]
+            
+            if min_score is not None:
+                where_clauses.append("score >= %s")
+                params.append(min_score)
+            if min_opt_score is not None:
+                where_clauses.append("opt_score >= %s")
+                params.append(min_opt_score)
+                
+            where_stmt = " WHERE " + " AND ".join(where_clauses)
+            
+            # Count for pagination
+            pagination, offset = get_pagination(cursor, "score_rank_daily", page, per_page, where_stmt, tuple(params))
+            
+            # Build ORDER BY
+            if sort_by == 'score':
+                order_stmt = f"ORDER BY score {order}"
+            elif sort_by == 'opt_score':
+                order_stmt = f"ORDER BY opt_score {order}"
+            elif sort_by == 'claude_score':
+                order_stmt = f"ORDER BY claude_score {order}"
+            else:
+                order_stmt = "ORDER BY score DESC"
+
+            # Removing the AND (is_bs_candidate = 1 OR is_self_selected = 1 OR pool_type IS NOT NULL)
+            sql = f"""
+            SELECT 
+                *, 
+                COALESCE(opt_score, 0) as opt_score,
+                COALESCE(claude_score, 0) as claude_score 
+            FROM score_rank_daily 
+            {where_stmt}
+            {order_stmt}
+            LIMIT %s OFFSET %s
+            """
+            
+            final_params = params + [per_page, offset]
+            cursor.execute(sql, tuple(final_params))
+            scores = cursor.fetchall()
+
+    return render_template('scores.html', 
+                           scores=scores, 
+                           pagination=pagination,
+                           date=latest_date,
+                           sort_by=sort_by,
+                           order=order,
+                           min_s=min_score,
+                           min_o=min_opt_score,
+                           per_page=per_page,
+                           now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                           page_title="全量股票评分")
 
 @app.route('/sina/self_selected')
 def sina_self_selected():
@@ -1867,6 +1944,39 @@ def backtest_results():
 
 @app.route('/stock_pool')
 def stock_pool():
+    conn = get_db()
+    with conn.cursor() as cursor:
+        _ensure_stock_pool_schema(cursor)
+        _ensure_seed_pools(cursor)
+        _sync_recent_buy_pool(cursor)
+        _seed_self_selected_if_empty(cursor)
+        conn.commit()
+
+        cursor.execute(
+            """
+            SELECT p.id, p.pool_name, p.pool_key, p.is_editable, p.source_type,
+                   COUNT(i.id) AS stock_count
+            FROM stock_pools p
+            LEFT JOIN stock_pool_items i ON i.pool_id = p.id
+            GROUP BY p.id, p.pool_name, p.pool_key, p.is_editable, p.source_type
+            ORDER BY p.is_system DESC, p.id ASC
+            """
+        )
+        pools = cursor.fetchall()
+
+        if not pools:
+            flash('股票池未初始化成功。', 'danger')
+            return render_template('stock_pool.html', now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'), pools=[])
+
+    return render_template(
+        'stock_pool.html',
+        now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        pools=pools,
+    )
+
+
+@app.route('/stock_pool/items')
+def stock_pool_items():
     selected_pool_id = request.args.get('pool_id', type=int)
     page = max(request.args.get('page', default=1, type=int), 1)
     page_size = 20
@@ -1893,7 +2003,7 @@ def stock_pool():
 
         if not pools:
             flash('股票池未初始化成功。', 'danger')
-            return render_template('stock_pool.html', now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'), pools=[], selected_pool=None, stocks=[])
+            return redirect(url_for('stock_pool'))
 
         if selected_pool_id is None or selected_pool_id not in {x['id'] for x in pools}:
             selected_pool_id = pools[0]['id']
@@ -1921,7 +2031,7 @@ def stock_pool():
         stocks = cursor.fetchall()
 
     return render_template(
-        'stock_pool.html',
+        'stock_pool_items.html',
         now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         pools=pools,
         selected_pool=selected_pool,
@@ -2036,10 +2146,23 @@ def _sync_recent_buy_pool(cursor):
 
     cursor.execute(
         """
-        SELECT b.stock_code AS symbol, COALESCE(a.stock_name, b.stock_code) AS stock_name
-        FROM bs_detection_results b
-        LEFT JOIN a_share_stock_list a ON b.stock_code = a.stock_code COLLATE utf8mb4_general_ci
-        WHERE b.batch_date = %s AND b.has_buy_signal = 1
+        SELECT latest_buy.stock_code AS symbol, COALESCE(a.stock_name, latest_buy.stock_code) AS stock_name
+        FROM bs_detection_results AS latest_buy
+        INNER JOIN (
+            SELECT
+                stock_code,
+                MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
+                MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
+            FROM bs_detection_results
+            WHERE batch_date <= %s
+            GROUP BY stock_code
+        ) AS summary
+            ON latest_buy.stock_code = summary.stock_code
+            AND latest_buy.batch_date = summary.latest_buy_date
+        LEFT JOIN a_share_stock_list a ON latest_buy.stock_code = a.stock_code COLLATE utf8mb4_general_ci
+        WHERE latest_buy.has_buy_signal = 1
+          AND (summary.latest_sell_date IS NULL
+               OR summary.latest_buy_date > summary.latest_sell_date)
         """,
         (latest_date,),
     )

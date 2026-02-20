@@ -41,7 +41,9 @@
             <div class="sidebar-group-title">系统设置</div>
             <nav>
                 <a href="{{ url_for('stock_pool') }}"
-                    class="{% if request.endpoint in ['stock_pool','add_stock_pool','rename_stock_pool','add_stock_pool_item','delete_stock_pool_item'] %}active{% endif %}">股票池管理</a>
+                    class="{% if request.endpoint in ['stock_pool', 'stock_pool_items', 'add_stock_pool','rename_stock_pool','add_stock_pool_item','delete_stock_pool_item'] %}active{% endif %}">股票池管理</a>
+                <a href="{{ url_for('sina_all_scores') }}"
+                    class="{% if request.endpoint == 'sina_all_scores' %}active{% endif %}">全量股票评分</a>
                 <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </nav>
         </aside>
@@ -54,12 +56,15 @@
 
             <div class="tabs" role="tablist" aria-label="数据页签">
                 {% if request.endpoint in ['sina_monitor', 'sina_scores', 'eastmoney_scores', 'sina_self_selected',
+                'sina_all_scores',
                 'sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7',
                 'positions'] %}
                 <a href="{{ url_for('sina_monitor') }}"
                     class="tab {% if request.endpoint == 'sina_monitor' %}active{% endif %}">B/S监控</a>
                 <a href="{{ url_for('sina_scores') }}"
-                    class="tab {% if request.endpoint in ['sina_scores', 'eastmoney_scores', 'sina_self_selected'] %}active{% endif %}">股票池评分</a>
+                    class="tab {% if request.endpoint in ['sina_scores', 'eastmoney_scores'] %}active{% endif %}">最近有B点股票评分</a>
+                <a href="{{ url_for('sina_self_selected') }}"
+                    class="tab {% if request.endpoint == 'sina_self_selected' %}active{% endif %}">自选股评分</a>
                 <a href="{{ url_for('sina_strategy_pyramid') }}"
                     class="tab {% if request.endpoint in ['sina_strategy_pyramid','sina_strategy_weighted','sina_strategy_quadrant','sina_strategy_m2','sina_strategy_m3','sina_strategy_m4','sina_strategy_m5','sina_strategy_m6','sina_strategy_m7'] %}active{% endif %}">M8评分策略</a>
                 <a href="{{ url_for('positions') }}"
@@ -71,6 +76,12 @@
                     class="tab {% if request.endpoint == 'backtest_results' %}active{% endif %}">回测中心</a>
                 <a href="{{ url_for('sina_tech_score') }}"
                     class="tab {% if request.endpoint == 'sina_tech_score' %}active{% endif %}">技术评分</a>
+                {% elif request.endpoint in ['stock_pool', 'stock_pool_items'] %}
+                <a href="{{ url_for('stock_pool') }}"
+                    class="tab {% if request.endpoint == 'stock_pool' %}active{% endif %}">股票池管理</a>
+                <a href="javascript:void(0)"
+                    class="tab {% if request.endpoint == 'stock_pool_items' %}active{% endif %}" {% if request.endpoint
+                    !='stock_pool_items' %}style="pointer-events:none; opacity:0.6;" {% endif %}>股票池股票管理</a>
                 {% else %}
                 <!-- Contextual sub-navigation or empty -->
                 {% endif %}

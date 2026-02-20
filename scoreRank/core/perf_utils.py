@@ -24,10 +24,21 @@ def enrich_scored_with_market_metrics(scored: pd.DataFrame, features: pd.DataFra
         out["price_change_ratio"] = pd.Series(dtype=float)
         return out
 
+    features_clean = features.dropna(subset=["trade_date"])
+    if len(features_clean) == 0:
+        merged = scored.copy()
+        merged["close_price"] = 0.0
+        merged["is_limit_up"] = 0
+        if "buy_point_close" not in merged.columns:
+            merged["buy_point_close"] = np.nan
+        merged["price_change_ratio"] = 0.0
+        return merged
+
+    # Avoid pandas sorting bugs on large mixed arrays by using drop_duplicates
+    # By default, fetch_bars returns sorted chronological data, so last item is the latest
     latest_qfq = (
-        features.sort_values("trade_date")
-        .groupby("symbol", as_index=False)
-        .tail(1)[["symbol", "close", "ret1"]]
+        features_clean.drop_duplicates(subset=["symbol"], keep="last")
+        [["symbol", "close", "ret1"]]
         .rename(columns={"close": "close_price"})
     )
 
