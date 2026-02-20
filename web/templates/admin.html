@@ -3,34 +3,39 @@
 {% block page_title %}任务调度与手动补单{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">任务调度</div>
+    <div class="panel-title">任务管理</div>
     <table>
         <thead>
             <tr>
                 <th>任务</th>
                 <th>状态</th>
                 <th>上次执行</th>
+                <th>下次执行</th>
                 <th>切日状态</th>
+                <th>计划任务配置</th>
                 <th>操作</th>
             </tr>
         </thead>
         <tbody>
             {% for name, task in tasks.items() %}
             <tr>
-                <td>{{ name }}</td>
+                <td>{{ task.name }}<br><small>{{ name }}</small></td>
                 <td>{{ task.status }}</td>
                 <td>{{ task.last_run or '-' }}</td>
+                <td>{{ task.next_run or '-' }}</td>
                 <td>{{ '已切日' if task.switched_day else '未切日' }}</td>
                 <td>
+                    <form method="post" action="{{ url_for('update_task_schedule', task_name=name) }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <label style="display:flex;align-items:center;gap:4px;">
+                            <input type="checkbox" name="schedule_enabled" {% if task.schedule_enabled %}checked{% endif %}>
+                            启用
+                        </label>
+                        <input type="time" name="schedule_time" value="{{ task.schedule_time or '00:00' }}" required>
+                        <button class="btn" type="submit">保存计划</button>
+                    </form>
+                </td>
+                <td>
                     <form method="post" action="{{ url_for('run_task', task_name=name) }}" style="display:flex;gap:8px;align-items:center;">
-                        {% if name == 'sina_m8' %}
-                        <select name="m8_pool_id">
-                            <option value="">全部股票池（默认）</option>
-                            {% for p in m8_pools %}
-                            <option value="{{ p.id }}">{{ p.pool_name }} (ID:{{ p.id }})</option>
-                            {% endfor %}
-                        </select>
-                        {% endif %}
                         <button class="btn">立即运行</button>
                     </form>
                 </td>
@@ -38,6 +43,50 @@
             {% endfor %}
         </tbody>
     </table>
+</section>
+
+<section class="panel">
+    <div class="panel-title">任务历史执行状态</div>
+    <table>
+        <thead>
+            <tr>
+                <th>任务</th>
+                <th>触发方式</th>
+                <th>开始时间</th>
+                <th>结束时间</th>
+                <th>耗时(秒)</th>
+                <th>状态</th>
+                <th>返回码</th>
+                <th>信息</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in task_history %}
+            <tr>
+                <td>{{ row.task_display_name }}<br><small>{{ row.task_name }}</small></td>
+                <td>{{ row.trigger_type }}</td>
+                <td>{{ row.started_at or '-' }}</td>
+                <td>{{ row.finished_at or '-' }}</td>
+                <td>{{ row.duration_seconds if row.duration_seconds is not none else '-' }}</td>
+                <td>{{ row.status }}</td>
+                <td>{{ row.exit_code if row.exit_code is not none else '-' }}</td>
+                <td><small>{{ row.message or '-' }}</small></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8">暂无历史记录</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+
+<section class="panel">
+    <div class="panel-title">任务说明</div>
+    <ul>
+        <li>当前任务管理包含 3 个任务：<strong>sina_bs</strong>、<strong>sina_score（全A股评分）</strong>、<strong>sina_m8（策略回归落库）</strong>。</li>
+        <li><code>sina_bs</code> 入口脚本为 <code>sina/bs_detection/main.py</code>，用于批量截图、批量识别并保存识别结果。</li>
+        <li>三个任务默认都按<strong>交易日</strong>执行，触发前会先查询交易日历（失败时退化为工作日判断）。</li>
+    </ul>
 </section>
 
 <section class="panel">

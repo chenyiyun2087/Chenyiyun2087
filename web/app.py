@@ -4,7 +4,7 @@ import os
 import pymysql
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import subprocess
 import threading
 import time
@@ -63,12 +63,41 @@ DB_CONFIG = {
 
 # Task Status Storage (Loaded from DB on start)
 TASKS = {
-    "sina_bs": {"name": "sina B/S 扫描", "script": "sina/bs_detection/main.py", "last_run": "Never", "status": "Idle", "switched_day": False},
-    "sina_score": {"name": "sina 每日评分", "script": "scoreRank/run_daily.py", "last_run": "Never", "status": "Idle", "switched_day": False},
-    "sina_m8": {"name": "策略M8 回归落库", "script": "scoreRank/cli/run_m8_cycle.py", "last_run": "Never", "status": "Idle", "switched_day": False},
-    "sina_snapshot": {"name": "sina 实盘快照", "script": "sina/live_tracker/live_tracker.py", "last_run": "Never", "status": "Idle", "switched_day": False},
-    "eastmoney": {"name": "eastmoney 策略扫描", "script": "eastmoney/run_strategy.py", "last_run": "Never", "status": "Idle", "switched_day": False}
+    "sina_bs": {
+        "name": "sina B/S 扫描",
+        "script": "sina/bs_detection/main.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "15:20",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "sina_score": {
+        "name": "全A股评分",
+        "script": "scoreRank/run_daily.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "21:00",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "sina_m8": {
+        "name": "M8策略回归落库",
+        "script": "scoreRank/cli/run_m8_cycle.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "21:10",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
 }
+TASKS_LOCK = threading.Lock()
 
 UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
@@ -286,20 +315,180 @@ def _fmt_num(v, ndigits=4):
     except (TypeError, ValueError):
         return '-'
 
+
+
+def _ensure_task_management_schema(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_task_status (
+            task_name VARCHAR(64) PRIMARY KEY,
+            last_run DATETIME NULL,
+            status VARCHAR(64) NOT NULL DEFAULT 'Idle',
+            switched_day TINYINT(1) NOT NULL DEFAULT 0,
+            schedule_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            schedule_time VARCHAR(5) NOT NULL DEFAULT '00:00',
+            next_run DATETIME NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_task_history (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            task_name VARCHAR(64) NOT NULL,
+            task_display_name VARCHAR(128) NOT NULL,
+            trigger_type VARCHAR(16) NOT NULL DEFAULT 'manual',
+            started_at DATETIME NOT NULL,
+            finished_at DATETIME NULL,
+            status VARCHAR(32) NOT NULL,
+            exit_code INT NULL,
+            duration_seconds INT NULL,
+            message TEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_task_started (task_name, started_at),
+            KEY idx_started (started_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def _normalize_schedule_time(raw_time):
+    parts = str(raw_time or '').strip().split(':')
+    if len(parts) != 2:
+        return None
+    try:
+        h = int(parts[0])
+        m = int(parts[1])
+    except ValueError:
+        return None
+    if h < 0 or h > 23 or m < 0 or m > 59:
+        return None
+    return f"{h:02d}:{m:02d}"
+
+
+def _compute_next_run(schedule_time, enabled):
+    if not enabled:
+        return None
+    normalized = _normalize_schedule_time(schedule_time)
+    if not normalized:
+        return None
+    hour, minute = [int(x) for x in normalized.split(':')]
+    now = datetime.now()
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target
+
+
+def _refresh_task_next_runs():
+    with TASKS_LOCK:
+        for task in TASKS.values():
+            next_dt = _compute_next_run(task.get('schedule_time'), bool(task.get('schedule_enabled')))
+            task['next_run'] = next_dt.strftime('%Y-%m-%d %H:%M:%S') if next_dt else '-'
+
+
+def _insert_task_history(task_name, trigger_type, status, started_at, finished_at=None, exit_code=None, duration_seconds=None, message=None):
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                INSERT INTO app_task_history
+                    (task_name, task_display_name, trigger_type, started_at, finished_at, status, exit_code, duration_seconds, message)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (task_name, TASKS[task_name]['name'], trigger_type, started_at, finished_at, status, exit_code, duration_seconds, message),
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Failed to insert task history: {e}")
+
+
+def _get_task_history(limit=100):
+    rows = []
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                SELECT task_name, task_display_name, trigger_type, started_at, finished_at, status, exit_code, duration_seconds, message
+                FROM app_task_history
+                ORDER BY started_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+    except Exception as e:
+        print(f"Failed to load task history: {e}")
+    return rows
+
+
+def _is_trading_day(target_date=None):
+    target = target_date or datetime.now().date()
+    ymd = target.strftime('%Y%m%d')
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT is_open
+                FROM dim_trade_cal
+                WHERE cal_date = %s AND exchange = 'SSE'
+                LIMIT 1
+                """,
+                (ymd,),
+            )
+            row = cursor.fetchone()
+        conn.close()
+        if row is not None and row.get('is_open') is not None:
+            return int(row.get('is_open')) == 1
+    except Exception as e:
+        print(f"Trade calendar query failed, fallback to weekday check: {e}")
+
+    return target.weekday() < 5
+
+
+def _build_task_script_parts(task_name):
+    task_config = TASKS[task_name]
+    script = task_config['script']
+    if task_name == 'sina_bs':
+        today = datetime.now().strftime('%Y%m%d')
+        return [script, 'config_1', today]
+    if task_name == 'sina_m8':
+        return [script, '--lookback-dates', '60']
+    return [script]
+
 def init_tasks():
     """Load task status from database"""
     try:
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
             cursor.execute("SELECT * FROM app_task_status")
             rows = cursor.fetchall()
-            for row in rows:
-                name = row['task_name']
-                if name in TASKS:
-                    TASKS[name]['last_run'] = row['last_run'].strftime('%Y-%m-%d %H:%M:%S') if row['last_run'] else "Never"
-                    TASKS[name]['status'] = row['status'] or "Idle"
-                    TASKS[name]['switched_day'] = bool(row['switched_day'])
+            with TASKS_LOCK:
+                for row in rows:
+                    name = row['task_name']
+                    if name in TASKS:
+                        TASKS[name]['last_run'] = row['last_run'].strftime('%Y-%m-%d %H:%M:%S') if row.get('last_run') else "Never"
+                        TASKS[name]['status'] = row.get('status') or "Idle"
+                        TASKS[name]['switched_day'] = bool(row.get('switched_day'))
+                        if 'schedule_enabled' in row:
+                            TASKS[name]['schedule_enabled'] = bool(row.get('schedule_enabled'))
+                        if row.get('schedule_time'):
+                            normalized = _normalize_schedule_time(row.get('schedule_time'))
+                            if normalized:
+                                TASKS[name]['schedule_time'] = normalized
+                        if row.get('next_run'):
+                            TASKS[name]['next_run'] = row['next_run'].strftime('%Y-%m-%d %H:%M:%S')
+            conn.commit()
         conn.close()
+        _refresh_task_next_runs()
     except Exception as e:
         print(f"Failed to load task status: {e}")
 
@@ -2463,110 +2652,194 @@ def delete_stock_pool_item(item_id):
 @app.route('/admin')
 def admin():
     now_date_iso = datetime.now().strftime('%Y-%m-%d')
-    m8_pools = []
+    task_history = []
     try:
         conn = get_db()
         with conn.cursor() as cursor:
-            _ensure_stock_pool_schema(cursor)
-            _ensure_seed_pools(cursor)
-            cursor.execute(
-                """
-                SELECT id, pool_name, pool_key, is_editable
-                FROM stock_pools
-                ORDER BY is_system DESC, id ASC
-                """
-            )
-            m8_pools = cursor.fetchall()
+            _ensure_task_management_schema(cursor)
+        task_history = _get_task_history(limit=100)
     except Exception as e:
         print(f"Failed to load stock pools in admin: {e}")
+
+    _refresh_task_next_runs()
 
     return render_template('admin.html', 
                            tasks=TASKS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            now_date=now_date_iso,
-                           m8_pools=m8_pools)
+                           task_history=task_history)
 
 def update_task_db(task_name):
     """Save task status to database"""
     try:
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
-            last_run = TASKS[task_name]['last_run']
-            if last_run == "Never":
-                last_run_db = None
-            else:
-                last_run_db = last_run
-                
-            sql = """
-            INSERT INTO app_task_status (task_name, last_run, status, switched_day)
-            VALUES (%s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                last_run = VALUES(last_run),
-                status = VALUES(status),
-                switched_day = VALUES(switched_day)
-            """
-            cursor.execute(sql, (task_name, last_run_db, TASKS[task_name]['status'], int(TASKS[task_name]['switched_day'])))
+            _ensure_task_management_schema(cursor)
+            with TASKS_LOCK:
+                task = TASKS[task_name]
+                last_run = task['last_run']
+                if last_run == "Never":
+                    last_run_db = None
+                else:
+                    last_run_db = last_run
+                next_run_dt = _compute_next_run(task.get('schedule_time'), bool(task.get('schedule_enabled')))
+                task['next_run'] = next_run_dt.strftime('%Y-%m-%d %H:%M:%S') if next_run_dt else '-'
+
+                sql = """
+                INSERT INTO app_task_status (task_name, last_run, status, switched_day, schedule_enabled, schedule_time, next_run)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    last_run = VALUES(last_run),
+                    status = VALUES(status),
+                    switched_day = VALUES(switched_day),
+                    schedule_enabled = VALUES(schedule_enabled),
+                    schedule_time = VALUES(schedule_time),
+                    next_run = VALUES(next_run)
+                """
+                cursor.execute(
+                    sql,
+                    (
+                        task_name,
+                        last_run_db,
+                        task['status'],
+                        int(task['switched_day']),
+                        int(bool(task.get('schedule_enabled'))),
+                        task.get('schedule_time') or '00:00',
+                        next_run_dt,
+                    ),
+                )
             conn.commit()
         conn.close()
     except Exception as e:
         print(f"Failed to update task DB: {e}")
 
-def run_script(script_parts, task_name):
+
+def run_script(script_parts, task_name, trigger_type='manual'):
     """Run a script in background and update status"""
-    TASKS[task_name]['status'] = "Running..."
-    TASKS[task_name]['last_run'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    started_at = datetime.now()
+    with TASKS_LOCK:
+        TASKS[task_name]['status'] = "Running..."
+        TASKS[task_name]['last_run'] = started_at.strftime('%Y-%m-%d %H:%M:%S')
     update_task_db(task_name)
-    
+
+    history_status = 'Success'
+    exit_code = 0
+    message = None
+
     try:
         # Construct full command
         cmd = [sys.executable] + script_parts
         result = subprocess.run(cmd, capture_output=True, text=True)
-        
+
         if result.returncode == 0:
-            TASKS[task_name]['status'] = "Success"
-            TASKS[task_name]['switched_day'] = True # Mock logic
+            with TASKS_LOCK:
+                TASKS[task_name]['status'] = "Success"
+                TASKS[task_name]['switched_day'] = True
         else:
-            TASKS[task_name]['status'] = f"Failed (Code {result.returncode})"
-            # Log error details
-            print(f"Task {task_name} stderr: {result.stderr}")
-            TASKS[task_name]['error_log'] = result.stderr[:500] # Keep recent error
-            
+            history_status = 'Failed'
+            exit_code = int(result.returncode)
+            with TASKS_LOCK:
+                TASKS[task_name]['status'] = f"Failed (Code {result.returncode})"
+                print(f"Task {task_name} stderr: {result.stderr}")
+                TASKS[task_name]['error_log'] = (result.stderr or '')[:500]
+            message = (result.stderr or result.stdout or '')[:1000]
+
     except Exception as e:
-        TASKS[task_name]['status'] = f"Error: {str(e)}"
-    
+        history_status = 'Error'
+        exit_code = -1
+        message = str(e)
+        with TASKS_LOCK:
+            TASKS[task_name]['status'] = f"Error: {str(e)}"
+
     update_task_db(task_name)
+    finished_at = datetime.now()
+    duration_seconds = int((finished_at - started_at).total_seconds())
+    _insert_task_history(
+        task_name=task_name,
+        trigger_type=trigger_type,
+        status=history_status,
+        started_at=started_at,
+        finished_at=finished_at,
+        exit_code=exit_code,
+        duration_seconds=duration_seconds,
+        message=message,
+    )
+
+@app.route('/admin/task/<task_name>/schedule', methods=['POST'])
+def update_task_schedule(task_name):
+    if task_name not in TASKS:
+        flash(f"Unknown task: {task_name}", 'danger')
+        return redirect(url_for('admin'))
+
+    schedule_time = _normalize_schedule_time(request.form.get('schedule_time'))
+    if schedule_time is None:
+        flash('调度时间格式非法，请使用 HH:MM。', 'danger')
+        return redirect(url_for('admin'))
+
+    schedule_enabled = request.form.get('schedule_enabled') == 'on'
+    with TASKS_LOCK:
+        TASKS[task_name]['schedule_time'] = schedule_time
+        TASKS[task_name]['schedule_enabled'] = schedule_enabled
+    update_task_db(task_name)
+    flash(f"任务 {TASKS[task_name]['name']} 调度配置已更新。", 'success')
+    return redirect(url_for('admin'))
+
 
 @app.route('/admin/run_task/<task_name>', methods=['POST'])
 def run_task(task_name):
     if task_name not in TASKS:
         flash(f"Unknown task: {task_name}", 'danger')
         return redirect(url_for('admin'))
-    
-    task_config = TASKS[task_name]
-    script = task_config['script']
-    
-    # Special handling for sina BS scan which needs config and date
-    if task_name == 'sina_bs':
-        today = datetime.now().strftime('%Y%m%d')
-        # We need to split if we want to pass as list, but subprocess likes list for args
-        # Actually run_script uses subprocess.run([sys.executable, script])
-        # So we better handle args in run_script or here.
-        # Let's adjust run_script to handle a list of command parts.
-        script_parts = [script, "config_1", today]
-    elif task_name == 'sina_m8':
-        m8_pool_id = request.form.get('m8_pool_id', type=int)
-        script_parts = [script, '--lookback-dates', '60']
-        if m8_pool_id:
-            script_parts.extend(['--pool-id', str(m8_pool_id)])
-    else:
-        script_parts = [script]
-    
-    # Run in thread to not block
-    thread = threading.Thread(target=run_script, args=(script_parts, task_name))
+
+    if TASKS[task_name].get('trading_day_only') and not _is_trading_day():
+        flash(f"任务 {TASKS[task_name]['name']} 仅交易日执行，今日已跳过。", 'warning')
+        return redirect(url_for('admin'))
+
+    script_parts = _build_task_script_parts(task_name)
+    thread = threading.Thread(target=run_script, args=(script_parts, task_name, 'manual'))
+    thread.daemon = True
     thread.start()
-    
+
     flash(f"Task {TASKS[task_name]['name']} started in background.", 'success')
     return redirect(url_for('admin'))
+
+
+def _run_scheduled_tasks_loop():
+    while True:
+        try:
+            now = datetime.now()
+            now_hm = now.strftime('%H:%M')
+            is_trade_day = _is_trading_day(now.date())
+            due_tasks = []
+            with TASKS_LOCK:
+                for task_name, task in TASKS.items():
+                    if task.get('status') == 'Running...':
+                        continue
+                    if not bool(task.get('schedule_enabled')):
+                        continue
+                    if bool(task.get('trading_day_only')) and not is_trade_day:
+                        continue
+                    if task.get('schedule_time') != now_hm:
+                        continue
+                    last_run = str(task.get('last_run') or '')
+                    if now.strftime('%Y-%m-%d %H:%M') in last_run:
+                        continue
+                    due_tasks.append(task_name)
+
+            for task_name in due_tasks:
+                script_parts = _build_task_script_parts(task_name)
+                thread = threading.Thread(target=run_script, args=(script_parts, task_name, 'schedule'))
+                thread.daemon = True
+                thread.start()
+
+            time.sleep(20)
+        except Exception as e:
+            print(f"Task scheduler loop error: {e}")
+            time.sleep(20)
+def start_task_scheduler_loop():
+    thread = threading.Thread(target=_run_scheduled_tasks_loop)
+    thread.daemon = True
+    thread.start()
 
 @app.route('/admin/add_position', methods=['POST'])
 def add_position():
@@ -2607,6 +2880,8 @@ def add_position():
             flash(f"Failed to add position: {e}", 'danger')
             
     return redirect(url_for('admin'))
+
+start_task_scheduler_loop()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
