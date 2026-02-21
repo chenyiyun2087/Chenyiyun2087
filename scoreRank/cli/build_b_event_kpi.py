@@ -247,7 +247,7 @@ def print_summary(fact_df: pd.DataFrame, kpi_df: pd.DataFrame):
 
 
 def main():
-    engine = get_engine()
+    engine = get_engine(as_sqlalchemy=True)
     ensure_tables(engine)
 
     events = load_events(engine)

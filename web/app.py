@@ -65,6 +65,7 @@ DB_CONFIG = {
 TASKS = {
     "sina_bs": {
         "name": "sina B/S 扫描",
+        "description": "Sina财经B/S信号截图与AI自动检测",
         "script": "sina/bs_detection/main.py",
         "last_run": "Never",
         "status": "Idle",
@@ -76,6 +77,7 @@ TASKS = {
     },
     "sina_score": {
         "name": "全A股评分",
+        "description": "全市场A股多因子量化评分落库",
         "script": "scoreRank/run_daily.py",
         "last_run": "Never",
         "status": "Idle",
@@ -87,6 +89,7 @@ TASKS = {
     },
     "sina_m8": {
         "name": "M8策略回归落库",
+        "description": "M8评分策略历史回归与信号生成",
         "script": "scoreRank/cli/run_m8_cycle.py",
         "last_run": "Never",
         "status": "Idle",
@@ -96,8 +99,46 @@ TASKS = {
         "next_run": "-",
         "trading_day_only": True,
     },
+    "sina_snapshot": {
+        "name": "sina 实盘快照",
+        "description": "账户实时持仓与净值曲线快照同步",
+        "script": "sina/live_tracker/live_tracker.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "21:30",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "eastmoney": {
+        "name": "eastmoney 策略扫描",
+        "description": "东方财富社区舆情扫描与个股热度分析",
+        "script": "eastmoney/run_strategy.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "16:30",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "sync_trade_cal": {
+        "name": "交易日历同步",
+        "description": "同步Tushare官方交易日历到本地库",
+        "script": "scripts/ops/sync_trade_cal.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "08:00",
+        "next_run": "-",
+        "trading_day_only": False,
+    },
 }
 TASKS_LOCK = threading.Lock()
+TASK_HEARTBEAT_INTERVAL_SECONDS = 20
+TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
 
 UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
@@ -332,6 +373,17 @@ def _ensure_task_management_schema(cursor):
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
+    
+    # Check for missing columns and add them if necessary
+    cursor.execute("DESC app_task_status")
+    existing_columns = [row['Field'] for row in cursor.fetchall()]
+    
+    if 'schedule_enabled' not in existing_columns:
+        cursor.execute("ALTER TABLE app_task_status ADD COLUMN schedule_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER switched_day")
+    if 'schedule_time' not in existing_columns:
+        cursor.execute("ALTER TABLE app_task_status ADD COLUMN schedule_time VARCHAR(5) NOT NULL DEFAULT '00:00' AFTER schedule_enabled")
+    if 'next_run' not in existing_columns:
+        cursor.execute("ALTER TABLE app_task_status ADD COLUMN next_run DATETIME NULL AFTER schedule_time")
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS app_task_history (
@@ -351,6 +403,63 @@ def _ensure_task_management_schema(cursor):
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_task_runner (
+            id TINYINT PRIMARY KEY,
+            status VARCHAR(16) NOT NULL DEFAULT 'IDLE',
+            running_task_name VARCHAR(64) NULL,
+            trigger_type VARCHAR(16) NULL,
+            queue_id BIGINT NULL,
+            started_at DATETIME NULL,
+            heartbeat_at DATETIME NULL,
+            finished_at DATETIME NULL,
+            message VARCHAR(255) NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_task_queue (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            task_name VARCHAR(64) NOT NULL,
+            trigger_type VARCHAR(16) NOT NULL DEFAULT 'manual',
+            scheduled_for DATETIME NULL,
+            status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+            requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME NULL,
+            finished_at DATETIME NULL,
+            exit_code INT NULL,
+            message TEXT NULL,
+            KEY idx_queue_status_requested (status, requested_at),
+            KEY idx_queue_task_status (task_name, status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_task_lock (
+            task_name VARCHAR(64) PRIMARY KEY,
+            status VARCHAR(16) NOT NULL DEFAULT 'IDLE',
+            queue_id BIGINT NULL,
+            started_at DATETIME NULL,
+            heartbeat_at DATETIME NULL,
+            finished_at DATETIME NULL,
+            message VARCHAR(255) NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    for task_name in TASKS.keys():
+        cursor.execute(
+            """
+            INSERT INTO app_task_lock (task_name, status, message)
+            VALUES (%s, 'IDLE', 'ready')
+            ON DUPLICATE KEY UPDATE task_name = task_name
+            """,
+            (task_name,),
+        )
 
 
 def _normalize_schedule_time(raw_time):
@@ -365,6 +474,16 @@ def _normalize_schedule_time(raw_time):
     if h < 0 or h > 23 or m < 0 or m > 59:
         return None
     return f"{h:02d}:{m:02d}"
+
+
+def _normalize_datestr(raw_value):
+    val = str(raw_value or "").strip()
+    if not val:
+        return None
+    val = val.replace("-", "")
+    if len(val) != 8 or not val.isdigit():
+        return None
+    return val
 
 
 def _compute_next_run(schedule_time, enabled):
@@ -428,39 +547,402 @@ def _get_task_history(limit=100):
     return rows
 
 
+def _get_task_lock_rows(limit=50):
+    rows = []
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                SELECT task_name, status, started_at, heartbeat_at, finished_at, message
+                FROM app_task_lock
+                ORDER BY (status='RUNNING') DESC, task_name ASC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+    except Exception as e:
+        print(f"Failed to load task lock rows: {e}")
+    return rows
+
+
+def _is_running_status_text(status_text):
+    return str(status_text or "").strip().lower().startswith("running")
+
+
+def _map_history_to_task_status(history_status):
+    hs = str(history_status or "").strip().lower()
+    if hs == "success":
+        return "Success"
+    if hs == "failed":
+        return "Failed"
+    if hs == "error":
+        return "Error"
+    return "Idle"
+
+
+def _reconcile_stale_task_states():
+    """
+    Reconcile stale UI/DB task status:
+    - If app_task_status says running but lock is not RUNNING, mark task as completed/failed/idle by latest history.
+    - Close leftover legacy queue RUNNING rows for the same task.
+    """
+    fixed_rows = []
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            for task_name in TASKS.keys():
+                cursor.execute(
+                    """
+                    SELECT status, last_run
+                    FROM app_task_status
+                    WHERE task_name = %s
+                    LIMIT 1
+                    """,
+                    (task_name,),
+                )
+                status_row = cursor.fetchone()
+                if not status_row:
+                    continue
+
+                current_status = status_row.get("status") or "Idle"
+                if not _is_running_status_text(current_status):
+                    continue
+
+                cursor.execute(
+                    """
+                    SELECT status
+                    FROM app_task_lock
+                    WHERE task_name = %s
+                    LIMIT 1
+                    """,
+                    (task_name,),
+                )
+                lock_row = cursor.fetchone() or {}
+                lock_status = str(lock_row.get("status") or "IDLE").upper()
+                if lock_status == "RUNNING":
+                    continue
+
+                cursor.execute(
+                    """
+                    SELECT status
+                    FROM app_task_history
+                    WHERE task_name = %s
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """,
+                    (task_name,),
+                )
+                last_history = cursor.fetchone() or {}
+                reconciled_status = _map_history_to_task_status(last_history.get("status"))
+                if reconciled_status == "Idle":
+                    if lock_status == "COMPLETE":
+                        reconciled_status = "Success"
+                    elif lock_status in ("FAILED", "ERROR"):
+                        reconciled_status = "Failed"
+
+                if reconciled_status != current_status:
+                    cursor.execute(
+                        """
+                        UPDATE app_task_status
+                        SET status = %s, updated_at = NOW()
+                        WHERE task_name = %s
+                        """,
+                        (reconciled_status, task_name),
+                    )
+                    with TASKS_LOCK:
+                        if task_name in TASKS:
+                            TASKS[task_name]["status"] = reconciled_status
+                    fixed_rows.append((task_name, current_status, reconciled_status))
+
+                cursor.execute(
+                    """
+                    UPDATE app_task_queue
+                    SET status = 'FAILED',
+                        finished_at = NOW(),
+                        exit_code = COALESCE(exit_code, -2),
+                        message = COALESCE(message, 'stale queue row auto-closed')
+                    WHERE task_name = %s
+                      AND status = 'RUNNING'
+                    """,
+                    (task_name,),
+                )
+
+            conn.commit()
+    except Exception as e:
+        print(f"Failed to reconcile stale task states: {e}")
+    return fixed_rows
+
+
+def _try_acquire_task_lock(task_name, trigger_type="manual"):
+    if task_name not in TASKS:
+        return False, "unknown task"
+
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                SELECT status, started_at, heartbeat_at
+                FROM app_task_lock
+                WHERE task_name = %s
+                FOR UPDATE
+                """,
+                (task_name,),
+            )
+            lock_row = cursor.fetchone()
+            if lock_row is None:
+                cursor.execute(
+                    """
+                    INSERT INTO app_task_lock (task_name, status, message)
+                    VALUES (%s, 'IDLE', 'auto-create')
+                    """,
+                    (task_name,),
+                )
+                lock_row = {"status": "IDLE", "started_at": None, "heartbeat_at": None}
+
+            lock_status = str(lock_row.get("status") or "").upper()
+            now = datetime.now()
+            if lock_status == "RUNNING":
+                heartbeat = lock_row.get("heartbeat_at") or lock_row.get("started_at")
+                if heartbeat and (now - heartbeat).total_seconds() <= TASK_STALE_TIMEOUT_SECONDS:
+                    conn.commit()
+                    return False, "RUNNING"
+
+                cursor.execute(
+                    """
+                    UPDATE app_task_lock
+                    SET status = 'FAILED',
+                        finished_at = NOW(),
+                        message = 'stale heartbeat timeout reset'
+                    WHERE task_name = %s
+                    """,
+                    (task_name,),
+                )
+
+            cursor.execute(
+                """
+                UPDATE app_task_lock
+                SET status = 'RUNNING',
+                    queue_id = NULL,
+                    started_at = NOW(),
+                    heartbeat_at = NOW(),
+                    finished_at = NULL,
+                    message = %s
+                WHERE task_name = %s
+                """,
+                (f"running:{trigger_type}", task_name),
+            )
+            conn.commit()
+            return True, None
+    except Exception as e:
+        print(f"Failed to acquire task lock for {task_name}: {e}")
+        return False, str(e)
+    finally:
+        if conn:
+            conn.close()
+
+
+def _touch_task_lock_heartbeat(task_name):
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                UPDATE app_task_lock
+                SET heartbeat_at = NOW(), message = 'running'
+                WHERE task_name = %s
+                  AND status = 'RUNNING'
+                """,
+                (task_name,),
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"Failed to update task lock heartbeat: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def _mark_task_lock_finished(task_name, lock_status, message):
+    conn = None
+    try:
+        msg = (str(message) if message is not None else lock_status)[:240]
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                UPDATE app_task_lock
+                SET status = %s,
+                    queue_id = NULL,
+                    finished_at = NOW(),
+                    heartbeat_at = NOW(),
+                    message = %s
+                WHERE task_name = %s
+                """,
+                (lock_status, msg, task_name),
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"Failed to finalize task lock state: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def _execute_locked_task(task_name, trigger_type, run_options=None):
+    started_at = datetime.now()
+    project_root = Path(app.root_path).parent
+
+    with TASKS_LOCK:
+        TASKS[task_name]["status"] = "Running..."
+        TASKS[task_name]["last_run"] = started_at.strftime("%Y-%m-%d %H:%M:%S")
+        TASKS[task_name]["error_log"] = ""
+    update_task_db(task_name)
+
+    history_status = "Success"
+    lock_status = "COMPLETE"
+    exit_code = 0
+    message = None
+
+    try:
+        script_parts = _build_task_script_parts(task_name, run_options=run_options)
+        script_abs_path = project_root / script_parts[0]
+        cmd = [sys.executable, str(script_abs_path)] + script_parts[1:]
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(project_root) + os.pathsep + env.get("PYTHONPATH", "")
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(project_root),
+            env=env,
+        )
+
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=TASK_HEARTBEAT_INTERVAL_SECONDS)
+                break
+            except subprocess.TimeoutExpired:
+                _touch_task_lock_heartbeat(task_name)
+
+        exit_code = int(process.returncode or 0)
+        if exit_code == 0:
+            with TASKS_LOCK:
+                TASKS[task_name]["status"] = "Success"
+                TASKS[task_name]["switched_day"] = True
+        else:
+            history_status = "Failed"
+            lock_status = "FAILED"
+            with TASKS_LOCK:
+                TASKS[task_name]["status"] = f"Failed (Code {exit_code})"
+                TASKS[task_name]["error_log"] = (stderr or "")[:500]
+            message = (stderr or stdout or "")[:1000]
+    except Exception as e:
+        history_status = "Error"
+        lock_status = "ERROR"
+        exit_code = -1
+        message = str(e)
+        with TASKS_LOCK:
+            TASKS[task_name]["status"] = f"Error: {str(e)}"
+            TASKS[task_name]["error_log"] = str(e)[:500]
+    finally:
+        update_task_db(task_name)
+        finished_at = datetime.now()
+        duration_seconds = int((finished_at - started_at).total_seconds())
+        _insert_task_history(
+            task_name=task_name,
+            trigger_type=trigger_type,
+            status=history_status,
+            started_at=started_at,
+            finished_at=finished_at,
+            exit_code=exit_code,
+            duration_seconds=duration_seconds,
+            message=message,
+        )
+        _mark_task_lock_finished(task_name, lock_status, message or lock_status)
+
+
+def _trigger_task_execution(task_name, trigger_type="manual", run_options=None):
+    acquired, reason = _try_acquire_task_lock(task_name, trigger_type=trigger_type)
+    if not acquired:
+        return False, reason
+
+    try:
+        thread = threading.Thread(target=_execute_locked_task, args=(task_name, trigger_type, run_options))
+        thread.daemon = True
+        thread.start()
+        return True, None
+    except Exception as e:
+        _mark_task_lock_finished(task_name, "ERROR", str(e))
+        return False, str(e)
+
+
 def _is_trading_day(target_date=None):
     target = target_date or datetime.now().date()
     ymd = target.strftime('%Y%m%d')
+    
+    # Try local database first
     try:
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
             cursor.execute(
-                """
-                SELECT is_open
-                FROM dim_trade_cal
-                WHERE cal_date = %s AND exchange = 'SSE'
-                LIMIT 1
-                """,
-                (ymd,),
+                "SELECT is_open FROM dim_trade_cal WHERE cal_date = %s AND exchange = 'SSE' LIMIT 1",
+                (ymd,)
             )
             row = cursor.fetchone()
         conn.close()
-        if row is not None and row.get('is_open') is not None:
+        if row is not None:
             return int(row.get('is_open')) == 1
     except Exception as e:
-        print(f"Trade calendar query failed, fallback to weekday check: {e}")
+        print(f"Local trade calendar check failed: {e}")
+
+    # Fallback to tushare_stock
+    try:
+        src_config = DB_CONFIG.copy()
+        src_config['database'] = 'tushare_stock'
+        conn = pymysql.connect(**src_config)
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT is_open FROM dim_trade_cal WHERE cal_date = %s AND exchange = 'SSE' LIMIT 1",
+                (ymd,)
+            )
+            row = cursor.fetchone()
+        conn.close()
+        if row is not None:
+            return int(row.get('is_open')) == 1
+    except Exception as e:
+        print(f"Backup trade calendar check failed: {e}")
 
     return target.weekday() < 5
 
 
-def _build_task_script_parts(task_name):
+def _build_task_script_parts(task_name, run_options=None):
     task_config = TASKS[task_name]
     script = task_config['script']
+    run_options = run_options or {}
+    datestr = _normalize_datestr(run_options.get("datestr"))
     if task_name == 'sina_bs':
-        today = datetime.now().strftime('%Y%m%d')
-        return [script, 'config_1', today]
+        target_date = datestr or datetime.now().strftime('%Y%m%d')
+        return [script, 'config_1', target_date]
+    if task_name == 'sina_score':
+        if datestr:
+            return [script, '--date', datestr, '--force']
+        return [script]
     if task_name == 'sina_m8':
         return [script, '--lookback-dates', '60']
+    if task_name == 'eastmoney':
+        return [script, '--export', 'result']
     return [script]
 
 def init_tasks():
@@ -1374,16 +1856,19 @@ def api_signal_stats():
                 MAX(created_at) AS last_update
             FROM bs_detection_results
             GROUP BY batch_date
-            ORDER BY batch_date ASC
+            ORDER BY batch_date DESC
             LIMIT 30
         """
         cursor.execute(sql)
         rows = cursor.fetchall()
+        
+        # Sort back to chronological order (Ascending batch_date) for Chart.js
+        rows = rows[::-1]
+
         # Convert datetime to string for JSON serialization
         for row in rows:
             if row.get('last_update'):
                 row['last_update'] = str(row['last_update'])
-            # Also ensure batch_date is string if it's a date object
             if row.get('batch_date') and hasattr(row['batch_date'], 'isoformat'):
                 row['batch_date'] = row['batch_date'].isoformat()
         return jsonify(rows)
@@ -2653,11 +3138,14 @@ def delete_stock_pool_item(item_id):
 def admin():
     now_date_iso = datetime.now().strftime('%Y-%m-%d')
     task_history = []
+    task_locks = []
+    _reconcile_stale_task_states()
     try:
         conn = get_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
         task_history = _get_task_history(limit=100)
+        task_locks = _get_task_lock_rows(limit=50)
     except Exception as e:
         print(f"Failed to load stock pools in admin: {e}")
 
@@ -2667,7 +3155,8 @@ def admin():
                            tasks=TASKS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            now_date=now_date_iso,
-                           task_history=task_history)
+                           task_history=task_history,
+                           task_locks=task_locks)
 
 def update_task_db(task_name):
     """Save task status to database"""
@@ -2714,57 +3203,6 @@ def update_task_db(task_name):
         print(f"Failed to update task DB: {e}")
 
 
-def run_script(script_parts, task_name, trigger_type='manual'):
-    """Run a script in background and update status"""
-    started_at = datetime.now()
-    with TASKS_LOCK:
-        TASKS[task_name]['status'] = "Running..."
-        TASKS[task_name]['last_run'] = started_at.strftime('%Y-%m-%d %H:%M:%S')
-    update_task_db(task_name)
-
-    history_status = 'Success'
-    exit_code = 0
-    message = None
-
-    try:
-        # Construct full command
-        cmd = [sys.executable] + script_parts
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode == 0:
-            with TASKS_LOCK:
-                TASKS[task_name]['status'] = "Success"
-                TASKS[task_name]['switched_day'] = True
-        else:
-            history_status = 'Failed'
-            exit_code = int(result.returncode)
-            with TASKS_LOCK:
-                TASKS[task_name]['status'] = f"Failed (Code {result.returncode})"
-                print(f"Task {task_name} stderr: {result.stderr}")
-                TASKS[task_name]['error_log'] = (result.stderr or '')[:500]
-            message = (result.stderr or result.stdout or '')[:1000]
-
-    except Exception as e:
-        history_status = 'Error'
-        exit_code = -1
-        message = str(e)
-        with TASKS_LOCK:
-            TASKS[task_name]['status'] = f"Error: {str(e)}"
-
-    update_task_db(task_name)
-    finished_at = datetime.now()
-    duration_seconds = int((finished_at - started_at).total_seconds())
-    _insert_task_history(
-        task_name=task_name,
-        trigger_type=trigger_type,
-        status=history_status,
-        started_at=started_at,
-        finished_at=finished_at,
-        exit_code=exit_code,
-        duration_seconds=duration_seconds,
-        message=message,
-    )
-
 @app.route('/admin/task/<task_name>/schedule', methods=['POST'])
 def update_task_schedule(task_name):
     if task_name not in TASKS:
@@ -2791,16 +3229,23 @@ def run_task(task_name):
         flash(f"Unknown task: {task_name}", 'danger')
         return redirect(url_for('admin'))
 
-    if TASKS[task_name].get('trading_day_only') and not _is_trading_day():
+    requested_datestr = _normalize_datestr(request.form.get('datestr') or request.args.get('datestr'))
+    run_options = {}
+    if requested_datestr:
+        run_options['datestr'] = requested_datestr
+
+    if TASKS[task_name].get('trading_day_only') and not requested_datestr and not _is_trading_day():
         flash(f"任务 {TASKS[task_name]['name']} 仅交易日执行，今日已跳过。", 'warning')
         return redirect(url_for('admin'))
 
-    script_parts = _build_task_script_parts(task_name)
-    thread = threading.Thread(target=run_script, args=(script_parts, task_name, 'manual'))
-    thread.daemon = True
-    thread.start()
-
-    flash(f"Task {TASKS[task_name]['name']} started in background.", 'success')
+    started, reason = _trigger_task_execution(task_name, trigger_type='manual', run_options=run_options)
+    date_suffix = f"（datestr={requested_datestr}）" if requested_datestr else ""
+    if started:
+        flash(f"任务 {TASKS[task_name]['name']} 已启动{date_suffix}，使用数据库锁保证同任务唯一运行。", 'success')
+    elif reason == 'RUNNING':
+        flash(f"任务 {TASKS[task_name]['name']} 未启动{date_suffix}：已有同名任务正在运行。", 'warning')
+    else:
+        flash(f"任务 {TASKS[task_name]['name']} 启动失败{date_suffix}：{reason}", 'danger')
     return redirect(url_for('admin'))
 
 
@@ -2813,8 +3258,6 @@ def _run_scheduled_tasks_loop():
             due_tasks = []
             with TASKS_LOCK:
                 for task_name, task in TASKS.items():
-                    if task.get('status') == 'Running...':
-                        continue
                     if not bool(task.get('schedule_enabled')):
                         continue
                     if bool(task.get('trading_day_only')) and not is_trade_day:
@@ -2827,15 +3270,20 @@ def _run_scheduled_tasks_loop():
                     due_tasks.append(task_name)
 
             for task_name in due_tasks:
-                script_parts = _build_task_script_parts(task_name)
-                thread = threading.Thread(target=run_script, args=(script_parts, task_name, 'schedule'))
-                thread.daemon = True
-                thread.start()
+                started, reason = _trigger_task_execution(task_name, trigger_type='schedule')
+                if started:
+                    print(f"Scheduled task started: {task_name}")
+                elif reason == "RUNNING":
+                    print(f"Scheduled task skipped (already running): {task_name}")
+                else:
+                    print(f"Scheduled task start failed: {task_name} ({reason})")
 
             time.sleep(20)
         except Exception as e:
             print(f"Task scheduler loop error: {e}")
             time.sleep(20)
+
+
 def start_task_scheduler_loop():
     thread = threading.Thread(target=_run_scheduled_tasks_loop)
     thread.daemon = True

@@ -4,7 +4,7 @@ import sys
 import os
 
 import pandas as pd
-from sqlalchemy import text
+import pymysql
 
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
@@ -16,42 +16,94 @@ from scoreRank.strategies.technical import TechnicalScorer
 # from scoreRank.strategies.fama import FamaScorer
 # from scoreRank.strategies.claude import ClaudeScorer
 
-# Import Factor Optimizer components
+# Import Factor Optimizer components (optional)
+load_category_scores = None
+OptimizerConfig = None
 try:
     from score.factor_optimizer.data_loader import load_category_scores
     from score.factor_optimizer.config import OptimizerConfig
-except ImportError:
+except Exception:
     # Handle case where score package might not be in path
     import sys
-    # Try to find AShareDataCenter relative to Chenyiyun2087
-    # Assuming they are side-by-side in PycharmProjects
     ashare_path = Path(__file__).resolve().parents[2] / "AShareDataCenter"
     if ashare_path.exists():
-         sys.path.append(str(ashare_path))
+        sys.path.append(str(ashare_path))
     else:
-         # Fallback to hardcoded path if relative path fails (e.g. symlinks)
-         sys.path.append("/Users/chenyiyun/PycharmProjects/AShareDataCenter")
-         
-    from score.factor_optimizer.data_loader import load_category_scores
-    from score.factor_optimizer.config import OptimizerConfig
+        sys.path.append("/Users/chenyiyun/PycharmProjects/AShareDataCenter")
+    try:
+        from score.factor_optimizer.data_loader import load_category_scores
+        from score.factor_optimizer.config import OptimizerConfig
+    except Exception:
+        load_category_scores = None
+        OptimizerConfig = None
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from sina.bs_detection import DEFAULT_MYSQL_CONFIG, fetch_latest_buy_signals
-from sina.backtest import bs_scorer
+def _query_df(db_conf: dict, sql: str, params=None) -> pd.DataFrame:
+    conn = pymysql.connect(**db_conf)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+        return pd.DataFrame(rows)
+    finally:
+        conn.close()
 
 
-def load_symbols_from_sina_bs() -> list[str]:
-    rows = fetch_latest_buy_signals(DEFAULT_MYSQL_CONFIG)
-    symbols = {
-        str(row["stock_code"]).zfill(6)
-        for row in rows
-        if row.get("stock_code")
-    }
-    return sorted(symbols)
+def _query_scalar(db_conf: dict, sql: str, params=None):
+    conn = pymysql.connect(**db_conf)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, params)
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return next(iter(row.values()))
+    finally:
+        conn.close()
+
+
+def _normalize_record_values(record):
+    out = []
+    for value in record:
+        if pd.isna(value):
+            out.append(None)
+        else:
+            out.append(value)
+    return tuple(out)
+
+
+def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: list[str]) -> pd.DataFrame:
+    if not symbols:
+        return pd.DataFrame(columns=["symbol", "buy_point_close"])
+
+    placeholders = ",".join(["%s"] * len(symbols))
+    sql = f"""
+    SELECT
+        latest.stock_code AS symbol,
+        k.adj_close AS buy_point_close
+    FROM (
+        SELECT stock_code, MAX(batch_date) AS max_buy_date
+        FROM bs_detection_results
+        WHERE has_buy_signal = 1
+          AND batch_date <= %s
+          AND stock_code IN ({placeholders})
+        GROUP BY stock_code
+    ) latest
+    LEFT JOIN tushare_stock.dwd_stock_daily_standard k
+        ON SUBSTR(k.ts_code, 1, 6) = latest.stock_code
+       AND k.trade_date = latest.max_buy_date
+    """
+    params = [asof_date.strftime("%Y%m%d")]
+    params.extend(symbols)
+    df = _query_df(db_conf, sql, tuple(params))
+    if df.empty:
+        return df
+    df["symbol"] = df["symbol"].astype(str).str.zfill(6)
+    return df
 
 
 def describe_scoring(
@@ -97,7 +149,7 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         print("No records to save.")
         return
         
-    engine = get_engine()
+    db_conf = get_engine()
     
     df_save['trade_date'] = asof_date.date()
     # Drop duplicates to prevent database constraint violation
@@ -136,12 +188,20 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
 
     df_db = df_save[list(cols_map.keys())].rename(columns=cols_map)
     
-    # Delete existing records for this date
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM score_rank_daily WHERE trade_date = :trade_date"), {"trade_date": asof_date.date()})
-    
     print("正在保存评分结果到数据库...")
-    df_db.to_sql('score_rank_daily', engine, if_exists='append', index=False, chunksize=1000)
+    conn = pymysql.connect(**db_conf)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM score_rank_daily WHERE trade_date = %s", (asof_date.date(),))
+            cols = list(df_db.columns)
+            col_sql = ", ".join(cols)
+            val_sql = ", ".join(["%s"] * len(cols))
+            sql = f"INSERT INTO score_rank_daily ({col_sql}) VALUES ({val_sql})"
+            records = [_normalize_record_values(rec) for rec in df_db.itertuples(index=False, name=None)]
+            cursor.executemany(sql, records)
+        conn.commit()
+    finally:
+        conn.close()
     print(f"成功保存 {len(df_db)} 条记录到 score_rank_daily")
 
 
@@ -149,6 +209,20 @@ def calculate_opt_score(scored: pd.DataFrame, asof_date: pd.Timestamp) -> pd.Dat
     """
     计算 Factor Optimizer 评分 (7大类因子等权平均)
     """
+    def _fallback_opt_score(df: pd.DataFrame, reason: str) -> pd.DataFrame:
+        # Fallback: keep a stable 0-10 scale so downstream pages/filters still work
+        # when external factor optimizer package is unavailable.
+        print(f"Factor Optimizer unavailable, fallback opt_score=score/10 ({reason})")
+        out = df.copy()
+        if "score" in out.columns:
+            out["opt_score"] = pd.to_numeric(out["score"], errors="coerce").fillna(0.0) / 10.0
+        else:
+            out["opt_score"] = 0.0
+        return out
+
+    if load_category_scores is None or OptimizerConfig is None:
+        return _fallback_opt_score(scored, "import failed")
+
     print("正在计算 Factor Optimizer 评分...")
     try:
         # Load category scores for the specific date
@@ -212,8 +286,7 @@ def calculate_opt_score(scored: pd.DataFrame, asof_date: pd.Timestamp) -> pd.Dat
         
     except Exception as e:
         print(f"计算 Factor Optimizer 评分失败: {e}")
-        scored["opt_score"] = None
-        return scored
+        return _fallback_opt_score(scored, f"runtime error: {e}")
 
 
 def main():
@@ -242,10 +315,10 @@ def main():
              asof_date = dt
         else:
              print("Step 1: Get latest B/S signals...")
-             with engine.connect() as conn:
-                # Get latest batch_date from bs_detection_results
-                res = conn.execute(text("SELECT MAX(batch_date) FROM bs_detection_results")).fetchone()
-                latest_bs_date = res[0]
+             latest_bs_date = _query_scalar(
+                 engine,
+                 "SELECT MAX(batch_date) AS max_batch_date FROM bs_detection_results"
+             )
                 
              if not latest_bs_date:
                 print("No B/S detection results found.")
@@ -254,9 +327,10 @@ def main():
              asof_date = pd.to_datetime(latest_bs_date)
 
         # Get latest trade_date from monthly data as a reference
-        with engine.connect() as conn:
-            res_td = conn.execute(text("SELECT MAX(trade_date) FROM tushare_stock.dwd_stock_daily_standard")).fetchone()
-            latest_data_date = res_td[0]
+        latest_data_date = _query_scalar(
+            engine,
+            "SELECT MAX(trade_date) AS max_trade_date FROM tushare_stock.dwd_stock_daily_standard"
+        )
             
         print(f"Target B/S Date: {asof_date.date()}")
         print(f"Latest Data Date: {latest_data_date}")
@@ -286,7 +360,7 @@ def main():
         # Use simple string replacement or param binding depending on read_sql support
         # pandas read_sql supports params.
         
-        df_bs = pd.read_sql(sql_bs, engine, params={"target_date": target_date_str})
+        df_bs = _query_df(engine, sql_bs, {"target_date": target_date_str})
         bs_symbols = df_bs['stock_code'].tolist()
         print(f"Found {len(bs_symbols)} B/S candidate symbols as of {target_date_str}.")
 
@@ -296,7 +370,7 @@ def main():
         FROM a_share_stock_list 
         WHERE is_self_selected = 1
         """
-        df_ss = pd.read_sql(sql_ss, engine)
+        df_ss = _query_df(engine, sql_ss)
         db_ss_symbols = df_ss['stock_code'].tolist()
         
         # Also load from sina/stock_codes.xlsx for consistency
@@ -320,7 +394,7 @@ def main():
         FROM a_share_stock_list 
         WHERE is_active = 1
         """
-        df_all = pd.read_sql(sql_all, engine)
+        df_all = _query_df(engine, sql_all)
         all_listed_symbols = df_all['stock_code'].astype(str).str.zfill(6).tolist()
         print(f"Found {len(all_listed_symbols)} total listed A-shares.")
 
@@ -389,7 +463,7 @@ def main():
             features = build_features_from_qfq(raw_data, breakout_n=CONFIG["breakout_n"])
         else:
             features = pd.DataFrame()
-        bs_signals = bs_scorer.fetch_bs_signals(engine, asof_date, all_symbols)
+        bs_signals = fetch_bs_signals_by_symbol(engine, asof_date, all_symbols)
         
         if not bs_signals.empty and "buy_point_close" in bs_signals.columns:
             scored["symbol"] = scored["symbol"].astype(str)

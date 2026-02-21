@@ -1,11 +1,10 @@
 import logging
 from datetime import datetime, timedelta
-from typing import List
+from typing import Any, List
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import bindparam, text
-from sqlalchemy.engine import Engine
+import pymysql
 
 from scoreRank.strategies.base import BaseScorer
 
@@ -20,7 +19,20 @@ class ClaudeScorer(BaseScorer):
     Total score = 100 points.
     """
 
-    def score(self, symbols: List[str], asof_date: pd.Timestamp, engine: Engine) -> pd.DataFrame:
+    def _query_df(self, db_conf: dict, sql: str, params=None) -> pd.DataFrame:
+        conn = pymysql.connect(**db_conf)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+            return pd.DataFrame(rows)
+        finally:
+            conn.close()
+
+    def _in_clause(self, values: list[str]) -> str:
+        return ", ".join(["%s"] * len(values))
+
+    def score(self, symbols: List[str], asof_date: pd.Timestamp, engine: Any) -> pd.DataFrame:
         symbols = [str(s).zfill(6) for s in symbols if s]
         if not symbols:
             return pd.DataFrame(columns=["symbol", "trade_date", "score"])
@@ -88,7 +100,7 @@ class ClaudeScorer(BaseScorer):
     # Data fetching
     # ------------------------------------------------------------------
 
-    def _fetch_technical_momentum(self, engine: Engine, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
+    def _fetch_technical_momentum(self, engine: Any, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
         ts_codes = list(ts_code_map.values())
         if not ts_codes:
             return pd.DataFrame(columns=["symbol"])
@@ -96,28 +108,28 @@ class ClaudeScorer(BaseScorer):
         dt = datetime.strptime(str(trade_date_int), "%Y%m%d")
         start_date_int = int((dt - timedelta(days=180)).strftime("%Y%m%d"))
 
-        sql = text(
-            """
+        sql = f"""
             SELECT trade_date, ts_code, adj_close, adj_high, adj_low, vol
             FROM tushare_stock.dwd_stock_daily_standard
-            WHERE trade_date BETWEEN :start_date AND :end_date
-              AND ts_code IN :ts_codes
+            WHERE trade_date BETWEEN %s AND %s
+              AND ts_code IN ({self._in_clause(ts_codes)})
             ORDER BY ts_code ASC, trade_date ASC
-            """
-        ).bindparams(bindparam("ts_codes", expanding=True))
+        """
 
         try:
-            df = pd.read_sql(
-                sql,
-                engine,
-                params={"start_date": start_date_int, "end_date": trade_date_int, "ts_codes": ts_codes},
-            )
+            params = [start_date_int, trade_date_int]
+            params.extend(ts_codes)
+            df = self._query_df(engine, sql, tuple(params))
         except Exception:
             logger.exception("ClaudeScorer: failed to fetch technical/momentum data")
             return pd.DataFrame(columns=["symbol"])
 
         if df.empty:
             return pd.DataFrame(columns=["symbol"])
+
+        for col in ("adj_close", "adj_high", "adj_low", "vol"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
 
         results = []
         target_date = pd.to_datetime(str(trade_date_int))
@@ -203,22 +215,22 @@ class ClaudeScorer(BaseScorer):
 
         return pd.DataFrame(results)
 
-    def _fetch_value(self, engine: Engine, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
+    def _fetch_value(self, engine: Any, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
         ts_codes = list(ts_code_map.values())
         if not ts_codes:
             return pd.DataFrame(columns=["symbol"])
 
-        sql = text(
-            """
+        sql = f"""
             SELECT ts_code, pe_ttm, pb, ps_ttm, turnover_rate_f
             FROM tushare_stock.dwd_daily_basic
-            WHERE trade_date = :trade_date
-              AND ts_code IN :ts_codes
-            """
-        ).bindparams(bindparam("ts_codes", expanding=True))
+            WHERE trade_date = %s
+              AND ts_code IN ({self._in_clause(ts_codes)})
+        """
 
         try:
-            df = pd.read_sql(sql, engine, params={"trade_date": trade_date_int, "ts_codes": ts_codes})
+            params = [trade_date_int]
+            params.extend(ts_codes)
+            df = self._query_df(engine, sql, tuple(params))
             if df.empty:
                 return pd.DataFrame(columns=["symbol"])
             df["symbol"] = df["ts_code"].str.slice(0, 6)
@@ -227,27 +239,23 @@ class ClaudeScorer(BaseScorer):
             logger.exception("ClaudeScorer: failed to fetch value factors")
             return pd.DataFrame(columns=["symbol"])
 
-    def _fetch_quality(self, engine: Engine, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
+    def _fetch_quality(self, engine: Any, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
         ts_codes = list(ts_code_map.values())
         if not ts_codes:
             return pd.DataFrame(columns=["symbol"])
 
         start_ann_date = trade_date_int - 10000
-        sql = text(
-            """
+        sql = f"""
             SELECT ts_code, ann_date, roe, grossprofit_margin, debt_to_assets
             FROM tushare_stock.dwd_fina_indicator
-            WHERE ann_date BETWEEN :start_ann_date AND :trade_date
-              AND ts_code IN :ts_codes
-            """
-        ).bindparams(bindparam("ts_codes", expanding=True))
+            WHERE ann_date BETWEEN %s AND %s
+              AND ts_code IN ({self._in_clause(ts_codes)})
+        """
 
         try:
-            df = pd.read_sql(
-                sql,
-                engine,
-                params={"start_ann_date": start_ann_date, "trade_date": trade_date_int, "ts_codes": ts_codes},
-            )
+            params = [start_ann_date, trade_date_int]
+            params.extend(ts_codes)
+            df = self._query_df(engine, sql, tuple(params))
             if df.empty:
                 return pd.DataFrame(columns=["symbol"])
             df = df.sort_values("ann_date").groupby("ts_code", as_index=False).last()
@@ -257,32 +265,30 @@ class ClaudeScorer(BaseScorer):
             logger.exception("ClaudeScorer: failed to fetch quality factors")
             return pd.DataFrame(columns=["symbol"])
 
-    def _fetch_capital(self, engine: Engine, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
+    def _fetch_capital(self, engine: Any, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
         ts_codes = list(ts_code_map.values())
         if not ts_codes:
             return pd.DataFrame(columns=["symbol"])
 
-        sql_mf = text(
-            """
+        sql_mf = f"""
             SELECT ts_code, buy_elg_amount, buy_lg_amount
             FROM tushare_stock.ods_moneyflow
-            WHERE trade_date = :trade_date
-              AND ts_code IN :ts_codes
-            """
-        ).bindparams(bindparam("ts_codes", expanding=True))
+            WHERE trade_date = %s
+              AND ts_code IN ({self._in_clause(ts_codes)})
+        """
 
-        sql_mg = text(
-            """
+        sql_mg = f"""
             SELECT ts_code, rzmre, rzche, rzye
             FROM tushare_stock.ods_margin_detail
-            WHERE trade_date = :trade_date
-              AND ts_code IN :ts_codes
-            """
-        ).bindparams(bindparam("ts_codes", expanding=True))
+            WHERE trade_date = %s
+              AND ts_code IN ({self._in_clause(ts_codes)})
+        """
 
         try:
-            df_mf = pd.read_sql(sql_mf, engine, params={"trade_date": trade_date_int, "ts_codes": ts_codes})
-            df_mg = pd.read_sql(sql_mg, engine, params={"trade_date": trade_date_int, "ts_codes": ts_codes})
+            params = [trade_date_int]
+            params.extend(ts_codes)
+            df_mf = self._query_df(engine, sql_mf, tuple(params))
+            df_mg = self._query_df(engine, sql_mg, tuple(params))
 
             df = pd.DataFrame({"symbol": [c[:6] for c in ts_codes]})
 
@@ -302,22 +308,22 @@ class ClaudeScorer(BaseScorer):
             logger.exception("ClaudeScorer: failed to fetch capital factors")
             return pd.DataFrame(columns=["symbol"])
 
-    def _fetch_chip(self, engine: Engine, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
+    def _fetch_chip(self, engine: Any, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
         ts_codes = list(ts_code_map.values())
         if not ts_codes:
             return pd.DataFrame(columns=["symbol"])
 
-        sql = text(
-            """
+        sql = f"""
             SELECT ts_code, winner_rate, cost_50pct
             FROM tushare_stock.ods_cyq_perf
-            WHERE trade_date = :trade_date
-              AND ts_code IN :ts_codes
-            """
-        ).bindparams(bindparam("ts_codes", expanding=True))
+            WHERE trade_date = %s
+              AND ts_code IN ({self._in_clause(ts_codes)})
+        """
 
         try:
-            df = pd.read_sql(sql, engine, params={"trade_date": trade_date_int, "ts_codes": ts_codes})
+            params = [trade_date_int]
+            params.extend(ts_codes)
+            df = self._query_df(engine, sql, tuple(params))
             if df.empty:
                 return pd.DataFrame(columns=["symbol"])
             df["symbol"] = df["ts_code"].str.slice(0, 6)
@@ -326,20 +332,18 @@ class ClaudeScorer(BaseScorer):
             logger.exception("ClaudeScorer: failed to fetch chip factors")
             return pd.DataFrame(columns=["symbol"])
 
-    def _get_ts_code_map(self, engine: Engine, symbols: List[str]) -> dict:
+    def _get_ts_code_map(self, engine: Any, symbols: List[str]) -> dict:
         if not symbols:
             return {}
 
-        sql = text(
-            """
+        sql = f"""
             SELECT symbol, ts_code
             FROM tushare_stock.dim_stock
-            WHERE symbol IN :symbols
-            """
-        ).bindparams(bindparam("symbols", expanding=True))
+            WHERE symbol IN ({self._in_clause(symbols)})
+        """
 
         try:
-            df = pd.read_sql(sql, engine, params={"symbols": symbols})
+            df = self._query_df(engine, sql, tuple(symbols))
             if df.empty:
                 return {}
             return dict(zip(df["symbol"].astype(str).str.zfill(6), df["ts_code"].astype(str)))

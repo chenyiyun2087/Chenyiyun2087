@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import pandas as pd
-from sqlalchemy.engine import Engine
+from typing import Any
 
 class BaseScorer(ABC):
     """
@@ -13,7 +13,7 @@ class BaseScorer(ABC):
         self, 
         symbols: list[str], 
         asof_date: pd.Timestamp, 
-        engine: Engine
+        engine: Any
     ) -> pd.DataFrame:
         """
         Calculates scores for the given list of symbols on a specific date.

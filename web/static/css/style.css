@@ -38,6 +38,10 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     cursor: pointer;
 }
 
+html {
+    scrollbar-gutter: stable;
+}
+
 html,
 body {
     background-color: #ffffff !important;
@@ -89,15 +93,15 @@ body {
 .sidebar nav a {
     text-decoration: none;
     padding: 8px 10px;
-    border: 1px solid transparent;
+    border: 2px solid transparent;
     font-weight: 600;
     font-size: 11px;
 }
 
 .sidebar nav a:hover,
 .sidebar nav a.active {
-    border: 2px solid #000000 !important;
-    font-weight: 900;
+    border-color: #000000 !important;
+    background: #f0f0f0 !important;
 }
 
 .main-content {
@@ -191,7 +195,7 @@ input[type="submit"] {
 
 .btn:hover,
 button:hover {
-    border-width: 5px !important;
+    box-shadow: inset 0 0 0 2px #000000 !important;
 }
 
 .tabs {
@@ -210,10 +214,8 @@ button:hover {
 }
 
 .tab.active {
-    border-width: 4px;
-    border-bottom: 4px solid #ffffff !important;
-    position: relative;
-    top: 2px;
+    background: #000000 !important;
+    color: #ffffff !important;
 }
 
 .sub-tab {

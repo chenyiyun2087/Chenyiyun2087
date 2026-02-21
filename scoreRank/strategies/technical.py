@@ -8,8 +8,8 @@ if str(PROJECT_ROOT) not in sys.path:
     
 import pandas as pd
 import numpy as np
-from sqlalchemy.engine import Engine
 from datetime import timedelta
+from typing import Any
 
 from scoreRank.strategies.base import BaseScorer
 from scoreRank.core.config import CONFIG
@@ -22,7 +22,7 @@ class TechnicalScorer(BaseScorer):
     It considers Trend, Breakout, Volume, RS, Contraction, Bias, Chip, Liquidity, etc.
     """
     
-    def score(self, symbols: list[str], asof_date: pd.Timestamp, engine: Engine) -> pd.DataFrame:
+    def score(self, symbols: list[str], asof_date: pd.Timestamp, engine: Any) -> pd.DataFrame:
         if not symbols:
             return pd.DataFrame()
             

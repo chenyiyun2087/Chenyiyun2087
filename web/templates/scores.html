@@ -103,30 +103,32 @@
             <tbody>
                 {% for row in scores %}
                 <tr>
+                    {% set opt_val = row.opt_score if row.opt_score is not none else 0 %}
+                    {% set claude_val = row.claude_score if row.claude_score is not none else 0 %}
+                    {% set price_change_val = row.price_change_ratio if row.price_change_ratio is not none else 0 %}
                     <td><input type="checkbox" class="stock-checkbox" data-symbol="{{ row.symbol }}"
                             data-date="{{ date }}">
                     </td>
                     <td><a href="{{ row.symbol | eastmoney_guba_url }}" target="_blank">{{ row.symbol }}</a></td>
                     <td><a href="{{ row.symbol | sina_finance_url }}" target="_blank">{{ row.name }}</a></td>
-                    <td class="text-up">{{ row.score }}</td>
-                    <td><span class="tag {{ 'text-up' if row.opt_score > 60 else '' }}">{{ "%.1f"|format(row.opt_score)
-                            if
-                            row.opt_score else '-' }}</span></td>
-                    <td><span class="tag {{ 'text-up' if row.claude_score > 60 else '' }}">{{
-                            "%.1f"|format(row.claude_score) if row.claude_score else '-' }}</span></td>
-                    <td>{{ row.close_price }}</td>
+                    <td class="text-up">{{ row.score if row.score is not none else '-' }}</td>
+                    <td><span class="tag {{ 'text-up' if opt_val > 60 else '' }}">{{ "%.1f"|format(opt_val)
+                            if row.opt_score is not none else '-' }}</span></td>
+                    <td><span class="tag {{ 'text-up' if claude_val > 60 else '' }}">{{
+                            "%.1f"|format(claude_val) if row.claude_score is not none else '-' }}</span></td>
+                    <td>{{ row.close_price if row.close_price is not none else '-' }}</td>
                     <td>{{ row.buy_point_close or '-' }}</td>
-                    <td class="{{ 'text-up' if row.price_change_ratio > 0 else 'text-down' }}">{{ row.price_change_ratio
-                        }}%
+                    <td class="{{ 'text-up' if price_change_val > 0 else 'text-down' }}">{{ "%.2f"|format(price_change_val)
+                        if row.price_change_ratio is not none else '-' }}{% if row.price_change_ratio is not none %}%{% endif %}
                     </td>
                     <td>
                         {% if row.is_limit_up == 1 %}
                         <span class="tag trade">涨停</span>
                         {% endif %}
                     </td>
-                    <td>{{ row.base_score }}</td>
-                    <td>{{ row.s_trend }}</td>
-                    <td>{{ row.s_volume }}</td>
+                    <td>{{ row.base_score if row.base_score is not none else '-' }}</td>
+                    <td>{{ row.s_trend if row.s_trend is not none else '-' }}</td>
+                    <td>{{ row.s_volume if row.s_volume is not none else '-' }}</td>
                     <td><span class="tag {{ row.pool_type|lower }}">{{ row.pool_type }}</span></td>
                 </tr>
                 {% else %}

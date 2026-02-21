@@ -53,6 +53,123 @@ def ensure_tables(engine):
         conn.execute(text(DDL_M8_ITEM))
 
 
+def _scalar(conn, sql: str, params: dict | None = None):
+    from sqlalchemy import text
+
+    result = conn.execute(text(sql), params or {})
+    return result.scalar()
+
+
+def _normalize_date_str(value):
+    if value is None:
+        return None
+    s = str(value)
+    try:
+        import pandas as pd
+        return pd.to_datetime(s).strftime("%Y%m%d")
+    except Exception:
+        return s
+
+
+def _fetch_staleness_report(engine):
+    report = {
+        "latest_bs_date": None,
+        "latest_score_date": None,
+        "latest_event_date": None,
+        "bs_score_gap": None,
+        "score_event_gap": None,
+        "missing_in_fact": None,
+        "extra_in_fact": None,
+    }
+
+    try:
+        with engine.begin() as conn:
+            try:
+                report["latest_bs_date"] = _scalar(conn, "SELECT MAX(batch_date) FROM bs_detection_results")
+            except Exception as exc:
+                print(f"[M8] Warning: cannot read bs_detection_results: {exc}")
+
+            try:
+                report["latest_score_date"] = _scalar(conn, "SELECT MAX(trade_date) FROM score_rank_daily")
+            except Exception as exc:
+                print(f"[M8] Warning: cannot read score_rank_daily: {exc}")
+
+            try:
+                report["latest_event_date"] = _scalar(conn, "SELECT MAX(event_date) FROM b_event_fact")
+            except Exception as exc:
+                print(f"[M8] Warning: cannot read b_event_fact: {exc}")
+
+            latest_bs_date = _normalize_date_str(report["latest_bs_date"])
+            latest_score_date = _normalize_date_str(report["latest_score_date"])
+            latest_event_date = _normalize_date_str(report["latest_event_date"])
+
+            if latest_bs_date and latest_score_date:
+                report["bs_score_gap"] = int(latest_bs_date != latest_score_date)
+
+            if latest_score_date:
+                report["score_event_gap"] = int(latest_event_date != latest_score_date)
+
+                report["missing_in_fact"] = _scalar(
+                    conn,
+                    """
+                    SELECT COUNT(*) FROM score_rank_daily s
+                    LEFT JOIN b_event_fact f
+                      ON f.event_date = s.trade_date AND f.symbol = s.symbol
+                    WHERE s.trade_date = :d AND s.is_bs_candidate = 1 AND f.symbol IS NULL
+                    """,
+                    {"d": report["latest_score_date"]},
+                )
+                report["extra_in_fact"] = _scalar(
+                    conn,
+                    """
+                    SELECT COUNT(*) FROM b_event_fact f
+                    LEFT JOIN score_rank_daily s
+                      ON s.trade_date = f.event_date AND s.symbol = f.symbol AND s.is_bs_candidate = 1
+                    WHERE f.event_date = :d AND s.symbol IS NULL
+                    """,
+                    {"d": report["latest_score_date"]},
+                )
+    except Exception as exc:
+        print(f"[M8] Warning: staleness check failed: {exc}")
+
+    return report
+
+
+def _ensure_b_event_fresh(engine):
+    report = _fetch_staleness_report(engine)
+    latest_bs_date = _normalize_date_str(report.get("latest_bs_date"))
+    latest_score_date = _normalize_date_str(report.get("latest_score_date"))
+    latest_event_date = _normalize_date_str(report.get("latest_event_date"))
+
+    if latest_bs_date and latest_score_date and latest_bs_date != latest_score_date:
+        print(
+            f"[M8] Abort: bs_detection_results latest ({latest_bs_date}) "
+            f"!= score_rank_daily latest ({latest_score_date}). "
+            "Run scoreRank/run_daily.py first."
+        )
+        return False
+
+    needs_refresh = False
+    if not latest_event_date and latest_score_date:
+        needs_refresh = True
+    if latest_score_date and latest_event_date and latest_event_date != latest_score_date:
+        needs_refresh = True
+    if (report.get("missing_in_fact") or 0) > 0:
+        needs_refresh = True
+    if (report.get("extra_in_fact") or 0) > 0:
+        needs_refresh = True
+
+    if needs_refresh:
+        print(
+            "[M8] b_event_fact is stale vs score_rank_daily. "
+            "Rebuilding b_event_fact/b_event_kpi..."
+        )
+        from scoreRank.cli import build_b_event_kpi
+
+        build_b_event_kpi.main()
+    return True
+
+
 def _to_float(v):
     import math
     try:
@@ -239,8 +356,10 @@ def persist_results(engine, latest_date, lookback_dates: int, sample_rows: int, 
 def run_cycle(lookback_dates: int = 60, pool_id: int | None = None):
     from scoreRank.core.db_io import get_engine
 
-    engine = get_engine()
+    engine = get_engine(as_sqlalchemy=True)
     ensure_tables(engine)
+    if not _ensure_b_event_fresh(engine):
+        return 0
 
     latest_date, rows = fetch_recent_m1_rows(engine, lookback_dates=lookback_dates, pool_id=pool_id)
     if not rows:
