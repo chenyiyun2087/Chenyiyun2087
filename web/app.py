@@ -1304,6 +1304,7 @@ def sina_scores():
                            order=order,
                            min_s=min_score,
                            min_o=min_opt_score,
+                           symbol='',
                            per_page=per_page,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            page_title="最近有B点股票评分")
@@ -1318,6 +1319,31 @@ def sina_all_scores():
     
     min_score = request.args.get('min_s', type=float)
     min_opt_score = request.args.get('min_o', type=float)
+    symbol_input = (request.args.get('symbol') or '').strip()
+    symbol_filters = []
+    if symbol_input:
+        tokens = (
+            symbol_input
+            .replace('，', ',')
+            .replace('；', ',')
+            .replace(';', ',')
+            .replace(' ', ',')
+            .split(',')
+        )
+        for token in tokens:
+            t = token.strip()
+            if not t:
+                continue
+            if t.isdigit():
+                symbol_filters.append(t.zfill(6))
+                continue
+            if '.' in t:
+                code_part = t.split('.', 1)[0]
+                if code_part.isdigit():
+                    symbol_filters.append(code_part.zfill(6))
+                    continue
+            symbol_filters.append(t)
+        symbol_filters = list(dict.fromkeys(symbol_filters))
     
     per_page = request.args.get('per_page', 50, type=int)
     if per_page not in [50, 100, 200]: per_page = 50
@@ -1359,6 +1385,14 @@ def sina_all_scores():
             if min_opt_score is not None:
                 where_clauses.append("srd.opt_score >= %s")
                 params.append(min_opt_score)
+            if symbol_filters:
+                if len(symbol_filters) == 1:
+                    where_clauses.append("srd.symbol = %s")
+                    params.append(symbol_filters[0])
+                else:
+                    placeholders = ",".join(["%s"] * len(symbol_filters))
+                    where_clauses.append(f"srd.symbol IN ({placeholders})")
+                    params.extend(symbol_filters)
                 
             where_stmt = " WHERE " + " AND ".join(where_clauses)
             
@@ -1418,6 +1452,7 @@ def sina_all_scores():
                            order=order,
                            min_s=min_score,
                            min_o=min_opt_score,
+                           symbol=symbol_input,
                            per_page=per_page,
                            pool_id=pool_id,
                            stock_pools=stock_pools,
@@ -1495,6 +1530,7 @@ def sina_self_selected():
                            order=order,
                            min_s=min_score,
                            min_o=min_opt_score,
+                           symbol='',
                            per_page=per_page,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            page_title="自选股评分")

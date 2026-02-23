@@ -22,6 +22,13 @@
                 <input type="number" name="min_o" step="0.1" value="{{ min_o or '' }}"
                     style="width: 80px; padding: 4px; background: #2a2a2a; border: 1px solid #444; color: white;">
             </div>
+            {% if is_all_scores_page|default(false) %}
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label>股票代码</label>
+                <input type="text" name="symbol" value="{{ symbol or '' }}" placeholder="支持多个，逗号分隔"
+                    style="width: 180px; padding: 4px; background: #2a2a2a; border: 1px solid #444; color: white;">
+            </div>
+            {% endif %}
 
             <!-- Preserve Sort and Order -->
             <input type="hidden" name="sort" value="{{ sort_by }}">
@@ -32,7 +39,7 @@
 
             <button type="submit" class="tag trade"
                 style="border: none; cursor: pointer; padding: 6px 15px;">应用筛选</button>
-            <a href="{{ url_for(request.endpoint) }}"
+            <a href="{{ url_for(request.endpoint, pool_id=pool_id) if is_all_scores_page|default(false) and pool_id else url_for(request.endpoint) }}"
                 style="color: #aaa; text-decoration: none; font-size: 0.9em;">重置</a>
         </form>
     </div>
@@ -47,13 +54,13 @@
                 <label style="font-size: 0.9em;">每页显示:</label>
                 <select onchange="window.location.href=this.value" style="padding: 2px 5px;">
                     <option
-                        value="{{ url_for(request.endpoint, per_page=50, sort=sort_by, order=order, min_s=min_s, min_o=min_o, pool_id=pool_id) }}"
+                        value="{{ url_for(request.endpoint, per_page=50, sort=sort_by, order=order, min_s=min_s, min_o=min_o, symbol=symbol, pool_id=pool_id) }}"
                         {{ 'selected' if per_page==50 else '' }}>50</option>
                     <option
-                        value="{{ url_for(request.endpoint, per_page=100, sort=sort_by, order=order, min_s=min_s, min_o=min_o, pool_id=pool_id) }}"
+                        value="{{ url_for(request.endpoint, per_page=100, sort=sort_by, order=order, min_s=min_s, min_o=min_o, symbol=symbol, pool_id=pool_id) }}"
                         {{ 'selected' if per_page==100 else '' }}>100</option>
                     <option
-                        value="{{ url_for(request.endpoint, per_page=200, sort=sort_by, order=order, min_s=min_s, min_o=min_o, pool_id=pool_id) }}"
+                        value="{{ url_for(request.endpoint, per_page=200, sort=sort_by, order=order, min_s=min_s, min_o=min_o, symbol=symbol, pool_id=pool_id) }}"
                         {{ 'selected' if per_page==200 else '' }}>200</option>
                 </select>
             </div>
@@ -68,21 +75,21 @@
                     <th>代码</th>
                     <th>名称</th>
                     <th>
-                        <a href="{{ url_for(request.endpoint, sort='score', order='asc' if sort_by=='score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, pool_id=pool_id) }}"
+                        <a href="{{ url_for(request.endpoint, sort='score', order='asc' if sort_by=='score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
                             总分 {{ '▲' if sort_by=='score' and order=='ASC' else ('▼' if sort_by=='score' and
                             order=='DESC' else '⇅') }}
                         </a>
                     </th>
                     <th>
-                        <a href="{{ url_for(request.endpoint, sort='opt_score', order='asc' if sort_by=='opt_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, pool_id=pool_id) }}"
+                        <a href="{{ url_for(request.endpoint, sort='opt_score', order='asc' if sort_by=='opt_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
                             因子分 {{ '▲' if sort_by=='opt_score' and order=='ASC' else ('▼' if sort_by=='opt_score' and
                             order=='DESC' else '⇅') }}
                         </a>
                     </th>
                     <th>
-                        <a href="{{ url_for(request.endpoint, sort='claude_score', order='asc' if sort_by=='claude_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, per_page=per_page, pool_id=pool_id) }}"
+                        <a href="{{ url_for(request.endpoint, sort='claude_score', order='asc' if sort_by=='claude_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
                             Claude分 {{ '▲' if sort_by=='claude_score' and order=='ASC' else ('▼' if
                             sort_by=='claude_score'
