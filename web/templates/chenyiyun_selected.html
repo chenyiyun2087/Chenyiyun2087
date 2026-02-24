@@ -5,6 +5,29 @@
 
 {% block content %}
 <div class="panel">
+    <div class="panel-title">策略参数</div>
+    <form method="post" action="{{ url_for('update_chenyiyun_selected_settings') }}" style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 12px; align-items:end;">
+        <label>
+            股票个数
+            <input type="number" min="1" max="50" name="stock_count" value="{{ strategy_settings.stock_count }}" required>
+        </label>
+        <label>
+            仓位比例(%)
+            <input type="number" min="5" max="100" step="1" name="position_ratio_pct" value="{{ '%.1f'|format(strategy_settings.position_ratio * 100) }}" required>
+        </label>
+        <label>
+            持有天数
+            <input type="number" min="1" max="120" name="holding_days" value="{{ strategy_settings.holding_days }}" required>
+        </label>
+        <button class="btn" type="submit">保存参数</button>
+    </form>
+    <div class="muted" style="margin-top: 8px; font-size: 12px;">
+        最新权益：¥{{ '%.2f'|format((latest_snapshot_equity or 0)|float) }}，
+        生效资金：¥{{ '%.2f'|format((latest_snapshot_equity or 0)|float * strategy_settings.position_ratio) }}
+    </div>
+</div>
+
+<div class="panel">
     <div class="panel-title">每日信号</div>
     <table>
         <thead>

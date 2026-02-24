@@ -112,7 +112,12 @@ def main() -> None:
     print("\n" + "=" * 60)
     logger.info("Starting Multi-Short Sentiment Scan...")
     
-    scan_output = controller.scan_sentiment(stock_codes, max_workers=args.max_workers)
+    scan_output = controller.scan_sentiment(
+        stock_codes,
+        max_workers=args.max_workers,
+        task_type=args.task_type,
+        trade_date=trade_date,
+    )
     
     # 打印结果表
     print("-" * 60)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable, Optional
@@ -34,6 +35,35 @@ class OrderInstruction:
     target_weight: float
     delta_weight: float
     note: str
+
+
+def _is_safe_table_name(table: str) -> bool:
+    # Allow table or schema.table (letters/digits/underscore only).
+    return bool(re.match(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?$", str(table or "")))
+
+
+def _coerce_trade_date(value: object) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+
+    raw = value
+    if isinstance(raw, (int, float)):
+        raw = str(int(raw))
+    else:
+        raw = str(raw or "").strip()
+
+    if not raw:
+        raise ValueError("empty trade_date value")
+
+    if len(raw) == 8 and raw.isdigit():
+        return datetime.strptime(raw, "%Y%m%d").date()
+
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError(f"invalid trade_date value: {value}") from exc
 
 
 def _round_lot(shares: float, lot_size: int = 100) -> int:
@@ -127,7 +157,7 @@ class DailySignalRunner:
         self.strategy = LocalHighDividendStrategy(provider, strategy_cfg)
 
     def load_current_positions(self, table: str = "live_positions") -> dict[str, int]:
-        if not table.replace("_", "").isalnum():
+        if not _is_safe_table_name(table):
             raise ValueError("invalid table name")
 
         sql = f"SELECT symbol, shares FROM {table}"
@@ -159,7 +189,7 @@ class DailySignalRunner:
     def save_orders(self, orders: list[OrderInstruction], table: str = "ads_local_strategy_orders") -> None:
         if not orders:
             return
-        if not table.replace("_", "").isalnum():
+        if not _is_safe_table_name(table):
             raise ValueError("invalid table name")
 
         with self.strategy.provider._conn() as conn:
@@ -227,7 +257,7 @@ class DailySignalRunner:
         signal_time: Optional[datetime] = None,
     ) -> None:
         """Save daily rebalance signals for web query."""
-        if not table.replace("_", "").isalnum():
+        if not _is_safe_table_name(table):
             raise ValueError("invalid table name")
 
         signal_time = signal_time or datetime.now()
@@ -343,7 +373,7 @@ def main() -> None:
         print("No target picks generated.")
         return
 
-    trade_date = pd.to_datetime(signals.iloc[0]["trade_date"]).date()
+    trade_date = _coerce_trade_date(signals.iloc[0]["trade_date"])
     target_weights = _normalize_target_weights(signals)
     positions = runner.load_current_positions(table=args.position_table)
 

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from BSpointChecker import main as capture_main
 from SinaBSDetector import batch_process_images, get_base_dir
+import pymysql
 
 
 logging.basicConfig(
@@ -44,6 +45,52 @@ def resolve_path(value, base_dir):
     if not value:
         return value
     return value if os.path.isabs(value) else os.path.abspath(os.path.join(base_dir, value))
+
+
+def _normalize_stock_code(value):
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    if raw.startswith(("sh", "sz", "bj")):
+        raw = raw[2:]
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return None
+    return digits[-6:].zfill(6)
+
+
+def load_self_selected_from_db(mysql_config):
+    if not mysql_config:
+        return []
+
+    sql = """
+    SELECT stock_code
+    FROM a_share_stock_list
+    WHERE is_self_selected = 1
+    ORDER BY stock_code
+    """
+    conn = None
+    try:
+        conn = pymysql.connect(**mysql_config)
+        with conn.cursor() as cursor:
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+        normalized = []
+        for row in rows:
+            if isinstance(row, dict):
+                value = row.get("stock_code")
+            else:
+                value = row[0] if row else None
+            code = _normalize_stock_code(value)
+            if code:
+                normalized.append(code)
+        return sorted(set(normalized))
+    except Exception as exc:
+        logger.warning("从数据库读取自选股失败，将回退Excel: %s", exc)
+        return []
+    finally:
+        if conn:
+            conn.close()
 
 
 def archive_old_folders(base_dir, archive_dir=None, days=30):
@@ -113,8 +160,36 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     archive_days = overrides.get("archive_days", config_data.get("archive_days", 30))
     mysql_config = overrides.get("mysql_config", config_data.get("mysql"))
 
+    def _png_mtime_map(folder: str) -> dict[str, float]:
+        if not folder or not os.path.isdir(folder):
+            return {}
+        out = {}
+        for name in os.listdir(folder):
+            if not name.lower().endswith(".png"):
+                continue
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                out[name] = os.path.getmtime(path)
+            except OSError:
+                continue
+        return out
+
+    # Default stock universe for sina_bs: self-selected symbols from DB.
+    # If DB is temporarily unavailable, fallback to Excel source.
+    if not stock_codes:
+        stock_codes = load_self_selected_from_db(mysql_config)
+        if stock_codes:
+            logger.info("默认使用数据库自选股，共 %d 只", len(stock_codes))
+        else:
+            logger.warning("数据库自选股为空，回退Excel股票列表: %s", excel_file)
+
+    expected_dir = os.path.join(base_dir, config_name, date_str)
+    pre_capture_map = _png_mtime_map(expected_dir) if not skip_capture else {}
+
     if skip_capture:
-        save_dir = os.path.join(base_dir, config_name, date_str)
+        save_dir = expected_dir
         if not os.path.isdir(save_dir):
             logger.error("跳过截图时目录不存在: %s", save_dir)
             return 1
@@ -132,6 +207,23 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
         if not save_dir:
             logger.error("截图阶段失败，未生成目录")
             return 1
+
+    post_capture_map = _png_mtime_map(save_dir)
+    if skip_capture:
+        if not post_capture_map:
+            logger.error("跳过截图阶段但目录无可用截图: %s", save_dir)
+            return 2
+        logger.info("跳过截图阶段，检测到现有截图: %d 张", len(post_capture_map))
+    else:
+        produced_count = sum(
+            1
+            for name, mtime in post_capture_map.items()
+            if name not in pre_capture_map or mtime > pre_capture_map[name] + 1e-6
+        )
+        if produced_count == 0:
+            logger.error("截图阶段无新增/更新产出，视为失败: %s", save_dir)
+            return 2
+        logger.info("截图阶段新增/更新产出: %d 张 (目录总数: %d)", produced_count, len(post_capture_map))
 
     logger.info("开始检测日期文件夹: %s/%s", config_name, date_str)
 

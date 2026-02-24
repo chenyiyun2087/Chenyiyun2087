@@ -3,6 +3,7 @@ from datetime import date
 import pandas as pd
 
 from chenyiyunSelected.strategy.daily_signal_runner import (
+    _coerce_trade_date,
     _normalize_target_weights,
     build_rebalance_orders,
     format_signal_message,
@@ -42,3 +43,8 @@ def test_build_rebalance_orders_buy_and_sell():
 def test_format_signal_message_empty():
     text = format_signal_message(date(2026, 2, 20), [])
     assert "no rebalance orders" in text.lower()
+
+
+def test_coerce_trade_date_from_int_yyyymmdd():
+    out = _coerce_trade_date(20260213)
+    assert out == date(2026, 2, 13)

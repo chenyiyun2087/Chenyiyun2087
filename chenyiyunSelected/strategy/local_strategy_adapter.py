@@ -286,8 +286,8 @@ class LocalHighDividendStrategy:
     def save_daily_signals(self, signals: pd.DataFrame, table: str = "ads_local_strategy_signals") -> None:
         if signals is None or signals.empty:
             return
-        if not re.match(r"^[A-Za-z0-9_]+$", table):
-            raise ValueError("signal table 名称仅允许字母/数字/下划线")
+        if not re.match(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?$", table):
+            raise ValueError("signal table 名称仅允许 table 或 schema.table")
 
         with self.provider._conn() as conn:
             with conn.cursor() as cur:
@@ -297,7 +297,7 @@ class LocalHighDividendStrategy:
                     (
                         trade_date DATE,
                         ts_code VARCHAR(16),
-                        signal VARCHAR(16),
+                        `signal` VARCHAR(16),
                         target_weight DOUBLE,
                         rank_num INT,
                         create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -306,9 +306,9 @@ class LocalHighDividendStrategy:
                     """
                 )
                 sql = (
-                    f"INSERT INTO {table} (trade_date, ts_code, signal, target_weight, rank_num) "
+                    f"INSERT INTO {table} (trade_date, ts_code, `signal`, target_weight, rank_num) "
                     "VALUES (%s, %s, %s, %s, %s) "
-                    "ON DUPLICATE KEY UPDATE signal=VALUES(signal), target_weight=VALUES(target_weight), rank_num=VALUES(rank_num)"
+                    "ON DUPLICATE KEY UPDATE `signal`=VALUES(`signal`), target_weight=VALUES(target_weight), rank_num=VALUES(rank_num)"
                 )
                 rows = [
                     (r.trade_date, r.ts_code, r.signal, float(r.target_weight), int(r.rank))

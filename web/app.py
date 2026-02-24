@@ -61,6 +61,12 @@ DB_CONFIG = {
     "cursorclass": pymysql.cursors.DictCursor
 }
 
+DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
+    "stock_count": 10,
+    "position_ratio": 1.0,
+    "holding_days": 20,
+}
+
 # Task Status Storage (Loaded from DB on start)
 TASKS = {
     "sina_bs": {
@@ -102,7 +108,7 @@ TASKS = {
     "sina_snapshot": {
         "name": "sina 实盘快照",
         "description": "账户实时持仓与净值曲线快照同步",
-        "script": "sina/live_tracker/live_tracker.py",
+        "script": "sina/live_tracker/run_live_tracker.py",
         "last_run": "Never",
         "status": "Idle",
         "switched_day": False,
@@ -134,6 +140,54 @@ TASKS = {
         "schedule_time": "08:00",
         "next_run": "-",
         "trading_day_only": False,
+    },
+    "chenyiyun_selected": {
+        "name": "陈依云信号检查（09:05）",
+        "description": "检查是否触发买卖信号，生成调仓建议",
+        "script": "scripts/ops/run_chenyiyun_signal_check.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "09:05",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "chenyiyun_weekly_rebalance": {
+        "name": "陈依云周调仓（周一09:30）",
+        "description": "每周一执行周度仓位调整",
+        "script": "scripts/ops/run_chenyiyun_weekly_rebalance.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "09:30",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "chenyiyun_limitup_check": {
+        "name": "陈依云涨停检查（14:00）",
+        "description": "检查持仓涨停打开并生成卖出建议",
+        "script": "scripts/ops/run_chenyiyun_limitup_check.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "14:00",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "chenyiyun_position_update": {
+        "name": "陈依云仓位更新（21:10）",
+        "description": "同步持仓价格并更新每日仓位快照",
+        "script": "scripts/ops/run_chenyiyun_position_update.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "21:10",
+        "next_run": "-",
+        "trading_day_only": True,
     },
 }
 TASKS_LOCK = threading.Lock()
@@ -484,6 +538,16 @@ def _normalize_datestr(raw_value):
     if len(val) != 8 or not val.isdigit():
         return None
     return val
+
+
+def _parse_task_last_run(raw_value):
+    value = str(raw_value or "").strip()
+    if not value or value == "Never":
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
 
 
 def _compute_next_run(schedule_time, enabled):
@@ -846,8 +910,8 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
             lock_status = "FAILED"
             with TASKS_LOCK:
                 TASKS[task_name]["status"] = f"Failed (Code {exit_code})"
-                TASKS[task_name]["error_log"] = (stderr or "")[:500]
-            message = (stderr or stdout or "")[:1000]
+                TASKS[task_name]["error_log"] = (stderr or "")[-500:]
+            message = (stderr or stdout or "")[-1000:]
     except Exception as e:
         history_status = "Error"
         lock_status = "ERROR"
@@ -941,8 +1005,23 @@ def _build_task_script_parts(task_name, run_options=None):
         return [script]
     if task_name == 'sina_m8':
         return [script, '--lookback-dates', '60']
+    if task_name == 'sina_snapshot':
+        if datestr and len(datestr) == 8:
+            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
+            return [script, 'snapshot', '--date', date_iso]
+        return [script, 'snapshot']
     if task_name == 'eastmoney':
         return [script, '--export', 'result']
+    if task_name == 'chenyiyun_selected':
+        if datestr and len(datestr) == 8:
+            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
+            return [script, '--date', date_iso]
+        return [script]
+    if task_name in {'chenyiyun_weekly_rebalance', 'chenyiyun_limitup_check', 'chenyiyun_position_update'}:
+        if datestr and len(datestr) == 8:
+            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
+            return [script, '--date', date_iso]
+        return [script]
     return [script]
 
 def init_tasks():
@@ -986,6 +1065,90 @@ def get_db():
 def close_db(error):
     if 'db' in g:
         g.db.close()
+
+
+def _ensure_chenyiyun_selected_settings_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chenyiyun_selected_settings (
+            id TINYINT PRIMARY KEY,
+            stock_count INT NOT NULL DEFAULT 10,
+            position_ratio DOUBLE NOT NULL DEFAULT 1.0,
+            holding_days INT NOT NULL DEFAULT 20,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _normalize_chenyiyun_selected_settings(raw):
+    stock_count = int(raw.get("stock_count") or DEFAULT_CHENYIYUN_SELECTED_SETTINGS["stock_count"])
+    stock_count = max(1, min(50, stock_count))
+
+    position_ratio = float(raw.get("position_ratio") or DEFAULT_CHENYIYUN_SELECTED_SETTINGS["position_ratio"])
+    position_ratio = max(0.05, min(1.0, position_ratio))
+
+    holding_days = int(raw.get("holding_days") or DEFAULT_CHENYIYUN_SELECTED_SETTINGS["holding_days"])
+    holding_days = max(1, min(120, holding_days))
+
+    return {
+        "stock_count": stock_count,
+        "position_ratio": position_ratio,
+        "holding_days": holding_days,
+    }
+
+
+def _get_chenyiyun_selected_settings(conn):
+    with conn.cursor() as cursor:
+        _ensure_chenyiyun_selected_settings_table(cursor)
+        cursor.execute(
+            """
+            SELECT stock_count, position_ratio, holding_days
+            FROM chenyiyun_selected_settings
+            WHERE id = 1
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if row:
+            return _normalize_chenyiyun_selected_settings(row)
+
+        defaults = _normalize_chenyiyun_selected_settings(DEFAULT_CHENYIYUN_SELECTED_SETTINGS)
+        cursor.execute(
+            """
+            INSERT INTO chenyiyun_selected_settings (id, stock_count, position_ratio, holding_days)
+            VALUES (1, %s, %s, %s)
+            """,
+            (defaults["stock_count"], defaults["position_ratio"], defaults["holding_days"]),
+        )
+        conn.commit()
+        return defaults
+
+
+def _save_chenyiyun_selected_settings(conn, stock_count, position_ratio, holding_days):
+    settings = _normalize_chenyiyun_selected_settings(
+        {
+            "stock_count": stock_count,
+            "position_ratio": position_ratio,
+            "holding_days": holding_days,
+        }
+    )
+    with conn.cursor() as cursor:
+        _ensure_chenyiyun_selected_settings_table(cursor)
+        cursor.execute(
+            """
+            INSERT INTO chenyiyun_selected_settings (id, stock_count, position_ratio, holding_days)
+            VALUES (1, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                stock_count = VALUES(stock_count),
+                position_ratio = VALUES(position_ratio),
+                holding_days = VALUES(holding_days)
+            """,
+            (settings["stock_count"], settings["position_ratio"], settings["holding_days"]),
+        )
+    conn.commit()
+    return settings
+
 
 def get_pagination(cursor, table_name, page, per_page, where_clause="", params=None):
     """Helper for pagination"""
@@ -1130,6 +1293,8 @@ def chenyiyun_selected_dashboard():
     per_page = 20
     signals = []
     positions = []
+    strategy_settings = _normalize_chenyiyun_selected_settings(DEFAULT_CHENYIYUN_SELECTED_SETTINGS)
+    latest_snapshot_equity = None
     pagination = {
         'page': page,
         'per_page': per_page,
@@ -1143,6 +1308,7 @@ def chenyiyun_selected_dashboard():
 
     try:
         conn = get_db()
+        strategy_settings = _get_chenyiyun_selected_settings(conn)
         with conn.cursor() as cursor:
             cursor.execute(
                 """
@@ -1184,6 +1350,10 @@ def chenyiyun_selected_dashboard():
                 """
             )
             positions = cursor.fetchall()
+
+            cursor.execute("SELECT total_equity FROM live_daily_snapshots ORDER BY snapshot_date DESC LIMIT 1")
+            snapshot_row = cursor.fetchone() or {}
+            latest_snapshot_equity = snapshot_row.get("total_equity")
     except Exception as e:
         flash(f"陈依云精选策略页面数据库不可用: {e}", "danger")
 
@@ -1193,7 +1363,39 @@ def chenyiyun_selected_dashboard():
         signals=signals,
         positions=positions,
         pagination=pagination,
+        strategy_settings=strategy_settings,
+        latest_snapshot_equity=latest_snapshot_equity,
     )
+
+
+@app.route('/chenyiyun/selected/settings', methods=['POST'])
+def update_chenyiyun_selected_settings():
+    stock_count_raw = request.form.get('stock_count')
+    position_ratio_pct_raw = request.form.get('position_ratio_pct')
+    holding_days_raw = request.form.get('holding_days')
+    try:
+        stock_count = int(stock_count_raw)
+        position_ratio_pct = float(position_ratio_pct_raw)
+        holding_days = int(holding_days_raw)
+    except (TypeError, ValueError):
+        flash("参数格式非法，请检查仓位比例、股票个数和持有天数。", "danger")
+        return redirect(url_for('chenyiyun_selected_dashboard'))
+
+    position_ratio = position_ratio_pct / 100.0
+    try:
+        conn = get_db()
+        settings = _save_chenyiyun_selected_settings(conn, stock_count, position_ratio, holding_days)
+        flash(
+            (
+                f"陈依云精选参数已更新：股票个数={settings['stock_count']}，"
+                f"仓位比例={settings['position_ratio'] * 100:.1f}% ，"
+                f"持有天数={settings['holding_days']}。"
+            ),
+            "success",
+        )
+    except Exception as e:
+        flash(f"保存陈依云精选参数失败: {e}", "danger")
+    return redirect(url_for('chenyiyun_selected_dashboard'))
 @app.route('/eastmoney')
 def eastmoney_scores():
     page = request.args.get('page', 1, type=int)
@@ -3289,7 +3491,6 @@ def _run_scheduled_tasks_loop():
     while True:
         try:
             now = datetime.now()
-            now_hm = now.strftime('%H:%M')
             is_trade_day = _is_trading_day(now.date())
             due_tasks = []
             with TASKS_LOCK:
@@ -3298,10 +3499,15 @@ def _run_scheduled_tasks_loop():
                         continue
                     if bool(task.get('trading_day_only')) and not is_trade_day:
                         continue
-                    if task.get('schedule_time') != now_hm:
+                    schedule_time = _normalize_schedule_time(task.get('schedule_time'))
+                    if not schedule_time:
                         continue
-                    last_run = str(task.get('last_run') or '')
-                    if now.strftime('%Y-%m-%d %H:%M') in last_run:
+                    hour, minute = [int(x) for x in schedule_time.split(':')]
+                    scheduled_for = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                    if now < scheduled_for:
+                        continue
+                    last_run_dt = _parse_task_last_run(task.get('last_run'))
+                    if last_run_dt and last_run_dt >= scheduled_for:
                         continue
                     due_tasks.append(task_name)
 

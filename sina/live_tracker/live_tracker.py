@@ -461,142 +461,98 @@ class LiveTracker:
             signals_dict: {'buy': df, 'watch': df}
         """
         try:
-            # 临时添加 scoreRank 到 path，以便其内部模块可以 import config
-            score_rank_path = str(REPO_ROOT / "scoreRank")
-            if score_rank_path not in sys.path:
-                sys.path.insert(0, score_rank_path)
-            
-            # 临时添加项目根目录到 path，以便 scoreRank 内部可以 import sina
-            if str(REPO_ROOT) not in sys.path:
-                sys.path.insert(0, str(REPO_ROOT))
+            conn = db.get_db_connection()
+            try:
+                with conn.cursor() as cursor:
+                    if asof_date is None:
+                        cursor.execute("SELECT MAX(trade_date) AS max_date FROM score_rank_daily")
+                        row = cursor.fetchone() or {}
+                        signal_date = row.get("max_date")
+                    else:
+                        signal_date = pd.to_datetime(asof_date).date()
 
-            from scoreRank.run_daily import load_symbols_from_sina_bs
-            from scoreRank.db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
-            from scoreRank.scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date
-            from scoreRank.config import CONFIG as SCORE_CONFIG
-            
-            # 加载有B点信号的股票
-            symbols = load_symbols_from_sina_bs()
-            if not symbols:
-                print("未找到有B点信号的股票")
-                return None, {"buy": pd.DataFrame(), "watch": pd.DataFrame()}
-            
-            engine = get_engine()
-            
-            # 获取最新交易日
-            max_date_str = get_latest_trade_date(engine, symbols, adj_type=SCORE_CONFIG["adj_for_signal"])
-            if not max_date_str:
-                return None, {"buy": pd.DataFrame(), "watch": pd.DataFrame()}
-            
-            asof_date = pd.to_datetime(max_date_str) if asof_date is None else pd.to_datetime(asof_date)
-            start_date = (asof_date - timedelta(days=SCORE_CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d")
-            
-            # 加载数据
-            qfq = fetch_bars_batch(engine, symbols, adj_type=SCORE_CONFIG["adj_for_signal"],
-                                   start_date=start_date, end_date=asof_date.strftime("%Y-%m-%d"))
-            raw = fetch_bars_batch(engine, symbols, adj_type=SCORE_CONFIG["adj_for_liquidity"],
-                                   start_date=start_date, end_date=asof_date.strftime("%Y-%m-%d"))
-            
-            # 计算评分
-            qfq_feat = build_features_from_qfq(qfq, breakout_n=SCORE_CONFIG["breakout_n"])
-            raw_liq = attach_liquidity_from_raw(raw)
-            names = get_symbol_names_if_exist(engine, symbols)
-            
-            scored = score_asof_date(qfq_feat, raw_liq, names, asof_date=asof_date)
-            
-            # 记录是否已持仓
+                    if not signal_date:
+                        return None, {"buy": pd.DataFrame(), "watch": pd.DataFrame(), "delayed": pd.DataFrame()}
+
+                    cursor.execute(
+                        """
+                        SELECT
+                            trade_date,
+                            symbol,
+                            name,
+                            score,
+                            pool_type,
+                            s_breakout,
+                            s_volume,
+                            s_rs
+                        FROM score_rank_daily
+                        WHERE trade_date = %s
+                          AND is_bs_candidate = 1
+                        ORDER BY score DESC, symbol ASC
+                        """,
+                        (signal_date,),
+                    )
+                    rows = cursor.fetchall()
+            finally:
+                conn.close()
+
+            if not rows:
+                return signal_date, {"buy": pd.DataFrame(), "watch": pd.DataFrame(), "delayed": pd.DataFrame()}
+
+            scored = pd.DataFrame(rows)
+            scored["symbol"] = scored["symbol"].astype(str).str.zfill(6)
+            scored["name"] = scored["name"].fillna("")
+            scored["score"] = pd.to_numeric(scored["score"], errors="coerce").fillna(0.0)
+            scored["s_breakout"] = pd.to_numeric(scored["s_breakout"], errors="coerce").fillna(0.0)
+            scored["s_volume"] = pd.to_numeric(scored["s_volume"], errors="coerce").fillna(0.0)
+            scored["s_rs"] = pd.to_numeric(scored["s_rs"], errors="coerce").fillna(0.0)
+
+            # UI still expects these legacy fields.
+            scored["is_breakout"] = (scored["s_breakout"] >= 80.0).astype(int)
+            scored["vol_ratio"] = 0.0
+            scored["rs20"] = 0.0
+
             held_symbols = set(self.positions.keys())
             scored["is_held"] = scored["symbol"].isin(held_symbols)
-            
-            # 筛选买入信号和观察池信号
-            buy_threshold = LIVE_CONFIG["buy_threshold"]
-            watch_threshold = LIVE_CONFIG["watch_threshold"]
-            
-            # 交易池
-            buy_signals = scored[scored["score"] >= buy_threshold].copy()
-            
-            # 观察池
-            watch_signals = scored[
-                (scored["score"] >= watch_threshold) & 
-                (scored["score"] < buy_threshold)
-            ].copy()
+            scored["data_date"] = signal_date
 
-            # --- Data Readiness Validation ---
-            # Identify symbols that are in `symbols` (had B-point) but not in `scored`.
-            # These were likely dropped due to missing data for `asof_date` in `score_asof_date`.
-            scored_symbols = set(scored["symbol"])
-            missing_symbols = set(symbols) - scored_symbols
-            
-            # For missing symbols, find their latest trade_date from qfq
-            delayed_data = []
-            if missing_symbols:
-                # Group by symbol to get max date
-                latest_dates = qfq.groupby("symbol")["trade_date"].max()
-                for sym in missing_symbols:
-                    if sym in latest_dates:
-                        last_dt = latest_dates[sym]
-                        delayed_data.append({
-                            "symbol": sym,
-                            "latest_date": last_dt.date(),
-                            "reason": "Data Lagging"
-                        })
-                    else:
-                        delayed_data.append({
-                            "symbol": sym, 
-                            "latest_date": None, 
-                            "reason": "No Data Found"
-                        })
-            
-            delayed_df = pd.DataFrame(delayed_data)
-            
-            # Add data_date column to signals
-            if not buy_signals.empty:
-                buy_signals["data_date"] = asof_date.date()
-                
-            if not watch_signals.empty:
-                watch_signals["data_date"] = asof_date.date()
-            
-            # 保存信号到数据库
-            signal_date = asof_date.date()
-            
-            # 保存买入信号
+            buy_threshold = float(LIVE_CONFIG["buy_threshold"])
+            watch_threshold = float(LIVE_CONFIG["watch_threshold"])
+            buy_signals = scored[scored["score"] >= buy_threshold].copy()
+            watch_signals = scored[(scored["score"] >= watch_threshold) & (scored["score"] < buy_threshold)].copy()
+
             for _, row in buy_signals.iterrows():
                 db.insert_signal(
                     signal_date=signal_date,
                     symbol=row["symbol"],
                     signal_type="buy",
-                    score=row["score"],
-                    bs_signal_strength=row.get("buy_points", 0), # 假设scorer返回了buy_points
+                    score=float(row["score"]),
+                    bs_signal_strength=float(row["s_breakout"]),
                     reason="Satisfy Buy Threshold",
                     name=row.get("name", ""),
-                    is_executed=1 if row["is_held"] else 0
+                    is_executed=1 if row["is_held"] else 0,
                 )
-                
-            # 保存观察信号
+
             for _, row in watch_signals.iterrows():
                 db.insert_signal(
                     signal_date=signal_date,
                     symbol=row["symbol"],
                     signal_type="watch",
-                    score=row["score"],
-                    bs_signal_strength=row.get("buy_points", 0),
+                    score=float(row["score"]),
+                    bs_signal_strength=float(row["s_breakout"]),
                     reason="Satisfy Watch Threshold",
                     name=row.get("name", ""),
-                    is_executed=1 if row["is_held"] else 0
+                    is_executed=1 if row["is_held"] else 0,
                 )
-            
+
             return signal_date, {
-                "buy": buy_signals.head(10), 
+                "buy": buy_signals.head(10),
                 "watch": watch_signals.head(20),
-                "delayed": delayed_df
+                "delayed": pd.DataFrame(columns=["symbol", "latest_date", "reason"]),
             }
-            
-        except ImportError as e:
-            print(f"无法导入评分模块: {e}")
-            return None, {"buy": pd.DataFrame(), "watch": pd.DataFrame()}
         except Exception as e:
             print(f"获取买入信号失败: {e}")
-            return None, {"buy": pd.DataFrame(), "watch": pd.DataFrame()}
+            return None, {"buy": pd.DataFrame(), "watch": pd.DataFrame(), "delayed": pd.DataFrame()}
     
     def get_sell_signals(self) -> List[Dict]:
         """

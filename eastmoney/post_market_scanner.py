@@ -149,16 +149,16 @@ class PostMarketScanner:
     def _fetch_candidates_from_db(self, date):
         """从数据库(em_duokong_sentiment)获取符合条件的股票代码"""
         data_api = self.data_api
-        sql = f"""
+        sql = """
         SELECT stock_code 
         FROM em_duokong_sentiment 
-        WHERE trade_date = '{date}' AND bears_percent > {self.min_bears_percent}
+        WHERE trade_date = %s AND bears_percent > %s
         """
         candidates = []
         try:
             with pymysql.connect(**data_api.db_config) as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute(sql)
+                    cursor.execute(sql, (date, float(self.min_bears_percent)))
                     rows = cursor.fetchall()
                     candidates = [row[0] for row in rows]
         except Exception as e:

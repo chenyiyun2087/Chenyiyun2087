@@ -76,7 +76,31 @@ def _normalize_record_values(record):
     return tuple(out)
 
 
+def _normalize_symbol(value) -> str | None:
+    s = str(value or "").strip().lower()
+    if not s:
+        return None
+    if "." in s:
+        s = s.split(".", 1)[0]
+    if s.startswith(("sh", "sz", "bj")):
+        s = s[2:]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        return None
+    return digits[-6:].zfill(6)
+
+
+def _normalize_symbol_list(values) -> list[str]:
+    out = []
+    for value in values or []:
+        sym = _normalize_symbol(value)
+        if sym:
+            out.append(sym)
+    return sorted(set(out))
+
+
 def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: list[str]) -> pd.DataFrame:
+    symbols = _normalize_symbol_list(symbols)
     if not symbols:
         return pd.DataFrame(columns=["symbol", "buy_point_close"])
 
@@ -151,6 +175,9 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         
     db_conf = get_engine()
     
+    df_save = df_save.copy()
+    df_save["symbol"] = df_save["symbol"].map(_normalize_symbol)
+    df_save = df_save[df_save["symbol"].notna()].copy()
     df_save['trade_date'] = asof_date.date()
     # Drop duplicates to prevent database constraint violation
     df_save = df_save.drop_duplicates(subset=['symbol'])
@@ -192,7 +219,12 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
     conn = pymysql.connect(**db_conf)
     try:
         with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM score_rank_daily WHERE trade_date = %s", (asof_date.date(),))
+            # Keep canonical named-parameter SQL for readability/auditing.
+            delete_sql = "DELETE FROM score_rank_daily WHERE trade_date = :trade_date"
+            cursor.execute(
+                delete_sql.replace(":trade_date", "%(trade_date)s"),
+                {"trade_date": asof_date.date()},
+            )
             cols = list(df_db.columns)
             col_sql = ", ".join(cols)
             val_sql = ", ".join(["%s"] * len(cols))
@@ -361,7 +393,7 @@ def main():
         # pandas read_sql supports params.
         
         df_bs = _query_df(engine, sql_bs, {"target_date": target_date_str})
-        bs_symbols = df_bs['stock_code'].tolist()
+        bs_symbols = _normalize_symbol_list(df_bs.get("stock_code", pd.Series(dtype=str)).tolist())
         print(f"Found {len(bs_symbols)} B/S candidate symbols as of {target_date_str}.")
 
         # 3) Load Self-selected Stocks (Candidates for Self-selected Monitor)
@@ -371,7 +403,7 @@ def main():
         WHERE is_self_selected = 1
         """
         df_ss = _query_df(engine, sql_ss)
-        db_ss_symbols = df_ss['stock_code'].tolist()
+        db_ss_symbols = _normalize_symbol_list(df_ss.get("stock_code", pd.Series(dtype=str)).tolist())
         
         # Also load from sina/stock_codes.xlsx for consistency
         # __file__ is scoreRank/cli/run_daily.py -> project_root is parents[2]
@@ -379,13 +411,13 @@ def main():
         try:
             df_excel = pd.read_excel(excel_path)
             col_name = 'stock_code' if 'stock_code' in df_excel.columns else df_excel.columns[0]
-            excel_symbols = df_excel[col_name].astype(str).str.replace('sh', '').str.replace('sz', '').tolist()
+            excel_symbols = _normalize_symbol_list(df_excel[col_name].tolist())
             print(f"Loaded {len(excel_symbols)} symbols from {excel_path}")
         except Exception as e:
             print(f"Warning: Failed to load {excel_path}: {e}")
             excel_symbols = []
 
-        ss_symbols = list(set(db_ss_symbols + excel_symbols))
+        ss_symbols = sorted(set(db_ss_symbols + excel_symbols))
         print(f"Found {len(ss_symbols)} total self-selected symbols (DB: {len(db_ss_symbols)}, Excel: {len(excel_symbols)}).")
         
         # 4) Fetch All A-Share Symbols
@@ -395,11 +427,11 @@ def main():
         WHERE is_active = 1
         """
         df_all = _query_df(engine, sql_all)
-        all_listed_symbols = df_all['stock_code'].astype(str).str.zfill(6).tolist()
+        all_listed_symbols = _normalize_symbol_list(df_all.get("stock_code", pd.Series(dtype=str)).tolist())
         print(f"Found {len(all_listed_symbols)} total listed A-shares.")
 
         # 4.5) Union Symbols for Scoring (Score ALL listed A-shares)
-        all_symbols = list(set(bs_symbols + ss_symbols + all_listed_symbols))
+        all_symbols = sorted(set(bs_symbols + ss_symbols + all_listed_symbols))
         print(f"Total unique symbols to score: {len(all_symbols)}")
 
         if not all_symbols:
@@ -466,8 +498,8 @@ def main():
         bs_signals = fetch_bs_signals_by_symbol(engine, asof_date, all_symbols)
         
         if not bs_signals.empty and "buy_point_close" in bs_signals.columns:
-            scored["symbol"] = scored["symbol"].astype(str)
-            bs_signals["symbol"] = bs_signals["symbol"].astype(str)
+            scored["symbol"] = scored["symbol"].map(_normalize_symbol)
+            bs_signals["symbol"] = bs_signals["symbol"].map(_normalize_symbol)
             
             scored = scored.merge(
                 bs_signals[["symbol", "buy_point_close"]],
@@ -484,9 +516,12 @@ def main():
         scored = calculate_opt_score(scored, asof_date)
 
         # 7) Determine Pool Types and Self-selected Status
-        
-        scored['is_bs_candidate'] = scored['symbol'].isin(bs_symbols).astype(int)
-        scored['is_self_selected'] = scored['symbol'].isin(ss_symbols).astype(int)
+        scored["symbol"] = scored["symbol"].map(_normalize_symbol)
+        scored = scored[scored["symbol"].notna()].copy()
+        bs_set = set(bs_symbols)
+        ss_set = set(ss_symbols)
+        scored['is_bs_candidate'] = scored['symbol'].isin(bs_set).astype(int)
+        scored['is_self_selected'] = scored['symbol'].isin(ss_set).astype(int)
         
         # Logic for Pool Type (Only for B/S candidates)
         scored['pool_type'] = None

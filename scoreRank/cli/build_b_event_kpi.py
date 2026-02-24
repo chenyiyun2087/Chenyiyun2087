@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from scoreRank.core.db_io import get_engine
 
@@ -216,14 +216,31 @@ def build_event_tables(events: pd.DataFrame, prices: pd.DataFrame) -> tuple[pd.D
 
 
 def save_tables(engine, fact_df: pd.DataFrame, kpi_df: pd.DataFrame):
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM b_event_fact"))
-        conn.execute(text("DELETE FROM b_event_kpi"))
+    fact_to_write = fact_df.copy()
+    kpi_to_write = kpi_df.copy()
 
-    if not fact_df.empty:
-        fact_df.to_sql("b_event_fact", engine, if_exists="append", index=False, chunksize=1000)
-    if not kpi_df.empty:
-        kpi_df.to_sql("b_event_kpi", engine, if_exists="append", index=False, chunksize=1000)
+    if not fact_to_write.empty:
+        fact_to_write["event_date"] = pd.to_datetime(fact_to_write["event_date"], errors="coerce").dt.date
+    if not kpi_to_write.empty:
+        kpi_to_write["event_date"] = pd.to_datetime(kpi_to_write["event_date"], errors="coerce").dt.date
+
+    fact_dates = sorted(set(fact_to_write["event_date"].dropna().tolist())) if not fact_to_write.empty else []
+    kpi_dates = sorted(set(kpi_to_write["event_date"].dropna().tolist())) if not kpi_to_write.empty else []
+
+    delete_fact_stmt = text("DELETE FROM b_event_fact WHERE event_date IN :event_dates").bindparams(
+        bindparam("event_dates", expanding=True)
+    )
+    delete_kpi_stmt = text("DELETE FROM b_event_kpi WHERE event_date IN :event_dates").bindparams(
+        bindparam("event_dates", expanding=True)
+    )
+
+    with engine.begin() as conn:
+        if fact_dates:
+            conn.execute(delete_fact_stmt, {"event_dates": fact_dates})
+            fact_to_write.to_sql("b_event_fact", conn, if_exists="append", index=False, chunksize=1000)
+        if kpi_dates:
+            conn.execute(delete_kpi_stmt, {"event_dates": kpi_dates})
+            kpi_to_write.to_sql("b_event_kpi", conn, if_exists="append", index=False, chunksize=1000)
 
 
 def print_summary(fact_df: pd.DataFrame, kpi_df: pd.DataFrame):

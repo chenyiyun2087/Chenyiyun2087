@@ -206,7 +206,6 @@ def main():
     while True:
         now = datetime.datetime.now()
         today = now.date()
-        current_time = now.strftime("%H:%M")
 
         # Basic check: Is today a trading day?
         if not is_trade_day(today):
@@ -217,29 +216,39 @@ def main():
             continue
 
         for task_name, config in TASKS.items():
-            trigger_time = config.get("time")
-            
-            # Check if time matches (simple minute precision)
-            if current_time == trigger_time:
-                # Check if already executed today
-                last_exec = executed_tasks.get(task_name)
-                if last_exec == today:
-                    continue
+            trigger_time = str(config.get("time") or "").strip()
+            if not trigger_time:
+                continue
 
-                logger.info(f"Triggering task: {task_name}")
-                
-                date_str = today.strftime("%Y%m%d")
-                
-                if config.get("type") == "pipeline":
-                    run_pipeline(today)
-                else:
-                    # Run Script Task
-                    # For sina and eastmoney main, append date argument
-                    args = config["args"] + [date_str]
-                    run_script(config["script"], args, task_name)
-                
-                # Mark as executed
-                executed_tasks[task_name] = today
+            try:
+                trigger_hour, trigger_minute = [int(x) for x in trigger_time.split(":")]
+            except Exception:
+                logger.error(f"Invalid trigger time for task {task_name}: {trigger_time}")
+                continue
+
+            trigger_dt = now.replace(hour=trigger_hour, minute=trigger_minute, second=0, microsecond=0)
+            if now < trigger_dt:
+                continue
+
+            # Check if already executed today
+            last_exec = executed_tasks.get(task_name)
+            if last_exec == today:
+                continue
+
+            logger.info(f"Triggering task: {task_name}")
+
+            date_str = today.strftime("%Y%m%d")
+
+            if config.get("type") == "pipeline":
+                run_pipeline(today)
+            else:
+                # Run Script Task
+                # For sina and eastmoney main, append date argument
+                args = config["args"] + [date_str]
+                run_script(config["script"], args, task_name)
+
+            # Mark as executed
+            executed_tasks[task_name] = today
         
         # Sleep
         time.sleep(30)

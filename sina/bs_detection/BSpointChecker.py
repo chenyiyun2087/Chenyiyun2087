@@ -1,4 +1,5 @@
 import concurrent.futures
+import glob
 import logging
 import os
 import threading
@@ -30,15 +31,68 @@ _CHROMEDRIVER_LOCK = threading.Lock()
 _CHROMEDRIVER_PATH = None
 
 
+def _ensure_local_no_proxy():
+    """Ensure localhost WebDriver traffic bypasses global proxy settings."""
+    required = {"localhost", "127.0.0.1", "::1"}
+    raw = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    existing = {x.strip() for x in raw.split(",") if x.strip()}
+    merged = existing | required
+    value = ",".join(sorted(merged))
+    os.environ["NO_PROXY"] = value
+    os.environ["no_proxy"] = value
+
+
+def _find_cached_chromedriver():
+    """Best-effort lookup for a previously downloaded chromedriver binary."""
+    candidates = []
+
+    # Explicit override has highest priority.
+    custom = os.environ.get("CHROMEDRIVER_PATH")
+    if custom and os.path.isfile(custom) and os.access(custom, os.X_OK):
+        return custom
+
+    # webdriver_manager default cache paths on macOS.
+    home = os.path.expanduser("~")
+    patterns = [
+        os.path.join(home, ".wdm", "drivers", "chromedriver", "mac64", "*", "chromedriver-mac-arm64", "chromedriver"),
+        os.path.join(home, ".wdm", "drivers", "chromedriver", "mac64", "*", "chromedriver-mac-x64", "chromedriver"),
+    ]
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                candidates.append(path)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return candidates[0]
+
+
 def get_chromedriver_path():
     global _CHROMEDRIVER_PATH
+    _ensure_local_no_proxy()
+
     if _CHROMEDRIVER_PATH:
         return _CHROMEDRIVER_PATH
+
     with _CHROMEDRIVER_LOCK:
         if _CHROMEDRIVER_PATH:
             return _CHROMEDRIVER_PATH
+
+        cached = _find_cached_chromedriver()
+        if cached:
+            _CHROMEDRIVER_PATH = cached
+            logger.info("使用本地缓存ChromeDriver: %s", _CHROMEDRIVER_PATH)
+            return _CHROMEDRIVER_PATH
+
         start_time = time.perf_counter()
-        _CHROMEDRIVER_PATH = ChromeDriverManager().install()
+        try:
+            _CHROMEDRIVER_PATH = ChromeDriverManager().install()
+        except Exception as exc:
+            raise RuntimeError(
+                "ChromeDriver下载失败。请检查代理设置，并确保 NO_PROXY 包含 localhost,127.0.0.1,::1"
+            ) from exc
         logger.info("ChromeDriver准备完成: %s (耗时 %.2f 秒)", _CHROMEDRIVER_PATH, time.perf_counter() - start_time)
         return _CHROMEDRIVER_PATH
 
@@ -137,6 +191,7 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
 
     driver = None
     try:
+        _ensure_local_no_proxy()
         capture_start = time.perf_counter()
         # 初始化WebDriver
         driver = webdriver.Chrome(service=Service(get_chromedriver_path()), options=chrome_options)

@@ -201,7 +201,13 @@ class DataController:
     def __init__(self, mysql_config: Optional[dict] = None) -> None:
         self.mysql_config = mysql_config or DEFAULT_MYSQL_CONFIG
 
-    def scan_sentiment(self, stock_codes: Optional[List[str]] = None, max_workers: int = 3, task_type: str = "all") -> dict:
+    def scan_sentiment(
+        self,
+        stock_codes: Optional[List[str]] = None,
+        max_workers: int = 3,
+        task_type: str = "all",
+        trade_date: date | None = None,
+    ) -> dict:
         """执行多空情绪扫描，并保存结果到数据库。"""
         if not stock_codes:
             stock_codes = self.get_all_stock_codes_from_db(task_type)
@@ -224,7 +230,7 @@ class DataController:
         success_count = sum(1 for res in results if res.snapshot)
         
         # Save to DB
-        saved_count = self._save_results_to_mysql(results)
+        saved_count = self._save_results_to_mysql(results, trade_date=trade_date)
         
         return {
             "total": len(codes),
@@ -250,12 +256,12 @@ class DataController:
             logger.error("从数据库获取股票列表失败: %s", e)
             return []
 
-    def _save_results_to_mysql(self, results: List[BatchResult]) -> int:
+    def _save_results_to_mysql(self, results: List[BatchResult], trade_date: date | None = None) -> int:
         """Internal helper to save scan results."""
         if not self.mysql_config:
             return 0
         
-        trade_date = date.today()
+        trade_date = trade_date or date.today()
         rows = []
         import json
         for item in results:
