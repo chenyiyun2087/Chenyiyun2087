@@ -67,22 +67,49 @@ def ensure_tables(engine):
         conn.execute(text(DDL_EVENT_KPI))
 
 
-def load_events(engine) -> pd.DataFrame:
-    sql = text(
-        """
-        SELECT
-            trade_date AS event_date,
-            symbol,
-            name,
-            score,
-            COALESCE(opt_score, 0) AS opt_score,
-            COALESCE(claude_score, 0) AS claude_score,
-            pool_type
-        FROM score_rank_daily
-        WHERE is_bs_candidate = 1
-        ORDER BY trade_date, symbol
-        """
-    )
+def load_events(engine, incremental: bool = True) -> pd.DataFrame:
+    if incremental:
+        # Load events that are missing or have changed scores
+        sql = text(
+            """
+            SELECT
+                s.trade_date AS event_date,
+                s.symbol,
+                s.name,
+                s.score,
+                COALESCE(s.opt_score, 0) AS opt_score,
+                COALESCE(s.claude_score, 0) AS claude_score,
+                s.pool_type
+            FROM score_rank_daily s
+            LEFT JOIN b_event_fact f
+              ON f.event_date = s.trade_date AND f.symbol = s.symbol
+            WHERE s.is_bs_candidate = 1
+              AND (
+                f.id IS NULL 
+                OR f.score != s.score 
+                OR f.opt_score != s.opt_score 
+                OR f.claude_score != s.claude_score
+                OR f.pool_type != s.pool_type
+              )
+            ORDER BY s.trade_date, s.symbol
+            """
+        )
+    else:
+        sql = text(
+            """
+            SELECT
+                trade_date AS event_date,
+                symbol,
+                name,
+                score,
+                COALESCE(opt_score, 0) AS opt_score,
+                COALESCE(claude_score, 0) AS claude_score,
+                pool_type
+            FROM score_rank_daily
+            WHERE is_bs_candidate = 1
+            ORDER BY trade_date, symbol
+            """
+        )
     with engine.begin() as conn:
         df = pd.read_sql(sql, conn)
 
@@ -263,13 +290,23 @@ def print_summary(fact_df: pd.DataFrame, kpi_df: pd.DataFrame):
             print(f" 10d: {merged['hit_10_10pct'].mean():.2%}")
 
 
-def main():
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description="Build B-event Fact and KPI tables")
+    parser.add_argument("--all", action="store_true", help="Force rebuild all events (default: incremental)")
+    args, _ = parser.parse_known_args(argv)
+
     engine = get_engine(as_sqlalchemy=True)
     ensure_tables(engine)
 
-    events = load_events(engine)
+    incremental = not args.all
+    events = load_events(engine, incremental=incremental)
+    
     if events.empty:
-        print("No source records in score_rank_daily (is_bs_candidate=1).")
+        if incremental:
+            print("No new or changed events to process. (Use --all to force rebuild)")
+        else:
+            print("No source records in score_rank_daily (is_bs_candidate=1).")
         return
 
     start_dt = events["event_date"].min() - timedelta(days=10)

@@ -4,7 +4,7 @@ import os
 import pymysql
 import json
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import subprocess
 import threading
 import time
@@ -540,6 +540,51 @@ def _normalize_datestr(raw_value):
     return val
 
 
+def _db_value_to_datestr(raw_value):
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, (datetime, date)):
+        return raw_value.strftime("%Y%m%d")
+
+    normalized = _normalize_datestr(raw_value)
+    if normalized:
+        return normalized
+
+    value = str(raw_value).strip()
+    if not value:
+        return None
+
+    try:
+        return datetime.strptime(value[:10].replace("/", "-"), "%Y-%m-%d").strftime("%Y%m%d")
+    except Exception:
+        pass
+
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if len(digits) >= 8:
+        return _normalize_datestr(digits[:8])
+    return None
+
+
+def _db_value_to_datetime(raw_value):
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, datetime):
+        return raw_value
+    if isinstance(raw_value, date):
+        return datetime.combine(raw_value, datetime.min.time())
+
+    value = str(raw_value).strip()
+    if not value:
+        return None
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+        try:
+            return datetime.strptime(value, fmt)
+        except Exception:
+            continue
+    return None
+
+
 def _parse_task_last_run(raw_value):
     value = str(raw_value or "").strip()
     if not value or value == "Never":
@@ -590,21 +635,33 @@ def _insert_task_history(task_name, trigger_type, status, started_at, finished_a
         print(f"Failed to insert task history: {e}")
 
 
-def _get_task_history(limit=100):
+def _get_task_history(limit=100, task_name=None):
     rows = []
     try:
         conn = get_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
-            cursor.execute(
-                """
-                SELECT task_name, task_display_name, trigger_type, started_at, finished_at, status, exit_code, duration_seconds, message
-                FROM app_task_history
-                ORDER BY started_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
+            if task_name:
+                cursor.execute(
+                    """
+                    SELECT id, task_name, task_display_name, trigger_type, started_at, finished_at, status, exit_code, duration_seconds, message
+                    FROM app_task_history
+                    WHERE task_name = %s
+                    ORDER BY started_at DESC
+                    LIMIT %s
+                    """,
+                    (task_name, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, task_name, task_display_name, trigger_type, started_at, finished_at, status, exit_code, duration_seconds, message
+                    FROM app_task_history
+                    ORDER BY started_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
             rows = cursor.fetchall()
     except Exception as e:
         print(f"Failed to load task history: {e}")
@@ -862,6 +919,164 @@ def _mark_task_lock_finished(task_name, lock_status, message):
             conn.close()
 
 
+def _format_task_message(stdout, stderr, verification_lines=None):
+    blocks = []
+    verification_lines = verification_lines or []
+
+    if verification_lines:
+        blocks.append("[verify]\n" + "\n".join(verification_lines))
+
+    stdout_tail = str(stdout or "").strip()
+    if stdout_tail:
+        blocks.append("[stdout_tail]\n" + stdout_tail[-2000:])
+
+    stderr_tail = str(stderr or "").strip()
+    if stderr_tail:
+        blocks.append("[stderr_tail]\n" + stderr_tail[-1200:])
+
+    if not blocks:
+        return None
+    return "\n\n".join(blocks)[-6000:]
+
+
+def _verify_sina_score_result(started_at, finished_at, run_options=None):
+    lines = []
+    try:
+        target_datestr = _normalize_datestr((run_options or {}).get("datestr"))
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT MAX(trade_date) AS d FROM score_rank_daily")
+                latest_score_row = cursor.fetchone() or {}
+                latest_score_date = latest_score_row.get("d")
+                latest_score_datestr = _db_value_to_datestr(latest_score_date)
+
+                cursor.execute(
+                    """
+                    SELECT trade_date,
+                           COUNT(*) AS rows_cnt,
+                           MAX(created_at) AS max_created,
+                           SUM(score IS NULL) AS null_score,
+                           SUM(opt_score IS NULL) AS null_opt,
+                           SUM(claude_score IS NULL) AS null_claude
+                    FROM score_rank_daily
+                    WHERE trade_date = (SELECT MAX(trade_date) FROM score_rank_daily)
+                    GROUP BY trade_date
+                    """
+                )
+                stat = cursor.fetchone() or {}
+
+                cursor.execute("SELECT MAX(batch_date) AS d FROM bs_detection_results")
+                latest_bs_row = cursor.fetchone() or {}
+                latest_bs_date = latest_bs_row.get("d")
+                latest_bs_datestr = _db_value_to_datestr(latest_bs_date)
+
+                cursor.execute("SELECT MAX(trade_date) AS d FROM tushare_stock.dwd_stock_daily_standard")
+                latest_market_row = cursor.fetchone() or {}
+                latest_market_date = latest_market_row.get("d")
+                latest_market_datestr = _db_value_to_datestr(latest_market_date)
+        finally:
+            conn.close()
+
+        rows_cnt = int(stat.get("rows_cnt") or 0)
+        max_created_raw = stat.get("max_created")
+        max_created = _db_value_to_datetime(max_created_raw) or max_created_raw
+        written_in_window = (
+            isinstance(max_created, datetime)
+            and (started_at - timedelta(seconds=30)) <= max_created <= (finished_at + timedelta(seconds=180))
+        )
+
+        expected_datestr = target_datestr or latest_bs_datestr
+        date_match = bool(latest_score_datestr and expected_datestr and latest_score_datestr == expected_datestr)
+
+        ok = bool(rows_cnt > 0 and written_in_window and date_match)
+        lines.append(
+            "result="
+            + ("PASS" if ok else "FAIL")
+            + f"; expected_score_date={expected_datestr or '-'}; latest_score_date={latest_score_datestr or '-'}"
+        )
+        lines.append(
+            f"score_rank_daily rows={rows_cnt}, max_created={max_created or '-'}, "
+            f"null_score={int(stat.get('null_score') or 0)}, "
+            f"null_opt={int(stat.get('null_opt') or 0)}, "
+            f"null_claude={int(stat.get('null_claude') or 0)}"
+        )
+        lines.append(
+            f"upstream bs_latest={latest_bs_datestr or '-'}, market_latest={latest_market_datestr or '-'}"
+        )
+        lines.append(f"written_in_window={written_in_window}, date_match={date_match}")
+        return ok, lines
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
+def _verify_sina_m8_result(started_at, finished_at):
+    lines = []
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, as_of_date, lookback_dates, sample_rows, eligible_rows, searched_total, status, created_at
+                    FROM strategy_m8_runs
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """
+                )
+                latest_run = cursor.fetchone() or {}
+
+                run_id = int(latest_run.get("id") or 0)
+                item_cnt = 0
+                if run_id > 0:
+                    cursor.execute("SELECT COUNT(*) AS c FROM strategy_m8_items WHERE run_id = %s", (run_id,))
+                    item_cnt = int((cursor.fetchone() or {}).get("c") or 0)
+
+                cursor.execute("SELECT MAX(trade_date) AS d FROM score_rank_daily")
+                score_max_row = cursor.fetchone() or {}
+                score_max_date = score_max_row.get("d")
+        finally:
+            conn.close()
+
+        created_at_raw = latest_run.get("created_at")
+        created_at = _db_value_to_datetime(created_at_raw) or created_at_raw
+        as_of_datestr = _db_value_to_datestr(latest_run.get("as_of_date"))
+        score_max_datestr = _db_value_to_datestr(score_max_date)
+        status = str(latest_run.get("status") or "").upper()
+
+        created_in_window = (
+            isinstance(created_at, datetime)
+            and (started_at - timedelta(seconds=30)) <= created_at <= (finished_at + timedelta(seconds=120))
+        )
+        as_of_match = bool(as_of_datestr and score_max_datestr and as_of_datestr == score_max_datestr)
+        ok = bool(run_id > 0 and status == "SUCCESS" and item_cnt > 0 and created_in_window and as_of_match)
+
+        lines.append(
+            "result="
+            + ("PASS" if ok else "FAIL")
+            + f"; run_id={run_id}; status={status or '-'}; item_cnt={item_cnt}"
+        )
+        lines.append(
+            f"as_of_date={as_of_datestr or '-'}, score_max_date={score_max_datestr or '-'}, as_of_match={as_of_match}"
+        )
+        lines.append(
+            f"sample_rows={latest_run.get('sample_rows') or 0}, eligible_rows={latest_run.get('eligible_rows') or 0}, "
+            f"searched_total={latest_run.get('searched_total') or 0}, created_at={created_at or '-'}"
+        )
+        lines.append(f"created_in_window={created_in_window}")
+        return ok, lines
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
+def _run_task_result_verification(task_name, started_at, finished_at, run_options=None):
+    if task_name == "sina_score":
+        return _verify_sina_score_result(started_at, finished_at, run_options=run_options)
+    if task_name == "sina_m8":
+        return _verify_sina_m8_result(started_at, finished_at)
+    return None, [f"result=SKIP; no verifier for task={task_name}"]
+
+
 def _execute_locked_task(task_name, trigger_type, run_options=None):
     started_at = datetime.now()
     project_root = Path(app.root_path).parent
@@ -876,6 +1091,8 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
     lock_status = "COMPLETE"
     exit_code = 0
     message = None
+    stdout = ""
+    stderr = ""
 
     try:
         script_parts = _build_task_script_parts(task_name, run_options=run_options)
@@ -902,21 +1119,37 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
 
         exit_code = int(process.returncode or 0)
         if exit_code == 0:
-            with TASKS_LOCK:
-                TASKS[task_name]["status"] = "Success"
-                TASKS[task_name]["switched_day"] = True
+            verify_finished_at = datetime.now()
+            verify_ok, verify_lines = _run_task_result_verification(
+                task_name=task_name,
+                started_at=started_at,
+                finished_at=verify_finished_at,
+                run_options=run_options,
+            )
+            message = _format_task_message(stdout, stderr, verify_lines)
+
+            if verify_ok is False:
+                history_status = "Failed"
+                lock_status = "FAILED"
+                with TASKS_LOCK:
+                    TASKS[task_name]["status"] = "Failed (Verification)"
+                    TASKS[task_name]["error_log"] = (message or "verification failed")[-500:]
+            else:
+                with TASKS_LOCK:
+                    TASKS[task_name]["status"] = "Success"
+                    TASKS[task_name]["switched_day"] = True
         else:
             history_status = "Failed"
             lock_status = "FAILED"
             with TASKS_LOCK:
                 TASKS[task_name]["status"] = f"Failed (Code {exit_code})"
                 TASKS[task_name]["error_log"] = (stderr or "")[-500:]
-            message = (stderr or stdout or "")[-1000:]
+            message = _format_task_message(stdout, stderr, [f"result=FAIL; exit_code={exit_code}"])
     except Exception as e:
         history_status = "Error"
         lock_status = "ERROR"
         exit_code = -1
-        message = str(e)
+        message = _format_task_message(stdout, stderr, [f"result=FAIL; exception={e}"])
         with TASKS_LOCK:
             TASKS[task_name]["status"] = f"Error: {str(e)}"
             TASKS[task_name]["error_log"] = str(e)[:500]
@@ -1291,10 +1524,23 @@ def positions():
 def chenyiyun_selected_dashboard():
     page = request.args.get('page', 1, type=int)
     per_page = 20
+    scope = str(request.args.get('scope') or 'latest').lower()
+    if scope not in {'latest', 'all'}:
+        scope = 'latest'
+    side_filter = str(request.args.get('side') or 'BUY').upper()
+    if side_filter not in {'BUY', 'SELL', 'ALL'}:
+        side_filter = 'BUY'
     signals = []
     positions = []
     strategy_settings = _normalize_chenyiyun_selected_settings(DEFAULT_CHENYIYUN_SELECTED_SETTINGS)
     latest_snapshot_equity = None
+    latest_signal_trade_date = None
+    signal_stats = {
+        "total_rows": 0,
+        "unique_codes": 0,
+        "buy_rows": 0,
+        "sell_rows": 0,
+    }
     pagination = {
         'page': page,
         'per_page': per_page,
@@ -1330,17 +1576,59 @@ def chenyiyun_selected_dashboard():
             )
             conn.commit()
 
-            pagination, offset = get_pagination(cursor, "ads_chenyiyun_selected_signals", page, per_page)
+            cursor.execute("SELECT MAX(trade_date) AS d FROM ads_chenyiyun_selected_signals")
+            latest_signal_trade_date = (cursor.fetchone() or {}).get("d")
+
+            where_clauses = []
+            params = []
+            if scope == 'latest' and latest_signal_trade_date is not None:
+                where_clauses.append("trade_date = %s")
+                params.append(latest_signal_trade_date)
+            if side_filter in {'BUY', 'SELL'}:
+                where_clauses.append("side = %s")
+                params.append(side_filter)
+            where_stmt = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+            pagination, offset = get_pagination(
+                cursor,
+                "ads_chenyiyun_selected_signals",
+                page,
+                per_page,
+                where_stmt,
+                tuple(params),
+            )
             cursor.execute(
-                """
+                f"""
                 SELECT signal_time, trade_date, ts_code, stock_name, side, open_price, allocated_shares, current_shares, target_shares
                 FROM ads_chenyiyun_selected_signals
+                {where_stmt}
                 ORDER BY signal_time DESC, ts_code ASC
                 LIMIT %s OFFSET %s
                 """,
-                (per_page, offset),
+                tuple(params + [per_page, offset]),
             )
             signals = cursor.fetchall()
+
+            if latest_signal_trade_date is not None:
+                cursor.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS total_rows,
+                        COUNT(DISTINCT ts_code) AS unique_codes,
+                        SUM(side='BUY') AS buy_rows,
+                        SUM(side='SELL') AS sell_rows
+                    FROM ads_chenyiyun_selected_signals
+                    WHERE trade_date = %s
+                    """,
+                    (latest_signal_trade_date,),
+                )
+                stat_row = cursor.fetchone() or {}
+                signal_stats = {
+                    "total_rows": int(stat_row.get("total_rows") or 0),
+                    "unique_codes": int(stat_row.get("unique_codes") or 0),
+                    "buy_rows": int(stat_row.get("buy_rows") or 0),
+                    "sell_rows": int(stat_row.get("sell_rows") or 0),
+                }
 
             cursor.execute(
                 """
@@ -1365,6 +1653,10 @@ def chenyiyun_selected_dashboard():
         pagination=pagination,
         strategy_settings=strategy_settings,
         latest_snapshot_equity=latest_snapshot_equity,
+        latest_signal_trade_date=latest_signal_trade_date,
+        signal_stats=signal_stats,
+        scope=scope,
+        side_filter=side_filter,
     )
 
 
@@ -3375,14 +3667,17 @@ def delete_stock_pool_item(item_id):
 @app.route('/admin')
 def admin():
     now_date_iso = datetime.now().strftime('%Y-%m-%d')
-    task_history = []
+    task_results = []
     task_locks = []
+    active_tab = str(request.args.get("tab") or "center-tab")
+    if active_tab not in {"center-tab", "lock-tab", "result-tab"}:
+        active_tab = "center-tab"
     _reconcile_stale_task_states()
     try:
         conn = get_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
-        task_history = _get_task_history(limit=100)
+        task_results = _get_task_history(limit=200)
         task_locks = _get_task_lock_rows(limit=50)
     except Exception as e:
         print(f"Failed to load stock pools in admin: {e}")
@@ -3393,8 +3688,9 @@ def admin():
                            tasks=TASKS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                            now_date=now_date_iso,
-                           task_history=task_history,
-                           task_locks=task_locks)
+                           task_results=task_results,
+                           task_locks=task_locks,
+                           active_tab=active_tab)
 
 def update_task_db(task_name):
     """Save task status to database"""
@@ -3463,9 +3759,27 @@ def update_task_schedule(task_name):
 
 @app.route('/admin/run_task/<task_name>', methods=['POST'])
 def run_task(task_name):
-    if task_name not in TASKS:
-        flash(f"Unknown task: {task_name}", 'danger')
+    wants_json = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or (
+        'application/json' in str(request.headers.get('Accept') or '').lower()
+    )
+
+    def _json_or_redirect(ok, message, category='info', http_code=200, **extra):
+        if wants_json:
+            payload = {'ok': bool(ok), 'message': message, 'category': category}
+            payload.update(extra)
+            return jsonify(payload), http_code
+        flash(message, category)
         return redirect(url_for('admin'))
+
+    if task_name not in TASKS:
+        return _json_or_redirect(
+            ok=False,
+            message=f"Unknown task: {task_name}",
+            category='danger',
+            http_code=404,
+            started=False,
+            reason='UNKNOWN_TASK',
+        )
 
     requested_datestr = _normalize_datestr(request.form.get('datestr') or request.args.get('datestr'))
     run_options = {}
@@ -3473,18 +3787,44 @@ def run_task(task_name):
         run_options['datestr'] = requested_datestr
 
     if TASKS[task_name].get('trading_day_only') and not requested_datestr and not _is_trading_day():
-        flash(f"任务 {TASKS[task_name]['name']} 仅交易日执行，今日已跳过。", 'warning')
-        return redirect(url_for('admin'))
+        return _json_or_redirect(
+            ok=True,
+            message=f"任务 {TASKS[task_name]['name']} 仅交易日执行，今日已跳过。",
+            category='warning',
+            started=False,
+            reason='NON_TRADING_DAY',
+            task_status=TASKS[task_name].get('status'),
+        )
 
     started, reason = _trigger_task_execution(task_name, trigger_type='manual', run_options=run_options)
     date_suffix = f"（datestr={requested_datestr}）" if requested_datestr else ""
     if started:
-        flash(f"任务 {TASKS[task_name]['name']} 已启动{date_suffix}，使用数据库锁保证同任务唯一运行。", 'success')
+        return _json_or_redirect(
+            ok=True,
+            message=f"任务 {TASKS[task_name]['name']} 已启动{date_suffix}，使用数据库锁保证同任务唯一运行。",
+            category='success',
+            started=True,
+            reason='STARTED',
+            task_status='Running...',
+        )
     elif reason == 'RUNNING':
-        flash(f"任务 {TASKS[task_name]['name']} 未启动{date_suffix}：已有同名任务正在运行。", 'warning')
-    else:
-        flash(f"任务 {TASKS[task_name]['name']} 启动失败{date_suffix}：{reason}", 'danger')
-    return redirect(url_for('admin'))
+        return _json_or_redirect(
+            ok=True,
+            message=f"任务 {TASKS[task_name]['name']} 未启动{date_suffix}：已有同名任务正在运行。",
+            category='warning',
+            started=False,
+            reason='RUNNING',
+            task_status=TASKS[task_name].get('status'),
+        )
+    return _json_or_redirect(
+        ok=False,
+        message=f"任务 {TASKS[task_name]['name']} 启动失败{date_suffix}：{reason}",
+        category='danger',
+        http_code=500,
+        started=False,
+        reason=str(reason or 'FAILED'),
+        task_status=TASKS[task_name].get('status'),
+    )
 
 
 def _run_scheduled_tasks_loop():

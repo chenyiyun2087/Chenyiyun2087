@@ -30,33 +30,35 @@
     <form method="GET" action="{{ url_for('sina_strategy_weighted') }}" class="strategy-form">
         <div class="strategy-grid">
             <div class="strategy-card">
-                <h3>参数化控制</h3>
-                <p>最终分 = 总分×A + 因子分排名百分比×B + Claude分×C</p>
+                <h3>参数输入（加权排序）</h3>
+                <p>最终分 = 总分×A + 因子分排名百分比×B + Claude分×C。建议先选预设，再微调权重，且 A+B+C 接近 1。</p>
                 <div class="form-grid">
-                    <label>策略预设
+                    <label>权重预设
                         <select name="weighted_profile">
                             <option value="balanced" {{ 'selected' if params.weighted_profile=='balanced' else '' }}>均衡</option>
                             <option value="aggressive" {{ 'selected' if params.weighted_profile=='aggressive' else '' }}>激进</option>
                             <option value="conservative" {{ 'selected' if params.weighted_profile=='conservative' else '' }}>保守</option>
                         </select>
                     </label>
-                    <label>权重A（总分）<input type="number" min="0" max="1" step="0.01" name="weight_a" value="{{ params.weight_a }}"></label>
-                    <label>权重B（因子分排名百分比）<input type="number" min="0" max="1" step="0.01" name="weight_b" value="{{ params.weight_b }}"></label>
-                    <label>权重C（Claude分）<input type="number" min="0" max="1" step="0.01" name="weight_c" value="{{ params.weight_c }}"></label>
-                    <label>展示Top N<input type="number" min="1" max="200" step="1" name="weighted_top_n" value="{{ params.weighted_top_n }}"></label>
+                    <label>A 权重（总分）<input type="number" min="0" max="1" step="0.01" name="weight_a" value="{{ params.weight_a }}"></label>
+                    <label>B 权重（因子分排名）<input type="number" min="0" max="1" step="0.01" name="weight_b" value="{{ params.weight_b }}"></label>
+                    <label>C 权重（Claude 分）<input type="number" min="0" max="1" step="0.01" name="weight_c" value="{{ params.weight_c }}"></label>
+                    <label>表格展示条数（Top N）<input type="number" min="1" max="200" step="1" name="weighted_top_n" value="{{ params.weighted_top_n }}"></label>
                 </div>
                 <ul class="strategy-note">
                     <li>候选总数：{{ total_candidates }}</li>
-                    <li>当前权重和：{{ weights_sum }}（建议≈1）</li>
+                    <li>当前权重和：{{ weights_sum }}（建议接近 1）</li>
+                    <li>调参建议：若更追求趋势延续，可提升 C；若更重视结构打分，可提升 B</li>
                 </ul>
             </div>
         </div>
-        <div style="margin-top: 12px;"><button class="btn" type="submit">应用参数</button></div>
+        <div style="margin-top: 12px;"><button class="btn" type="submit">更新排序结果</button></div>
     </form>
 </section>
 
 <section class="panel">
-    <div class="panel-title">筛选结果股票池（按最终分排序）</div>
+    <div class="panel-title">加权结果清单（按最终分降序）</div>
+    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">说明：表格仅展示 Top N。若想观察长尾分布，可适当调大展示条数。</div>
     <table>
         <thead><tr><th>代码</th><th>名称</th><th>最终分</th><th>总分</th><th>因子分排名百分比</th><th>Claude分</th></tr></thead>
         <tbody>

@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS strategy_m8_items (
     hit_3 DECIMAL(10,2),
     hit_5 DECIMAL(10,2),
     hit_10 DECIMAL(10,2),
+    avg_mdd_3 DECIMAL(10,2),
+    avg_mdd_5 DECIMAL(10,2),
+    avg_mdd_10 DECIMAL(10,2),
+    sharpe_3 DECIMAL(10,4),
+    sharpe_5 DECIMAL(10,4),
+    sharpe_10 DECIMAL(10,4),
     sample_count INT,
     rank_no INT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -51,6 +57,21 @@ def ensure_tables(engine):
     with engine.begin() as conn:
         conn.execute(text(DDL_M8_RUN))
         conn.execute(text(DDL_M8_ITEM))
+        
+        # Add columns if they don't exist (for existing tables)
+        columns = {
+            "avg_mdd_3": "DECIMAL(10,2)",
+            "avg_mdd_5": "DECIMAL(10,2)",
+            "avg_mdd_10": "DECIMAL(10,2)",
+            "sharpe_3": "DECIMAL(10,4)",
+            "sharpe_5": "DECIMAL(10,4)",
+            "sharpe_10": "DECIMAL(10,4)",
+        }
+        for col, col_type in columns.items():
+            try:
+                conn.execute(text(f"ALTER TABLE strategy_m8_items ADD COLUMN {col} {col_type} AFTER hit_10"))
+            except Exception:
+                pass # Already exists
 
 
 def _scalar(conn, sql: str, params: dict | None = None):
@@ -142,6 +163,14 @@ def _ensure_b_event_fresh(engine):
     latest_event_date = _normalize_date_str(report.get("latest_event_date"))
 
     if latest_bs_date and latest_score_date and latest_bs_date != latest_score_date:
+        if latest_bs_date > latest_score_date:
+            print(
+                "[M8] Abort: 上游任务未执行完成，不能执行 M8。"
+                f"bs_detection_results 最新={latest_bs_date}，"
+                f"score_rank_daily 最新={latest_score_date}。"
+                "请先执行 sina_score（scoreRank/run_daily.py）后重试。"
+            )
+            return False
         print(
             f"[M8] Abort: bs_detection_results latest ({latest_bs_date}) "
             f"!= score_rank_daily latest ({latest_score_date}). "
@@ -206,7 +235,10 @@ def fetch_recent_m1_rows(engine, lookback_dates: int = 60, pool_id: int | None =
             k.ret_10,
             k.hit_3_10pct,
             k.hit_5_10pct,
-            k.hit_10_10pct
+            k.hit_10_10pct,
+            k.mdd_3,
+            k.mdd_5,
+            k.mdd_10
         FROM b_event_fact f
         LEFT JOIN b_event_kpi k
           ON f.event_date = k.event_date AND f.symbol = k.symbol
@@ -257,6 +289,12 @@ def build_item_rows(m2_eval: dict, m3_eval: dict):
                 "hit_3": _to_float(row.get("hit_3")),
                 "hit_5": _to_float(row.get("hit_5")),
                 "hit_10": _to_float(row.get("hit_10")),
+                "avg_mdd_3": _to_float(row.get("avg_mdd_3")),
+                "avg_mdd_5": _to_float(row.get("avg_mdd_5")),
+                "avg_mdd_10": _to_float(row.get("avg_mdd_10")),
+                "sharpe_3": _to_float(row.get("sharpe_3")),
+                "sharpe_5": _to_float(row.get("sharpe_5")),
+                "sharpe_10": _to_float(row.get("sharpe_10")),
                 "sample_count": int(row.get("count") or 0),
                 "rank_no": idx,
             }
@@ -275,6 +313,12 @@ def build_item_rows(m2_eval: dict, m3_eval: dict):
                 "hit_3": _to_float(row.get("hit_3")),
                 "hit_5": _to_float(row.get("hit_5")),
                 "hit_10": _to_float(row.get("hit_10")),
+                "avg_mdd_3": _to_float(row.get("avg_mdd_3")),
+                "avg_mdd_5": _to_float(row.get("avg_mdd_5")),
+                "avg_mdd_10": _to_float(row.get("avg_mdd_10")),
+                "sharpe_3": _to_float(row.get("sharpe_3")),
+                "sharpe_5": _to_float(row.get("sharpe_5")),
+                "sharpe_10": _to_float(row.get("sharpe_10")),
                 "sample_count": int(row.get("count") or 0),
                 "rank_no": idx,
             }
@@ -339,11 +383,17 @@ def persist_results(engine, latest_date, lookback_dates: int, sample_rows: int, 
                     INSERT INTO strategy_m8_items (
                         run_id, item_type, strategy, params, description,
                         avg_ret_3, avg_ret_5, avg_ret_10,
-                        hit_3, hit_5, hit_10, sample_count, rank_no
+                        hit_3, hit_5, hit_10,
+                        avg_mdd_3, avg_mdd_5, avg_mdd_10,
+                        sharpe_3, sharpe_5, sharpe_10,
+                        sample_count, rank_no
                     ) VALUES (
                         :run_id, :item_type, :strategy, :params, :description,
                         :avg_ret_3, :avg_ret_5, :avg_ret_10,
-                        :hit_3, :hit_5, :hit_10, :sample_count, :rank_no
+                        :hit_3, :hit_5, :hit_10,
+                        :avg_mdd_3, :avg_mdd_5, :avg_mdd_10,
+                        :sharpe_3, :sharpe_5, :sharpe_10,
+                        :sample_count, :rank_no
                     )
                     """
                 ),
@@ -359,7 +409,7 @@ def run_cycle(lookback_dates: int = 60, pool_id: int | None = None):
     engine = get_engine(as_sqlalchemy=True)
     ensure_tables(engine)
     if not _ensure_b_event_fresh(engine):
-        return 0
+        return -1
 
     latest_date, rows = fetch_recent_m1_rows(engine, lookback_dates=lookback_dates, pool_id=pool_id)
     if not rows:
@@ -383,12 +433,16 @@ def run_cycle(lookback_dates: int = 60, pool_id: int | None = None):
 
 
 def main():
+    import sys
+
     parser = argparse.ArgumentParser(description="Run M8 strategy regression + optimizer and persist results")
     parser.add_argument("--lookback-dates", type=int, default=60, help="Recent event_date count from M1 tables")
     parser.add_argument("--pool-id", type=int, default=None, help="Optional stock_pools.id filter for M8 samples")
     args = parser.parse_args()
 
-    run_cycle(lookback_dates=max(1, args.lookback_dates), pool_id=args.pool_id)
+    rc = run_cycle(lookback_dates=max(1, args.lookback_dates), pool_id=args.pool_id)
+    if rc == -1:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

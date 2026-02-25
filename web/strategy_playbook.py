@@ -113,15 +113,32 @@ def _safe_float(v):
         return None
 
 
+import statistics
+import math
+
 def _calc_bucket_stats(rows):
     out = {"count": len(rows)}
     for h in (3, 5, 10):
         rets = [_safe_float(r.get(f"ret_{h}")) for r in rows]
-        rets = [v for v in rets if v is not None]
+        # Filter for finite values only
+        rets = [v for v in rets if v is not None and math.isfinite(v)]
+        
         hits = [_safe_float(r.get(f"hit_{h}_10pct")) for r in rows]
-        hits = [v for v in hits if v is not None]
+        hits = [v for v in hits if v is not None and math.isfinite(v)]
+        mdds = [_safe_float(r.get(f"mdd_{h}")) for r in rows]
+        mdds = [v for v in mdds if v is not None and math.isfinite(v)]
+
         out[f"avg_ret_{h}"] = round(sum(rets) / len(rets) * 100, 2) if rets else None
         out[f"hit_{h}"] = round(sum(hits) / len(hits) * 100, 2) if hits else None
+        out[f"avg_mdd_{h}"] = round(sum(mdds) / len(mdds) * 100, 2) if mdds else None
+        
+        if len(rets) > 1:
+            std_v = statistics.stdev(rets)
+            # Avoid division by zero
+            out[f"sharpe_{h}"] = round(sum(rets) / len(rets) / (std_v + 1e-9), 4)
+        else:
+            out[f"sharpe_{h}"] = None
+
     return out
 
 

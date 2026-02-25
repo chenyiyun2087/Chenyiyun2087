@@ -1,4 +1,8 @@
 /sina/sina_bs_capture.log
 /sina/bs_detection/SinaAppBS/
-
-/sina/bs_detection/SinaAppBS/
+/dist/
+.DS_Store
+**/.DS_Store
+__pycache__/
+**/__pycache__/
+*.log

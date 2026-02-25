@@ -4,12 +4,14 @@
 {% block content %}
 
 <div class="sub-tabs" style="display:flex; gap:10px; margin-bottom:20px; border-bottom:2px solid #000;">
-    <button class="sub-tab active" onclick="showTab('tasks-tab', this)">任务管理</button>
-    <button class="sub-tab" onclick="showTab('history-tab', this)">执行历史</button>
-    <button class="sub-tab" onclick="showTab('order-tab', this)">手动补单</button>
+    <button id="tab-btn-center-tab" class="sub-tab" onclick="showTab('center-tab')">后台任务中心</button>
+    <button id="tab-btn-lock-tab" class="sub-tab" onclick="showTab('lock-tab')">任务锁状态</button>
+    <button id="tab-btn-result-tab" class="sub-tab" onclick="showTab('result-tab')">任务结果查询</button>
 </div>
 
-<div id="tasks-tab" class="admin-tab-content">
+<div id="admin-action-feedback" class="admin-action-feedback" aria-live="polite"></div>
+
+<div id="center-tab" class="admin-tab-content">
     <section class="panel">
         <div class="panel-title">后台任务中心</div>
         <table>
@@ -31,7 +33,7 @@
                         <div style="font-size: 11px; opacity: 0.7; margin-top: 4px;">{{ task.description or '-' }}</div>
                         <code style="font-size: 10px; opacity: 0.5;">ID: {{ name }}</code>
                     </td>
-                    <td><span class="status-badge">{{ task.status }}</span></td>
+                    <td><span id="task-status-{{ name }}" class="status-badge">{{ task.status }}</span></td>
                     <td>
                         <div style="font-size: 12px;">上: {{ task.last_run or '-' }}</div>
                         <div style="font-size: 12px; margin-top: 2px;">下: {{ task.next_run or '-' }}</div>
@@ -42,8 +44,7 @@
                             style="display:flex; flex-direction:column; gap:6px;">
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <label style="display:flex; align-items:center; gap:4px; font-size: 12px;">
-                                    <input type="checkbox" name="schedule_enabled" {% if task.schedule_enabled
-                                        %}checked{% endif %}>
+                                    <input type="checkbox" name="schedule_enabled" {% if task.schedule_enabled %}checked{% endif %}>
                                     自动
                                 </label>
                                 <input type="time" name="schedule_time" value="{{ task.schedule_time or '00:00' }}"
@@ -53,8 +54,9 @@
                         </form>
                     </td>
                     <td>
-                        <form method="post" action="{{ url_for('run_task', task_name=name) }}">
-                            <button class="btn" style="padding: 4px 12px;">运行</button>
+                        <form method="post" action="{{ url_for('run_task', task_name=name) }}" class="js-run-task-form"
+                            data-task-id="{{ name }}">
+                            <button class="btn btn-run-task" style="padding: 4px 12px;">运行</button>
                         </form>
                     </td>
                 </tr>
@@ -64,97 +66,15 @@
     </section>
 
     <section class="panel">
-        <div class="panel-title">任务锁状态（同任务单实例）</div>
-        <div class="table-container" style="max-height: 280px; overflow-y: auto; margin-bottom: 12px;">
-            <table>
-                <thead>
-                    <tr>
-                        <th>任务ID</th>
-                        <th>锁状态</th>
-                        <th>开始时间</th>
-                        <th>心跳</th>
-                        <th>完成时间</th>
-                        <th>消息</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in task_locks %}
-                    <tr>
-                        <td>{{ row.task_name }}</td>
-                        <td>{{ row.status }}</td>
-                        <td>{{ row.started_at or '-' }}</td>
-                        <td>{{ row.heartbeat_at or '-' }}</td>
-                        <td>{{ row.finished_at or '-' }}</td>
-                        <td>{{ row.message or '-' }}</td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="6" style="text-align:center; padding: 20px;">当前无任务锁记录</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </section>
-
-    <section class="panel">
         <div class="panel-title">调度说明</div>
         <div style="font-size: 13px; line-height: 1.6;">
             • 系统根据<strong>交易日历</strong>决定是否执行标有“交易日执行”的任务。<br>
             • 任务触发后直接尝试获取数据库锁：<strong>同任务仅允许1个实例运行</strong>，不同任务可并发。<br>
-            • 通过心跳时间判断任务是否存活，超时锁会被自动重置。<br>
-            • 所有任务执行日志可在“执行历史”标签页中查看。
+            • 任务结束时会执行结果校验（如 sina_score/sina_m8），避免“进程成功但数据未落库”的假成功。<br>
+            • 在“任务结果查询”点击“详细”，可查看脚本输出尾部和校验结论。
         </div>
     </section>
-</div>
 
-<div id="history-tab" class="admin-tab-content" style="display:none;">
-    <section class="panel">
-        <div class="panel-title">最近执行历史 (100条)</div>
-        <div class="table-container" style="max-height: 600px; overflow-y: auto;">
-            <table>
-                <thead>
-                    <tr>
-                        <th>任务</th>
-                        <th>触发</th>
-                        <th>时间</th>
-                        <th>耗时</th>
-                        <th>结果</th>
-                        <th>详情</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in task_history %}
-                    <tr>
-                        <td>{{ row.task_display_name }}<br><small>{{ row.task_name }}</small></td>
-                        <td>{{ '🤖 计划' if row.trigger_type == 'schedule' else '👤 手动' }}</td>
-                        <td style="font-size: 11px;">
-                            始: {{ row.started_at }}<br>
-                            终: {{ row.finished_at or '...' }}
-                        </td>
-                        <td>{{ row.duration_seconds or '-' }}s</td>
-                        <td>
-                            <strong class="{% if row.status == 'Success' %}text-up{% else %}text-down{% endif %}">
-                                {{ row.status }}
-                            </strong>
-                            {% if row.exit_code is not none %}({{ row.exit_code }}){% endif %}
-                        </td>
-                        <td style="max-width: 200px;"><small
-                                style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                                title="{{ row.message or '' }}">{{ row.message or '-' }}</small></td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="6" style="text-align:center; padding: 40px;">暂无历史执行记录</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </section>
-</div>
-
-<div id="order-tab" class="admin-tab-content" style="display:none;">
     <section class="panel">
         <div class="panel-title">手动录入成交单</div>
         <form method="post" action="{{ url_for('add_position') }}" class="form-grid" style="max-width: 500px;">
@@ -189,25 +109,228 @@
     </section>
 </div>
 
+<div id="lock-tab" class="admin-tab-content" style="display:none;">
+    <section class="panel">
+        <div class="panel-title">任务锁状态（同任务单实例）</div>
+        <div class="table-container" style="max-height: 550px; overflow-y: auto; margin-bottom: 12px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>任务ID</th>
+                        <th>锁状态</th>
+                        <th>开始时间</th>
+                        <th>心跳</th>
+                        <th>完成时间</th>
+                        <th>消息</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in task_locks %}
+                    <tr>
+                        <td>{{ row.task_name }}</td>
+                        <td>{{ row.status }}</td>
+                        <td>{{ row.started_at or '-' }}</td>
+                        <td>{{ row.heartbeat_at or '-' }}</td>
+                        <td>{{ row.finished_at or '-' }}</td>
+                        <td>{{ row.message or '-' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align:center; padding: 20px;">当前无任务锁记录</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+<div id="result-tab" class="admin-tab-content" style="display:none;">
+    <section class="panel">
+        <div class="panel-title">任务结果查询（最近200条）</div>
+        <div class="table-container" style="max-height: 650px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>任务</th>
+                        <th>触发</th>
+                        <th>时间</th>
+                        <th>耗时</th>
+                        <th>执行结果</th>
+                        <th>脚本确认</th>
+                        <th>详细</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in task_results %}
+                    {% set msg = row.message or '' %}
+                    <tr>
+                        <td>{{ row.task_display_name }}<br><small>{{ row.task_name }}</small></td>
+                        <td>{{ '🤖 计划' if row.trigger_type == 'schedule' else '👤 手动' }}</td>
+                        <td style="font-size: 11px;">
+                            始: {{ row.started_at }}<br>
+                            终: {{ row.finished_at or '...' }}
+                        </td>
+                        <td>{{ row.duration_seconds or '-' }}s</td>
+                        <td>
+                            <strong class="{% if row.status == 'Success' %}text-up{% else %}text-down{% endif %}">
+                                {{ row.status }}
+                            </strong>
+                            {% if row.exit_code is not none %}({{ row.exit_code }}){% endif %}
+                        </td>
+                        <td>
+                            {% if 'result=PASS' in msg %}
+                            <span class="text-up"><strong>PASS</strong></span>
+                            {% elif 'result=FAIL' in msg %}
+                            <span class="text-down"><strong>FAIL</strong></span>
+                            {% elif 'result=SKIP' in msg %}
+                            <span>SKIP</span>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button type="button" class="btn" style="padding: 3px 10px; font-size: 11px;"
+                                onclick="toggleResultDetail('{{ row.id }}', this)">详细</button>
+                        </td>
+                    </tr>
+                    <tr id="detail-row-{{ row.id }}" style="display:none; background:#fafafa;">
+                        <td colspan="7" style="padding: 12px;">
+                            <div style="font-size: 12px; margin-bottom: 6px;">
+                                <strong>任务状态：</strong>{{ row.status }}{% if row.exit_code is not none %} (exit_code={{ row.exit_code }}){% endif %}
+                            </div>
+                            <div style="font-size: 12px; margin-bottom: 6px;">
+                                <strong>脚本输出与校验：</strong>
+                            </div>
+                            <pre style="margin:0; padding:10px; font-size:12px; white-space:pre-wrap; background:#fff; border:1px solid #ddd;">{{ row.message or '无脚本输出/校验输出（旧记录或未启用校验）' }}</pre>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" style="text-align:center; padding: 40px;">暂无历史执行记录</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
 <script>
-    function showTab(tabId, el) {
-        // Hide all contents
+    function activateTab(tabId) {
         document.querySelectorAll('.admin-tab-content').forEach(div => {
             div.style.display = 'none';
         });
-        // Remove active class from buttons
         document.querySelectorAll('.sub-tab').forEach(btn => {
             btn.classList.remove('active');
         });
 
-        // Show target content
-        document.getElementById(tabId).style.display = 'block';
-        // Add active class to clicked button
-        el.classList.add('active');
+        const panel = document.getElementById(tabId);
+        if (panel) {
+            panel.style.display = 'block';
+        }
+        const button = document.getElementById('tab-btn-' + tabId);
+        if (button) {
+            button.classList.add('active');
+        }
     }
+
+    function showTab(tabId) {
+        activateTab(tabId);
+    }
+
+    function showActionFeedback(message, category) {
+        const box = document.getElementById('admin-action-feedback');
+        if (!box) return;
+        const cls = category || 'info';
+        box.className = 'admin-action-feedback ' + cls;
+        box.textContent = message || '';
+    }
+
+    async function submitRunTaskForm(form) {
+        const btn = form.querySelector('.btn-run-task');
+        if (!btn || form.dataset.busy === '1') return;
+        form.dataset.busy = '1';
+
+        const taskId = form.dataset.taskId || '';
+        const width = Math.ceil(btn.getBoundingClientRect().width);
+        if (width > 0) {
+            btn.style.width = width + 'px';
+        }
+        const oldText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '执行中';
+        showActionFeedback('任务提交中，请稍候...', 'info');
+
+        try {
+            const res = await fetch(form.action, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                },
+                body: new FormData(form),
+            });
+            const data = await res.json().catch(() => ({}));
+            const category = data.category || (res.ok ? 'success' : 'danger');
+            showActionFeedback(data.message || '任务请求已处理。', category);
+
+            if (data.task_status && taskId) {
+                const badge = document.getElementById('task-status-' + taskId);
+                if (badge) badge.textContent = data.task_status;
+            }
+        } catch (err) {
+            showActionFeedback('提交失败：网络或服务异常。', 'danger');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = oldText;
+            form.dataset.busy = '0';
+        }
+    }
+
+    function toggleResultDetail(rowId, btn) {
+        const detailRow = document.getElementById('detail-row-' + rowId);
+        if (!detailRow) return;
+        const hidden = detailRow.style.display === 'none';
+        detailRow.style.display = hidden ? 'table-row' : 'none';
+        btn.textContent = hidden ? '收起' : '详细';
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        activateTab('{{ active_tab or "center-tab" }}');
+        document.querySelectorAll('.js-run-task-form').forEach(form => {
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                submitRunTaskForm(form);
+            });
+        });
+    });
 </script>
 
 <style>
+    .admin-action-feedback {
+        min-height: 42px;
+        margin: 0 0 16px;
+        padding: 10px 12px;
+        border: 3px solid #000;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.3;
+        visibility: hidden;
+    }
+
+    .admin-action-feedback.info,
+    .admin-action-feedback.success,
+    .admin-action-feedback.warning,
+    .admin-action-feedback.danger {
+        visibility: visible;
+    }
+
+    .btn-run-task {
+        min-width: 74px;
+        text-align: center;
+    }
+
     .status-badge {
         display: inline-block;
         padding: 2px 8px;

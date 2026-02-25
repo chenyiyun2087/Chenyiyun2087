@@ -27,18 +27,19 @@
     {% endif %}
 
     <form method="GET" action="{{ url_for('sina_strategy_m5') }}" class="strategy-form">
+        <div style="margin-bottom:8px;color:#9fb8dd;font-size:12px;">输入建议：窗口越大越稳但反应更慢；回看期越长越全面但会混入旧市场状态。</div>
         <div class="form-grid">
-            <label>滚动窗口大小（事件日）
+            <label>滚动窗口长度（事件日）
                 <input type="number" min="2" max="30" step="1" name="window_size" value="{{ params.window_size }}">
             </label>
-            <label>回看事件日数
+            <label>回看范围（事件日数）
                 <input type="number" min="5" max="120" step="1" name="lookback_dates" value="{{ params.lookback_dates }}">
             </label>
-            <label>每窗建议持仓数
+            <label>每窗口持仓数
                 <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
             </label>
         </div>
-        <div style="margin-top:12px;"><button class="btn" type="submit">执行滚动验证</button></div>
+        <div style="margin-top:12px;"><button class="btn" type="submit">更新滚动验证</button></div>
     </form>
 
     <div class="m2-summary-grid" style="margin-top:12px;">
@@ -50,6 +51,7 @@
 
 <section class="panel">
     <div class="panel-title">M5 稳定性汇总（10日维度）</div>
+    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">读表建议：均值看收益中枢，标准差看稳定性；优先选择“均值不差且波动可控”的配置。</div>
     <table>
         <thead><tr><th>指标</th><th>均值</th><th>标准差</th><th>最小值</th><th>最大值</th></tr></thead>
         <tbody>
@@ -73,6 +75,7 @@
 
 <section class="panel">
     <div class="panel-title">M5 窗口明细</div>
+    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">说明：用于定位表现突变区间，便于回看当时市场环境和参数适配性。</div>
     <table>
         <thead><tr><th>窗口起止</th><th>样本数</th><th>持仓数</th><th>10日均收益%</th><th>10日命中率%</th><th>5日均收益%</th><th>5日命中率%</th></tr></thead>
         <tbody>

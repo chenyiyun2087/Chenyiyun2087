@@ -29,6 +29,32 @@
 
 <div class="panel">
     <div class="panel-title">每日信号</div>
+    <form method="get" style="display:flex; gap:10px; align-items:end; margin-bottom:10px; flex-wrap:wrap;">
+        <label>
+            数据范围
+            <select name="scope">
+                <option value="latest" {% if scope == 'latest' %}selected{% endif %}>最新交易日</option>
+                <option value="all" {% if scope == 'all' %}selected{% endif %}>全部历史</option>
+            </select>
+        </label>
+        <label>
+            信号方向
+            <select name="side">
+                <option value="BUY" {% if side_filter == 'BUY' %}selected{% endif %}>仅BUY</option>
+                <option value="SELL" {% if side_filter == 'SELL' %}selected{% endif %}>仅SELL</option>
+                <option value="ALL" {% if side_filter == 'ALL' %}selected{% endif %}>全部</option>
+            </select>
+        </label>
+        <button class="btn" type="submit">筛选</button>
+    </form>
+    <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
+        最新交易日：{{ latest_signal_trade_date or '-' }}，
+        当日总信号：{{ signal_stats.total_rows }}，
+        当日去重股票数：{{ signal_stats.unique_codes }}，
+        BUY：{{ signal_stats.buy_rows }}，
+        SELL：{{ signal_stats.sell_rows }}，
+        预设股票个数：{{ strategy_settings.stock_count }}
+    </div>
     <table>
         <thead>
             <tr>
@@ -73,12 +99,12 @@
 
 <div class="pagination">
     {% if pagination.has_prev %}
-    <a href="{{ url_for('chenyiyun_selected_dashboard', page=pagination.prev_num) }}">上一页</a>
+    <a href="{{ url_for('chenyiyun_selected_dashboard', page=pagination.prev_num, scope=scope, side=side_filter) }}">上一页</a>
     {% endif %}
     <span>第 {{ pagination.page }} / {{ pagination.pages if pagination.pages > 0 else 1 }} 页（共 {{ pagination.total }}
         条）</span>
     {% if pagination.has_next %}
-    <a href="{{ url_for('chenyiyun_selected_dashboard', page=pagination.next_num) }}">下一页</a>
+    <a href="{{ url_for('chenyiyun_selected_dashboard', page=pagination.next_num, scope=scope, side=side_filter) }}">下一页</a>
     {% endif %}
 </div>
 

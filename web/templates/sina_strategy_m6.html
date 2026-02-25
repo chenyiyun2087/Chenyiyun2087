@@ -27,21 +27,22 @@
     {% endif %}
 
     <form method="GET" action="{{ url_for('sina_strategy_m6') }}" class="strategy-form">
+        <div style="margin-bottom:8px;color:#9fb8dd;font-size:12px;">输入建议：先固定持仓数，再逐步提高成本/滑点参数做压力测试。</div>
         <div class="form-grid">
-            <label>回看事件日数
+            <label>回看范围（事件日数）
                 <input type="number" min="5" max="240" step="1" name="lookback_dates" value="{{ params.lookback_dates }}">
             </label>
             <label>每期持仓数
                 <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
             </label>
-            <label>手续费（bps）
+            <label>单边手续费（bps）
                 <input type="number" min="0" max="200" step="0.1" name="cost_bps" value="{{ params.cost_bps }}">
             </label>
-            <label>滑点（bps）
+            <label>单边滑点（bps）
                 <input type="number" min="0" max="200" step="0.1" name="slippage_bps" value="{{ params.slippage_bps }}">
             </label>
         </div>
-        <div style="margin-top:12px;"><button class="btn" type="submit">执行净值回测</button></div>
+        <div style="margin-top:12px;"><button class="btn" type="submit">更新净值回测</button></div>
     </form>
 
     <div class="m2-summary-grid" style="margin-top:12px;">
@@ -55,6 +56,7 @@
 
 <section class="panel">
     <div class="panel-title">M6 净值序列明细</div>
+    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">读表建议：重点观察净收益与净净值的连续性；若频繁跳变，需回看持仓集中度与成本设置。</div>
     <table>
         <thead><tr><th>事件日</th><th>持仓数</th><th>毛收益%</th><th>净收益%</th><th>毛净值</th><th>净净值</th></tr></thead>
         <tbody>

@@ -27,12 +27,13 @@
     {% endif %}
 
     <form method="GET" action="{{ url_for('sina_strategy_m4') }}" class="strategy-form">
+        <div style="margin-bottom:8px;color:#9fb8dd;font-size:12px;">输入建议：先用 5~8 只持仓观察稳定性，再逐步放宽到 10~12 只。</div>
         <div class="form-grid">
-            <label>建议持仓数（1-20）
+            <label>目标持仓数（1-20）
                 <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ max_positions }}">
             </label>
         </div>
-        <div style="margin-top:12px;"><button class="btn" type="submit">更新建议</button></div>
+        <div style="margin-top:12px;"><button class="btn" type="submit">更新持仓建议</button></div>
     </form>
 
     <div class="m2-summary-grid" style="margin-top: 12px;">
@@ -44,6 +45,7 @@
 
 <section class="panel">
     <div class="panel-title">M4 持仓建议（共识优先 + 线性权重）</div>
+    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">读表建议：先看“共识票数 + M4分”，再看建议权重；高票高分标的应优先纳入核心仓位。</div>
     <table>
         <thead>
             <tr>

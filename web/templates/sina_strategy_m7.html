@@ -28,20 +28,21 @@
     {% endif %}
 
     <form method="GET" action="{{ url_for('sina_strategy_m7') }}" class="strategy-form">
+        <div style="margin-bottom:8px;color:#9fb8dd;font-size:12px;">输入建议：先确认目标持仓数，再设定最小调仓阈值，减少小额噪声交易。</div>
         <div class="form-grid">
-            <label>目标持仓数
+            <label>目标持仓数（Top N）
                 <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
             </label>
             <label>组合资金（仅无快照时使用）
                 <input type="number" min="10000" max="100000000" step="1000" name="capital"
                     value="{{ params.capital }}">
             </label>
-            <label>最小调仓权重阈值(%)
+            <label>最小调仓阈值（%）
                 <input type="number" min="0" max="20" step="0.1" name="min_trade_weight"
                     value="{{ params.min_trade_weight }}">
             </label>
         </div>
-        <div style="margin-top:12px;"><button class="btn" type="submit">生成模拟调仓单</button></div>
+        <div style="margin-top:12px;"><button class="btn" type="submit">更新模拟调仓单</button></div>
     </form>
 
     <div class="m2-summary-grid" style="margin-top:12px;">
@@ -71,6 +72,7 @@
 
 <section class="panel">
     <div class="panel-title">M7 模拟下单流水</div>
+    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">读表建议：优先处理金额大且偏离权重高的订单；执行前请复核价格、股数和资金约束。</div>
     <table>
         <thead>
             <tr>

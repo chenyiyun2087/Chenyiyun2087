@@ -274,7 +274,11 @@ class LocalHighDividendStrategy:
         return final
 
     def build_daily_signals(self, asof: Optional[date] = None) -> pd.DataFrame:
-        picked = self.pick(asof).head(self.config.stock_num).copy()
+        max_count = max(1, int(self.config.stock_num))
+        picked = self.pick(asof).copy()
+        if not picked.empty:
+            # Defensive dedupe in case upstream factor joins produce repeated ts_code rows.
+            picked = picked.drop_duplicates(subset=["ts_code"], keep="first").head(max_count).copy()
         if picked.empty:
             return pd.DataFrame(columns=["trade_date", "ts_code", "signal", "target_weight", "rank"])
 
