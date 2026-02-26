@@ -416,6 +416,51 @@ def _calc_max_drawdown(nav_points):
     return round(mdd * 100, 2)
 
 
+def _fetch_latest_bs_signal_state(conn, symbols):
+    """
+    Return latest B/S snapshot per symbol.
+    has_exit_signal=True means latest sell date is newer/equal to latest buy date,
+    which implies current long-hold condition is broken.
+    """
+    state = {}
+    if conn is None:
+        return state
+
+    symbol_list = [str(s).zfill(6) for s in (symbols or []) if str(s or "").strip()]
+    if not symbol_list:
+        return state
+
+    placeholders = ",".join(["%s"] * len(symbol_list))
+    sql = f"""
+        SELECT
+            stock_code,
+            MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
+            MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
+        FROM bs_detection_results
+        WHERE stock_code IN ({placeholders})
+        GROUP BY stock_code
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(sql, tuple(symbol_list))
+            for row in cursor.fetchall():
+                symbol = str(row.get("stock_code") or "").zfill(6)
+                if not symbol:
+                    continue
+                latest_buy = str(row.get("latest_buy_date") or "")
+                latest_sell = str(row.get("latest_sell_date") or "")
+                has_exit = bool(latest_sell and ((not latest_buy) or latest_sell >= latest_buy))
+                state[symbol] = {
+                    "latest_buy_date": latest_buy or None,
+                    "latest_sell_date": latest_sell or None,
+                    "has_exit_signal": has_exit,
+                }
+    except Exception as e:
+        print(f"Failed to fetch B/S state for M7 exits: {e}")
+
+    return state
+
+
 def evaluate_m6_nav(rows, cost_bps=20, slippage_bps=10, max_positions=5):
     """Build gross/net NAV series with transaction cost & slippage."""
     eligible = [r for r in rows if int(r.get("is_eligible") or 0) == 1]
@@ -476,7 +521,14 @@ def evaluate_m6_nav(rows, cost_bps=20, slippage_bps=10, max_positions=5):
 
 
 
-def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=100000.0, min_trade_weight=1.0, conn=None):
+def evaluate_m7_rebalance(
+    target_allocations,
+    current_positions,
+    total_capital=100000.0,
+    min_trade_weight=1.0,
+    conn=None,
+    stop_loss_pct=0.07,
+):
     """Generate simulated rebalance orders from target vs current weights."""
     total_capital = float(total_capital or 0)
     if total_capital <= 0:
@@ -486,7 +538,8 @@ def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=1
     target_map = {}
     for t in target_allocations or []:
         symbol = str(t.get("symbol") or "").zfill(6) if t.get("symbol") else ""
-        if not symbol: continue
+        if not symbol:
+            continue
         target_map[symbol] = {
             "symbol": symbol,
             "name": t.get("name"),
@@ -497,101 +550,112 @@ def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=1
     current_map = {}
     for p in current_positions or []:
         symbol = str(p.get("symbol") or "").zfill(6) if p.get("symbol") else ""
-        if not symbol: continue
-        
+        if not symbol:
+            continue
+
         # Calculate weight if missing
         market_value = _safe_float(p.get("market_value"))
         weight_pct = _safe_float(p.get("weight_pct"))
         if weight_pct is None and market_value is not None and total_capital > 0:
             weight_pct = market_value / total_capital * 100
-        
+
         current_map[symbol] = {
             "symbol": symbol,
             "name": p.get("name"),
             "current_weight": float(weight_pct or 0.0),
             "shares": int(p.get("shares") or 0),
+            "avg_cost": _safe_float(p.get("avg_cost")),
+            "current_price": _safe_float(p.get("current_price")),
         }
 
     all_symbols = sorted(set(target_map.keys()) | set(current_map.keys()))
-    
+
     # 2. Fetch latest prices for rounding
     prices = {}
     if conn and all_symbols:
         try:
-            from sqlalchemy import text
             placeholders = ",".join([f"'{s}'" for s in all_symbols])
-            # Corrected query: join dim_stock to match 6-digit symbols and fetch raw close from ods_daily
             sql = f"""
-                SELECT s.symbol, t.close 
+                SELECT s.symbol, t.close
                 FROM tushare_stock.ods_daily t
                 JOIN tushare_stock.dim_stock s ON t.ts_code = s.ts_code
-                WHERE s.symbol IN ({placeholders}) 
+                WHERE s.symbol IN ({placeholders})
                   AND t.trade_date = (SELECT MAX(trade_date) FROM tushare_stock.ods_daily)
             """
-            
+
             with conn.cursor() as cursor:
-                 cursor.execute(sql)
-                 for row in cursor.fetchall():
-                     # Since app.py uses DictCursor
-                     prices[row['symbol']] = float(row['close'])
+                cursor.execute(sql)
+                for row in cursor.fetchall():
+                    prices[row["symbol"]] = float(row["close"])
         except Exception as e:
             print(f"Failed to fetch prices for M7 rounding: {e}")
 
+    bs_state_map = _fetch_latest_bs_signal_state(conn, list(current_map.keys())) if current_map else {}
+
     orders = []
+    forced_sell_total = 0
 
     for idx, symbol in enumerate(all_symbols, start=1):
         t_info = target_map.get(symbol, {})
         c_info = current_map.get(symbol, {})
-        
-        tw = float(t_info.get("target_weight", 0.0))
+
+        raw_tw = float(t_info.get("target_weight", 0.0))
         cw = float(c_info.get("current_weight", 0.0))
+
+        forced_exit_reasons = []
+        bs_state = bs_state_map.get(symbol) or {}
+        if bool(bs_state.get("has_exit_signal")) and c_info:
+            forced_exit_reasons.append("B/S反转卖出")
+
+        price = float(prices.get(symbol) or 0.0)
+        if price <= 0:
+            price = float(c_info.get("current_price") or 0.0)
+
+        avg_cost = _safe_float(c_info.get("avg_cost"))
+        if avg_cost and avg_cost > 0 and price > 0 and c_info:
+            stop_loss_line = avg_cost * (1.0 - float(stop_loss_pct or 0.0))
+            if price <= stop_loss_line:
+                forced_exit_reasons.append(f"硬止损({float(stop_loss_pct) * 100:.1f}%)")
+
+        is_forced_exit = bool(forced_exit_reasons and c_info)
+        tw = 0.0 if is_forced_exit else raw_tw
         delta_w = round(tw - cw, 2)
 
-        if abs(delta_w) < float(min_trade_weight or 0):
+        if abs(delta_w) < float(min_trade_weight or 0) and not is_forced_exit:
             continue
 
-        price = prices.get(symbol, 0.0)
-        # If price not found in DB, try to infer from current position
-        if price <= 0 and c_info.get("shares") and c_info.get("current_weight"):
-             # rough estimate
-             # market_value = shares * price
-             # weight = market_value / capital * 100
-             # price = (weight / 100 * capital) / shares
-             pass 
-
         notional_diff = total_capital * delta_w / 100.0
-        
-        # Round logic
-        shares_delta = 0
-        if price > 0:
-             # Round to nearest 100
-             raw_shares = notional_diff / price
-             shares_delta = int(round(raw_shares / 100.0) * 100)
-             
-             # Re-adjust notional based on rounded shares
-             final_notional = shares_delta * price
-        else:
-             final_notional = notional_diff
-             shares_delta = 0 # Cannot calculate without price
 
-        if shares_delta == 0 and abs(final_notional) < 100: 
-             # Too small after rounding or no price
-             continue
+        if is_forced_exit:
+            # Forced exit should clear all current shares, no 100-share rounding.
+            shares_delta = -int(c_info.get("shares") or 0)
+            final_notional = shares_delta * price if price > 0 else notional_diff
+        else:
+            shares_delta = 0
+            if price > 0:
+                raw_shares = notional_diff / price
+                shares_delta = int(round(raw_shares / 100.0) * 100)
+                final_notional = shares_delta * price
+            else:
+                final_notional = notional_diff
+
+        if shares_delta == 0 and abs(final_notional) < 100:
+            continue
 
         action = "BUY" if final_notional > 0 else "SELL"
-        reason = "目标权重提升" if final_notional > 0 else "目标权重下调"
-        
+        if action == "SELL" and is_forced_exit:
+            reason = " + ".join(forced_exit_reasons)
+            forced_sell_total += 1
+        else:
+            reason = "目标权重提升" if action == "BUY" else "目标权重下调"
+
         abs_shares = abs(shares_delta)
         abs_amt = abs(final_notional)
-        
-        # Determine name
         name = t_info.get("name") or c_info.get("name") or symbol
 
-        # CLI Command Generation
-        # python sina/live_tracker/run_live_tracker.py buy -s 000001 -p 12.34 -n 1000
         cmd_action = "buy" if action == "BUY" else "sell"
         cli_cmd = ""
-        if price > 0:
+        if price > 0 and abs_shares > 0:
             cli_cmd = f"python sina/live_tracker/run_live_tracker.py {cmd_action} -s {symbol} -p {price:.2f} -n {abs_shares}"
 
         orders.append(
@@ -609,11 +673,17 @@ def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=1
                 "status": "SIMULATED",
                 "reason": reason,
                 "m4_score": t_info.get("m4_score"),
-                "cli_cmd": cli_cmd
+                "sell_signal": (
+                    "FORCED_EXIT"
+                    if (action == "SELL" and is_forced_exit)
+                    else ("REBALANCE" if action == "SELL" else "REBALANCE_BUY")
+                ),
+                "cli_cmd": cli_cmd,
             }
         )
 
-    orders.sort(key=lambda x: x["notional"], reverse=True)
+    # Practical execution: sell first to release cash, then buy.
+    orders.sort(key=lambda x: (x["action"] != "SELL", -x["notional"]))
 
     buy_orders = [o for o in orders if o["action"] == "BUY"]
     sell_orders = [o for o in orders if o["action"] == "SELL"]
@@ -624,6 +694,7 @@ def evaluate_m7_rebalance(target_allocations, current_positions, total_capital=1
         "orders_total": len(orders),
         "buy_total": len(buy_orders),
         "sell_total": len(sell_orders),
+        "forced_sell_total": forced_sell_total,
         "turnover_notional": round(sum(o["notional"] for o in orders), 2),
         "orders": orders,
     }

@@ -1,153 +1,470 @@
-@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
+/* ═══════════════════════════════════════════════════════════════
+   Quant Admin Console – Design System v2
+   Modern data-dense dashboard with anti-jitter foundations
+   ═══════════════════════════════════════════════════════════════ */
 
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+
+/* ── Design Tokens ── */
 :root {
-    --bg: #ffffff;
-    --text: #000000;
-    --border: #000000;
+    --primary: #7C3AED;
+    --primary-light: #A78BFA;
+    --primary-dark: #5B21B6;
+    --primary-bg: #F5F3FF;
+    --accent: #F97316;
+    --accent-light: #FDBA74;
+
+    --success: #10B981;
+    --success-bg: #ECFDF5;
+    --warning: #F59E0B;
+    --warning-bg: #FFFBEB;
+    --danger: #EF4444;
+    --danger-bg: #FEF2F2;
+    --info: #3B82F6;
+    --info-bg: #EFF6FF;
+
+    --bg: #F8FAFC;
+    --bg-card: #FFFFFF;
+    --bg-sidebar: #1E1B4B;
+    --bg-sidebar-hover: rgba(255, 255, 255, 0.08);
+    --bg-sidebar-active: rgba(124, 58, 237, 0.35);
+
+    --text: #1E293B;
+    --text-muted: #64748B;
+    --text-light: #94A3B8;
+    --text-sidebar: #CBD5E1;
+    --text-sidebar-active: #FFFFFF;
+
+    --border: #E2E8F0;
+    --border-light: #F1F5F9;
+
+    --radius: 8px;
+    --radius-lg: 12px;
+    --radius-sm: 6px;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+
+    --transition: 150ms ease;
+    --transition-slow: 250ms ease;
 }
 
-* {
+/* ── Reset & Anti-jitter ── */
+*,
+*::before,
+*::after {
     box-sizing: border-box;
-    background-color: transparent;
-    color: #000000 !important;
-    box-shadow: none !important;
-    text-shadow: none !important;
-    background-image: none !important;
-    border-radius: 0 !important;
-}
-
-/*
-- [x] Dashboard Layout & Control Refinement <!-- id: 26 -->
-- [/] B/S Monitor Tabbed Refactor <!-- id: 30 -->
-    -### [Component] B/S Monitor (sina_monitor.html & app.py)
-- **Tabbed Interface**:
-    - **Tab 1 (Summary)**: Date picker + Compact Metrics + Daily Signals Table.
-    - **Tab 2 (Recent Buy)**: Table of `has_buy_signal=1` with 50-item pagination.
-    - **Tab 3 (Recent Sell)**: Table of `has_sell_signal=1` with 50-item pagination.
-- **Pagination Logic**:
-    - Update `sina_monitor` route to accept `tab`, `page`, and `per_page=50`.
-    - Fetch filtered data from `bs_detection_results` based on tab.
-    - [/] Update `sina_monitor` route for tab-based filtering and pagination <!-- id: 31 -->
-    - [ ] Refactor `sina_monitor.html` with tabbed UI and pagination <!-- id: 32 -->
-- [ ] Verification <!-- id: 8 -->
-*/
-
-/* Date picker cleanup */
-input[type="date"]::-webkit-calendar-picker-indicator {
-    filter: invert(0);
-    cursor: pointer;
+    margin: 0;
+    padding: 0;
 }
 
 html {
     scrollbar-gutter: stable;
+    -webkit-text-size-adjust: 100%;
+}
+
+/* Date picker cleanup */
+input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: none;
+    cursor: pointer;
 }
 
 html,
 body {
-    background-color: #ffffff !important;
-    color: #000000 !important;
+    background-color: var(--bg);
+    color: var(--text);
     margin: 0;
-    font-family: 'Source Sans 3', sans-serif;
+    font-family: 'Fira Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
+a {
+    color: var(--primary);
+    text-decoration: none;
+}
+
+a:hover {
+    color: var(--primary-dark);
+}
+
+/* ── App Shell ── */
 .app-shell {
     display: grid;
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: 250px 1fr;
     min-height: 100vh;
 }
 
+/* ── Sidebar ── */
 .sidebar {
-    width: 240px;
-    background: #ffffff !important;
-    border-right: 2px solid #000000 !important;
-    padding: 30px 20px;
+    width: 250px;
+    background: var(--bg-sidebar);
+    padding: 24px 16px;
     display: flex;
     flex-direction: column;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
 }
 
 .brand {
-    font-size: 20px;
-    font-weight: 800;
-    margin-bottom: 30px;
-    font-family: 'Lexend', sans-serif;
-    border: 3px solid #000000;
-    padding: 10px;
+    font-size: 16px;
+    font-weight: 700;
+    color: #FFFFFF;
+    font-family: 'Fira Code', monospace;
+    padding: 12px 14px;
     text-align: center;
+    border: 2px solid var(--primary-light);
+    border-radius: var(--radius);
+    background: rgba(124, 58, 237, 0.15);
+    margin-bottom: 28px;
+    letter-spacing: 0.5px;
 }
 
 .sidebar-group-title {
-    font-size: 14px;
-    font-weight: 800;
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
-    margin: 25px 0 10px;
-    border-bottom: 2px solid #000000;
-    padding-bottom: 4px;
+    letter-spacing: 1.5px;
+    color: var(--text-light);
+    margin: 24px 0 8px;
+    padding: 0 14px 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .sidebar nav {
-    display: grid;
-    gap: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 
 .sidebar nav a {
     text-decoration: none;
-    padding: 8px 10px;
-    border: 2px solid transparent;
-    font-weight: 600;
-    font-size: 11px;
+    padding: 9px 14px;
+    color: var(--text-sidebar);
+    font-weight: 500;
+    font-size: 13px;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition);
+    border: 1px solid transparent;
 }
 
-.sidebar nav a:hover,
+.sidebar nav a:hover {
+    background: var(--bg-sidebar-hover);
+    color: #FFFFFF;
+}
+
 .sidebar nav a.active {
-    border-color: #000000 !important;
-    background: #f0f0f0 !important;
+    background: var(--bg-sidebar-active);
+    color: var(--text-sidebar-active);
+    font-weight: 600;
+    border-color: rgba(167, 139, 250, 0.3);
 }
 
+/* ── Main Content ── */
 .main-content {
-    background: #ffffff !important;
-    padding: 24px;
+    background: var(--bg);
+    padding: 28px 32px;
+    min-width: 0;
+    /* prevent grid blowout */
 }
 
 .topbar {
-    border-bottom: 3px solid #000000;
-    margin-bottom: 24px;
-    padding-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid var(--border);
 }
 
 .topbar h1 {
-    font-family: 'Lexend', sans-serif;
-    font-size: 28px;
+    font-family: 'Fira Sans', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
     margin: 0;
-    font-weight: 800;
 }
 
-.panel {
-    background: #ffffff !important;
-    border: 3px solid #000000 !important;
-    padding: 20px;
+.timestamp {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'Fira Code', monospace;
+}
+
+/* ── Tabs (top-level page tabs) ── */
+.tabs {
+    display: flex;
+    gap: 4px;
     margin-bottom: 24px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 0;
+    overflow-x: auto;
+}
+
+.tab {
+    padding: 10px 18px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all var(--transition);
+    white-space: nowrap;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.tab:hover {
+    color: var(--primary);
+    background: var(--primary-bg);
+}
+
+.tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 700;
+    background: transparent;
+}
+
+/* ── Sub-tabs (within admin) ── */
+.sub-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 24px;
+    border-bottom: 2px solid var(--border);
+}
+
+.sub-tab {
+    background: none;
+    border: none;
+    padding: 10px 16px;
+    font-weight: 600;
+    font-size: 13px;
+    font-family: 'Fira Sans', sans-serif;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all var(--transition);
+    border-radius: 0;
+}
+
+.sub-tab:hover {
+    color: var(--primary);
+    background: var(--primary-bg);
+}
+
+.sub-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 700;
+}
+
+/* ── Admin Tab Content – Anti-jitter ── */
+.admin-tab-content {
+    min-height: 450px;
+    animation: fadeSlideIn var(--transition-slow) ease-out;
+}
+
+@keyframes fadeSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .admin-tab-content {
+        animation: none;
+    }
+}
+
+/* ── Panel / Card ── */
+.panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow var(--transition);
+}
+
+.panel:hover {
+    box-shadow: var(--shadow);
 }
 
 .panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 15px;
-    border-bottom: 2px solid #000000;
-    padding-bottom: 5px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-light);
 }
 
 .panel-title {
-    font-family: 'Lexend', sans-serif;
-    font-size: 18px;
-    font-weight: 800;
-    margin-bottom: 0px;
-    border-bottom: none;
-    padding-bottom: 0px;
+    font-family: 'Fira Sans', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-light);
 }
 
-/* Pagination Placement & Stability */
+/* ── Table ── */
+table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+}
+
+th,
+td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-light);
+}
+
+th {
+    background: var(--bg);
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+tbody tr {
+    transition: background var(--transition);
+}
+
+tbody tr:hover {
+    background: var(--primary-bg);
+}
+
+.table-container {
+    min-height: 300px;
+    width: 100%;
+    border-radius: var(--radius);
+    overflow: auto;
+}
+
+/* ── Buttons ── */
+.btn,
+button,
+input[type="submit"] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 18px;
+    font-weight: 600;
+    font-size: 13px;
+    font-family: 'Fira Sans', sans-serif;
+    color: #FFFFFF;
+    background: var(--primary);
+    border: 1px solid var(--primary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+.btn:hover,
+button:hover,
+input[type="submit"]:hover {
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+    box-shadow: var(--shadow-sm);
+}
+
+.btn:active,
+button:active {
+    transform: scale(0.98);
+}
+
+.btn:disabled,
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Secondary / outline button */
+.btn-outline {
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid var(--border);
+}
+
+.btn-outline:hover {
+    background: var(--primary-bg);
+    border-color: var(--primary);
+}
+
+/* Small variant */
+.btn-sm {
+    padding: 4px 12px;
+    font-size: 12px;
+}
+
+/* ── Forms ── */
+select,
+input,
+textarea {
+    font-family: 'Fira Sans', sans-serif;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    background: var(--bg-card);
+    color: var(--text);
+    transition: border-color var(--transition), box-shadow var(--transition);
+    width: auto;
+}
+
+select:focus,
+input:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--primary-light);
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+}
+
+input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+.form-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+/* ── Pagination ── */
 .top-pagination {
     display: flex;
     align-items: center;
@@ -156,144 +473,814 @@ body {
 
 .pagination {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
-    font-family: 'Lexend', sans-serif;
-    font-weight: 700;
+    font-family: 'Fira Code', monospace;
+    font-weight: 600;
     font-size: 11px;
 }
 
 .pagination a {
     text-decoration: none;
-    padding: 2px 8px;
-    border: 2px solid #000000;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    background: var(--bg-card);
+    transition: all var(--transition);
 }
 
 .pagination a:hover {
-    background: #000000 !important;
-    color: #ffffff !important;
+    background: var(--primary);
+    color: #FFFFFF;
+    border-color: var(--primary);
 }
 
-.table-container {
-    min-height: 600px;
-    /* Prevent layout jump/jitter on load */
-    width: 100%;
-}
-
-.btn,
-button,
-input[type="submit"] {
-    background-color: #ffffff !important;
-    color: #000000 !important;
-    border: 3px solid #000000 !important;
-    padding: 8px 20px;
-    font-weight: 800;
-    text-transform: uppercase;
-    cursor: pointer;
-    font-family: 'Lexend', sans-serif;
-}
-
-.btn:hover,
-button:hover {
-    box-shadow: inset 0 0 0 2px #000000 !important;
-}
-
-.tabs {
-    display: flex;
+/* ── Metric Cards ── */
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 10px;
     margin-bottom: 20px;
-    border-bottom: 2px solid #000000;
-}
-
-.tab {
-    padding: 10px 20px;
-    text-decoration: none;
-    border: 2px solid #000000;
-    border-bottom: none;
-    font-weight: 700;
-}
-
-.tab.active {
-    background: #000000 !important;
-    color: #ffffff !important;
-}
-
-.sub-tab {
-    border: none;
-    padding: 10px;
-    font-weight: 700;
-}
-
-.sub-tab.active {
-    text-decoration: underline;
-    text-decoration-thickness: 4px;
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-th,
-td {
-    border: 1px solid #000000;
-    padding: 12px;
-    text-align: left;
-}
-
-th {
-    background: #ffffff !important;
-    font-weight: 800;
 }
 
 .metric-card {
-    border: 2px solid #000000;
-    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
     text-align: left;
     display: flex;
     flex-direction: column;
     justify-content: center;
+    background: var(--bg-card);
+    transition: all var(--transition);
+}
+
+.metric-card:hover {
+    box-shadow: var(--shadow);
+    border-color: var(--primary-light);
+}
+
+.metric-card .label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
 }
 
 .metric-card .value {
-    font-size: 18px;
-    font-weight: 800;
-    margin-top: 2px;
+    font-size: 20px;
+    font-weight: 700;
+    margin-top: 4px;
+    font-family: 'Fira Code', monospace;
+    color: var(--text);
 }
 
-.metrics-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 8px;
-    margin-bottom: 16px;
-}
-
-/* Forcing all colored text to black */
+/* ── Status indicators ── */
 .text-up,
-.text-down,
 .up,
-.down,
-.success,
-.danger {
-    color: #000000 !important;
-    font-weight: 800;
-}
-
-select,
-input {
-    border: 2px solid #000000 !important;
-    padding: 8px !important;
-    background: #ffffff !important;
-}
-
-.flash {
-    border: 4px solid #000000;
-    padding: 15px;
-    margin-bottom: 15px;
+.success {
+    color: var(--success);
     font-weight: 700;
 }
 
+.text-down,
+.down,
+.danger {
+    color: var(--danger);
+    font-weight: 700;
+}
+
+/* ── Status Badges ── */
+.status-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 20px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    background: var(--bg);
+    color: var(--text-muted);
+}
+
+.status-badge.status-running {
+    background: var(--info-bg);
+    color: var(--info);
+    animation: statusPulse 2s ease-in-out infinite;
+}
+
+.status-badge.status-success {
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+.status-badge.status-failed,
+.status-badge.status-error {
+    background: var(--danger-bg);
+    color: var(--danger);
+}
+
+.status-badge.status-idle {
+    background: var(--bg);
+    color: var(--text-light);
+}
+
+@keyframes statusPulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.55;
+    }
+}
+
+/* ── Admin feedback bar ── */
+.admin-action-feedback {
+    min-height: 44px;
+    margin: 0 0 16px;
+    padding: 10px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity var(--transition-slow), visibility var(--transition-slow);
+    background: var(--bg-card);
+}
+
+.admin-action-feedback.info {
+    visibility: visible;
+    opacity: 1;
+    background: var(--info-bg);
+    border-color: var(--info);
+    color: var(--info);
+}
+
+.admin-action-feedback.success {
+    visibility: visible;
+    opacity: 1;
+    background: var(--success-bg);
+    border-color: var(--success);
+    color: var(--success);
+}
+
+.admin-action-feedback.warning {
+    visibility: visible;
+    opacity: 1;
+    background: var(--warning-bg);
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
+.admin-action-feedback.danger {
+    visibility: visible;
+    opacity: 1;
+    background: var(--danger-bg);
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+/* ── Run button specific ── */
+.btn-run-task {
+    min-width: 74px;
+    text-align: center;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #FFFFFF;
+    font-size: 12px;
+    padding: 6px 14px;
+}
+
+.btn-run-task:hover {
+    background: #EA580C;
+    border-color: #EA580C;
+}
+
+/* ── Day switch badge ── */
+.day-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.day-badge.day-yes {
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+.day-badge.day-no {
+    background: var(--bg);
+    color: var(--text-light);
+}
+
+/* ── Trigger type badge ── */
+.trigger-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.trigger-badge.trigger-schedule {
+    background: var(--primary-bg);
+    color: var(--primary);
+}
+
+.trigger-badge.trigger-manual {
+    background: var(--warning-bg);
+    color: var(--warning);
+}
+
+/* ── Flash messages ── */
+.flash-wrap {
+    margin-bottom: 16px;
+}
+
+.flash {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin-bottom: 10px;
+    font-weight: 600;
+    font-size: 13px;
+    background: var(--bg-card);
+}
+
+.flash.success {
+    background: var(--success-bg);
+    border-color: var(--success);
+    color: var(--success);
+}
+
+.flash.danger,
+.flash.error {
+    background: var(--danger-bg);
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.flash.warning {
+    background: var(--warning-bg);
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
+.flash.info {
+    background: var(--info-bg);
+    border-color: var(--info);
+    color: var(--info);
+}
+
+/* ── Detail row (task results expand) ── */
+.detail-row td {
+    background: var(--bg);
+    padding: 16px 20px;
+}
+
+.detail-row pre {
+    margin: 0;
+    padding: 14px;
+    font-size: 12px;
+    font-family: 'Fira Code', monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    line-height: 1.6;
+    color: var(--text);
+}
+
+/* ── Task description & ID ── */
+.task-name {
+    font-weight: 700;
+    color: var(--text);
+    font-size: 14px;
+}
+
+.task-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+
+.task-id {
+    font-size: 10px;
+    color: var(--text-light);
+    font-family: 'Fira Code', monospace;
+}
+
+/* ── Time display ── */
+.time-display {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'Fira Code', monospace;
+    line-height: 1.6;
+}
+
+/* ── Schedule config form ── */
+.schedule-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.schedule-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.schedule-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.schedule-time {
+    padding: 4px 8px;
+    font-size: 12px;
+    width: 110px;
+}
+
+.schedule-btn {
+    padding: 4px 12px;
+    font-size: 11px;
+    background: var(--primary-bg);
+    color: var(--primary);
+    border: 1px solid var(--primary-light);
+}
+
+.schedule-btn:hover {
+    background: var(--primary);
+    color: #FFFFFF;
+}
+
+/* ── Result confirm badges ── */
+.result-pass {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+.result-fail {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--danger-bg);
+    color: var(--danger);
+}
+
+.result-skip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--bg);
+    color: var(--text-light);
+}
+
+/* ── Description panel ── */
+.info-text {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-muted);
+}
+
+.info-text strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+/* ── Form Grid (manual position entry) ── */
+.form-grid {
+    max-width: 520px;
+}
+
+.form-grid-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.form-submit-btn {
+    margin-top: 20px;
+    width: 100%;
+    padding: 10px 20px;
+    font-size: 14px;
+}
+
+/* ── Chart wrap ── */
 .chart-wrap {
-    border: 1px solid #000000;
-    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    background: var(--bg-card);
+}
+
+/* ══════════════════════════════════════════════
+   Strategy Pages – 3-Section Layout
+   ══════════════════════════════════════════════ */
+
+/* ── Strategy Header (Section 1: Title + Date + Desc) ── */
+.strat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 12px;
+}
+
+.strat-header .strat-date {
+    font-family: 'Fira Code', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.strat-header .strat-time {
+    font-family: 'Fira Code', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.strat-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 12px;
+}
+
+/* ── M1 Summary Bar ── */
+.m1-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--primary-bg);
+    border: 1px solid rgba(124, 58, 237, 0.15);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    font-size: 13px;
+}
+
+.m1-summary strong {
+    color: var(--primary);
+    font-weight: 700;
+}
+
+.m1-summary span {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* ── Strategy Params (Section 2: Input Row) ── */
+.strat-params {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    background: var(--bg-card);
+}
+
+.strat-params-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+}
+
+.strat-params-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    line-height: 1.5;
+}
+
+.strat-params-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.strat-params-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 140px;
+    flex: 0 1 auto;
+}
+
+.strat-params-grid label input,
+.strat-params-grid label select {
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+
+.strat-params-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-top: 14px;
+    gap: 16px;
+}
+
+.strat-params-footer .btn {
+    flex-shrink: 0;
+    align-self: flex-end;
+}
+
+/* ── Strategy Notes ── */
+.strat-note {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.7;
+}
+
+.strat-note li::before {
+    content: "•";
+    color: var(--primary-light);
+    font-weight: 700;
+    margin-right: 6px;
+}
+
+/* ── Strategy Hint (no-params notice) ── */
+.strat-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    padding: 10px 0 0;
+    font-style: italic;
+}
+
+/* ── KPI Grid (compact metric cards for strategies) ── */
+.kpi-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 14px 0 0;
+}
+
+.kpi-card {
+    flex: 1 1 120px;
+    max-width: 180px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    background: var(--bg);
+    transition: all var(--transition);
+}
+
+.kpi-card:hover {
+    border-color: var(--primary-light);
+    box-shadow: var(--shadow-sm);
+}
+
+.kpi-card .k {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.kpi-card .v {
+    font-size: 18px;
+    font-weight: 700;
+    font-family: 'Fira Code', monospace;
+    color: var(--text);
+    margin-top: 2px;
+}
+
+/* ── Results Hint ── */
+.results-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0 0 10px;
+    line-height: 1.5;
+}
+
+/* ── Empty state ── */
+.empty {
+    text-align: center;
+    padding: 30px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ── M7 Specific Styles ── */
+.tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--bg);
+    color: var(--text-muted);
+}
+
+.tag.trade {
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+.btn-small {
+    padding: 4px 10px;
+    font-size: 11px;
+    background: var(--primary-bg);
+    color: var(--primary);
+    border: 1px solid var(--primary-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: 'Fira Sans', sans-serif;
+    font-weight: 600;
+    transition: all var(--transition);
+}
+
+.btn-small:hover {
+    background: var(--primary);
+    color: #FFFFFF;
+}
+
+.btn-small.trade {
+    background: var(--success-bg);
+    color: var(--success);
+    border-color: var(--success);
+}
+
+.btn-small.trade:hover {
+    background: var(--success);
+    color: #FFFFFF;
+}
+
+/* ── M7 Execute Modal ── */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+}
+
+.modal-content {
+    background: var(--bg-card);
+    margin: 8% auto;
+    padding: 28px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    width: 420px;
+    max-width: 90vw;
+    box-shadow: var(--shadow-md);
+    position: relative;
+}
+
+.modal-content h3 {
+    margin: 0 0 16px;
+    color: var(--primary);
+    font-size: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.modal-body {
+    line-height: 2;
+    font-size: 13px;
+    margin: 16px 0;
+}
+
+.modal-body strong {
+    color: var(--text);
+}
+
+.modal-body input {
+    width: 100px;
+    padding: 4px 8px;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+/* ── Quadrant Plot ── */
+.quadrant-plot-wrap {
+    position: relative;
+    display: inline-block;
+    margin-top: 10px;
+}
+
+.quadrant-plot {
+    width: 410px;
+    height: 260px;
+    display: block;
+}
+
+.quadrant-tooltip {
+    position: absolute;
+    background: var(--bg-card);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--primary-light);
+    font-size: 13px;
+    pointer-events: none;
+    z-index: 100;
+    box-shadow: var(--shadow-md);
+    white-space: nowrap;
+    line-height: 1.5;
+}
+
+.quadrant-point {
+    transition: r 0.2s ease, stroke 0.2s ease;
+    stroke: transparent;
+    stroke-width: 2;
+    cursor: crosshair;
+}
+
+.quadrant-point:hover {
+    r: 6px;
+    stroke: #fff;
+}
+
+/* ── Action cell color ── */
+.action-cell.text-up {
+    color: var(--success);
+}
+
+.action-cell.text-down {
+    color: var(--danger);
+}
+
+/* ── Responsive ── */
+@media (max-width: 1024px) {
+    .app-shell {
+        grid-template-columns: 200px 1fr;
+    }
+
+    .sidebar {
+        width: 200px;
+    }
+}
+
+@media (max-width: 768px) {
+    .app-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+        flex-direction: row;
+        flex-wrap: wrap;
+        padding: 12px;
+    }
+
+    .main-content {
+        padding: 16px;
+    }
+
+    .tabs {
+        flex-wrap: wrap;
+    }
 }

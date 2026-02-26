@@ -193,6 +193,7 @@ TASKS = {
 TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
+SCHEDULED_TASK_WHITELIST = {"sina_bs"}  # Only keep web-console timed run for sina_bs.
 
 UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
@@ -939,6 +940,35 @@ def _format_task_message(stdout, stderr, verification_lines=None):
     return "\n\n".join(blocks)[-6000:]
 
 
+def _has_scheduled_run_in_slot(task_name, scheduled_for):
+    """Return True if a scheduled run already exists in history for this slot."""
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            slot_end = scheduled_for + timedelta(days=1)
+            cursor.execute(
+                """
+                SELECT 1
+                FROM app_task_history
+                WHERE task_name = %s
+                  AND trigger_type = 'schedule'
+                  AND started_at >= %s
+                  AND started_at < %s
+                LIMIT 1
+                """,
+                (task_name, scheduled_for, slot_end),
+            )
+            return cursor.fetchone() is not None
+    except Exception as e:
+        print(f"Failed to check scheduled history slot for {task_name}: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+
 def _verify_sina_score_result(started_at, finished_at, run_options=None):
     lines = []
     try:
@@ -989,7 +1019,9 @@ def _verify_sina_score_result(started_at, finished_at, run_options=None):
         expected_datestr = target_datestr or latest_bs_datestr
         date_match = bool(latest_score_datestr and expected_datestr and latest_score_datestr == expected_datestr)
 
-        ok = bool(rows_cnt > 0 and written_in_window and date_match)
+        null_claude = int(stat.get('null_claude') or 0)
+        claude_coverage_ok = rows_cnt <= 0 or null_claude < rows_cnt
+        ok = bool(rows_cnt > 0 and written_in_window and date_match and claude_coverage_ok)
         lines.append(
             "result="
             + ("PASS" if ok else "FAIL")
@@ -1001,6 +1033,7 @@ def _verify_sina_score_result(started_at, finished_at, run_options=None):
             f"null_opt={int(stat.get('null_opt') or 0)}, "
             f"null_claude={int(stat.get('null_claude') or 0)}"
         )
+        lines.append(f"claude_coverage_ok={claude_coverage_ok}")
         lines.append(
             f"upstream bs_latest={latest_bs_datestr or '-'}, market_latest={latest_market_datestr or '-'}"
         )
@@ -1460,6 +1493,8 @@ def positions():
         # Fetch latest two snapshots to determine baseline for daily P&L
         cursor.execute("SELECT * FROM live_daily_snapshots ORDER BY snapshot_date DESC LIMIT 2")
         snapshots = cursor.fetchall()
+        cursor.execute("SELECT snapshot_date, total_equity FROM live_daily_snapshots ORDER BY snapshot_date ASC LIMIT 1")
+        first_snapshot = cursor.fetchone()
         
         assets = snapshots[0] if snapshots else None
         baseline_equity = 0
@@ -1511,6 +1546,25 @@ def positions():
             else:
                 assets['daily_pnl'] = 0
                 assets['daily_return_pct'] = 0
+
+            # Calculate cumulative return and annualized return from first snapshot.
+            start_equity = float(first_snapshot.get('total_equity') or 0) if first_snapshot else 0
+            start_date = first_snapshot.get('snapshot_date') if first_snapshot else None
+            if start_equity > 0:
+                growth = float(assets['total_equity']) / start_equity
+                assets['cumulative_return_pct'] = round((growth - 1.0) * 100, 4)
+                if start_date:
+                    elapsed_days = (datetime.now().date() - start_date).days
+                    if elapsed_days > 0 and growth > 0:
+                        annualized = (growth ** (365.0 / elapsed_days) - 1.0) * 100
+                        assets['annualized_return_pct'] = round(annualized, 4)
+                    else:
+                        assets['annualized_return_pct'] = round(assets['cumulative_return_pct'], 4)
+                else:
+                    assets['annualized_return_pct'] = 0
+            else:
+                assets['cumulative_return_pct'] = 0
+                assets['annualized_return_pct'] = 0
 
     return render_template('positions.html', 
                            positions=positions, 
@@ -2404,6 +2458,119 @@ def api_signal_stats():
         return jsonify(rows)
 
 
+@app.route('/api/m7/sell-signals/latest')
+def api_m7_sell_signals_latest():
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            _ensure_m7_sell_signal_table(cursor)
+
+            source_raw = str(request.args.get('source') or 'm7_rebalance').strip()
+            source = None if source_raw.lower() in {'', 'all'} else source_raw
+            limit = request.args.get('limit', 200, type=int)
+            limit = max(1, min(int(limit or 200), 1000))
+
+            requested_date = request.args.get('date')
+            signal_date = _coerce_to_date(requested_date) if requested_date else None
+            if requested_date and signal_date is None:
+                return jsonify({"error": "invalid date, expected YYYY-MM-DD or YYYYMMDD"}), 400
+
+            if signal_date is None:
+                if source:
+                    cursor.execute(
+                        "SELECT MAX(signal_date) AS d FROM m7_sell_signals WHERE source = %s",
+                        (source,),
+                    )
+                else:
+                    cursor.execute("SELECT MAX(signal_date) AS d FROM m7_sell_signals")
+                signal_date = (cursor.fetchone() or {}).get("d")
+
+            if signal_date is None:
+                return jsonify(
+                    {
+                        "signal_date": None,
+                        "source": source or "all",
+                        "limit": limit,
+                        "summary": {
+                            "total_rows": 0,
+                            "forced_exit_rows": 0,
+                            "rebalance_rows": 0,
+                            "total_notional": 0.0,
+                        },
+                        "rows": [],
+                    }
+                )
+
+            where_clauses = ["signal_date = %s"]
+            params = [signal_date]
+            if source:
+                where_clauses.append("source = %s")
+                params.append(source)
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+            cursor.execute(
+                f"""
+                SELECT
+                    symbol,
+                    name,
+                    sell_signal,
+                    reason,
+                    current_weight,
+                    target_weight,
+                    delta_weight,
+                    price,
+                    shares,
+                    notional,
+                    source,
+                    created_at,
+                    updated_at
+                FROM m7_sell_signals
+                {where_sql}
+                ORDER BY notional DESC, symbol ASC
+                LIMIT %s
+                """,
+                tuple(params + [limit]),
+            )
+            rows = cursor.fetchall()
+
+            cursor.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS total_rows,
+                    SUM(CASE WHEN sell_signal = 'FORCED_EXIT' THEN 1 ELSE 0 END) AS forced_exit_rows,
+                    SUM(CASE WHEN sell_signal = 'REBALANCE' THEN 1 ELSE 0 END) AS rebalance_rows,
+                    SUM(COALESCE(notional, 0)) AS total_notional
+                FROM m7_sell_signals
+                {where_sql}
+                """,
+                tuple(params),
+            )
+            summary = cursor.fetchone() or {}
+
+            for row in rows:
+                if row.get("created_at"):
+                    row["created_at"] = str(row.get("created_at"))
+                if row.get("updated_at"):
+                    row["updated_at"] = str(row.get("updated_at"))
+
+            signal_date_str = signal_date.isoformat() if hasattr(signal_date, "isoformat") else str(signal_date)
+            payload = {
+                "signal_date": signal_date_str,
+                "source": source or "all",
+                "limit": limit,
+                "summary": {
+                    "total_rows": int(summary.get("total_rows") or 0),
+                    "forced_exit_rows": int(summary.get("forced_exit_rows") or 0),
+                    "rebalance_rows": int(summary.get("rebalance_rows") or 0),
+                    "total_notional": float(summary.get("total_notional") or 0.0),
+                },
+                "rows": rows,
+            }
+            return jsonify(payload)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/live/execute_trade', methods=['POST'])
 def execute_trade():
     """Execute a trade from the web interface using LiveTracker"""
@@ -2643,6 +2810,110 @@ def _fetch_recent_m1_rows(conn, lookback_dates=20):
         return cursor.fetchall()
 
 
+def _coerce_to_date(raw_value):
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, datetime):
+        return raw_value.date()
+    if isinstance(raw_value, date):
+        return raw_value
+
+    s = str(raw_value).strip()
+    if not s:
+        return None
+
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").date()
+    except Exception:
+        pass
+
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) >= 8:
+        try:
+            return datetime.strptime(digits[:8], "%Y%m%d").date()
+        except Exception:
+            return None
+    return None
+
+
+def _ensure_m7_sell_signal_table(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS m7_sell_signals (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            signal_date DATE NOT NULL,
+            symbol VARCHAR(16) NOT NULL,
+            name VARCHAR(64) NULL,
+            sell_signal VARCHAR(32) NOT NULL DEFAULT 'REBALANCE',
+            reason VARCHAR(255) NULL,
+            current_weight DECIMAL(10,4) NULL,
+            target_weight DECIMAL(10,4) NULL,
+            delta_weight DECIMAL(10,4) NULL,
+            price DECIMAL(12,4) NULL,
+            shares INT NULL,
+            notional DECIMAL(16,2) NULL,
+            source VARCHAR(32) NOT NULL DEFAULT 'm7_rebalance',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_signal_symbol_source (signal_date, symbol, source),
+            KEY idx_signal_date (signal_date),
+            KEY idx_symbol (symbol)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+
+
+def _sync_m7_sell_signals(conn, signal_date, orders, source="m7_rebalance"):
+    if conn is None:
+        return 0
+
+    signal_dt = _coerce_to_date(signal_date) or datetime.now().date()
+    source = str(source or "m7_rebalance")
+
+    sell_orders = [
+        o for o in (orders or [])
+        if str(o.get("action") or "").upper() == "SELL"
+    ]
+
+    with conn.cursor() as cursor:
+        _ensure_m7_sell_signal_table(cursor)
+        cursor.execute(
+            "DELETE FROM m7_sell_signals WHERE signal_date = %s AND source = %s",
+            (signal_dt, source),
+        )
+
+        if sell_orders:
+            sql = """
+                INSERT INTO m7_sell_signals (
+                    signal_date, symbol, name, sell_signal, reason,
+                    current_weight, target_weight, delta_weight,
+                    price, shares, notional, source
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            params = []
+            for o in sell_orders:
+                params.append(
+                    (
+                        signal_dt,
+                        str(o.get("symbol") or "").zfill(6),
+                        o.get("name"),
+                        str(o.get("sell_signal") or "REBALANCE"),
+                        str(o.get("reason") or ""),
+                        float(o.get("current_weight") or 0.0),
+                        float(o.get("target_weight") or 0.0),
+                        float(o.get("delta_weight") or 0.0),
+                        float(o.get("price") or 0.0),
+                        int(o.get("shares") or 0),
+                        float(o.get("notional") or 0.0),
+                        source,
+                    )
+                )
+            cursor.executemany(sql, params)
+
+    conn.commit()
+    return len(sell_orders)
+
+
 def _fetch_live_positions_snapshot(conn):
     """Fetch current live positions as current portfolio snapshot."""
     if conn is None:
@@ -2673,6 +2944,9 @@ def _fetch_live_positions_snapshot(conn):
                 {
                     'symbol': str(r.get('symbol') or '').zfill(6),
                     'name': r.get('name'),
+                    'shares': int(r.get('shares') or 0),
+                    'avg_cost': float(r.get('avg_cost') or 0),
+                    'current_price': float(r.get('current_price') or 0),
                     'market_value': mv,
                 }
             )
@@ -3042,13 +3316,15 @@ def sina_strategy_m7():
         print(f"Failed to connect DB in sina_strategy_m7: {e}")
         conn = None
 
-    max_positions = request.args.get('max_positions', 5, type=int)
+    max_positions = request.args.get('max_positions', 3, type=int)
     capital = request.args.get('capital', 100000, type=float)
     min_trade_weight = request.args.get('min_trade_weight', 1.0, type=float)
+    stop_loss_pct = request.args.get('stop_loss_pct', 7.0, type=float)
 
-    max_positions = int(clamp(max_positions or 5, 1, 20))
+    max_positions = int(clamp(max_positions or 3, 1, 20))
     capital = clamp(capital if capital is not None else 100000, 10000.0, 100000000.0)
     min_trade_weight = clamp(min_trade_weight if min_trade_weight is not None else 1.0, 0.0, 20.0)
+    stop_loss_pct = clamp(stop_loss_pct if stop_loss_pct is not None else 7.0, 0.0, 30.0)
 
     latest_date = None
     rows = []
@@ -3071,8 +3347,19 @@ def sina_strategy_m7():
         current_positions=current_positions,
         total_capital=capital_used,
         min_trade_weight=min_trade_weight,
-        conn=conn
+        conn=conn,
+        stop_loss_pct=float(stop_loss_pct) / 100.0,
     )
+    m7_sell_sync_count = 0
+    try:
+        m7_sell_sync_count = _sync_m7_sell_signals(
+            conn=conn,
+            signal_date=latest_date,
+            orders=m7_eval.get('orders') or [],
+            source='m7_rebalance',
+        )
+    except Exception as e:
+        print(f"Failed to sync M7 sell signals: {e}")
 
     m1_summary = None
     executed_symbols = set()
@@ -3106,6 +3393,8 @@ def sina_strategy_m7():
             'capital': capital,
             'capital_used': capital_used,
             'min_trade_weight': min_trade_weight,
+            'stop_loss_pct': stop_loss_pct,
+            'm7_sell_sync_count': m7_sell_sync_count,
         },
         page_title="策略M7：模拟调仓与下单流水",
     )
@@ -3749,6 +4038,9 @@ def update_task_schedule(task_name):
         return redirect(url_for('admin'))
 
     schedule_enabled = request.form.get('schedule_enabled') == 'on'
+    if schedule_enabled and task_name not in SCHEDULED_TASK_WHITELIST:
+        schedule_enabled = False
+        flash(f"任务 {TASKS[task_name]['name']} 不支持定时调度，已自动关闭。", 'warning')
     with TASKS_LOCK:
         TASKS[task_name]['schedule_time'] = schedule_time
         TASKS[task_name]['schedule_enabled'] = schedule_enabled
@@ -3835,6 +4127,8 @@ def _run_scheduled_tasks_loop():
             due_tasks = []
             with TASKS_LOCK:
                 for task_name, task in TASKS.items():
+                    if task_name not in SCHEDULED_TASK_WHITELIST:
+                        continue
                     if not bool(task.get('schedule_enabled')):
                         continue
                     if bool(task.get('trading_day_only')) and not is_trade_day:
@@ -3848,6 +4142,9 @@ def _run_scheduled_tasks_loop():
                         continue
                     last_run_dt = _parse_task_last_run(task.get('last_run'))
                     if last_run_dt and last_run_dt >= scheduled_for:
+                        continue
+                    # Cross-process idempotence: prevent duplicate "catch-up" runs for the same slot.
+                    if _has_scheduled_run_in_slot(task_name, scheduled_for):
                         continue
                     due_tasks.append(task_name)
 
@@ -3867,6 +4164,10 @@ def _run_scheduled_tasks_loop():
 
 
 def start_task_scheduler_loop():
+    # When launched as `python web/app.py` with Werkzeug reloader, parent process
+    # also imports this module. Skip scheduler in parent to avoid duplicate loops.
+    if __name__ == "__main__" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return
     thread = threading.Thread(target=_run_scheduled_tasks_loop)
     thread.daemon = True
     thread.start()

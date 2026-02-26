@@ -369,6 +369,17 @@ class ClaudeScorer(BaseScorer):
         out[valid.to_numpy()] = np.clip(ranks.to_numpy(), 0.0, 1.0) * max_points
         return out
 
+    @staticmethod
+    def _numeric_series(df: pd.DataFrame, key: str) -> pd.Series:
+        raw = df.get(key, pd.Series(index=df.index, dtype=float))
+        if isinstance(raw, pd.DataFrame):
+            raw = raw.iloc[:, 0]
+        elif not isinstance(raw, pd.Series):
+            raw = pd.Series([raw] * len(df), index=df.index)
+        else:
+            raw = raw.reindex(df.index)
+        return pd.to_numeric(raw, errors="coerce")
+
     def _score_momentum(self, df: pd.DataFrame) -> np.ndarray:
         # 25 pts = ret_5(5) + ret_20(6) + ret_60(7) + vol_ratio(4) + turnover(3)
         score = np.zeros(len(df), dtype=float)
@@ -399,21 +410,21 @@ class ClaudeScorer(BaseScorer):
         # 15 pts via deterministic indicator rules (no unconditional base score)
         score = np.zeros(len(df), dtype=float)
 
-        macd = pd.to_numeric(df.get("macd"), errors="coerce")
-        macd_signal = pd.to_numeric(df.get("macd_signal"), errors="coerce")
+        macd = self._numeric_series(df, "macd")
+        macd_signal = self._numeric_series(df, "macd_signal")
         score += np.where((macd > 0) & (macd > macd_signal), 4, np.where(macd > 0, 2, 0))
 
-        rsi = pd.to_numeric(df.get("rsi_6"), errors="coerce")
+        rsi = self._numeric_series(df, "rsi_6")
         score += np.where((rsi >= 40) & (rsi <= 65), 3, np.where((rsi >= 30) & (rsi < 40), 1.5, 0))
 
-        k = pd.to_numeric(df.get("k"), errors="coerce")
-        d = pd.to_numeric(df.get("d"), errors="coerce")
+        k = self._numeric_series(df, "k")
+        d = self._numeric_series(df, "d")
         score += np.where((k > d) & (k < 80), 3, np.where((k > d), 1.5, 0))
 
-        cci = pd.to_numeric(df.get("cci"), errors="coerce")
+        cci = self._numeric_series(df, "cci")
         score += np.where((cci > -100) & (cci < 150), 3, np.where((cci >= 150), 1, 0))
 
-        bias = pd.to_numeric(df.get("bias"), errors="coerce").abs()
+        bias = self._numeric_series(df, "bias").abs()
         score += np.where(bias <= 0.05, 2, np.where(bias <= 0.1, 1, 0))
 
         return np.clip(score, 0.0, 15.0)
@@ -429,13 +440,13 @@ class ClaudeScorer(BaseScorer):
         # 10 pts = winner_rate near 20-40 better (6) + cost deviation (4)
         score = np.zeros(len(df), dtype=float)
 
-        wr = pd.to_numeric(df.get("winner_rate"), errors="coerce")
+        wr = self._numeric_series(df, "winner_rate")
         # triangular preference centered at 30, range +/-30
         wr_pts = (1 - (wr - 30).abs() / 30).clip(lower=0, upper=1) * 6
         score += wr_pts.fillna(0).to_numpy()
 
-        cost = pd.to_numeric(df.get("cost_50pct"), errors="coerce").replace(0, np.nan)
-        close = pd.to_numeric(df.get("close"), errors="coerce")
+        cost = self._numeric_series(df, "cost_50pct").replace(0, np.nan)
+        close = self._numeric_series(df, "close")
         ratio = close / cost
         ratio_pts = np.where(ratio > 1.1, 4, np.where(ratio > 1.03, 2.5, np.where(ratio > 0.97, 1, 0)))
         score += np.nan_to_num(ratio_pts, nan=0.0)

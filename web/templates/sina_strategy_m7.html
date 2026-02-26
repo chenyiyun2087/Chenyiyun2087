@@ -3,10 +3,13 @@
 {% block page_title %}策略M7：模拟调仓与下单流水{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span>
+    <!-- ── Section 1: Title + Date + M1 Summary ── -->
+    <div class="strat-header">
+        <span class="strat-date">最新事件日：{{ date or '-' }}</span>
+        <span class="strat-time">更新时间：{{ now }}</span>
     </div>
 
-    <div class="tabs" style="margin-bottom:14px;">
+    <div class="tabs">
         <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
         <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
         <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
@@ -27,52 +30,68 @@
     </div>
     {% endif %}
 
-    <form method="GET" action="{{ url_for('sina_strategy_m7') }}" class="strategy-form">
-        <div style="margin-bottom:8px;color:#9fb8dd;font-size:12px;">输入建议：先确认目标持仓数，再设定最小调仓阈值，减少小额噪声交易。</div>
-        <div class="form-grid">
-            <label>目标持仓数（Top N）
-                <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
-            </label>
-            <label>组合资金（仅无快照时使用）
-                <input type="number" min="10000" max="100000000" step="1000" name="capital"
-                    value="{{ params.capital }}">
-            </label>
-            <label>最小调仓阈值（%）
-                <input type="number" min="0" max="20" step="0.1" name="min_trade_weight"
-                    value="{{ params.min_trade_weight }}">
-            </label>
+    <!-- ── Section 2: Input Parameters ── -->
+    <form method="GET" action="{{ url_for('sina_strategy_m7') }}">
+        <div class="strat-params">
+            <div class="strat-params-title">参数输入（调仓配置）</div>
+            <div class="strat-params-desc">先确认目标持仓数，再设定最小调仓阈值，减少小额噪声交易。</div>
+            <div class="strat-params-grid">
+                <label>目标持仓数（Top N）
+                    <input type="number" min="1" max="20" step="1" name="max_positions"
+                        value="{{ params.max_positions }}">
+                </label>
+                <label>组合资金（仅无快照时使用）
+                    <input type="number" min="10000" max="100000000" step="1000" name="capital"
+                        value="{{ params.capital }}">
+                </label>
+                <label>最小调仓阈值（%）
+                    <input type="number" min="0" max="20" step="0.1" name="min_trade_weight"
+                        value="{{ params.min_trade_weight }}">
+                </label>
+                <label>硬止损阈值（%）
+                    <input type="number" min="0" max="30" step="0.1" name="stop_loss_pct"
+                        value="{{ params.stop_loss_pct }}">
+                </label>
+            </div>
+            <div class="strat-params-footer">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="k">目标标的数</div>
+                        <div class="v">{{ m7_eval.target_count }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">当前持仓数</div>
+                        <div class="v">{{ m7_eval.current_count }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">模拟订单数</div>
+                        <div class="v">{{ m7_eval.orders_total }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">买入/卖出</div>
+                        <div class="v">{{ m7_eval.buy_total }}/{{ m7_eval.sell_total }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">强制卖出</div>
+                        <div class="v">{{ m7_eval.forced_sell_total or 0 }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">预计换手额</div>
+                        <div class="v">{{ m7_eval.turnover_notional }}</div>
+                    </div>
+                </div>
+                <button class="btn" type="submit">更新模拟调仓单</button>
+            </div>
+            <p class="strat-hint" style="font-style:normal;">估算资金基数：{{ params.capital_used }} ｜ 卖出信号落库：{{
+                params.m7_sell_sync_count or 0 }} 条（表：m7_sell_signals）</p>
         </div>
-        <div style="margin-top:12px;"><button class="btn" type="submit">更新模拟调仓单</button></div>
     </form>
-
-    <div class="m2-summary-grid" style="margin-top:12px;">
-        <div class="m2-kpi-card">
-            <div class="k">目标标的数</div>
-            <div class="v">{{ m7_eval.target_count }}</div>
-        </div>
-        <div class="m2-kpi-card">
-            <div class="k">当前持仓数</div>
-            <div class="v">{{ m7_eval.current_count }}</div>
-        </div>
-        <div class="m2-kpi-card">
-            <div class="k">模拟订单数</div>
-            <div class="v">{{ m7_eval.orders_total }}</div>
-        </div>
-        <div class="m2-kpi-card">
-            <div class="k">买入/卖出</div>
-            <div class="v">{{ m7_eval.buy_total }}/{{ m7_eval.sell_total }}</div>
-        </div>
-        <div class="m2-kpi-card">
-            <div class="k">预计换手额</div>
-            <div class="v">{{ m7_eval.turnover_notional }}</div>
-        </div>
-    </div>
-    <div style="margin-top:8px;color:#9fb8dd;font-size:12px;">估算资金基数：{{ params.capital_used }}</div>
 </section>
 
+<!-- ── Section 3: Output Results ── -->
 <section class="panel">
     <div class="panel-title">M7 模拟下单流水</div>
-    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">读表建议：优先处理金额大且偏离权重高的订单；执行前请复核价格、股数和资金约束。</div>
+    <p class="results-hint">读表建议：优先处理金额大且偏离权重高的订单；执行前请复核价格、股数和资金约束。</p>
     <table>
         <thead>
             <tr>
@@ -86,6 +105,7 @@
                 <th>变动%</th>
                 <th>股数</th>
                 <th>金额</th>
+                <th>触发原因</th>
                 <th>状态</th>
                 <th>操作</th>
             </tr>
@@ -104,6 +124,7 @@
                 <td>{{ o.delta_weight }}</td>
                 <td>{{ o.shares }}</td>
                 <td>{{ o.notional }}</td>
+                <td style="font-size: 11px;">{{ o.reason or '-' }}</td>
                 <td class="status-cell">
                     {% if o.is_executed %}
                     <span class="tag trade">已执行</span>
@@ -114,16 +135,17 @@
                 <td>
                     {% if o.cli_cmd %}
                     <div style="display: flex; gap: 5px;">
-                        <button class="btn-small" onclick="copyCmd('{{ o.cli_cmd }}')">复制</button>
-                        <button class="btn-small trade" onclick="openExecuteModal({
-                            symbol: '{{ o.symbol }}',
-                            name: '{{ o.name }}',
-                            action: '{{ o.action }}',
-                            price: {{ o.price or 0 }},
-                            shares: {{ o.shares or 0 }},
-                            notional: {{ o.notional or 0 }},
-                            score: {{ o.m4_score or 'null' }}
-                        })">执行</button>
+                        <button class="btn-small" onclick='copyCmd({{ o.cli_cmd|tojson }})'>复制</button>
+                        <button class="btn-small trade" onclick='openExecuteModal({
+                            symbol: {{ o.symbol|tojson }},
+                            name: {{ o.name|tojson }},
+                            action: {{ o.action|tojson }},
+                            price: {{ (o.price if o.price is not none else 0)|tojson }},
+                            shares: {{ (o.shares if o.shares is not none else 0)|tojson }},
+                            notional: {{ (o.notional if o.notional is not none else 0)|tojson }},
+                            score: {{ o.m4_score|tojson }},
+                            reason: {{ o.reason|tojson }}
+                        })'>执行</button>
                     </div>
                     {% else %}
                     -
@@ -132,40 +154,80 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="11" class="empty">暂无需执行的调仓单（可能已接近目标权重）</td>
+                <td colspan="13" class="empty">暂无需执行的调仓单（可能已接近目标权重）</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </section>
 
+<section class="panel">
+    <div class="panel-title">M7 卖出信号落库明细</div>
+    <p class="results-hint">数据来源：m7_sell_signals。默认查询最新日期，可按日期重查。</p>
+    <div class="strat-params-grid" style="margin-bottom:14px;">
+        <label>信号日期
+            <input id="sell-signal-date" type="date" value="{{ date or '' }}">
+        </label>
+        <label>来源
+            <select id="sell-signal-source">
+                <option value="m7_rebalance">m7_rebalance</option>
+                <option value="all">all</option>
+            </select>
+        </label>
+        <label>条数上限
+            <input id="sell-signal-limit" type="number" min="1" max="1000" step="1" value="200">
+        </label>
+        <button id="sell-signal-refresh" class="btn" type="button" style="align-self:flex-end;">查询</button>
+    </div>
+
+    <div id="sell-signal-summary" class="results-hint">加载中...</div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>信号类型</th>
+                <th>触发原因</th>
+                <th>当前%</th>
+                <th>目标%</th>
+                <th>变动%</th>
+                <th>价格</th>
+                <th>股数</th>
+                <th>金额</th>
+                <th>更新时间</th>
+            </tr>
+        </thead>
+        <tbody id="sell-signal-tbody">
+            <tr>
+                <td colspan="11" class="empty">加载中...</td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+
 <!-- Modal for Trade Execution -->
-<div id="executeModal"
-    style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8);">
-    <div
-        style="background: #1e1e1e; margin: 10% auto; padding: 25px; border: 1px solid #444; width: 400px; border-radius: 8px; position: relative; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
-        <h3 id="modalTitle" style="margin-top: 0; color: #4CAF50; border-bottom: 1px solid #444; padding-bottom: 10px;">
-            确认执行交易</h3>
-        <div id="modalBody" style="margin: 20px 0; line-height: 2;">
+<div id="executeModal" class="modal-overlay">
+    <div class="modal-content">
+        <h3 id="modalTitle">确认执行交易</h3>
+        <div id="modalBody" class="modal-body">
             <div><strong>股票：</strong> <span id="m_name"></span> (<span id="m_symbol"></span>)</div>
             <div><strong>操作：</strong> <span id="m_action"></span></div>
+            <div><strong>触发原因：</strong> <span id="m_reason"></span></div>
             <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
                 <strong>价格：</strong>
-                <input type="number" id="m_price" step="0.01"
-                    style="width: 100px; background: #2a2a2a; color: white; border: 1px solid #444; padding: 4px; border-radius: 4px;">
+                <input type="number" id="m_price" step="0.01">
             </div>
             <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
                 <strong>股数：</strong>
-                <input type="number" id="m_shares" step="100"
-                    style="width: 100px; background: #2a2a2a; color: white; border: 1px solid #444; padding: 4px; border-radius: 4px;">
+                <input type="number" id="m_shares" step="100">
             </div>
             <div style="margin-top: 5px;"><strong>总额：</strong> ¥<span id="m_notional">0</span></div>
         </div>
-        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
-            <button id="confirmBtn" onclick="confirmExecute()" class="tag trade"
-                style="border: none; cursor: pointer; padding: 8px 20px; font-weight: bold;">确认执行</button>
-            <button onclick="closeExecuteModal()" class="tag"
-                style="border: none; cursor: pointer; padding: 8px 20px; background: #666; color: white;">取消</button>
+        <div class="modal-actions">
+            <button id="confirmBtn" onclick="confirmExecute()" class="btn"
+                style="background:var(--success);border-color:var(--success);">确认执行</button>
+            <button onclick="closeExecuteModal()" class="btn-outline">取消</button>
         </div>
     </div>
 </div>
@@ -173,7 +235,87 @@
 <script>
     let currentTradeData = null;
 
-    // Load execution status on page load
+    function fmtNum(v, digits = 2) {
+        const n = Number(v);
+        return Number.isFinite(n) ? n.toFixed(digits) : '-';
+    }
+
+    function escHtml(v) {
+        return String(v ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    async function loadSellSignalTable() {
+        const dateInput = document.getElementById('sell-signal-date');
+        const sourceInput = document.getElementById('sell-signal-source');
+        const limitInput = document.getElementById('sell-signal-limit');
+        const summary = document.getElementById('sell-signal-summary');
+        const tbody = document.getElementById('sell-signal-tbody');
+        const refreshBtn = document.getElementById('sell-signal-refresh');
+        if (!summary || !tbody || !refreshBtn) return;
+
+        const params = new URLSearchParams();
+        const dateVal = (dateInput?.value || '').trim();
+        const sourceVal = (sourceInput?.value || '').trim() || 'm7_rebalance';
+        const limitVal = parseInt(limitInput?.value || '200', 10);
+        if (dateVal) params.set('date', dateVal);
+        if (sourceVal) params.set('source', sourceVal);
+        if (Number.isFinite(limitVal)) params.set('limit', String(limitVal));
+
+        refreshBtn.disabled = true;
+        const oldBtnText = refreshBtn.innerText;
+        refreshBtn.innerText = '查询中...';
+        summary.innerText = '加载中...';
+        tbody.innerHTML = '<tr><td colspan="11" class="empty">加载中...</td></tr>';
+
+        try {
+            const res = await fetch('/api/m7/sell-signals/latest?' + params.toString());
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.error || `HTTP ${res.status}`);
+            }
+
+            const s = data.summary || {};
+            summary.innerText = `日期: ${data.signal_date || '-'} | 来源: ${data.source || '-'} | 总数: ${s.total_rows || 0} | 强制卖出: ${s.forced_exit_rows || 0} | 调仓卖出: ${s.rebalance_rows || 0} | 总金额: ${fmtNum(s.total_notional)}`;
+
+            const rows = data.rows || [];
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="11" class="empty">暂无卖出信号</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = rows.map(r => {
+                const signalType = String(r.sell_signal || '-');
+                const signalClass = signalType === 'FORCED_EXIT' ? 'text-down' : '';
+                return `
+                    <tr>
+                        <td>${escHtml(r.symbol || '-')}</td>
+                        <td>${escHtml(r.name || '-')}</td>
+                        <td class="${signalClass}">${escHtml(signalType)}</td>
+                        <td style="font-size:11px;">${escHtml(r.reason || '-')}</td>
+                        <td>${fmtNum(r.current_weight)}</td>
+                        <td>${fmtNum(r.target_weight)}</td>
+                        <td>${fmtNum(r.delta_weight)}</td>
+                        <td>${fmtNum(r.price)}</td>
+                        <td>${escHtml(r.shares ?? '-')}</td>
+                        <td>${fmtNum(r.notional)}</td>
+                        <td style="font-size:11px;">${escHtml(r.updated_at || r.created_at || '-')}</td>
+                    </tr>
+                `;
+            }).join('');
+        } catch (e) {
+            summary.innerText = '加载失败：' + (e?.message || e);
+            tbody.innerHTML = '<tr><td colspan="11" class="empty">加载失败</td></tr>';
+        } finally {
+            refreshBtn.disabled = false;
+            refreshBtn.innerText = oldBtnText;
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         const saved = JSON.parse(localStorage.getItem('m7_executed') || '{}');
         const today = new Date().toISOString().split('T')[0];
@@ -189,6 +331,12 @@
                 }
             });
         }
+
+        const refreshBtn = document.getElementById('sell-signal-refresh');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', loadSellSignalTable);
+        }
+        loadSellSignalTable();
     });
 
     function copyCmd(cmd) {
@@ -207,16 +355,20 @@
         document.getElementById('m_symbol').innerText = data.symbol;
         const actionSpan = document.getElementById('m_action');
         actionSpan.innerHTML = data.action === 'BUY' ? '<span class="text-up">买入</span>' : '<span class="text-down">卖出</span>';
+        document.getElementById('m_reason').innerText = data.reason || '-';
 
         const priceInput = document.getElementById('m_price');
         const sharesInput = document.getElementById('m_shares');
         const notionalSpan = document.getElementById('m_notional');
 
-        priceInput.value = data.price.toFixed(2);
-        sharesInput.value = data.shares;
-        notionalSpan.innerText = data.notional.toLocaleString();
+        const p = Number(data.price);
+        const s = parseInt(data.shares, 10);
+        const n = Number(data.notional);
 
-        // Update notional on input change
+        priceInput.value = Number.isFinite(p) ? p.toFixed(2) : '0.00';
+        sharesInput.value = Number.isFinite(s) ? s : 0;
+        notionalSpan.innerText = Number.isFinite(n) ? n.toLocaleString() : '0';
+
         const updateNotional = () => {
             const p = parseFloat(priceInput.value) || 0;
             const s = parseInt(sharesInput.value) || 0;
@@ -260,13 +412,12 @@
                     price: price,
                     shares: shares,
                     score: currentTradeData.score,
-                    reason: 'M7 策略调仓 (Web交互)'
+                    reason: currentTradeData.reason || 'M7 策略调仓 (Web交互)'
                 })
             });
 
             const result = await response.json();
             if (result.success) {
-                // Save to localStorage before reload
                 const saved = JSON.parse(localStorage.getItem('m7_executed') || '{}');
                 const today = new Date().toISOString().split('T')[0];
                 if (saved.date !== today) {
@@ -292,7 +443,6 @@
         }
     }
 
-    // Close on outside click
     window.onclick = function (event) {
         const modal = document.getElementById('executeModal');
         if (event.target == modal) {

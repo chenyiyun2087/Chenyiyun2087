@@ -3,9 +3,13 @@
 {% block page_title %}策略M6：净值回测（成本/滑点）{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+    <!-- ── Section 1: Title + Date + M1 Summary ── -->
+    <div class="strat-header">
+        <span class="strat-date">最新事件日：{{ date or '-' }}</span>
+        <span class="strat-time">更新时间：{{ now }}</span>
+    </div>
 
-    <div class="tabs" style="margin-bottom:14px;">
+    <div class="tabs">
         <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
         <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
         <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
@@ -26,39 +30,73 @@
     </div>
     {% endif %}
 
-    <form method="GET" action="{{ url_for('sina_strategy_m6') }}" class="strategy-form">
-        <div style="margin-bottom:8px;color:#9fb8dd;font-size:12px;">输入建议：先固定持仓数，再逐步提高成本/滑点参数做压力测试。</div>
-        <div class="form-grid">
-            <label>回看范围（事件日数）
-                <input type="number" min="5" max="240" step="1" name="lookback_dates" value="{{ params.lookback_dates }}">
-            </label>
-            <label>每期持仓数
-                <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
-            </label>
-            <label>单边手续费（bps）
-                <input type="number" min="0" max="200" step="0.1" name="cost_bps" value="{{ params.cost_bps }}">
-            </label>
-            <label>单边滑点（bps）
-                <input type="number" min="0" max="200" step="0.1" name="slippage_bps" value="{{ params.slippage_bps }}">
-            </label>
+    <!-- ── Section 2: Input Parameters ── -->
+    <form method="GET" action="{{ url_for('sina_strategy_m6') }}">
+        <div class="strat-params">
+            <div class="strat-params-title">参数输入（回测配置）</div>
+            <div class="strat-params-desc">先固定持仓数，再逐步提高成本/滑点参数做压力测试。</div>
+            <div class="strat-params-grid">
+                <label>回看范围（事件日数）
+                    <input type="number" min="5" max="240" step="1" name="lookback_dates"
+                        value="{{ params.lookback_dates }}">
+                </label>
+                <label>每期持仓数
+                    <input type="number" min="1" max="20" step="1" name="max_positions"
+                        value="{{ params.max_positions }}">
+                </label>
+                <label>单边手续费（bps）
+                    <input type="number" min="0" max="200" step="0.1" name="cost_bps" value="{{ params.cost_bps }}">
+                </label>
+                <label>单边滑点（bps）
+                    <input type="number" min="0" max="200" step="0.1" name="slippage_bps"
+                        value="{{ params.slippage_bps }}">
+                </label>
+            </div>
+            <div class="strat-params-footer">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="k">可交易事件</div>
+                        <div class="v">{{ m6_eval.eligible_total }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">回测事件日数</div>
+                        <div class="v">{{ m6_eval.dates_total }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">毛收益(%)</div>
+                        <div class="v">{{ m6_eval.gross_final_ret_pct }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">净收益(%)</div>
+                        <div class="v">{{ m6_eval.net_final_ret_pct }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">最大回撤(%)</div>
+                        <div class="v">{{ m6_eval.max_drawdown_pct if m6_eval.max_drawdown_pct is not none else '-' }}
+                        </div>
+                    </div>
+                </div>
+                <button class="btn" type="submit">更新净值回测</button>
+            </div>
         </div>
-        <div style="margin-top:12px;"><button class="btn" type="submit">更新净值回测</button></div>
     </form>
-
-    <div class="m2-summary-grid" style="margin-top:12px;">
-        <div class="m2-kpi-card"><div class="k">可交易事件</div><div class="v">{{ m6_eval.eligible_total }}</div></div>
-        <div class="m2-kpi-card"><div class="k">回测事件日数</div><div class="v">{{ m6_eval.dates_total }}</div></div>
-        <div class="m2-kpi-card"><div class="k">毛收益(%)</div><div class="v">{{ m6_eval.gross_final_ret_pct }}</div></div>
-        <div class="m2-kpi-card"><div class="k">净收益(%)</div><div class="v">{{ m6_eval.net_final_ret_pct }}</div></div>
-        <div class="m2-kpi-card"><div class="k">最大回撤(%)</div><div class="v">{{ m6_eval.max_drawdown_pct if m6_eval.max_drawdown_pct is not none else '-' }}</div></div>
-    </div>
 </section>
 
+<!-- ── Section 3: Output Results ── -->
 <section class="panel">
     <div class="panel-title">M6 净值序列明细</div>
-    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">读表建议：重点观察净收益与净净值的连续性；若频繁跳变，需回看持仓集中度与成本设置。</div>
+    <p class="results-hint">读表建议：重点观察净收益与净净值的连续性；若频繁跳变，需回看持仓集中度与成本设置。</p>
     <table>
-        <thead><tr><th>事件日</th><th>持仓数</th><th>毛收益%</th><th>净收益%</th><th>毛净值</th><th>净净值</th></tr></thead>
+        <thead>
+            <tr>
+                <th>事件日</th>
+                <th>持仓数</th>
+                <th>毛收益%</th>
+                <th>净收益%</th>
+                <th>毛净值</th>
+                <th>净净值</th>
+            </tr>
+        </thead>
         <tbody>
             {% for row in m6_eval.nav_points %}
             <tr>
@@ -70,7 +108,9 @@
                 <td class="text-up">{{ row.net_nav }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="6" class="empty">暂无足够数据进行净值回测</td></tr>
+            <tr>
+                <td colspan="6" class="empty">暂无足够数据进行净值回测</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>

@@ -3,7 +3,7 @@
 {% block page_title %}调度与管理控制台{% endblock %}
 {% block content %}
 
-<div class="sub-tabs" style="display:flex; gap:10px; margin-bottom:20px; border-bottom:2px solid #000;">
+<div class="sub-tabs">
     <button id="tab-btn-center-tab" class="sub-tab" onclick="showTab('center-tab')">后台任务中心</button>
     <button id="tab-btn-lock-tab" class="sub-tab" onclick="showTab('lock-tab')">任务锁状态</button>
     <button id="tab-btn-result-tab" class="sub-tab" onclick="showTab('result-tab')">任务结果查询</button>
@@ -29,34 +29,47 @@
                 {% for name, task in tasks.items() %}
                 <tr>
                     <td>
-                        <div style="font-weight: 800;">{{ task.name }}</div>
-                        <div style="font-size: 11px; opacity: 0.7; margin-top: 4px;">{{ task.description or '-' }}</div>
-                        <code style="font-size: 10px; opacity: 0.5;">ID: {{ name }}</code>
+                        <div class="task-name">{{ task.name }}</div>
+                        <div class="task-desc">{{ task.description or '-' }}</div>
+                        <code class="task-id">ID: {{ name }}</code>
                     </td>
-                    <td><span id="task-status-{{ name }}" class="status-badge">{{ task.status }}</span></td>
                     <td>
-                        <div style="font-size: 12px;">上: {{ task.last_run or '-' }}</div>
-                        <div style="font-size: 12px; margin-top: 2px;">下: {{ task.next_run or '-' }}</div>
+                        <span id="task-status-{{ name }}" class="status-badge
+                            {% if task.status == 'Running...' %}status-running
+                            {% elif task.status == 'Success' %}status-success
+                            {% elif task.status in ['Failed', 'Error'] %}status-failed
+                            {% else %}status-idle{% endif %}">{{ task.status }}</span>
                     </td>
-                    <td>{{ '✅' if task.switched_day else '❌' }}</td>
+                    <td>
+                        <div class="time-display">上: {{ task.last_run or '-' }}</div>
+                        <div class="time-display">下: {{ task.next_run or '-' }}</div>
+                    </td>
+                    <td>
+                        {% if task.switched_day %}
+                        <span class="day-badge day-yes">已切日</span>
+                        {% else %}
+                        <span class="day-badge day-no">未切日</span>
+                        {% endif %}
+                    </td>
                     <td>
                         <form method="post" action="{{ url_for('update_task_schedule', task_name=name) }}"
-                            style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <label style="display:flex; align-items:center; gap:4px; font-size: 12px;">
-                                    <input type="checkbox" name="schedule_enabled" {% if task.schedule_enabled %}checked{% endif %}>
+                            class="schedule-form">
+                            <div class="schedule-row">
+                                <label class="schedule-label">
+                                    <input type="checkbox" name="schedule_enabled" {% if task.schedule_enabled
+                                        %}checked{% endif %}>
                                     自动
                                 </label>
                                 <input type="time" name="schedule_time" value="{{ task.schedule_time or '00:00' }}"
-                                    style="padding: 2px 4px !important; font-size: 12px;" required>
+                                    class="schedule-time" required>
                             </div>
-                            <button class="btn" style="padding: 4px 8px; font-size: 10px;">更新配置</button>
+                            <button class="btn schedule-btn">更新配置</button>
                         </form>
                     </td>
                     <td>
                         <form method="post" action="{{ url_for('run_task', task_name=name) }}" class="js-run-task-form"
                             data-task-id="{{ name }}">
-                            <button class="btn btn-run-task" style="padding: 4px 12px;">运行</button>
+                            <button class="btn btn-run-task">运行</button>
                         </form>
                     </td>
                 </tr>
@@ -67,18 +80,18 @@
 
     <section class="panel">
         <div class="panel-title">调度说明</div>
-        <div style="font-size: 13px; line-height: 1.6;">
-            • 系统根据<strong>交易日历</strong>决定是否执行标有“交易日执行”的任务。<br>
+        <div class="info-text">
+            • 系统根据<strong>交易日历</strong>决定是否执行标有"交易日执行"的任务。<br>
             • 任务触发后直接尝试获取数据库锁：<strong>同任务仅允许1个实例运行</strong>，不同任务可并发。<br>
-            • 任务结束时会执行结果校验（如 sina_score/sina_m8），避免“进程成功但数据未落库”的假成功。<br>
-            • 在“任务结果查询”点击“详细”，可查看脚本输出尾部和校验结论。
+            • 任务结束时会执行结果校验（如 sina_score/sina_m8），避免"进程成功但数据未落库"的假成功。<br>
+            • 在"任务结果查询"点击"详细"，可查看脚本输出尾部和校验结论。
         </div>
     </section>
 
     <section class="panel">
         <div class="panel-title">手动录入成交单</div>
-        <form method="post" action="{{ url_for('add_position') }}" class="form-grid" style="max-width: 500px;">
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <form method="post" action="{{ url_for('add_position') }}" class="form-grid">
+            <div class="form-grid-2col">
                 <div class="form-group">
                     <label>股票代码</label>
                     <input name="symbol" placeholder="如: 600519" required style="width:100%;">
@@ -104,7 +117,7 @@
                     <input name="strategy_id" placeholder="M8_PYRAMID" style="width:100%;">
                 </div>
             </div>
-            <button class="btn" style="margin-top:20px; width:100%;">提交入库并同步实盘快照</button>
+            <button class="btn form-submit-btn">提交入库并同步实盘快照</button>
         </form>
     </section>
 </div>
@@ -112,7 +125,7 @@
 <div id="lock-tab" class="admin-tab-content" style="display:none;">
     <section class="panel">
         <div class="panel-title">任务锁状态（同任务单实例）</div>
-        <div class="table-container" style="max-height: 550px; overflow-y: auto; margin-bottom: 12px;">
+        <div class="table-container" style="max-height: 550px; overflow-y: auto;">
             <table>
                 <thead>
                     <tr>
@@ -127,16 +140,22 @@
                 <tbody>
                     {% for row in task_locks %}
                     <tr>
-                        <td>{{ row.task_name }}</td>
-                        <td>{{ row.status }}</td>
-                        <td>{{ row.started_at or '-' }}</td>
-                        <td>{{ row.heartbeat_at or '-' }}</td>
-                        <td>{{ row.finished_at or '-' }}</td>
+                        <td><code class="task-id">{{ row.task_name }}</code></td>
+                        <td>
+                            <span class="status-badge
+                                {% if row.status == 'running' %}status-running
+                                {% elif row.status == 'done' %}status-success
+                                {% else %}status-idle{% endif %}">{{ row.status }}</span>
+                        </td>
+                        <td class="time-display">{{ row.started_at or '-' }}</td>
+                        <td class="time-display">{{ row.heartbeat_at or '-' }}</td>
+                        <td class="time-display">{{ row.finished_at or '-' }}</td>
                         <td>{{ row.message or '-' }}</td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="6" style="text-align:center; padding: 20px;">当前无任务锁记录</td>
+                        <td colspan="6" style="text-align:center; padding: 30px; color: var(--text-muted);">当前无任务锁记录
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -165,49 +184,62 @@
                     {% for row in task_results %}
                     {% set msg = row.message or '' %}
                     <tr>
-                        <td>{{ row.task_display_name }}<br><small>{{ row.task_name }}</small></td>
-                        <td>{{ '🤖 计划' if row.trigger_type == 'schedule' else '👤 手动' }}</td>
-                        <td style="font-size: 11px;">
-                            始: {{ row.started_at }}<br>
-                            终: {{ row.finished_at or '...' }}
-                        </td>
-                        <td>{{ row.duration_seconds or '-' }}s</td>
                         <td>
-                            <strong class="{% if row.status == 'Success' %}text-up{% else %}text-down{% endif %}">
-                                {{ row.status }}
-                            </strong>
-                            {% if row.exit_code is not none %}({{ row.exit_code }}){% endif %}
+                            <div class="task-name">{{ row.task_display_name }}</div>
+                            <code class="task-id">{{ row.task_name }}</code>
                         </td>
                         <td>
-                            {% if 'result=PASS' in msg %}
-                            <span class="text-up"><strong>PASS</strong></span>
-                            {% elif 'result=FAIL' in msg %}
-                            <span class="text-down"><strong>FAIL</strong></span>
-                            {% elif 'result=SKIP' in msg %}
-                            <span>SKIP</span>
+                            {% if row.trigger_type == 'schedule' %}
+                            <span class="trigger-badge trigger-schedule">计划</span>
                             {% else %}
-                            -
+                            <span class="trigger-badge trigger-manual">手动</span>
                             {% endif %}
                         </td>
                         <td>
-                            <button type="button" class="btn" style="padding: 3px 10px; font-size: 11px;"
+                            <div class="time-display">始: {{ row.started_at }}</div>
+                            <div class="time-display">终: {{ row.finished_at or '...' }}</div>
+                        </td>
+                        <td><span class="time-display">{{ row.duration_seconds or '-' }}s</span></td>
+                        <td>
+                            <span class="status-badge
+                                {% if row.status == 'Success' %}status-success
+                                {% elif row.status in ['Failed', 'Error'] %}status-failed
+                                {% else %}status-idle{% endif %}">
+                                {{ row.status }}{% if row.exit_code is not none %} ({{ row.exit_code }}){% endif %}
+                            </span>
+                        </td>
+                        <td>
+                            {% if 'result=PASS' in msg %}
+                            <span class="result-pass">PASS</span>
+                            {% elif 'result=FAIL' in msg %}
+                            <span class="result-fail">FAIL</span>
+                            {% elif 'result=SKIP' in msg %}
+                            <span class="result-skip">SKIP</span>
+                            {% else %}
+                            <span class="result-skip">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button type="button" class="btn btn-sm btn-outline"
                                 onclick="toggleResultDetail('{{ row.id }}', this)">详细</button>
                         </td>
                     </tr>
-                    <tr id="detail-row-{{ row.id }}" style="display:none; background:#fafafa;">
-                        <td colspan="7" style="padding: 12px;">
-                            <div style="font-size: 12px; margin-bottom: 6px;">
-                                <strong>任务状态：</strong>{{ row.status }}{% if row.exit_code is not none %} (exit_code={{ row.exit_code }}){% endif %}
+                    <tr id="detail-row-{{ row.id }}" class="detail-row" style="display:none;">
+                        <td colspan="7">
+                            <div style="font-size: 12px; margin-bottom: 8px; color: var(--text-muted);">
+                                <strong style="color: var(--text);">任务状态：</strong>{{ row.status }}{% if row.exit_code is
+                                not none %} (exit_code={{ row.exit_code }}){% endif %}
                             </div>
-                            <div style="font-size: 12px; margin-bottom: 6px;">
-                                <strong>脚本输出与校验：</strong>
+                            <div style="font-size: 12px; margin-bottom: 8px; color: var(--text-muted);">
+                                <strong style="color: var(--text);">脚本输出与校验：</strong>
                             </div>
-                            <pre style="margin:0; padding:10px; font-size:12px; white-space:pre-wrap; background:#fff; border:1px solid #ddd;">{{ row.message or '无脚本输出/校验输出（旧记录或未启用校验）' }}</pre>
+                            <pre>{{ row.message or '无脚本输出/校验输出（旧记录或未启用校验）' }}</pre>
                         </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="7" style="text-align:center; padding: 40px;">暂无历史执行记录</td>
+                        <td colspan="7" style="text-align:center; padding: 50px; color: var(--text-muted);">暂无历史执行记录
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -220,6 +252,7 @@
     function activateTab(tabId) {
         document.querySelectorAll('.admin-tab-content').forEach(div => {
             div.style.display = 'none';
+            div.style.animation = 'none';
         });
         document.querySelectorAll('.sub-tab').forEach(btn => {
             btn.classList.remove('active');
@@ -228,6 +261,9 @@
         const panel = document.getElementById(tabId);
         if (panel) {
             panel.style.display = 'block';
+            /* Trigger reflow to restart animation */
+            void panel.offsetWidth;
+            panel.style.animation = '';
         }
         const button = document.getElementById('tab-btn-' + tabId);
         if (button) {
@@ -259,7 +295,7 @@
         }
         const oldText = btn.textContent;
         btn.disabled = true;
-        btn.textContent = '执行中';
+        btn.textContent = '执行中…';
         showActionFeedback('任务提交中，请稍候...', 'info');
 
         try {
@@ -277,13 +313,21 @@
 
             if (data.task_status && taskId) {
                 const badge = document.getElementById('task-status-' + taskId);
-                if (badge) badge.textContent = data.task_status;
+                if (badge) {
+                    badge.textContent = data.task_status;
+                    badge.className = 'status-badge';
+                    if (data.task_status === 'Running...') badge.classList.add('status-running');
+                    else if (data.task_status === 'Success') badge.classList.add('status-success');
+                    else if (['Failed', 'Error'].includes(data.task_status)) badge.classList.add('status-failed');
+                    else badge.classList.add('status-idle');
+                }
             }
         } catch (err) {
             showActionFeedback('提交失败：网络或服务异常。', 'danger');
         } finally {
             btn.disabled = false;
             btn.textContent = oldText;
+            btn.style.width = '';
             form.dataset.busy = '0';
         }
     }
@@ -306,45 +350,4 @@
         });
     });
 </script>
-
-<style>
-    .admin-action-feedback {
-        min-height: 42px;
-        margin: 0 0 16px;
-        padding: 10px 12px;
-        border: 3px solid #000;
-        font-size: 13px;
-        font-weight: 700;
-        line-height: 1.3;
-        visibility: hidden;
-    }
-
-    .admin-action-feedback.info,
-    .admin-action-feedback.success,
-    .admin-action-feedback.warning,
-    .admin-action-feedback.danger {
-        visibility: visible;
-    }
-
-    .btn-run-task {
-        min-width: 74px;
-        text-align: center;
-    }
-
-    .status-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        background: #000;
-        color: #fff !important;
-        font-size: 11px;
-        font-weight: 700;
-    }
-
-    .form-group label {
-        display: block;
-        font-size: 12px;
-        font-weight: 800;
-        margin-bottom: 5px;
-    }
-</style>
 {% endblock %}

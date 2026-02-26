@@ -3,9 +3,13 @@
 {% block page_title %}策略M3：参数优化与冠军方案{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+    <!-- ── Section 1: Title + Date + M1 Summary ── -->
+    <div class="strat-header">
+        <span class="strat-date">最新事件日：{{ date or '-' }}</span>
+        <span class="strat-time">更新时间：{{ now }}</span>
+    </div>
 
-    <div class="tabs" style="margin-bottom:14px;">
+    <div class="tabs">
         <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
         <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
         <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
@@ -23,38 +27,49 @@
         <span>事件总数：{{ m1_summary.total_events }}</span>
         <span>可交易：{{ m1_summary.eligible_events }}</span>
         <span>高风险：{{ m1_summary.high_risk_events }}</span>
-        <span>Hit@10%（3/5/10日）：{{ m1_summary.hit_3_10pct if m1_summary.hit_3_10pct is not none else '-' }}% / {{ m1_summary.hit_5_10pct if m1_summary.hit_5_10pct is not none else '-' }}% / {{ m1_summary.hit_10_10pct if m1_summary.hit_10_10pct is not none else '-' }}%</span>
+        <span>Hit@10%（3/5/10日）：{{ m1_summary.hit_3_10pct if m1_summary.hit_3_10pct is not none else '-' }}% / {{
+            m1_summary.hit_5_10pct if m1_summary.hit_5_10pct is not none else '-' }}% / {{ m1_summary.hit_10_10pct if
+            m1_summary.hit_10_10pct is not none else '-' }}%</span>
     </div>
     {% endif %}
 
-    <div class="m2-summary-grid">
-        <div class="m2-kpi-card">
-            <div class="k">可交易样本</div>
-            <div class="v">{{ m3_eval.eligible_total }}</div>
+    <!-- ── Section 2: No Params — KPI cards + notice ── -->
+    <div class="strat-params">
+        <div class="strat-params-title">网格搜索结果</div>
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="k">可交易样本</div>
+                <div class="v">{{ m3_eval.eligible_total }}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="k">搜索策略组合数</div>
+                <div class="v">{{ m3_eval.searched_total }}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="k">冠军方案数</div>
+                <div class="v">{{ m3_eval.winners|length }}</div>
+            </div>
         </div>
-        <div class="m2-kpi-card">
-            <div class="k">搜索策略组合数</div>
-            <div class="v">{{ m3_eval.searched_total }}</div>
-        </div>
-        <div class="m2-kpi-card">
-            <div class="k">冠军方案数</div>
-            <div class="v">{{ m3_eval.winners|length }}</div>
-        </div>
-    </div>
-    <div style="margin-top:10px;color:#9fb8dd;font-size:12px;">
-        本页展示网格搜索后的冠军参数，不提供在线调参输入；推荐先用 M2 确认策略方向，再在此页选择落地参数。
+        <p class="strat-hint">本页展示网格搜索后的冠军参数，不提供在线调参输入；推荐先用 M2 确认策略方向，再在此页选择落地参数。</p>
     </div>
 </section>
 
+<!-- ── Section 3: Output Results ── -->
 <section class="panel">
     <div class="panel-title">M3 冠军参数（每策略家族最佳，按10日收益排序）</div>
-    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">读表建议：优先关注 10 日收益与样本量兼顾的方案，再参考 3/5 日短周期一致性。</div>
+    <p class="results-hint">读表建议：优先关注 10 日收益与样本量兼顾的方案，再参考 3/5 日短周期一致性。</p>
     <table>
         <thead>
             <tr>
-                <th>策略家族</th><th>参数组合</th><th>样本数</th>
-                <th>3日均收益%</th><th>5日均收益%</th><th>10日均收益%</th>
-                <th>3日命中率%</th><th>5日命中率%</th><th>10日命中率%</th>
+                <th>策略家族</th>
+                <th>参数组合</th>
+                <th>样本数</th>
+                <th>3日均收益%</th>
+                <th>5日均收益%</th>
+                <th>10日均收益%</th>
+                <th>3日命中率%</th>
+                <th>5日命中率%</th>
+                <th>10日命中率%</th>
             </tr>
         </thead>
         <tbody>
@@ -71,7 +86,9 @@
                 <td>{{ row.hit_10 if row.hit_10 is not none else '-' }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="9" class="empty">暂无可优化的M1事件数据（可先执行 build_b_event_kpi）</td></tr>
+            <tr>
+                <td colspan="9" class="empty">暂无可优化的M1事件数据（可先执行 build_b_event_kpi）</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>

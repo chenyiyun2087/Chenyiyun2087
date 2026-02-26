@@ -3,9 +3,13 @@
 {% block page_title %}策略一：金字塔筛选法{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">最新交易日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+    <!-- ── Section 1: Title + Date + M1 Summary ── -->
+    <div class="strat-header">
+        <span class="strat-date">最新交易日：{{ date or '-' }}</span>
+        <span class="strat-time">更新时间：{{ now }}</span>
+    </div>
 
-    <div class="tabs" style="margin-bottom:14px;">
+    <div class="tabs">
         <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab active">策略一 金字塔</a>
         <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
         <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
@@ -17,6 +21,7 @@
         <a href="{{ url_for('sina_strategy_m7') }}" class="tab">策略M7 调仓</a>
     </div>
 
+    <p class="strat-desc">先按总分做初筛，再保留因子分前排，最后用 Claude 分做确认。阈值越高，样本越少、信号更集中。</p>
 
     {% if m1_summary %}
     <div class="m1-summary">
@@ -24,46 +29,72 @@
         <span>事件总数：{{ m1_summary.total_events }}</span>
         <span>可交易：{{ m1_summary.eligible_events }}</span>
         <span>高风险：{{ m1_summary.high_risk_events }}</span>
-        <span>Hit@10%（3/5/10日）：{{ m1_summary.hit_3_10pct if m1_summary.hit_3_10pct is not none else '-' }}% / {{ m1_summary.hit_5_10pct if m1_summary.hit_5_10pct is not none else '-' }}% / {{ m1_summary.hit_10_10pct if m1_summary.hit_10_10pct is not none else '-' }}%</span>
+        <span>Hit@10%（3/5/10日）：{{ m1_summary.hit_3_10pct if m1_summary.hit_3_10pct is not none else '-' }}% / {{
+            m1_summary.hit_5_10pct if m1_summary.hit_5_10pct is not none else '-' }}% / {{ m1_summary.hit_10_10pct if
+            m1_summary.hit_10_10pct is not none else '-' }}%</span>
     </div>
     {% endif %}
-    <form method="GET" action="{{ url_for('sina_strategy_pyramid') }}" class="strategy-form">
-        <div class="strategy-grid">
-            <div class="strategy-card">
-                <h3>参数输入（三级过滤）</h3>
-                <p>先按总分做初筛，再保留因子分前排，最后用 Claude 分做确认。阈值越高，样本越少、信号更集中。</p>
-                <div class="form-grid">
-                    <label>总分下限（严格大于）
-                        <input type="number" min="0" max="100" step="0.1" name="pyramid_min_score" value="{{ params.pyramid_min_score }}">
-                    </label>
-                    <label>因子分保留比例（Top %）
-                        <input type="number" min="0" max="100" step="0.1" name="pyramid_top_pct" value="{{ params.pyramid_top_pct }}">
-                    </label>
-                    <label>Claude 分确认下限（严格大于）
-                        <input type="number" min="0" max="100" step="0.1" name="pyramid_min_claude" value="{{ params.pyramid_min_claude }}">
-                    </label>
-                </div>
-                <ul class="strategy-note">
+
+    <!-- ── Section 2: Input Parameters ── -->
+    <form method="GET" action="{{ url_for('sina_strategy_pyramid') }}">
+        <div class="strat-params">
+            <div class="strat-params-title">参数输入（三级过滤）</div>
+            <div class="strat-params-grid">
+                <label>总分下限（严格大于）
+                    <input type="number" min="0" max="100" step="0.1" name="pyramid_min_score"
+                        value="{{ params.pyramid_min_score }}">
+                </label>
+                <label>因子分保留比例（Top %）
+                    <input type="number" min="0" max="100" step="0.1" name="pyramid_top_pct"
+                        value="{{ params.pyramid_top_pct }}">
+                </label>
+                <label>Claude 分确认下限（严格大于）
+                    <input type="number" min="0" max="100" step="0.1" name="pyramid_min_claude"
+                        value="{{ params.pyramid_min_claude }}">
+                </label>
+            </div>
+            <div class="strat-params-footer">
+                <ul class="strat-note">
                     <li>候选总数：{{ total_candidates }}</li>
-                    <li>筛选漏斗：第一层 {{ pyramid.layer1|length }} → 第二层 {{ pyramid.layer2|length }} → 第三层 {{ pyramid.layer3|length }}</li>
+                    <li>筛选漏斗：第一层 {{ pyramid.layer1|length }} → 第二层 {{ pyramid.layer2|length }} → 第三层 {{
+                        pyramid.layer3|length }}</li>
                     <li>调参建议：先固定前两项，再微调 Claude 下限观察候选稳定性</li>
                 </ul>
+                <button class="btn" type="submit">更新筛选结果</button>
             </div>
         </div>
-        <div style="margin-top: 12px;"><button class="btn" type="submit">更新筛选结果</button></div>
     </form>
 </section>
 
+<!-- ── Section 3: Output Results ── -->
 <section class="panel">
     <div class="panel-title">第三层候选清单（可执行池）</div>
-    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">说明：仅展示通过三级过滤的标的。若数量过少，可先下调 Claude 分下限或放宽 Top 比例。</div>
+    <p class="results-hint">说明：仅展示通过三级过滤的标的。若数量过少，可先下调 Claude 分下限或放宽 Top 比例。</p>
     <table>
-        <thead><tr><th>代码</th><th>名称</th><th>总分</th><th>因子分</th><th>Claude分</th><th>池类型</th></tr></thead>
+        <thead>
+            <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>总分</th>
+                <th>因子分</th>
+                <th>Claude分</th>
+                <th>池类型</th>
+            </tr>
+        </thead>
         <tbody>
             {% for row in pyramid.layer3 %}
-            <tr><td>{{ row.symbol }}</td><td>{{ row.name }}</td><td>{{ row.score }}</td><td>{{ row.opt_score }}</td><td>{{ row.claude_score }}</td><td>{{ row.pool_type or '-' }}</td></tr>
+            <tr>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.name }}</td>
+                <td>{{ row.score }}</td>
+                <td>{{ row.opt_score }}</td>
+                <td>{{ row.claude_score }}</td>
+                <td>{{ row.pool_type or '-' }}</td>
+            </tr>
             {% else %}
-            <tr><td colspan="6" class="empty">暂无符合条件的股票</td></tr>
+            <tr>
+                <td colspan="6" class="empty">暂无符合条件的股票</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>

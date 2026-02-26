@@ -3,9 +3,13 @@
 {% block page_title %}策略M5：滚动窗口稳定性验证{% endblock %}
 {% block content %}
 <section class="panel">
-    <div class="panel-title">最新事件日：{{ date or '-' }}<span style="float:right;font-size:0.8em;">当前更新时间：{{ now }}</span></div>
+    <!-- ── Section 1: Title + Date + M1 Summary ── -->
+    <div class="strat-header">
+        <span class="strat-date">最新事件日：{{ date or '-' }}</span>
+        <span class="strat-time">更新时间：{{ now }}</span>
+    </div>
 
-    <div class="tabs" style="margin-bottom:14px;">
+    <div class="tabs">
         <a href="{{ url_for('sina_strategy_pyramid') }}" class="tab">策略一 金字塔</a>
         <a href="{{ url_for('sina_strategy_weighted') }}" class="tab">策略二 加权</a>
         <a href="{{ url_for('sina_strategy_quadrant') }}" class="tab">策略三 四象限</a>
@@ -26,34 +30,59 @@
     </div>
     {% endif %}
 
-    <form method="GET" action="{{ url_for('sina_strategy_m5') }}" class="strategy-form">
-        <div style="margin-bottom:8px;color:#9fb8dd;font-size:12px;">输入建议：窗口越大越稳但反应更慢；回看期越长越全面但会混入旧市场状态。</div>
-        <div class="form-grid">
-            <label>滚动窗口长度（事件日）
-                <input type="number" min="2" max="30" step="1" name="window_size" value="{{ params.window_size }}">
-            </label>
-            <label>回看范围（事件日数）
-                <input type="number" min="5" max="120" step="1" name="lookback_dates" value="{{ params.lookback_dates }}">
-            </label>
-            <label>每窗口持仓数
-                <input type="number" min="1" max="20" step="1" name="max_positions" value="{{ params.max_positions }}">
-            </label>
+    <!-- ── Section 2: Input Parameters ── -->
+    <form method="GET" action="{{ url_for('sina_strategy_m5') }}">
+        <div class="strat-params">
+            <div class="strat-params-title">参数输入（滚动窗口配置）</div>
+            <div class="strat-params-desc">窗口越大越稳但反应更慢；回看期越长越全面但会混入旧市场状态。</div>
+            <div class="strat-params-grid">
+                <label>滚动窗口长度（事件日）
+                    <input type="number" min="2" max="30" step="1" name="window_size" value="{{ params.window_size }}">
+                </label>
+                <label>回看范围（事件日数）
+                    <input type="number" min="5" max="120" step="1" name="lookback_dates"
+                        value="{{ params.lookback_dates }}">
+                </label>
+                <label>每窗口持仓数
+                    <input type="number" min="1" max="20" step="1" name="max_positions"
+                        value="{{ params.max_positions }}">
+                </label>
+            </div>
+            <div class="strat-params-footer">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="k">可交易事件</div>
+                        <div class="v">{{ m5_eval.eligible_total }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">滚动窗口数</div>
+                        <div class="v">{{ m5_eval.windows_total }}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="k">窗口大小</div>
+                        <div class="v">{{ m5_eval.window_size }}</div>
+                    </div>
+                </div>
+                <button class="btn" type="submit">更新滚动验证</button>
+            </div>
         </div>
-        <div style="margin-top:12px;"><button class="btn" type="submit">更新滚动验证</button></div>
     </form>
-
-    <div class="m2-summary-grid" style="margin-top:12px;">
-        <div class="m2-kpi-card"><div class="k">可交易事件</div><div class="v">{{ m5_eval.eligible_total }}</div></div>
-        <div class="m2-kpi-card"><div class="k">滚动窗口数</div><div class="v">{{ m5_eval.windows_total }}</div></div>
-        <div class="m2-kpi-card"><div class="k">窗口大小</div><div class="v">{{ m5_eval.window_size }}</div></div>
-    </div>
 </section>
 
+<!-- ── Section 3: Output Results ── -->
 <section class="panel">
     <div class="panel-title">M5 稳定性汇总（10日维度）</div>
-    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">读表建议：均值看收益中枢，标准差看稳定性；优先选择“均值不差且波动可控”的配置。</div>
+    <p class="results-hint">读表建议：均值看收益中枢，标准差看稳定性；优先选择"均值不差且波动可控"的配置。</p>
     <table>
-        <thead><tr><th>指标</th><th>均值</th><th>标准差</th><th>最小值</th><th>最大值</th></tr></thead>
+        <thead>
+            <tr>
+                <th>指标</th>
+                <th>均值</th>
+                <th>标准差</th>
+                <th>最小值</th>
+                <th>最大值</th>
+            </tr>
+        </thead>
         <tbody>
             <tr>
                 <td>10日平均收益(%)</td>
@@ -75,9 +104,19 @@
 
 <section class="panel">
     <div class="panel-title">M5 窗口明细</div>
-    <div style="margin: 0 0 10px; color:#9fb8dd; font-size:12px;">说明：用于定位表现突变区间，便于回看当时市场环境和参数适配性。</div>
+    <p class="results-hint">说明：用于定位表现突变区间，便于回看当时市场环境和参数适配性。</p>
     <table>
-        <thead><tr><th>窗口起止</th><th>样本数</th><th>持仓数</th><th>10日均收益%</th><th>10日命中率%</th><th>5日均收益%</th><th>5日命中率%</th></tr></thead>
+        <thead>
+            <tr>
+                <th>窗口起止</th>
+                <th>样本数</th>
+                <th>持仓数</th>
+                <th>10日均收益%</th>
+                <th>10日命中率%</th>
+                <th>5日均收益%</th>
+                <th>5日命中率%</th>
+            </tr>
+        </thead>
         <tbody>
             {% for row in m5_eval.windows %}
             <tr>
@@ -90,7 +129,9 @@
                 <td>{{ row.hit_5 if row.hit_5 is not none else '-' }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="7" class="empty">暂无足够历史事件数据进行滚动验证</td></tr>
+            <tr>
+                <td colspan="7" class="empty">暂无足够历史事件数据进行滚动验证</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>
