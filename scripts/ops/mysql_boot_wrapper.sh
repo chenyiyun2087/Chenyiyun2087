@@ -40,7 +40,10 @@ if [ ! -d "$DATADIR" ]; then
     exit 1
 fi
 
-echo "$(date): Volume found. Starting MySQL..." >> "$LOG_FILE"
+echo "$(date): Volume found. Ensuring permissions..." >> "$LOG_FILE"
+if [ "$CURRENT_UID" -eq 0 ]; then
+  chown -R "$MYSQL_RUN_USER":staff "$DATADIR" >> "$LOG_FILE" 2>&1 || true
+fi
 
 # Clean stale local pid/socket/log (safe to ignore errors)
 rm -f "$MYSQL_PID_FILE" "$MYSQL_SOCKET" >> "$LOG_FILE" 2>&1
@@ -61,7 +64,7 @@ for f in "$DATADIR"/*.pid; do
     rm -f "$f" >> "$LOG_FILE" 2>&1 || true
 done
 
-MYSQLD_CMD="$MYSQLD_SAFE --datadir=\"$DATADIR\" --log-error=\"$MYSQL_ERR_LOG\" --pid-file=\"$MYSQL_PID_FILE\" --socket=\"$MYSQL_SOCKET\""
+MYSQLD_CMD="$MYSQLD_SAFE --datadir=\"$DATADIR\" --log-error=\"$MYSQL_ERR_LOG\" --pid-file=\"$MYSQL_PID_FILE\" --socket=\"$MYSQL_SOCKET\" --user=\"$MYSQL_RUN_USER\""
 echo "$(date): CMD=$MYSQLD_CMD (run as $MYSQL_RUN_USER)" >> "$LOG_FILE"
 
 MYSQL_RUN_UID="$(id -u "$MYSQL_RUN_USER" 2>/dev/null || true)"
@@ -72,8 +75,8 @@ if [ -z "$MYSQL_RUN_UID" ]; then
 fi
 
 if [ "$CURRENT_UID" -eq 0 ]; then
-  # Run as root but drop privileges explicitly to the MySQL user.
-  exec /usr/bin/sudo -u "$MYSQL_RUN_USER" /bin/sh -c "$MYSQLD_CMD" >> "$LOG_FILE" 2>&1
+  # Run directly as root; mysqld_safe will drop to --user=_mysql internally.
+  exec /bin/sh -c "$MYSQLD_CMD" >> "$LOG_FILE" 2>&1
 elif [ "$CURRENT_UID" -eq "$MYSQL_RUN_UID" ]; then
   # Already running as mysql user.
   exec $MYSQLD_SAFE \
@@ -81,6 +84,7 @@ elif [ "$CURRENT_UID" -eq "$MYSQL_RUN_UID" ]; then
     --log-error="$MYSQL_ERR_LOG" \
     --pid-file="$MYSQL_PID_FILE" \
     --socket="$MYSQL_SOCKET" \
+    --user="$MYSQL_RUN_USER" \
     >> "$LOG_FILE" 2>&1
 else
   echo "$(date): ERROR: run this wrapper as root (sudo) or $MYSQL_RUN_USER." >> "$LOG_FILE"

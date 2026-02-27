@@ -9,13 +9,13 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 - 本地策略与信号生成（chenyiyunSelected）
 - 回测引擎（backtest）
 - Web 看板与任务运维（Flask + Admin）
-- 定时调度（独立调度器 + Web 内置调度）
+- 定时调度（Web 内置调度，`scheduler.py` 当前未启用）
 
 ## 1. 架构总览（按代码实现）
 
 | 层 | 目录/文件 | 说明 | 典型入口 |
 |---|---|---|---|
-| 调度层 | `scheduler.py`、`web/app.py`、`scripts/ops/` | 交易日判定、定时触发、任务串联、任务状态记录 | `python scheduler.py` / `python web/app.py` |
+| 调度层 | `web/app.py`、`scripts/ops/`（`scheduler.py` 历史保留） | 交易日判定、定时触发、任务状态记录 | `python web/app.py` |
 | 数据采集层 | `sina/bs_detection/`、`eastmoney/` | B/S 信号图片抓取与检测、舆情扫描与落库 | `python sina/bs_detection/main.py config_1` |
 | 评分层 | `scoreRank/core/`、`scoreRank/strategies/` | 技术因子打分 + Claude 分 + 优化分（opt_score） | `python -m scoreRank.cli.run_daily` |
 | 策略评估层 | `scoreRank/cli/`、`web/strategy_playbook.py` | 事件/KPI 构建、M2~M8 参数回归与评估 | `python -m scoreRank.cli.run_m8_cycle` |
@@ -25,7 +25,7 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 
 ## 2. 调度系统（三阶段自动化）
 
-项目当前采用“独立进程生产流水线”与“Web 交互式管理”双轨制。
+项目当前以 `web/app.py` 内置调度为唯一生效入口；`scheduler.py` 仅保留作历史参考，不参与生产调度。
 
 ### 2.1 三阶段日内调度流水线
 
@@ -35,7 +35,8 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 | | 09:05 | 信号强度检查 | `scripts/ops/run_chenyiyun_signal_check.py` |
 | | 09:30 | 周度调仓（周一）| `scripts/ops/run_chenyiyun_weekly_rebalance.py` |
 | **二阶段：盘中/收盘后** | 14:00 | 涨停状态检查 | `scripts/ops/run_chenyiyun_limitup_check.py` |
-| | 15:20 | Sina B/S 扫描 | `sina/bs_detection/main.py` |
+| | 15:20 | Sina 批量截图（`sina_picture`） | `sina/bs_detection/main.py --capture-only` |
+| | 16:10 | Sina 买卖点分析（`sina_analyse`） | `sina/bs_detection/main.py --analyze-only` |
 | | 16:30 | 舆情扫描 | `eastmoney/main.py` |
 | **三阶段：夜间处理** | 21:00 | 全A股评分流水线 | `run_pipeline()` (含 Pipeline 内子任务) |
 | | 21:10 | M8 回归与仓位更新 | `run_m8_cycle.py` / `run_chenyiyun_position_update.py` |
@@ -43,8 +44,14 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 
 ### 2.2 调度器说明
 
-- **独立调度器 (`scheduler.py`)**: 运行于后台，负责高可靠性的生产任务触发。具备 TuShare 数据就绪门禁机制。
-- **Web 内置调度 (`web/app.py`)**: 为管理台任务提供定时触发能力，支持手动重跑与实时日志查看。
+- **Web 内置调度 (`web/app.py`)**: 当前生产调度入口，支持定时触发、手动重跑、任务锁与历史记录。
+- **独立调度器 (`scheduler.py`)**: 当前未启用，仅保留代码与日志结构供排查/回溯。
+
+### 2.3 交易日门禁规则（2026-02-27 更新）
+
+- 所有定时任务在触发执行前，统一查询 `chenyiyun.dim_trade_cal`（`exchange='SSE'`）判断是否交易日。
+- 若当日非交易日：任务不执行业务脚本，直接按 `Success` 记账并切日（`switched_day=True`）。
+- Web 调度会写入 `app_task_history`，消息包含 `reason=NON_TRADING_DAY`，便于审计。
 
 ## 3. 核心模块详解
 
@@ -90,7 +97,7 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 
 ```text
 Chenyiyun2087/
-├── scheduler.py                 # 生产调度入口
+├── scheduler.py                 # 历史保留（当前未启用）
 ├── web/                         # Flask Web 看板与调度管控
 ├── scripts/ops/                  # 业务运维脚本 (陈依云信号、日历同步等)
 ├── sina/                        # Sina B/S 数据流与实盘同步
@@ -124,5 +131,5 @@ python sina/live_tracker/run_live_tracker.py sync
 ```
 
 ## 6. 注意事项
-- 修改调度时间请同步更新 `scheduler.py`、`web/app.py` 的任务字典。
+- 修改调度时间以 `web/app.py` 的任务字典为准（`scheduler.py` 当前未启用）。
 - 实盘同步（Snapshot）前需确保行情数据已在 ODS 层落库完成。

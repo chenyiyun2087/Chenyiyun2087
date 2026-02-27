@@ -148,6 +148,8 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
     screenshot_workers = overrides.get("screenshot_workers", config_data.get("screenshot_workers", 20))
     detect_workers = overrides.get("detect_workers", config_data.get("detect_workers", 4))
     skip_capture = overrides.get("skip_capture", config_data.get("skip_capture", False))
+    capture_only = bool(overrides.get("capture_only", False))
+    analyze_only = bool(overrides.get("analyze_only", False))
     stock_codes = overrides.get("stock_codes")
     base_dir = resolve_path(
         overrides.get("base_dir", config_data.get("base_dir", get_base_dir())),
@@ -159,6 +161,15 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
         base_dir = fallback_base_dir
     archive_days = overrides.get("archive_days", config_data.get("archive_days", 30))
     mysql_config = overrides.get("mysql_config", config_data.get("mysql"))
+
+    if capture_only and analyze_only:
+        logger.error("参数冲突：capture_only 与 analyze_only 不能同时开启")
+        return 1
+    if capture_only and skip_capture:
+        logger.error("参数冲突：capture_only 与 skip_capture 不能同时开启")
+        return 1
+    if analyze_only:
+        skip_capture = True
 
     def _png_mtime_map(folder: str) -> dict[str, float]:
         if not folder or not os.path.isdir(folder):
@@ -176,7 +187,7 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
                 continue
         return out
 
-    # Default stock universe for sina_bs: self-selected symbols from DB.
+    # Default stock universe for Sina capture/analyse tasks: self-selected symbols from DB.
     # If DB is temporarily unavailable, fallback to Excel source.
     if not stock_codes:
         stock_codes = load_self_selected_from_db(mysql_config)
@@ -225,6 +236,10 @@ def run_pipeline(config_name, date_str, config_data, overrides=None):
             return 2
         logger.info("截图阶段新增/更新产出: %d 张 (目录总数: %d)", produced_count, len(post_capture_map))
 
+    if capture_only:
+        logger.info("仅截图模式执行完成: %s/%s", config_name, date_str)
+        return 0
+
     logger.info("开始检测日期文件夹: %s/%s", config_name, date_str)
 
     detect_start = time.perf_counter()
@@ -252,6 +267,8 @@ def parse_args():
     parser.add_argument("--screenshot-workers", type=int, default=3, help="截图线程数")
     parser.add_argument("--detect-workers", type=int, default=5, help="检测线程数")
     parser.add_argument("--skip-capture", action="store_true", help="跳过截图阶段，直接检测已存在图片")
+    parser.add_argument("--capture-only", action="store_true", help="仅执行截图阶段，不执行检测")
+    parser.add_argument("--analyze-only", action="store_true", help="仅执行检测阶段（自动跳过截图）")
     parser.add_argument("--base-dir", help="截图/检测基础目录，默认使用 SinaAppBS")
     parser.add_argument("--archive-days", type=int, help="归档天数阈值，0表示不归档")
     parser.add_argument("--stock-codes", help="指定股票代码列表，逗号分隔")
@@ -273,6 +290,10 @@ if __name__ == "__main__":
         overrides["detect_workers"] = args.detect_workers
     if args.skip_capture:
         overrides["skip_capture"] = True
+    if args.capture_only:
+        overrides["capture_only"] = True
+    if args.analyze_only:
+        overrides["analyze_only"] = True
     if args.base_dir is not None:
         overrides["base_dir"] = args.base_dir
     if args.archive_days is not None:

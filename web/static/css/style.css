@@ -364,6 +364,44 @@ tbody tr:hover {
     overflow: auto;
 }
 
+.positions-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.cash-adjust-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.cash-input {
+    width: 280px;
+    max-width: 100%;
+}
+
+.positions-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.pos-input {
+    width: 118px;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+
+.pos-input.pos-input-shares {
+    width: 90px;
+}
+
+tbody tr.is-selected {
+    background: var(--primary-bg);
+}
+
 /* ── Buttons ── */
 .btn,
 button,

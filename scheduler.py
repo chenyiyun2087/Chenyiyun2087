@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, text
 
 # Configuration
 # ------------------------------------------------------------------------------
-DB_URL = "mysql+pymysql://root:19871019@localhost:3306/tushare_stock?charset=utf8mb4"
+DB_URL = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
 LOG_DIR = Path("logs/scheduler")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -74,10 +74,11 @@ def is_trade_day(target_date):
     engine = get_engine()
     try:
         with engine.connect() as conn:
-            # Query dim_trade_cal. Note: adjust table/schema as needed.
-            # Assuming tushare_stock.dim_trade_cal
             result = conn.execute(
-                text("SELECT is_open FROM dim_trade_cal WHERE cal_date = :date AND exchange = 'SSE'"),
+                text(
+                    "SELECT is_open FROM chenyiyun.dim_trade_cal "
+                    "WHERE cal_date = :date AND exchange = 'SSE' LIMIT 1"
+                ),
                 {"date": date_str}
             ).fetchone()
             if result:
@@ -85,8 +86,6 @@ def is_trade_day(target_date):
             return False
     except Exception as e:
         logger.error(f"Error checking trade day: {e}")
-        # Default to False to be safe, or True to retry? 
-        # For a scheduler, safer to skip or retry. Let's return False for now.
         return False
 
 
@@ -98,7 +97,7 @@ def is_data_ready(target_date):
         with engine.connect() as conn:
             # Check for a small count
             result = conn.execute(
-                text("SELECT count(*) FROM dwd_stock_daily_standard WHERE trade_date = :date"),
+                text("SELECT count(*) FROM tushare_stock.dwd_stock_daily_standard WHERE trade_date = :date"),
                 {"date": date_str}
             ).fetchone()
             return result[0] > 1000  # Assuming >1000 records means success
@@ -206,14 +205,9 @@ def main():
     while True:
         now = datetime.datetime.now()
         today = now.date()
-
-        # Basic check: Is today a trading day?
-        if not is_trade_day(today):
-            # Log once per hour to avoid spam
-            if now.minute == 0 and now.second < 30: # approximate once per hour check
-                logger.info(f"{today} is not a trading day. Idling...")
-            time.sleep(30)
-            continue
+        today_is_trade_day = is_trade_day(today)
+        if not today_is_trade_day and now.minute == 0 and now.second < 30:
+            logger.info(f"{today} is not a trading day. Scheduled tasks will be marked success-skip.")
 
         for task_name, config in TASKS.items():
             trigger_time = str(config.get("time") or "").strip()
@@ -233,6 +227,14 @@ def main():
             # Check if already executed today
             last_exec = executed_tasks.get(task_name)
             if last_exec == today:
+                continue
+
+            if not today_is_trade_day:
+                logger.info(
+                    f"Triggering task: {task_name} -> success-skip "
+                    f"(non-trading day from chenyiyun.dim_trade_cal)"
+                )
+                executed_tasks[task_name] = today
                 continue
 
             logger.info(f"Triggering task: {task_name}")

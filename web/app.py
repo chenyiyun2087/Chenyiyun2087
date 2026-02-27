@@ -5,9 +5,11 @@ import pymysql
 import json
 from pathlib import Path
 from datetime import datetime, timedelta, date
+from decimal import Decimal, InvalidOperation
 import subprocess
 import threading
 import time
+import tempfile
 from werkzeug.utils import secure_filename
 
 try:
@@ -69,15 +71,27 @@ DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
 
 # Task Status Storage (Loaded from DB on start)
 TASKS = {
-    "sina_bs": {
-        "name": "sina B/S 扫描",
-        "description": "Sina财经B/S信号截图与AI自动检测",
+    "sina_picture": {
+        "name": "sina 图片截图",
+        "description": "Sina财经B/S信号批量截图",
         "script": "sina/bs_detection/main.py",
         "last_run": "Never",
         "status": "Idle",
         "switched_day": False,
         "schedule_enabled": False,
         "schedule_time": "15:20",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "sina_analyse": {
+        "name": "sina 买卖点分析",
+        "description": "基于已截图图片执行B/S买卖点分析并落库",
+        "script": "sina/bs_detection/main.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "16:10",
         "next_run": "-",
         "trading_day_only": True,
     },
@@ -193,7 +207,7 @@ TASKS = {
 TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
-SCHEDULED_TASK_WHITELIST = {"sina_bs"}  # Only keep web-console timed run for sina_bs.
+SCHEDULED_TASK_WHITELIST = {"sina_picture", "sina_analyse", "sina_score", "sina_m8", "sina_snapshot"}
 
 UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
@@ -940,6 +954,24 @@ def _format_task_message(stdout, stderr, verification_lines=None):
     return "\n\n".join(blocks)[-6000:]
 
 
+def _read_text_tail(file_path, max_chars):
+    if not file_path:
+        return ""
+    try:
+        with open(file_path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            if size <= 0:
+                return ""
+            # Read a bounded tail window to avoid loading huge logs into memory.
+            window = min(size, max_chars * 6)
+            fh.seek(-window, os.SEEK_END)
+            data = fh.read()
+        return data.decode("utf-8", errors="replace")[-max_chars:]
+    except Exception as e:
+        return f"[tail-read-error] {e}"
+
+
 def _has_scheduled_run_in_slot(task_name, scheduled_for):
     """Return True if a scheduled run already exists in history for this slot."""
     conn = None
@@ -1126,6 +1158,8 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
     message = None
     stdout = ""
     stderr = ""
+    stdout_path = None
+    stderr_path = None
 
     try:
         script_parts = _build_task_script_parts(task_name, run_options=run_options)
@@ -1134,23 +1168,28 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
         env = os.environ.copy()
         env["PYTHONPATH"] = str(project_root) + os.pathsep + env.get("PYTHONPATH", "")
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(project_root),
-            env=env,
-        )
+        with tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stdout.log") as out_fh, \
+                tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stderr.log") as err_fh:
+            stdout_path = out_fh.name
+            stderr_path = err_fh.name
+            process = subprocess.Popen(
+                cmd,
+                stdout=out_fh,
+                stderr=err_fh,
+                cwd=str(project_root),
+                env=env,
+            )
 
-        while True:
-            try:
-                stdout, stderr = process.communicate(timeout=TASK_HEARTBEAT_INTERVAL_SECONDS)
-                break
-            except subprocess.TimeoutExpired:
-                _touch_task_lock_heartbeat(task_name)
+            while True:
+                try:
+                    process.wait(timeout=TASK_HEARTBEAT_INTERVAL_SECONDS)
+                    break
+                except subprocess.TimeoutExpired:
+                    _touch_task_lock_heartbeat(task_name)
 
         exit_code = int(process.returncode or 0)
+        stdout = _read_text_tail(stdout_path, max_chars=4000)
+        stderr = _read_text_tail(stderr_path, max_chars=2400)
         if exit_code == 0:
             verify_finished_at = datetime.now()
             verify_ok, verify_lines = _run_task_result_verification(
@@ -1187,6 +1226,12 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
             TASKS[task_name]["status"] = f"Error: {str(e)}"
             TASKS[task_name]["error_log"] = str(e)[:500]
     finally:
+        for path in (stdout_path, stderr_path):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
         update_task_db(task_name)
         finished_at = datetime.now()
         duration_seconds = int((finished_at - started_at).total_seconds())
@@ -1221,13 +1266,12 @@ def _trigger_task_execution(task_name, trigger_type="manual", run_options=None):
 def _is_trading_day(target_date=None):
     target = target_date or datetime.now().date()
     ymd = target.strftime('%Y%m%d')
-    
-    # Try local database first
+
     try:
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT is_open FROM dim_trade_cal WHERE cal_date = %s AND exchange = 'SSE' LIMIT 1",
+                "SELECT is_open FROM chenyiyun.dim_trade_cal WHERE cal_date = %s AND exchange = 'SSE' LIMIT 1",
                 (ymd,)
             )
             row = cursor.fetchone()
@@ -1235,26 +1279,29 @@ def _is_trading_day(target_date=None):
         if row is not None:
             return int(row.get('is_open')) == 1
     except Exception as e:
-        print(f"Local trade calendar check failed: {e}")
+        print(f"Trade calendar check failed (chenyiyun.dim_trade_cal): {e}")
+    return False
 
-    # Fallback to tushare_stock
-    try:
-        src_config = DB_CONFIG.copy()
-        src_config['database'] = 'tushare_stock'
-        conn = pymysql.connect(**src_config)
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "SELECT is_open FROM dim_trade_cal WHERE cal_date = %s AND exchange = 'SSE' LIMIT 1",
-                (ymd,)
-            )
-            row = cursor.fetchone()
-        conn.close()
-        if row is not None:
-            return int(row.get('is_open')) == 1
-    except Exception as e:
-        print(f"Backup trade calendar check failed: {e}")
 
-    return target.weekday() < 5
+def _mark_scheduled_non_trading_success(task_name, scheduled_for):
+    started_at = scheduled_for or datetime.now().replace(second=0, microsecond=0)
+    message = "result=SKIP; reason=NON_TRADING_DAY; source=chenyiyun.dim_trade_cal"
+    with TASKS_LOCK:
+        TASKS[task_name]["status"] = "Success (Non-trading day skip)"
+        TASKS[task_name]["switched_day"] = True
+        TASKS[task_name]["last_run"] = started_at.strftime("%Y-%m-%d %H:%M:%S")
+        TASKS[task_name]["error_log"] = ""
+    update_task_db(task_name)
+    _insert_task_history(
+        task_name=task_name,
+        trigger_type="schedule",
+        status="Success",
+        started_at=started_at,
+        finished_at=started_at,
+        exit_code=0,
+        duration_seconds=0,
+        message=message,
+    )
 
 
 def _build_task_script_parts(task_name, run_options=None):
@@ -1262,9 +1309,12 @@ def _build_task_script_parts(task_name, run_options=None):
     script = task_config['script']
     run_options = run_options or {}
     datestr = _normalize_datestr(run_options.get("datestr"))
-    if task_name == 'sina_bs':
+    if task_name == 'sina_picture':
         target_date = datestr or datetime.now().strftime('%Y%m%d')
-        return [script, 'config_1', target_date]
+        return [script, 'config_1', target_date, '--capture-only']
+    if task_name == 'sina_analyse':
+        target_date = datestr or datetime.now().strftime('%Y%m%d')
+        return [script, 'config_1', target_date, '--analyze-only']
     if task_name == 'sina_score':
         if datestr:
             return [script, '--date', datestr, '--force']
@@ -1571,6 +1621,200 @@ def positions():
                            assets=assets,
                            pagination=pagination,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+
+@app.route('/sina/positions/adjust', methods=['POST'])
+def adjust_positions():
+    selected_symbols = [
+        symbol.strip()
+        for symbol in request.form.getlist('selected_symbols')
+        if (symbol or '').strip()
+    ]
+    selected_symbols = list(dict.fromkeys(selected_symbols))
+    return_page = request.form.get('return_page', type=int) or 1
+
+    if not selected_symbols:
+        flash('请先勾选需要调整的持仓。', 'warning')
+        return redirect(url_for('positions', page=return_page))
+
+    conn = get_db()
+    updated_count = 0
+    errors = []
+
+    try:
+        with conn.cursor() as cursor:
+            for symbol in selected_symbols:
+                shares_raw = (request.form.get(f'shares_{symbol}') or '').strip()
+                avg_cost_raw = (request.form.get(f'avg_cost_{symbol}') or '').strip()
+
+                if not shares_raw or not avg_cost_raw:
+                    errors.append(f'{symbol} 数量或成本为空')
+                    continue
+
+                try:
+                    shares = int(shares_raw)
+                except ValueError:
+                    errors.append(f'{symbol} 数量格式非法')
+                    continue
+                if shares <= 0:
+                    errors.append(f'{symbol} 数量必须大于0')
+                    continue
+
+                try:
+                    avg_cost = Decimal(avg_cost_raw)
+                except InvalidOperation:
+                    errors.append(f'{symbol} 成本格式非法')
+                    continue
+                if avg_cost <= 0:
+                    errors.append(f'{symbol} 成本必须大于0')
+                    continue
+
+                cursor.execute(
+                    "SELECT id FROM live_positions WHERE symbol = %s LIMIT 1",
+                    (symbol,),
+                )
+                if not cursor.fetchone():
+                    errors.append(f'{symbol} 持仓不存在')
+                    continue
+
+                cursor.execute(
+                    """
+                    UPDATE live_positions
+                    SET shares = %s, avg_cost = %s
+                    WHERE symbol = %s
+                    """,
+                    (shares, float(avg_cost), symbol),
+                )
+                updated_count += cursor.rowcount
+
+        if updated_count > 0:
+            conn.commit()
+        else:
+            conn.rollback()
+    except Exception as e:
+        conn.rollback()
+        flash(f'持仓调整失败: {e}', 'danger')
+        return redirect(url_for('positions', page=return_page))
+
+    if updated_count > 0:
+        flash(f'已更新 {updated_count} 条持仓。', 'success')
+    if errors:
+        preview = '；'.join(errors[:3])
+        suffix = '；...' if len(errors) > 3 else ''
+        flash(f'部分持仓未更新：{preview}{suffix}', 'warning')
+    elif updated_count == 0:
+        flash('未更新任何持仓。', 'warning')
+
+    return redirect(url_for('positions', page=return_page))
+
+
+@app.route('/sina/cash/adjust', methods=['POST'])
+def adjust_cash():
+    amount_raw = (request.form.get('cash_adjust_amount') or '').strip()
+    return_page = request.form.get('return_page', type=int) or 1
+
+    if not amount_raw:
+        flash('请输入现金调整金额。', 'warning')
+        return redirect(url_for('positions', page=return_page))
+
+    try:
+        amount = Decimal(amount_raw).quantize(Decimal('0.01'))
+    except InvalidOperation:
+        flash('现金调整金额格式非法。', 'warning')
+        return redirect(url_for('positions', page=return_page))
+
+    if amount == 0:
+        flash('现金调整金额不能为0。', 'warning')
+        return redirect(url_for('positions', page=return_page))
+
+    conn = get_db()
+    today = datetime.now().date()
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM live_daily_snapshots ORDER BY snapshot_date DESC LIMIT 1")
+            latest_snapshot = cursor.fetchone()
+            if not latest_snapshot:
+                flash('暂无账户快照，请先执行一次实盘快照同步。', 'danger')
+                return redirect(url_for('positions', page=return_page))
+
+            latest_date = latest_snapshot.get('snapshot_date')
+            if isinstance(latest_date, datetime):
+                latest_date = latest_date.date()
+
+            if latest_date != today:
+                cursor.execute(
+                    """
+                    INSERT INTO live_daily_snapshots
+                    (snapshot_date, cash, positions_value, total_equity, daily_pnl, daily_return_pct, csi300_return_pct, excess_return_pct)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        cash = VALUES(cash),
+                        positions_value = VALUES(positions_value),
+                        total_equity = VALUES(total_equity),
+                        daily_pnl = VALUES(daily_pnl),
+                        daily_return_pct = VALUES(daily_return_pct),
+                        csi300_return_pct = VALUES(csi300_return_pct),
+                        excess_return_pct = VALUES(excess_return_pct)
+                    """,
+                    (
+                        today,
+                        latest_snapshot.get('cash'),
+                        latest_snapshot.get('positions_value'),
+                        latest_snapshot.get('total_equity'),
+                        latest_snapshot.get('daily_pnl'),
+                        latest_snapshot.get('daily_return_pct'),
+                        latest_snapshot.get('csi300_return_pct'),
+                        latest_snapshot.get('excess_return_pct'),
+                    ),
+                )
+
+            cursor.execute(
+                """
+                SELECT snapshot_date, cash, positions_value
+                FROM live_daily_snapshots
+                WHERE snapshot_date = %s
+                LIMIT 1
+                """,
+                (today,),
+            )
+            today_snapshot = cursor.fetchone()
+            if not today_snapshot:
+                conn.rollback()
+                flash('未找到今日快照，现金调整失败。', 'danger')
+                return redirect(url_for('positions', page=return_page))
+
+            current_cash = Decimal(str(today_snapshot.get('cash') or 0)).quantize(Decimal('0.01'))
+            positions_value = Decimal(str(today_snapshot.get('positions_value') or 0)).quantize(Decimal('0.01'))
+            new_cash = (current_cash + amount).quantize(Decimal('0.01'))
+            if new_cash < 0:
+                conn.rollback()
+                flash('现金调整后小于0，已拒绝更新。', 'warning')
+                return redirect(url_for('positions', page=return_page))
+
+            new_total_equity = (new_cash + positions_value).quantize(Decimal('0.01'))
+
+            cursor.execute(
+                """
+                UPDATE live_daily_snapshots
+                SET cash = %s, total_equity = %s
+                WHERE snapshot_date = %s
+                """,
+                (str(new_cash), str(new_total_equity), today),
+            )
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        flash(f'现金调整失败: {e}', 'danger')
+        return redirect(url_for('positions', page=return_page))
+
+    sign = '+' if amount > 0 else ''
+    flash(
+        f'现金调整成功：{today.strftime("%Y-%m-%d")} {sign}{amount:.2f}，当前现金 {new_cash:.2f}。',
+        'success',
+    )
+    return redirect(url_for('positions', page=return_page))
 
 
 
@@ -4125,13 +4369,12 @@ def _run_scheduled_tasks_loop():
             now = datetime.now()
             is_trade_day = _is_trading_day(now.date())
             due_tasks = []
+            skipped_non_trade_tasks = []
             with TASKS_LOCK:
                 for task_name, task in TASKS.items():
                     if task_name not in SCHEDULED_TASK_WHITELIST:
                         continue
                     if not bool(task.get('schedule_enabled')):
-                        continue
-                    if bool(task.get('trading_day_only')) and not is_trade_day:
                         continue
                     schedule_time = _normalize_schedule_time(task.get('schedule_time'))
                     if not schedule_time:
@@ -4146,7 +4389,14 @@ def _run_scheduled_tasks_loop():
                     # Cross-process idempotence: prevent duplicate "catch-up" runs for the same slot.
                     if _has_scheduled_run_in_slot(task_name, scheduled_for):
                         continue
-                    due_tasks.append(task_name)
+                    if not is_trade_day:
+                        skipped_non_trade_tasks.append((task_name, scheduled_for))
+                    else:
+                        due_tasks.append(task_name)
+
+            for task_name, scheduled_for in skipped_non_trade_tasks:
+                _mark_scheduled_non_trading_success(task_name, scheduled_for)
+                print(f"Scheduled task success-skip (non-trading day): {task_name}")
 
             for task_name in due_tasks:
                 started, reason = _trigger_task_execution(task_name, trigger_type='schedule')
