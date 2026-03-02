@@ -89,6 +89,45 @@
     </section>
 
     <section class="panel">
+        <div class="panel-title">消息通知渠道</div>
+        <form method="post" action="{{ url_for('update_notification_channels') }}" class="form-grid">
+            <div class="info-text" style="margin-bottom: 8px;">
+                • 仅对已启用且 URL 合法（http/https）的渠道发送通知。<br>
+                • 任务通知触发点：<code>sina_analyse</code>、<code>sina_m8</code>、<code>sina_snapshot</code> 成功完成后。
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 130px;">渠道</th>
+                        <th>Webhook URL</th>
+                        <th style="width: 100px;">启用</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in notification_channels %}
+                    <tr>
+                        <td><strong>{{ row.channel_name }}</strong><br><code>{{ row.channel_key }}</code></td>
+                        <td>
+                            <input
+                                type="url"
+                                name="{{ row.channel_key }}_webhook_url"
+                                value="{{ row.webhook_url }}"
+                                placeholder="https://..."
+                                style="width:100%;"
+                            >
+                        </td>
+                        <td style="text-align:center;">
+                            <input type="checkbox" name="{{ row.channel_key }}_enabled" {% if row.enabled %}checked{% endif %}>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <button class="btn form-submit-btn">保存通知配置</button>
+        </form>
+    </section>
+
+    <section class="panel">
         <div class="panel-title">手动录入成交单</div>
         <form method="post" action="{{ url_for('add_position') }}" class="form-grid">
             <div class="form-grid-2col">

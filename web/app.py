@@ -10,6 +10,8 @@ import subprocess
 import threading
 import time
 import tempfile
+import urllib.request
+import urllib.error
 from werkzeug.utils import secure_filename
 
 try:
@@ -226,6 +228,14 @@ TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
 SCHEDULED_TASK_WHITELIST = {"sina_picture", "sina_analyse", "sina_score", "sina_m8", "sina_snapshot", "sina_m7_sell"}
+
+NOTIFICATION_CHANNEL_DEFS = [
+    ("feishu", "飞书"),
+    ("wechat", "企业微信"),
+    ("dingtalk", "钉钉"),
+    ("custom", "自定义Webhook"),
+]
+DEFAULT_FEISHU_TEST_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/a8374c19-3620-4891-8c7a-df6885229607"
 
 UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
@@ -547,6 +557,94 @@ def _ensure_task_management_schema(cursor):
             """,
             (task_name,),
         )
+    _ensure_notification_channel_schema(cursor)
+
+
+def _default_notification_channels():
+    rows = []
+    for key, name in NOTIFICATION_CHANNEL_DEFS:
+        if key == "feishu":
+            rows.append(
+                {
+                    "channel_key": key,
+                    "channel_name": name,
+                    "webhook_url": DEFAULT_FEISHU_TEST_WEBHOOK,
+                    "enabled": 1,
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "channel_key": key,
+                    "channel_name": name,
+                    "webhook_url": "",
+                    "enabled": 0,
+                }
+            )
+    return rows
+
+
+def _ensure_notification_channel_schema(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_notification_channel (
+            channel_key VARCHAR(32) PRIMARY KEY,
+            channel_name VARCHAR(64) NOT NULL,
+            webhook_url TEXT NULL,
+            enabled TINYINT(1) NOT NULL DEFAULT 0,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    defaults = _default_notification_channels()
+    for row in defaults:
+        cursor.execute(
+            """
+            INSERT INTO app_notification_channel (channel_key, channel_name, webhook_url, enabled)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE channel_name = VALUES(channel_name)
+            """,
+            (
+                row["channel_key"],
+                row["channel_name"],
+                row["webhook_url"],
+                int(row["enabled"]),
+            ),
+        )
+
+
+def _load_notification_channels_from_cursor(cursor):
+    _ensure_notification_channel_schema(cursor)
+    cursor.execute(
+        """
+        SELECT channel_key, channel_name, webhook_url, enabled
+        FROM app_notification_channel
+        ORDER BY channel_key
+        """
+    )
+    rows = {str(r.get("channel_key")): r for r in cursor.fetchall()}
+    out = []
+    for default in _default_notification_channels():
+        key = default["channel_key"]
+        src = rows.get(key) or {}
+        out.append(
+            {
+                "channel_key": key,
+                "channel_name": src.get("channel_name") or default["channel_name"],
+                "webhook_url": str(src.get("webhook_url") or default["webhook_url"] or ""),
+                "enabled": int(src.get("enabled") if src.get("enabled") is not None else default["enabled"]),
+            }
+        )
+    return out
+
+
+def _normalize_webhook_url(raw):
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if not (value.startswith("http://") or value.startswith("https://")):
+        return ""
+    return value
 
 
 def _normalize_schedule_time(raw_time):
@@ -1215,6 +1313,414 @@ def _run_task_result_verification(task_name, started_at, finished_at, run_option
     return None, [f"result=SKIP; no verifier for task={task_name}"]
 
 
+def _table_exists(cursor, table_name):
+    cursor.execute("SHOW TABLES LIKE %s", (table_name,))
+    return cursor.fetchone() is not None
+
+
+def _fmt_money(value):
+    try:
+        return f"{float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _fmt_pct_value(value):
+    try:
+        return f"{float(value):.2f}%"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _build_sina_analyse_notification(cursor, run_options=None):
+    if not _table_exists(cursor, "bs_detection_results"):
+        return "分析结果表 `bs_detection_results` 不存在，无法生成统计摘要。"
+
+    datestr = _normalize_datestr((run_options or {}).get("datestr"))
+    target_date = None
+    if datestr:
+        target_date = datetime.strptime(datestr, "%Y%m%d").date()
+    else:
+        cursor.execute("SELECT MAX(batch_date) AS d FROM bs_detection_results")
+        target_date = (cursor.fetchone() or {}).get("d")
+
+    if target_date is None:
+        return "未找到可用的 B/S 分析结果。"
+
+    cursor.execute(
+        """
+        SELECT
+            COUNT(*) AS total_cnt,
+            SUM(CASE WHEN has_buy_signal = 1 THEN 1 ELSE 0 END) AS buy_cnt,
+            SUM(CASE WHEN has_sell_signal = 1 THEN 1 ELSE 0 END) AS sell_cnt,
+            SUM(CASE WHEN has_buy_signal = 1 AND has_sell_signal = 1 THEN 1 ELSE 0 END) AS dual_cnt,
+            MAX(created_at) AS updated_at
+        FROM bs_detection_results
+        WHERE batch_date = %s
+        """,
+        (target_date,),
+    )
+    stats = cursor.fetchone() or {}
+
+    cursor.execute(
+        """
+        SELECT stock_code
+        FROM bs_detection_results
+        WHERE batch_date = %s AND has_buy_signal = 1
+        ORDER BY stock_code ASC
+        LIMIT 8
+        """,
+        (target_date,),
+    )
+    buy_codes = [str(r.get("stock_code") or "").zfill(6) for r in cursor.fetchall() if r.get("stock_code")]
+
+    cursor.execute(
+        """
+        SELECT stock_code
+        FROM bs_detection_results
+        WHERE batch_date = %s AND has_sell_signal = 1
+        ORDER BY stock_code ASC
+        LIMIT 8
+        """,
+        (target_date,),
+    )
+    sell_codes = [str(r.get("stock_code") or "").zfill(6) for r in cursor.fetchall() if r.get("stock_code")]
+
+    target_datestr = _db_value_to_datestr(target_date) or str(target_date)
+    return "\n".join(
+        [
+            f"分析日期：{target_datestr}",
+            f"覆盖股票：{int(stats.get('total_cnt') or 0)}",
+            f"买点信号：{int(stats.get('buy_cnt') or 0)}",
+            f"卖点信号：{int(stats.get('sell_cnt') or 0)}",
+            f"双向信号：{int(stats.get('dual_cnt') or 0)}",
+            f"数据更新时间：{stats.get('updated_at') or '-'}",
+            f"买点示例：{', '.join(buy_codes) if buy_codes else '无'}",
+            f"卖点示例：{', '.join(sell_codes) if sell_codes else '无'}",
+        ]
+    )
+
+
+def _build_sina_m8_notification(cursor, run_options=None):
+    if not _table_exists(cursor, "strategy_m8_runs"):
+        return "M8 结果表 `strategy_m8_runs` 不存在，无法生成摘要。"
+
+    datestr = _normalize_datestr((run_options or {}).get("datestr"))
+    if datestr:
+        target_date = datetime.strptime(datestr, "%Y%m%d").date()
+        cursor.execute(
+            """
+            SELECT id, as_of_date, lookback_dates, sample_rows, eligible_rows, searched_total, status, created_at
+            FROM strategy_m8_runs
+            WHERE as_of_date = %s
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (target_date,),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT id, as_of_date, lookback_dates, sample_rows, eligible_rows, searched_total, status, created_at
+            FROM strategy_m8_runs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+    run = cursor.fetchone() or {}
+
+    run_id = int(run.get("id") or 0)
+    if run_id <= 0:
+        return "未找到可用的 M8 运行记录。"
+
+    item_cnt = 0
+    if _table_exists(cursor, "strategy_m8_items"):
+        cursor.execute("SELECT COUNT(*) AS c FROM strategy_m8_items WHERE run_id = %s", (run_id,))
+        item_cnt = int((cursor.fetchone() or {}).get("c") or 0)
+
+    winners = []
+    if _table_exists(cursor, "strategy_m8_items"):
+        cursor.execute(
+            """
+            SELECT strategy, avg_ret_10, hit_10, rank_no
+            FROM strategy_m8_items
+            WHERE run_id = %s AND item_type = 'M3'
+            ORDER BY rank_no ASC
+            LIMIT 3
+            """,
+            (run_id,),
+        )
+        winners = cursor.fetchall() or []
+
+    as_of_date = run.get("as_of_date")
+    rebalance_line = "今日调仓结果（卖出侧）：暂无 m7_sell_signals 数据"
+    if as_of_date and _table_exists(cursor, "m7_sell_signals"):
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_rows,
+                SUM(
+                    CASE
+                        WHEN COALESCE(reason_code, '') IN ('BS_REVERSAL', 'HARD_STOP', 'LIMIT_DOWN_EXIT', 'TRAILING_STOP', 'TIME_STOP', 'SCORE_EXIT')
+                             OR sell_signal = 'FORCED_EXIT'
+                        THEN 1 ELSE 0
+                    END
+                ) AS forced_rows,
+                SUM(CASE WHEN COALESCE(reason_code, '') = 'REBALANCE_SELL' OR sell_signal = 'REBALANCE' THEN 1 ELSE 0 END) AS rebalance_rows,
+                SUM(CASE WHEN COALESCE(pending_flag, 0) = 1 OR UPPER(COALESCE(exec_status, '')) = 'PENDING' THEN 1 ELSE 0 END) AS pending_rows,
+                SUM(COALESCE(notional, 0)) AS total_notional
+            FROM m7_sell_signals
+            WHERE signal_date = %s
+            """,
+            (as_of_date,),
+        )
+        rb = cursor.fetchone() or {}
+        rebalance_line = (
+            "今日调仓结果（卖出侧）："
+            f"卖出单 {int(rb.get('total_rows') or 0)}，"
+            f"强制卖出 {int(rb.get('forced_rows') or 0)}，"
+            f"再平衡卖出 {int(rb.get('rebalance_rows') or 0)}，"
+            f"挂起 {int(rb.get('pending_rows') or 0)}，"
+            f"预计卖出额 {_fmt_money(rb.get('total_notional') or 0)}"
+        )
+
+    winner_lines = []
+    for row in winners:
+        winner_lines.append(
+            f"- {row.get('strategy') or '-'}: ret10={_fmt_pct_value(row.get('avg_ret_10'))}, hit10={_fmt_pct_value(row.get('hit_10'))}"
+        )
+
+    return "\n".join(
+        [
+            f"M8运行ID：{run_id}",
+            f"评估日期：{_db_value_to_datestr(run.get('as_of_date')) or run.get('as_of_date') or '-'}",
+            f"状态：{run.get('status') or '-'}",
+            f"lookback_dates：{int(run.get('lookback_dates') or 0)}",
+            f"样本行数：{int(run.get('sample_rows') or 0)}",
+            f"可交易样本：{int(run.get('eligible_rows') or 0)}",
+            f"搜索组合数：{int(run.get('searched_total') or 0)}",
+            f"结果条目数：{item_cnt}",
+            f"运行时间：{run.get('created_at') or '-'}",
+            ("M3冠军参数：" if winner_lines else "M3冠军参数：无"),
+            *winner_lines,
+            rebalance_line,
+        ]
+    )
+
+
+def _build_sina_snapshot_notification(cursor, run_options=None):
+    if not _table_exists(cursor, "live_daily_snapshots"):
+        return "快照表 `live_daily_snapshots` 不存在，无法生成实盘总结。"
+
+    datestr = _normalize_datestr((run_options or {}).get("datestr"))
+    snapshot = None
+    if datestr:
+        target_date = datetime.strptime(datestr, "%Y%m%d").date()
+        cursor.execute(
+            """
+            SELECT snapshot_date, cash, positions_value, total_equity, daily_pnl, daily_return_pct, csi300_return_pct, excess_return_pct
+            FROM live_daily_snapshots
+            WHERE snapshot_date = %s
+            LIMIT 1
+            """,
+            (target_date,),
+        )
+        snapshot = cursor.fetchone()
+    if not snapshot:
+        cursor.execute(
+            """
+            SELECT snapshot_date, cash, positions_value, total_equity, daily_pnl, daily_return_pct, csi300_return_pct, excess_return_pct
+            FROM live_daily_snapshots
+            ORDER BY snapshot_date DESC
+            LIMIT 1
+            """
+        )
+        snapshot = cursor.fetchone()
+
+    if not snapshot:
+        return "未找到可用的实盘快照记录。"
+
+    pos_cnt = 0
+    if _table_exists(cursor, "live_positions"):
+        cursor.execute("SELECT COUNT(*) AS c FROM live_positions")
+        pos_cnt = int((cursor.fetchone() or {}).get("c") or 0)
+
+    trade_date = snapshot.get("snapshot_date")
+    buy_cnt = sell_cnt = 0
+    buy_amt = sell_amt = 0.0
+    if trade_date and _table_exists(cursor, "live_trades"):
+        cursor.execute(
+            """
+            SELECT direction, COUNT(*) AS cnt, SUM(amount) AS amt
+            FROM live_trades
+            WHERE trade_date = %s
+            GROUP BY direction
+            """,
+            (trade_date,),
+        )
+        for row in cursor.fetchall() or []:
+            direction = str(row.get("direction") or "").lower()
+            if direction == "buy":
+                buy_cnt = int(row.get("cnt") or 0)
+                buy_amt = float(row.get("amt") or 0.0)
+            elif direction == "sell":
+                sell_cnt = int(row.get("cnt") or 0)
+                sell_amt = float(row.get("amt") or 0.0)
+
+    return "\n".join(
+        [
+            f"快照日期：{_db_value_to_datestr(snapshot.get('snapshot_date')) or snapshot.get('snapshot_date') or '-'}",
+            f"总权益：{_fmt_money(snapshot.get('total_equity') or 0)}",
+            f"现金：{_fmt_money(snapshot.get('cash') or 0)}",
+            f"持仓市值：{_fmt_money(snapshot.get('positions_value') or 0)}",
+            f"当日盈亏：{_fmt_money(snapshot.get('daily_pnl') or 0)}",
+            f"当日收益率：{_fmt_pct_value(snapshot.get('daily_return_pct'))}",
+            f"沪深300收益率：{_fmt_pct_value(snapshot.get('csi300_return_pct'))}",
+            f"超额收益率：{_fmt_pct_value(snapshot.get('excess_return_pct'))}",
+            f"当前持仓数：{pos_cnt}",
+            f"当日成交：买入 {buy_cnt} 笔 / {_fmt_money(buy_amt)}，卖出 {sell_cnt} 笔 / {_fmt_money(sell_amt)}",
+        ]
+    )
+
+
+def _build_task_completion_notification(task_name, trigger_type, started_at, finished_at, run_options=None):
+    if task_name not in {"sina_analyse", "sina_m8", "sina_snapshot"}:
+        return None
+
+    conn = pymysql.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            if task_name == "sina_analyse":
+                detail = _build_sina_analyse_notification(cursor, run_options=run_options)
+            elif task_name == "sina_m8":
+                detail = _build_sina_m8_notification(cursor, run_options=run_options)
+            else:
+                detail = _build_sina_snapshot_notification(cursor, run_options=run_options)
+    finally:
+        conn.close()
+
+    task_display_name = TASKS.get(task_name, {}).get("name") or task_name
+    lines = [
+        f"【任务完成】{task_display_name}",
+        f"任务ID：{task_name}",
+        f"触发方式：{trigger_type or '-'}",
+        f"开始时间：{started_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(started_at, datetime) else started_at}",
+        f"完成时间：{finished_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(finished_at, datetime) else finished_at}",
+        "",
+        str(detail or "无摘要信息。"),
+    ]
+    return "\n".join(lines)
+
+
+def _build_channel_payload(channel_key, content):
+    text = str(content or "")
+    if channel_key == "feishu":
+        return {"msg_type": "text", "content": {"text": text}}
+    if channel_key == "wechat":
+        return {"msgtype": "markdown", "markdown": {"content": text}}
+    if channel_key == "dingtalk":
+        return {"msgtype": "markdown", "markdown": {"title": "任务完成通知", "text": text}}
+    return {"text": text, "content": text}
+
+
+def _is_webhook_response_ok(status_code, body):
+    if status_code < 200 or status_code >= 300:
+        return False, f"http_status={status_code}"
+    try:
+        parsed = json.loads(body) if body else {}
+    except Exception:
+        return True, "http_ok"
+    if not isinstance(parsed, dict):
+        return True, "http_ok"
+    errcode = parsed.get("errcode")
+    code = parsed.get("code")
+    status_code_field = parsed.get("StatusCode")
+    if errcode not in (None, 0, "0"):
+        return False, f"errcode={errcode}"
+    if code not in (None, 0, "0"):
+        return False, f"code={code}"
+    if status_code_field not in (None, 0, "0"):
+        return False, f"StatusCode={status_code_field}"
+    return True, "ok"
+
+
+def _post_channel_webhook(channel_key, webhook_url, content):
+    payload = _build_channel_payload(channel_key, content)
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        webhook_url,
+        data=raw,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            status = int(resp.getcode() or 0)
+            body = resp.read().decode("utf-8", errors="ignore")
+            ok, reason = _is_webhook_response_ok(status, body)
+            return ok, reason
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore") if hasattr(e, "read") else str(e)
+        return False, f"http_error={e.code}; body={body[:200]}"
+    except Exception as e:
+        return False, f"exception={e}"
+
+
+def _dispatch_task_notification(content):
+    conn = pymysql.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cursor:
+            channels = _load_notification_channels_from_cursor(cursor)
+    finally:
+        conn.close()
+
+    enabled_channels = [
+        row for row in channels
+        if int(row.get("enabled") or 0) == 1 and _normalize_webhook_url(row.get("webhook_url"))
+    ]
+    if not enabled_channels:
+        print("Task notification skipped: no enabled webhook channels configured.")
+        return
+
+    success_cnt = 0
+    fail_logs = []
+    for row in enabled_channels:
+        channel_key = row.get("channel_key")
+        webhook_url = _normalize_webhook_url(row.get("webhook_url"))
+        if not webhook_url:
+            continue
+        ok, reason = _post_channel_webhook(channel_key, webhook_url, content)
+        if ok:
+            success_cnt += 1
+        else:
+            fail_logs.append(f"{channel_key}:{reason}")
+    print(
+        f"Task notification dispatched: success={success_cnt}/{len(enabled_channels)}"
+        + (f"; failures={' | '.join(fail_logs)}" if fail_logs else "")
+    )
+
+
+def _send_task_completion_notification(task_name, history_status, trigger_type, started_at, finished_at, run_options=None):
+    if history_status != "Success":
+        return
+    if task_name not in {"sina_analyse", "sina_m8", "sina_snapshot"}:
+        return
+    try:
+        content = _build_task_completion_notification(
+            task_name=task_name,
+            trigger_type=trigger_type,
+            started_at=started_at,
+            finished_at=finished_at,
+            run_options=run_options,
+        )
+        if not content:
+            return
+        _dispatch_task_notification(content)
+    except Exception as e:
+        print(f"Task notification error ({task_name}): {e}")
+
+
 def _execute_locked_task(task_name, trigger_type, run_options=None):
     started_at = datetime.now()
     project_root = Path(app.root_path).parent
@@ -1317,6 +1823,14 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
             exit_code=exit_code,
             duration_seconds=duration_seconds,
             message=message,
+        )
+        _send_task_completion_notification(
+            task_name=task_name,
+            history_status=history_status,
+            trigger_type=trigger_type,
+            started_at=started_at,
+            finished_at=finished_at,
+            run_options=run_options,
         )
         _mark_task_lock_finished(task_name, lock_status, message or lock_status)
 
@@ -4499,6 +5013,7 @@ def admin():
     now_date_iso = datetime.now().strftime('%Y-%m-%d')
     task_results = []
     task_locks = []
+    notification_channels = _default_notification_channels()
     active_tab = str(request.args.get("tab") or "center-tab")
     if active_tab not in {"center-tab", "lock-tab", "result-tab"}:
         active_tab = "center-tab"
@@ -4507,6 +5022,7 @@ def admin():
         conn = get_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
+            notification_channels = _load_notification_channels_from_cursor(cursor)
         task_results = _get_task_history(limit=200)
         task_locks = _get_task_lock_rows(limit=50)
     except Exception as e:
@@ -4520,6 +5036,7 @@ def admin():
                            now_date=now_date_iso,
                            task_results=task_results,
                            task_locks=task_locks,
+                           notification_channels=notification_channels,
                            active_tab=active_tab)
 
 def update_task_db(task_name):
@@ -4588,6 +5105,51 @@ def update_task_schedule(task_name):
     update_task_db(task_name)
     flash(f"任务 {TASKS[task_name]['name']} 调度配置已更新。", 'success')
     return redirect(url_for('admin'))
+
+
+@app.route('/admin/notification_channels', methods=['POST'])
+def update_notification_channels():
+    invalid_channels = []
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            for channel_key, channel_name in NOTIFICATION_CHANNEL_DEFS:
+                raw_url = request.form.get(f"{channel_key}_webhook_url")
+                raw_url = str(raw_url or "").strip()
+                webhook_url = _normalize_webhook_url(raw_url)
+                enabled_flag = request.form.get(f"{channel_key}_enabled") == "on"
+                enabled = 1 if (enabled_flag and bool(webhook_url)) else 0
+                if raw_url and not webhook_url:
+                    invalid_channels.append(channel_name)
+                cursor.execute(
+                    """
+                    INSERT INTO app_notification_channel (channel_key, channel_name, webhook_url, enabled)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        channel_name = VALUES(channel_name),
+                        webhook_url = VALUES(webhook_url),
+                        enabled = VALUES(enabled)
+                    """,
+                    (channel_key, channel_name, webhook_url, enabled),
+                )
+        conn.commit()
+    except Exception as e:
+        flash(f"通知渠道配置保存失败：{e}", "danger")
+        return redirect(url_for("admin", tab="center-tab"))
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    if invalid_channels:
+        flash(f"以下渠道 URL 非法（仅支持 http/https）：{', '.join(invalid_channels)}。已自动禁用这些渠道。", "warning")
+    else:
+        flash("通知渠道配置已更新。", "success")
+    return redirect(url_for("admin", tab="center-tab"))
 
 
 @app.route('/admin/run_task/<task_name>', methods=['POST'])

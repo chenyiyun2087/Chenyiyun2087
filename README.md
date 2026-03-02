@@ -163,3 +163,99 @@ python sina/live_tracker/run_live_tracker.py sync
 ## 6. 注意事项
 - 修改调度时间以 `web/app.py` 的任务字典为准（`scheduler.py` 当前未启用）。
 - 实盘同步（Snapshot）前需确保行情数据已在 ODS 层落库完成。
+
+## 7. 任务完成通知系统（新增）
+
+### 7.1 Web Console 配置入口
+
+- 入口页面：`/admin`（后台任务中心）
+- 配置区域：`消息通知渠道`
+- 支持渠道：
+  - 飞书（Feishu）
+  - 企业微信（Wechat）
+  - 钉钉（Dingtalk）
+  - 自定义 Webhook
+- 生效规则：仅对“已启用 + URL 合法（http/https）”的渠道发送通知。
+
+> 测试环境默认预填飞书 Webhook（可在后台覆盖）：
+> `https://open.feishu.cn/open-apis/bot/v2/hook/a8374c19-3620-4891-8c7a-df6885229607`
+
+### 7.2 调用链（任务完成后通知）
+
+统一调用链如下（位于 `web/app.py`）：
+
+1. 任务执行线程：`_execute_locked_task(...)`
+2. 写入任务历史：`_insert_task_history(...)`
+3. 触发通知总入口：`_send_task_completion_notification(...)`
+4. 构建任务摘要：`_build_task_completion_notification(...)`
+5. 多渠道分发：`_dispatch_task_notification(...)`
+6. 单渠道发送：`_post_channel_webhook(...)`
+
+### 7.3 触发条件
+
+- 仅在任务 **执行成功**（`history_status == "Success"`）后触发通知。
+- 当前仅对以下任务启用通知：
+  - `sina_analyse`
+  - `sina_m8`
+  - `sina_snapshot`
+
+### 7.4 业务功能（按任务）
+
+#### A) `sina_analyse` 完成通知
+
+- 目标：通知“分析完成”，并给出当日 B/S 统计结果。
+- 摘要字段：
+  - 分析日期（`batch_date`）
+  - 覆盖股票数
+  - 买点信号数 / 卖点信号数 / 双向信号数
+  - 数据更新时间
+  - 买点示例代码（最多 8 条）
+  - 卖点示例代码（最多 8 条）
+- 数据来源：`bs_detection_results`
+
+#### B) `sina_m8` 完成通知
+
+- 目标：通知“M8 已完成”，并给出“今天调仓结果”（卖出侧）。
+- 摘要字段（M8 本体）：
+  - `run_id`、`as_of_date`、`status`
+  - `lookback_dates`、样本行数、可交易样本、搜索组合数、结果条目数
+  - M3 冠军参数摘要（最多 3 条）
+- 调仓结果字段（卖出侧）：
+  - 今日卖出单总数
+  - 强制卖出数
+  - 再平衡卖出数
+  - 挂起单数（`pending`）
+  - 预计卖出总金额
+- 数据来源：`strategy_m8_runs`、`strategy_m8_items`、`m7_sell_signals`
+
+#### C) `sina_snapshot` 完成通知
+
+- 目标：通知“实盘快照已完成”，并给出当日实盘总结。
+- 摘要字段：
+  - 快照日期
+  - 总权益、现金、持仓市值
+  - 当日盈亏、当日收益率、沪深300收益率、超额收益率
+  - 当前持仓数量
+  - 当日成交汇总（买入笔数/金额、卖出笔数/金额）
+- 数据来源：`live_daily_snapshots`、`live_positions`、`live_trades`
+
+### 7.5 消息样式（模板）
+
+统一消息头：
+
+```text
+【任务完成】<任务显示名>
+任务ID：<task_name>
+触发方式：manual/schedule
+开始时间：YYYY-MM-DD HH:MM:SS
+完成时间：YYYY-MM-DD HH:MM:SS
+```
+
+任务摘要正文按任务类型拼接（见 7.4）。
+
+渠道适配：
+
+- 飞书：`msg_type=text`
+- 企业微信：`msgtype=markdown`
+- 钉钉：`msgtype=markdown`（含标题）
+- 自定义：默认 `{text, content}` JSON
