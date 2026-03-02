@@ -112,21 +112,50 @@ def upsert_position(
     entry_date: date,
     name: str = "",
     current_price: float = None,
+    highest_since_entry: float = None,
+    holding_trade_days: int = None,
+    pending_forced_exit: int = 0,
+    pending_exit_reason: str = None,
+    rebuy_cooldown_until: date = None,
 ) -> None:
     """插入或更新持仓"""
     sql = """
-    INSERT INTO live_positions (symbol, name, shares, avg_cost, entry_date, current_price)
-    VALUES (%s, %s, %s, %s, %s, %s)
+    INSERT INTO live_positions (
+        symbol, name, shares, avg_cost, entry_date, current_price,
+        highest_since_entry, holding_trade_days, pending_forced_exit, pending_exit_reason, rebuy_cooldown_until
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
         name = VALUES(name),
         shares = VALUES(shares),
         avg_cost = VALUES(avg_cost),
-        current_price = VALUES(current_price)
+        current_price = VALUES(current_price),
+        highest_since_entry = GREATEST(COALESCE(highest_since_entry, 0), COALESCE(VALUES(highest_since_entry), 0)),
+        holding_trade_days = COALESCE(VALUES(holding_trade_days), holding_trade_days),
+        pending_forced_exit = COALESCE(VALUES(pending_forced_exit), pending_forced_exit),
+        pending_exit_reason = COALESCE(VALUES(pending_exit_reason), pending_exit_reason),
+        rebuy_cooldown_until = COALESCE(VALUES(rebuy_cooldown_until), rebuy_cooldown_until)
     """
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(sql, (symbol, name, shares, avg_cost, entry_date, current_price))
+            hs = highest_since_entry if highest_since_entry is not None else current_price
+            cursor.execute(
+                sql,
+                (
+                    symbol,
+                    name,
+                    shares,
+                    avg_cost,
+                    entry_date,
+                    current_price,
+                    hs,
+                    holding_trade_days,
+                    pending_forced_exit,
+                    pending_exit_reason,
+                    rebuy_cooldown_until,
+                ),
+            )
             conn.commit()
     finally:
         conn.close()
@@ -170,11 +199,16 @@ def get_position(symbol: str) -> Optional[Dict]:
 
 def update_position_price(symbol: str, current_price: float) -> None:
     """更新持仓当前价格"""
-    sql = "UPDATE live_positions SET current_price = %s WHERE symbol = %s"
+    sql = """
+    UPDATE live_positions
+    SET current_price = %s,
+        highest_since_entry = GREATEST(COALESCE(highest_since_entry, 0), COALESCE(%s, 0))
+    WHERE symbol = %s
+    """
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(sql, (current_price, symbol))
+            cursor.execute(sql, (current_price, current_price, symbol))
             conn.commit()
     finally:
         conn.close()
@@ -190,8 +224,13 @@ def batch_update_prices(price_dict: Dict[str, float]) -> None:
         with conn.cursor() as cursor:
             for symbol, price in price_dict.items():
                 cursor.execute(
-                    "UPDATE live_positions SET current_price = %s WHERE symbol = %s",
-                    (price, symbol)
+                    """
+                    UPDATE live_positions
+                    SET current_price = %s,
+                        highest_since_entry = GREATEST(COALESCE(highest_since_entry, 0), COALESCE(%s, 0))
+                    WHERE symbol = %s
+                    """,
+                    (price, price, symbol)
                 )
             conn.commit()
     finally:

@@ -33,6 +33,9 @@ try:
         evaluate_m5_rolling,
         evaluate_m6_nav,
         evaluate_m7_rebalance,
+        M7_FORCED_REASON_CODES,
+        M7_RULE_VERSION_V1,
+        M7_RULE_VERSION_V21,
     )
 except ImportError:
     from strategy_playbook import (  # type: ignore
@@ -48,6 +51,9 @@ except ImportError:
         evaluate_m5_rolling,
         evaluate_m6_nav,
         evaluate_m7_rebalance,
+        M7_FORCED_REASON_CODES,
+        M7_RULE_VERSION_V1,
+        M7_RULE_VERSION_V21,
     )
 
 app = Flask(__name__)
@@ -131,6 +137,18 @@ TASKS = {
         "next_run": "-",
         "trading_day_only": True,
     },
+    "sina_m7_sell": {
+        "name": "M7 卖出评估",
+        "description": "基于 M4 目标仓位与实盘持仓执行 M7 卖出规则引擎（m7_sell_v2.1）",
+        "script": "scripts/ops/run_m7_sell_eval.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "21:35",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
     "eastmoney": {
         "name": "eastmoney 策略扫描",
         "description": "东方财富社区舆情扫描与个股热度分析",
@@ -207,7 +225,7 @@ TASKS = {
 TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
-SCHEDULED_TASK_WHITELIST = {"sina_picture", "sina_analyse", "sina_score", "sina_m8", "sina_snapshot"}
+SCHEDULED_TASK_WHITELIST = {"sina_picture", "sina_analyse", "sina_score", "sina_m8", "sina_snapshot", "sina_m7_sell"}
 
 UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
@@ -1134,11 +1152,66 @@ def _verify_sina_m8_result(started_at, finished_at):
         return False, [f"result=FAIL; verifier_error={e}"]
 
 
+def _verify_sina_m7_sell_result(started_at, finished_at, run_options=None):
+    lines = []
+    try:
+        target_datestr = _normalize_datestr((run_options or {}).get("datestr"))
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                _ensure_m7_sell_signal_table(cursor)
+                if target_datestr:
+                    target_date = datetime.strptime(target_datestr, "%Y%m%d").date()
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) AS c, MAX(updated_at) AS max_updated
+                        FROM m7_sell_signals
+                        WHERE signal_date = %s AND source = 'm7_nightly'
+                        """,
+                        (target_date,),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) AS c, MAX(updated_at) AS max_updated, MAX(signal_date) AS signal_date
+                        FROM m7_sell_signals
+                        WHERE source = 'm7_nightly'
+                        """
+                    )
+                row = cursor.fetchone() or {}
+        finally:
+            conn.close()
+
+        cnt = int(row.get("c") or 0)
+        max_updated_raw = row.get("max_updated")
+        max_updated = _db_value_to_datetime(max_updated_raw) or max_updated_raw
+        in_window = (
+            isinstance(max_updated, datetime)
+            and (started_at - timedelta(seconds=30)) <= max_updated <= (finished_at + timedelta(seconds=300))
+        )
+        if cnt <= 0:
+            # 无卖出单也可判定任务成功，避免空集导致夜间任务误报失败
+            lines.append("result=PASS; rows=0; reason=no_sell_signal_generated")
+            return True, lines
+
+        ok = bool(in_window)
+        lines.append(
+            "result="
+            + ("PASS" if ok else "FAIL")
+            + f"; rows={cnt}; max_updated={max_updated or '-'}; in_window={in_window}"
+        )
+        return ok, lines
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
 def _run_task_result_verification(task_name, started_at, finished_at, run_options=None):
     if task_name == "sina_score":
         return _verify_sina_score_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_m8":
         return _verify_sina_m8_result(started_at, finished_at)
+    if task_name == "sina_m7_sell":
+        return _verify_sina_m7_sell_result(started_at, finished_at, run_options=run_options)
     return None, [f"result=SKIP; no verifier for task={task_name}"]
 
 
@@ -1326,6 +1399,11 @@ def _build_task_script_parts(task_name, run_options=None):
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
             return [script, 'snapshot', '--date', date_iso]
         return [script, 'snapshot']
+    if task_name == 'sina_m7_sell':
+        if datestr and len(datestr) == 8:
+            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
+            return [script, '--date', date_iso]
+        return [script]
     if task_name == 'eastmoney':
         return [script, '--export', 'result']
     if task_name == 'chenyiyun_selected':
@@ -2739,6 +2817,7 @@ def api_m7_sell_signals_latest():
                             "total_rows": 0,
                             "forced_exit_rows": 0,
                             "rebalance_rows": 0,
+                            "pending_rows": 0,
                             "total_notional": 0.0,
                         },
                         "rows": [],
@@ -2759,12 +2838,21 @@ def api_m7_sell_signals_latest():
                     name,
                     sell_signal,
                     reason,
+                    reason_code,
+                    reason_detail_json,
+                    rule_version,
+                    score_date,
                     current_weight,
                     target_weight,
                     delta_weight,
                     price,
                     shares,
                     notional,
+                    pending_flag,
+                    pending_reason,
+                    exec_status,
+                    protect_window_hit,
+                    market_risk_gate_hit,
                     source,
                     created_at,
                     updated_at
@@ -2781,8 +2869,15 @@ def api_m7_sell_signals_latest():
                 f"""
                 SELECT
                     COUNT(*) AS total_rows,
-                    SUM(CASE WHEN sell_signal = 'FORCED_EXIT' THEN 1 ELSE 0 END) AS forced_exit_rows,
-                    SUM(CASE WHEN sell_signal = 'REBALANCE' THEN 1 ELSE 0 END) AS rebalance_rows,
+                    SUM(
+                        CASE
+                            WHEN COALESCE(reason_code, '') IN ('BS_REVERSAL', 'HARD_STOP', 'LIMIT_DOWN_EXIT', 'TRAILING_STOP', 'TIME_STOP', 'SCORE_EXIT')
+                                 OR sell_signal = 'FORCED_EXIT'
+                            THEN 1 ELSE 0
+                        END
+                    ) AS forced_exit_rows,
+                    SUM(CASE WHEN COALESCE(reason_code, '') = 'REBALANCE_SELL' OR sell_signal = 'REBALANCE' THEN 1 ELSE 0 END) AS rebalance_rows,
+                    SUM(CASE WHEN COALESCE(pending_flag, 0) = 1 OR UPPER(COALESCE(exec_status, '')) = 'PENDING' THEN 1 ELSE 0 END) AS pending_rows,
                     SUM(COALESCE(notional, 0)) AS total_notional
                 FROM m7_sell_signals
                 {where_sql}
@@ -2796,6 +2891,8 @@ def api_m7_sell_signals_latest():
                     row["created_at"] = str(row.get("created_at"))
                 if row.get("updated_at"):
                     row["updated_at"] = str(row.get("updated_at"))
+                if row.get("score_date"):
+                    row["score_date"] = str(row.get("score_date"))
 
             signal_date_str = signal_date.isoformat() if hasattr(signal_date, "isoformat") else str(signal_date)
             payload = {
@@ -2806,6 +2903,7 @@ def api_m7_sell_signals_latest():
                     "total_rows": int(summary.get("total_rows") or 0),
                     "forced_exit_rows": int(summary.get("forced_exit_rows") or 0),
                     "rebalance_rows": int(summary.get("rebalance_rows") or 0),
+                    "pending_rows": int(summary.get("pending_rows") or 0),
                     "total_notional": float(summary.get("total_notional") or 0.0),
                 },
                 "rows": rows,
@@ -2831,7 +2929,11 @@ def execute_trade():
         price = float(data.get('price') or 0)
         shares = int(data.get('shares') or 0)
         reason = data.get('reason') or "Web 执行"
+        reason_code = str(data.get('reason_code') or "").strip()
         score = data.get('score')
+
+        if reason_code and reason_code not in reason:
+            reason = f"{reason} [{reason_code}]"
         
         if not symbol or not action or price <= 0 or shares <= 0:
             return {"error": "Invalid parameters"}, 400
@@ -2854,6 +2956,27 @@ def execute_trade():
                 reason=reason,
                 score=score
             )
+            # 成交后清理挂起强制卖出状态（若仍有残余持仓）
+            conn = None
+            try:
+                conn = pymysql.connect(**DB_CONFIG)
+                with conn.cursor() as cursor:
+                    _ensure_live_positions_m7_columns(cursor)
+                    cursor.execute(
+                        """
+                        UPDATE live_positions
+                        SET pending_forced_exit = 0,
+                            pending_exit_reason = NULL
+                        WHERE symbol = %s
+                        """,
+                        (symbol,),
+                    )
+                conn.commit()
+            except Exception as e:
+                print(f"Failed to clear pending_exit state after sell: {e}")
+            finally:
+                if conn:
+                    conn.close()
         else:
             return {"error": f"Unsupported action: {action}"}, 400
             
@@ -3105,14 +3228,59 @@ def _ensure_m7_sell_signal_table(cursor):
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
+    cursor.execute("DESC m7_sell_signals")
+    columns = {row["Field"] for row in cursor.fetchall()}
+    alter_sql = {
+        "reason_code": "ALTER TABLE m7_sell_signals ADD COLUMN reason_code VARCHAR(32) NULL COMMENT 'M7卖出主因码' AFTER reason",
+        "reason_detail_json": "ALTER TABLE m7_sell_signals ADD COLUMN reason_detail_json JSON NULL COMMENT '结构化卖出依据' AFTER reason_code",
+        "rule_version": "ALTER TABLE m7_sell_signals ADD COLUMN rule_version VARCHAR(32) NOT NULL DEFAULT 'v1' COMMENT '规则版本号' AFTER reason_detail_json",
+        "score_date": "ALTER TABLE m7_sell_signals ADD COLUMN score_date DATE NULL COMMENT '评分日期' AFTER rule_version",
+        "pending_flag": "ALTER TABLE m7_sell_signals ADD COLUMN pending_flag TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否挂起' AFTER score_date",
+        "pending_reason": "ALTER TABLE m7_sell_signals ADD COLUMN pending_reason VARCHAR(128) NULL COMMENT '挂起原因' AFTER pending_flag",
+        "exec_status": "ALTER TABLE m7_sell_signals ADD COLUMN exec_status VARCHAR(32) NOT NULL DEFAULT 'NEW' COMMENT 'NEW/PENDING/EXECUTED/FAILED' AFTER pending_reason",
+        "protect_window_hit": "ALTER TABLE m7_sell_signals ADD COLUMN protect_window_hit TINYINT(1) NOT NULL DEFAULT 0 COMMENT '命中保护期' AFTER exec_status",
+        "market_risk_gate_hit": "ALTER TABLE m7_sell_signals ADD COLUMN market_risk_gate_hit TINYINT(1) NOT NULL DEFAULT 0 COMMENT '命中系统性风控门禁' AFTER protect_window_hit",
+    }
+    for col, sql in alter_sql.items():
+        if col not in columns:
+            cursor.execute(sql)
+
+    cursor.execute("SHOW INDEX FROM m7_sell_signals")
+    existing_keys = {row.get("Key_name") for row in cursor.fetchall()}
+    if "idx_signal_source" not in existing_keys:
+        cursor.execute("CREATE INDEX idx_signal_source ON m7_sell_signals(source, signal_date)")
+    if "idx_reason_code" not in existing_keys:
+        cursor.execute("CREATE INDEX idx_reason_code ON m7_sell_signals(reason_code, signal_date)")
+    if "idx_pending_status" not in existing_keys:
+        cursor.execute("CREATE INDEX idx_pending_status ON m7_sell_signals(pending_flag, exec_status, signal_date)")
 
 
-def _sync_m7_sell_signals(conn, signal_date, orders, source="m7_rebalance"):
+def _ensure_live_positions_m7_columns(cursor):
+    cursor.execute("SHOW TABLES LIKE 'live_positions'")
+    if cursor.fetchone() is None:
+        return
+    cursor.execute("DESC live_positions")
+    columns = {row["Field"] for row in cursor.fetchall()}
+    alter_sql = {
+        "entry_date": "ALTER TABLE live_positions ADD COLUMN entry_date DATE NULL COMMENT '建仓日期' AFTER avg_cost",
+        "highest_since_entry": "ALTER TABLE live_positions ADD COLUMN highest_since_entry DECIMAL(12,4) NULL COMMENT '建仓后最高价' AFTER current_price",
+        "holding_trade_days": "ALTER TABLE live_positions ADD COLUMN holding_trade_days INT NOT NULL DEFAULT 0 COMMENT '持仓交易日天数' AFTER highest_since_entry",
+        "pending_forced_exit": "ALTER TABLE live_positions ADD COLUMN pending_forced_exit TINYINT(1) NOT NULL DEFAULT 0 COMMENT '强制卖出挂起' AFTER holding_trade_days",
+        "pending_exit_reason": "ALTER TABLE live_positions ADD COLUMN pending_exit_reason VARCHAR(128) NULL COMMENT '挂起原因' AFTER pending_forced_exit",
+        "rebuy_cooldown_until": "ALTER TABLE live_positions ADD COLUMN rebuy_cooldown_until DATE NULL COMMENT '禁买截止日' AFTER pending_exit_reason",
+    }
+    for col, sql in alter_sql.items():
+        if col not in columns:
+            cursor.execute(sql)
+
+
+def _sync_m7_sell_signals(conn, signal_date, orders, source="m7_rebalance", rule_version=M7_RULE_VERSION_V1):
     if conn is None:
         return 0
 
     signal_dt = _coerce_to_date(signal_date) or datetime.now().date()
     source = str(source or "m7_rebalance")
+    rule_version = str(rule_version or M7_RULE_VERSION_V1)
 
     sell_orders = [
         o for o in (orders or [])
@@ -3131,11 +3299,17 @@ def _sync_m7_sell_signals(conn, signal_date, orders, source="m7_rebalance"):
                 INSERT INTO m7_sell_signals (
                     signal_date, symbol, name, sell_signal, reason,
                     current_weight, target_weight, delta_weight,
-                    price, shares, notional, source
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    price, shares, notional, source,
+                    reason_code, reason_detail_json, rule_version, score_date,
+                    pending_flag, pending_reason, exec_status,
+                    protect_window_hit, market_risk_gate_hit
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             params = []
             for o in sell_orders:
+                detail = o.get("reason_detail_json")
+                if isinstance(detail, (dict, list)):
+                    detail = json.dumps(detail, ensure_ascii=False)
                 params.append(
                     (
                         signal_dt,
@@ -3150,9 +3324,44 @@ def _sync_m7_sell_signals(conn, signal_date, orders, source="m7_rebalance"):
                         int(o.get("shares") or 0),
                         float(o.get("notional") or 0.0),
                         source,
+                        str(o.get("reason_code") or o.get("sell_signal") or "REBALANCE_SELL"),
+                        detail,
+                        str(o.get("rule_version") or rule_version),
+                        _coerce_to_date(o.get("score_date")) or signal_dt,
+                        int(o.get("pending_flag") or 0),
+                        (str(o.get("pending_reason") or "").strip() or None),
+                        str(o.get("exec_status") or "NEW"),
+                        int(o.get("protect_window_hit") or 0),
+                        int(o.get("market_risk_gate_hit") or 0),
                     )
                 )
             cursor.executemany(sql, params)
+
+            # 将 pending 强制卖出状态同步到 live_positions，便于次日优先重试
+            _ensure_live_positions_m7_columns(cursor)
+            state_updates = []
+            for o in sell_orders:
+                symbol = str(o.get("symbol") or "").zfill(6)
+                if not symbol:
+                    continue
+                reason_code = str(o.get("reason_code") or "")
+                forced = int(o.get("forced_exit") or 0) == 1 or reason_code in M7_FORCED_REASON_CODES
+                if not forced:
+                    state_updates.append((0, None, symbol))
+                    continue
+                pending_flag = int(o.get("pending_flag") or 0)
+                pending_reason = str(o.get("pending_reason") or "").strip() or None
+                state_updates.append((pending_flag, pending_reason, symbol))
+            if state_updates:
+                cursor.executemany(
+                    """
+                    UPDATE live_positions
+                    SET pending_forced_exit = %s,
+                        pending_exit_reason = %s
+                    WHERE symbol = %s
+                    """,
+                    state_updates,
+                )
 
     conn.commit()
     return len(sell_orders)
@@ -3169,9 +3378,21 @@ def _fetch_live_positions_snapshot(conn):
         if not has_pos:
             return [], None
 
+        _ensure_live_positions_m7_columns(cursor)
         cursor.execute(
             """
-            SELECT symbol, name, shares, avg_cost, current_price
+            SELECT
+                symbol,
+                name,
+                shares,
+                avg_cost,
+                current_price,
+                entry_date,
+                highest_since_entry,
+                holding_trade_days,
+                pending_forced_exit,
+                pending_exit_reason,
+                rebuy_cooldown_until
             FROM live_positions
             """
         )
@@ -3191,6 +3412,12 @@ def _fetch_live_positions_snapshot(conn):
                     'shares': int(r.get('shares') or 0),
                     'avg_cost': float(r.get('avg_cost') or 0),
                     'current_price': float(r.get('current_price') or 0),
+                    'entry_date': r.get('entry_date'),
+                    'highest_since_entry': float(r.get('highest_since_entry') or 0) if r.get('highest_since_entry') is not None else None,
+                    'holding_trade_days': int(r.get('holding_trade_days') or 0),
+                    'pending_forced_exit': int(r.get('pending_forced_exit') or 0),
+                    'pending_exit_reason': r.get('pending_exit_reason'),
+                    'rebuy_cooldown_until': r.get('rebuy_cooldown_until'),
                     'market_value': mv,
                 }
             )
@@ -3562,13 +3789,49 @@ def sina_strategy_m7():
 
     max_positions = request.args.get('max_positions', 3, type=int)
     capital = request.args.get('capital', 100000, type=float)
+    rule_version = str(request.args.get('rule_version') or M7_RULE_VERSION_V21).strip() or M7_RULE_VERSION_V21
+    if rule_version not in {M7_RULE_VERSION_V1, M7_RULE_VERSION_V21}:
+        rule_version = M7_RULE_VERSION_V21
+
     min_trade_weight = request.args.get('min_trade_weight', 1.0, type=float)
-    stop_loss_pct = request.args.get('stop_loss_pct', 7.0, type=float)
+    min_trade_notional = request.args.get('min_trade_notional', 5000.0, type=float)
+    stop_loss_pct = request.args.get('stop_loss_pct', 6.0, type=float)
+    bs_fresh_trade_days = request.args.get('bs_fresh_trade_days', 3, type=int)
+    trail_activate_pct = request.args.get('trail_activate_pct', 12.0, type=float)
+    trail_drawdown_pct = request.args.get('trail_drawdown_pct', 4.0, type=float)
+    time_stop_days = request.args.get('time_stop_days', 8, type=int)
+    time_stop_min_return_pct = request.args.get('time_stop_min_return_pct', 1.0, type=float)
+    time_stop_rel_index_pct = request.args.get('time_stop_rel_index_pct', -3.0, type=float)
+    min_hold_protect_days = request.args.get('min_hold_protect_days', 5, type=int)
+    claude_floor = request.args.get('claude_floor', 45.0, type=float)
+    score_floor = request.args.get('score_floor', 60.0, type=float)
+    score_confirm_days = request.args.get('score_confirm_days', 2, type=int)
+    rebuy_cooldown_days = request.args.get('rebuy_cooldown_days', 5, type=int)
+    enable_market_risk_gate = str(request.args.get('enable_market_risk_gate') or '').strip().lower() in {'1', 'true', 'on', 'yes'}
+    market_risk_gate_drop_pct = request.args.get('market_risk_gate_drop_pct', -2.0, type=float)
+    is_post_close = str(request.args.get('is_post_close') or '1').strip().lower() not in {'0', 'false', 'off', 'no'}
 
     max_positions = int(clamp(max_positions or 3, 1, 20))
     capital = clamp(capital if capital is not None else 100000, 10000.0, 100000000.0)
     min_trade_weight = clamp(min_trade_weight if min_trade_weight is not None else 1.0, 0.0, 20.0)
-    stop_loss_pct = clamp(stop_loss_pct if stop_loss_pct is not None else 7.0, 0.0, 30.0)
+    min_trade_notional = clamp(min_trade_notional if min_trade_notional is not None else 5000.0, 0.0, 100000000.0)
+    stop_loss_pct = clamp(stop_loss_pct if stop_loss_pct is not None else 6.0, 0.0, 30.0)
+    bs_fresh_trade_days = int(clamp(bs_fresh_trade_days if bs_fresh_trade_days is not None else 3, 1, 20))
+    trail_activate_pct = clamp(trail_activate_pct if trail_activate_pct is not None else 12.0, 0.0, 80.0)
+    trail_drawdown_pct = clamp(trail_drawdown_pct if trail_drawdown_pct is not None else 4.0, 0.1, 40.0)
+    time_stop_days = int(clamp(time_stop_days if time_stop_days is not None else 8, 1, 120))
+    time_stop_min_return_pct = clamp(time_stop_min_return_pct if time_stop_min_return_pct is not None else 1.0, -50.0, 50.0)
+    time_stop_rel_index_pct = clamp(time_stop_rel_index_pct if time_stop_rel_index_pct is not None else -3.0, -50.0, 50.0)
+    min_hold_protect_days = int(clamp(min_hold_protect_days if min_hold_protect_days is not None else 5, 0, 60))
+    claude_floor = clamp(claude_floor if claude_floor is not None else 45.0, 0.0, 100.0)
+    score_floor = clamp(score_floor if score_floor is not None else 60.0, 0.0, 100.0)
+    score_confirm_days = int(clamp(score_confirm_days if score_confirm_days is not None else 2, 1, 10))
+    rebuy_cooldown_days = int(clamp(rebuy_cooldown_days if rebuy_cooldown_days is not None else 5, 0, 90))
+    market_risk_gate_drop_pct = clamp(
+        market_risk_gate_drop_pct if market_risk_gate_drop_pct is not None else -2.0,
+        -20.0,
+        0.0,
+    )
 
     latest_date = None
     rows = []
@@ -3591,8 +3854,25 @@ def sina_strategy_m7():
         current_positions=current_positions,
         total_capital=capital_used,
         min_trade_weight=min_trade_weight,
+        min_trade_notional=min_trade_notional,
         conn=conn,
-        stop_loss_pct=float(stop_loss_pct) / 100.0,
+        stop_loss_pct=stop_loss_pct,
+        rule_version=rule_version,
+        asof_date=latest_date,
+        bs_fresh_trade_days=bs_fresh_trade_days,
+        trail_activate_pct=trail_activate_pct,
+        trail_drawdown_pct=trail_drawdown_pct,
+        time_stop_days=time_stop_days,
+        time_stop_min_return_pct=time_stop_min_return_pct,
+        time_stop_rel_index_pct=time_stop_rel_index_pct,
+        min_hold_protect_days=min_hold_protect_days,
+        enable_market_risk_gate=enable_market_risk_gate,
+        market_risk_gate_drop_pct=market_risk_gate_drop_pct,
+        claude_floor=claude_floor,
+        score_floor=score_floor,
+        score_confirm_days=score_confirm_days,
+        is_post_close=is_post_close,
+        rebuy_cooldown_days=rebuy_cooldown_days,
     )
     m7_sell_sync_count = 0
     try:
@@ -3601,6 +3881,7 @@ def sina_strategy_m7():
             signal_date=latest_date,
             orders=m7_eval.get('orders') or [],
             source='m7_rebalance',
+            rule_version=rule_version,
         )
     except Exception as e:
         print(f"Failed to sync M7 sell signals: {e}")
@@ -3636,8 +3917,24 @@ def sina_strategy_m7():
             'max_positions': max_positions,
             'capital': capital,
             'capital_used': capital_used,
+            'rule_version': rule_version,
             'min_trade_weight': min_trade_weight,
+            'min_trade_notional': min_trade_notional,
             'stop_loss_pct': stop_loss_pct,
+            'bs_fresh_trade_days': bs_fresh_trade_days,
+            'trail_activate_pct': trail_activate_pct,
+            'trail_drawdown_pct': trail_drawdown_pct,
+            'time_stop_days': time_stop_days,
+            'time_stop_min_return_pct': time_stop_min_return_pct,
+            'time_stop_rel_index_pct': time_stop_rel_index_pct,
+            'min_hold_protect_days': min_hold_protect_days,
+            'claude_floor': claude_floor,
+            'score_floor': score_floor,
+            'score_confirm_days': score_confirm_days,
+            'rebuy_cooldown_days': rebuy_cooldown_days,
+            'enable_market_risk_gate': 1 if enable_market_risk_gate else 0,
+            'market_risk_gate_drop_pct': market_risk_gate_drop_pct,
+            'is_post_close': 1 if is_post_close else 0,
             'm7_sell_sync_count': m7_sell_sync_count,
         },
         page_title="策略M7：模拟调仓与下单流水",
@@ -4445,16 +4742,20 @@ def add_position():
         # So we cannot insert entry_price. We use avg_cost.
         
         sql = """
-        INSERT INTO live_positions (symbol, name, entry_date, shares, avg_cost, current_price)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO live_positions (symbol, name, entry_date, shares, avg_cost, current_price, highest_since_entry, pending_forced_exit, pending_exit_reason)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 0, NULL)
         ON DUPLICATE KEY UPDATE
             shares = shares + VALUES(shares),
             avg_cost = (avg_cost * shares + VALUES(avg_cost) * VALUES(shares)) / (shares + VALUES(shares)),
             current_price = VALUES(current_price),
-            entry_date = VALUES(entry_date)
+            highest_since_entry = GREATEST(COALESCE(highest_since_entry, 0), COALESCE(VALUES(current_price), 0)),
+            entry_date = VALUES(entry_date),
+            pending_forced_exit = 0,
+            pending_exit_reason = NULL
         """
         try:
-            cursor.execute(sql, (symbol, name, date_str, shares, price, price))
+            _ensure_live_positions_m7_columns(cursor)
+            cursor.execute(sql, (symbol, name, date_str, shares, price, price, price))
             conn.commit()
             flash(f"Position {symbol} added/updated.", 'success')
         except Exception as e:
@@ -4462,7 +4763,8 @@ def add_position():
             
     return redirect(url_for('admin'))
 
-start_task_scheduler_loop()
+if os.environ.get("DISABLE_APP_SCHEDULER_LOOP") != "1":
+    start_task_scheduler_loop()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)

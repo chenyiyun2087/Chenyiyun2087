@@ -44,13 +44,83 @@
                     <input type="number" min="10000" max="100000000" step="1000" name="capital"
                         value="{{ params.capital }}">
                 </label>
+                <label>规则版本
+                    <select name="rule_version">
+                        <option value="m7_sell_v2.1" {% if params.rule_version == 'm7_sell_v2.1' %}selected{% endif %}>m7_sell_v2.1</option>
+                        <option value="v1" {% if params.rule_version == 'v1' %}selected{% endif %}>v1</option>
+                    </select>
+                </label>
                 <label>最小调仓阈值（%）
                     <input type="number" min="0" max="20" step="0.1" name="min_trade_weight"
                         value="{{ params.min_trade_weight }}">
                 </label>
+                <label>最小调仓金额（元）
+                    <input type="number" min="0" max="100000000" step="100" name="min_trade_notional"
+                        value="{{ params.min_trade_notional }}">
+                </label>
                 <label>硬止损阈值（%）
                     <input type="number" min="0" max="30" step="0.1" name="stop_loss_pct"
                         value="{{ params.stop_loss_pct }}">
+                </label>
+                <label>B/S新鲜度（交易日）
+                    <input type="number" min="1" max="20" step="1" name="bs_fresh_trade_days"
+                        value="{{ params.bs_fresh_trade_days }}">
+                </label>
+                <label>移动止损激活（%）
+                    <input type="number" min="0" max="80" step="0.1" name="trail_activate_pct"
+                        value="{{ params.trail_activate_pct }}">
+                </label>
+                <label>移动止损回撤（%）
+                    <input type="number" min="0.1" max="40" step="0.1" name="trail_drawdown_pct"
+                        value="{{ params.trail_drawdown_pct }}">
+                </label>
+                <label>时间止损天数（交易日）
+                    <input type="number" min="1" max="120" step="1" name="time_stop_days"
+                        value="{{ params.time_stop_days }}">
+                </label>
+                <label>时间止损最小收益（%）
+                    <input type="number" min="-50" max="50" step="0.1" name="time_stop_min_return_pct"
+                        value="{{ params.time_stop_min_return_pct }}">
+                </label>
+                <label>相对指数阈值（%）
+                    <input type="number" min="-50" max="50" step="0.1" name="time_stop_rel_index_pct"
+                        value="{{ params.time_stop_rel_index_pct }}">
+                </label>
+                <label>最小持有保护期（交易日）
+                    <input type="number" min="0" max="60" step="1" name="min_hold_protect_days"
+                        value="{{ params.min_hold_protect_days }}">
+                </label>
+                <label>Claude下限
+                    <input type="number" min="0" max="100" step="0.1" name="claude_floor"
+                        value="{{ params.claude_floor }}">
+                </label>
+                <label>M4下限
+                    <input type="number" min="0" max="100" step="0.1" name="score_floor"
+                        value="{{ params.score_floor }}">
+                </label>
+                <label>评分确认天数
+                    <input type="number" min="1" max="10" step="1" name="score_confirm_days"
+                        value="{{ params.score_confirm_days }}">
+                </label>
+                <label>禁买期（天）
+                    <input type="number" min="0" max="90" step="1" name="rebuy_cooldown_days"
+                        value="{{ params.rebuy_cooldown_days }}">
+                </label>
+                <label>系统性风险门禁
+                    <select name="enable_market_risk_gate">
+                        <option value="0" {% if not params.enable_market_risk_gate %}selected{% endif %}>关闭</option>
+                        <option value="1" {% if params.enable_market_risk_gate %}selected{% endif %}>开启</option>
+                    </select>
+                </label>
+                <label>门禁阈值（指数日涨跌%）
+                    <input type="number" min="-20" max="0" step="0.1" name="market_risk_gate_drop_pct"
+                        value="{{ params.market_risk_gate_drop_pct }}">
+                </label>
+                <label>仅盘后执行评分退场
+                    <select name="is_post_close">
+                        <option value="1" {% if params.is_post_close %}selected{% endif %}>是</option>
+                        <option value="0" {% if not params.is_post_close %}selected{% endif %}>否</option>
+                    </select>
                 </label>
             </div>
             <div class="strat-params-footer">
@@ -83,7 +153,7 @@
                 <button class="btn" type="submit">更新模拟调仓单</button>
             </div>
             <p class="strat-hint" style="font-style:normal;">估算资金基数：{{ params.capital_used }} ｜ 卖出信号落库：{{
-                params.m7_sell_sync_count or 0 }} 条（表：m7_sell_signals）</p>
+                params.m7_sell_sync_count or 0 }} 条（表：m7_sell_signals） ｜ 规则版本：{{ m7_eval.rule_version or params.rule_version }}</p>
         </div>
     </form>
 </section>
@@ -105,8 +175,9 @@
                 <th>变动%</th>
                 <th>股数</th>
                 <th>金额</th>
+                <th>原因码</th>
                 <th>触发原因</th>
-                <th>状态</th>
+                <th>执行状态</th>
                 <th>操作</th>
             </tr>
         </thead>
@@ -124,12 +195,15 @@
                 <td>{{ o.delta_weight }}</td>
                 <td>{{ o.shares }}</td>
                 <td>{{ o.notional }}</td>
+                <td style="font-size: 11px;">{{ o.reason_code or '-' }}</td>
                 <td style="font-size: 11px;">{{ o.reason or '-' }}</td>
                 <td class="status-cell">
-                    {% if o.is_executed %}
+                    {% if o.exec_status == 'PENDING' %}
+                    <span class="tag" style="background:#f59e0b;">PENDING{% if o.pending_reason %}({{ o.pending_reason }}){% endif %}</span>
+                    {% elif o.is_executed %}
                     <span class="tag trade">已执行</span>
                     {% else %}
-                    -
+                    {{ o.exec_status or '-' }}
                     {% endif %}
                 </td>
                 <td>
@@ -144,7 +218,8 @@
                             shares: {{ (o.shares if o.shares is not none else 0)|tojson }},
                             notional: {{ (o.notional if o.notional is not none else 0)|tojson }},
                             score: {{ o.m4_score|tojson }},
-                            reason: {{ o.reason|tojson }}
+                            reason: {{ o.reason|tojson }},
+                            reason_code: {{ o.reason_code|tojson }}
                         })'>执行</button>
                     </div>
                     {% else %}
@@ -154,7 +229,7 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="13" class="empty">暂无需执行的调仓单（可能已接近目标权重）</td>
+                <td colspan="14" class="empty">暂无需执行的调仓单（可能已接近目标权重）</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -188,19 +263,23 @@
                 <th>代码</th>
                 <th>名称</th>
                 <th>信号类型</th>
+                <th>原因码</th>
                 <th>触发原因</th>
+                <th>执行状态</th>
+                <th>挂起原因</th>
                 <th>当前%</th>
                 <th>目标%</th>
                 <th>变动%</th>
                 <th>价格</th>
                 <th>股数</th>
                 <th>金额</th>
+                <th>规则版本</th>
                 <th>更新时间</th>
             </tr>
         </thead>
         <tbody id="sell-signal-tbody">
             <tr>
-                <td colspan="11" class="empty">加载中...</td>
+                <td colspan="15" class="empty">加载中...</td>
             </tr>
         </tbody>
     </table>
@@ -220,7 +299,7 @@
             </div>
             <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
                 <strong>股数：</strong>
-                <input type="number" id="m_shares" step="100">
+                <input type="number" id="m_shares" step="1">
             </div>
             <div style="margin-top: 5px;"><strong>总额：</strong> ¥<span id="m_notional">0</span></div>
         </div>
@@ -270,7 +349,7 @@
         const oldBtnText = refreshBtn.innerText;
         refreshBtn.innerText = '查询中...';
         summary.innerText = '加载中...';
-        tbody.innerHTML = '<tr><td colspan="11" class="empty">加载中...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="15" class="empty">加载中...</td></tr>';
 
         try {
             const res = await fetch('/api/m7/sell-signals/latest?' + params.toString());
@@ -280,11 +359,11 @@
             }
 
             const s = data.summary || {};
-            summary.innerText = `日期: ${data.signal_date || '-'} | 来源: ${data.source || '-'} | 总数: ${s.total_rows || 0} | 强制卖出: ${s.forced_exit_rows || 0} | 调仓卖出: ${s.rebalance_rows || 0} | 总金额: ${fmtNum(s.total_notional)}`;
+            summary.innerText = `日期: ${data.signal_date || '-'} | 来源: ${data.source || '-'} | 总数: ${s.total_rows || 0} | 强制卖出: ${s.forced_exit_rows || 0} | 调仓卖出: ${s.rebalance_rows || 0} | 挂起: ${s.pending_rows || 0} | 总金额: ${fmtNum(s.total_notional)}`;
 
             const rows = data.rows || [];
             if (!rows.length) {
-                tbody.innerHTML = '<tr><td colspan="11" class="empty">暂无卖出信号</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="15" class="empty">暂无卖出信号</td></tr>';
                 return;
             }
 
@@ -296,20 +375,24 @@
                         <td>${escHtml(r.symbol || '-')}</td>
                         <td>${escHtml(r.name || '-')}</td>
                         <td class="${signalClass}">${escHtml(signalType)}</td>
+                        <td style="font-size:11px;">${escHtml(r.reason_code || '-')}</td>
                         <td style="font-size:11px;">${escHtml(r.reason || '-')}</td>
+                        <td>${escHtml(r.exec_status || '-')}</td>
+                        <td>${escHtml(r.pending_reason || '-')}</td>
                         <td>${fmtNum(r.current_weight)}</td>
                         <td>${fmtNum(r.target_weight)}</td>
                         <td>${fmtNum(r.delta_weight)}</td>
                         <td>${fmtNum(r.price)}</td>
                         <td>${escHtml(r.shares ?? '-')}</td>
                         <td>${fmtNum(r.notional)}</td>
+                        <td>${escHtml(r.rule_version || '-')}</td>
                         <td style="font-size:11px;">${escHtml(r.updated_at || r.created_at || '-')}</td>
                     </tr>
                 `;
             }).join('');
         } catch (e) {
             summary.innerText = '加载失败：' + (e?.message || e);
-            tbody.innerHTML = '<tr><td colspan="11" class="empty">加载失败</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="15" class="empty">加载失败</td></tr>';
         } finally {
             refreshBtn.disabled = false;
             refreshBtn.innerText = oldBtnText;
@@ -412,7 +495,8 @@
                     price: price,
                     shares: shares,
                     score: currentTradeData.score,
-                    reason: currentTradeData.reason || 'M7 策略调仓 (Web交互)'
+                    reason: currentTradeData.reason || 'M7 策略调仓 (Web交互)',
+                    reason_code: currentTradeData.reason_code || null
                 })
             });
 

@@ -60,6 +60,11 @@ class LivePosition:
     avg_cost: float
     entry_date: date
     current_price: float = 0.0
+    highest_since_entry: float = 0.0
+    holding_trade_days: int = 0
+    pending_forced_exit: int = 0
+    pending_exit_reason: str = ""
+    rebuy_cooldown_until: date = None
     
     @property
     def market_value(self) -> float:
@@ -128,6 +133,11 @@ class LiveTracker:
                 avg_cost=float(row["avg_cost"]),
                 entry_date=row["entry_date"],
                 current_price=float(row["current_price"] or 0),
+                highest_since_entry=float(row.get("highest_since_entry") or row.get("current_price") or 0),
+                holding_trade_days=int(row.get("holding_trade_days") or 0),
+                pending_forced_exit=int(row.get("pending_forced_exit") or 0),
+                pending_exit_reason=str(row.get("pending_exit_reason") or ""),
+                rebuy_cooldown_until=row.get("rebuy_cooldown_until"),
             )
             self.positions[pos.symbol] = pos
         
@@ -193,6 +203,10 @@ class LiveTracker:
             new_shares = pos.shares + shares
             pos.avg_cost = new_cost / new_shares
             pos.shares = new_shares
+            pos.current_price = max(float(actual_price), float(pos.current_price or 0))
+            pos.highest_since_entry = max(float(pos.highest_since_entry or 0), float(actual_price))
+            pos.pending_forced_exit = 0
+            pos.pending_exit_reason = ""
         else:
             # 新建持仓
             name = db.get_stock_name(symbol)
@@ -203,6 +217,7 @@ class LiveTracker:
                 avg_cost=actual_price,
                 entry_date=trade_date,
                 current_price=actual_price,
+                highest_since_entry=actual_price,
             )
             self.positions[symbol] = pos
         
@@ -227,6 +242,11 @@ class LiveTracker:
             entry_date=pos.entry_date,
             name=pos.name,
             current_price=pos.current_price,
+            highest_since_entry=pos.highest_since_entry,
+            holding_trade_days=pos.holding_trade_days,
+            pending_forced_exit=pos.pending_forced_exit,
+            pending_exit_reason=pos.pending_exit_reason,
+            rebuy_cooldown_until=pos.rebuy_cooldown_until,
         )
         
         # 持久化当前账户状态（包括现金）
@@ -309,6 +329,11 @@ class LiveTracker:
                 entry_date=pos.entry_date,
                 name=pos.name,
                 current_price=pos.current_price,
+                highest_since_entry=pos.highest_since_entry,
+                holding_trade_days=pos.holding_trade_days,
+                pending_forced_exit=pos.pending_forced_exit,
+                pending_exit_reason=pos.pending_exit_reason,
+                rebuy_cooldown_until=pos.rebuy_cooldown_until,
             )
         
         # 持久化当前账户状态（包括现金）
@@ -379,6 +404,10 @@ class LiveTracker:
         for symbol, price in prices.items():
             if symbol in self.positions:
                 self.positions[symbol].current_price = price
+                self.positions[symbol].highest_since_entry = max(
+                    float(self.positions[symbol].highest_since_entry or 0),
+                    float(price or 0),
+                )
         
         # 批量更新数据库
         db.batch_update_prices(prices)
@@ -940,6 +969,11 @@ class LiveTracker:
                 "unrealized_pnl": p.unrealized_pnl,
                 "pnl_pct": p.pnl_pct,
                 "entry_date": p.entry_date,
+                "highest_since_entry": p.highest_since_entry,
+                "holding_trade_days": p.holding_trade_days,
+                "pending_forced_exit": p.pending_forced_exit,
+                "pending_exit_reason": p.pending_exit_reason,
+                "rebuy_cooldown_until": p.rebuy_cooldown_until,
             }
             for p in self.positions.values()
         ]

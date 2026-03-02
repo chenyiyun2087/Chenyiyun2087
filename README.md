@@ -23,6 +23,24 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 | 回测层 | `backtest/src/` | 通用回测框架 + 策略集成测试 | `pytest backtest/tests` |
 | 展示层 | `web/templates/`、`web/app.py` | 监控看板、股票池管理、任务调度配置 | `http://localhost:5001/admin` |
 
+### 1.1 策略边界说明（重要）
+
+本项目中 **`sina` 策略** 与 **`chenyiyun` 策略** 是两套独立策略体系，不是同一策略的不同别名：
+
+- **sina 策略体系**
+  - 主要目录：`sina/`、`scoreRank/`、`web/strategy_playbook.py`
+  - 核心能力：B/S 检测、M2~M8 评估、M7 调仓规则、Sina 实盘跟踪
+  - 典型任务：`sina_picture`、`sina_analyse`、`sina_score`、`sina_m8`、`sina_m7_sell`、`sina_snapshot`
+
+- **chenyiyun 策略体系**
+  - 主要目录：`chenyiyunSelected/`、`scripts/ops/run_chenyiyun_*.py`
+  - 核心能力：本地化选股、日/周调仓信号生成、涨停检查、仓位更新
+  - 典型任务：`chenyiyun_selected`、`chenyiyun_weekly_rebalance`、`chenyiyun_limitup_check`、`chenyiyun_position_update`
+
+- **共享但不混用的部分**
+  - 共享基础设施：MySQL、交易日历、Web 管理台、部分持仓表
+  - 不共享策略决策逻辑：信号生成、调仓规则、评估口径分别独立维护
+
 ## 2. 调度系统（三阶段自动化）
 
 项目当前以 `web/app.py` 内置调度为唯一生效入口；`scheduler.py` 仅保留作历史参考，不参与生产调度。
@@ -83,6 +101,18 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 
 - `sina_m8` 任务的上游门禁：若 `bs_detection_results` 最新日期领先 `score_rank_daily`，会提示“上游任务未执行完成，不能执行 M8”，并以非零退出码中止，避免假成功。
 - Web 页面分工：`/sina/strategy/m2`、`/sina/strategy/m3` 主要做在线展示与分析；`sina_m8` 任务负责周期落库与可审计追踪。
+
+#### 3.2.2 M7 模拟调仓执行口径（2026-02-27）
+
+- M7 是“**每日评估（仅交易日）**、**按条件交易**”机制，不是“每日必有交易”机制。
+- 交易日内每次运行都会基于 `M4目标仓位 + 当前实盘仓位` 重新计算调仓单；若无触发条件，`orders_total=0`，当天不下单。
+- 普通调仓触发条件：`|target_weight - current_weight| >= min_trade_weight`。
+- 强制卖出触发条件（优先级最高）：
+  - `B/S反转卖出`：`latest_sell_date >= latest_buy_date`；
+  - `硬止损`：`current_price <= avg_cost * (1 - stop_loss_pct)`。
+- 强制卖出会直接清仓当前持股，不受 `min_trade_weight` 限制，且不做 100 股取整。
+- 非强制调仓按金额差换算股数，按 100 股取整；结果按“先卖后买”排序，优先释放资金。
+- 卖出信号会同步落库到 `m7_sell_signals`（`FORCED_EXIT` / `REBALANCE`），用于审计与复盘。
 
 ### 3.3 Sina & Live Tracker (实盘监控)
 - **B/S 扫描**: 全自动截图 + Tesseract OCR 识别新浪财经买卖信号。

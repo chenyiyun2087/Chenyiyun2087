@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS live_positions (
     avg_cost DECIMAL(12, 4) NOT NULL COMMENT '平均成本',
     entry_date DATE NOT NULL COMMENT '首次买入日期',
     current_price DECIMAL(12, 4) COMMENT '当前价格',
+    highest_since_entry DECIMAL(12, 4) NULL COMMENT '建仓后最高价',
+    holding_trade_days INT NOT NULL DEFAULT 0 COMMENT '持仓交易日天数',
+    pending_forced_exit TINYINT(1) NOT NULL DEFAULT 0 COMMENT '强制卖出挂起标记',
+    pending_exit_reason VARCHAR(128) NULL COMMENT '挂起原因',
+    rebuy_cooldown_until DATE NULL COMMENT '禁买截止日',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='实盘持仓';
 
