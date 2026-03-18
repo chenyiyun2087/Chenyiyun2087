@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, text
+from project_network import build_direct_network_env, enforce_direct_network
+
+enforce_direct_network()
 
 # Configuration
 # ------------------------------------------------------------------------------
@@ -125,8 +128,7 @@ def run_script(script_rel_path, args, log_name):
     try:
         with open(log_file, "w", encoding="utf-8") as f:
             # Add project root to PYTHONPATH
-            env = os.environ.copy()
-            env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+            env = build_direct_network_env(os.environ, pythonpath_prefix=str(PROJECT_ROOT))
             
             subprocess.run(
                 cmd, 

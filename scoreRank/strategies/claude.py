@@ -1,14 +1,14 @@
-import logging
 from datetime import datetime, timedelta
 from typing import Any, List
 
 import numpy as np
 import pandas as pd
-import pymysql
 
+from scoreRank.core.db_io import query_df
+from scoreRank.core.logging_utils import get_score_rank_logger
 from scoreRank.strategies.base import BaseScorer
 
-logger = logging.getLogger(__name__)
+logger = get_score_rank_logger(__name__)
 
 
 class ClaudeScorer(BaseScorer):
@@ -20,14 +20,7 @@ class ClaudeScorer(BaseScorer):
     """
 
     def _query_df(self, db_conf: dict, sql: str, params=None) -> pd.DataFrame:
-        conn = pymysql.connect(**db_conf)
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, params)
-                rows = cursor.fetchall()
-            return pd.DataFrame(rows)
-        finally:
-            conn.close()
+        return query_df(db_conf, sql, params)
 
     def _in_clause(self, values: list[str]) -> str:
         return ", ".join(["%s"] * len(values))
@@ -131,89 +124,76 @@ class ClaudeScorer(BaseScorer):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        results = []
-        target_date = pd.to_datetime(str(trade_date_int))
-        df["trade_date"] = pd.to_datetime(df["trade_date"].astype(str))
+        df["trade_date"] = pd.to_datetime(df["trade_date"].astype(str), format="%Y%m%d", errors="coerce")
+        df = df.dropna(subset=["trade_date"]).sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
+        if df.empty:
+            return pd.DataFrame(columns=["symbol"])
 
-        for ts_code, group in df.groupby("ts_code"):
-            group = group.sort_values("trade_date").reset_index(drop=True)
-            if group.iloc[-1]["trade_date"] != target_date:
-                continue
+        g = df.groupby("ts_code", sort=False)
 
-            close = group["adj_close"]
-            high = group["adj_high"]
-            low = group["adj_low"]
+        df["ret_5"] = g["adj_close"].pct_change(5)
+        df["ret_20"] = g["adj_close"].pct_change(20)
+        df["ret_60"] = g["adj_close"].pct_change(60)
 
-            curr_close = close.iloc[-1]
+        vol_ma5_prev = g["vol"].transform(lambda s: s.shift(1).rolling(5).mean())
+        df["vol_ratio"] = np.where(vol_ma5_prev > 0, df["vol"] / vol_ma5_prev, np.nan)
 
-            def get_ret(days: int):
-                if len(group) <= days:
-                    return np.nan
-                prev = close.iloc[-(days + 1)]
-                if pd.isna(prev) or prev == 0:
-                    return np.nan
-                return (curr_close - prev) / prev
+        ema12 = g["adj_close"].transform(lambda s: s.ewm(span=12, adjust=False).mean())
+        ema26 = g["adj_close"].transform(lambda s: s.ewm(span=26, adjust=False).mean())
+        df["macd"] = ema12 - ema26
+        df["macd_signal"] = df.groupby("ts_code", sort=False)["macd"].transform(
+            lambda s: s.ewm(span=9, adjust=False).mean()
+        )
 
-            ret_5 = get_ret(5)
-            ret_20 = get_ret(20)
-            ret_60 = get_ret(60)
+        delta = g["adj_close"].diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = (-delta.where(delta < 0, 0.0))
+        gain_avg = gain.groupby(df["ts_code"], sort=False).transform(lambda s: s.rolling(6).mean())
+        loss_avg = loss.groupby(df["ts_code"], sort=False).transform(lambda s: s.rolling(6).mean())
+        rs = gain_avg / loss_avg.replace(0, np.nan)
+        df["rsi_6"] = 100 - (100 / (1 + rs))
 
-            if len(group) >= 6:
-                ma5_vol = group.iloc[-6:-1]["vol"].mean()
-                vol_ratio = group.iloc[-1]["vol"] / ma5_vol if ma5_vol and ma5_vol > 0 else np.nan
-            else:
-                vol_ratio = np.nan
+        low_9 = g["adj_low"].transform(lambda s: s.rolling(9).min())
+        high_9 = g["adj_high"].transform(lambda s: s.rolling(9).max())
+        rsv = (df["adj_close"] - low_9) / (high_9 - low_9).replace(0, np.nan) * 100
+        df["k"] = rsv.groupby(df["ts_code"], sort=False).transform(lambda s: s.ewm(alpha=1 / 3, adjust=False).mean())
+        df["d"] = df["k"].groupby(df["ts_code"], sort=False).transform(lambda s: s.ewm(alpha=1 / 3, adjust=False).mean())
+        df["j"] = 3 * df["k"] - 2 * df["d"]
 
-            # MACD
-            ema12 = close.ewm(span=12, adjust=False).mean()
-            ema26 = close.ewm(span=26, adjust=False).mean()
-            macd = ema12 - ema26
-            macd_signal = macd.ewm(span=9, adjust=False).mean()
+        tp = (df["adj_high"] + df["adj_low"] + df["adj_close"]) / 3
+        ma_tp = tp.groupby(df["ts_code"], sort=False).transform(lambda s: s.rolling(14).mean())
+        md = (tp - ma_tp).abs().groupby(df["ts_code"], sort=False).transform(lambda s: s.rolling(14).mean())
+        df["cci"] = (tp - ma_tp) / (0.015 * md.replace(0, np.nan))
 
-            # RSI(6)
-            delta = close.diff()
-            gain = delta.where(delta > 0, 0).rolling(window=6).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=6).mean()
-            rs = gain / loss.replace(0, np.nan)
-            rsi_6 = 100 - (100 / (1 + rs))
+        ma20 = g["adj_close"].transform(lambda s: s.rolling(20).mean())
+        df["bias"] = (df["adj_close"] - ma20) / ma20.replace(0, np.nan)
 
-            # KDJ(9,3,3)
-            low_9 = low.rolling(window=9).min()
-            high_9 = high.rolling(window=9).max()
-            rsv = (close - low_9) / (high_9 - low_9).replace(0, np.nan) * 100
-            k = rsv.ewm(alpha=1 / 3, adjust=False).mean()
-            d = k.ewm(alpha=1 / 3, adjust=False).mean()
-            j = 3 * k - 2 * d
+        target_date = pd.to_datetime(str(trade_date_int), format="%Y%m%d")
+        latest_trade_date = g["trade_date"].transform("max")
+        latest_rows = df[(df["trade_date"] == target_date) & (latest_trade_date == target_date)].copy()
+        if latest_rows.empty:
+            return pd.DataFrame(columns=["symbol"])
 
-            # CCI(14)
-            tp = (high + low + close) / 3
-            ma_tp = tp.rolling(window=14).mean()
-            md = (tp - ma_tp).abs().rolling(window=14).mean()
-            cci = (tp - ma_tp) / (0.015 * md.replace(0, np.nan))
-
-            ma20 = close.rolling(window=20).mean()
-            bias = (close - ma20) / ma20.replace(0, np.nan)
-
-            results.append(
-                {
-                    "symbol": ts_code[:6],
-                    "ret_5": ret_5,
-                    "ret_20": ret_20,
-                    "ret_60": ret_60,
-                    "vol_ratio": vol_ratio,
-                    "macd": macd.iloc[-1],
-                    "macd_signal": macd_signal.iloc[-1],
-                    "rsi_6": rsi_6.iloc[-1],
-                    "k": k.iloc[-1],
-                    "d": d.iloc[-1],
-                    "j": j.iloc[-1],
-                    "cci": cci.iloc[-1],
-                    "bias": bias.iloc[-1],
-                    "close": curr_close,
-                }
-            )
-
-        return pd.DataFrame(results)
+        latest_rows["symbol"] = latest_rows["ts_code"].astype(str).str.slice(0, 6)
+        latest_rows["close"] = latest_rows["adj_close"]
+        return latest_rows[
+            [
+                "symbol",
+                "ret_5",
+                "ret_20",
+                "ret_60",
+                "vol_ratio",
+                "macd",
+                "macd_signal",
+                "rsi_6",
+                "k",
+                "d",
+                "j",
+                "cci",
+                "bias",
+                "close",
+            ]
+        ]
 
     def _fetch_value(self, engine: Any, ts_code_map: dict, trade_date_int: int) -> pd.DataFrame:
         ts_codes = list(ts_code_map.values())

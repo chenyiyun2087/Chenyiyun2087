@@ -19,12 +19,22 @@ import json
 import logging
 import re
 import smtplib
+import sys
 from datetime import datetime
 from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from enum import Enum
+from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from project_network import enforce_direct_network
+
+enforce_direct_network()
 
 import requests
 

@@ -7,6 +7,7 @@ from live snapshots when the user does not provide it manually.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -14,6 +15,14 @@ from datetime import datetime
 from pathlib import Path
 
 import pymysql
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from project_network import build_direct_network_env, enforce_direct_network
+
+enforce_direct_network()
 
 DEFAULT_SETTINGS = {
     "stock_count": 10,
@@ -207,7 +216,7 @@ def main() -> None:
         )
     total_equity = total_equity * position_ratio
 
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = PROJECT_ROOT
     cmd = [
         sys.executable,
         "-m",
@@ -250,7 +259,12 @@ def main() -> None:
     if args.emit_signals:
         cmd.append("--emit-signals")
 
-    subprocess.run(cmd, cwd=str(project_root), check=True)
+    subprocess.run(
+        cmd,
+        cwd=str(project_root),
+        env=build_direct_network_env(os.environ, pythonpath_prefix=str(project_root)),
+        check=True,
+    )
 
 
 if __name__ == "__main__":

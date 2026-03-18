@@ -7,7 +7,14 @@ import pandas as pd
 import pymysql
 
 from scoreRank.core.config import CONFIG
-from scoreRank.core.db_io import get_engine, fetch_bars_batch, get_latest_trade_date, get_symbol_names_if_exist
+from scoreRank.core.db_io import (
+    get_engine,
+    fetch_bars_batch,
+    get_latest_trade_date,
+    get_symbol_names_if_exist,
+    query_df,
+    query_scalar,
+)
 # from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date  # DEPRECATED
 from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
 
@@ -43,27 +50,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 def _query_df(db_conf: dict, sql: str, params=None) -> pd.DataFrame:
-    conn = pymysql.connect(**db_conf)
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, params)
-            rows = cursor.fetchall()
-        return pd.DataFrame(rows)
-    finally:
-        conn.close()
+    return query_df(db_conf, sql, params)
 
 
 def _query_scalar(db_conf: dict, sql: str, params=None):
-    conn = pymysql.connect(**db_conf)
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, params)
-            row = cursor.fetchone()
-        if not row:
-            return None
-        return next(iter(row.values()))
-    finally:
-        conn.close()
+    return query_scalar(db_conf, sql, params)
 
 
 def _normalize_record_values(record):

@@ -15,6 +15,9 @@ from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
+from project_network import configure_chrome_direct_options, enforce_direct_network
+
+enforce_direct_network()
 
 # 配置日志
 logging.basicConfig(
@@ -29,17 +32,9 @@ logger = logging.getLogger(__name__)
 
 _CHROMEDRIVER_LOCK = threading.Lock()
 _CHROMEDRIVER_PATH = None
-
-
-def _ensure_local_no_proxy():
-    """Ensure localhost WebDriver traffic bypasses global proxy settings."""
-    required = {"localhost", "127.0.0.1", "::1"}
-    raw = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-    existing = {x.strip() for x in raw.split(",") if x.strip()}
-    merged = existing | required
-    value = ",".join(sorted(merged))
-    os.environ["NO_PROXY"] = value
-    os.environ["no_proxy"] = value
+def _ensure_direct_network_env():
+    """Ensure Selenium and ChromeDriver inherit direct-network settings."""
+    enforce_direct_network()
 
 
 def _find_cached_chromedriver():
@@ -71,7 +66,7 @@ def _find_cached_chromedriver():
 
 def get_chromedriver_path():
     global _CHROMEDRIVER_PATH
-    _ensure_local_no_proxy()
+    _ensure_direct_network_env()
 
     if _CHROMEDRIVER_PATH:
         return _CHROMEDRIVER_PATH
@@ -187,11 +182,12 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
     chrome_options.add_argument("--disable-notifications")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    configure_chrome_direct_options(chrome_options)
     chrome_options.page_load_strategy = "eager"
 
     driver = None
     try:
-        _ensure_local_no_proxy()
+        _ensure_direct_network_env()
         capture_start = time.perf_counter()
         # 初始化WebDriver
         driver = webdriver.Chrome(service=Service(get_chromedriver_path()), options=chrome_options)

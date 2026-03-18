@@ -4,11 +4,22 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
-from urllib import request
+from pathlib import Path
 
 import pymysql
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from project_network import enforce_direct_network
+
+enforce_direct_network()
+
+from urllib import request
 
 
 def _is_safe_table_name(table: str) -> bool:

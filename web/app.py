@@ -13,6 +13,9 @@ import tempfile
 import urllib.request
 import urllib.error
 from werkzeug.utils import secure_filename
+from project_network import build_direct_network_env, enforce_direct_network
+
+enforce_direct_network()
 
 try:
     from sina.live_tracker.live_tracker import LiveTracker
@@ -1744,8 +1747,7 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
         script_parts = _build_task_script_parts(task_name, run_options=run_options)
         script_abs_path = project_root / script_parts[0]
         cmd = [sys.executable, str(script_abs_path)] + script_parts[1:]
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(project_root) + os.pathsep + env.get("PYTHONPATH", "")
+        env = _build_task_subprocess_env(task_name, project_root)
 
         with tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stdout.log") as out_fh, \
                 tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stderr.log") as err_fh:
@@ -1833,6 +1835,11 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
             run_options=run_options,
         )
         _mark_task_lock_finished(task_name, lock_status, message or lock_status)
+
+
+def _build_task_subprocess_env(task_name, project_root):
+    _ = task_name
+    return build_direct_network_env(os.environ, pythonpath_prefix=str(project_root))
 
 
 def _trigger_task_execution(task_name, trigger_type="manual", run_options=None):

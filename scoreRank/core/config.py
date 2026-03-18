@@ -1,6 +1,7 @@
 CONFIG = {
     "db_url": "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4",   # 换成你的数据库连接
     "table": "tushare_stock.dwd_stock_daily_standard",
+    "raw_table": "tushare_stock.dwd_daily",
     "adj_for_signal": "qfq",                  # 信号/评分用 qfq
     "adj_for_liquidity": "raw",               # 流动性用 raw
     "lookback_days": 160,                     # 计算MA/波动/突破的回溯长度（交易日数量级）

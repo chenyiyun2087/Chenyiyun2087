@@ -259,3 +259,86 @@ python sina/live_tracker/run_live_tracker.py sync
 - 企业微信：`msgtype=markdown`
 - 钉钉：`msgtype=markdown`（含标题）
 - 自定义：默认 `{text, content}` JSON
+
+## 8. 评分公式（2026-03）
+
+本节给出当前代码实现中的核心评分公式，便于联调、核对与回归测试。
+
+### 8.1 Technical 总分（`score`）
+
+TechnicalScorer 的总分由 10 个分项加权求和后再扣减风险惩罚：
+
+$$
+base\_score = 0.12\,s_{trend}+0.08\,s_{bull\_align}+0.22\,s_{breakout}+0.12\,s_{volume}+0.04\,s_{vol\_mild}+0.12\,s_{rs}+0.10\,s_{contraction}+0.07\,s_{bias}+0.03\,s_{chip}+0.10\,s_{liquidity}
+$$
+
+$$
+penalty = 40\,I_{suspended}+20\,I_{limit\_up\_lock}+25\,I_{ST}+15\,I_{negative\_news}
+$$
+
+$$
+score = \mathrm{clip}(base\_score-penalty,\,0,\,100)
+$$
+
+其中关键分项定义：
+
+- `s_trend = 100 * trend_ok`
+- `s_bull_align = 100 * bull_align`
+- `s_breakout = pct_rank_100(is_breakout * clip((breakout_dist-0.003)/(0.06-0.003),0,1))`
+- `s_volume = pct_rank_100(clip((vol_ratio-1.0)/(2.5-1.0),0,1))`
+- `s_vol_mild = 100 * clip(1-|vol_ratio-1.5|/0.8,0,1)`
+- `s_rs = pct_rank_100(rs20)`
+- `s_contraction = 100 - pct_rank_100(contraction)`
+- `s_bias = 100 * (1-clip(|bias_ma20|/0.05,0,1))`
+- `s_chip = 100 * I(raw_close > avg_price20 > 0)`
+- `s_liquidity = pct_rank_100(avg_amount20)`，若 `avg_amount20 < 50,000,000` 则再乘 `0.3`
+
+触发信号定义：
+
+$$
+trigger\_today = I(trend\_ok=1\ \land\ is\_breakout=1)
+$$
+
+### 8.2 Claude 六维分（`claude_score`）
+
+ClaudeScorer 使用六维评分，总分 100 分封顶：
+
+$$
+claude\_score = \mathrm{clip}(S_{momentum}+S_{value}+S_{quality}+S_{technical}+S_{capital}+S_{chip},\,0,\,100)
+$$
+
+各维上限：
+
+- 动量 `S_momentum`：25 分（`ret_5(5) + ret_20(6) + ret_60(7) + vol_ratio(4) + turnover_rate_f(3)`，高分位更优）
+- 价值 `S_value`：20 分（`PE(7)+PB(7)+PS(6)`，低分位更优）
+- 质量 `S_quality`：20 分（`ROE(8)+gross_margin(6)+debt_to_assets(6)`，其中负债率低更优）
+- 技术 `S_technical`：15 分（MACD/RSI/KDJ/CCI/BIAS 规则打分）
+- 资金 `S_capital`：10 分（`big_order_flow(6)+margin_ratio(4)`，高分位更优）
+- 筹码 `S_chip`：10 分（`winner_rate` 三角偏好 6 分 + `close/cost_50pct` 区间分 4 分）
+
+其中：
+
+$$
+S_{chip,winner}=6\cdot clip\left(1-\frac{|winner\_rate-30|}{30},0,1\right)
+$$
+
+`close/cost_50pct` 加分规则：`>1.10 -> 4`，`>1.03 -> 2.5`，`>0.97 -> 1`，否则 `0`。
+
+### 8.3 因子优化分（`opt_score`）
+
+当 Factor Optimizer 可用时：
+
+$$
+opt\_score = 0.15\,momentum + 0.05\,value + 0.05\,quality + 0.25\,technical + 0.25\,capital + 0.15\,chip + 0.10\,size
+$$
+
+当 Optimizer 不可用时，回退为：
+
+$$
+opt\_score = score / 10
+$$
+
+### 8.4 `score_rank_daily` 字段口径说明
+
+- 默认 `run_daily --strategy technical`：`score` 为 Technical 总分；`claude_score` 为并行计算后的 Claude 六维总分；`opt_score` 为因子优化分。
+- 若 `run_daily --strategy claude`：`score` 即 Claude 六维总分，同时 `claude_score = score`。

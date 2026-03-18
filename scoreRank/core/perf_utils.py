@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from .market_rules import get_limit_up_ratio
+
 
 def enrich_scored_with_market_metrics(scored: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
     """Vectorized enrichment for close price / limit-up flag / buy-point return.
@@ -48,7 +50,8 @@ def enrich_scored_with_market_metrics(scored: pd.DataFrame, features: pd.DataFra
 
     merged = merged.merge(latest_qfq, on="symbol", how="left")
     merged["close_price"] = merged["close_price"].fillna(0.0)
-    merged["is_limit_up"] = ((merged["ret1"].fillna(0.0) * 100) > 9.5).astype(int)
+    limit_ratio = get_limit_up_ratio(merged["symbol"])
+    merged["is_limit_up"] = (merged["ret1"].fillna(0.0) >= limit_ratio).astype(int)
 
     if "buy_point_close" not in merged.columns:
         merged["buy_point_close"] = np.nan

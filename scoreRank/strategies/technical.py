@@ -7,14 +7,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
     
 import pandas as pd
-import numpy as np
 from datetime import timedelta
 from typing import Any
 
 from scoreRank.strategies.base import BaseScorer
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_io import fetch_bars_batch, get_symbol_names_if_exist
+from scoreRank.core.logging_utils import get_score_rank_logger
 from scoreRank.core import scorer as legacy_scorer  # Import from core.scorer
+
+
+logger = get_score_rank_logger(__name__)
 
 class TechnicalScorer(BaseScorer):
     """
@@ -37,7 +40,7 @@ class TechnicalScorer(BaseScorer):
         )
         
         if raw_data.empty:
-            print(f"TechnicalScorer: No market data found for {asof_date.date()}")
+            logger.warning("TechnicalScorer: no market data found for %s", asof_date.date())
             return pd.DataFrame()
             
         # 2. Fetch Liquidity Data (Unadjusted/Raw)

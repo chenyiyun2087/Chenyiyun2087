@@ -4,6 +4,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 from typing import List, Optional
 
 from .config import CONFIG
+from .logging_utils import get_score_rank_logger
+
+
+logger = get_score_rank_logger(__name__)
+_SQLALCHEMY_ENGINE = None
 
 
 def _parse_db_url(db_url: str) -> dict:
@@ -25,20 +30,42 @@ def _parse_db_url(db_url: str) -> dict:
 
 def get_engine(as_sqlalchemy: bool = False):
     # Kept function name for compatibility; default returns pymysql connection config.
+    global _SQLALCHEMY_ENGINE
     if as_sqlalchemy:
-        from sqlalchemy import create_engine
-        return create_engine(CONFIG["db_url"], future=True)
+        if _SQLALCHEMY_ENGINE is None:
+            from sqlalchemy import create_engine
+            _SQLALCHEMY_ENGINE = create_engine(
+                CONFIG["db_url"],
+                future=True,
+                pool_size=5,
+                max_overflow=10,
+                pool_recycle=3600,
+                pool_pre_ping=True,
+            )
+        return _SQLALCHEMY_ENGINE
     return _parse_db_url(CONFIG["db_url"])
 
 
 def _fetch_rows(db_conf: dict, sql: str, params: tuple | list | dict | None = None) -> list[dict]:
-    conn = pymysql.connect(**db_conf)
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, params)
-            return cursor.fetchall()
-    finally:
-        conn.close()
+    engine = get_engine(as_sqlalchemy=True)
+    query_params = params if params is not None else ()
+    with engine.connect() as conn:
+        result = conn.exec_driver_sql(sql, query_params)
+        return [dict(row._mapping) for row in result.fetchall()]
+
+
+def query_df(db_conf: dict, sql: str, params: tuple | list | dict | None = None) -> pd.DataFrame:
+    return pd.DataFrame(_fetch_rows(db_conf, sql, params))
+
+
+def query_scalar(db_conf: dict, sql: str, params: tuple | list | dict | None = None):
+    rows = _fetch_rows(db_conf, sql, params)
+    if not rows:
+        return None
+    first_row = rows[0]
+    if not first_row:
+        return None
+    return next(iter(first_row.values()))
 
 
 def get_latest_trade_date(engine, symbols: List[str], adj_type: str) -> Optional[str]:
@@ -49,10 +76,13 @@ def get_latest_trade_date(engine, symbols: List[str], adj_type: str) -> Optional
     if not symbols:
         return None
 
+    normalized_adj_type = str(adj_type or "").strip().lower()
+    source_table = CONFIG.get("raw_table", "tushare_stock.dwd_daily") if normalized_adj_type == "raw" else CONFIG["table"]
+
     placeholders = ",".join(["%s"] * len(symbols))
     sql = f"""
     SELECT MAX(trade_date) AS max_date
-    FROM {CONFIG["table"]}
+    FROM {source_table}
     WHERE SUBSTR(ts_code, 1, 6) IN ({placeholders})
     """
     rows = _fetch_rows(engine, sql, tuple(symbols))
@@ -80,19 +110,29 @@ def fetch_bars_batch(
     start_date_int = int(start_date.replace("-", ""))
     end_date_int = int(end_date.replace("-", "")) if end_date else None
 
+    normalized_adj_type = str(adj_type or "").strip().lower()
+    if normalized_adj_type == "raw":
+        source_table = CONFIG.get("raw_table", "tushare_stock.dwd_daily")
+        open_col, high_col, low_col, close_col = "open", "high", "low", "close"
+    else:
+        source_table = CONFIG["table"]
+        if normalized_adj_type not in {"qfq", "hfq", "adj", ""}:
+            logger.warning("Unknown adj_type=%s, fallback to qfq(adjusted) columns", adj_type)
+        open_col, high_col, low_col, close_col = "adj_open", "adj_high", "adj_low", "adj_close"
+
     end_clause = "AND trade_date <= %s" if end_date_int else ""
     placeholders = ",".join(["%s"] * len(symbols))
     sql = f"""
     SELECT
         test.ts_code,
         trade_date,
-        adj_open AS open,
-        adj_high AS high,
-        adj_low AS low,
-        adj_close AS close,
+        {open_col} AS open,
+        {high_col} AS high,
+        {low_col} AS low,
+        {close_col} AS close,
         vol AS volume,
         amount
-    FROM {CONFIG["table"]} test
+    FROM {source_table} test
     WHERE trade_date >= %s
       {end_clause}
       AND SUBSTR(ts_code, 1, 6) IN ({placeholders})
@@ -144,5 +184,5 @@ def get_symbol_names_if_exist(engine, symbols: List[str]) -> pd.DataFrame:
         df["name"] = df["name"].fillna("")
         return df
     except Exception as e:
-        print(f"Error fetching names: {e}")
+        logger.exception("Error fetching symbol names: %s", e)
         return pd.DataFrame({"symbol": symbols, "name": [""] * len(symbols)})

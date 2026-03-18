@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple
 from .config import CONFIG
+from .market_rules import get_limit_up_ratio
 
 
 def _ma(s: pd.Series, n: int) -> pd.Series:
@@ -37,27 +38,27 @@ def build_features_from_qfq(qfq: pd.DataFrame, breakout_n: int) -> pd.DataFrame:
     qfq = qfq.copy()
     qfq = qfq.sort_values(["symbol", "trade_date"])
 
-    g = qfq.groupby("symbol", group_keys=False)
+    g = qfq.groupby("symbol", sort=False)
 
-    qfq["ma10"] = g["close"].apply(lambda x: _ma(x, 10))
-    qfq["ma20"] = g["close"].apply(lambda x: _ma(x, 20))
-    qfq["ma60"] = g["close"].apply(lambda x: _ma(x, 60))
-    qfq["ma20_slope"] = g["ma20"].apply(lambda x: x.diff(5))
-    qfq["ma5"] = g["close"].apply(lambda x: _ma(x, 5))
+    qfq["ma10"] = g["close"].transform(lambda s: s.rolling(10).mean())
+    qfq["ma20"] = g["close"].transform(lambda s: s.rolling(20).mean())
+    qfq["ma60"] = g["close"].transform(lambda s: s.rolling(60).mean())
+    qfq["ma20_slope"] = qfq.groupby("symbol", sort=False)["ma20"].diff(5)
+    qfq["ma5"] = g["close"].transform(lambda s: s.rolling(5).mean())
 
     # 突破：用昨日的N日最高，避免未来函数
-    qfq["hh_n"] = g["high"].apply(lambda x: _rolling_max(x, breakout_n).shift(1))
+    qfq["hh_n"] = g["high"].transform(lambda s: s.rolling(breakout_n).max().shift(1))
     qfq["is_breakout"] = (qfq["close"] > qfq["hh_n"]).astype(int)
     qfq["breakout_dist"] = qfq["close"] / qfq["hh_n"] - 1.0
 
     # 量比（用volume）
-    qfq["vol_ma5"] = g["volume"].apply(lambda x: _ma(x, 5))
+    qfq["vol_ma5"] = g["volume"].transform(lambda s: s.rolling(5).mean())
     qfq["vol_ratio"] = qfq["volume"] / qfq["vol_ma5"]
 
     # 收敛：std5 / std20 越小越好
-    qfq["ret1"] = g["close"].apply(lambda x: x.pct_change())
-    qfq["std5"] = g["ret1"].apply(lambda x: x.rolling(5).std())
-    qfq["std20"] = g["ret1"].apply(lambda x: x.rolling(20).std())
+    qfq["ret1"] = g["close"].pct_change()
+    qfq["std5"] = qfq.groupby("symbol", sort=False)["ret1"].transform(lambda s: s.rolling(5).std())
+    qfq["std20"] = qfq.groupby("symbol", sort=False)["ret1"].transform(lambda s: s.rolling(20).std())
     qfq["contraction"] = qfq["std5"] / qfq["std20"]
 
     # 趋势过滤：收在MA20上方、MA10>MA20、MA20斜率>0
@@ -77,7 +78,7 @@ def build_features_from_qfq(qfq: pd.DataFrame, breakout_n: int) -> pd.DataFrame:
     qfq["bias_ma20"] = qfq["close"] / qfq["ma20"] - 1.0
 
     # 近20日收益（用于RS）
-    qfq["ret20"] = g["close"].apply(lambda x: x.pct_change(20))
+    qfq["ret20"] = g["close"].pct_change(20)
 
     return qfq
 
@@ -88,23 +89,20 @@ def attach_liquidity_from_raw(raw: pd.DataFrame) -> pd.DataFrame:
     返回：symbol, trade_date, avg_amount20, suspended_recent_flag, limit_up_lock_flag
     """
     raw = raw.copy().sort_values(["symbol", "trade_date"])
-    g = raw.groupby("symbol", group_keys=False)
+    g = raw.groupby("symbol", sort=False)
 
-    raw["avg_amount20"] = g["amount"].apply(lambda x: x.rolling(20).mean())
-    raw["amount_sum20"] = g["amount"].apply(lambda x: x.rolling(20).sum())
-    raw["volume_sum20"] = g["volume"].apply(lambda x: x.rolling(20).sum())
+    raw["avg_amount20"] = g["amount"].transform(lambda s: s.rolling(20).mean())
+    raw["amount_sum20"] = g["amount"].transform(lambda s: s.rolling(20).sum())
+    raw["volume_sum20"] = g["volume"].transform(lambda s: s.rolling(20).sum())
     raw["avg_price20"] = raw["amount_sum20"] / raw["volume_sum20"].replace(0, np.nan)
 
     # 停牌近似：volume<=0
     raw["is_suspended"] = (raw["volume"] <= 0).astype(int)
-    raw["suspended_20"] = g["is_suspended"].apply(lambda x: x.rolling(20).sum())
+    raw["suspended_20"] = g["is_suspended"].transform(lambda s: s.rolling(20).sum())
     raw["suspended_recent_flag"] = (raw["suspended_20"] > 0).astype(int)
 
     # 涨停锁死：用收盘=最高 且 close/open 涨幅达到涨停阈值
-    # 20cm：科创板(688)/创业板(300)，主板10cm，其余按10cm处理
-    symbol_series = raw["symbol"].astype(str).str.zfill(6)
-    limit_threshold = pd.Series(0.097, index=raw.index)
-    limit_threshold[symbol_series.str.startswith(("688", "300"))] = 0.197
+    limit_threshold = get_limit_up_ratio(raw["symbol"])
     raw["limit_up_lock_flag"] = (
         (raw["close"] >= raw["high"] - 1e-9) &
         ((raw["close"] / raw["open"] - 1.0) >= limit_threshold)

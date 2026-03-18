@@ -34,6 +34,11 @@ class TestM1RegressionNoDB(unittest.TestCase):
         self.assertIn("@app.route('/sina/strategy/quadrant')", self.web_app)
         self.assertIn('m1_summary=m1_summary', self.web_app)
 
+    def test_sina_picture_task_forces_direct_network(self):
+        self.assertIn('from project_network import build_direct_network_env, enforce_direct_network', self.web_app)
+        self.assertIn('def _build_task_subprocess_env(task_name, project_root):', self.web_app)
+        self.assertIn('return build_direct_network_env(os.environ, pythonpath_prefix=str(project_root))', self.web_app)
+
 
 if __name__ == '__main__':
     unittest.main()

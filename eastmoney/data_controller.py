@@ -9,6 +9,9 @@ from datetime import date, datetime
 from typing import Iterable, List, Optional
 
 import pymysql
+from project_network import configure_chrome_direct_options, enforce_direct_network
+
+enforce_direct_network()
 
 # --- Data Schemas & Constants ---
 
@@ -102,6 +105,7 @@ def _get_driver(force_refresh: bool = False):
         options.add_argument("--disable-gpu")
         # Add realistic User-Agent
         options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        configure_chrome_direct_options(options)
         
         _thread_local.driver = webdriver.Chrome(options=options)
         _thread_local.request_count = 0

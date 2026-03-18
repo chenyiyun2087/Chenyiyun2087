@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from project_network import build_direct_network_env, enforce_direct_network
+
+enforce_direct_network()
 
 
 def _normalize_date(raw: str | None) -> str | None:
@@ -32,13 +41,18 @@ def main() -> None:
         print(f"Skip weekly rebalance: {target_date} is not Monday.")
         return
 
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = PROJECT_ROOT
     runner = project_root / "scripts" / "ops" / "run_chenyiyun_daily.py"
     cmd = [sys.executable, str(runner), "--emit-signals"]
     if date_iso:
         cmd.extend(["--date", date_iso])
     cmd.extend(passthrough)
-    subprocess.run(cmd, cwd=str(project_root), check=True)
+    subprocess.run(
+        cmd,
+        cwd=str(project_root),
+        env=build_direct_network_env(os.environ, pythonpath_prefix=str(project_root)),
+        check=True,
+    )
 
 
 if __name__ == "__main__":
