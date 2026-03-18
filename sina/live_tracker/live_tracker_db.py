@@ -4,41 +4,68 @@ Live Trading Tracker Database Layer
 """
 
 from datetime import date, datetime
-from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+import logging
 
 import pandas as pd
-import pymysql
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 
 from live_tracker_config import LIVE_CONFIG
 
 
+logger = logging.getLogger(__name__)
+_SQLALCHEMY_ENGINE = None
+
+
 def get_db_connection():
-    """获取 PyMySQL 连接"""
-    # 从 SQLAlchemy URL 解析连接参数
-    db_url = LIVE_CONFIG["db_url"]
-    # mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4
-    parts = db_url.replace("mysql+pymysql://", "").split("@")
-    user_pass = parts[0].split(":")
-    host_db = parts[1].split("/")
-    host_port = host_db[0].split(":")
-    db_name = host_db[1].split("?")[0]
-    
-    return pymysql.connect(
-        host=host_port[0],
-        port=int(host_port[1]) if len(host_port) > 1 else 3306,
-        user=user_pass[0],
-        password=user_pass[1],
-        database=db_name,
-        charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-    )
+    """获取复用连接池的 DBAPI 连接（close 时归还到池）"""
+    return get_engine().raw_connection()
 
 
 def get_engine():
     """获取 SQLAlchemy 引擎"""
-    return create_engine(LIVE_CONFIG["db_url"], future=True)
+    global _SQLALCHEMY_ENGINE
+    if _SQLALCHEMY_ENGINE is None:
+        _SQLALCHEMY_ENGINE = create_engine(
+            LIVE_CONFIG["db_url"],
+            future=True,
+            pool_size=5,
+            max_overflow=10,
+            pool_recycle=3600,
+            pool_pre_ping=True,
+        )
+    return _SQLALCHEMY_ENGINE
+
+
+def _row_to_dict(cursor, row: Any) -> Optional[Dict]:
+    """将 DBAPI 返回行统一转换为 dict。"""
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row
+    if hasattr(row, "keys"):
+        try:
+            return {key: row[key] for key in row.keys()}
+        except Exception:
+            pass
+    if isinstance(row, (tuple, list)):
+        columns = [col[0] for col in (cursor.description or [])]
+        if columns:
+            return dict(zip(columns, row))
+    return row
+
+
+def _fetchall_dict(cursor) -> List[Dict]:
+    """fetchall 并确保返回 dict 列表。"""
+    rows = cursor.fetchall()
+    if not rows:
+        return []
+    return [_row_to_dict(cursor, row) for row in rows]
+
+
+def _fetchone_dict(cursor) -> Optional[Dict]:
+    """fetchone 并确保返回 dict。"""
+    return _row_to_dict(cursor, cursor.fetchone())
 
 
 # ==================== 交易记录 ====================
@@ -98,7 +125,7 @@ def get_trades(
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, params)
-            return cursor.fetchall()
+            return _fetchall_dict(cursor)
     finally:
         conn.close()
 
@@ -180,7 +207,7 @@ def get_all_positions() -> List[Dict]:
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql)
-            return cursor.fetchall()
+            return _fetchall_dict(cursor)
     finally:
         conn.close()
 
@@ -192,7 +219,7 @@ def get_position(symbol: str) -> Optional[Dict]:
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, (symbol,))
-            return cursor.fetchone()
+            return _fetchone_dict(cursor)
     finally:
         conn.close()
 
@@ -297,7 +324,7 @@ def get_daily_snapshots(
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, params)
-            return cursor.fetchall()
+            return _fetchall_dict(cursor)
     finally:
         conn.close()
 
@@ -309,7 +336,7 @@ def get_latest_snapshot() -> Optional[Dict]:
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql)
-            return cursor.fetchone()
+            return _fetchone_dict(cursor)
     finally:
         conn.close()
 
@@ -374,7 +401,7 @@ def get_signals(
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, params)
-            return cursor.fetchall()
+            return _fetchall_dict(cursor)
     finally:
         conn.close()
 
@@ -419,7 +446,7 @@ def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) ->
                 WHERE s.symbol IN ({placeholders})
                 """
                 cursor.execute(date_sql, symbols)
-                row = cursor.fetchone()
+                row = _fetchone_dict(cursor)
                 if row and row["max_date"]:
                     # 转换 int YYYYMMDD -> date
                     date_str = str(row["max_date"])
@@ -448,7 +475,7 @@ def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) ->
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, [trade_date_int] + list(symbols))
-            rows = cursor.fetchall()
+            rows = _fetchall_dict(cursor)
             return {row["symbol"]: float(row["close"]) for row in rows}
     finally:
         conn.close()
@@ -473,12 +500,12 @@ def get_latest_price(symbol: str) -> float:
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, (symbol,))
-            result = cursor.fetchone()
+            result = _fetchone_dict(cursor)
             if result:
                 return float(result["close"])
             return 0.0
     except Exception as e:
-        print(f"Error fetching price for {symbol}: {e}")
+        logger.exception("Error fetching price for %s: %s", symbol, e)
         return 0.0
     finally:
         conn.close()
@@ -492,7 +519,7 @@ def get_stock_name(symbol: str) -> str:
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, (symbol,))
-            result = cursor.fetchone()
+            result = _fetchone_dict(cursor)
             if result:
                 return result["name"]
             return symbol
