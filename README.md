@@ -23,7 +23,19 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 | 回测层 | `backtest/src/` | 通用回测框架 + 策略集成测试 | `pytest backtest/tests` |
 | 展示层 | `web/templates/`、`web/app.py` | 监控看板、股票池管理、任务调度配置 | `http://localhost:5001/admin` |
 
-### 1.1 策略边界说明（重要）
+### 1.1 核心业务主线（按代码执行链）
+
+项目当前的主要业务不是单脚本执行，而是围绕 `sina` 与 `chenyiyun` 两条主线持续运转：
+
+| 主线 | 起点 | 中间处理 | 结果落点 | 主要消费方 |
+|---|---|---|---|---|
+| `sina` 信号主线 | `sina_picture` 抓图 | `sina_analyse` 识别买卖点 | `bs_detection_results` | `sina_score`、M7 卖出、M8 回归 |
+| `sina` 评分主线 | `bs_detection_results` + 全市场股票池 | `scoreRank.cli.run_daily` | `score_rank_daily` | Web 股票池、M2~M8、Snapshot |
+| `sina` 评估主线 | `score_rank_daily` + 未来收益标签 | `build_b_event_kpi`、`run_m8_cycle` | `b_event_fact`、`b_event_kpi`、`strategy_m8_runs/items` | M4 配置、M7 调仓、绩效复盘 |
+| `sina` 实盘主线 | 持仓/成交/行情 | `sina.live_tracker` | `live_positions`、`live_trades`、`live_daily_snapshots` | 实盘日报、净值、快照通知 |
+| `chenyiyun` 本地策略主线 | 本地选股规则 | `run_chenyiyun_daily.py` 等 | 自有信号/仓位表 | 日常调仓、涨停检查、仓位更新 |
+
+### 1.2 策略边界说明（重要）
 
 本项目中 **`sina` 策略** 与 **`chenyiyun` 策略** 是两套独立策略体系，不是同一策略的不同别名：
 
@@ -81,13 +93,196 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
     - `run_chenyiyun_limitup_check.py`: 盘中涨停监控。
 
 ### 3.2 ScoreRank (评分引擎)
-- **评分体系**: 结合技术面因子（trend, breakout, volume等）与 AI 评分（Claude）。
+- **定位**: `ScoreRank` 是 `sina` 策略体系的评分与研究中台，负责“全市场打分 -> 候选池落库 -> 事件收益构建 -> M2~M8 回归 -> 调仓决策支持”。
+- **主入口**: `python -m scoreRank.cli.run_daily`
+- **评分输出不是单一分数**:
+  - `score`: 技术总分，0~100
+  - `opt_score`: 分类因子优化分，通常约 0~10
+  - `claude_score`: AI 六维分，0~100
 - **M8 回归优化**: 对 M1 (事件) 与 KPI (收益) 进行自动化评估与回测。
-    - **增量构建**: `build_b_event_kpi.py` 支持增量更新，大幅提升每日处理性能。
-    - **风险量化**: 评估体系引入了 **夏普比率 (Sharpe Ratio)** 与 **最大回撤 (MDD)**，实现风险调整后的收益评估。
-    - **参数搜索**: 通过 `run_m8_cycle.py` 自动执行网格搜索并持久化最优策略参数。
+  - **增量构建**: `build_b_event_kpi.py` 支持增量更新，大幅提升每日处理性能。
+  - **风险量化**: 评估体系引入 **夏普比率 (Sharpe Ratio)** 与 **最大回撤 (MDD)**。
+  - **参数搜索**: `run_m8_cycle.py` 自动执行网格搜索并持久化冠军参数。
 
-#### 3.2.1 M2~M8 逻辑链路（输入/处理/输出）
+#### 3.2.1 评分主调用链（按 `run_daily.py`）
+
+| 步骤 | 输入 | 核心处理 | 输出 |
+|---|---|---|---|
+| 1. 候选收集 | `bs_detection_results`、`a_share_stock_list`、`sina/stock_codes.xlsx` | 合并 B/S 股票、自选股、全市场活跃股票，形成 `all_symbols` | 待评分股票集合 |
+| 2. 行情取数 | `tushare_stock.dwd_stock_daily_standard`、`tushare_stock.dwd_daily` | 拉取约 `lookback_days*2` 天历史行情，分别用于技术特征和流动性 | QFQ 行情、RAW 行情 |
+| 3. 技术评分 | `TechnicalScorer` | 生成 `score/base_score/penalty` 及各技术分项 | 技术评分结果 |
+| 4. AI 评分 | `ClaudeScorer` | 补充 `claude_score` 供展示和 M2~M8 使用 | AI 评分结果 |
+| 5. 市场增强 | 当日特征 + `bs_detection_results` | 回填 `buy_point_close`、`close_price`、`is_limit_up`、`price_change_ratio` | 增强后的评分表 |
+| 6. 因子优化分 | `AShareDataCenter` 因子分类表 | 计算 `opt_score` 并按股票代码 merge | 三分体系结果 |
+| 7. 业务标签 | B/S 集合、自选集合、技术总分 | 计算 `is_bs_candidate`、`is_self_selected`、`pool_type` | 最终落库结果 |
+| 8. 落库 | 最终评分表 | 覆盖写入 `score_rank_daily` | Web 展示、M8、M7、实盘 |
+
+#### 3.2.2 技术分 `score` 的数据处理流程
+
+`TechnicalScorer` 的实现位于 `scoreRank/strategies/technical.py`，具体打分逻辑位于 `scoreRank/core/scorer.py`。
+
+1. 输入行情
+
+- 前复权行情：`tushare_stock.dwd_stock_daily_standard`
+- 原始行情：`tushare_stock.dwd_daily`
+- 股票名称：`tushare_stock.dim_stock`
+
+2. 构建特征
+
+| 特征类别 | 关键字段 | 说明 |
+|---|---|---|
+| 均线趋势 | `ma5/ma10/ma20/ma60`、`ma20_slope` | 判断趋势和多头排列 |
+| 突破 | `hh_n`、`is_breakout`、`breakout_dist` | 判断是否突破最近 N 日高点 |
+| 量能 | `vol_ma5`、`vol_ratio` | 衡量放量强度 |
+| 相对强弱 | `ret20`、`rs20` | 使用横截面中位数构建相对强弱 |
+| 收敛与波动 | `std5/std20`、`contraction` | 越收敛越高分 |
+| 乖离 | `bias_ma20` | 乖离越大越不利于追涨 |
+| 流动性 | `avg_amount20`、`avg_price20` | 对小成交额标的压分 |
+| 风险项 | `suspended_recent_flag`、`limit_up_lock_flag` | 用于最终 penalty 扣分 |
+| 筹码健康 | `chip_healthy` | `raw_close > avg_price20` 视为健康 |
+
+3. 技术分分项规则
+
+| 分项 | 字段 | 当前规则 |
+|---|---|---|
+| 趋势分 | `s_trend` | `trend_ok` 为 1 记 100，否则 0 |
+| 多头排列分 | `s_bull_align` | `bull_align` 为 1 记 100，否则 0 |
+| 突破分 | `s_breakout` | 将 `breakout_dist` 映射到 `0.003~0.06` 后做横截面百分位 |
+| 放量分 | `s_volume` | 将 `vol_ratio` 映射到 `1.0~2.5` 后做横截面百分位 |
+| 温和放量分 | `s_vol_mild` | 以 `1.5` 为中心、`0.8` 为半区间做中心型打分 |
+| 相对强弱分 | `s_rs` | `rs20` 的横截面百分位 |
+| 收敛分 | `s_contraction` | `contraction` 的反向百分位，越小越好 |
+| 乖离分 | `s_bias` | 绝对乖离以 `5%` 为上限，越小分越高 |
+| 筹码分 | `s_chip` | `chip_healthy` 为 1 记 100，否则 0 |
+| 流动性分 | `s_liquidity` | `avg_amount20` 百分位，低于门槛时乘 `0.3` 压分 |
+
+4. 技术总分权重
+
+| 分项 | 权重 |
+|---|---|
+| `trend` | 0.12 |
+| `bull_align` | 0.08 |
+| `breakout` | 0.22 |
+| `volume` | 0.12 |
+| `vol_mild` | 0.04 |
+| `rs` | 0.12 |
+| `contraction` | 0.10 |
+| `bias` | 0.07 |
+| `chip` | 0.03 |
+| `liquidity` | 0.10 |
+
+技术总分先得到 `base_score`，再减去风险扣分：
+
+- 停牌风险：40
+- 涨停锁死：20
+- 名称含 `ST`：25
+- 重大利空：15
+
+最终：
+
+```text
+score = clip(base_score - penalty, 0, 100)
+```
+
+补充说明：
+
+- `trigger_today = trend_ok == 1 and is_breakout == 1`
+- `trade_threshold = 75`
+- `watch_threshold = 60`
+- `min_avg_amount20 = 50,000,000`
+
+#### 3.2.3 因子优化分 `opt_score`
+
+`opt_score` 来自 `AShareDataCenter/score/factor_optimizer/data_loader.py`，不是 `score` 的副本。
+
+上游分类因子来源：
+
+- `dws_momentum_score`
+- `dws_value_score`
+- `dws_quality_score`
+- `dws_technical_score`
+- `dws_capital_score`
+- `dws_chip_score`
+- `dwd_daily_basic`（使用 `circ_mv` 推导 `size`）
+
+当前权重：
+
+| 分类因子 | 权重 |
+|---|---|
+| `momentum` | 0.15 |
+| `value` | 0.05 |
+| `quality` | 0.05 |
+| `technical` | 0.25 |
+| `capital` | 0.25 |
+| `chip` | 0.15 |
+| `size` | 0.10 |
+
+说明：
+
+- `opt_score` 一般在 `0~10` 区间
+- 若 Optimizer 导入失败或运行异常，会回退为 `score / 10`
+- 若当日分类因子表为空，当前实现会将 `opt_score` 记为 `NULL`
+
+#### 3.2.4 AI 分 `claude_score`
+
+`claude_score` 由 `scoreRank/strategies/claude.py` 生成，包含六个维度：
+
+- 动量 `score_momentum`
+- 估值 `score_value`
+- 质量 `score_quality`
+- 技术 `score_technical`
+- 资金 `score_capital`
+- 筹码 `score_chip`
+
+其作用不是替代技术分，而是为：
+
+- Web 多维筛选
+- M2/M3 参数比较
+- M4/M7 融合投票
+
+提供第二套独立评分视角。
+
+#### 3.2.5 候选池划分与落库字段
+
+评分完成后，`run_daily` 会补齐业务标签：
+
+| 字段 | 规则 |
+|---|---|
+| `is_bs_candidate` | 是否属于 `bs_detection_results` 最新有效买点集合 |
+| `is_self_selected` | 是否属于自选股 DB 或 `sina/stock_codes.xlsx` |
+| `pool_type=TRADE` | `is_bs_candidate=1` 且 `score >= 75` |
+| `pool_type=WATCH` | `is_bs_candidate=1` 且 `60 <= score < 75` |
+
+最终写入 `score_rank_daily` 的核心字段包括：
+
+- 基础信息：`trade_date`、`symbol`、`name`
+- 技术评分：`score`、`base_score`、`penalty`
+- 技术分项：`s_trend`、`s_breakout`、`s_volume`、`s_rs`、`s_contraction`、`s_liquidity`
+- 增强字段：`buy_point_close`、`close_price`、`is_limit_up`、`price_change_ratio`
+- 组合评分：`opt_score`、`claude_score`
+- 业务标签：`pool_type`、`is_self_selected`、`is_bs_candidate`
+
+#### 3.2.6 评分结果如何流向 M2~M8
+
+评分落库不是终点，而是后续策略评估的输入层：
+
+- `build_b_event_kpi.py` 从 `score_rank_daily` 构建 `b_event_fact` 与 `b_event_kpi`
+- `evaluate_m2_presets`、`evaluate_m3_optimizer` 主要消费 `score/opt_score/claude_score + ret_3/5/10`
+- `evaluate_m4_allocation` 用三套投票规则融合出 `m4_score`
+- `evaluate_m7_rebalance` 再用 `m4_score + 当前实盘仓位` 生成调仓清单
+
+M4 当前融合口径：
+
+```text
+vote_pyramid  = score > 60 and claude_score > 50
+vote_weighted = 0.4*score + 0.3*(opt_score*10) + 0.3*claude_score >= 65
+vote_quadrant = opt_score >= 6 and claude_score >= 50 and score > 60
+
+consensus = vote_pyramid + vote_weighted + vote_quadrant
+m4_score  = 0.35*score + 0.25*(opt_score*10) + 0.30*claude_score + 10*consensus
+```
+
+#### 3.2.7 M2~M8 逻辑链路（输入/处理/输出）
 
 | 阶段 | 主要输入 | 核心处理 | 主要输出 | 代码入口 |
 |---|---|---|---|---|
@@ -102,7 +297,7 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 - `sina_m8` 任务的上游门禁：若 `bs_detection_results` 最新日期领先 `score_rank_daily`，会提示“上游任务未执行完成，不能执行 M8”，并以非零退出码中止，避免假成功。
 - Web 页面分工：`/sina/strategy/m2`、`/sina/strategy/m3` 主要做在线展示与分析；`sina_m8` 任务负责周期落库与可审计追踪。
 
-#### 3.2.2 M7 模拟调仓执行口径（2026-02-27）
+#### 3.2.8 M7 模拟调仓执行口径（2026-02-27）
 
 - M7 是“**每日评估（仅交易日）**、**按条件交易**”机制，不是“每日必有交易”机制。
 - 交易日内每次运行都会基于 `M4目标仓位 + 当前实盘仓位` 重新计算调仓单；若无触发条件，`orders_total=0`，当天不下单。
@@ -114,11 +309,23 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 - 非强制调仓按金额差换算股数，按 100 股取整；结果按“先卖后买”排序，优先释放资金。
 - 卖出信号会同步落库到 `m7_sell_signals`（`FORCED_EXIT` / `REBALANCE`），用于审计与复盘。
 
-### 3.3 Sina & Live Tracker (实盘监控)
+### 3.3 数据处理流程（从信号到实盘）
+
+| 步骤 | 关键表/文件 | 说明 |
+|---|---|---|
+| 1. 信号采集 | `sina/bs_detection/`、`bs_detection_results` | 新浪页面截图、OCR 识别买卖点并写库 |
+| 2. 股票池拼装 | `a_share_stock_list`、`sina/stock_codes.xlsx` | 合并全市场、自选股、B/S 股票，形成评分全集 |
+| 3. 全市场评分 | `scoreRank.cli.run_daily`、`score_rank_daily` | 计算 `score/opt_score/claude_score` 并落库 |
+| 4. 事件收益构建 | `build_b_event_kpi.py`、`b_event_fact`、`b_event_kpi` | 生成未来 3/5/10 日收益与命中标签 |
+| 5. 参数回归 | `run_m8_cycle.py`、`strategy_m8_runs/items` | 评估 M2/M3 并输出冠军参数与样本统计 |
+| 6. 组合与调仓 | `web.strategy_playbook`、`m7_sell_signals` | 生成 `m4_score` 和调仓建议 |
+| 7. 实盘快照 | `sina/live_tracker/`、`live_daily_snapshots` | 汇总持仓、现金、成交和收益，生成盘后总结 |
+
+### 3.4 Sina & Live Tracker (实盘监控)
 - **B/S 扫描**: 全自动截图 + Tesseract OCR 识别新浪财经买卖信号。
 - **Live Tracker**: 实盘流水审计、持仓估值与每日建档快照。
 
-### 3.4 Web 控制台 (`web/`)
+### 3.5 Web 控制台 (`web/`)
 - **Dashboard**: 策略绩效、信号趋势、持仓分布可视化。
 - **Monitor**: B/S 信号最新监控、当日汇总、技术因子热力图。
 - **Admin**: 任务锁状态管理、调度配置更新、手动录入成交单。
@@ -156,7 +363,7 @@ python -m scoreRank.cli.run_m8_cycle --lookback-dates 60
 # 5. 手动重建 B-Event KPI 基础数据 (增量模式下跳过已有数据)
 python -m scoreRank.cli.build_b_event_kpi --all  # 使用 --all 强制全量重建
 
-# 5. 实盘持仓同步
+# 6. 实盘持仓同步
 python sina/live_tracker/run_live_tracker.py sync
 ```
 
