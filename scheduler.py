@@ -180,17 +180,22 @@ def run_pipeline(target_date):
         logger.error("Pipeline aborted at scoreRank.")
         return
 
-    # 4. Build M1 event+kpi tables for strategy stages
+    # 4. Persist B-signal consensus scores used by /sina/scores.
+    if not run_script("scoreRank/cli/build_bs_consensus.py", [], "bs_consensus"):
+        logger.error("Pipeline aborted at B-signal consensus scoring.")
+        return
+
+    # 5. Build M1 event+kpi tables for strategy stages
     if not run_script("scoreRank/cli/build_b_event_kpi.py", [], "m1_event_kpi"):
         logger.error("Pipeline aborted at M1 Event KPI build.")
         return
 
-    # 5. Run M8 strategy regression + parameter search and persist
+    # 6. Run M8 strategy regression + parameter search and persist
     if not run_script("scoreRank/cli/run_m8_cycle.py", ["--lookback-dates", "60"], "strategy_m8"):
         logger.error("Pipeline aborted at M8 cycle.")
         return
 
-    # 6. Run Live Sync
+    # 7. Run Live Sync
     if not run_script("sina/live_tracker/run_live_tracker.py", ["sync"], "live_sync"):
         logger.error("Pipeline aborted at Live Sync.")
         return

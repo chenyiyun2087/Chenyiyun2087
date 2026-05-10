@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scoreRank.core.bs_enhanced_score import (  # noqa: E402
     add_bs_enhanced_scores,
+    calculate_bs_consensus_signal,
     calculate_bs_enhanced_score,
     calculate_bs_research_signal,
     calculate_bs_score_v2,
@@ -102,6 +103,40 @@ class TestBSEnhancedScore(unittest.TestCase):
         self.assertEqual(weak["bs_research_label"], "回避")
         self.assertIn("共振", strong["bs_research_reason"])
 
+    def test_research_signal_uses_market_context(self):
+        base = {
+            "bs_score_v2": 60,
+            "s_rs": 82,
+            "s_liquidity": 72,
+            "s_breakout": 65,
+            "price_change_ratio": 2,
+            "is_limit_up": 0,
+        }
+        overheated = calculate_bs_research_signal({**base, "market_hs300_ret_20": 0.08, "market_regime": "risk_on"})
+        risk_off = calculate_bs_research_signal({**base, "market_hs300_ret_20": -0.05, "market_regime": "risk_off"})
+        self.assertGreater(risk_off["bs_research_score"], overheated["bs_research_score"])
+        self.assertIn("指数20日涨幅偏高", overheated["bs_research_reason"])
+        self.assertIn("弱市中仍保持强势", risk_off["bs_research_reason"])
+
+    def test_consensus_signal_marks_model_rule_disagreement(self):
+        disagreement = calculate_bs_consensus_signal(
+            {
+                "bs_model_prob": 0.9,
+                "bs_research_score": 45,
+                "bs_score_v2": 50,
+            }
+        )
+        agreement = calculate_bs_consensus_signal(
+            {
+                "bs_model_prob": 0.75,
+                "bs_research_score": 65,
+                "bs_score_v2": 62,
+            }
+        )
+        self.assertEqual(disagreement["bs_consensus_label"], "模型分歧")
+        self.assertGreater(agreement["bs_consensus_score"], disagreement["bs_consensus_score"])
+        self.assertIn("模型与规则分歧", disagreement["bs_consensus_reason"])
+
     def test_add_bs_enhanced_scores_preserves_rows(self):
         df = pd.DataFrame(
             [
@@ -114,6 +149,7 @@ class TestBSEnhancedScore(unittest.TestCase):
         self.assertIn("bs_score", out.columns)
         self.assertIn("bs_score_v2", out.columns)
         self.assertIn("bs_research_label", out.columns)
+        self.assertIn("bs_consensus_label", out.columns)
         self.assertGreater(out.iloc[0]["bs_score"], out.iloc[1]["bs_score"])
 
 

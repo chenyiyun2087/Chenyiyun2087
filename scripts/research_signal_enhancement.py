@@ -18,9 +18,11 @@ from scripts.export_signal_enhancement_dataset import (
     DB_CONFIG,
     DEFAULT_HORIZONS,
     _add_engineered_features,
+    _add_market_context,
     _add_split_column,
     _horizon_labels,
     _load_first_buy_events,
+    _load_market_context,
     _load_prices,
 )
 
@@ -80,7 +82,10 @@ def _load_labeled_events() -> tuple[pd.DataFrame, pd.DataFrame]:
         events["event_date"].min() - pd.Timedelta(days=5),
         END_DATE + pd.Timedelta(days=1),
     )
+    market_context = _load_market_context(events["event_date"].min() - pd.Timedelta(days=5), END_DATE + pd.Timedelta(days=1))
     labeled, paths = _horizon_labels(events, prices)
+    labeled = _add_market_context(labeled, market_context, "event_date")
+    labeled = _add_engineered_features(labeled)
     labeled = _add_split_column(labeled)
     return labeled, paths
 
@@ -241,7 +246,18 @@ def _bin_stats(df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
     mdd = f"mdd_{horizon}"
     d0 = df[df[target].notna()].copy()
     rows = []
-    for col in ["rs_liquidity_combo", "s_rs", "s_liquidity", "s_breakout", "bs_score_v2", "price_change_ratio"]:
+    for col in [
+        "rs_liquidity_combo",
+        "s_rs",
+        "s_liquidity",
+        "s_breakout",
+        "bs_score_v2",
+        "price_change_ratio",
+        "market_hs300_ret_20",
+        "market_bs_ratio",
+        "market_limit_up_rate",
+        "market_avg_research_score",
+    ]:
         d = d0[d0[col].notna()].copy()
         if len(d) < 50:
             continue
@@ -262,6 +278,13 @@ def _bin_stats(df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
 def _correlations(df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
     d = df[df[f"max_ret_{horizon}"].notna()].copy()
     rows = []
+
+    def spearman_like(left: pd.Series, right: pd.Series) -> float:
+        pair = pd.concat([pd.to_numeric(left, errors="coerce"), pd.to_numeric(right, errors="coerce")], axis=1).dropna()
+        if len(pair) <= 20:
+            return np.nan
+        return float(pair.iloc[:, 0].rank(method="average").corr(pair.iloc[:, 1].rank(method="average")))
+
     for col in [
         "bs_score_v2",
         "bs_score",
@@ -276,14 +299,21 @@ def _correlations(df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
         "rs_liquidity_combo",
         "breakout_volume_combo",
         "price_change_ratio",
+        "market_hs300_pct_chg",
+        "market_hs300_ret_5",
+        "market_hs300_ret_20",
+        "market_bs_ratio",
+        "market_limit_up_rate",
+        "market_avg_research_score",
+        "market_avg_price_change",
     ]:
         if col not in d or d[col].notna().sum() <= 20:
             continue
         rows.append(
             {
                 "feature": col,
-                "spearman_max_ret20": d[col].corr(d[f"max_ret_{horizon}"], method="spearman"),
-                "spearman_hit20": d[col].corr(d[f"hit_{horizon}_10pct"], method="spearman"),
+                "spearman_max_ret20": spearman_like(d[col], d[f"max_ret_{horizon}"]),
+                "spearman_hit20": spearman_like(d[col], d[f"hit_{horizon}_10pct"]),
             }
         )
     return pd.DataFrame(rows).sort_values("spearman_hit20", ascending=False)
@@ -305,6 +335,27 @@ def _monthly(df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
     )
 
 
+def _market_regime_stats(df: pd.DataFrame, horizon: int = 20) -> pd.DataFrame:
+    target = f"hit_{horizon}_10pct"
+    d = df[df[target].notna()].copy()
+    if d.empty or "market_regime" not in d.columns:
+        return pd.DataFrame()
+    return (
+        d.groupby("market_regime", dropna=False)
+        .agg(
+            n=(target, "size"),
+            hit20=(target, "mean"),
+            max_ret20=(f"max_ret_{horizon}", "mean"),
+            mdd20=(f"mdd_{horizon}", "mean"),
+            avg_hs300_ret20=("market_hs300_ret_20", "mean"),
+            avg_bs_ratio=("market_bs_ratio", "mean"),
+            avg_market_research=("market_avg_research_score", "mean"),
+        )
+        .reset_index()
+        .sort_values("hit20", ascending=False)
+    )
+
+
 def _write_report(out_dir: Path, payload: dict) -> None:
     db = payload["db"]
     completeness = payload["label_completeness"]
@@ -313,6 +364,7 @@ def _write_report(out_dir: Path, payload: dict) -> None:
     rules = payload["rules"]
     corr = payload["correlations"]
     monthly = payload["monthly"]
+    market_regime = payload["market_regime"]
 
     report = f"""
 # 2026-01 至今 B 点信号增强研究
@@ -356,20 +408,24 @@ def _write_report(out_dir: Path, payload: dict) -> None:
 
 {_table(monthly)}
 
+## 市场环境分层
+
+{_table(market_regime)}
+
 ## 初步结论
 
 1. `bs_score_v2` 对 20 日 10% 命中有提升，但绝对阈值 `>=72` 过于严格，当前样本几乎没有强买样本；短期更适合用 TopN 或 `>=55/58` 作为研究阈值。
 2. `rs_liquidity_combo` 是目前最强的可解释单因子。20 日样本中，`rs_liquidity_combo>=45` 的命中率显著高于全体样本。
 3. 原始 `score` 单独排序效果弱，说明技术总分不能直接代表 B 点后的交易质量，需要 B 点专用评分层。
 4. `price_change_ratio` 与后续空间呈负相关，买点后已经明显拉升的样本不宜追高，应继续作为风险扣分项。
-5. 样本存在月度漂移，2 月表现明显好于 3 月，后续需要加入市场环境因子，否则模型容易把行情阶段误学成个股规律。
+5. 样本存在月度漂移，2 月表现明显好于 3 月；市场环境字段已加入数据包，后续模型可以区分个股质量与行情阶段。
 
 ## 下一步建议
 
 1. 页面新增一个“研究建议”字段：先显示 `强观察/普通观察/回避`，底层规则可以从 `bs_score_v2>=55`、`rs_liquidity_combo>=45`、`price_change_ratio` 风险扣分组合开始。
 2. 每周或每新增 100 条 20 日完整标签后重跑本脚本，比较阈值稳定性。
 3. 当 20 日完整标签超过 1,500 条后，再训练 LightGBM/XGBoost；60 日标签未超过 500 条前，不建议上 60 日模型。
-4. 加入市场状态特征，例如指数 20 日涨跌、市场涨停家数、全市场成交额变化，用来解释月度漂移。
+4. 后续应观察 `market_regime`、`market_bs_ratio`、`market_hs300_ret_20` 的稳定性，决定是否按市场状态拆分模型。
 """
     (out_dir / "RESEARCH_REPORT.md").write_text(report.strip() + "\n", encoding="utf-8")
 
@@ -395,9 +451,10 @@ def main() -> None:
         "bins": _bin_stats(labeled),
         "correlations": _correlations(labeled),
         "monthly": _monthly(labeled),
+        "market_regime": _market_regime_stats(labeled),
     }
 
-    for key in ["label_completeness", "label_stats", "top_by_day", "rules", "bins", "correlations", "monthly"]:
+    for key in ["label_completeness", "label_stats", "top_by_day", "rules", "bins", "correlations", "monthly", "market_regime"]:
         payload[key].to_csv(out_dir / f"{key}.csv", index=False)
 
     summary = {

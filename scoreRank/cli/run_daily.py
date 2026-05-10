@@ -17,6 +17,7 @@ from scoreRank.core.db_io import (
 )
 # from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date  # DEPRECATED
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
+from scoreRank.core.market_context import MARKET_CONTEXT_COLUMNS, attach_market_context, build_daily_market_context
 from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
 
 # Strategy Imports
@@ -97,11 +98,30 @@ def _ensure_score_rank_daily_schema(cursor):
     additions = {
         "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
         "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
-        "bs_score_v2": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2 DECIMAL(10,2) NULL COMMENT 'B点增强分V2' AFTER bs_entry_score",
+        "bs_score_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_label VARCHAR(16) NULL COMMENT 'B点增强分标签' AFTER bs_entry_score",
+        "bs_score_v2": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2 DECIMAL(10,2) NULL COMMENT 'B点增强分V2' AFTER bs_score_label",
         "bs_score_v2_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2_label VARCHAR(16) NULL COMMENT 'B点增强分V2分层' AFTER bs_score_v2",
         "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
         "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
         "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
+        "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_research_reason",
+        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
+        "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",
+        "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
+        "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
+        "bs_consensus_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_reason VARCHAR(128) NULL COMMENT 'B点综合建议原因' AFTER bs_consensus_label",
+        "market_hs300_pct_chg": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_pct_chg DECIMAL(10,4) NULL COMMENT '沪深300当日涨跌幅' AFTER bs_research_reason",
+        "market_hs300_ret_5": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_ret_5 DECIMAL(10,6) NULL COMMENT '沪深300近5日收益' AFTER market_hs300_pct_chg",
+        "market_hs300_ret_20": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_ret_20 DECIMAL(10,6) NULL COMMENT '沪深300近20日收益' AFTER market_hs300_ret_5",
+        "market_scored_count": "ALTER TABLE score_rank_daily ADD COLUMN market_scored_count INT NULL COMMENT '当日评分股票数' AFTER market_hs300_ret_20",
+        "market_bs_count": "ALTER TABLE score_rank_daily ADD COLUMN market_bs_count INT NULL COMMENT '当日B点候选数' AFTER market_scored_count",
+        "market_bs_ratio": "ALTER TABLE score_rank_daily ADD COLUMN market_bs_ratio DECIMAL(10,6) NULL COMMENT '当日B点候选占比' AFTER market_bs_count",
+        "market_limit_up_rate": "ALTER TABLE score_rank_daily ADD COLUMN market_limit_up_rate DECIMAL(10,6) NULL COMMENT '当日评分池涨停率' AFTER market_bs_ratio",
+        "market_avg_score": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_score DECIMAL(10,4) NULL COMMENT '当日市场平均技术分' AFTER market_limit_up_rate",
+        "market_avg_v2": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_v2 DECIMAL(10,4) NULL COMMENT '当日市场平均V2分' AFTER market_avg_score",
+        "market_avg_research_score": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_research_score DECIMAL(10,4) NULL COMMENT '当日市场平均研究分' AFTER market_avg_v2",
+        "market_avg_price_change": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_price_change DECIMAL(10,4) NULL COMMENT '当日买点后平均涨幅' AFTER market_avg_research_score",
+        "market_regime": "ALTER TABLE score_rank_daily ADD COLUMN market_regime VARCHAR(16) NULL COMMENT '市场状态' AFTER market_avg_price_change",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -213,11 +233,16 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'claude_score': 'claude_score',
         'bs_score': 'bs_score',
         'bs_entry_score': 'bs_entry_score',
+        'bs_score_label': 'bs_score_label',
         'bs_score_v2': 'bs_score_v2',
         'bs_score_v2_label': 'bs_score_v2_label',
         'bs_research_score': 'bs_research_score',
         'bs_research_label': 'bs_research_label',
         'bs_research_reason': 'bs_research_reason',
+        'bs_consensus_score': 'bs_consensus_score',
+        'bs_consensus_label': 'bs_consensus_label',
+        'bs_consensus_reason': 'bs_consensus_reason',
+        **{col: col for col in MARKET_CONTEXT_COLUMNS},
         'is_self_selected': 'is_self_selected',
         'is_bs_candidate': 'is_bs_candidate'
     }
@@ -540,6 +565,9 @@ def main():
         ss_set = set(ss_symbols)
         scored['is_bs_candidate'] = scored['symbol'].isin(bs_set).astype(int)
         scored['is_self_selected'] = scored['symbol'].isin(ss_set).astype(int)
+        market_context = build_daily_market_context(scored, asof_date, engine)
+        scored = attach_market_context(scored, market_context)
+        scored = add_bs_enhanced_scores(scored)
         
         # Logic for Pool Type (Only for B/S candidates)
         scored['pool_type'] = None

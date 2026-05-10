@@ -1,0 +1,104 @@
+{
+  "first_buy_rows": 905,
+  "active_panel_rows": 8521,
+  "latest_candidates_rows": 242,
+  "leak_guard_prefixes": [
+    "ret_",
+    "max_ret_",
+    "mdd_",
+    "hit_",
+    "days_to_"
+  ],
+  "label_completeness": {
+    "hit_1_10pct": {
+      "available_rows": 871,
+      "available_pct": 0.9624,
+      "positive_rate": 0.0126
+    },
+    "hit_3_10pct": {
+      "available_rows": 819,
+      "available_pct": 0.905,
+      "positive_rate": 0.072
+    },
+    "hit_5_10pct": {
+      "available_rows": 777,
+      "available_pct": 0.8586,
+      "positive_rate": 0.1081
+    },
+    "hit_10_10pct": {
+      "available_rows": 732,
+      "available_pct": 0.8088,
+      "positive_rate": 0.1885
+    },
+    "hit_20_10pct": {
+      "available_rows": 584,
+      "available_pct": 0.6453,
+      "positive_rate": 0.2705
+    },
+    "hit_60_10pct": {
+      "available_rows": 64,
+      "available_pct": 0.0707,
+      "positive_rate": 0.2969
+    }
+  },
+  "split_counts": {
+    "split_hit_1_10pct": {
+      "train": 559,
+      "validation": 181,
+      "test": 131,
+      "unlabeled": 34
+    },
+    "split_hit_3_10pct": {
+      "train": 524,
+      "validation": 171,
+      "test": 124,
+      "unlabeled": 86
+    },
+    "split_hit_5_10pct": {
+      "train": 516,
+      "validation": 137,
+      "unlabeled": 128,
+      "test": 124
+    },
+    "split_hit_10_10pct": {
+      "train": 481,
+      "test": 173,
+      "unlabeled": 173,
+      "validation": 78
+    },
+    "split_hit_20_10pct": {
+      "train": 476,
+      "unlabeled": 321,
+      "test": 68,
+      "validation": 40
+    },
+    "split_hit_60_10pct": {
+      "unlabeled": 841,
+      "train": 48,
+      "test": 10,
+      "validation": 6
+    }
+  },
+  "missing_rate_top20": {
+    "days_to_10pct_within_1": 0.9878,
+    "days_to_10pct_within_60": 0.979,
+    "pool_type": 0.9448,
+    "days_to_10pct_within_3": 0.9348,
+    "mdd_60": 0.9293,
+    "max_ret_60": 0.9293,
+    "ret_60": 0.9293,
+    "hit_60_10pct": 0.9293,
+    "hit_60_5pct": 0.9293,
+    "days_to_10pct_within_5": 0.9072,
+    "days_to_10pct_within_10": 0.8475,
+    "days_to_10pct_within_20": 0.8254,
+    "ret_20": 0.3547,
+    "mdd_20": 0.3547,
+    "hit_20_5pct": 0.3547,
+    "hit_20_10pct": 0.3547,
+    "max_ret_20": 0.3547,
+    "hit_10_10pct": 0.1912,
+    "hit_10_5pct": 0.1912,
+    "mdd_10": 0.1912
+  }
+}

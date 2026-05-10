@@ -1,0 +1,23 @@
+{
+  "exported_at": "2026-05-10T18:23:24",
+  "date_min": "2026-01-22",
+  "date_max": "2026-05-08",
+  "first_buy_events_rows": 905,
+  "first_buy_events_ret10_rows": 732,
+  "first_buy_events_ret20_rows": 584,
+  "first_buy_events_ret60_rows": 64,
+  "active_panel_rows": 8521,
+  "latest_candidates_rows": 242,
+  "unique_symbols_first_buy": 407,
+  "files": [
+    "first_buy_events_labeled.csv",
+    "first_buy_price_paths_60d.csv",
+    "active_b_daily_panel_labeled.csv",
+    "latest_b_candidates.csv",
+    "signal_enhancement_dataset.xlsx",
+    "README_FOR_EXPERT.md",
+    "DATA_DICTIONARY.md",
+    "feature_whitelist.json",
+    "quality_report.json"
+  ]
+}

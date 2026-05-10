@@ -172,6 +172,8 @@ def calculate_bs_research_signal(row: Mapping[str, Any]) -> dict[str, float | st
     breakout = _safe_float(row.get("s_breakout"), 50.0)
     gain = _safe_float(row.get("price_change_ratio"))
     is_limit_up = int(_safe_float(row.get("is_limit_up"))) == 1
+    hs300_ret20 = _safe_float(row.get("market_hs300_ret_20"), np.nan)
+    market_regime = str(row.get("market_regime") or "").strip().lower()
 
     rs_liquidity = (max(rs, 0.0) * max(liquidity, 0.0)) ** 0.5
     research_score = 0.55 * v2 + 0.35 * rs_liquidity + 0.10 * breakout
@@ -202,6 +204,15 @@ def calculate_bs_research_signal(row: Mapping[str, Any]) -> dict[str, float | st
     if is_limit_up:
         research_score -= 8.0
         reasons.append("涨停可买性不足")
+    if np.isfinite(hs300_ret20) and hs300_ret20 >= 0.06:
+        research_score -= 4.0
+        reasons.append("指数20日涨幅偏高")
+    elif market_regime == "risk_off" and rs_liquidity >= 45:
+        research_score += 3.0
+        reasons.append("弱市中仍保持强势")
+    elif market_regime == "risk_on" and gain > 8:
+        research_score -= 2.0
+        reasons.append("强市后段防追高")
 
     research_score = float(np.clip(research_score, 0.0, 100.0))
     if not reasons:
@@ -214,10 +225,65 @@ def calculate_bs_research_signal(row: Mapping[str, Any]) -> dict[str, float | st
     }
 
 
+def bs_consensus_label(score: Any, model_prob: Any = None, research_score: Any = None) -> str:
+    s = _safe_float(score)
+    p = _safe_float(model_prob, np.nan)
+    r = _safe_float(research_score)
+    if np.isfinite(p) and p >= 0.65 and r < 58:
+        return "模型分歧"
+    if s >= 70:
+        return "共振观察"
+    if s >= 58:
+        return "谨慎观察"
+    return "回避"
+
+
+def calculate_bs_consensus_signal(row: Mapping[str, Any]) -> dict[str, float | str]:
+    research = _safe_float(row.get("bs_research_score"))
+    if research <= 0 and row.get("bs_research_score") is None:
+        research = _safe_float(calculate_bs_research_signal(row)["bs_research_score"])
+    v2 = _safe_float(row.get("bs_score_v2"))
+    model_prob = _safe_float(row.get("bs_model_prob"), np.nan)
+    model_score = model_prob * 100.0 if np.isfinite(model_prob) else np.nan
+
+    if np.isfinite(model_score):
+        consensus = 0.45 * research + 0.35 * model_score + 0.20 * v2
+    else:
+        consensus = 0.65 * research + 0.35 * v2
+
+    reasons: list[str] = []
+    if np.isfinite(model_score) and model_prob >= 0.65:
+        reasons.append("模型高分")
+    if research >= 58:
+        reasons.append("研究建议通过")
+    if v2 >= 58:
+        reasons.append("V2观察以上")
+    if np.isfinite(model_score) and model_prob >= 0.65 and research < 58:
+        consensus -= 10.0
+        reasons.append("模型与规则分歧")
+    if research < 50:
+        consensus -= 4.0
+    consensus = float(np.clip(consensus, 0.0, 100.0))
+    if not reasons:
+        reasons.append("共振不足")
+    return {
+        "bs_consensus_score": round(consensus, 2),
+        "bs_consensus_label": bs_consensus_label(consensus, model_prob, research),
+        "bs_consensus_reason": "；".join(reasons[:3]),
+    }
+
+
 def add_bs_enhanced_scores(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if out.empty:
-        text_cols = {"bs_score_label", "bs_score_v2_label", "bs_research_label", "bs_research_reason"}
+        text_cols = {
+            "bs_score_label",
+            "bs_score_v2_label",
+            "bs_research_label",
+            "bs_research_reason",
+            "bs_consensus_label",
+            "bs_consensus_reason",
+        }
         for col in (
             "bs_score",
             "bs_entry_score",
@@ -227,6 +293,9 @@ def add_bs_enhanced_scores(df: pd.DataFrame) -> pd.DataFrame:
             "bs_research_score",
             "bs_research_label",
             "bs_research_reason",
+            "bs_consensus_score",
+            "bs_consensus_label",
+            "bs_consensus_reason",
         ):
             if col not in out.columns:
                 out[col] = pd.Series(dtype=object if col in text_cols else float)
@@ -241,4 +310,7 @@ def add_bs_enhanced_scores(df: pd.DataFrame) -> pd.DataFrame:
     research = out.apply(lambda row: calculate_bs_research_signal(row), axis=1, result_type="expand")
     for col in research.columns:
         out[col] = research[col]
+    consensus = out.apply(lambda row: calculate_bs_consensus_signal(row), axis=1, result_type="expand")
+    for col in consensus.columns:
+        out[col] = consensus[col]
     return out

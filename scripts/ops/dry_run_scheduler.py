@@ -36,6 +36,7 @@ def main() -> None:
         expected_calls = [
             "eastmoney/run_strategy.py",
             "scoreRank/run_daily.py",
+            "scoreRank/cli/build_bs_consensus.py",
             "sina/live_tracker/run_live_tracker.py",
         ]
 

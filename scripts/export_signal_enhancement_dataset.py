@@ -89,8 +89,34 @@ TRAINABLE_FEATURE_COLUMNS = [
     "breakout_volume_combo",
     "overextended_flag",
     "pullback_flag",
+    "market_hs300_pct_chg",
+    "market_hs300_ret_5",
+    "market_hs300_ret_20",
+    "market_scored_count",
+    "market_bs_count",
+    "market_bs_ratio",
+    "market_limit_up_rate",
+    "market_avg_score",
+    "market_avg_v2",
+    "market_avg_research_score",
+    "market_avg_price_change",
+    "market_regime",
 ]
 LEAKY_PREFIXES = ("ret_", "max_ret_", "mdd_", "hit_", "days_to_")
+MARKET_CONTEXT_COLUMNS = [
+    "market_hs300_pct_chg",
+    "market_hs300_ret_5",
+    "market_hs300_ret_20",
+    "market_scored_count",
+    "market_bs_count",
+    "market_bs_ratio",
+    "market_limit_up_rate",
+    "market_avg_score",
+    "market_avg_v2",
+    "market_avg_research_score",
+    "market_avg_price_change",
+    "market_regime",
+]
 
 
 def _connect():
@@ -338,6 +364,94 @@ def _load_prices(symbols: list[str], start_date: pd.Timestamp, end_date: pd.Time
     px["close"] = pd.to_numeric(px["close"], errors="coerce")
     px["vol"] = pd.to_numeric(px["vol"], errors="coerce")
     return px.dropna(subset=["close"]).reset_index(drop=True)
+
+
+def _load_market_context(start_date: pd.Timestamp, end_date: pd.Timestamp, index_ts_code: str = "000300.SH") -> pd.DataFrame:
+    idx_sql = """
+    SELECT trade_date, close, pct_chg
+    FROM tushare_stock.dwd_index_daily
+    WHERE ts_code = %s
+      AND trade_date >= %s
+      AND trade_date <= %s
+    ORDER BY trade_date
+    """
+    start_key = int((start_date - pd.Timedelta(days=90)).strftime("%Y%m%d"))
+    end_key = int(end_date.strftime("%Y%m%d"))
+    idx = _read_sql(idx_sql, params=[index_ts_code, start_key, end_key])
+    if not idx.empty:
+        idx["event_date"] = pd.to_datetime(idx["trade_date"].astype(str))
+        idx["close"] = pd.to_numeric(idx["close"], errors="coerce")
+        idx["market_hs300_pct_chg"] = pd.to_numeric(idx["pct_chg"], errors="coerce")
+        idx["market_hs300_ret_5"] = idx["close"].pct_change(5)
+        idx["market_hs300_ret_20"] = idx["close"].pct_change(20)
+        idx = idx[
+            [
+                "event_date",
+                "market_hs300_pct_chg",
+                "market_hs300_ret_5",
+                "market_hs300_ret_20",
+            ]
+        ]
+    else:
+        idx = pd.DataFrame(columns=["event_date", "market_hs300_pct_chg", "market_hs300_ret_5", "market_hs300_ret_20"])
+
+    score_sql = """
+    SELECT
+        trade_date AS event_date,
+        COUNT(*) AS market_scored_count,
+        SUM(CASE WHEN is_bs_candidate = 1 THEN 1 ELSE 0 END) AS market_bs_count,
+        AVG(CASE WHEN is_limit_up = 1 THEN 1 ELSE 0 END) AS market_limit_up_rate,
+        AVG(score) AS market_avg_score,
+        AVG(bs_score_v2) AS market_avg_v2,
+        AVG(bs_research_score) AS market_avg_research_score,
+        AVG(price_change_ratio) AS market_avg_price_change
+    FROM score_rank_daily
+    WHERE trade_date >= %s
+      AND trade_date <= %s
+    GROUP BY trade_date
+    ORDER BY trade_date
+    """
+    score_ctx = _read_sql(score_sql, params=[start_date.date(), end_date.date()])
+    if not score_ctx.empty:
+        score_ctx["event_date"] = pd.to_datetime(score_ctx["event_date"])
+        for col in score_ctx.columns:
+            if col != "event_date":
+                score_ctx[col] = pd.to_numeric(score_ctx[col], errors="coerce")
+        score_ctx["market_bs_ratio"] = score_ctx["market_bs_count"] / score_ctx["market_scored_count"].replace(0, np.nan)
+    else:
+        score_ctx = pd.DataFrame(columns=["event_date"])
+
+    out = idx.merge(score_ctx, on="event_date", how="outer").sort_values("event_date")
+    out = out[(out["event_date"] >= start_date) & (out["event_date"] <= end_date)].copy()
+    ret20 = out.get("market_hs300_ret_20", pd.Series(np.nan, index=out.index))
+    pct = out.get("market_hs300_pct_chg", pd.Series(np.nan, index=out.index))
+    out["market_regime"] = np.select(
+        [
+            (ret20 >= 0.04) & (pct >= -1.0),
+            (ret20 <= -0.04) | (pct <= -2.0),
+        ],
+        ["risk_on", "risk_off"],
+        default="neutral",
+    )
+    return out
+
+
+def _add_market_context(df: pd.DataFrame, market_context: pd.DataFrame, date_col: str = "event_date") -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = df.copy()
+    if market_context.empty or date_col not in out.columns:
+        for col in MARKET_CONTEXT_COLUMNS:
+            if col not in out.columns:
+                out[col] = None
+        return out
+    ctx = market_context.copy()
+    ctx["event_date"] = pd.to_datetime(ctx["event_date"])
+    out[date_col] = pd.to_datetime(out[date_col])
+    out = out.merge(ctx, left_on=date_col, right_on="event_date", how="left", suffixes=("", "_market_ctx"))
+    if date_col != "event_date" and "event_date_market_ctx" in out.columns:
+        out = out.drop(columns=["event_date_market_ctx"])
+    return out
 
 
 def _add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -603,6 +717,10 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 - `score_*_gap`、`score_dispersion`：不同评分体系之间的分歧特征。
 - `rs_liquidity_combo`、`breakout_volume_combo`：组合交互特征。
 - `overextended_flag`、`pullback_flag`：买点后过热或破位提示。
+- `market_hs300_pct_chg` / `market_hs300_ret_5` / `market_hs300_ret_20`：沪深300当日涨跌幅、近 5/20 日收益。
+- `market_bs_count` / `market_bs_ratio`：当日评分池中 B 点候选数量与占比，用于衡量信号拥挤度。
+- `market_limit_up_rate` / `market_avg_score` / `market_avg_v2` / `market_avg_research_score`：当日市场横截面环境。
+- `market_regime`：基于沪深300 20 日收益和当日跌幅的简化市场状态，`risk_on` / `neutral` / `risk_off`。
 - `close_price`：事件日收盘价。
 - `buy_point_close`：买点日收盘价。
 - `price_change_ratio`：事件日相对买点价涨幅百分比。
@@ -646,8 +764,15 @@ def main() -> None:
     end = max(first_buy["event_date"].max(), latest["asof_date"].max() if not latest.empty else first_buy["event_date"].max()) + timedelta(days=100)
     symbols = sorted(set(first_buy["symbol"].tolist()) | set(active_panel["symbol"].tolist()) | set(latest["symbol"].tolist()))
     prices = _load_prices(symbols, start, end)
+    market_context = _load_market_context(start, end)
 
     first_labeled, price_paths = _horizon_labels(first_buy, prices)
+    first_labeled = _add_engineered_features(first_labeled)
+    active_panel = _add_engineered_features(active_panel)
+    latest = _add_engineered_features(latest)
+    first_labeled = _add_market_context(first_labeled, market_context, "event_date")
+    active_panel = _add_market_context(active_panel, market_context, "event_date")
+    latest = _add_market_context(latest, market_context, "asof_date")
     first_labeled = _add_engineered_features(first_labeled)
     active_panel = _add_engineered_features(active_panel)
     latest = _add_engineered_features(latest)
@@ -678,6 +803,7 @@ def main() -> None:
         "breakout_volume_combo",
         "overextended_flag",
         "pullback_flag",
+        *MARKET_CONTEXT_COLUMNS,
     ]
     split_cols = [c for c in first_labeled.columns if c.startswith("split_")]
     label_cols = [c for c in first_labeled.columns if c.startswith(("ret_", "max_ret_", "mdd_", "hit_", "days_to_"))]
@@ -701,6 +827,7 @@ def main() -> None:
             "breakout_volume_combo",
             "overextended_flag",
             "pullback_flag",
+            *MARKET_CONTEXT_COLUMNS,
             "is_eligible",
             "is_high_risk",
         ]
@@ -723,6 +850,7 @@ def main() -> None:
             "breakout_volume_combo",
             "overextended_flag",
             "pullback_flag",
+            *MARKET_CONTEXT_COLUMNS,
         ]
         latest = latest[[c for c in latest_front if c in latest.columns]]
 

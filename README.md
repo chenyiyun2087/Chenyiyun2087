@@ -116,6 +116,7 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 | 6. 因子优化分 | `AShareDataCenter` 因子分类表 | 计算 `opt_score` 并按股票代码 merge | 三分体系结果 |
 | 7. 业务标签 | B/S 集合、自选集合、技术总分 | 计算 `is_bs_candidate`、`is_self_selected`、`pool_type` | 最终落库结果 |
 | 8. 落库 | 最终评分表 | 覆盖写入 `score_rank_daily` | Web 展示、M8、M7、实盘 |
+| 9. 综合建议批量化 | `score_rank_daily` 当日记录 | 复算并写回 `bs_score/bs_score_v2/bs_research_score/bs_consensus_score` 与建议文案 | `/sina/scores` 稳定排序与展示 |
 
 #### 3.2.2 技术分 `score` 的数据处理流程
 
@@ -570,6 +571,8 @@ $$
 
 `bs_research_score` 是 2026 年以来样本研究后的页面提示层，核心规则来自 `bs_score_v2` 与 `rs_liquidity_combo` 的共振。它的标签是 `强观察` / `普通观察` / `回避`，用于辅助复核，不等同于自动交易指令。
 
+当 `score_rank_daily` 中存在市场环境字段时，`bs_research_score` 会做市场感知校正：指数 20 日涨幅过高时降低追高型 B 点，弱市中仍保持强势流动性的标的会获得额外确认。
+
 外部专家协作数据通过以下脚本导出：
 
 ```bash
@@ -578,6 +581,8 @@ python3 scripts/export_signal_enhancement_dataset.py
 
 导出目录位于 `exports/signal_enhancement/<timestamp>/`，包含首次 B 点事件、1/3/5/10/20/60 日标签、60 日价格路径、活跃 B 点日面板、最新候选池、特征白名单、质量报告和 Excel 汇总包。训练特征只应从 `feature_whitelist.json` 读取，避免未来收益字段泄漏到模型。
 
+数据包同时包含市场环境特征：沪深300当日与近 5/20 日表现、当日 B 点拥挤度、市场涨停率、市场平均 V2/研究分，以及 `market_regime`。这些字段用于解释行情阶段差异，避免模型把市场环境误学成个股质量。
+
 基线模型训练入口：
 
 ```bash
@@ -585,3 +590,39 @@ python3 scripts/train_bs_signal_model.py --dataset-dir exports/signal_enhancemen
 ```
 
 模型产物位于 `exports/bs_signal_models/<timestamp>/`，包括校准后的 Logistic 模型、验证/测试指标、模型报告和最新候选股概率排序。
+
+模型分写回页面入口：
+
+```bash
+python3 scripts/import_bs_model_scores.py --model-dir exports/bs_signal_models/<timestamp>
+```
+
+写回后，`/sina/scores` 会展示：
+
+- `综合分`: 规则研究分、模型概率、V2 分的融合排序分。
+- `综合建议`: `共振观察` / `谨慎观察` / `模型分歧` / `回避`。
+- `综合原因`: 展示触发共振、风险扣分或模型规则分歧的主要原因。
+- `模型分` 与 `模型概率`: 最新训练模型对当前候选池的排序结果。
+- `市场`: 当前候选对应的市场环境标签。
+
+日终复算并写回页面排序字段：
+
+```bash
+python3 scoreRank/cli/build_bs_consensus.py
+```
+
+可指定日期重跑：
+
+```bash
+python3 scoreRank/cli/build_bs_consensus.py --date 20260508
+```
+
+完整闭环入口：
+
+```bash
+python3 scripts/run_bs_signal_enhancement_cycle.py --target hit_20_10pct
+```
+
+该脚本会依次完成“专家数据包导出 -> 研究报告生成 -> 基线模型训练 -> 最新候选模型分入库”，并在 `exports/bs_signal_cycles/<timestamp>/cycle_manifest.json` 留存本轮数据包、研究报告、模型目录、入库结果和核心测试集指标。
+
+当前样本仍以 2026 年以来的短期历史为主，20 日标签样本量有限。已验证更复杂的树模型在当前样本上不稳定，校准 Logistic 暂时是更稳的基线。后续应随着每日新增 B 点事件持续重跑闭环；当 20 日有效标签达到约 1500 条、60 日有效标签达到约 500 条后，再重新评估分市场阶段模型、非线性模型和分行业模型。

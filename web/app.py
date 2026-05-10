@@ -17,7 +17,7 @@ from project_network import build_direct_network_env, enforce_direct_network
 
 enforce_direct_network()
 
-from scoreRank.core.bs_enhanced_score import calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2
+from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2
 
 try:
     from sina.live_tracker.live_tracker import LiveTracker
@@ -117,6 +117,18 @@ TASKS = {
         "switched_day": False,
         "schedule_enabled": False,
         "schedule_time": "21:00",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "sina_bs_consensus": {
+        "name": "B点综合评分建议",
+        "description": "批量复算并写回B点增强分、研究分、综合分与综合建议",
+        "script": "scoreRank/cli/build_bs_consensus.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": False,
+        "schedule_time": "21:20",
         "next_run": "-",
         "trading_day_only": True,
     },
@@ -232,7 +244,7 @@ TASKS = {
 TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
-SCHEDULED_TASK_WHITELIST = {"sina_picture", "sina_analyse", "sina_score", "sina_m8", "sina_snapshot", "sina_m7_sell"}
+SCHEDULED_TASK_WHITELIST = {"sina_picture", "sina_analyse", "sina_score", "sina_bs_consensus", "sina_m8", "sina_snapshot", "sina_m7_sell"}
 
 NOTIFICATION_CHANNEL_DEFS = [
     ("feishu", "飞书"),
@@ -1196,6 +1208,62 @@ def _verify_sina_score_result(started_at, finished_at, run_options=None):
         return False, [f"result=FAIL; verifier_error={e}"]
 
 
+def _verify_sina_bs_consensus_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    lines = []
+    try:
+        target_datestr = _normalize_datestr((run_options or {}).get("datestr"))
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                _ensure_score_rank_daily_score_columns(cursor)
+                if target_datestr:
+                    target_date = datetime.strptime(target_datestr, "%Y%m%d").date()
+                else:
+                    cursor.execute("SELECT MAX(trade_date) AS d FROM score_rank_daily")
+                    target_date = (cursor.fetchone() or {}).get("d")
+
+                if target_date is None:
+                    return False, ["result=FAIL; reason=no_score_rank_daily_date"]
+
+                cursor.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS rows_cnt,
+                        SUM(CASE WHEN is_bs_candidate = 1 THEN 1 ELSE 0 END) AS bs_rows,
+                        SUM(CASE WHEN bs_score IS NULL THEN 1 ELSE 0 END) AS null_bs_score,
+                        SUM(CASE WHEN bs_score_v2 IS NULL THEN 1 ELSE 0 END) AS null_v2,
+                        SUM(CASE WHEN bs_research_score IS NULL THEN 1 ELSE 0 END) AS null_research,
+                        SUM(CASE WHEN bs_consensus_score IS NULL THEN 1 ELSE 0 END) AS null_consensus
+                    FROM score_rank_daily
+                    WHERE trade_date = %s
+                    """,
+                    (target_date,),
+                )
+                stat = cursor.fetchone() or {}
+        finally:
+            conn.close()
+
+        rows_cnt = int(stat.get("rows_cnt") or 0)
+        null_bs_score = int(stat.get("null_bs_score") or 0)
+        null_v2 = int(stat.get("null_v2") or 0)
+        null_research = int(stat.get("null_research") or 0)
+        null_consensus = int(stat.get("null_consensus") or 0)
+        ok = rows_cnt > 0 and null_bs_score == 0 and null_v2 == 0 and null_research == 0 and null_consensus == 0
+        lines.append(
+            "result="
+            + ("PASS" if ok else "FAIL")
+            + f"; target_date={_db_value_to_datestr(target_date) or target_date}; rows={rows_cnt}"
+        )
+        lines.append(
+            f"bs_rows={int(stat.get('bs_rows') or 0)}, null_bs_score={null_bs_score}, "
+            f"null_v2={null_v2}, null_research={null_research}, null_consensus={null_consensus}"
+        )
+        return ok, lines
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
 def _verify_sina_m8_result(started_at, finished_at):
     lines = []
     try:
@@ -1311,6 +1379,8 @@ def _verify_sina_m7_sell_result(started_at, finished_at, run_options=None):
 def _run_task_result_verification(task_name, started_at, finished_at, run_options=None):
     if task_name == "sina_score":
         return _verify_sina_score_result(started_at, finished_at, run_options=run_options)
+    if task_name == "sina_bs_consensus":
+        return _verify_sina_bs_consensus_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_m8":
         return _verify_sina_m8_result(started_at, finished_at)
     if task_name == "sina_m7_sell":
@@ -1915,6 +1985,10 @@ def _build_task_script_parts(task_name, run_options=None):
         if datestr:
             return [script, '--date', datestr, '--force']
         return [script]
+    if task_name == 'sina_bs_consensus':
+        if datestr:
+            return [script, '--date', datestr]
+        return [script]
     if task_name == 'sina_m8':
         return [script, '--lookback-dates', '60']
     if task_name == 'sina_snapshot':
@@ -2119,6 +2193,7 @@ def _enrich_bs_score_rows(rows):
         row.update(calculate_bs_enhanced_score(row))
         row.update(calculate_bs_score_v2(row))
         row.update(calculate_bs_research_signal(row))
+        row.update(calculate_bs_consensus_signal(row))
     return rows
 
 
@@ -2132,11 +2207,30 @@ def _ensure_score_rank_daily_score_columns(cursor):
     additions = {
         "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
         "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
-        "bs_score_v2": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2 DECIMAL(10,2) NULL COMMENT 'B点增强分V2' AFTER bs_entry_score",
+        "bs_score_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_label VARCHAR(16) NULL COMMENT 'B点增强分标签' AFTER bs_entry_score",
+        "bs_score_v2": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2 DECIMAL(10,2) NULL COMMENT 'B点增强分V2' AFTER bs_score_label",
         "bs_score_v2_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2_label VARCHAR(16) NULL COMMENT 'B点增强分V2分层' AFTER bs_score_v2",
         "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
         "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
         "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
+        "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_research_reason",
+        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
+        "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",
+        "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
+        "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
+        "bs_consensus_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_reason VARCHAR(128) NULL COMMENT 'B点综合建议原因' AFTER bs_consensus_label",
+        "market_hs300_pct_chg": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_pct_chg DECIMAL(10,4) NULL COMMENT '沪深300当日涨跌幅' AFTER bs_research_reason",
+        "market_hs300_ret_5": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_ret_5 DECIMAL(10,6) NULL COMMENT '沪深300近5日收益' AFTER market_hs300_pct_chg",
+        "market_hs300_ret_20": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_ret_20 DECIMAL(10,6) NULL COMMENT '沪深300近20日收益' AFTER market_hs300_ret_5",
+        "market_scored_count": "ALTER TABLE score_rank_daily ADD COLUMN market_scored_count INT NULL COMMENT '当日评分股票数' AFTER market_hs300_ret_20",
+        "market_bs_count": "ALTER TABLE score_rank_daily ADD COLUMN market_bs_count INT NULL COMMENT '当日B点候选数' AFTER market_scored_count",
+        "market_bs_ratio": "ALTER TABLE score_rank_daily ADD COLUMN market_bs_ratio DECIMAL(10,6) NULL COMMENT '当日B点候选占比' AFTER market_bs_count",
+        "market_limit_up_rate": "ALTER TABLE score_rank_daily ADD COLUMN market_limit_up_rate DECIMAL(10,6) NULL COMMENT '当日评分池涨停率' AFTER market_bs_ratio",
+        "market_avg_score": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_score DECIMAL(10,4) NULL COMMENT '当日市场平均技术分' AFTER market_limit_up_rate",
+        "market_avg_v2": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_v2 DECIMAL(10,4) NULL COMMENT '当日市场平均V2分' AFTER market_avg_score",
+        "market_avg_research_score": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_research_score DECIMAL(10,4) NULL COMMENT '当日市场平均研究分' AFTER market_avg_v2",
+        "market_avg_price_change": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_price_change DECIMAL(10,4) NULL COMMENT '当日买点后平均涨幅' AFTER market_avg_research_score",
+        "market_regime": "ALTER TABLE score_rank_daily ADD COLUMN market_regime VARCHAR(16) NULL COMMENT '市场状态' AFTER market_avg_price_change",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -2728,12 +2822,13 @@ def sina_scores():
             all_scores = _enrich_bs_score_rows(cursor.fetchall())
 
             reverse = order == 'DESC'
-            if sort_by in {'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score'}:
+            if sort_by in {'bs_consensus_score', 'bs_model_rank_score', 'bs_model_prob', 'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score'}:
                 all_scores.sort(key=lambda row: _safe_sort_float(row, sort_by), reverse=reverse)
             else:
                 all_scores.sort(
                     key=lambda row: (
                         _pool_sort_rank(row),
+                        -_safe_sort_float(row, 'bs_consensus_score'),
                         -_safe_sort_float(row, 'bs_research_score'),
                         -_safe_sort_float(row, 'bs_score_v2'),
                         -_safe_sort_float(row, 'bs_score'),
@@ -2859,6 +2954,12 @@ def sina_all_scores():
                 order_stmt = f"ORDER BY srd.bs_score_v2 {order}"
             elif sort_by == 'bs_research_score':
                 order_stmt = f"ORDER BY srd.bs_research_score {order}"
+            elif sort_by == 'bs_consensus_score':
+                order_stmt = f"ORDER BY srd.bs_consensus_score {order}"
+            elif sort_by == 'bs_model_rank_score':
+                order_stmt = f"ORDER BY srd.bs_model_rank_score {order}"
+            elif sort_by == 'bs_model_prob':
+                order_stmt = f"ORDER BY srd.bs_model_prob {order}"
             else:
                 order_stmt = "ORDER BY srd.bs_research_score DESC, srd.bs_score_v2 DESC, srd.score DESC"
 
@@ -2967,6 +3068,12 @@ def sina_self_selected():
                 order_stmt = f"ORDER BY bs_score_v2 {order}"
             elif sort_by == 'bs_research_score':
                 order_stmt = f"ORDER BY bs_research_score {order}"
+            elif sort_by == 'bs_consensus_score':
+                order_stmt = f"ORDER BY bs_consensus_score {order}"
+            elif sort_by == 'bs_model_rank_score':
+                order_stmt = f"ORDER BY bs_model_rank_score {order}"
+            elif sort_by == 'bs_model_prob':
+                order_stmt = f"ORDER BY bs_model_prob {order}"
             else:
                 order_stmt = "ORDER BY bs_research_score DESC, bs_score_v2 DESC, score DESC"
 

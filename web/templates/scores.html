@@ -75,6 +75,16 @@
                     <th>代码</th>
                     <th>名称</th>
                     <th>
+                        <a href="{{ url_for(request.endpoint, sort='bs_consensus_score', order='asc' if sort_by=='bs_consensus_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
+                            style="text-decoration: none; color: inherit;">
+                            综合分 {{ '▲' if sort_by=='bs_consensus_score' and order=='ASC' else ('▼' if sort_by=='bs_consensus_score'
+                            and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
+                    <th>综合建议</th>
+                    <th>综合原因</th>
+                    <th>
                         <a href="{{ url_for(request.endpoint, sort='bs_research_score', order='asc' if sort_by=='bs_research_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
                             研究分 {{ '▲' if sort_by=='bs_research_score' and order=='ASC' else ('▼' if sort_by=='bs_research_score'
@@ -84,6 +94,23 @@
                     </th>
                     <th>研究建议</th>
                     <th>研究原因</th>
+                    <th>市场</th>
+                    <th>
+                        <a href="{{ url_for(request.endpoint, sort='bs_model_rank_score', order='asc' if sort_by=='bs_model_rank_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
+                            style="text-decoration: none; color: inherit;">
+                            模型分 {{ '▲' if sort_by=='bs_model_rank_score' and order=='ASC' else ('▼' if sort_by=='bs_model_rank_score'
+                            and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
+                    <th>
+                        <a href="{{ url_for(request.endpoint, sort='bs_model_prob', order='asc' if sort_by=='bs_model_prob' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
+                            style="text-decoration: none; color: inherit;">
+                            模型概率 {{ '▲' if sort_by=='bs_model_prob' and order=='ASC' else ('▼' if sort_by=='bs_model_prob'
+                            and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
                     <th>
                         <a href="{{ url_for(request.endpoint, sort='bs_score_v2', order='asc' if sort_by=='bs_score_v2' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
@@ -146,10 +173,17 @@
                     </td>
                     <td><a href="{{ row.symbol | eastmoney_guba_url }}" target="_blank">{{ row.symbol }}</a></td>
                     <td><a href="{{ row.symbol | sina_finance_url }}" target="_blank">{{ row.name }}</a></td>
+                    <td class="text-up">{{ "%.2f"|format(row.bs_consensus_score) if row.bs_consensus_score is not none else '-' }}</td>
+                    <td><span class="tag {{ 'trade' if row.bs_consensus_label == '共振观察' else '' }}">{{
+                            row.bs_consensus_label or '-' }}</span></td>
+                    <td>{{ row.bs_consensus_reason or '-' }}</td>
                     <td class="text-up">{{ "%.2f"|format(row.bs_research_score) if row.bs_research_score is not none else '-' }}</td>
                     <td><span class="tag {{ 'trade' if row.bs_research_label == '强观察' else '' }}">{{
                             row.bs_research_label or '-' }}</span></td>
                     <td>{{ row.bs_research_reason or '-' }}</td>
+                    <td><span class="tag">{{ row.market_regime or '-' }}</span></td>
+                    <td class="text-up">{{ "%.2f"|format(row.bs_model_rank_score) if row.bs_model_rank_score is not none else '-' }}</td>
+                    <td class="text-up">{{ "%.1f"|format(row.bs_model_prob * 100) if row.bs_model_prob is not none else '-' }}{% if row.bs_model_prob is not none %}%{% endif %}</td>
                     <td class="text-up">{{ "%.2f"|format(row.bs_score_v2) if row.bs_score_v2 is not none else '-' }}</td>
                     <td><span class="tag {{ 'trade' if row.bs_score_v2_label == '强买' else '' }}">{{
                             row.bs_score_v2_label or '-' }}</span></td>
@@ -178,7 +212,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="21" class="empty">暂无评分数据</td>
+                    <td colspan="27" class="empty">暂无评分数据</td>
                 </tr>
                 {% endfor %}
             </tbody>
