@@ -2,6 +2,9 @@ import concurrent.futures
 import glob
 import logging
 import os
+import re
+import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -15,8 +18,9 @@ from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
-from project_network import configure_chrome_direct_options, enforce_direct_network
+from project_network import PROXY_ENV_KEYS, configure_chrome_direct_options, enforce_direct_network
 
+_ORIGINAL_PROXY_ENV = {key: os.environ.get(key) for key in PROXY_ENV_KEYS if os.environ.get(key)}
 enforce_direct_network()
 
 # 配置日志
@@ -32,19 +36,95 @@ logger = logging.getLogger(__name__)
 
 _CHROMEDRIVER_LOCK = threading.Lock()
 _CHROMEDRIVER_PATH = None
+
+
 def _ensure_direct_network_env():
     """Ensure Selenium and ChromeDriver inherit direct-network settings."""
     enforce_direct_network()
 
 
-def _find_cached_chromedriver():
+def _parse_major_version(text):
+    match = re.search(r"\b(\d+)\.", str(text or ""))
+    return int(match.group(1)) if match else None
+
+
+def _get_chrome_major_version():
+    commands = [
+        ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--version"],
+        ["google-chrome", "--version"],
+        ["google-chrome-stable", "--version"],
+        ["chromium", "--version"],
+        ["chromium-browser", "--version"],
+    ]
+    for command in commands:
+        executable = command[0]
+        if os.path.isabs(executable):
+            if not os.path.exists(executable):
+                continue
+        elif not shutil.which(executable):
+            continue
+        try:
+            output = subprocess.check_output(command, stderr=subprocess.STDOUT, text=True, timeout=5)
+        except Exception:
+            continue
+        major = _parse_major_version(output)
+        if major:
+            return major
+    return None
+
+
+def _get_chromedriver_major_version(path):
+    try:
+        output = subprocess.check_output([path, "--version"], stderr=subprocess.STDOUT, text=True, timeout=5)
+    except Exception:
+        return None
+    return _parse_major_version(output)
+
+
+def _chromedriver_matches_chrome(path, chrome_major):
+    if chrome_major is None:
+        return True
+    driver_major = _get_chromedriver_major_version(path)
+    if driver_major == chrome_major:
+        return True
+    logger.warning(
+        "忽略ChromeDriver缓存，版本不匹配: %s (driver=%s, chrome=%s)",
+        path,
+        driver_major or "unknown",
+        chrome_major,
+    )
+    return False
+
+
+def _install_chromedriver_with_original_proxy():
+    env_keys = tuple(PROXY_ENV_KEYS) + ("NO_PROXY", "no_proxy")
+    old_env = {key: os.environ.get(key) for key in env_keys}
+    try:
+        for key in PROXY_ENV_KEYS:
+            if key in _ORIGINAL_PROXY_ENV:
+                os.environ[key] = _ORIGINAL_PROXY_ENV[key]
+            else:
+                os.environ.pop(key, None)
+        os.environ["NO_PROXY"] = "localhost,127.0.0.1,::1"
+        os.environ["no_proxy"] = "localhost,127.0.0.1,::1"
+        return ChromeDriverManager().install()
+    finally:
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _find_cached_chromedriver(chrome_major=None):
     """Best-effort lookup for a previously downloaded chromedriver binary."""
     candidates = []
 
     # Explicit override has highest priority.
     custom = os.environ.get("CHROMEDRIVER_PATH")
     if custom and os.path.isfile(custom) and os.access(custom, os.X_OK):
-        return custom
+        if _chromedriver_matches_chrome(custom, chrome_major):
+            return custom
 
     # webdriver_manager default cache paths on macOS.
     home = os.path.expanduser("~")
@@ -61,7 +141,10 @@ def _find_cached_chromedriver():
         return None
 
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return candidates[0]
+    for path in candidates:
+        if _chromedriver_matches_chrome(path, chrome_major):
+            return path
+    return None
 
 
 def get_chromedriver_path():
@@ -75,7 +158,8 @@ def get_chromedriver_path():
         if _CHROMEDRIVER_PATH:
             return _CHROMEDRIVER_PATH
 
-        cached = _find_cached_chromedriver()
+        chrome_major = _get_chrome_major_version()
+        cached = _find_cached_chromedriver(chrome_major)
         if cached:
             _CHROMEDRIVER_PATH = cached
             logger.info("使用本地缓存ChromeDriver: %s", _CHROMEDRIVER_PATH)
@@ -85,9 +169,21 @@ def get_chromedriver_path():
         try:
             _CHROMEDRIVER_PATH = ChromeDriverManager().install()
         except Exception as exc:
-            raise RuntimeError(
-                "ChromeDriver下载失败。请检查代理设置，并确保 NO_PROXY 包含 localhost,127.0.0.1,::1"
-            ) from exc
+            if not _ORIGINAL_PROXY_ENV:
+                raise RuntimeError(
+                    "ChromeDriver下载失败。请检查代理设置，并确保 NO_PROXY 包含 localhost,127.0.0.1,::1"
+                ) from exc
+            logger.warning("ChromeDriver直连下载失败，尝试使用启动时代理下载: %s", exc)
+            try:
+                _CHROMEDRIVER_PATH = _install_chromedriver_with_original_proxy()
+            except Exception as proxy_exc:
+                raise RuntimeError(
+                    "ChromeDriver下载失败。请检查代理设置，并确保 NO_PROXY 包含 localhost,127.0.0.1,::1"
+                ) from proxy_exc
+        if not _chromedriver_matches_chrome(_CHROMEDRIVER_PATH, chrome_major):
+            bad_path = _CHROMEDRIVER_PATH
+            _CHROMEDRIVER_PATH = None
+            raise RuntimeError(f"下载到的ChromeDriver版本仍不匹配: {bad_path}")
         logger.info("ChromeDriver准备完成: %s (耗时 %.2f 秒)", _CHROMEDRIVER_PATH, time.perf_counter() - start_time)
         return _CHROMEDRIVER_PATH
 
