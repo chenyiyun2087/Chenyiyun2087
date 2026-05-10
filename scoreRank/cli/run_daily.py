@@ -17,6 +17,7 @@ from scoreRank.core.db_io import (
 )
 # from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date  # DEPRECATED
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
+from scoreRank.core.bs_model_infer import apply_bs_model_scores, load_latest_bs_model
 from scoreRank.core.market_context import MARKET_CONTEXT_COLUMNS, attach_market_context, build_daily_market_context
 from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
 
@@ -96,6 +97,19 @@ def _ensure_score_rank_daily_schema(cursor):
     cursor.execute("SHOW COLUMNS FROM score_rank_daily")
     existing = {row["Field"] for row in cursor.fetchall()}
     additions = {
+        "score_momentum": "ALTER TABLE score_rank_daily ADD COLUMN score_momentum DECIMAL(10,2) NULL COMMENT 'Claude动量子分' AFTER claude_score",
+        "score_value": "ALTER TABLE score_rank_daily ADD COLUMN score_value DECIMAL(10,2) NULL COMMENT 'Claude估值子分' AFTER score_momentum",
+        "score_quality": "ALTER TABLE score_rank_daily ADD COLUMN score_quality DECIMAL(10,2) NULL COMMENT 'Claude质量子分' AFTER score_value",
+        "score_technical": "ALTER TABLE score_rank_daily ADD COLUMN score_technical DECIMAL(10,2) NULL COMMENT 'Claude技术子分' AFTER score_quality",
+        "score_capital": "ALTER TABLE score_rank_daily ADD COLUMN score_capital DECIMAL(10,2) NULL COMMENT 'Claude资金子分' AFTER score_technical",
+        "score_chip": "ALTER TABLE score_rank_daily ADD COLUMN score_chip DECIMAL(10,2) NULL COMMENT 'Claude筹码子分' AFTER score_capital",
+        "opt_momentum": "ALTER TABLE score_rank_daily ADD COLUMN opt_momentum DECIMAL(10,4) NULL COMMENT 'Factor Optimizer动量分类分' AFTER opt_score",
+        "opt_value": "ALTER TABLE score_rank_daily ADD COLUMN opt_value DECIMAL(10,4) NULL COMMENT 'Factor Optimizer估值分类分' AFTER opt_momentum",
+        "opt_quality": "ALTER TABLE score_rank_daily ADD COLUMN opt_quality DECIMAL(10,4) NULL COMMENT 'Factor Optimizer质量分类分' AFTER opt_value",
+        "opt_technical": "ALTER TABLE score_rank_daily ADD COLUMN opt_technical DECIMAL(10,4) NULL COMMENT 'Factor Optimizer技术分类分' AFTER opt_quality",
+        "opt_capital": "ALTER TABLE score_rank_daily ADD COLUMN opt_capital DECIMAL(10,4) NULL COMMENT 'Factor Optimizer资金分类分' AFTER opt_technical",
+        "opt_chip": "ALTER TABLE score_rank_daily ADD COLUMN opt_chip DECIMAL(10,4) NULL COMMENT 'Factor Optimizer筹码分类分' AFTER opt_capital",
+        "opt_size": "ALTER TABLE score_rank_daily ADD COLUMN opt_size DECIMAL(10,4) NULL COMMENT 'Factor Optimizer规模分类分' AFTER opt_chip",
         "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
         "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
         "bs_score_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_label VARCHAR(16) NULL COMMENT 'B点增强分标签' AFTER bs_entry_score",
@@ -104,6 +118,10 @@ def _ensure_score_rank_daily_schema(cursor):
         "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
         "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
         "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
+        "bs_gate_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_score DECIMAL(10,2) NULL COMMENT 'B点交易门禁分' AFTER bs_research_reason",
+        "bs_gate_pass": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_pass TINYINT(1) NULL COMMENT 'B点交易门禁是否通过' AFTER bs_gate_score",
+        "bs_gate_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_label VARCHAR(16) NULL COMMENT 'B点交易门禁标签' AFTER bs_gate_pass",
+        "bs_gate_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_reason VARCHAR(128) NULL COMMENT 'B点交易门禁原因' AFTER bs_gate_label",
         "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_research_reason",
         "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
         "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",
@@ -230,7 +248,20 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'buy_point_close': 'buy_point_close',
         'price_change_ratio': 'price_change_ratio',
         'opt_score': 'opt_score',
+        'opt_momentum': 'opt_momentum',
+        'opt_value': 'opt_value',
+        'opt_quality': 'opt_quality',
+        'opt_technical': 'opt_technical',
+        'opt_capital': 'opt_capital',
+        'opt_chip': 'opt_chip',
+        'opt_size': 'opt_size',
         'claude_score': 'claude_score',
+        'score_momentum': 'score_momentum',
+        'score_value': 'score_value',
+        'score_quality': 'score_quality',
+        'score_technical': 'score_technical',
+        'score_capital': 'score_capital',
+        'score_chip': 'score_chip',
         'bs_score': 'bs_score',
         'bs_entry_score': 'bs_entry_score',
         'bs_score_label': 'bs_score_label',
@@ -239,6 +270,13 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'bs_research_score': 'bs_research_score',
         'bs_research_label': 'bs_research_label',
         'bs_research_reason': 'bs_research_reason',
+        'bs_gate_score': 'bs_gate_score',
+        'bs_gate_pass': 'bs_gate_pass',
+        'bs_gate_label': 'bs_gate_label',
+        'bs_gate_reason': 'bs_gate_reason',
+        'bs_model_prob': 'bs_model_prob',
+        'bs_model_rank_score': 'bs_model_rank_score',
+        'bs_model_version': 'bs_model_version',
         'bs_consensus_score': 'bs_consensus_score',
         'bs_consensus_label': 'bs_consensus_label',
         'bs_consensus_reason': 'bs_consensus_reason',
@@ -340,6 +378,11 @@ def calculate_opt_score(scored: pd.DataFrame, asof_date: pd.Timestamp) -> pd.Dat
             
         # Weighted sum
         cat_scores["opt_score"] = sum(cat_scores[f] * w for f, w in weights.items())
+        opt_cols = ["opt_score"]
+        for factor in weights:
+            opt_col = f"opt_{factor}"
+            cat_scores[opt_col] = cat_scores[f]
+            opt_cols.append(opt_col)
         
         # Merge back to scored DataFrame
         # scored has 'symbol' (6 digits), cat_scores has 'ts_code' (6 digits + suffix)
@@ -350,7 +393,7 @@ def calculate_opt_score(scored: pd.DataFrame, asof_date: pd.Timestamp) -> pd.Dat
         
         # Merge
         merged = scored.merge(
-            cat_scores[["symbol", "opt_score"]],
+            cat_scores[["symbol", *opt_cols]],
             on="symbol",
             how="left"
         )
@@ -508,9 +551,18 @@ def main():
                 claude_scored = claude_scorer.score(all_symbols, asof_date, engine)
                 
                 if not claude_scored.empty:
-                    # Keep only symbol and score, rename to claude_score
-                    claude_scored = claude_scored[['symbol', 'score']].rename(columns={'score': 'claude_score'})
-                    # Merge
+                    claude_scored = claude_scored.rename(columns={'score': 'claude_score'})
+                    keep_cols = [
+                        'symbol',
+                        'claude_score',
+                        'score_momentum',
+                        'score_value',
+                        'score_quality',
+                        'score_technical',
+                        'score_capital',
+                        'score_chip',
+                    ]
+                    claude_scored = claude_scored[[c for c in keep_cols if c in claude_scored.columns]]
                     scored = scored.merge(claude_scored, on='symbol', how='left')
                 else:
                     scored['claude_score'] = None
@@ -568,18 +620,32 @@ def main():
         market_context = build_daily_market_context(scored, asof_date, engine)
         scored = attach_market_context(scored, market_context)
         scored = add_bs_enhanced_scores(scored)
+        model_bundle = load_latest_bs_model(target=CONFIG.get("bs_model_target", "hit_20_10pct"))
+        if model_bundle:
+            print(f"Applying B-signal model: {model_bundle.get('version')}")
+        else:
+            print("No trained B-signal model found; bs_model_* columns will remain empty.")
+        scored = apply_bs_model_scores(scored, model_bundle=model_bundle, only_candidates=True)
+        scored = add_bs_enhanced_scores(scored)
         
         # Logic for Pool Type (Only for B/S candidates)
         scored['pool_type'] = None
         
         mask_bs = (scored['is_bs_candidate'] == 1)
-        mask_trade = mask_bs & (
+        gate_pass = pd.to_numeric(scored.get('bs_gate_pass', 0), errors='coerce').fillna(0).astype(int) == 1
+        gate_label = scored.get('bs_gate_label', pd.Series("", index=scored.index)).fillna("").astype(str)
+        mask_trade = mask_bs & gate_pass & (
             scored['bs_score_v2'] >= CONFIG.get("bs_v2_trade_threshold", CONFIG.get("bs_trade_threshold", CONFIG["trade_threshold"]))
         )
         scored.loc[mask_trade, 'pool_type'] = 'TRADE'
         
         mask_watch = mask_bs & (~mask_trade) & (
             scored['bs_score_v2'] >= CONFIG.get("bs_v2_watch_threshold", CONFIG.get("bs_watch_threshold", CONFIG["watch_threshold"]))
+        ) & (gate_label != "过滤")
+        mask_watch = mask_watch | (
+            mask_bs
+            & (gate_label == "观察")
+            & (scored['bs_research_score'] >= CONFIG.get("bs_research_watch_threshold", 58))
         )
         scored.loc[mask_watch, 'pool_type'] = 'WATCH'
         

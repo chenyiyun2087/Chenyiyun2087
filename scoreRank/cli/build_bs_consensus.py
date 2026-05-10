@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
+from scoreRank.core.bs_model_infer import apply_bs_model_scores, load_latest_bs_model
 from scoreRank.core.config import CONFIG
 
 
@@ -28,6 +29,13 @@ SCORE_UPDATE_COLUMNS = [
     "bs_research_score",
     "bs_research_label",
     "bs_research_reason",
+    "bs_gate_score",
+    "bs_gate_pass",
+    "bs_gate_label",
+    "bs_gate_reason",
+    "bs_model_prob",
+    "bs_model_rank_score",
+    "bs_model_version",
     "bs_consensus_score",
     "bs_consensus_label",
     "bs_consensus_reason",
@@ -84,6 +92,10 @@ def ensure_score_rank_daily_score_columns(cursor) -> None:
         "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
         "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
         "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
+        "bs_gate_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_score DECIMAL(10,2) NULL COMMENT 'B点交易门禁分' AFTER bs_research_reason",
+        "bs_gate_pass": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_pass TINYINT(1) NULL COMMENT 'B点交易门禁是否通过' AFTER bs_gate_score",
+        "bs_gate_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_label VARCHAR(16) NULL COMMENT 'B点交易门禁标签' AFTER bs_gate_pass",
+        "bs_gate_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_reason VARCHAR(128) NULL COMMENT 'B点交易门禁原因' AFTER bs_gate_label",
         "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_research_reason",
         "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
         "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",
@@ -126,6 +138,9 @@ def enrich_score_rows(rows: list[dict]) -> list[dict]:
     if not rows:
         return []
     out = add_bs_enhanced_scores(pd.DataFrame(rows))
+    model_bundle = load_latest_bs_model(target=CONFIG.get("bs_model_target", "hit_20_10pct"))
+    out = apply_bs_model_scores(out, model_bundle=model_bundle, only_candidates=True)
+    out = add_bs_enhanced_scores(out)
     records = out.to_dict("records")
     return [
         {

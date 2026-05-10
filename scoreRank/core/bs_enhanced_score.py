@@ -70,6 +70,56 @@ def bs_research_label(score: Any) -> str:
     return "回避"
 
 
+def calculate_bs_trade_gate(row: Mapping[str, Any]) -> dict[str, float | int | str]:
+    liquidity = _safe_float(row.get("s_liquidity"), 50.0)
+    gain = _safe_float(row.get("price_change_ratio"))
+    penalty = _safe_float(row.get("penalty"))
+    is_limit_up = int(_safe_float(row.get("is_limit_up"))) == 1
+
+    reasons: list[str] = []
+    gate_score = 100.0
+
+    if is_limit_up:
+        gate_score -= 45.0
+        reasons.append("涨停可买性不足")
+    if liquidity < 20:
+        gate_score -= min(35.0, (20.0 - liquidity) * 2.0)
+        reasons.append("流动性低于门槛")
+    if gain > 8:
+        gate_score -= min(28.0, (gain - 8.0) * 1.4)
+        reasons.append("买点后涨幅偏高")
+    elif gain <= -6:
+        gate_score -= min(20.0, (-6.0 - gain) * 2.0)
+        reasons.append("买点后回撤偏深")
+    if penalty > 0:
+        gate_score -= min(18.0, penalty * 0.6)
+        reasons.append("基础评分存在惩罚项")
+
+    hard_block = is_limit_up or liquidity < 15 or gain > 18 or penalty >= 35
+    strict_pass = (not is_limit_up) and liquidity >= 20 and gain <= 8 and gain > -6 and penalty <= 0
+    gate_score = float(np.clip(gate_score, 0.0, 100.0))
+
+    if strict_pass:
+        label = "可买"
+        gate_pass = 1
+        reason = "满足流动性、涨幅、风险门禁"
+    elif hard_block:
+        label = "过滤"
+        gate_pass = 0
+        reason = "；".join(reasons[:3]) or "硬性门禁未通过"
+    else:
+        label = "观察"
+        gate_pass = 0
+        reason = "；".join(reasons[:3]) or "未完全满足交易门禁"
+
+    return {
+        "bs_gate_score": round(gate_score, 2),
+        "bs_gate_pass": int(gate_pass),
+        "bs_gate_label": label,
+        "bs_gate_reason": reason,
+    }
+
+
 def calculate_bs_enhanced_score(row: Mapping[str, Any]) -> dict[str, float | str]:
     score = _safe_float(row.get("score"))
     opt = normalize_opt_score(row.get("opt_score"))
@@ -263,6 +313,14 @@ def calculate_bs_consensus_signal(row: Mapping[str, Any]) -> dict[str, float | s
         reasons.append("模型与规则分歧")
     if research < 50:
         consensus -= 4.0
+    gate_label = str(row.get("bs_gate_label") or "").strip()
+    gate_pass = int(_safe_float(row.get("bs_gate_pass"), 1.0))
+    if gate_label == "过滤":
+        consensus -= 12.0
+        reasons.append("交易门禁过滤")
+    elif gate_pass == 0 and gate_label == "观察":
+        consensus -= 4.0
+        reasons.append("交易门禁观察")
     consensus = float(np.clip(consensus, 0.0, 100.0))
     if not reasons:
         reasons.append("共振不足")
@@ -281,6 +339,8 @@ def add_bs_enhanced_scores(df: pd.DataFrame) -> pd.DataFrame:
             "bs_score_v2_label",
             "bs_research_label",
             "bs_research_reason",
+            "bs_gate_label",
+            "bs_gate_reason",
             "bs_consensus_label",
             "bs_consensus_reason",
         }
@@ -293,6 +353,10 @@ def add_bs_enhanced_scores(df: pd.DataFrame) -> pd.DataFrame:
             "bs_research_score",
             "bs_research_label",
             "bs_research_reason",
+            "bs_gate_score",
+            "bs_gate_pass",
+            "bs_gate_label",
+            "bs_gate_reason",
             "bs_consensus_score",
             "bs_consensus_label",
             "bs_consensus_reason",
@@ -310,6 +374,9 @@ def add_bs_enhanced_scores(df: pd.DataFrame) -> pd.DataFrame:
     research = out.apply(lambda row: calculate_bs_research_signal(row), axis=1, result_type="expand")
     for col in research.columns:
         out[col] = research[col]
+    gate = out.apply(lambda row: calculate_bs_trade_gate(row), axis=1, result_type="expand")
+    for col in gate.columns:
+        out[col] = gate[col]
     consensus = out.apply(lambda row: calculate_bs_consensus_signal(row), axis=1, result_type="expand")
     for col in consensus.columns:
         out[col] = consensus[col]

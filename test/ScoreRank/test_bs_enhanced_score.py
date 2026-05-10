@@ -14,6 +14,7 @@ from scoreRank.core.bs_enhanced_score import (  # noqa: E402
     calculate_bs_enhanced_score,
     calculate_bs_research_signal,
     calculate_bs_score_v2,
+    calculate_bs_trade_gate,
     entry_timing_score,
     normalize_opt_score,
 )
@@ -137,6 +138,17 @@ class TestBSEnhancedScore(unittest.TestCase):
         self.assertGreater(agreement["bs_consensus_score"], disagreement["bs_consensus_score"])
         self.assertIn("模型与规则分歧", disagreement["bs_consensus_reason"])
 
+    def test_trade_gate_splits_buy_watch_and_filter(self):
+        passed = calculate_bs_trade_gate({"s_liquidity": 55, "price_change_ratio": 4, "penalty": 0, "is_limit_up": 0})
+        watched = calculate_bs_trade_gate({"s_liquidity": 55, "price_change_ratio": 11, "penalty": 0, "is_limit_up": 0})
+        blocked = calculate_bs_trade_gate({"s_liquidity": 10, "price_change_ratio": 22, "penalty": 0, "is_limit_up": 1})
+
+        self.assertEqual(passed["bs_gate_label"], "可买")
+        self.assertEqual(passed["bs_gate_pass"], 1)
+        self.assertEqual(watched["bs_gate_label"], "观察")
+        self.assertEqual(blocked["bs_gate_label"], "过滤")
+        self.assertLess(blocked["bs_gate_score"], passed["bs_gate_score"])
+
     def test_add_bs_enhanced_scores_preserves_rows(self):
         df = pd.DataFrame(
             [
@@ -149,6 +161,7 @@ class TestBSEnhancedScore(unittest.TestCase):
         self.assertIn("bs_score", out.columns)
         self.assertIn("bs_score_v2", out.columns)
         self.assertIn("bs_research_label", out.columns)
+        self.assertIn("bs_gate_label", out.columns)
         self.assertIn("bs_consensus_label", out.columns)
         self.assertGreater(out.iloc[0]["bs_score"], out.iloc[1]["bs_score"])
 

@@ -17,7 +17,7 @@ from project_network import build_direct_network_env, enforce_direct_network
 
 enforce_direct_network()
 
-from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2
+from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2, calculate_bs_trade_gate
 
 try:
     from sina.live_tracker.live_tracker import LiveTracker
@@ -2193,6 +2193,7 @@ def _enrich_bs_score_rows(rows):
         row.update(calculate_bs_enhanced_score(row))
         row.update(calculate_bs_score_v2(row))
         row.update(calculate_bs_research_signal(row))
+        row.update(calculate_bs_trade_gate(row))
         row.update(calculate_bs_consensus_signal(row))
     return rows
 
@@ -2205,6 +2206,19 @@ def _ensure_score_rank_daily_score_columns(cursor):
     cursor.execute("SHOW COLUMNS FROM score_rank_daily")
     existing = {row["Field"] for row in cursor.fetchall()}
     additions = {
+        "score_momentum": "ALTER TABLE score_rank_daily ADD COLUMN score_momentum DECIMAL(10,2) NULL COMMENT 'Claude动量子分' AFTER claude_score",
+        "score_value": "ALTER TABLE score_rank_daily ADD COLUMN score_value DECIMAL(10,2) NULL COMMENT 'Claude估值子分' AFTER score_momentum",
+        "score_quality": "ALTER TABLE score_rank_daily ADD COLUMN score_quality DECIMAL(10,2) NULL COMMENT 'Claude质量子分' AFTER score_value",
+        "score_technical": "ALTER TABLE score_rank_daily ADD COLUMN score_technical DECIMAL(10,2) NULL COMMENT 'Claude技术子分' AFTER score_quality",
+        "score_capital": "ALTER TABLE score_rank_daily ADD COLUMN score_capital DECIMAL(10,2) NULL COMMENT 'Claude资金子分' AFTER score_technical",
+        "score_chip": "ALTER TABLE score_rank_daily ADD COLUMN score_chip DECIMAL(10,2) NULL COMMENT 'Claude筹码子分' AFTER score_capital",
+        "opt_momentum": "ALTER TABLE score_rank_daily ADD COLUMN opt_momentum DECIMAL(10,4) NULL COMMENT 'Factor Optimizer动量分类分' AFTER opt_score",
+        "opt_value": "ALTER TABLE score_rank_daily ADD COLUMN opt_value DECIMAL(10,4) NULL COMMENT 'Factor Optimizer估值分类分' AFTER opt_momentum",
+        "opt_quality": "ALTER TABLE score_rank_daily ADD COLUMN opt_quality DECIMAL(10,4) NULL COMMENT 'Factor Optimizer质量分类分' AFTER opt_value",
+        "opt_technical": "ALTER TABLE score_rank_daily ADD COLUMN opt_technical DECIMAL(10,4) NULL COMMENT 'Factor Optimizer技术分类分' AFTER opt_quality",
+        "opt_capital": "ALTER TABLE score_rank_daily ADD COLUMN opt_capital DECIMAL(10,4) NULL COMMENT 'Factor Optimizer资金分类分' AFTER opt_technical",
+        "opt_chip": "ALTER TABLE score_rank_daily ADD COLUMN opt_chip DECIMAL(10,4) NULL COMMENT 'Factor Optimizer筹码分类分' AFTER opt_capital",
+        "opt_size": "ALTER TABLE score_rank_daily ADD COLUMN opt_size DECIMAL(10,4) NULL COMMENT 'Factor Optimizer规模分类分' AFTER opt_chip",
         "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
         "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
         "bs_score_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_label VARCHAR(16) NULL COMMENT 'B点增强分标签' AFTER bs_entry_score",
@@ -2213,6 +2227,10 @@ def _ensure_score_rank_daily_score_columns(cursor):
         "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
         "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
         "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
+        "bs_gate_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_score DECIMAL(10,2) NULL COMMENT 'B点交易门禁分' AFTER bs_research_reason",
+        "bs_gate_pass": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_pass TINYINT(1) NULL COMMENT 'B点交易门禁是否通过' AFTER bs_gate_score",
+        "bs_gate_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_label VARCHAR(16) NULL COMMENT 'B点交易门禁标签' AFTER bs_gate_pass",
+        "bs_gate_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_reason VARCHAR(128) NULL COMMENT 'B点交易门禁原因' AFTER bs_gate_label",
         "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_research_reason",
         "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
         "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",

@@ -38,14 +38,38 @@ SCORE_FEATURE_COLUMNS = [
     "s_contraction",
     "s_liquidity",
     "opt_score",
+    "opt_momentum",
+    "opt_value",
+    "opt_quality",
+    "opt_technical",
+    "opt_capital",
+    "opt_chip",
+    "opt_size",
     "claude_score",
+    "score_momentum",
+    "score_value",
+    "score_quality",
+    "score_technical",
+    "score_capital",
+    "score_chip",
     "bs_score",
     "bs_entry_score",
+    "bs_score_label",
     "bs_score_v2",
     "bs_score_v2_label",
     "bs_research_score",
     "bs_research_label",
     "bs_research_reason",
+    "bs_gate_score",
+    "bs_gate_pass",
+    "bs_gate_label",
+    "bs_gate_reason",
+    "bs_model_prob",
+    "bs_model_rank_score",
+    "bs_model_version",
+    "bs_consensus_score",
+    "bs_consensus_label",
+    "bs_consensus_reason",
     "close_price",
     "buy_point_close",
     "price_change_ratio",
@@ -71,11 +95,26 @@ TRAINABLE_FEATURE_COLUMNS = [
     "s_contraction",
     "s_liquidity",
     "opt_score",
+    "opt_momentum",
+    "opt_value",
+    "opt_quality",
+    "opt_technical",
+    "opt_capital",
+    "opt_chip",
+    "opt_size",
     "claude_score",
+    "score_momentum",
+    "score_value",
+    "score_quality",
+    "score_technical",
+    "score_capital",
+    "score_chip",
     "bs_score",
     "bs_entry_score",
     "bs_score_v2",
     "bs_research_score",
+    "bs_gate_score",
+    "bs_gate_pass",
     "close_price",
     "buy_point_close",
     "price_change_ratio",
@@ -103,6 +142,14 @@ TRAINABLE_FEATURE_COLUMNS = [
     "market_regime",
 ]
 LEAKY_PREFIXES = ("ret_", "max_ret_", "mdd_", "hit_", "days_to_")
+MODEL_OUTPUT_COLUMNS = {
+    "bs_model_prob",
+    "bs_model_rank_score",
+    "bs_model_version",
+    "bs_consensus_score",
+    "bs_consensus_label",
+    "bs_consensus_reason",
+}
 MARKET_CONTEXT_COLUMNS = [
     "market_hs300_pct_chg",
     "market_hs300_ret_5",
@@ -130,13 +177,37 @@ def _read_sql(sql: str, params=None) -> pd.DataFrame:
 
 def _ensure_score_rank_daily_columns() -> None:
     additions = {
+        "score_momentum": "ALTER TABLE score_rank_daily ADD COLUMN score_momentum DECIMAL(10,2) NULL COMMENT 'Claude动量子分' AFTER claude_score",
+        "score_value": "ALTER TABLE score_rank_daily ADD COLUMN score_value DECIMAL(10,2) NULL COMMENT 'Claude估值子分' AFTER score_momentum",
+        "score_quality": "ALTER TABLE score_rank_daily ADD COLUMN score_quality DECIMAL(10,2) NULL COMMENT 'Claude质量子分' AFTER score_value",
+        "score_technical": "ALTER TABLE score_rank_daily ADD COLUMN score_technical DECIMAL(10,2) NULL COMMENT 'Claude技术子分' AFTER score_quality",
+        "score_capital": "ALTER TABLE score_rank_daily ADD COLUMN score_capital DECIMAL(10,2) NULL COMMENT 'Claude资金子分' AFTER score_technical",
+        "score_chip": "ALTER TABLE score_rank_daily ADD COLUMN score_chip DECIMAL(10,2) NULL COMMENT 'Claude筹码子分' AFTER score_capital",
+        "opt_momentum": "ALTER TABLE score_rank_daily ADD COLUMN opt_momentum DECIMAL(10,4) NULL COMMENT 'Factor Optimizer动量分类分' AFTER opt_score",
+        "opt_value": "ALTER TABLE score_rank_daily ADD COLUMN opt_value DECIMAL(10,4) NULL COMMENT 'Factor Optimizer估值分类分' AFTER opt_momentum",
+        "opt_quality": "ALTER TABLE score_rank_daily ADD COLUMN opt_quality DECIMAL(10,4) NULL COMMENT 'Factor Optimizer质量分类分' AFTER opt_value",
+        "opt_technical": "ALTER TABLE score_rank_daily ADD COLUMN opt_technical DECIMAL(10,4) NULL COMMENT 'Factor Optimizer技术分类分' AFTER opt_quality",
+        "opt_capital": "ALTER TABLE score_rank_daily ADD COLUMN opt_capital DECIMAL(10,4) NULL COMMENT 'Factor Optimizer资金分类分' AFTER opt_technical",
+        "opt_chip": "ALTER TABLE score_rank_daily ADD COLUMN opt_chip DECIMAL(10,4) NULL COMMENT 'Factor Optimizer筹码分类分' AFTER opt_capital",
+        "opt_size": "ALTER TABLE score_rank_daily ADD COLUMN opt_size DECIMAL(10,4) NULL COMMENT 'Factor Optimizer规模分类分' AFTER opt_chip",
         "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
         "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
+        "bs_score_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_label VARCHAR(16) NULL COMMENT 'B点增强分标签' AFTER bs_entry_score",
         "bs_score_v2": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2 DECIMAL(10,2) NULL COMMENT 'B点增强分V2' AFTER bs_entry_score",
         "bs_score_v2_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2_label VARCHAR(16) NULL COMMENT 'B点增强分V2分层' AFTER bs_score_v2",
         "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
         "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
         "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
+        "bs_gate_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_score DECIMAL(10,2) NULL COMMENT 'B点交易门禁分' AFTER bs_research_reason",
+        "bs_gate_pass": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_pass TINYINT(1) NULL COMMENT 'B点交易门禁是否通过' AFTER bs_gate_score",
+        "bs_gate_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_label VARCHAR(16) NULL COMMENT 'B点交易门禁标签' AFTER bs_gate_pass",
+        "bs_gate_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_reason VARCHAR(128) NULL COMMENT 'B点交易门禁原因' AFTER bs_gate_label",
+        "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_gate_reason",
+        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
+        "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",
+        "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
+        "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
+        "bs_consensus_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_reason VARCHAR(128) NULL COMMENT 'B点综合建议原因' AFTER bs_consensus_label",
     }
     conn = _connect()
     try:
@@ -200,14 +271,38 @@ def _load_first_buy_events() -> pd.DataFrame:
         s.s_contraction,
         s.s_liquidity,
         s.opt_score,
+        s.opt_momentum,
+        s.opt_value,
+        s.opt_quality,
+        s.opt_technical,
+        s.opt_capital,
+        s.opt_chip,
+        s.opt_size,
         s.claude_score,
+        s.score_momentum,
+        s.score_value,
+        s.score_quality,
+        s.score_technical,
+        s.score_capital,
+        s.score_chip,
         s.bs_score,
         s.bs_entry_score,
+        s.bs_score_label,
         s.bs_score_v2,
         s.bs_score_v2_label,
         s.bs_research_score,
         s.bs_research_label,
         s.bs_research_reason,
+        s.bs_gate_score,
+        s.bs_gate_pass,
+        s.bs_gate_label,
+        s.bs_gate_reason,
+        s.bs_model_prob,
+        s.bs_model_rank_score,
+        s.bs_model_version,
+        s.bs_consensus_score,
+        s.bs_consensus_label,
+        s.bs_consensus_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
@@ -254,14 +349,38 @@ def _load_active_panel() -> pd.DataFrame:
         s.s_contraction,
         s.s_liquidity,
         s.opt_score,
+        s.opt_momentum,
+        s.opt_value,
+        s.opt_quality,
+        s.opt_technical,
+        s.opt_capital,
+        s.opt_chip,
+        s.opt_size,
         s.claude_score,
+        s.score_momentum,
+        s.score_value,
+        s.score_quality,
+        s.score_technical,
+        s.score_capital,
+        s.score_chip,
         s.bs_score,
         s.bs_entry_score,
+        s.bs_score_label,
         s.bs_score_v2,
         s.bs_score_v2_label,
         s.bs_research_score,
         s.bs_research_label,
         s.bs_research_reason,
+        s.bs_gate_score,
+        s.bs_gate_pass,
+        s.bs_gate_label,
+        s.bs_gate_reason,
+        s.bs_model_prob,
+        s.bs_model_rank_score,
+        s.bs_model_version,
+        s.bs_consensus_score,
+        s.bs_consensus_label,
+        s.bs_consensus_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
@@ -312,14 +431,38 @@ def _load_latest_candidates() -> pd.DataFrame:
         s.s_contraction,
         s.s_liquidity,
         s.opt_score,
+        s.opt_momentum,
+        s.opt_value,
+        s.opt_quality,
+        s.opt_technical,
+        s.opt_capital,
+        s.opt_chip,
+        s.opt_size,
         s.claude_score,
+        s.score_momentum,
+        s.score_value,
+        s.score_quality,
+        s.score_technical,
+        s.score_capital,
+        s.score_chip,
         s.bs_score,
         s.bs_entry_score,
+        s.bs_score_label,
         s.bs_score_v2,
         s.bs_score_v2_label,
         s.bs_research_score,
         s.bs_research_label,
         s.bs_research_reason,
+        s.bs_gate_score,
+        s.bs_gate_pass,
+        s.bs_gate_label,
+        s.bs_gate_reason,
+        s.bs_model_prob,
+        s.bs_model_rank_score,
+        s.bs_model_version,
+        s.bs_consensus_score,
+        s.bs_consensus_label,
+        s.bs_consensus_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
@@ -461,7 +604,24 @@ def _add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
     for col in [
         "score",
         "opt_score",
+        "opt_momentum",
+        "opt_value",
+        "opt_quality",
+        "opt_technical",
+        "opt_capital",
+        "opt_chip",
+        "opt_size",
         "claude_score",
+        "score_momentum",
+        "score_value",
+        "score_quality",
+        "score_technical",
+        "score_capital",
+        "score_chip",
+        "bs_gate_score",
+        "bs_gate_pass",
+        "bs_model_prob",
+        "bs_model_rank_score",
         "s_rs",
         "s_liquidity",
         "s_breakout",
@@ -562,17 +722,38 @@ def _horizon_labels(events: pd.DataFrame, prices: pd.DataFrame, horizons=DEFAULT
     return out, paths
 
 
-def _time_split_for_mask(dates: pd.Series, mask: pd.Series) -> pd.Series:
+def _time_split_for_mask(dates: pd.Series, mask: pd.Series, embargo_days: int = 0) -> pd.Series:
     split = pd.Series("unlabeled", index=dates.index, dtype=object)
     eligible_dates = sorted(pd.to_datetime(dates[mask]).dt.date.unique())
     if not eligible_dates:
         return split
-    train_cut = eligible_dates[int(len(eligible_dates) * 0.70)]
-    valid_cut = eligible_dates[int(len(eligible_dates) * 0.85)]
+    if len(eligible_dates) < 12 or embargo_days <= 0:
+        train_cut = eligible_dates[min(int(len(eligible_dates) * 0.70), len(eligible_dates) - 1)]
+        valid_cut = eligible_dates[min(int(len(eligible_dates) * 0.85), len(eligible_dates) - 1)]
+        eligible = pd.to_datetime(dates).dt.date
+        split.loc[mask & (eligible <= train_cut)] = "train"
+        split.loc[mask & (eligible > train_cut) & (eligible <= valid_cut)] = "validation"
+        split.loc[mask & (eligible > valid_cut)] = "test"
+        return split
+
+    n = len(eligible_dates)
+    embargo_steps = min(max(1, int(embargo_days)), max(1, n // 20))
+    train_cut_idx = int(n * 0.70)
+    valid_cut_idx = int(n * 0.85)
+    train_end_idx = max(0, train_cut_idx - embargo_steps)
+    valid_start_idx = min(n - 1, train_cut_idx + embargo_steps)
+    valid_end_idx = max(valid_start_idx, valid_cut_idx - embargo_steps)
+    test_start_idx = min(n - 1, valid_cut_idx + embargo_steps)
+
+    train_end = eligible_dates[train_end_idx]
+    valid_start = eligible_dates[valid_start_idx]
+    valid_end = eligible_dates[valid_end_idx]
+    test_start = eligible_dates[test_start_idx]
     eligible = pd.to_datetime(dates).dt.date
-    split.loc[mask & (eligible <= train_cut)] = "train"
-    split.loc[mask & (eligible > train_cut) & (eligible <= valid_cut)] = "validation"
-    split.loc[mask & (eligible > valid_cut)] = "test"
+    split.loc[mask & (eligible <= train_end)] = "train"
+    split.loc[mask & (eligible >= valid_start) & (eligible <= valid_end)] = "validation"
+    split.loc[mask & (eligible >= test_start)] = "test"
+    split.loc[mask & split.eq("unlabeled") & eligible.isin(eligible_dates)] = "embargo"
     return split
 
 
@@ -584,18 +765,22 @@ def _add_split_column(df: pd.DataFrame, primary_horizon: int = 20) -> pd.DataFra
     dates = pd.to_datetime(out["event_date"])
     primary_target = f"hit_{primary_horizon}_10pct"
     if primary_target in out.columns:
-        out["sample_split"] = _time_split_for_mask(dates, out[primary_target].notna())
+        out["sample_split"] = _time_split_for_mask(dates, out[primary_target].notna(), embargo_days=primary_horizon)
     else:
         out["sample_split"] = _time_split_for_mask(dates, pd.Series(True, index=out.index))
     for h in DEFAULT_HORIZONS:
         target = f"hit_{h}_10pct"
         if target in out.columns:
-            out[f"split_{target}"] = _time_split_for_mask(dates, out[target].notna())
+            out[f"split_{target}"] = _time_split_for_mask(dates, out[target].notna(), embargo_days=h)
     return out
 
 
 def _feature_whitelist(df: pd.DataFrame) -> list[str]:
-    return [col for col in TRAINABLE_FEATURE_COLUMNS if col in df.columns and not col.startswith(LEAKY_PREFIXES)]
+    return [
+        col
+        for col in TRAINABLE_FEATURE_COLUMNS
+        if col in df.columns and not col.startswith(LEAKY_PREFIXES) and col not in MODEL_OUTPUT_COLUMNS
+    ]
 
 
 def _quality_report(first_labeled: pd.DataFrame, active_panel: pd.DataFrame, latest: pd.DataFrame) -> dict:

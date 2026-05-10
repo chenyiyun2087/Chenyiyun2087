@@ -23,6 +23,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPORT_ROOT = PROJECT_ROOT / "exports" / "signal_enhancement"
 MODEL_ROOT = PROJECT_ROOT / "exports" / "bs_signal_models"
 LEAKY_PREFIXES = ("ret_", "max_ret_", "mdd_", "hit_", "days_to_")
+MODEL_OUTPUT_COLUMNS = {
+    "bs_model_prob",
+    "bs_model_rank_score",
+    "bs_model_version",
+    "bs_consensus_score",
+    "bs_consensus_label",
+    "bs_consensus_reason",
+}
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn.utils.extmath")
 
@@ -38,12 +46,13 @@ def _load_feature_whitelist(dataset_dir: Path, df: pd.DataFrame) -> list[str]:
     path = dataset_dir / "feature_whitelist.json"
     if path.exists():
         data = json.loads(path.read_text(encoding="utf-8"))
-        return [c for c in data.get("feature_columns", []) if c in df.columns]
+        return [c for c in data.get("feature_columns", []) if c in df.columns and c not in MODEL_OUTPUT_COLUMNS]
     return [
         c
         for c in df.columns
         if c not in {"event_date", "event_uid", "symbol", "ts_code", "name", "sample_split"}
         and not c.startswith(LEAKY_PREFIXES)
+        and c not in MODEL_OUTPUT_COLUMNS
     ]
 
 
@@ -134,6 +143,57 @@ def _top_stats(frame: pd.DataFrame, target: str, score_col: str, k: int) -> dict
     return out
 
 
+def _ece(y_true: pd.Series, y_score: np.ndarray, n_bins: int = 10):
+    if len(y_true) == 0:
+        return None
+    y = y_true.astype(float).to_numpy()
+    p = np.asarray(y_score, dtype=float)
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    total = len(y)
+    error = 0.0
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        mask = (p >= lo) & (p <= hi if hi == 1.0 else p < hi)
+        if not mask.any():
+            continue
+        error += float(mask.sum()) / total * abs(float(y[mask].mean()) - float(p[mask].mean()))
+    return round(error, 6)
+
+
+def _reliability_bins(frame: pd.DataFrame, target: str, score_col: str, n_bins: int = 10) -> list[dict]:
+    if frame.empty:
+        return []
+    tmp = frame[[target, score_col]].dropna().copy()
+    if tmp.empty:
+        return []
+    tmp["_bin"] = pd.cut(tmp[score_col].astype(float), bins=np.linspace(0.0, 1.0, n_bins + 1), include_lowest=True)
+    rows = []
+    for bucket, group in tmp.groupby("_bin", observed=True):
+        rows.append(
+            {
+                "bin": str(bucket),
+                "rows": int(len(group)),
+                "avg_pred": round(float(group[score_col].mean()), 6),
+                "hit_rate": round(float(group[target].mean()), 6),
+            }
+        )
+    return rows
+
+
+def _daily_topn_stats(frame: pd.DataFrame, target: str, score_col: str, k: int = 20) -> dict:
+    if frame.empty or "event_date" not in frame.columns:
+        return {"days": 0, f"daily_precision_at_{k}_mean": None}
+    rows = []
+    for _, group in frame.dropna(subset=[target, score_col]).groupby("event_date"):
+        top = group.sort_values(score_col, ascending=False).head(min(k, len(group)))
+        if not top.empty:
+            rows.append(float(top[target].mean()))
+    return {
+        "days": len(rows),
+        f"daily_precision_at_{k}_mean": round(float(np.mean(rows)), 6) if rows else None,
+        f"daily_precision_at_{k}_p25": round(float(np.percentile(rows, 25)), 6) if rows else None,
+    }
+
+
 def _evaluate_split(name: str, frame: pd.DataFrame, target: str, score_col: str) -> dict:
     y = frame[target].astype(float)
     p = frame[score_col].astype(float).to_numpy()
@@ -144,6 +204,7 @@ def _evaluate_split(name: str, frame: pd.DataFrame, target: str, score_col: str)
         "roc_auc": _safe_metric(roc_auc_score, y, p),
         "average_precision": _safe_metric(average_precision_score, y, p),
         "brier": round(float(brier_score_loss(y, p)), 6) if len(frame) and y.notna().all() else None,
+        "ece": _ece(y, p) if len(frame) and y.notna().all() else None,
     }
     for k in (10, 20, 30):
         result.update(_top_stats(frame, target, score_col, k))
@@ -268,6 +329,8 @@ def train(dataset_dir: Path, target: str) -> dict:
             latest_out["model_rank_score"] = latest_out["p_signal"].astype(float)
         latest_out = latest_out.sort_values("model_rank_score", ascending=False)
         latest_out.to_csv(latest_scored_path, index=False, encoding="utf-8-sig")
+    else:
+        latest_out = pd.DataFrame()
 
     summary = {
         "trained_at": datetime.now().isoformat(timespec="seconds"),
@@ -282,7 +345,27 @@ def train(dataset_dir: Path, target: str) -> dict:
         "latest_candidates_scored": str(latest_scored_path),
         "feature_cols": feature_cols,
     }
+    monitoring = {
+        "target": target,
+        "split_col": split_col,
+        "reliability": {},
+        "daily_topn": {},
+        "latest_candidates": {
+            "rows": int(len(latest_out)),
+            "p_signal_mean": round(float(latest_out["p_signal"].mean()), 6) if "p_signal" in latest_out and latest_out["p_signal"].notna().any() else None,
+            "model_rank_score_mean": round(float(latest_out["model_rank_score"].mean()), 6) if "model_rank_score" in latest_out and latest_out["model_rank_score"].notna().any() else None,
+        },
+    }
+    for split_name, frame in (("train", train_df), ("validation", val_df), ("test", test_df)):
+        if frame.empty:
+            continue
+        scored = frame.copy()
+        scored["p_signal"] = _predict_proba(calibrated, scored, feature_cols)
+        monitoring["reliability"][split_name] = _reliability_bins(scored, target, "p_signal")
+        monitoring["daily_topn"][split_name] = _daily_topn_stats(scored, target, "p_signal", k=20)
+
     (out_dir / "metrics.json").write_text(json.dumps({"summary": summary, "metrics": metrics}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "monitoring.json").write_text(json.dumps(monitoring, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_report(out_dir / "MODEL_REPORT.md", summary, metrics, latest_scored_path)
     print(json.dumps({"summary": summary, "metrics": metrics}, ensure_ascii=False, indent=2))
     return summary
