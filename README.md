@@ -559,3 +559,29 @@ bs\_score = 0.15\,score + 0.30\,(10 \cdot opt\_score) + 0.25\,claude\_score + 0.
 $$
 
 `bs_entry_score` 描述买点后节奏：买点后小幅确认（约 0%~8%）更高，明显破位或过度追高会降分；当日涨停、买点后涨幅过大或跌幅过深会触发额外扣分。
+
+### 8.6 B点增强分 V2 与专家数据包
+
+`bs_score_v2` 是面向 B 点信号增强的保守排序分，重点提高相对强弱、流动性、突破放量和多源评分一致性的权重，并对涨停锁死、买点后过度追高、明显破位和评分分歧做扣分。默认标签：
+
+- `强买`: `bs_score_v2 >= 72`
+- `观察`: `58 <= bs_score_v2 < 72`
+- `剔除`: `bs_score_v2 < 58`
+
+`bs_research_score` 是 2026 年以来样本研究后的页面提示层，核心规则来自 `bs_score_v2` 与 `rs_liquidity_combo` 的共振。它的标签是 `强观察` / `普通观察` / `回避`，用于辅助复核，不等同于自动交易指令。
+
+外部专家协作数据通过以下脚本导出：
+
+```bash
+python3 scripts/export_signal_enhancement_dataset.py
+```
+
+导出目录位于 `exports/signal_enhancement/<timestamp>/`，包含首次 B 点事件、1/3/5/10/20/60 日标签、60 日价格路径、活跃 B 点日面板、最新候选池、特征白名单、质量报告和 Excel 汇总包。训练特征只应从 `feature_whitelist.json` 读取，避免未来收益字段泄漏到模型。
+
+基线模型训练入口：
+
+```bash
+python3 scripts/train_bs_signal_model.py --dataset-dir exports/signal_enhancement/<timestamp> --target hit_20_10pct
+```
+
+模型产物位于 `exports/bs_signal_models/<timestamp>/`，包括校准后的 Logistic 模型、验证/测试指标、模型报告和最新候选股概率排序。

@@ -97,6 +97,11 @@ def _ensure_score_rank_daily_schema(cursor):
     additions = {
         "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
         "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
+        "bs_score_v2": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2 DECIMAL(10,2) NULL COMMENT 'B点增强分V2' AFTER bs_entry_score",
+        "bs_score_v2_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2_label VARCHAR(16) NULL COMMENT 'B点增强分V2分层' AFTER bs_score_v2",
+        "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
+        "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
+        "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -208,6 +213,11 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'claude_score': 'claude_score',
         'bs_score': 'bs_score',
         'bs_entry_score': 'bs_entry_score',
+        'bs_score_v2': 'bs_score_v2',
+        'bs_score_v2_label': 'bs_score_v2_label',
+        'bs_research_score': 'bs_research_score',
+        'bs_research_label': 'bs_research_label',
+        'bs_research_reason': 'bs_research_reason',
         'is_self_selected': 'is_self_selected',
         'is_bs_candidate': 'is_bs_candidate'
     }
@@ -535,11 +545,13 @@ def main():
         scored['pool_type'] = None
         
         mask_bs = (scored['is_bs_candidate'] == 1)
-        mask_trade = mask_bs & (scored['bs_score'] >= CONFIG.get("bs_trade_threshold", CONFIG["trade_threshold"]))
+        mask_trade = mask_bs & (
+            scored['bs_score_v2'] >= CONFIG.get("bs_v2_trade_threshold", CONFIG.get("bs_trade_threshold", CONFIG["trade_threshold"]))
+        )
         scored.loc[mask_trade, 'pool_type'] = 'TRADE'
         
         mask_watch = mask_bs & (~mask_trade) & (
-            scored['bs_score'] >= CONFIG.get("bs_watch_threshold", CONFIG["watch_threshold"])
+            scored['bs_score_v2'] >= CONFIG.get("bs_v2_watch_threshold", CONFIG.get("bs_watch_threshold", CONFIG["watch_threshold"]))
         )
         scored.loc[mask_watch, 'pool_type'] = 'WATCH'
         

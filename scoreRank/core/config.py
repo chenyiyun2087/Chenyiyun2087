@@ -10,6 +10,8 @@ CONFIG = {
     "watch_threshold": 60,
     "bs_trade_threshold": 75,
     "bs_watch_threshold": 58,
+    "bs_v2_trade_threshold": 72,
+    "bs_v2_watch_threshold": 58,
     "max_trade_pool": 80,
 
     # 资金200万：用成交额门槛过滤小票（单位取决于你库中amount单位）

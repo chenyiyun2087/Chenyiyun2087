@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,6 +9,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pymysql
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
 
 
 DB_CONFIG = {
@@ -18,7 +25,6 @@ DB_CONFIG = {
     "charset": "utf8mb4",
 }
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPORT_ROOT = PROJECT_ROOT / "exports" / "signal_enhancement"
 
 SCORE_FEATURE_COLUMNS = [
@@ -35,6 +41,11 @@ SCORE_FEATURE_COLUMNS = [
     "claude_score",
     "bs_score",
     "bs_entry_score",
+    "bs_score_v2",
+    "bs_score_v2_label",
+    "bs_research_score",
+    "bs_research_label",
+    "bs_research_reason",
     "close_price",
     "buy_point_close",
     "price_change_ratio",
@@ -42,6 +53,44 @@ SCORE_FEATURE_COLUMNS = [
     "pool_type",
     "is_self_selected",
 ]
+
+DEFAULT_HORIZONS = (1, 3, 5, 10, 20, 60)
+TRAINABLE_FEATURE_COLUMNS = [
+    "event_seq_for_symbol",
+    "total_b_points",
+    "total_s_points",
+    "buy_points_count",
+    "sell_points_count",
+    "score",
+    "base_score",
+    "penalty",
+    "s_trend",
+    "s_breakout",
+    "s_volume",
+    "s_rs",
+    "s_contraction",
+    "s_liquidity",
+    "opt_score",
+    "claude_score",
+    "bs_score",
+    "bs_entry_score",
+    "bs_score_v2",
+    "bs_research_score",
+    "close_price",
+    "buy_point_close",
+    "price_change_ratio",
+    "is_limit_up",
+    "is_self_selected",
+    "score_opt_gap",
+    "score_claude_gap",
+    "opt_claude_gap",
+    "score_dispersion",
+    "rs_liquidity_combo",
+    "breakout_volume_combo",
+    "overextended_flag",
+    "pullback_flag",
+]
+LEAKY_PREFIXES = ("ret_", "max_ret_", "mdd_", "hit_", "days_to_")
 
 
 def _connect():
@@ -51,6 +100,29 @@ def _connect():
 def _read_sql(sql: str, params=None) -> pd.DataFrame:
     with _connect() as conn:
         return pd.read_sql(sql, conn, params=params)
+
+
+def _ensure_score_rank_daily_columns() -> None:
+    additions = {
+        "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
+        "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
+        "bs_score_v2": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2 DECIMAL(10,2) NULL COMMENT 'B点增强分V2' AFTER bs_entry_score",
+        "bs_score_v2_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2_label VARCHAR(16) NULL COMMENT 'B点增强分V2分层' AFTER bs_score_v2",
+        "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
+        "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
+        "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
+    }
+    conn = _connect()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SHOW COLUMNS FROM score_rank_daily")
+            existing = {row[0] for row in cursor.fetchall()}
+            for col, ddl in additions.items():
+                if col not in existing:
+                    cursor.execute(ddl)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _normalize_symbol(series: pd.Series) -> pd.Series:
@@ -105,6 +177,11 @@ def _load_first_buy_events() -> pd.DataFrame:
         s.claude_score,
         s.bs_score,
         s.bs_entry_score,
+        s.bs_score_v2,
+        s.bs_score_v2_label,
+        s.bs_research_score,
+        s.bs_research_label,
+        s.bs_research_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
@@ -154,6 +231,11 @@ def _load_active_panel() -> pd.DataFrame:
         s.claude_score,
         s.bs_score,
         s.bs_entry_score,
+        s.bs_score_v2,
+        s.bs_score_v2_label,
+        s.bs_research_score,
+        s.bs_research_label,
+        s.bs_research_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
@@ -207,6 +289,11 @@ def _load_latest_candidates() -> pd.DataFrame:
         s.claude_score,
         s.bs_score,
         s.bs_entry_score,
+        s.bs_score_v2,
+        s.bs_score_v2_label,
+        s.bs_research_score,
+        s.bs_research_label,
+        s.bs_research_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
@@ -253,7 +340,45 @@ def _load_prices(symbols: list[str], start_date: pd.Timestamp, end_date: pd.Time
     return px.dropna(subset=["close"]).reset_index(drop=True)
 
 
-def _horizon_labels(events: pd.DataFrame, prices: pd.DataFrame, horizons=(1, 3, 5, 10, 20)) -> pd.DataFrame:
+def _add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = add_bs_enhanced_scores(df)
+    for col in [
+        "score",
+        "opt_score",
+        "claude_score",
+        "s_rs",
+        "s_liquidity",
+        "s_breakout",
+        "s_volume",
+        "price_change_ratio",
+    ]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    opt_norm = out.get("opt_score", pd.Series(0.0, index=out.index)).fillna(0.0)
+    opt_norm = np.where(opt_norm <= 12, opt_norm * 10.0, opt_norm)
+    score = out.get("score", pd.Series(np.nan, index=out.index))
+    claude = out.get("claude_score", pd.Series(np.nan, index=out.index))
+    out["score_opt_gap"] = score - opt_norm
+    out["score_claude_gap"] = score - claude
+    out["opt_claude_gap"] = opt_norm - claude
+    out["score_dispersion"] = pd.concat([score, pd.Series(opt_norm, index=out.index), claude], axis=1).std(axis=1)
+    out["rs_liquidity_combo"] = (
+        out.get("s_rs", pd.Series(0.0, index=out.index)).fillna(0.0).clip(lower=0)
+        * out.get("s_liquidity", pd.Series(0.0, index=out.index)).fillna(0.0).clip(lower=0)
+    ) ** 0.5
+    out["breakout_volume_combo"] = (
+        0.65 * out.get("s_breakout", pd.Series(0.0, index=out.index)).fillna(0.0)
+        + 0.35 * out.get("s_volume", pd.Series(0.0, index=out.index)).fillna(0.0)
+    )
+    gain = out.get("price_change_ratio", pd.Series(0.0, index=out.index)).fillna(0.0)
+    out["overextended_flag"] = (gain >= 22).astype(int)
+    out["pullback_flag"] = (gain <= -6).astype(int)
+    return out
+
+
+def _horizon_labels(events: pd.DataFrame, prices: pd.DataFrame, horizons=DEFAULT_HORIZONS) -> pd.DataFrame:
     if events.empty or prices.empty:
         return events.copy()
 
@@ -323,25 +448,70 @@ def _horizon_labels(events: pd.DataFrame, prices: pd.DataFrame, horizons=(1, 3, 
     return out, paths
 
 
-def _add_split_column(df: pd.DataFrame) -> pd.DataFrame:
+def _time_split_for_mask(dates: pd.Series, mask: pd.Series) -> pd.Series:
+    split = pd.Series("unlabeled", index=dates.index, dtype=object)
+    eligible_dates = sorted(pd.to_datetime(dates[mask]).dt.date.unique())
+    if not eligible_dates:
+        return split
+    train_cut = eligible_dates[int(len(eligible_dates) * 0.70)]
+    valid_cut = eligible_dates[int(len(eligible_dates) * 0.85)]
+    eligible = pd.to_datetime(dates).dt.date
+    split.loc[mask & (eligible <= train_cut)] = "train"
+    split.loc[mask & (eligible > train_cut) & (eligible <= valid_cut)] = "validation"
+    split.loc[mask & (eligible > valid_cut)] = "test"
+    return split
+
+
+def _add_split_column(df: pd.DataFrame, primary_horizon: int = 20) -> pd.DataFrame:
     if df.empty:
         df["sample_split"] = []
         return df
     out = df.copy()
-    ordered_dates = sorted(pd.to_datetime(out["event_date"]).dt.date.unique())
-    if not ordered_dates:
-        out["sample_split"] = "train"
-        return out
-    train_cut = ordered_dates[int(len(ordered_dates) * 0.70)]
-    valid_cut = ordered_dates[int(len(ordered_dates) * 0.85)]
-
-    dates = pd.to_datetime(out["event_date"]).dt.date
-    out["sample_split"] = np.select(
-        [dates <= train_cut, dates <= valid_cut],
-        ["train", "validation"],
-        default="test",
-    )
+    dates = pd.to_datetime(out["event_date"])
+    primary_target = f"hit_{primary_horizon}_10pct"
+    if primary_target in out.columns:
+        out["sample_split"] = _time_split_for_mask(dates, out[primary_target].notna())
+    else:
+        out["sample_split"] = _time_split_for_mask(dates, pd.Series(True, index=out.index))
+    for h in DEFAULT_HORIZONS:
+        target = f"hit_{h}_10pct"
+        if target in out.columns:
+            out[f"split_{target}"] = _time_split_for_mask(dates, out[target].notna())
     return out
+
+
+def _feature_whitelist(df: pd.DataFrame) -> list[str]:
+    return [col for col in TRAINABLE_FEATURE_COLUMNS if col in df.columns and not col.startswith(LEAKY_PREFIXES)]
+
+
+def _quality_report(first_labeled: pd.DataFrame, active_panel: pd.DataFrame, latest: pd.DataFrame) -> dict:
+    report = {
+        "first_buy_rows": int(len(first_labeled)),
+        "active_panel_rows": int(len(active_panel)),
+        "latest_candidates_rows": int(len(latest)),
+        "leak_guard_prefixes": list(LEAKY_PREFIXES),
+        "label_completeness": {},
+        "split_counts": {},
+        "missing_rate_top20": {},
+    }
+    for h in DEFAULT_HORIZONS:
+        target = f"hit_{h}_10pct"
+        if target in first_labeled.columns:
+            report["label_completeness"][target] = {
+                "available_rows": int(first_labeled[target].notna().sum()),
+                "available_pct": round(float(first_labeled[target].notna().mean()), 4),
+                "positive_rate": round(float(first_labeled[target].mean(skipna=True)), 4)
+                if first_labeled[target].notna().any()
+                else None,
+            }
+        split_col = f"split_{target}"
+        if split_col in first_labeled.columns:
+            report["split_counts"][split_col] = {
+                str(k): int(v) for k, v in first_labeled[split_col].value_counts(dropna=False).to_dict().items()
+            }
+    missing = first_labeled.isna().mean().sort_values(ascending=False).head(20)
+    report["missing_rate_top20"] = {str(k): round(float(v), 4) for k, v in missing.to_dict().items()}
+    return report
 
 
 def _write_markdown(path: Path, title: str, body: str) -> None:
@@ -363,12 +533,14 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 
 ## 文件
 
-- `first_buy_events_labeled.csv`：主训练表，一行代表某股票某日首次出现 B 点。包含当时评分、信号描述、未来收益标签。
-- `first_buy_price_paths_20d.csv`：首次 B 点后最多 20 个交易日的相对收益路径，`rel_ret_d0=0`。
+- `first_buy_events_labeled.csv`：主训练表，一行代表某股票某日首次出现 B 点。包含当时评分、信号描述、未来 1/3/5/10/20/60 日收益标签。
+- `first_buy_price_paths_60d.csv`：首次 B 点后最多 60 个交易日的相对收益路径，`rel_ret_d0=0`。
 - `active_b_daily_panel_labeled.csv`：辅助表，一行代表某股票在某日仍处于 B 点有效状态，适合研究持有期加减仓。
 - `latest_b_candidates.csv`：最新交易日仍有效的 B 点候选，仅用于专家产出排序/打分，无未来标签。
 - `signal_enhancement_dataset.xlsx`：同内容 Excel 汇总版。
 - `DATA_DICTIONARY.md`：字段解释。
+- `feature_whitelist.json`：允许进入模型的特征白名单，已排除未来标签。
+- `quality_report.json`：标签完整性、split 分布、缺失率摘要。
 - `summary.json`：本次导出的统计摘要。
 
 ## 防泄漏约束
@@ -423,6 +595,14 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 - `claude_score`：Claude 六维评分，0-100 标尺。
 - `bs_score`：当前系统的 B 点增强分，0-100 标尺。
 - `bs_entry_score`：买点后节奏分，偏好买点后温和确认、不过度追高。
+- `bs_score_v2`：规则增强版 B 点分，强化 RS、流动性、突破质量、节奏确认和风险约束。
+- `bs_score_v2_label`：`强买` / `观察` / `剔除` 分层。
+- `bs_research_score`：基于 2026 年以来样本研究得到的建议分，强调 `bs_score_v2` 与 `rs_liquidity_combo` 共振。
+- `bs_research_label`：`强观察` / `普通观察` / `回避`，用于页面研究提示，不等同于自动交易指令。
+- `bs_research_reason`：研究建议的主要原因，例如强势流动性共振、追高风险、流动性偏弱等。
+- `score_*_gap`、`score_dispersion`：不同评分体系之间的分歧特征。
+- `rs_liquidity_combo`、`breakout_volume_combo`：组合交互特征。
+- `overextended_flag`、`pullback_flag`：买点后过热或破位提示。
 - `close_price`：事件日收盘价。
 - `buy_point_close`：买点日收盘价。
 - `price_change_ratio`：事件日相对买点价涨幅百分比。
@@ -432,7 +612,7 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 
 ## 标签字段
 
-- `ret_1` / `ret_3` / `ret_5` / `ret_10` / `ret_20`：事件后第 N 个交易日收益。
+- `ret_1` / `ret_3` / `ret_5` / `ret_10` / `ret_20` / `ret_60`：事件后第 N 个交易日收益。
 - `max_ret_N`：事件后 N 个交易日窗口内最大收益。
 - `mdd_N`：事件后 N 个交易日窗口内最大不利浮亏。
 - `hit_N_5pct` / `hit_N_10pct`：N 日内是否曾达到 +5% / +10%。
@@ -440,7 +620,7 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 
 ## 价格路径字段
 
-- `rel_ret_d0` 至 `rel_ret_d20`：事件后第 N 个交易日相对事件日收盘价的收益，`d0=0`。
+- `rel_ret_d0` 至 `rel_ret_d60`：事件后第 N 个交易日相对事件日收盘价的收益，`d0=0`。
 """,
     )
 
@@ -454,6 +634,7 @@ def main() -> None:
     out_dir = EXPORT_ROOT / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    _ensure_score_rank_daily_columns()
     first_buy = _load_first_buy_events()
     active_panel = _load_active_panel()
     latest = _load_latest_candidates()
@@ -462,11 +643,14 @@ def main() -> None:
         raise RuntimeError("No first buy events found after joining score_rank_daily.")
 
     start = first_buy["event_date"].min() - timedelta(days=5)
-    end = max(first_buy["event_date"].max(), latest["asof_date"].max() if not latest.empty else first_buy["event_date"].max()) + timedelta(days=40)
+    end = max(first_buy["event_date"].max(), latest["asof_date"].max() if not latest.empty else first_buy["event_date"].max()) + timedelta(days=100)
     symbols = sorted(set(first_buy["symbol"].tolist()) | set(active_panel["symbol"].tolist()) | set(latest["symbol"].tolist()))
     prices = _load_prices(symbols, start, end)
 
     first_labeled, price_paths = _horizon_labels(first_buy, prices)
+    first_labeled = _add_engineered_features(first_labeled)
+    active_panel = _add_engineered_features(active_panel)
+    latest = _add_engineered_features(latest)
     first_labeled = _add_split_column(first_labeled)
 
     preferred_cols = [
@@ -486,9 +670,18 @@ def main() -> None:
         "sell_points_count",
         "process_time",
         *SCORE_FEATURE_COLUMNS,
+        "score_opt_gap",
+        "score_claude_gap",
+        "opt_claude_gap",
+        "score_dispersion",
+        "rs_liquidity_combo",
+        "breakout_volume_combo",
+        "overextended_flag",
+        "pullback_flag",
     ]
+    split_cols = [c for c in first_labeled.columns if c.startswith("split_")]
     label_cols = [c for c in first_labeled.columns if c.startswith(("ret_", "max_ret_", "mdd_", "hit_", "days_to_"))]
-    first_labeled = first_labeled[[c for c in preferred_cols + label_cols if c in first_labeled.columns]]
+    first_labeled = first_labeled[[c for c in preferred_cols + split_cols + label_cols if c in first_labeled.columns]]
 
     if not active_panel.empty:
         active_panel = _add_split_column(active_panel)
@@ -500,6 +693,14 @@ def main() -> None:
             "ts_code",
             "name",
             *SCORE_FEATURE_COLUMNS,
+            "score_opt_gap",
+            "score_claude_gap",
+            "opt_claude_gap",
+            "score_dispersion",
+            "rs_liquidity_combo",
+            "breakout_volume_combo",
+            "overextended_flag",
+            "pullback_flag",
             "is_eligible",
             "is_high_risk",
         ]
@@ -514,13 +715,32 @@ def main() -> None:
             "ts_code",
             "name",
             *SCORE_FEATURE_COLUMNS,
+            "score_opt_gap",
+            "score_claude_gap",
+            "opt_claude_gap",
+            "score_dispersion",
+            "rs_liquidity_combo",
+            "breakout_volume_combo",
+            "overextended_flag",
+            "pullback_flag",
         ]
         latest = latest[[c for c in latest_front if c in latest.columns]]
 
     _save_csv(first_labeled, out_dir / "first_buy_events_labeled.csv")
-    _save_csv(price_paths, out_dir / "first_buy_price_paths_20d.csv")
+    _save_csv(price_paths, out_dir / "first_buy_price_paths_60d.csv")
     _save_csv(active_panel, out_dir / "active_b_daily_panel_labeled.csv")
     _save_csv(latest, out_dir / "latest_b_candidates.csv")
+
+    feature_whitelist = {
+        "feature_columns": _feature_whitelist(first_labeled),
+        "target_columns": [c for c in first_labeled.columns if c.startswith(LEAKY_PREFIXES)],
+        "notes": "Only feature_columns should be used as model inputs. target_columns are labels/evaluation fields.",
+    }
+    with (out_dir / "feature_whitelist.json").open("w", encoding="utf-8") as f:
+        json.dump(feature_whitelist, f, ensure_ascii=False, indent=2)
+    quality = _quality_report(first_labeled, active_panel, latest)
+    with (out_dir / "quality_report.json").open("w", encoding="utf-8") as f:
+        json.dump(quality, f, ensure_ascii=False, indent=2)
 
     summary = {
         "exported_at": datetime.now().isoformat(timespec="seconds"),
@@ -528,17 +748,21 @@ def main() -> None:
         "date_max": str(first_labeled["event_date"].max().date()),
         "first_buy_events_rows": int(len(first_labeled)),
         "first_buy_events_ret10_rows": int(first_labeled["ret_10"].notna().sum()) if "ret_10" in first_labeled else 0,
+        "first_buy_events_ret20_rows": int(first_labeled["ret_20"].notna().sum()) if "ret_20" in first_labeled else 0,
+        "first_buy_events_ret60_rows": int(first_labeled["ret_60"].notna().sum()) if "ret_60" in first_labeled else 0,
         "active_panel_rows": int(len(active_panel)),
         "latest_candidates_rows": int(len(latest)),
         "unique_symbols_first_buy": int(first_labeled["symbol"].nunique()),
         "files": [
             "first_buy_events_labeled.csv",
-            "first_buy_price_paths_20d.csv",
+            "first_buy_price_paths_60d.csv",
             "active_b_daily_panel_labeled.csv",
             "latest_b_candidates.csv",
             "signal_enhancement_dataset.xlsx",
             "README_FOR_EXPERT.md",
             "DATA_DICTIONARY.md",
+            "feature_whitelist.json",
+            "quality_report.json",
         ],
     }
 
@@ -550,10 +774,13 @@ def main() -> None:
     xlsx_path = out_dir / "signal_enhancement_dataset.xlsx"
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
         first_labeled.to_excel(writer, sheet_name="first_buy_events", index=False)
-        price_paths.to_excel(writer, sheet_name="price_paths_20d", index=False)
+        price_paths.to_excel(writer, sheet_name="price_paths_60d", index=False)
         active_panel.to_excel(writer, sheet_name="active_b_panel", index=False)
         latest.to_excel(writer, sheet_name="latest_candidates", index=False)
         pd.DataFrame([summary]).to_excel(writer, sheet_name="summary", index=False)
+        pd.DataFrame({"feature_column": feature_whitelist["feature_columns"]}).to_excel(
+            writer, sheet_name="feature_whitelist", index=False
+        )
 
     zip_path = out_dir.with_suffix(".zip")
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:

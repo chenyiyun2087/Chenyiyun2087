@@ -75,6 +75,25 @@
                     <th>代码</th>
                     <th>名称</th>
                     <th>
+                        <a href="{{ url_for(request.endpoint, sort='bs_research_score', order='asc' if sort_by=='bs_research_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
+                            style="text-decoration: none; color: inherit;">
+                            研究分 {{ '▲' if sort_by=='bs_research_score' and order=='ASC' else ('▼' if sort_by=='bs_research_score'
+                            and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
+                    <th>研究建议</th>
+                    <th>研究原因</th>
+                    <th>
+                        <a href="{{ url_for(request.endpoint, sort='bs_score_v2', order='asc' if sort_by=='bs_score_v2' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
+                            style="text-decoration: none; color: inherit;">
+                            V2增强分 {{ '▲' if sort_by=='bs_score_v2' and order=='ASC' else ('▼' if sort_by=='bs_score_v2'
+                            and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
+                    <th>V2状态</th>
+                    <th>
                         <a href="{{ url_for(request.endpoint, sort='bs_score', order='asc' if sort_by=='bs_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
                             B点增强分 {{ '▲' if sort_by=='bs_score' and order=='ASC' else ('▼' if sort_by=='bs_score'
@@ -127,6 +146,13 @@
                     </td>
                     <td><a href="{{ row.symbol | eastmoney_guba_url }}" target="_blank">{{ row.symbol }}</a></td>
                     <td><a href="{{ row.symbol | sina_finance_url }}" target="_blank">{{ row.name }}</a></td>
+                    <td class="text-up">{{ "%.2f"|format(row.bs_research_score) if row.bs_research_score is not none else '-' }}</td>
+                    <td><span class="tag {{ 'trade' if row.bs_research_label == '强观察' else '' }}">{{
+                            row.bs_research_label or '-' }}</span></td>
+                    <td>{{ row.bs_research_reason or '-' }}</td>
+                    <td class="text-up">{{ "%.2f"|format(row.bs_score_v2) if row.bs_score_v2 is not none else '-' }}</td>
+                    <td><span class="tag {{ 'trade' if row.bs_score_v2_label == '强买' else '' }}">{{
+                            row.bs_score_v2_label or '-' }}</span></td>
                     <td class="text-up">{{ "%.2f"|format(row.bs_score) if row.bs_score is not none else '-' }}</td>
                     <td><span class="tag {{ 'trade' if row.bs_score_label in ['强确认', '可交易'] else '' }}">{{
                             row.bs_score_label or '-' }}</span></td>
@@ -152,7 +178,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="16" class="empty">暂无评分数据</td>
+                    <td colspan="21" class="empty">暂无评分数据</td>
                 </tr>
                 {% endfor %}
             </tbody>

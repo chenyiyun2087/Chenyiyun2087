@@ -17,7 +17,7 @@ from project_network import build_direct_network_env, enforce_direct_network
 
 enforce_direct_network()
 
-from scoreRank.core.bs_enhanced_score import calculate_bs_enhanced_score
+from scoreRank.core.bs_enhanced_score import calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2
 
 try:
     from sina.live_tracker.live_tracker import LiveTracker
@@ -2117,6 +2117,8 @@ def _safe_sort_float(row, key, default=0.0):
 def _enrich_bs_score_rows(rows):
     for row in rows:
         row.update(calculate_bs_enhanced_score(row))
+        row.update(calculate_bs_score_v2(row))
+        row.update(calculate_bs_research_signal(row))
     return rows
 
 
@@ -2130,6 +2132,11 @@ def _ensure_score_rank_daily_score_columns(cursor):
     additions = {
         "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
         "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
+        "bs_score_v2": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2 DECIMAL(10,2) NULL COMMENT 'B点增强分V2' AFTER bs_entry_score",
+        "bs_score_v2_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_v2_label VARCHAR(16) NULL COMMENT 'B点增强分V2分层' AFTER bs_score_v2",
+        "bs_research_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_score DECIMAL(10,2) NULL COMMENT 'B点研究建议分' AFTER bs_score_v2_label",
+        "bs_research_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_label VARCHAR(16) NULL COMMENT 'B点研究建议标签' AFTER bs_research_score",
+        "bs_research_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_research_reason VARCHAR(128) NULL COMMENT 'B点研究建议原因' AFTER bs_research_label",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -2721,12 +2728,14 @@ def sina_scores():
             all_scores = _enrich_bs_score_rows(cursor.fetchall())
 
             reverse = order == 'DESC'
-            if sort_by in {'bs_score', 'score', 'opt_score', 'claude_score'}:
+            if sort_by in {'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score'}:
                 all_scores.sort(key=lambda row: _safe_sort_float(row, sort_by), reverse=reverse)
             else:
                 all_scores.sort(
                     key=lambda row: (
                         _pool_sort_rank(row),
+                        -_safe_sort_float(row, 'bs_research_score'),
+                        -_safe_sort_float(row, 'bs_score_v2'),
                         -_safe_sort_float(row, 'bs_score'),
                         -_safe_sort_float(row, 'score'),
                     )
@@ -2846,8 +2855,12 @@ def sina_all_scores():
                 order_stmt = f"ORDER BY srd.claude_score {order}"
             elif sort_by == 'bs_score':
                 order_stmt = f"ORDER BY srd.bs_score {order}"
+            elif sort_by == 'bs_score_v2':
+                order_stmt = f"ORDER BY srd.bs_score_v2 {order}"
+            elif sort_by == 'bs_research_score':
+                order_stmt = f"ORDER BY srd.bs_research_score {order}"
             else:
-                order_stmt = "ORDER BY srd.score DESC"
+                order_stmt = "ORDER BY srd.bs_research_score DESC, srd.bs_score_v2 DESC, srd.score DESC"
 
             join_stmt = ""
             if pool_id != 'all':
@@ -2950,8 +2963,12 @@ def sina_self_selected():
                 order_stmt = f"ORDER BY claude_score {order}"
             elif sort_by == 'bs_score':
                 order_stmt = f"ORDER BY bs_score {order}"
+            elif sort_by == 'bs_score_v2':
+                order_stmt = f"ORDER BY bs_score_v2 {order}"
+            elif sort_by == 'bs_research_score':
+                order_stmt = f"ORDER BY bs_research_score {order}"
             else:
-                order_stmt = "ORDER BY score DESC"
+                order_stmt = "ORDER BY bs_research_score DESC, bs_score_v2 DESC, score DESC"
 
             sql = f"""
             SELECT 
