@@ -1,10 +1,9 @@
-'''
 from jqdata import *
 from jqfactor import get_factor_values
 import numpy as np
 import pandas as pd
 
-#初始化函数 
+#初始化函数
 def initialize(context):
     # 设定基准 中证500
     set_benchmark('000905.XSHG')
@@ -36,7 +35,7 @@ def initialize(context):
 
 
 
-#1-1 根据最近一年分红除以当前总市值计算股息率并筛选    
+#1-1 根据最近一年分红除以当前总市值计算股息率并筛选
 def get_dividend_ratio_filter_list(context, stock_list, sort, p1, p2):
     time1 = context.previous_date
     time0 = time1 - datetime.timedelta(days=365)
@@ -287,7 +286,7 @@ def print_position_info(context):
         price=position.price
         ret=100*(price/cost-1)
         value=position.value
-        amount=position.total_amount    
+        amount=position.total_amount
         print('代码:{}'.format(securities))
         print('成本价:{}'.format(format(cost,'.2f')))
         print('现价:{}'.format(price))
@@ -296,4 +295,3 @@ def print_position_info(context):
         print('市值:{}'.format(format(value,'.2f')))
         print('———————————————————————————————————')
     print('———————————————————————————————————————分割线————————————————————————————————————————')
-'''

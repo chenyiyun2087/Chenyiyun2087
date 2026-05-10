@@ -16,6 +16,7 @@ from scoreRank.core.db_io import (
     query_scalar,
 )
 # from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date  # DEPRECATED
+from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
 from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
 
 # Strategy Imports
@@ -88,6 +89,18 @@ def _normalize_symbol_list(values) -> list[str]:
         if sym:
             out.append(sym)
     return sorted(set(out))
+
+
+def _ensure_score_rank_daily_schema(cursor):
+    cursor.execute("SHOW COLUMNS FROM score_rank_daily")
+    existing = {row["Field"] for row in cursor.fetchall()}
+    additions = {
+        "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
+        "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
+    }
+    for col, ddl in additions.items():
+        if col not in existing:
+            cursor.execute(ddl)
 
 
 def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: list[str]) -> pd.DataFrame:
@@ -193,6 +206,8 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'price_change_ratio': 'price_change_ratio',
         'opt_score': 'opt_score',
         'claude_score': 'claude_score',
+        'bs_score': 'bs_score',
+        'bs_entry_score': 'bs_entry_score',
         'is_self_selected': 'is_self_selected',
         'is_bs_candidate': 'is_bs_candidate'
     }
@@ -210,6 +225,7 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
     conn = pymysql.connect(**db_conf)
     try:
         with conn.cursor() as cursor:
+            _ensure_score_rank_daily_schema(cursor)
             # Keep canonical named-parameter SQL for readability/auditing.
             delete_sql = "DELETE FROM score_rank_daily WHERE trade_date = :trade_date"
             cursor.execute(
@@ -505,6 +521,7 @@ def main():
 
         # 6.6) Calculate Factor Optimizer Score [NEW]
         scored = calculate_opt_score(scored, asof_date)
+        scored = add_bs_enhanced_scores(scored)
 
         # 7) Determine Pool Types and Self-selected Status
         scored["symbol"] = scored["symbol"].map(_normalize_symbol)
@@ -518,10 +535,12 @@ def main():
         scored['pool_type'] = None
         
         mask_bs = (scored['is_bs_candidate'] == 1)
-        mask_trade = mask_bs & (scored['score'] >= CONFIG["trade_threshold"])
+        mask_trade = mask_bs & (scored['bs_score'] >= CONFIG.get("bs_trade_threshold", CONFIG["trade_threshold"]))
         scored.loc[mask_trade, 'pool_type'] = 'TRADE'
         
-        mask_watch = mask_bs & (~mask_trade) & (scored['score'] >= CONFIG["watch_threshold"])
+        mask_watch = mask_bs & (~mask_trade) & (
+            scored['bs_score'] >= CONFIG.get("bs_watch_threshold", CONFIG["watch_threshold"])
+        )
         scored.loc[mask_watch, 'pool_type'] = 'WATCH'
         
         # Filter for saving

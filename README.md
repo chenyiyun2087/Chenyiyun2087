@@ -549,3 +549,13 @@ $$
 
 - 默认 `run_daily --strategy technical`：`score` 为 Technical 总分；`claude_score` 为并行计算后的 Claude 六维总分；`opt_score` 为因子优化分。
 - 若 `run_daily --strategy claude`：`score` 即 Claude 六维总分，同时 `claude_score = score`。
+
+### 8.5 B点增强分（`bs_score`）
+
+`bs_score` 只用于已经出现 B 点的候选股排序，不替代全市场 Technical 总分。当前口径：
+
+$$
+bs\_score = 0.15\,score + 0.30\,(10 \cdot opt\_score) + 0.25\,claude\_score + 0.15\,s\_{rs} + 0.05\,s\_{breakout} + 0.10\,bs\_{entry} - penalty
+$$
+
+`bs_entry_score` 描述买点后节奏：买点后小幅确认（约 0%~8%）更高，明显破位或过度追高会降分；当日涨停、买点后涨幅过大或跌幅过深会触发额外扣分。

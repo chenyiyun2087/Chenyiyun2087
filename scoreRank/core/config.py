@@ -8,6 +8,8 @@ CONFIG = {
     "breakout_n": 20,                         # 突破窗口（10或20常用）
     "trade_threshold": 75,
     "watch_threshold": 60,
+    "bs_trade_threshold": 75,
+    "bs_watch_threshold": 58,
     "max_trade_pool": 80,
 
     # 资金200万：用成交额门槛过滤小票（单位取决于你库中amount单位）

@@ -32,6 +32,16 @@ CREATE TABLE IF NOT EXISTS score_rank_daily (
     s_contraction DECIMAL(10, 2),
     s_liquidity DECIMAL(10, 2),
     pool_type VARCHAR(20), -- 'TRADE', 'WATCH', 'OTHER'
+    is_limit_up TINYINT DEFAULT 0,
+    close_price DECIMAL(10, 2),
+    buy_point_close DECIMAL(10, 2),
+    price_change_ratio DECIMAL(10, 2),
+    opt_score FLOAT,
+    claude_score FLOAT,
+    bs_score DECIMAL(10, 2) COMMENT 'B点增强分',
+    bs_entry_score DECIMAL(10, 2) COMMENT '买点后节奏分',
+    is_self_selected TINYINT(1) DEFAULT 0,
+    is_bs_candidate TINYINT(1) DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_date_symbol (trade_date, symbol)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

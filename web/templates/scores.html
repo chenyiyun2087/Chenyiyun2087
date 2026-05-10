@@ -75,14 +75,23 @@
                     <th>代码</th>
                     <th>名称</th>
                     <th>
-                        <a href="{{ url_for(request.endpoint, sort='score', order='asc' if sort_by=='score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, pool_id=pool_id) }}"
+                        <a href="{{ url_for(request.endpoint, sort='bs_score', order='asc' if sort_by=='bs_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
+                            style="text-decoration: none; color: inherit;">
+                            B点增强分 {{ '▲' if sort_by=='bs_score' and order=='ASC' else ('▼' if sort_by=='bs_score'
+                            and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
+                    <th>状态</th>
+                    <th>
+                        <a href="{{ url_for(request.endpoint, sort='score', order='asc' if sort_by=='score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
                             总分 {{ '▲' if sort_by=='score' and order=='ASC' else ('▼' if sort_by=='score' and
                             order=='DESC' else '⇅') }}
                         </a>
                     </th>
                     <th>
-                        <a href="{{ url_for(request.endpoint, sort='opt_score', order='asc' if sort_by=='opt_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, pool_id=pool_id) }}"
+                        <a href="{{ url_for(request.endpoint, sort='opt_score', order='asc' if sort_by=='opt_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
                             因子分 {{ '▲' if sort_by=='opt_score' and order=='ASC' else ('▼' if sort_by=='opt_score' and
                             order=='DESC' else '⇅') }}
@@ -118,6 +127,9 @@
                     </td>
                     <td><a href="{{ row.symbol | eastmoney_guba_url }}" target="_blank">{{ row.symbol }}</a></td>
                     <td><a href="{{ row.symbol | sina_finance_url }}" target="_blank">{{ row.name }}</a></td>
+                    <td class="text-up">{{ "%.2f"|format(row.bs_score) if row.bs_score is not none else '-' }}</td>
+                    <td><span class="tag {{ 'trade' if row.bs_score_label in ['强确认', '可交易'] else '' }}">{{
+                            row.bs_score_label or '-' }}</span></td>
                     <td class="text-up">{{ row.score if row.score is not none else '-' }}</td>
                     <td><span class="tag {{ 'text-up' if opt_val > 60 else '' }}">{{ "%.1f"|format(opt_val)
                             if row.opt_score is not none else '-' }}</span></td>
@@ -140,7 +152,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="14" class="empty">暂无评分数据</td>
+                    <td colspan="16" class="empty">暂无评分数据</td>
                 </tr>
                 {% endfor %}
             </tbody>

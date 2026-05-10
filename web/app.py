@@ -17,6 +17,8 @@ from project_network import build_direct_network_env, enforce_direct_network
 
 enforce_direct_network()
 
+from scoreRank.core.bs_enhanced_score import calculate_bs_enhanced_score
+
 try:
     from sina.live_tracker.live_tracker import LiveTracker
     LIVE_TRACKER_IMPORT_ERROR = None
@@ -2086,6 +2088,53 @@ def get_pagination(cursor, table_name, page, per_page, where_clause="", params=N
     }
     return pagination, offset
 
+
+def get_memory_pagination(total, page, per_page):
+    page = max(1, int(page or 1))
+    per_page = max(1, int(per_page or 50))
+    return {
+        'page': page,
+        'per_page': per_page,
+        'total': total,
+        'pages': (total + per_page - 1) // per_page,
+        'has_prev': page > 1,
+        'has_next': page * per_page < total,
+        'prev_num': page - 1,
+        'next_num': page + 1
+    }
+
+
+def _safe_sort_float(row, key, default=0.0):
+    try:
+        value = row.get(key)
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError, InvalidOperation):
+        return default
+
+
+def _enrich_bs_score_rows(rows):
+    for row in rows:
+        row.update(calculate_bs_enhanced_score(row))
+    return rows
+
+
+def _pool_sort_rank(row):
+    return {'TRADE': 1, 'WATCH': 2}.get(row.get('pool_type'), 3)
+
+
+def _ensure_score_rank_daily_score_columns(cursor):
+    cursor.execute("SHOW COLUMNS FROM score_rank_daily")
+    existing = {row["Field"] for row in cursor.fetchall()}
+    additions = {
+        "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
+        "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
+    }
+    for col, ddl in additions.items():
+        if col not in existing:
+            cursor.execute(ddl)
+
 @app.template_filter('sina_finance_url')
 def sina_finance_url(symbol):
     """Generate sina Finance URL for a stock symbol"""
@@ -2624,7 +2673,7 @@ def eastmoney_scores():
 @app.route('/sina/scores')
 def sina_scores():
     page = request.args.get('page', 1, type=int)
-    sort_by = request.args.get('sort', 'default')  # default, score, opt_score
+    sort_by = request.args.get('sort', 'default')  # default, bs_score, score, opt_score
     order = request.args.get('order', 'desc').upper()
     if order not in ['ASC', 'DESC']: order = 'DESC'
     
@@ -2637,6 +2686,7 @@ def sina_scores():
     conn = get_db()
     
     with conn.cursor() as cursor:
+        _ensure_score_rank_daily_score_columns(cursor)
         # Get latest date
         cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
         res = cursor.fetchone()
@@ -2658,20 +2708,6 @@ def sina_scores():
                 
             where_stmt = " WHERE " + " AND ".join(where_clauses)
             
-            # Count for pagination
-            pagination, offset = get_pagination(cursor, "score_rank_daily", page, per_page, where_stmt, tuple(params))
-            
-            # Build ORDER BY
-            if sort_by == 'score':
-                order_stmt = f"ORDER BY score {order}"
-            elif sort_by == 'opt_score':
-                order_stmt = f"ORDER BY opt_score {order}"
-            elif sort_by == 'claude_score':
-                order_stmt = f"ORDER BY claude_score {order}"
-            else:
-                # Default: Prioritize TRADE pool, then score desc
-                order_stmt = "ORDER BY CASE WHEN pool_type='TRADE' THEN 1 WHEN pool_type='WATCH' THEN 2 ELSE 3 END, score DESC"
-
             sql = f"""
             SELECT 
                 *, 
@@ -2679,13 +2715,26 @@ def sina_scores():
                 COALESCE(claude_score, 0) as claude_score 
             FROM score_rank_daily 
             {where_stmt}
-            {order_stmt}
-            LIMIT %s OFFSET %s
             """
             
-            final_params = params + [per_page, offset]
-            cursor.execute(sql, tuple(final_params))
-            scores = cursor.fetchall()
+            cursor.execute(sql, tuple(params))
+            all_scores = _enrich_bs_score_rows(cursor.fetchall())
+
+            reverse = order == 'DESC'
+            if sort_by in {'bs_score', 'score', 'opt_score', 'claude_score'}:
+                all_scores.sort(key=lambda row: _safe_sort_float(row, sort_by), reverse=reverse)
+            else:
+                all_scores.sort(
+                    key=lambda row: (
+                        _pool_sort_rank(row),
+                        -_safe_sort_float(row, 'bs_score'),
+                        -_safe_sort_float(row, 'score'),
+                    )
+                )
+
+            pagination = get_memory_pagination(len(all_scores), page, per_page)
+            offset = (pagination['page'] - 1) * per_page
+            scores = all_scores[offset: offset + per_page]
 
     return render_template('scores.html', 
                            scores=scores, 
@@ -2742,6 +2791,7 @@ def sina_all_scores():
     conn = get_db()
     
     with conn.cursor() as cursor:
+        _ensure_score_rank_daily_score_columns(cursor)
         _ensure_stock_pool_schema(cursor)
         _ensure_seed_pools(cursor)
         cursor.execute(
@@ -2794,6 +2844,8 @@ def sina_all_scores():
                 order_stmt = f"ORDER BY srd.opt_score {order}"
             elif sort_by == 'claude_score':
                 order_stmt = f"ORDER BY srd.claude_score {order}"
+            elif sort_by == 'bs_score':
+                order_stmt = f"ORDER BY srd.bs_score {order}"
             else:
                 order_stmt = "ORDER BY srd.score DESC"
 
@@ -2833,7 +2885,7 @@ def sina_all_scores():
             
             final_params = params + [per_page, offset]
             cursor.execute(sql, tuple(final_params))
-            scores = cursor.fetchall()
+            scores = _enrich_bs_score_rows(cursor.fetchall())
 
     return render_template('scores.html', 
                            scores=scores, 
@@ -2867,6 +2919,7 @@ def sina_self_selected():
     conn = get_db()
     
     with conn.cursor() as cursor:
+        _ensure_score_rank_daily_score_columns(cursor)
         cursor.execute("SELECT MAX(trade_date) as max_date FROM score_rank_daily")
         res = cursor.fetchone()
         latest_date = res['max_date']
@@ -2895,6 +2948,8 @@ def sina_self_selected():
                 order_stmt = f"ORDER BY opt_score {order}"
             elif sort_by == 'claude_score':
                 order_stmt = f"ORDER BY claude_score {order}"
+            elif sort_by == 'bs_score':
+                order_stmt = f"ORDER BY bs_score {order}"
             else:
                 order_stmt = "ORDER BY score DESC"
 
@@ -2911,7 +2966,7 @@ def sina_self_selected():
             
             final_params = params + [per_page, offset]
             cursor.execute(sql, tuple(final_params))
-            scores = cursor.fetchall()
+            scores = _enrich_bs_score_rows(cursor.fetchall())
 
     return render_template('scores.html', 
                            scores=scores, 

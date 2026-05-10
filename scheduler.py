@@ -21,6 +21,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # Project Paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 PYTHON_EXE = sys.executable
+CATCH_UP_GRACE_SECONDS = int(os.getenv("SCHEDULER_CATCH_UP_GRACE_SECONDS", "90"))
 
 # Task Definitions
 # ------------------------------------------------------------------------------
@@ -229,6 +230,14 @@ def main():
             # Check if already executed today
             last_exec = executed_tasks.get(task_name)
             if last_exec == today:
+                continue
+
+            if (now - trigger_dt).total_seconds() > CATCH_UP_GRACE_SECONDS:
+                logger.info(
+                    f"Skipping stale task: {task_name} scheduled at {trigger_time} "
+                    f"(grace {CATCH_UP_GRACE_SECONDS}s)"
+                )
+                executed_tasks[task_name] = today
                 continue
 
             if not today_is_trade_day:
