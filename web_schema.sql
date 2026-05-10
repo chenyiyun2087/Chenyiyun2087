@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS score_rank_daily (
     bs_gate_label VARCHAR(16) COMMENT 'B点交易门禁标签',
     bs_gate_reason VARCHAR(128) COMMENT 'B点交易门禁原因',
     bs_model_prob DECIMAL(10, 6) COMMENT 'B点模型20日命中概率',
+    bs_model_expected_mdd DECIMAL(10, 6) COMMENT 'B点模型预期最大回撤',
+    bs_model_risk_score DECIMAL(10, 4) COMMENT 'B点模型回撤风险分',
     bs_model_rank_score DECIMAL(10, 4) COMMENT 'B点模型综合排序分',
     bs_model_version VARCHAR(32) COMMENT 'B点模型版本',
     bs_consensus_score DECIMAL(10, 2) COMMENT 'B点综合建议分',

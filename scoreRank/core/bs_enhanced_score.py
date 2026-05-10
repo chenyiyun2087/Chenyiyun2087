@@ -275,15 +275,18 @@ def calculate_bs_research_signal(row: Mapping[str, Any]) -> dict[str, float | st
     }
 
 
-def bs_consensus_label(score: Any, model_prob: Any = None, research_score: Any = None) -> str:
+def bs_consensus_label(score: Any, model_prob: Any = None, research_score: Any = None, gate_label: Any = None) -> str:
     s = _safe_float(score)
     p = _safe_float(model_prob, np.nan)
     r = _safe_float(research_score)
+    gate = str(gate_label or "").strip()
     if np.isfinite(p) and p >= 0.65 and r < 58:
         return "模型分歧"
-    if s >= 70:
+    if gate == "过滤" and s < 72:
+        return "回避"
+    if s >= 68 or (r >= 68 and gate == "可买" and (not np.isfinite(p) or p >= 0.15)):
         return "共振观察"
-    if s >= 58:
+    if s >= 50 or (r >= 58 and gate in {"可买", "观察"}):
         return "谨慎观察"
     return "回避"
 
@@ -295,6 +298,7 @@ def calculate_bs_consensus_signal(row: Mapping[str, Any]) -> dict[str, float | s
     v2 = _safe_float(row.get("bs_score_v2"))
     model_prob = _safe_float(row.get("bs_model_prob"), np.nan)
     model_score = model_prob * 100.0 if np.isfinite(model_prob) else np.nan
+    risk_score = _safe_float(row.get("bs_model_risk_score"), np.nan)
 
     if np.isfinite(model_score):
         consensus = 0.45 * research + 0.35 * model_score + 0.20 * v2
@@ -311,6 +315,12 @@ def calculate_bs_consensus_signal(row: Mapping[str, Any]) -> dict[str, float | s
     if np.isfinite(model_score) and model_prob >= 0.65 and research < 58:
         consensus -= 10.0
         reasons.append("模型与规则分歧")
+    if np.isfinite(risk_score) and risk_score < 35:
+        consensus -= 6.0
+        reasons.append("模型回撤风险高")
+    elif np.isfinite(risk_score) and risk_score >= 70 and research >= 58:
+        consensus += 2.0
+        reasons.append("模型回撤风险低")
     if research < 50:
         consensus -= 4.0
     gate_label = str(row.get("bs_gate_label") or "").strip()
@@ -326,7 +336,7 @@ def calculate_bs_consensus_signal(row: Mapping[str, Any]) -> dict[str, float | s
         reasons.append("共振不足")
     return {
         "bs_consensus_score": round(consensus, 2),
-        "bs_consensus_label": bs_consensus_label(consensus, model_prob, research),
+        "bs_consensus_label": bs_consensus_label(consensus, model_prob, research, gate_label),
         "bs_consensus_reason": "；".join(reasons[:3]),
     }
 

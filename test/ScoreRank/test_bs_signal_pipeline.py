@@ -19,6 +19,11 @@ class FakeModel:
         return np.column_stack([1.0 - base, base])
 
 
+class FakeRiskModel:
+    def predict(self, frame):
+        return np.where(pd.to_numeric(frame["bs_score_v2"], errors="coerce").fillna(0.0) >= 70, -0.03, -0.20)
+
+
 class TestBSSignalPipeline(unittest.TestCase):
     def test_horizon_split_keeps_embargo_gap(self):
         dates = pd.Series(pd.date_range("2025-01-01", periods=80, freq="D"))
@@ -61,6 +66,23 @@ class TestBSSignalPipeline(unittest.TestCase):
         self.assertIsNone(out.loc[1, "bs_model_prob"])
         self.assertLess(float(out.loc[2, "bs_model_rank_score"]), float(out.loc[0, "bs_model_rank_score"]))
         self.assertEqual(out.loc[0, "bs_model_version"], "unit")
+
+    def test_apply_bs_model_scores_adds_risk_head_outputs(self):
+        df = pd.DataFrame(
+            [
+                {"symbol": "000001", "is_bs_candidate": 1, "bs_score_v2": 80, "bs_gate_label": "可买"},
+                {"symbol": "000002", "is_bs_candidate": 1, "bs_score_v2": 40, "bs_gate_label": "可买"},
+            ]
+        )
+        out = apply_bs_model_scores(
+            df,
+            {"model": FakeModel(), "risk_model": FakeRiskModel(), "feature_cols": ["bs_score_v2"], "version": "unit"},
+            only_candidates=True,
+        )
+
+        self.assertIn("bs_model_expected_mdd", out.columns)
+        self.assertIn("bs_model_risk_score", out.columns)
+        self.assertGreater(float(out.loc[0, "bs_model_risk_score"]), float(out.loc[1, "bs_model_risk_score"]))
 
 
 if __name__ == "__main__":

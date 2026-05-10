@@ -65,6 +65,8 @@ SCORE_FEATURE_COLUMNS = [
     "bs_gate_label",
     "bs_gate_reason",
     "bs_model_prob",
+    "bs_model_expected_mdd",
+    "bs_model_risk_score",
     "bs_model_rank_score",
     "bs_model_version",
     "bs_consensus_score",
@@ -144,6 +146,8 @@ TRAINABLE_FEATURE_COLUMNS = [
 LEAKY_PREFIXES = ("ret_", "max_ret_", "mdd_", "hit_", "days_to_")
 MODEL_OUTPUT_COLUMNS = {
     "bs_model_prob",
+    "bs_model_expected_mdd",
+    "bs_model_risk_score",
     "bs_model_rank_score",
     "bs_model_version",
     "bs_consensus_score",
@@ -203,7 +207,9 @@ def _ensure_score_rank_daily_columns() -> None:
         "bs_gate_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_label VARCHAR(16) NULL COMMENT 'B点交易门禁标签' AFTER bs_gate_pass",
         "bs_gate_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_reason VARCHAR(128) NULL COMMENT 'B点交易门禁原因' AFTER bs_gate_label",
         "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_gate_reason",
-        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
+        "bs_model_expected_mdd": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_expected_mdd DECIMAL(10,6) NULL COMMENT 'B点模型预期最大回撤' AFTER bs_model_prob",
+        "bs_model_risk_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_risk_score DECIMAL(10,4) NULL COMMENT 'B点模型回撤风险分' AFTER bs_model_expected_mdd",
+        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_risk_score",
         "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",
         "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
         "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
@@ -298,6 +304,8 @@ def _load_first_buy_events() -> pd.DataFrame:
         s.bs_gate_label,
         s.bs_gate_reason,
         s.bs_model_prob,
+        s.bs_model_expected_mdd,
+        s.bs_model_risk_score,
         s.bs_model_rank_score,
         s.bs_model_version,
         s.bs_consensus_score,
@@ -376,6 +384,8 @@ def _load_active_panel() -> pd.DataFrame:
         s.bs_gate_label,
         s.bs_gate_reason,
         s.bs_model_prob,
+        s.bs_model_expected_mdd,
+        s.bs_model_risk_score,
         s.bs_model_rank_score,
         s.bs_model_version,
         s.bs_consensus_score,
@@ -458,6 +468,8 @@ def _load_latest_candidates() -> pd.DataFrame:
         s.bs_gate_label,
         s.bs_gate_reason,
         s.bs_model_prob,
+        s.bs_model_expected_mdd,
+        s.bs_model_risk_score,
         s.bs_model_rank_score,
         s.bs_model_version,
         s.bs_consensus_score,
@@ -621,6 +633,8 @@ def _add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
         "bs_gate_score",
         "bs_gate_pass",
         "bs_model_prob",
+        "bs_model_expected_mdd",
+        "bs_model_risk_score",
         "bs_model_rank_score",
         "s_rs",
         "s_liquidity",
@@ -891,7 +905,9 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 - `s_contraction`：波动收敛项，当前分值越高代表越收敛。
 - `s_liquidity`：流动性项。
 - `opt_score`：因子优化分，当前通常是 0-10 标尺。
+- `opt_momentum` / `opt_value` / `opt_quality` / `opt_technical` / `opt_capital` / `opt_chip` / `opt_size`：Factor Optimizer 分类因子子分项。
 - `claude_score`：Claude 六维评分，0-100 标尺。
+- `score_momentum` / `score_value` / `score_quality` / `score_technical` / `score_capital` / `score_chip`：Claude 六维子分项。
 - `bs_score`：当前系统的 B 点增强分，0-100 标尺。
 - `bs_entry_score`：买点后节奏分，偏好买点后温和确认、不过度追高。
 - `bs_score_v2`：规则增强版 B 点分，强化 RS、流动性、突破质量、节奏确认和风险约束。
@@ -899,6 +915,11 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 - `bs_research_score`：基于 2026 年以来样本研究得到的建议分，强调 `bs_score_v2` 与 `rs_liquidity_combo` 共振。
 - `bs_research_label`：`强观察` / `普通观察` / `回避`，用于页面研究提示，不等同于自动交易指令。
 - `bs_research_reason`：研究建议的主要原因，例如强势流动性共振、追高风险、流动性偏弱等。
+- `bs_gate_score` / `bs_gate_pass` / `bs_gate_label` / `bs_gate_reason`：两阶段交易门禁，先判断可买性，再进入排序。
+- `bs_model_prob`：模型对目标 `hit_N_10pct` 的校准命中概率。
+- `bs_model_expected_mdd` / `bs_model_risk_score`：模型回撤头输出，前者为预期最大回撤，后者为 0-100 风险友好分。
+- `bs_model_rank_score` / `bs_model_version`：模型综合排序分与模型版本。
+- `bs_consensus_score` / `bs_consensus_label` / `bs_consensus_reason`：规则、模型和门禁融合后的最终综合建议。
 - `score_*_gap`、`score_dispersion`：不同评分体系之间的分歧特征。
 - `rs_liquidity_combo`、`breakout_volume_combo`：组合交互特征。
 - `overextended_flag`、`pullback_flag`：买点后过热或破位提示。

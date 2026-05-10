@@ -19,10 +19,16 @@ def _safe_prob(values: np.ndarray) -> np.ndarray:
 
 def _empty_model_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    for col in ("bs_model_prob", "bs_model_rank_score", "bs_model_version"):
+    for col in ("bs_model_prob", "bs_model_expected_mdd", "bs_model_risk_score", "bs_model_rank_score", "bs_model_version"):
         if col not in out.columns:
             out[col] = None
     return out
+
+
+def _risk_score_from_mdd(values: np.ndarray | pd.Series) -> np.ndarray:
+    mdd = pd.to_numeric(pd.Series(values), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(-0.30)
+    score = 100.0 * (1.0 + mdd.clip(lower=-0.30, upper=0.0) / 0.30)
+    return score.clip(lower=0.0, upper=100.0).to_numpy(dtype=float)
 
 
 def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str = DEFAULT_TARGET) -> Path | None:
@@ -78,6 +84,8 @@ def apply_bs_model_scores(
         mask = pd.to_numeric(out["is_bs_candidate"], errors="coerce").fillna(0).astype(int) == 1
 
     out["bs_model_prob"] = None
+    out["bs_model_expected_mdd"] = None
+    out["bs_model_risk_score"] = None
     out["bs_model_rank_score"] = None
     out["bs_model_version"] = None
     if not mask.any():
@@ -87,7 +95,22 @@ def apply_bs_model_scores(
         warnings.simplefilter("ignore", RuntimeWarning)
         probs = _safe_prob(model.predict_proba(out.loc[mask, feature_cols])[:, 1])
     v2 = pd.to_numeric(out.loc[mask, "bs_score_v2"], errors="coerce").fillna(0.0) if "bs_score_v2" in out.columns else 0.0
-    rank = 70.0 * probs + 30.0 * (v2 / 100.0)
+    risk_model = model_bundle.get("risk_model")
+    expected_mdd = None
+    risk_score = None
+    if risk_model is not None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            expected_mdd = (
+                pd.Series(risk_model.predict(out.loc[mask, feature_cols]), index=out.loc[mask].index)
+                .replace([np.inf, -np.inf], np.nan)
+                .clip(lower=-0.60, upper=0.10)
+                .to_numpy(dtype=float)
+            )
+        risk_score = _risk_score_from_mdd(expected_mdd)
+        rank = 60.0 * probs + 25.0 * (v2 / 100.0) + 15.0 * (risk_score / 100.0)
+    else:
+        rank = 70.0 * probs + 30.0 * (v2 / 100.0)
 
     if "bs_gate_label" in out.columns:
         gate_label = out.loc[mask, "bs_gate_label"].fillna("").astype(str)
@@ -95,6 +118,9 @@ def apply_bs_model_scores(
         rank = np.where(gate_label.eq("观察"), rank - 5.0, rank)
 
     out.loc[mask, "bs_model_prob"] = np.round(probs, 6)
+    if expected_mdd is not None and risk_score is not None:
+        out.loc[mask, "bs_model_expected_mdd"] = np.round(expected_mdd, 6)
+        out.loc[mask, "bs_model_risk_score"] = np.round(risk_score, 4)
     out.loc[mask, "bs_model_rank_score"] = np.round(np.clip(rank, 0.0, 100.0), 4)
     out.loc[mask, "bs_model_version"] = str(model_bundle.get("version") or "")
     return out

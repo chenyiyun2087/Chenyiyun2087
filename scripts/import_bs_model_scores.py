@@ -37,7 +37,9 @@ def _normalize_symbol(value) -> str:
 def _ensure_columns(cursor) -> None:
     additions = {
         "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_research_reason",
-        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
+        "bs_model_expected_mdd": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_expected_mdd DECIMAL(10,6) NULL COMMENT 'B点模型预期最大回撤' AFTER bs_model_prob",
+        "bs_model_risk_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_risk_score DECIMAL(10,4) NULL COMMENT 'B点模型回撤风险分' AFTER bs_model_expected_mdd",
+        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_risk_score",
         "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",
         "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
         "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
@@ -78,10 +80,14 @@ def import_scores(model_dir: Path) -> dict:
         if pd.isna(row.get("p_signal")) or pd.isna(row.get("model_rank_score")):
             continue
         row["bs_model_prob"] = float(row["p_signal"])
+        row["bs_model_expected_mdd"] = None if pd.isna(row.get("expected_mdd")) else float(row.get("expected_mdd"))
+        row["bs_model_risk_score"] = None if pd.isna(row.get("risk_score")) else float(row.get("risk_score"))
         consensus = calculate_bs_consensus_signal(row)
         updates.append(
             (
                 round(float(row["p_signal"]), 6),
+                None if row["bs_model_expected_mdd"] is None else round(float(row["bs_model_expected_mdd"]), 6),
+                None if row["bs_model_risk_score"] is None else round(float(row["bs_model_risk_score"]), 4),
                 round(float(row["model_rank_score"]), 4),
                 version,
                 consensus["bs_consensus_score"],
@@ -99,6 +105,8 @@ def import_scores(model_dir: Path) -> dict:
                 """
                 UPDATE score_rank_daily
                 SET bs_model_prob=%s,
+                    bs_model_expected_mdd=%s,
+                    bs_model_risk_score=%s,
                     bs_model_rank_score=%s,
                     bs_model_version=%s,
                     bs_consensus_score=%s,

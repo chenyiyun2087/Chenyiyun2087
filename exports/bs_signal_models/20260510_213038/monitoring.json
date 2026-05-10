@@ -1,0 +1,110 @@
+{
+  "target": "hit_20_10pct",
+  "split_col": "split_hit_20_10pct",
+  "reliability": {
+    "train": [
+      {
+        "bin": "(0.1, 0.2]",
+        "rows": 1,
+        "avg_pred": 0.191748,
+        "hit_rate": 1.0
+      },
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 431,
+        "avg_pred": 0.255824,
+        "hit_rate": 0.24594
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 17,
+        "avg_pred": 0.331362,
+        "hit_rate": 0.764706
+      }
+    ],
+    "validation": [
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 5,
+        "avg_pred": 0.286183,
+        "hit_rate": 0.0
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 6,
+        "avg_pred": 0.304273,
+        "hit_rate": 0.0
+      }
+    ],
+    "test": [
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 37,
+        "avg_pred": 0.287712,
+        "hit_rate": 0.297297
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 23,
+        "avg_pred": 0.323053,
+        "hit_rate": 0.434783
+      }
+    ]
+  },
+  "daily_topn": {
+    "train": {
+      "days": 29,
+      "daily_precision_at_20_mean": 0.258563,
+      "daily_precision_at_20_p25": 0.1
+    },
+    "validation": {
+      "days": 3,
+      "daily_precision_at_20_mean": 0.0,
+      "daily_precision_at_20_p25": 0.0
+    },
+    "test": {
+      "days": 5,
+      "daily_precision_at_20_mean": 0.330214,
+      "daily_precision_at_20_p25": 0.272727
+    }
+  },
+  "latest_candidates": {
+    "rows": 242,
+    "p_signal_mean": 0.192501,
+    "expected_mdd_mean": -0.023588,
+    "risk_score_mean": 89.69432,
+    "model_rank_score_mean": 37.044026
+  },
+  "risk_regression": [
+    {
+      "model": "ridge_risk",
+      "split": "train",
+      "target": "mdd_20",
+      "rows": 449,
+      "mae": 0.047588,
+      "r2": 0.311954,
+      "actual_mean": -0.111896,
+      "pred_mean": -0.111896
+    },
+    {
+      "model": "ridge_risk",
+      "split": "validation",
+      "target": "mdd_20",
+      "rows": 11,
+      "mae": 0.060183,
+      "r2": 0.095155,
+      "actual_mean": -0.116929,
+      "pred_mean": -0.076686
+    },
+    {
+      "model": "ridge_risk",
+      "split": "test",
+      "target": "mdd_20",
+      "rows": 60,
+      "mae": 0.048418,
+      "r2": -0.35733,
+      "actual_mean": -0.067429,
+      "pred_mean": -0.050443
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import warnings
 from datetime import datetime
@@ -13,8 +14,8 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.compose import ColumnTransformer
 from sklearn.frozen import FrozenEstimator
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.metrics import average_precision_score, brier_score_loss, mean_absolute_error, r2_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -27,12 +28,16 @@ MODEL_OUTPUT_COLUMNS = {
     "bs_model_prob",
     "bs_model_rank_score",
     "bs_model_version",
+    "bs_model_expected_mdd",
+    "bs_model_risk_score",
     "bs_consensus_score",
     "bs_consensus_label",
     "bs_consensus_reason",
 }
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn.utils.extmath")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn.linear_model._base")
+warnings.filterwarnings("ignore", message="Skipping features without any observed values:*")
 
 
 def _latest_dataset_dir() -> Path:
@@ -54,6 +59,16 @@ def _load_feature_whitelist(dataset_dir: Path, df: pd.DataFrame) -> list[str]:
         and not c.startswith(LEAKY_PREFIXES)
         and c not in MODEL_OUTPUT_COLUMNS
     ]
+
+
+def _usable_feature_columns(df: pd.DataFrame, feature_cols: list[str]) -> list[str]:
+    usable = []
+    for col in feature_cols:
+        if col not in df.columns or col.startswith(LEAKY_PREFIXES) or col in MODEL_OUTPUT_COLUMNS:
+            continue
+        if df[col].notna().any():
+            usable.append(col)
+    return usable
 
 
 def _split_col_for_target(target: str) -> str:
@@ -104,6 +119,41 @@ def _build_pipeline(df: pd.DataFrame, feature_cols: list[str]) -> Pipeline:
     )
 
 
+def _build_regression_pipeline(df: pd.DataFrame, feature_cols: list[str]) -> Pipeline:
+    categorical = [
+        c
+        for c in feature_cols
+        if c in df.columns and (df[c].dtype == object or str(df[c].dtype).startswith("category"))
+    ]
+    numeric = [c for c in feature_cols if c not in categorical]
+
+    numeric_pipe = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    categorical_pipe = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore")),
+        ]
+    )
+    preprocessor = ColumnTransformer(
+        [
+            ("num", numeric_pipe, numeric),
+            ("cat", categorical_pipe, categorical),
+        ],
+        remainder="drop",
+    )
+    return Pipeline(
+        [
+            ("preprocess", preprocessor),
+            ("model", Ridge(alpha=2.0, random_state=42)),
+        ]
+    )
+
+
 def _has_two_classes(y: pd.Series) -> bool:
     return y.dropna().nunique() >= 2
 
@@ -112,6 +162,20 @@ def _predict_proba(model, df: pd.DataFrame, feature_cols: list[str]) -> np.ndarr
     if df.empty:
         return np.array([])
     return model.predict_proba(df[feature_cols])[:, 1]
+
+
+def _risk_score_from_mdd(expected_mdd: pd.Series | np.ndarray) -> pd.Series:
+    mdd = pd.to_numeric(pd.Series(expected_mdd), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(-0.30)
+    return (100.0 * (1.0 + mdd.clip(lower=-0.30, upper=0.0) / 0.30)).clip(lower=0.0, upper=100.0)
+
+
+def _rank_score(prob: pd.Series, bs_score_v2: pd.Series, risk_score: pd.Series | None = None) -> pd.Series:
+    p = pd.to_numeric(prob, errors="coerce").fillna(0.0)
+    v2 = pd.to_numeric(bs_score_v2, errors="coerce").fillna(0.0) / 100.0
+    if risk_score is None:
+        return 70.0 * p + 30.0 * v2
+    risk = pd.to_numeric(risk_score, errors="coerce").fillna(50.0) / 100.0
+    return 60.0 * p + 25.0 * v2 + 15.0 * risk
 
 
 def _safe_metric(fn, y_true: pd.Series, y_score: np.ndarray):
@@ -211,6 +275,38 @@ def _evaluate_split(name: str, frame: pd.DataFrame, target: str, score_col: str)
     return result
 
 
+def _evaluate_regression_split(name: str, frame: pd.DataFrame, target: str, pred_col: str) -> dict:
+    tmp = frame[[target, pred_col]].dropna().copy()
+    result = {
+        "model": "ridge_risk",
+        "split": name,
+        "target": target,
+        "rows": int(len(tmp)),
+        "mae": None,
+        "r2": None,
+        "actual_mean": None,
+        "pred_mean": None,
+    }
+    if tmp.empty:
+        return result
+    y = tmp[target].astype(float)
+    pred = tmp[pred_col].astype(float)
+    result["mae"] = round(float(mean_absolute_error(y, pred)), 6)
+    result["r2"] = round(float(r2_score(y, pred)), 6) if len(tmp) >= 2 else None
+    result["actual_mean"] = round(float(y.mean()), 6)
+    result["pred_mean"] = round(float(pred.mean()), 6)
+    return result
+
+
+def _risk_target_for(target: str, requested: str | None = None) -> str | None:
+    if requested:
+        return requested
+    parts = target.split("_")
+    if len(parts) >= 2 and parts[0] == "hit":
+        return f"mdd_{parts[1]}"
+    return None
+
+
 def _baseline_metrics(df: pd.DataFrame, target: str, split_col: str) -> list[dict]:
     metrics = []
     for score_col in ("bs_score", "bs_score_v2", "score"):
@@ -227,6 +323,11 @@ def _baseline_metrics(df: pd.DataFrame, target: str, split_col: str) -> list[dic
             item["model"] = score_col
             metrics.append(item)
     return metrics
+
+
+def _feature_schema_hash(feature_cols: list[str]) -> str:
+    payload = json.dumps(sorted(feature_cols), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _write_report(path: Path, summary: dict, metrics: list[dict], latest_path: Path) -> None:
@@ -263,7 +364,7 @@ def _write_report(path: Path, summary: dict, metrics: list[dict], latest_path: P
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def train(dataset_dir: Path, target: str) -> dict:
+def train(dataset_dir: Path, target: str, risk_target: str | None = None) -> dict:
     events_path = dataset_dir / "first_buy_events_labeled.csv"
     latest_path = dataset_dir / "latest_b_candidates.csv"
     if not events_path.exists():
@@ -274,13 +375,13 @@ def train(dataset_dir: Path, target: str) -> dict:
     latest = latest.replace([np.inf, -np.inf], np.nan)
     if target not in events.columns:
         raise ValueError(f"Target {target} not found in {events_path}")
+    risk_target = _risk_target_for(target, risk_target)
 
     split_col = _split_col_for_target(target)
     if split_col not in events.columns:
         split_col = "sample_split"
 
-    feature_cols = _load_feature_whitelist(dataset_dir, events)
-    feature_cols = [c for c in feature_cols if c in events.columns and not c.startswith(LEAKY_PREFIXES)]
+    feature_cols = _usable_feature_columns(events, _load_feature_whitelist(dataset_dir, events))
     usable = events[events[target].notna() & events[split_col].isin(["train", "validation", "test"])].copy()
     if usable.empty:
         raise ValueError(f"No labeled rows for {target}")
@@ -288,19 +389,51 @@ def train(dataset_dir: Path, target: str) -> dict:
     train_df = usable[usable[split_col] == "train"].copy()
     val_df = usable[usable[split_col] == "validation"].copy()
     test_df = usable[usable[split_col] == "test"].copy()
-    if train_df.empty or val_df.empty or not _has_two_classes(train_df[target]) or not _has_two_classes(val_df[target]):
-        raise ValueError("Need non-empty train/validation splits with both classes for calibrated logistic model.")
+    if train_df.empty or not _has_two_classes(train_df[target]):
+        raise ValueError("Need non-empty train split with both classes for calibrated logistic model.")
 
-    base_model = _build_pipeline(events, feature_cols)
-    base_model.fit(train_df[feature_cols], train_df[target].astype(int))
-    calibrated = CalibratedClassifierCV(FrozenEstimator(base_model), method="sigmoid")
-    calibrated.fit(val_df[feature_cols], val_df[target].astype(int))
+    calibration_method = "heldout_validation"
+    if not val_df.empty and _has_two_classes(val_df[target]):
+        base_model = _build_pipeline(events, feature_cols)
+        base_model.fit(train_df[feature_cols], train_df[target].astype(int))
+        calibrated = CalibratedClassifierCV(FrozenEstimator(base_model), method="sigmoid")
+        calibrated.fit(val_df[feature_cols], val_df[target].astype(int))
+    else:
+        calibration_method = "train_cv_fallback"
+        calibrated = CalibratedClassifierCV(_build_pipeline(events, feature_cols), method="sigmoid", cv=3)
+        calibrated.fit(train_df[feature_cols], train_df[target].astype(int))
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = MODEL_ROOT / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / f"logistic_calibrated_{target}.joblib"
-    joblib.dump({"model": calibrated, "feature_cols": feature_cols, "target": target}, model_path)
+    risk_model = None
+    risk_metrics = []
+    if risk_target and risk_target in usable.columns:
+        risk_train = train_df[train_df[risk_target].notna()].copy()
+        if len(risk_train) >= 20:
+            risk_model = _build_regression_pipeline(events, feature_cols)
+            risk_model.fit(risk_train[feature_cols], risk_train[risk_target].astype(float))
+            for split_name, frame in (("train", train_df), ("validation", val_df), ("test", test_df)):
+                if frame.empty or risk_target not in frame:
+                    continue
+                tmp = frame.copy()
+                valid = tmp[risk_target].notna()
+                if not valid.any():
+                    continue
+                pred = pd.Series(risk_model.predict(tmp.loc[valid, feature_cols]), index=tmp.loc[valid].index)
+                tmp.loc[valid, "predicted_mdd"] = pred.replace([np.inf, -np.inf], np.nan).clip(lower=-0.60, upper=0.10)
+                risk_metrics.append(_evaluate_regression_split(split_name, tmp.loc[valid], risk_target, "predicted_mdd"))
+
+    bundle = {
+        "model": calibrated,
+        "feature_cols": feature_cols,
+        "target": target,
+        "feature_schema_hash": _feature_schema_hash(feature_cols),
+        "risk_model": risk_model,
+        "risk_target": risk_target if risk_model is not None else None,
+    }
+    joblib.dump(bundle, model_path)
 
     metrics = []
     for split_name, frame in (("train", train_df), ("validation", val_df), ("test", test_df)):
@@ -320,11 +453,19 @@ def train(dataset_dir: Path, target: str) -> dict:
             latest[col] = np.nan
         latest_out = latest.copy()
         latest_out["p_signal"] = _predict_proba(calibrated, latest_out, feature_cols)
-        if {"p_signal", "bs_score_v2"}.issubset(latest_out.columns):
-            latest_out["model_rank_score"] = (
-                70.0 * latest_out["p_signal"].astype(float)
-                + 30.0 * (pd.to_numeric(latest_out["bs_score_v2"], errors="coerce").fillna(0.0) / 100.0)
+        if risk_model is not None:
+            latest_out["expected_mdd"] = (
+                pd.Series(risk_model.predict(latest_out[feature_cols]), index=latest_out.index)
+                .replace([np.inf, -np.inf], np.nan)
+                .clip(lower=-0.60, upper=0.10)
             )
+            latest_out["risk_score"] = _risk_score_from_mdd(latest_out["expected_mdd"]).to_numpy()
+        else:
+            latest_out["expected_mdd"] = np.nan
+            latest_out["risk_score"] = np.nan
+        if {"p_signal", "bs_score_v2"}.issubset(latest_out.columns):
+            risk = latest_out["risk_score"] if latest_out["risk_score"].notna().any() else None
+            latest_out["model_rank_score"] = _rank_score(latest_out["p_signal"], latest_out["bs_score_v2"], risk)
         else:
             latest_out["model_rank_score"] = latest_out["p_signal"].astype(float)
         latest_out = latest_out.sort_values("model_rank_score", ascending=False)
@@ -337,7 +478,10 @@ def train(dataset_dir: Path, target: str) -> dict:
         "dataset_dir": str(dataset_dir),
         "output_dir": str(out_dir),
         "target": target,
+        "risk_target": risk_target if risk_model is not None else None,
         "feature_count": len(feature_cols),
+        "feature_schema_hash": _feature_schema_hash(feature_cols),
+        "calibration_method": calibration_method,
         "train_rows": int(len(train_df)),
         "validation_rows": int(len(val_df)),
         "test_rows": int(len(test_df)),
@@ -345,6 +489,8 @@ def train(dataset_dir: Path, target: str) -> dict:
         "latest_candidates_scored": str(latest_scored_path),
         "feature_cols": feature_cols,
     }
+    if risk_model is not None:
+        summary["risk_model"] = "ridge"
     monitoring = {
         "target": target,
         "split_col": split_col,
@@ -353,9 +499,13 @@ def train(dataset_dir: Path, target: str) -> dict:
         "latest_candidates": {
             "rows": int(len(latest_out)),
             "p_signal_mean": round(float(latest_out["p_signal"].mean()), 6) if "p_signal" in latest_out and latest_out["p_signal"].notna().any() else None,
+            "expected_mdd_mean": round(float(latest_out["expected_mdd"].mean()), 6) if "expected_mdd" in latest_out and latest_out["expected_mdd"].notna().any() else None,
+            "risk_score_mean": round(float(latest_out["risk_score"].mean()), 6) if "risk_score" in latest_out and latest_out["risk_score"].notna().any() else None,
             "model_rank_score_mean": round(float(latest_out["model_rank_score"].mean()), 6) if "model_rank_score" in latest_out and latest_out["model_rank_score"].notna().any() else None,
         },
     }
+    if risk_metrics:
+        monitoring["risk_regression"] = risk_metrics
     for split_name, frame in (("train", train_df), ("validation", val_df), ("test", test_df)):
         if frame.empty:
             continue
@@ -364,8 +514,19 @@ def train(dataset_dir: Path, target: str) -> dict:
         monitoring["reliability"][split_name] = _reliability_bins(scored, target, "p_signal")
         monitoring["daily_topn"][split_name] = _daily_topn_stats(scored, target, "p_signal", k=20)
 
+    metrics.extend(risk_metrics)
+    manifest = {
+        "model_version": out_dir.name,
+        "model_path": str(model_path),
+        "target": target,
+        "risk_target": risk_target if risk_model is not None else None,
+        "feature_schema_hash": summary["feature_schema_hash"],
+        "feature_cols": feature_cols,
+        "trained_at": summary["trained_at"],
+    }
     (out_dir / "metrics.json").write_text(json.dumps({"summary": summary, "metrics": metrics}, ensure_ascii=False, indent=2), encoding="utf-8")
     (out_dir / "monitoring.json").write_text(json.dumps(monitoring, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "model_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_report(out_dir / "MODEL_REPORT.md", summary, metrics, latest_scored_path)
     print(json.dumps({"summary": summary, "metrics": metrics}, ensure_ascii=False, indent=2))
     return summary
@@ -375,9 +536,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train calibrated B-signal enhancement model.")
     parser.add_argument("--dataset-dir", type=Path, default=None, help="Export dataset directory. Defaults to latest export.")
     parser.add_argument("--target", default="hit_20_10pct", help="Binary target column.")
+    parser.add_argument("--risk-target", default=None, help="Regression target for risk head. Defaults to matching mdd_N.")
     args = parser.parse_args()
     dataset_dir = args.dataset_dir or _latest_dataset_dir()
-    train(dataset_dir, args.target)
+    train(dataset_dir, args.target, risk_target=args.risk_target)
 
 
 if __name__ == "__main__":

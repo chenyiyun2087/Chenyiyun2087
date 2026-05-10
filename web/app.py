@@ -2232,7 +2232,9 @@ def _ensure_score_rank_daily_score_columns(cursor):
         "bs_gate_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_label VARCHAR(16) NULL COMMENT 'B点交易门禁标签' AFTER bs_gate_pass",
         "bs_gate_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_gate_reason VARCHAR(128) NULL COMMENT 'B点交易门禁原因' AFTER bs_gate_label",
         "bs_model_prob": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_prob DECIMAL(10,6) NULL COMMENT 'B点模型20日命中概率' AFTER bs_research_reason",
-        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_prob",
+        "bs_model_expected_mdd": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_expected_mdd DECIMAL(10,6) NULL COMMENT 'B点模型预期最大回撤' AFTER bs_model_prob",
+        "bs_model_risk_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_risk_score DECIMAL(10,4) NULL COMMENT 'B点模型回撤风险分' AFTER bs_model_expected_mdd",
+        "bs_model_rank_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_rank_score DECIMAL(10,4) NULL COMMENT 'B点模型综合排序分' AFTER bs_model_risk_score",
         "bs_model_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_model_version VARCHAR(32) NULL COMMENT 'B点模型版本' AFTER bs_model_rank_score",
         "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
         "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
@@ -2840,7 +2842,7 @@ def sina_scores():
             all_scores = _enrich_bs_score_rows(cursor.fetchall())
 
             reverse = order == 'DESC'
-            if sort_by in {'bs_consensus_score', 'bs_model_rank_score', 'bs_model_prob', 'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score'}:
+            if sort_by in {'bs_consensus_score', 'bs_model_rank_score', 'bs_model_prob', 'bs_model_risk_score', 'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score'}:
                 all_scores.sort(key=lambda row: _safe_sort_float(row, sort_by), reverse=reverse)
             else:
                 all_scores.sort(
@@ -2978,6 +2980,8 @@ def sina_all_scores():
                 order_stmt = f"ORDER BY srd.bs_model_rank_score {order}"
             elif sort_by == 'bs_model_prob':
                 order_stmt = f"ORDER BY srd.bs_model_prob {order}"
+            elif sort_by == 'bs_model_risk_score':
+                order_stmt = f"ORDER BY srd.bs_model_risk_score {order}"
             else:
                 order_stmt = "ORDER BY srd.bs_research_score DESC, srd.bs_score_v2 DESC, srd.score DESC"
 
@@ -3092,6 +3096,8 @@ def sina_self_selected():
                 order_stmt = f"ORDER BY bs_model_rank_score {order}"
             elif sort_by == 'bs_model_prob':
                 order_stmt = f"ORDER BY bs_model_prob {order}"
+            elif sort_by == 'bs_model_risk_score':
+                order_stmt = f"ORDER BY bs_model_risk_score {order}"
             else:
                 order_stmt = "ORDER BY bs_research_score DESC, bs_score_v2 DESC, score DESC"
 
