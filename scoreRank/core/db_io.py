@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import pandas as pd
 import pymysql
 from urllib.parse import parse_qs, unquote, urlparse
 from typing import List, Optional
 
 from .config import CONFIG
+from .db_config import symbols_to_ts_codes
 from .logging_utils import get_score_rank_logger
 
 
@@ -79,13 +82,14 @@ def get_latest_trade_date(engine, symbols: List[str], adj_type: str) -> Optional
     normalized_adj_type = str(adj_type or "").strip().lower()
     source_table = CONFIG.get("raw_table", "tushare_stock.dwd_daily") if normalized_adj_type == "raw" else CONFIG["table"]
 
-    placeholders = ",".join(["%s"] * len(symbols))
+    ts_codes = symbols_to_ts_codes(symbols)
+    placeholders = ",".join(["%s"] * len(ts_codes))
     sql = f"""
     SELECT MAX(trade_date) AS max_date
     FROM {source_table}
-    WHERE SUBSTR(ts_code, 1, 6) IN ({placeholders})
+    WHERE ts_code IN ({placeholders})
     """
-    rows = _fetch_rows(engine, sql, tuple(symbols))
+    rows = _fetch_rows(engine, sql, tuple(ts_codes))
     max_date = rows[0]["max_date"] if rows else None
     if max_date:
         date_str = str(max_date)
@@ -121,7 +125,8 @@ def fetch_bars_batch(
         open_col, high_col, low_col, close_col = "adj_open", "adj_high", "adj_low", "adj_close"
 
     end_clause = "AND trade_date <= %s" if end_date_int else ""
-    placeholders = ",".join(["%s"] * len(symbols))
+    ts_codes = symbols_to_ts_codes(symbols)
+    placeholders = ",".join(["%s"] * len(ts_codes))
     sql = f"""
     SELECT
         test.ts_code,
@@ -135,14 +140,14 @@ def fetch_bars_batch(
     FROM {source_table} test
     WHERE trade_date >= %s
       {end_clause}
-      AND SUBSTR(ts_code, 1, 6) IN ({placeholders})
+      AND ts_code IN ({placeholders})
     ORDER BY ts_code, trade_date
     """
 
     params: list = [start_date_int]
     if end_date_int:
         params.append(end_date_int)
-    params.extend(symbols)
+    params.extend(ts_codes)
 
     rows = _fetch_rows(engine, sql, tuple(params))
     if not rows:

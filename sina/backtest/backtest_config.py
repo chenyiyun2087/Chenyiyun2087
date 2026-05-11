@@ -5,6 +5,8 @@ backtest configuration for sina B/S strategy
 
 from typing import TypedDict, Dict
 
+from scoreRank.core.db_config import build_sqlalchemy_url
+
 class BacktestConfig(TypedDict, total=False):
     # 数据库配置
     db_url: str
@@ -30,7 +32,7 @@ class BacktestConfig(TypedDict, total=False):
 
 CONFIG: BacktestConfig = {
     # 数据库配置
-    "db_url": "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4",
+    "db_url": build_sqlalchemy_url(),
     "kline_table": "tushare_stock.dwd_stock_daily_standard",
     "bs_table": "bs_detection_results",
     

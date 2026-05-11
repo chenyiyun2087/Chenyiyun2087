@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from scoreRank.core.bs_model_infer import apply_bs_model_scores  # noqa: E402
+from scoreRank.core.db_config import build_sqlalchemy_url, symbol_to_ts_code, symbols_to_ts_codes  # noqa: E402
 from scripts.export_signal_enhancement_dataset import _feature_whitelist, _time_split_for_mask  # noqa: E402
 
 
@@ -83,6 +84,24 @@ class TestBSSignalPipeline(unittest.TestCase):
         self.assertIn("bs_model_expected_mdd", out.columns)
         self.assertIn("bs_model_risk_score", out.columns)
         self.assertGreater(float(out.loc[0, "bs_model_risk_score"]), float(out.loc[1, "bs_model_risk_score"]))
+
+    def test_apply_bs_model_scores_records_missing_features(self):
+        df = pd.DataFrame([{"symbol": "000001", "is_bs_candidate": 1, "bs_score_v2": 80}])
+        with self.assertWarns(RuntimeWarning):
+            out = apply_bs_model_scores(
+                df,
+                {"model": FakeModel(), "feature_cols": ["bs_score_v2", "total_b_points"], "version": "unit"},
+                only_candidates=True,
+            )
+
+        self.assertIn("total_b_points", out.attrs["bs_model_missing_features"])
+        self.assertAlmostEqual(float(out.loc[0, "bs_model_prob"]), 0.8)
+
+    def test_db_config_builds_urls_without_embedded_secret_default(self):
+        self.assertEqual(symbol_to_ts_code("600000"), "600000.SH")
+        self.assertEqual(symbol_to_ts_code("300001"), "300001.SZ")
+        self.assertEqual(symbols_to_ts_codes(["830001"]), ["830001.BJ"])
+        self.assertIn("mysql+pymysql://root@localhost:3306/chenyiyun", build_sqlalchemy_url("MISSING_TEST_DB"))
 
 
 if __name__ == "__main__":

@@ -3,18 +3,19 @@ import pandas as pd
 import pymysql
 from datetime import datetime
 import glob
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from scoreRank.core.db_config import build_pymysql_config
 
 # Constants
 RESULT_DIR = "/Users/chenyiyun/PycharmProjects/Chenyiyun2087/sina/bs_detection/SinaAppBS/result/"
-MYSQL_CONFIG = {
-    "host": "localhost",
-    "port": 3306,
-    "user": "root",
-    "password": "19871019",
-    "database": "chenyiyun",
-    "charset": "utf8mb4",
-    "autocommit": True,
-}
+MYSQL_CONFIG = build_pymysql_config(dict_cursor=False)
+MYSQL_CONFIG["autocommit"] = True
 
 # Column Mapping (Excel -> DB)
 COLUMN_MAP = {

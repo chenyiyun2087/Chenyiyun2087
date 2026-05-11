@@ -1,14 +1,16 @@
 import pymysql
 import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from scoreRank.core.db_config import build_pymysql_config
 
 def init_db():
-    conn = pymysql.connect(
-        host='localhost', 
-        user='root', 
-        password='19871019', 
-        database='chenyiyun',
-        charset='utf8mb4'
-    )
+    conn = pymysql.connect(**build_pymysql_config(dict_cursor=False))
     cursor = conn.cursor()
     
     # Locate web_schema.sql in project root

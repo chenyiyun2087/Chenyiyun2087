@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from datetime import date, datetime
@@ -286,7 +287,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3306)
     parser.add_argument("--user", default="root")
-    parser.add_argument("--password", default="19871019")
+    parser.add_argument("--password", default=os.getenv("CHENYIYUN_DB_PASSWORD", ""))
     parser.add_argument("--account-database", default="chenyiyun")
     parser.add_argument("--warehouse-database", default="tushare_stock")
     parser.add_argument("--position-table", default="chenyiyun.live_positions")

@@ -9,6 +9,7 @@ Data sources:
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,16 +17,14 @@ import numpy as np
 import pandas as pd
 import pymysql
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-DEFAULT_MYSQL_CONFIG = {
-    "host": "localhost",
-    "port": 3306,
-    "user": "root",
-    "password": "19871019",
-    "database": "chenyiyun",
-    "charset": "utf8mb4",
-    "autocommit": True,
-}
+from scoreRank.core.db_config import build_pymysql_config, symbols_to_ts_codes
+
+DEFAULT_MYSQL_CONFIG = build_pymysql_config(dict_cursor=False)
+DEFAULT_MYSQL_CONFIG["autocommit"] = True
 
 DEFAULT_COLUMNS = [
     "batch_date",
@@ -170,22 +169,23 @@ def fetch_kline_with_warmup(
 
     column_map = resolve_kline_ohlc_columns(conn)
 
-    placeholders = ",".join(["%s"] * len(symbols))
+    ts_codes = symbols_to_ts_codes(symbols)
+    placeholders = ",".join(["%s"] * len(ts_codes))
     sql = f"""
     SELECT
-        SUBSTR(ts_code, 1, 6) AS stock_code,
+        ts_code,
         trade_date,
         {column_map['open']} AS `open`,
         {column_map['high']} AS `high`,
         {column_map['low']} AS `low`,
         {column_map['close']} AS `close`
     FROM tushare_stock.dwd_stock_daily_standard
-    WHERE SUBSTR(ts_code, 1, 6) IN ({placeholders})
+    WHERE ts_code IN ({placeholders})
       AND trade_date BETWEEN %s AND %s
-    ORDER BY stock_code ASC, trade_date ASC
+    ORDER BY ts_code ASC, trade_date ASC
     """
 
-    params = list(symbols)
+    params = list(ts_codes)
     params.extend([start_date, end_date_int])
 
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
@@ -196,6 +196,8 @@ def fetch_kline_with_warmup(
         return pd.DataFrame(columns=["stock_code", "trade_date", "open", "high", "low", "close"])
 
     df = pd.DataFrame(rows)
+    df["stock_code"] = df["ts_code"].astype(str).str.slice(0, 6)
+    df = df.drop(columns=["ts_code"])
     df["stock_code"] = df["stock_code"].map(normalize_symbol)
     df["trade_date"] = pd.to_datetime(df["trade_date"].astype(str), format="%Y%m%d", errors="coerce")
 

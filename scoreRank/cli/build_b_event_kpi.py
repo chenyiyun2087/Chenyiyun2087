@@ -7,6 +7,7 @@ import pandas as pd
 from sqlalchemy import bindparam, text
 
 from scoreRank.core.db_io import get_engine
+from scoreRank.core.db_config import symbols_to_ts_codes
 
 
 DDL_EVENT_FACT = """
@@ -126,22 +127,23 @@ def load_daily_prices(engine, symbols: list[str], start_dt: pd.Timestamp, end_dt
     if not symbols:
         return pd.DataFrame()
 
-    placeholders = ",".join([f":s{i}" for i in range(len(symbols))])
+    ts_codes = symbols_to_ts_codes(symbols)
+    placeholders = ",".join([f":s{i}" for i in range(len(ts_codes))])
     sql = text(
         f"""
-        SELECT SUBSTR(ts_code, 1, 6) AS symbol, trade_date, adj_close AS close, vol
+        SELECT ts_code, trade_date, adj_close AS close, vol
         FROM tushare_stock.dwd_stock_daily_standard
         WHERE trade_date >= :start_date
           AND trade_date <= :end_date
-          AND SUBSTR(ts_code, 1, 6) IN ({placeholders})
-        ORDER BY symbol, trade_date
+          AND ts_code IN ({placeholders})
+        ORDER BY ts_code, trade_date
         """
     )
     params = {
         "start_date": int(start_dt.strftime("%Y%m%d")),
         "end_date": int(end_dt.strftime("%Y%m%d")),
     }
-    params.update({f"s{i}": s for i, s in enumerate(symbols)})
+    params.update({f"s{i}": s for i, s in enumerate(ts_codes)})
 
     with engine.begin() as conn:
         px = pd.read_sql(sql, conn, params=params)
@@ -149,6 +151,8 @@ def load_daily_prices(engine, symbols: list[str], start_dt: pd.Timestamp, end_dt
     if px.empty:
         return px
 
+    px["symbol"] = px["ts_code"].astype(str).str.slice(0, 6)
+    px = px.drop(columns=["ts_code"])
     px["trade_date"] = pd.to_datetime(px["trade_date"].astype(str))
     px["close"] = pd.to_numeric(px["close"], errors="coerce")
     px["vol"] = pd.to_numeric(px["vol"], errors="coerce")

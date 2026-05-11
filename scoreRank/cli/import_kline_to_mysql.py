@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import argparse
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -52,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--db-password",
-        default="19871019",
+        default=os.getenv("CHENYIYUN_DB_PASSWORD", ""),
         help="MySQL password",
     )
     parser.add_argument(

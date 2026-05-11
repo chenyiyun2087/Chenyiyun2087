@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+import os
+from urllib.parse import quote_plus
+
+import pymysql
+
+
+def build_sqlalchemy_url(prefix: str = "CHENYIYUN_DB") -> str:
+    explicit = os.getenv(f"{prefix}_URL")
+    if explicit:
+        return explicit
+
+    user = os.getenv(f"{prefix}_USER", "root")
+    password = os.getenv(f"{prefix}_PASSWORD", "")
+    host = os.getenv(f"{prefix}_HOST", "localhost")
+    port = os.getenv(f"{prefix}_PORT", "3306")
+    database = os.getenv(f"{prefix}_NAME", "chenyiyun")
+    charset = os.getenv(f"{prefix}_CHARSET", "utf8mb4")
+    auth = quote_plus(user)
+    if password:
+        auth = f"{auth}:{quote_plus(password)}"
+    return f"mysql+pymysql://{auth}@{host}:{port}/{database}?charset={charset}"
+
+
+def build_pymysql_config(prefix: str = "CHENYIYUN_DB", dict_cursor: bool = True) -> dict:
+    config = {
+        "host": os.getenv(f"{prefix}_HOST", "localhost"),
+        "port": int(os.getenv(f"{prefix}_PORT", "3306")),
+        "user": os.getenv(f"{prefix}_USER", "root"),
+        "password": os.getenv(f"{prefix}_PASSWORD", ""),
+        "database": os.getenv(f"{prefix}_NAME", "chenyiyun"),
+        "charset": os.getenv(f"{prefix}_CHARSET", "utf8mb4"),
+    }
+    if dict_cursor:
+        config["cursorclass"] = pymysql.cursors.DictCursor
+    return config
+
+
+def symbol_to_ts_code(symbol: str) -> str:
+    s = str(symbol or "").strip()
+    digits = "".join(ch for ch in s if ch.isdigit())[-6:].zfill(6)
+    if digits.startswith(("6", "9")):
+        return f"{digits}.SH"
+    if digits.startswith(("4", "8")):
+        return f"{digits}.BJ"
+    return f"{digits}.SZ"
+
+
+def symbols_to_ts_codes(symbols: list[str] | tuple[str, ...]) -> list[str]:
+    return [symbol_to_ts_code(s) for s in symbols]

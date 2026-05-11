@@ -15,15 +15,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
+from scoreRank.core.db_config import build_pymysql_config, symbols_to_ts_codes
 
 
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "19871019",
-    "database": "chenyiyun",
-    "charset": "utf8mb4",
-}
+DB_CONFIG = build_pymysql_config(dict_cursor=False)
 
 EXPORT_ROOT = PROJECT_ROOT / "exports" / "signal_enhancement"
 
@@ -497,24 +492,26 @@ def _load_latest_candidates() -> pd.DataFrame:
 def _load_prices(symbols: list[str], start_date: pd.Timestamp, end_date: pd.Timestamp) -> pd.DataFrame:
     if not symbols:
         return pd.DataFrame()
-    placeholders = ",".join(["%s"] * len(symbols))
+    ts_codes = symbols_to_ts_codes(symbols)
+    placeholders = ",".join(["%s"] * len(ts_codes))
     sql = f"""
     SELECT
-        SUBSTR(ts_code, 1, 6) AS symbol,
+        ts_code,
         trade_date,
         adj_close AS close,
         vol
     FROM tushare_stock.dwd_stock_daily_standard
     WHERE trade_date >= %s
       AND trade_date <= %s
-      AND SUBSTR(ts_code, 1, 6) IN ({placeholders})
-    ORDER BY symbol, trade_date
+      AND ts_code IN ({placeholders})
+    ORDER BY ts_code, trade_date
     """
-    params = [int(start_date.strftime("%Y%m%d")), int(end_date.strftime("%Y%m%d"))] + symbols
+    params = [int(start_date.strftime("%Y%m%d")), int(end_date.strftime("%Y%m%d"))] + ts_codes
     px = _read_sql(sql, params=params)
     if px.empty:
         return px
-    px["symbol"] = _normalize_symbol(px["symbol"])
+    px["symbol"] = _normalize_symbol(px["ts_code"])
+    px = px.drop(columns=["ts_code"])
     px["trade_date"] = pd.to_datetime(px["trade_date"].astype(str))
     px["close"] = pd.to_numeric(px["close"], errors="coerce")
     px["vol"] = pd.to_numeric(px["vol"], errors="coerce")

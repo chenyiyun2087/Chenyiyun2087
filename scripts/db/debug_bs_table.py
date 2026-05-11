@@ -1,9 +1,17 @@
+import sys
+from pathlib import Path
+
 from sqlalchemy import create_engine, text
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from scoreRank.core.db_config import build_sqlalchemy_url
 
 
 def main() -> None:
-    db_url = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
-    engine = create_engine(db_url)
+    engine = create_engine(build_sqlalchemy_url())
 
     with engine.connect() as conn:
         try:

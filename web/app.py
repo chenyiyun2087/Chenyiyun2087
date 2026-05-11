@@ -18,6 +18,7 @@ from project_network import build_direct_network_env, enforce_direct_network
 enforce_direct_network()
 
 from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2, calculate_bs_trade_gate
+from scoreRank.core.db_config import build_pymysql_config
 
 try:
     from sina.live_tracker.live_tracker import LiveTracker
@@ -64,17 +65,10 @@ except ImportError:
     )
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key_here' # Needed for flash messages
+app.secret_key = os.getenv("CHENYIYUN_WEB_SECRET_KEY", os.urandom(32))
 
 # Database Configuration
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "19871019",
-    "database": "chenyiyun",
-    "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor
-}
+DB_CONFIG = build_pymysql_config()
 
 DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
     "stock_count": 10,

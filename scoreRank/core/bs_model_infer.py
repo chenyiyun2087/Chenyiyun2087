@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import hashlib
+import json
 import warnings
 
 import numpy as np
@@ -15,6 +17,11 @@ DEFAULT_TARGET = "hit_20_10pct"
 
 def _safe_prob(values: np.ndarray) -> np.ndarray:
     return np.clip(values.astype(float), 0.0, 1.0)
+
+
+def _feature_schema_hash(feature_cols: list[str]) -> str:
+    payload = json.dumps(sorted(feature_cols), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _empty_model_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -54,10 +61,26 @@ def load_latest_bs_model(model_root: Path | str = DEFAULT_MODEL_ROOT, target: st
     if not isinstance(bundle, dict) or "model" not in bundle:
         raise ValueError(f"Invalid B-signal model bundle: {model_path}")
     bundle = dict(bundle)
+    manifest_path = model_path.parent / "model_manifest.json"
+    manifest = {}
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_target = manifest.get("target")
+        if manifest_target and manifest_target != target:
+            raise ValueError(f"B-signal model target mismatch: expected {target}, manifest has {manifest_target}")
     bundle["model_path"] = str(model_path)
     bundle["version"] = model_path.parent.name
     bundle.setdefault("target", target)
     bundle.setdefault("feature_cols", [])
+    bundle.setdefault("manifest_path", str(manifest_path) if manifest_path.exists() else None)
+    feature_cols = list(bundle.get("feature_cols") or [])
+    computed_hash = _feature_schema_hash(feature_cols)
+    expected_hash = bundle.get("feature_schema_hash") or manifest.get("feature_schema_hash")
+    if expected_hash and expected_hash != computed_hash:
+        raise ValueError(
+            f"B-signal model feature schema mismatch: expected {expected_hash}, computed {computed_hash}"
+        )
+    bundle["feature_schema_hash"] = computed_hash
     return bundle
 
 
@@ -74,6 +97,17 @@ def apply_bs_model_scores(
     model = model_bundle.get("model")
     if model is None or not feature_cols:
         return _empty_model_columns(out)
+
+    missing_features = [col for col in feature_cols if col not in out.columns]
+    if missing_features:
+        warnings.warn(
+            "B-signal model input is missing feature columns; scoring will rely on model imputers: "
+            + ", ".join(missing_features[:12])
+            + ("..." if len(missing_features) > 12 else ""),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        out.attrs["bs_model_missing_features"] = missing_features
 
     for col in feature_cols:
         if col not in out.columns:

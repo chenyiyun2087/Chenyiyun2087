@@ -74,7 +74,11 @@ def fetch_bs_signals(engine, asof_date: pd.Timestamp, symbols: List[str]) -> pd.
     JOIN {CONFIG['bs_table']} bs 
         ON latest.stock_code = bs.stock_code AND latest.max_buy_date = bs.batch_date
     LEFT JOIN tushare_stock.dwd_stock_daily_standard k 
-        ON SUBSTR(k.ts_code, 1, 6) = latest.stock_code 
+        ON k.ts_code = CASE
+            WHEN latest.stock_code REGEXP '^[69]' THEN CONCAT(latest.stock_code, '.SH')
+            WHEN latest.stock_code REGEXP '^[48]' THEN CONCAT(latest.stock_code, '.BJ')
+            ELSE CONCAT(latest.stock_code, '.SZ')
+        END
         AND k.trade_date = latest.max_buy_date
     """
     

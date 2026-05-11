@@ -171,7 +171,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3306)
     parser.add_argument("--user", default="root")
-    parser.add_argument("--password", default="19871019")
+    parser.add_argument("--password", default=os.getenv("CHENYIYUN_DB_PASSWORD", ""))
     parser.add_argument("--database", default="tushare_stock", help="strategy warehouse DB")
     parser.add_argument("--total-equity", type=float, default=None, help="account total equity (CNY)")
     parser.add_argument("--account-database", default="chenyiyun", help="DB used to infer total_equity")

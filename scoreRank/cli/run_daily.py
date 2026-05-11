@@ -17,6 +17,7 @@ from scoreRank.core.db_io import (
 )
 # from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date  # DEPRECATED
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
+from scoreRank.core.db_config import symbols_to_ts_codes
 from scoreRank.core.bs_model_infer import apply_bs_model_scores, load_latest_bs_model
 from scoreRank.core.market_context import MARKET_CONTEXT_COLUMNS, attach_market_context, build_daily_market_context
 from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
@@ -153,25 +154,53 @@ def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: 
     if not symbols:
         return pd.DataFrame(columns=["symbol", "buy_point_close"])
 
-    placeholders = ",".join(["%s"] * len(symbols))
+    symbol_placeholders = ",".join(["%s"] * len(symbols))
+    ts_codes = symbols_to_ts_codes(symbols)
+    ts_placeholders = ",".join(["%s"] * len(ts_codes))
     sql = f"""
     SELECT
         latest.stock_code AS symbol,
+        latest.buy_signal_description,
+        latest.sell_signal_description,
+        latest.total_b_points,
+        latest.total_s_points,
+        latest.buy_points_count,
+        latest.sell_points_count,
+        (
+            SELECT COUNT(*)
+            FROM bs_detection_results history_buy
+            WHERE history_buy.stock_code = latest.stock_code
+              AND history_buy.has_buy_signal = 1
+              AND history_buy.batch_date <= latest.max_buy_date
+        ) AS event_seq_for_symbol,
         k.adj_close AS buy_point_close
     FROM (
-        SELECT stock_code, MAX(batch_date) AS max_buy_date
-        FROM bs_detection_results
-        WHERE has_buy_signal = 1
-          AND batch_date <= %s
-          AND stock_code IN ({placeholders})
-        GROUP BY stock_code
+        SELECT b.*, picked.max_buy_date
+        FROM bs_detection_results b
+        INNER JOIN (
+            SELECT stock_code, MAX(batch_date) AS max_buy_date
+            FROM bs_detection_results
+            WHERE has_buy_signal = 1
+              AND batch_date <= %s
+              AND stock_code IN ({symbol_placeholders})
+            GROUP BY stock_code
+        ) picked
+          ON picked.stock_code = b.stock_code
+         AND picked.max_buy_date = b.batch_date
+        WHERE b.has_buy_signal = 1
     ) latest
     LEFT JOIN tushare_stock.dwd_stock_daily_standard k
-        ON SUBSTR(k.ts_code, 1, 6) = latest.stock_code
+        ON k.ts_code = CASE
+            WHEN latest.stock_code REGEXP '^[69]' THEN CONCAT(latest.stock_code, '.SH')
+            WHEN latest.stock_code REGEXP '^[48]' THEN CONCAT(latest.stock_code, '.BJ')
+            ELSE CONCAT(latest.stock_code, '.SZ')
+        END
        AND k.trade_date = latest.max_buy_date
+       AND k.ts_code IN ({ts_placeholders})
     """
     params = [asof_date.strftime("%Y%m%d")]
     params.extend(symbols)
+    params.extend(ts_codes)
     df = _query_df(db_conf, sql, tuple(params))
     if df.empty:
         return df
@@ -599,8 +628,19 @@ def main():
             scored["symbol"] = scored["symbol"].map(_normalize_symbol)
             bs_signals["symbol"] = bs_signals["symbol"].map(_normalize_symbol)
             
+            bs_cols = [
+                "symbol",
+                "buy_point_close",
+                "buy_signal_description",
+                "sell_signal_description",
+                "total_b_points",
+                "total_s_points",
+                "buy_points_count",
+                "sell_points_count",
+                "event_seq_for_symbol",
+            ]
             scored = scored.merge(
-                bs_signals[["symbol", "buy_point_close"]],
+                bs_signals[[c for c in bs_cols if c in bs_signals.columns]],
                 on="symbol",
                 how="left"
             )

@@ -1,25 +1,19 @@
 import pymysql
 import sys
 import os
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from scoreRank.core.db_config import build_pymysql_config
 
 # Database configurations
-DB_CONFIG_SRC = {
-    "host": "localhost",
-    "user": "root",
-    "password": "19871019",
-    "database": "tushare_stock",
-    "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor
-}
+DB_CONFIG_SRC = build_pymysql_config(dict_cursor=True)
+DB_CONFIG_SRC["database"] = "tushare_stock"
 
-DB_CONFIG_DST = {
-    "host": "localhost",
-    "user": "root",
-    "password": "19871019",
-    "database": "chenyiyun",
-    "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor
-}
+DB_CONFIG_DST = build_pymysql_config(dict_cursor=True)
 
 def sync_trade_cal():
     print("Starting trade calendar synchronization...")
