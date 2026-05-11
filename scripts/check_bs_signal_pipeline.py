@@ -34,12 +34,11 @@ def _find_metric(metrics: list[dict], model: str, split: str) -> dict:
 
 def _normalize_model_score_columns(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
-    rename = {}
-    if "p_signal" in out.columns and "bs_model_prob" not in out.columns:
-        rename["p_signal"] = "bs_model_prob"
-    if "model_rank_score" in out.columns and "bs_model_rank_score" not in out.columns:
-        rename["model_rank_score"] = "bs_model_rank_score"
-    return out.rename(columns=rename)
+    if "p_signal" in out.columns:
+        out["bs_model_prob"] = out["p_signal"]
+    if "model_rank_score" in out.columns:
+        out["bs_model_rank_score"] = out["model_rank_score"]
+    return out
 
 
 def build_report(check_db: bool = False) -> dict:
@@ -72,7 +71,8 @@ def build_report(check_db: bool = False) -> dict:
         metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
         summary = metrics.get("summary", {})
         metric_rows = metrics.get("metrics", [])
-        test_metric = _find_metric(metric_rows, "logistic_calibrated", "test")
+        active_model_kind = model_bundle.get("model_kind") or summary.get("model_kind") or "logistic_calibrated"
+        test_metric = _find_metric(metric_rows, str(active_model_kind), "test")
         latest_path = Path(summary.get("latest_candidates_scored", model_dir / "latest_candidates_scored.csv"))
         latest_rows = None
         latest_scored = pd.DataFrame()
@@ -81,6 +81,7 @@ def build_report(check_db: bool = False) -> dict:
             latest_rows = int(len(latest_scored))
         report["model"] = {
             "version": model_bundle.get("version"),
+            "model_kind": active_model_kind,
             "target": model_bundle.get("target"),
             "risk_target": model_bundle.get("risk_target"),
             "feature_count": len(model_bundle.get("feature_cols") or []),

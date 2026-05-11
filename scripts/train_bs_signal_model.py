@@ -443,7 +443,7 @@ def train(dataset_dir: Path, target: str, risk_target: str | None = None, model_
         calibrated = CalibratedClassifierCV(_build_pipeline(events, feature_cols, model_kind=model_kind), method="sigmoid", cv=3)
         calibrated.fit(train_df[feature_cols], train_df[target].astype(int))
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     out_dir = MODEL_ROOT / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / _model_file_name(model_kind, target)

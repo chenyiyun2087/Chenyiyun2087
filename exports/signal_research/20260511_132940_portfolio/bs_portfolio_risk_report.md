@@ -1,0 +1,23 @@
+# B点组合风控评估
+
+- 数据目录：`exports/signal_enhancement/20260511_132510`
+- Horizon：20
+- TopN：10
+
+| score_col           |   horizon |   top_n | weight_mode   |   cost_bps |   slippage_bps |   days |   avg_selected |   avg_net_ret |   avg_gross_ret |    avg_mdd |   avg_max_position_weight |   avg_max_industry_weight |   industry_constraint_feasible_rate |   rows |
+|:--------------------|----------:|--------:|:--------------|-----------:|---------------:|-------:|---------------:|--------------:|----------------:|-----------:|--------------------------:|--------------------------:|------------------------------------:|-------:|
+| score               |        20 |      10 | equal         |         20 |             15 |     43 |              8 |     -0.048676 |       -0.041676 |  -0.106819 |                  0.181229 |                         1 |                                   0 |    nan |
+| score               |        20 |      10 | probability   |         20 |             15 |     43 |              8 |     -0.048676 |       -0.041676 |  -0.106819 |                  0.181229 |                         1 |                                   0 |    nan |
+| score               |        20 |      10 | risk_adjusted |         20 |             15 |     43 |              8 |     -0.048676 |       -0.041676 |  -0.106819 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_research_score   |        20 |      10 | equal         |         20 |             15 |     43 |              8 |     -0.049178 |       -0.042178 |  -0.110081 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_research_score   |        20 |      10 | probability   |         20 |             15 |     43 |              8 |     -0.049178 |       -0.042178 |  -0.110081 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_research_score   |        20 |      10 | risk_adjusted |         20 |             15 |     43 |              8 |     -0.049178 |       -0.042178 |  -0.110081 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_score_v2         |        20 |      10 | equal         |         20 |             15 |     43 |              8 |     -0.049951 |       -0.042951 |  -0.109551 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_score_v2         |        20 |      10 | probability   |         20 |             15 |     43 |              8 |     -0.049951 |       -0.042951 |  -0.109551 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_score_v2         |        20 |      10 | risk_adjusted |         20 |             15 |     43 |              8 |     -0.049951 |       -0.042951 |  -0.109551 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_consensus_score  |        20 |      10 | equal         |         20 |             15 |     43 |              8 |     -0.050695 |       -0.043695 |  -0.111426 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_consensus_score  |        20 |      10 | probability   |         20 |             15 |     43 |              8 |     -0.050695 |       -0.043695 |  -0.111426 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_consensus_score  |        20 |      10 | risk_adjusted |         20 |             15 |     43 |              8 |     -0.050695 |       -0.043695 |  -0.111426 |                  0.181229 |                         1 |                                   0 |    nan |
+| bs_model_rank_score |       nan |     nan | nan           |        nan |            nan |      0 |            nan |    nan        |      nan        | nan        |                nan        |                       nan |                                 nan |    905 |
+| bs_model_rank_score |       nan |     nan | nan           |        nan |            nan |      0 |            nan |    nan        |      nan        | nan        |                nan        |                       nan |                                 nan |    905 |
+| bs_model_rank_score |       nan |     nan | nan           |        nan |            nan |      0 |            nan |    nan        |      nan        | nan        |                nan        |                       nan |                                 nan |    905 |
