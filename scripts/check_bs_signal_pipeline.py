@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from scoreRank.core.bs_model_infer import DEFAULT_MODEL_ROOT, load_latest_bs_model
+from scoreRank.core.bs_monitoring import compare_distributions, summarize_score_distribution
 from scoreRank.core.db_io import get_engine
 
 
@@ -29,6 +30,16 @@ def _find_metric(metrics: list[dict], model: str, split: str) -> dict:
         if item.get("model") == model and item.get("split") == split:
             return item
     return {}
+
+
+def _normalize_model_score_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    rename = {}
+    if "p_signal" in out.columns and "bs_model_prob" not in out.columns:
+        rename["p_signal"] = "bs_model_prob"
+    if "model_rank_score" in out.columns and "bs_model_rank_score" not in out.columns:
+        rename["model_rank_score"] = "bs_model_rank_score"
+    return out.rename(columns=rename)
 
 
 def build_report(check_db: bool = False) -> dict:
@@ -64,8 +75,10 @@ def build_report(check_db: bool = False) -> dict:
         test_metric = _find_metric(metric_rows, "logistic_calibrated", "test")
         latest_path = Path(summary.get("latest_candidates_scored", model_dir / "latest_candidates_scored.csv"))
         latest_rows = None
+        latest_scored = pd.DataFrame()
         if latest_path.exists():
-            latest_rows = int(len(pd.read_csv(latest_path, dtype={"symbol": str})))
+            latest_scored = _normalize_model_score_columns(pd.read_csv(latest_path, dtype={"symbol": str}))
+            latest_rows = int(len(latest_scored))
         report["model"] = {
             "version": model_bundle.get("version"),
             "target": model_bundle.get("target"),
@@ -79,6 +92,10 @@ def build_report(check_db: bool = False) -> dict:
         }
         report["checks"]["model_exists"] = True
         report["checks"]["model_has_features"] = bool(model_bundle.get("feature_cols"))
+        report["monitoring"] = {
+            "latest_scored_distribution": summarize_score_distribution(latest_scored),
+            "warnings": [],
+        }
     else:
         report["checks"]["model_exists"] = False
         report["checks"]["model_has_features"] = False
@@ -101,6 +118,36 @@ def build_report(check_db: bool = False) -> dict:
                 }
                 report["checks"]["db_model_columns_present"] = sorted(required - existing) == []
                 report["db_missing_columns"] = sorted(required - existing)
+                if not report["db_missing_columns"]:
+                    cursor.execute(
+                        """
+                        SELECT bs_model_prob, bs_model_rank_score, bs_consensus_score
+                        FROM score_rank_daily
+                        WHERE trade_date = (SELECT MAX(trade_date) FROM score_rank_daily)
+                          AND is_bs_candidate = 1
+                        """
+                    )
+                    db_latest = pd.DataFrame(cursor.fetchall())
+                    current = report.setdefault("monitoring", {})
+                    current["db_latest_distribution"] = summarize_score_distribution(db_latest)
+
+    if dataset_dir and report.get("model"):
+        latest_candidates_path = dataset_dir / "latest_b_candidates.csv"
+        model_dir = Path(str(model_bundle["model_path"])).parent if model_bundle else None
+        latest_scored_path = model_dir / "latest_candidates_scored.csv" if model_dir else None
+        if latest_candidates_path.exists() and latest_scored_path and latest_scored_path.exists():
+            reference = pd.read_csv(latest_candidates_path, dtype={"symbol": str})
+            current = _normalize_model_score_columns(pd.read_csv(latest_scored_path, dtype={"symbol": str}))
+            compare_cols = [
+                c
+                for c in ("bs_score_v2", "bs_research_score", "bs_model_prob", "bs_model_rank_score", "bs_consensus_score")
+                if c in reference.columns or c in current.columns
+            ]
+            drift = compare_distributions(reference, current, compare_cols)
+            report.setdefault("monitoring", {})["latest_candidate_drift"] = drift
+            report["monitoring"]["warnings"] = sorted(
+                set(report["monitoring"].get("warnings", []) + drift.get("warnings", []))
+            )
 
     return report
 

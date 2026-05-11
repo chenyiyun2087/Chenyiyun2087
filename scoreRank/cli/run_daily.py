@@ -19,6 +19,8 @@ from scoreRank.core.db_io import (
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
 from scoreRank.core.db_config import symbols_to_ts_codes
 from scoreRank.core.bs_model_infer import apply_bs_model_scores, load_latest_bs_model
+from scoreRank.core.bs_threshold_policy import assign_shadow_pool, attach_threshold_columns, resolve_bs_thresholds
+from scoreRank.core.external_features import EXTERNAL_FEATURE_COLUMNS, attach_external_features
 from scoreRank.core.market_context import MARKET_CONTEXT_COLUMNS, attach_market_context, build_daily_market_context
 from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
 
@@ -131,6 +133,17 @@ def _ensure_score_rank_daily_schema(cursor):
         "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
         "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
         "bs_consensus_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_reason VARCHAR(128) NULL COMMENT 'B点综合建议原因' AFTER bs_consensus_label",
+        "dynamic_trade_threshold": "ALTER TABLE score_rank_daily ADD COLUMN dynamic_trade_threshold DECIMAL(10,2) NULL COMMENT '动态交易阈值' AFTER bs_consensus_reason",
+        "dynamic_watch_threshold": "ALTER TABLE score_rank_daily ADD COLUMN dynamic_watch_threshold DECIMAL(10,2) NULL COMMENT '动态观察阈值' AFTER dynamic_trade_threshold",
+        "bs_threshold_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_threshold_version VARCHAR(32) NULL COMMENT 'B点阈值策略版本' AFTER dynamic_watch_threshold",
+        "bs_threshold_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_threshold_reason VARCHAR(128) NULL COMMENT 'B点阈值调整原因' AFTER bs_threshold_version",
+        "pool_type_shadow": "ALTER TABLE score_rank_daily ADD COLUMN pool_type_shadow VARCHAR(20) NULL COMMENT '共识影子池类型' AFTER pool_type",
+        "pool_type_shadow_reason": "ALTER TABLE score_rank_daily ADD COLUMN pool_type_shadow_reason VARCHAR(128) NULL COMMENT '共识影子池原因' AFTER pool_type_shadow",
+        "industry": "ALTER TABLE score_rank_daily ADD COLUMN industry VARCHAR(64) NULL COMMENT '行业特征' AFTER name",
+        "fund_pe_ttm": "ALTER TABLE score_rank_daily ADD COLUMN fund_pe_ttm DECIMAL(12,4) NULL COMMENT '市盈率TTM' AFTER industry",
+        "fund_pb": "ALTER TABLE score_rank_daily ADD COLUMN fund_pb DECIMAL(12,4) NULL COMMENT '市净率' AFTER fund_pe_ttm",
+        "fund_roe": "ALTER TABLE score_rank_daily ADD COLUMN fund_roe DECIMAL(12,4) NULL COMMENT 'ROE' AFTER fund_pb",
+        "fund_netprofit_yoy": "ALTER TABLE score_rank_daily ADD COLUMN fund_netprofit_yoy DECIMAL(12,4) NULL COMMENT '归母净利润同比' AFTER fund_roe",
         "market_hs300_pct_chg": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_pct_chg DECIMAL(10,4) NULL COMMENT '沪深300当日涨跌幅' AFTER bs_research_reason",
         "market_hs300_ret_5": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_ret_5 DECIMAL(10,6) NULL COMMENT '沪深300近5日收益' AFTER market_hs300_pct_chg",
         "market_hs300_ret_20": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_ret_20 DECIMAL(10,6) NULL COMMENT '沪深300近20日收益' AFTER market_hs300_ret_5",
@@ -274,6 +287,8 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         's_liquidity': 's_liquidity',
         'trade_date': 'trade_date',
         'pool_type': 'pool_type',
+        'pool_type_shadow': 'pool_type_shadow',
+        'pool_type_shadow_reason': 'pool_type_shadow_reason',
         'is_limit_up': 'is_limit_up',
         'close_price': 'close_price',
         'buy_point_close': 'buy_point_close',
@@ -287,6 +302,7 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'opt_chip': 'opt_chip',
         'opt_size': 'opt_size',
         'claude_score': 'claude_score',
+        **{col: col for col in EXTERNAL_FEATURE_COLUMNS},
         'score_momentum': 'score_momentum',
         'score_value': 'score_value',
         'score_quality': 'score_quality',
@@ -313,6 +329,10 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'bs_consensus_score': 'bs_consensus_score',
         'bs_consensus_label': 'bs_consensus_label',
         'bs_consensus_reason': 'bs_consensus_reason',
+        'dynamic_trade_threshold': 'dynamic_trade_threshold',
+        'dynamic_watch_threshold': 'dynamic_watch_threshold',
+        'bs_threshold_version': 'bs_threshold_version',
+        'bs_threshold_reason': 'bs_threshold_reason',
         **{col: col for col in MARKET_CONTEXT_COLUMNS},
         'is_self_selected': 'is_self_selected',
         'is_bs_candidate': 'is_bs_candidate'
@@ -663,6 +683,7 @@ def main():
         scored['is_self_selected'] = scored['symbol'].isin(ss_set).astype(int)
         market_context = build_daily_market_context(scored, asof_date, engine)
         scored = attach_market_context(scored, market_context)
+        scored = attach_external_features(scored, asof_date, lambda sql, params=None: _query_df(engine, sql, params))
         scored = add_bs_enhanced_scores(scored)
         model_bundle = load_latest_bs_model(target=CONFIG.get("bs_model_target", "hit_20_10pct"))
         if model_bundle:
@@ -671,6 +692,9 @@ def main():
             print("No trained B-signal model found; bs_model_* columns will remain empty.")
         scored = apply_bs_model_scores(scored, model_bundle=model_bundle, only_candidates=True)
         scored = add_bs_enhanced_scores(scored)
+        threshold_decision = resolve_bs_thresholds(market_context, CONFIG)
+        scored = attach_threshold_columns(scored, threshold_decision)
+        scored = assign_shadow_pool(scored, CONFIG)
         
         # Logic for Pool Type (Only for B/S candidates)
         scored['pool_type'] = None
@@ -679,12 +703,12 @@ def main():
         gate_pass = pd.to_numeric(scored.get('bs_gate_pass', 0), errors='coerce').fillna(0).astype(int) == 1
         gate_label = scored.get('bs_gate_label', pd.Series("", index=scored.index)).fillna("").astype(str)
         mask_trade = mask_bs & gate_pass & (
-            scored['bs_score_v2'] >= CONFIG.get("bs_v2_trade_threshold", CONFIG.get("bs_trade_threshold", CONFIG["trade_threshold"]))
+            scored['bs_score_v2'] >= scored["dynamic_trade_threshold"]
         )
         scored.loc[mask_trade, 'pool_type'] = 'TRADE'
         
         mask_watch = mask_bs & (~mask_trade) & (
-            scored['bs_score_v2'] >= CONFIG.get("bs_v2_watch_threshold", CONFIG.get("bs_watch_threshold", CONFIG["watch_threshold"]))
+            scored['bs_score_v2'] >= scored["dynamic_watch_threshold"]
         ) & (gate_label != "过滤")
         mask_watch = mask_watch | (
             mask_bs
@@ -703,6 +727,8 @@ def main():
         print(f"  Total Scored: {len(scored)}")
         print(f"  TRADE Pool  : {len(scored[scored['pool_type']=='TRADE'])}")
         print(f"  WATCH Pool  : {len(scored[scored['pool_type']=='WATCH'])}")
+        print(f"  Shadow TRADE: {len(scored[scored['pool_type_shadow']=='TRADE'])}")
+        print(f"  Threshold   : {threshold_decision.trade_threshold}/{threshold_decision.watch_threshold} ({threshold_decision.reason})")
         print(f"  Self-Select : {len(scored[scored['is_self_selected']==1])}")
         print("--------------------------------------------------")
         

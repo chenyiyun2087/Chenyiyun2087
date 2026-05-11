@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
 from scoreRank.core.db_config import build_pymysql_config, symbols_to_ts_codes
+from scoreRank.core.external_features import EXTERNAL_FEATURE_COLUMNS
 
 
 DB_CONFIG = build_pymysql_config(dict_cursor=False)
@@ -41,6 +42,7 @@ SCORE_FEATURE_COLUMNS = [
     "opt_chip",
     "opt_size",
     "claude_score",
+    *EXTERNAL_FEATURE_COLUMNS,
     "score_momentum",
     "score_value",
     "score_quality",
@@ -67,11 +69,17 @@ SCORE_FEATURE_COLUMNS = [
     "bs_consensus_score",
     "bs_consensus_label",
     "bs_consensus_reason",
+    "dynamic_trade_threshold",
+    "dynamic_watch_threshold",
+    "bs_threshold_version",
+    "bs_threshold_reason",
     "close_price",
     "buy_point_close",
     "price_change_ratio",
     "is_limit_up",
     "pool_type",
+    "pool_type_shadow",
+    "pool_type_shadow_reason",
     "is_self_selected",
 ]
 
@@ -100,6 +108,7 @@ TRAINABLE_FEATURE_COLUMNS = [
     "opt_chip",
     "opt_size",
     "claude_score",
+    *EXTERNAL_FEATURE_COLUMNS,
     "score_momentum",
     "score_value",
     "score_quality",
@@ -148,6 +157,12 @@ MODEL_OUTPUT_COLUMNS = {
     "bs_consensus_score",
     "bs_consensus_label",
     "bs_consensus_reason",
+    "dynamic_trade_threshold",
+    "dynamic_watch_threshold",
+    "bs_threshold_version",
+    "bs_threshold_reason",
+    "pool_type_shadow",
+    "pool_type_shadow_reason",
 }
 MARKET_CONTEXT_COLUMNS = [
     "market_hs300_pct_chg",
@@ -209,6 +224,17 @@ def _ensure_score_rank_daily_columns() -> None:
         "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
         "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
         "bs_consensus_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_reason VARCHAR(128) NULL COMMENT 'B点综合建议原因' AFTER bs_consensus_label",
+        "dynamic_trade_threshold": "ALTER TABLE score_rank_daily ADD COLUMN dynamic_trade_threshold DECIMAL(10,2) NULL COMMENT '动态交易阈值' AFTER bs_consensus_reason",
+        "dynamic_watch_threshold": "ALTER TABLE score_rank_daily ADD COLUMN dynamic_watch_threshold DECIMAL(10,2) NULL COMMENT '动态观察阈值' AFTER dynamic_trade_threshold",
+        "bs_threshold_version": "ALTER TABLE score_rank_daily ADD COLUMN bs_threshold_version VARCHAR(32) NULL COMMENT 'B点阈值策略版本' AFTER dynamic_watch_threshold",
+        "bs_threshold_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_threshold_reason VARCHAR(128) NULL COMMENT 'B点阈值调整原因' AFTER bs_threshold_version",
+        "pool_type_shadow": "ALTER TABLE score_rank_daily ADD COLUMN pool_type_shadow VARCHAR(20) NULL COMMENT '共识影子池类型' AFTER pool_type",
+        "pool_type_shadow_reason": "ALTER TABLE score_rank_daily ADD COLUMN pool_type_shadow_reason VARCHAR(128) NULL COMMENT '共识影子池原因' AFTER pool_type_shadow",
+        "industry": "ALTER TABLE score_rank_daily ADD COLUMN industry VARCHAR(64) NULL COMMENT '行业特征' AFTER name",
+        "fund_pe_ttm": "ALTER TABLE score_rank_daily ADD COLUMN fund_pe_ttm DECIMAL(12,4) NULL COMMENT '市盈率TTM' AFTER industry",
+        "fund_pb": "ALTER TABLE score_rank_daily ADD COLUMN fund_pb DECIMAL(12,4) NULL COMMENT '市净率' AFTER fund_pe_ttm",
+        "fund_roe": "ALTER TABLE score_rank_daily ADD COLUMN fund_roe DECIMAL(12,4) NULL COMMENT 'ROE' AFTER fund_pb",
+        "fund_netprofit_yoy": "ALTER TABLE score_rank_daily ADD COLUMN fund_netprofit_yoy DECIMAL(12,4) NULL COMMENT '归母净利润同比' AFTER fund_roe",
     }
     conn = _connect()
     try:
@@ -280,6 +306,11 @@ def _load_first_buy_events() -> pd.DataFrame:
         s.opt_chip,
         s.opt_size,
         s.claude_score,
+        s.industry,
+        s.fund_pe_ttm,
+        s.fund_pb,
+        s.fund_roe,
+        s.fund_netprofit_yoy,
         s.score_momentum,
         s.score_value,
         s.score_quality,
@@ -306,11 +337,17 @@ def _load_first_buy_events() -> pd.DataFrame:
         s.bs_consensus_score,
         s.bs_consensus_label,
         s.bs_consensus_reason,
+        s.dynamic_trade_threshold,
+        s.dynamic_watch_threshold,
+        s.bs_threshold_version,
+        s.bs_threshold_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
         s.is_limit_up,
         s.pool_type,
+        s.pool_type_shadow,
+        s.pool_type_shadow_reason,
         s.is_self_selected
     FROM bs_detection_results b
     INNER JOIN score_rank_daily s
@@ -360,6 +397,11 @@ def _load_active_panel() -> pd.DataFrame:
         s.opt_chip,
         s.opt_size,
         s.claude_score,
+        s.industry,
+        s.fund_pe_ttm,
+        s.fund_pb,
+        s.fund_roe,
+        s.fund_netprofit_yoy,
         s.score_momentum,
         s.score_value,
         s.score_quality,
@@ -386,11 +428,17 @@ def _load_active_panel() -> pd.DataFrame:
         s.bs_consensus_score,
         s.bs_consensus_label,
         s.bs_consensus_reason,
+        s.dynamic_trade_threshold,
+        s.dynamic_watch_threshold,
+        s.bs_threshold_version,
+        s.bs_threshold_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
         s.is_limit_up,
         s.pool_type,
+        s.pool_type_shadow,
+        s.pool_type_shadow_reason,
         s.is_self_selected,
         f.is_eligible,
         f.is_high_risk,
@@ -444,6 +492,11 @@ def _load_latest_candidates() -> pd.DataFrame:
         s.opt_chip,
         s.opt_size,
         s.claude_score,
+        s.industry,
+        s.fund_pe_ttm,
+        s.fund_pb,
+        s.fund_roe,
+        s.fund_netprofit_yoy,
         s.score_momentum,
         s.score_value,
         s.score_quality,
@@ -470,11 +523,17 @@ def _load_latest_candidates() -> pd.DataFrame:
         s.bs_consensus_score,
         s.bs_consensus_label,
         s.bs_consensus_reason,
+        s.dynamic_trade_threshold,
+        s.dynamic_watch_threshold,
+        s.bs_threshold_version,
+        s.bs_threshold_reason,
         s.close_price,
         s.buy_point_close,
         s.price_change_ratio,
         s.is_limit_up,
         s.pool_type,
+        s.pool_type_shadow,
+        s.pool_type_shadow_reason,
         s.is_self_selected
     FROM score_rank_daily s
     WHERE s.trade_date = (SELECT MAX(trade_date) FROM score_rank_daily)

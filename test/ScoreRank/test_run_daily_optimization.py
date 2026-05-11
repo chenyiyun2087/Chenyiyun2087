@@ -29,6 +29,12 @@ class TestRunDailyOptimization(unittest.TestCase):
         self.assertIn('"total_b_points"', self.content)
         self.assertIn('"buy_points_count"', self.content)
 
+    def test_dynamic_threshold_and_shadow_pool_are_applied(self):
+        self.assertIn("resolve_bs_thresholds(market_context, CONFIG)", self.content)
+        self.assertIn("assign_shadow_pool(scored, CONFIG)", self.content)
+        self.assertIn("'pool_type_shadow': 'pool_type_shadow'", self.content)
+        self.assertIn("'dynamic_trade_threshold': 'dynamic_trade_threshold'", self.content)
+
 
 if __name__ == '__main__':
     unittest.main()
