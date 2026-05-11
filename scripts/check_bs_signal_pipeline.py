@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from scoreRank.core.bs_model_infer import DEFAULT_MODEL_ROOT, load_latest_bs_model
+from scoreRank.core.bs_model_infer import DEFAULT_TARGET, load_latest_bs_model
 from scoreRank.core.bs_monitoring import compare_distributions, summarize_score_distribution
 from scoreRank.core.db_io import get_engine
 
@@ -41,9 +41,34 @@ def _normalize_model_score_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_report(check_db: bool = False) -> dict:
-    dataset_dir = _latest_dir(DATASET_ROOT)
-    model_bundle = load_latest_bs_model()
+def _load_bs_model_from_dir(model_dir: Path, target: str = DEFAULT_TARGET) -> dict | None:
+    manifest_path = model_dir / "model_manifest.json"
+    if not manifest_path.exists():
+        return load_latest_bs_model(model_root=model_dir, target=target)
+    import joblib
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    model_path = Path(str(manifest.get("model_path") or ""))
+    if not model_path.exists():
+        model_path = model_dir / model_path.name
+    if not model_path.exists():
+        return None
+    bundle = joblib.load(model_path)
+    if not isinstance(bundle, dict) or "model" not in bundle:
+        return None
+    bundle = dict(bundle)
+    bundle["model_path"] = str(model_path)
+    bundle["version"] = model_dir.name
+    bundle.setdefault("target", manifest.get("target") or target)
+    bundle.setdefault("feature_cols", manifest.get("feature_cols") or [])
+    bundle.setdefault("feature_schema_hash", manifest.get("feature_schema_hash"))
+    bundle.setdefault("manifest_path", str(manifest_path))
+    return bundle
+
+
+def build_report(check_db: bool = False, dataset_dir: Path | None = None, model_dir: Path | None = None) -> dict:
+    dataset_dir = dataset_dir or _latest_dir(DATASET_ROOT)
+    model_bundle = _load_bs_model_from_dir(model_dir) if model_dir else load_latest_bs_model()
     report = {
         "dataset": None,
         "model": None,
@@ -156,8 +181,10 @@ def build_report(check_db: bool = False) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check B-signal enhancement dataset/model/DB readiness.")
     parser.add_argument("--check-db", action="store_true", help="Also connect to MySQL and verify score_rank_daily columns.")
+    parser.add_argument("--dataset-dir", type=Path, default=None, help="Dataset directory to check. Defaults to latest export.")
+    parser.add_argument("--model-dir", type=Path, default=None, help="Model directory to check. Defaults to latest model root.")
     args = parser.parse_args()
-    print(json.dumps(build_report(check_db=args.check_db), ensure_ascii=False, indent=2))
+    print(json.dumps(build_report(check_db=args.check_db, dataset_dir=args.dataset_dir, model_dir=args.model_dir), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

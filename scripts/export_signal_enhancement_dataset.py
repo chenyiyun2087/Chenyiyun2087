@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+from scoreRank.core.ashare_data_center_features import ALL_ADC_FEATURE_COLUMNS, attach_adc_features
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
 from scoreRank.core.db_config import build_pymysql_config, symbols_to_ts_codes
 from scoreRank.core.external_features import EXTERNAL_FEATURE_COLUMNS
@@ -146,6 +147,7 @@ TRAINABLE_FEATURE_COLUMNS = [
     "market_avg_research_score",
     "market_avg_price_change",
     "market_regime",
+    *ALL_ADC_FEATURE_COLUMNS,
 ]
 LEAKY_PREFIXES = ("ret_", "max_ret_", "mdd_", "hit_", "days_to_")
 MODEL_OUTPUT_COLUMNS = {
@@ -205,6 +207,7 @@ FIELD_GROUPS = {
     ],
     "model_outputs": ["bs_model_prob", "bs_model_expected_mdd", "bs_model_risk_score", "bs_model_rank_score", "bs_model_version"],
     "market_context": MARKET_CONTEXT_COLUMNS,
+    "ashare_data_center": ALL_ADC_FEATURE_COLUMNS,
     "engineered": [
         "score_opt_gap",
         "score_claude_gap",
@@ -1026,6 +1029,10 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 - `split_protocol.json`：horizon-aware walk-forward + embargo 切分协议。
 - `summary.json`：本次导出的统计摘要。
 
+## AShareDataCenter 增强字段
+
+本数据包会按 `symbol/ts_code + event_date/asof_date` 尝试连接 `tushare_stock` 中的 AShareDataCenter ADS/DWS/ODS 因子表，并以 `adc_*` 前缀输出。若某张表或字段在当前环境中不存在，对应字段保留为空，不中断导出。
+
 ## 防泄漏约束
 
 训练新信号时只能使用 `ret_*`、`max_ret_*`、`mdd_*`、`hit_*`、`days_to_*` 以外的字段作为特征。所有未来收益字段只能作为标签或评估指标。
@@ -1098,6 +1105,7 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 - `market_bs_count` / `market_bs_ratio`：当日评分池中 B 点候选数量与占比，用于衡量信号拥挤度。
 - `market_limit_up_rate` / `market_avg_score` / `market_avg_v2` / `market_avg_research_score`：当日市场横截面环境。
 - `market_regime`：基于沪深300 20 日收益和当日跌幅的简化市场状态，`risk_on` / `neutral` / `risk_off`。
+- `adc_*`：来自 AShareDataCenter 的同日可见增强字段，包括技术形态、资金流、融资情绪、筹码、流动性、风险、综合评分、前复权技术指标和 B/S 信号确认字段；字段名前缀用于避免和当前项目已有字段冲突。
 - `close_price`：事件日收盘价。
 - `buy_point_close`：买点日收盘价。
 - `price_change_ratio`：事件日相对买点价涨幅百分比。
@@ -1143,6 +1151,11 @@ def main() -> None:
     prices = _load_prices(symbols, start, end)
     market_context = _load_market_context(start, end)
 
+    first_buy = attach_adc_features(first_buy, "event_date_key", _read_sql)
+    active_panel = attach_adc_features(active_panel, "event_date_key", _read_sql)
+    if not latest.empty:
+        latest = attach_adc_features(latest, "asof_date_key", _read_sql)
+
     first_labeled, price_paths = _horizon_labels(first_buy, prices)
     active_panel = _panel_horizon_labels(active_panel, prices)
     first_labeled = _add_engineered_features(first_labeled)
@@ -1182,6 +1195,7 @@ def main() -> None:
         "overextended_flag",
         "pullback_flag",
         *MARKET_CONTEXT_COLUMNS,
+        *ALL_ADC_FEATURE_COLUMNS,
     ]
     split_cols = [c for c in first_labeled.columns if c.startswith("split_")]
     label_cols = [c for c in first_labeled.columns if c.startswith(("ret_", "max_ret_", "mdd_", "hit_", "days_to_"))]
@@ -1206,6 +1220,7 @@ def main() -> None:
             "overextended_flag",
             "pullback_flag",
             *MARKET_CONTEXT_COLUMNS,
+            *ALL_ADC_FEATURE_COLUMNS,
             "is_eligible",
             "is_high_risk",
         ]
@@ -1229,6 +1244,7 @@ def main() -> None:
             "overextended_flag",
             "pullback_flag",
             *MARKET_CONTEXT_COLUMNS,
+            *ALL_ADC_FEATURE_COLUMNS,
         ]
         latest = latest[[c for c in latest_front if c in latest.columns]]
 

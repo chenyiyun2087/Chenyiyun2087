@@ -226,7 +226,15 @@ def main() -> None:
         report_outputs = {"rankers": rankers, "holding": holding, "portfolio": portfolio}
 
     check_summary, check_log = _run_optional(
-        [sys.executable, "scripts/check_bs_signal_pipeline.py", "--check-db"],
+        [
+            sys.executable,
+            "scripts/check_bs_signal_pipeline.py",
+            "--check-db",
+            "--dataset-dir",
+            str(dataset_dir),
+            "--model-dir",
+            str(model_dir),
+        ],
         enabled=not args.skip_check,
     )
     test_summary, test_log = _run_optional(

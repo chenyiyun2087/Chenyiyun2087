@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from scoreRank.core.bs_model_infer import apply_bs_model_scores  # noqa: E402
+from scoreRank.core.ashare_data_center_features import attach_adc_features  # noqa: E402
 from scoreRank.core.db_config import build_sqlalchemy_url, symbol_to_ts_code, symbols_to_ts_codes  # noqa: E402
 from scripts.export_signal_enhancement_dataset import _feature_whitelist, _time_split_for_mask  # noqa: E402
 
@@ -40,14 +41,58 @@ class TestBSSignalPipeline(unittest.TestCase):
         self.assertGreater((test_min - val_max).days, 1)
 
     def test_feature_whitelist_excludes_model_outputs(self):
-        df = pd.DataFrame(columns=["bs_score_v2", "bs_gate_score", "bs_model_prob", "bs_consensus_score", "ret_20"])
+        df = pd.DataFrame(columns=["bs_score_v2", "bs_gate_score", "bs_model_prob", "bs_consensus_score", "ret_20", "adc_hma_slope"])
         features = _feature_whitelist(df)
 
         self.assertIn("bs_score_v2", features)
         self.assertIn("bs_gate_score", features)
+        self.assertIn("adc_hma_slope", features)
         self.assertNotIn("bs_model_prob", features)
         self.assertNotIn("bs_consensus_score", features)
         self.assertNotIn("ret_20", features)
+
+    def test_attach_adc_features_uses_prefixed_point_in_time_fields(self):
+        def fake_query(sql, params=None):
+            sql_lower = sql.lower()
+            if "information_schema.columns" in sql_lower:
+                table = params[1]
+                columns = {
+                    "dws_tech_pattern": ["ts_code", "trade_date", "hma_slope", "rsi_14", "boll_width"],
+                    "dws_capital_flow": ["ts_code", "trade_date", "main_net_ratio", "main_net_ma5"],
+                }.get(table, [])
+                return pd.DataFrame({"column_name": columns})
+            if "dws_tech_pattern" in sql_lower:
+                return pd.DataFrame(
+                    [
+                        {
+                            "adc_ts_code": "000001.SZ",
+                            "adc_event_date_key": "20260508",
+                            "adc_hma_slope": 0.03,
+                            "adc_rsi_14": 58,
+                            "adc_boll_width": 0.12,
+                        }
+                    ]
+                )
+            if "dws_capital_flow" in sql_lower:
+                return pd.DataFrame(
+                    [
+                        {
+                            "adc_ts_code": "000001.SZ",
+                            "adc_event_date_key": "20260508",
+                            "adc_main_net_ratio": 0.08,
+                            "adc_main_net_ma5": 0.03,
+                        }
+                    ]
+                )
+            return pd.DataFrame()
+
+        df = pd.DataFrame([{"symbol": "1", "event_date_key": 20260508}])
+        out = attach_adc_features(df, "event_date_key", fake_query)
+
+        self.assertIn("adc_hma_slope", out.columns)
+        self.assertIn("adc_main_net_accel", out.columns)
+        self.assertAlmostEqual(float(out.loc[0, "adc_hma_slope"]), 0.03)
+        self.assertAlmostEqual(float(out.loc[0, "adc_main_net_accel"]), 0.05)
 
     def test_apply_bs_model_scores_only_scores_candidates(self):
         df = pd.DataFrame(

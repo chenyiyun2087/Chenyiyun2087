@@ -162,6 +162,18 @@ TASKS = {
         "next_run": "-",
         "trading_day_only": True,
     },
+    "bs_signal_monthly_cycle": {
+        "name": "B点模型月度闭环",
+        "description": "月度执行数据包导出、全模型训练、模型写回与后续评估报告",
+        "script": "scripts/ops/run_monthly_bs_signal_enhancement_cycle.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": True,
+        "schedule_time": "21:45",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
     "eastmoney": {
         "name": "eastmoney 策略扫描",
         "description": "东方财富社区舆情扫描与个股热度分析",
@@ -238,7 +250,16 @@ TASKS = {
 TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
-SCHEDULED_TASK_WHITELIST = {"sina_picture", "sina_analyse", "sina_score", "sina_bs_consensus", "sina_m8", "sina_snapshot", "sina_m7_sell"}
+SCHEDULED_TASK_WHITELIST = {
+    "sina_picture",
+    "sina_analyse",
+    "sina_score",
+    "sina_bs_consensus",
+    "sina_m8",
+    "sina_snapshot",
+    "sina_m7_sell",
+    "bs_signal_monthly_cycle",
+}
 
 NOTIFICATION_CHANNEL_DEFS = [
     ("feishu", "飞书"),
@@ -1995,6 +2016,12 @@ def _build_task_script_parts(task_name, run_options=None):
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
             return [script, '--date', date_iso]
         return [script]
+    if task_name == 'bs_signal_monthly_cycle':
+        args = []
+        if datestr and len(datestr) == 8:
+            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
+            args.extend(['--date', date_iso, '--force'])
+        return [script, *args]
     if task_name == 'eastmoney':
         return [script, '--export', 'result']
     if task_name == 'chenyiyun_selected':
