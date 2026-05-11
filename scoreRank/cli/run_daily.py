@@ -21,6 +21,7 @@ from scoreRank.core.db_config import symbols_to_ts_codes
 from scoreRank.core.bs_model_infer import apply_bs_model_scores, load_latest_bs_model
 from scoreRank.core.bs_threshold_policy import assign_shadow_pool, attach_threshold_columns, resolve_bs_thresholds
 from scoreRank.core.external_features import EXTERNAL_FEATURE_COLUMNS, attach_external_features
+from scoreRank.core.logging_utils import get_score_rank_logger
 from scoreRank.core.market_context import MARKET_CONTEXT_COLUMNS, attach_market_context, build_daily_market_context
 from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
 
@@ -54,6 +55,15 @@ except Exception:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
+
+logger = get_score_rank_logger(__name__)
+
+
+def _announce(message: str, *args) -> None:
+    text = message % args if args else message
+    print(text)
+    logger.info(text)
+
 
 def _query_df(db_conf: dict, sql: str, params=None) -> pd.DataFrame:
     return query_df(db_conf, sql, params)
@@ -472,7 +482,7 @@ def main():
         # 判断当前时间是否在16:30之后 (Unless forced or specific date provided)
         if not args.force and not args.date:
             if current_time.hour < 16 or (current_time.hour == 16 and current_time.minute < 30):
-                print(f"当前时间 {current_time} 未到收盘后处理时间(16:30)，程序退出")
+                _announce("当前时间 %s 未到收盘后处理时间(16:30)，程序退出", current_time)
                 return
 
         engine = get_engine()
@@ -484,14 +494,14 @@ def main():
              target_date_str = dt.strftime("%Y%m%d")
              asof_date = dt
         else:
-             print("Step 1: Get latest B/S signals...")
+             _announce("Step 1: Get latest B/S signals...")
              latest_bs_date = _query_scalar(
                  engine,
                  "SELECT MAX(batch_date) AS max_batch_date FROM bs_detection_results"
              )
                 
              if not latest_bs_date:
-                print("No B/S detection results found.")
+                _announce("No B/S detection results found.")
                 return
              target_date_str = latest_bs_date
              asof_date = pd.to_datetime(latest_bs_date)
@@ -502,8 +512,8 @@ def main():
             "SELECT MAX(trade_date) AS max_trade_date FROM tushare_stock.dwd_stock_daily_standard"
         )
             
-        print(f"Target B/S Date: {asof_date.date()}")
-        print(f"Latest Data Date: {latest_data_date}")
+        _announce("Target B/S Date: %s", asof_date.date())
+        _announce("Latest Data Date: %s", latest_data_date)
 
         # 2) Load Symbols from B/S Detection (Candidates for TRADE/WATCH)
         # Modified to support time-travel (snapshot at target_date)
@@ -532,7 +542,7 @@ def main():
         
         df_bs = _query_df(engine, sql_bs, {"target_date": target_date_str})
         bs_symbols = _normalize_symbol_list(df_bs.get("stock_code", pd.Series(dtype=str)).tolist())
-        print(f"Found {len(bs_symbols)} B/S candidate symbols as of {target_date_str}.")
+        _announce("Found %s B/S candidate symbols as of %s.", len(bs_symbols), target_date_str)
 
         # 3) Load Self-selected Stocks (Candidates for Self-selected Monitor)
         sql_ss = """
@@ -550,13 +560,14 @@ def main():
             df_excel = pd.read_excel(excel_path)
             col_name = 'stock_code' if 'stock_code' in df_excel.columns else df_excel.columns[0]
             excel_symbols = _normalize_symbol_list(df_excel[col_name].tolist())
-            print(f"Loaded {len(excel_symbols)} symbols from {excel_path}")
+            _announce("Loaded %s symbols from %s", len(excel_symbols), excel_path)
         except Exception as e:
+            logger.warning("Failed to load %s: %s", excel_path, e)
             print(f"Warning: Failed to load {excel_path}: {e}")
             excel_symbols = []
 
         ss_symbols = sorted(set(db_ss_symbols + excel_symbols))
-        print(f"Found {len(ss_symbols)} total self-selected symbols (DB: {len(db_ss_symbols)}, Excel: {len(excel_symbols)}).")
+        _announce("Found %s total self-selected symbols (DB: %s, Excel: %s).", len(ss_symbols), len(db_ss_symbols), len(excel_symbols))
         
         # 4) Fetch All A-Share Symbols
         sql_all = """
@@ -566,14 +577,14 @@ def main():
         """
         df_all = _query_df(engine, sql_all)
         all_listed_symbols = _normalize_symbol_list(df_all.get("stock_code", pd.Series(dtype=str)).tolist())
-        print(f"Found {len(all_listed_symbols)} total listed A-shares.")
+        _announce("Found %s total listed A-shares.", len(all_listed_symbols))
 
         # 4.5) Union Symbols for Scoring (Score ALL listed A-shares)
         all_symbols = sorted(set(bs_symbols + ss_symbols + all_listed_symbols))
-        print(f"Total unique symbols to score: {len(all_symbols)}")
+        _announce("Total unique symbols to score: %s", len(all_symbols))
 
         if not all_symbols:
-            print("No symbols to score.")
+            _announce("No symbols to score.")
             return
 
         # 5) Fetch Data & Score using Strategies
@@ -583,22 +594,22 @@ def main():
         if args.strategy == "claude":
             from scoreRank.strategies.claude import ClaudeScorer
             scorer = ClaudeScorer()
-            print("Running ClaudeScorer...")
+            _announce("Running ClaudeScorer...")
         else:
             scorer = TechnicalScorer()
-            print("Running TechnicalScorer...")
+            _announce("Running TechnicalScorer...")
         
         # Execute Scoring
         scored = scorer.score(all_symbols, asof_date, engine)
         
         if scored.empty:
-            print("No scores generated.")
+            _announce("No scores generated.")
             return
 
         # [NEW] Always calculate Claude Score for display if not already main strategy
         if args.strategy != "claude":
             try:
-                print("Calculating Claude Score for display...")
+                _announce("Calculating Claude Score for display...")
                 from scoreRank.strategies.claude import ClaudeScorer
                 claude_scorer = ClaudeScorer()
                 claude_scored = claude_scorer.score(all_symbols, asof_date, engine)
@@ -620,6 +631,7 @@ def main():
                 else:
                     scored['claude_score'] = None
             except Exception as e:
+                logger.exception("Error calculating Claude Score")
                 print(f"Error calculating Claude Score: {e}")
                 scored['claude_score'] = None
         else:
@@ -631,7 +643,7 @@ def main():
         start_date = (asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d")
         end_date = asof_date.strftime("%Y-%m-%d")
         
-        print("Fetching raw data for enrichment...")
+        _announce("Fetching raw data for enrichment...")
         raw_data = fetch_bars_batch(
             engine, all_symbols, adj_type=CONFIG["adj_for_signal"],
             start_date=start_date, end_date=end_date
@@ -687,9 +699,9 @@ def main():
         scored = add_bs_enhanced_scores(scored)
         model_bundle = load_latest_bs_model(target=CONFIG.get("bs_model_target", "hit_20_10pct"))
         if model_bundle:
-            print(f"Applying B-signal model: {model_bundle.get('version')}")
+            _announce("Applying B-signal model: %s", model_bundle.get("version"))
         else:
-            print("No trained B-signal model found; bs_model_* columns will remain empty.")
+            _announce("No trained B-signal model found; bs_model_* columns will remain empty.")
         scored = apply_bs_model_scores(scored, model_bundle=model_bundle, only_candidates=True)
         scored = add_bs_enhanced_scores(scored)
         threshold_decision = resolve_bs_thresholds(market_context, CONFIG)
@@ -722,15 +734,15 @@ def main():
         # This supports the 'All A-Shares' scoring tab logic.
         df_to_save = scored.copy()
         
-        print("--------------------------------------------------")
-        print("Scoring Summary:")
-        print(f"  Total Scored: {len(scored)}")
-        print(f"  TRADE Pool  : {len(scored[scored['pool_type']=='TRADE'])}")
-        print(f"  WATCH Pool  : {len(scored[scored['pool_type']=='WATCH'])}")
-        print(f"  Shadow TRADE: {len(scored[scored['pool_type_shadow']=='TRADE'])}")
-        print(f"  Threshold   : {threshold_decision.trade_threshold}/{threshold_decision.watch_threshold} ({threshold_decision.reason})")
-        print(f"  Self-Select : {len(scored[scored['is_self_selected']==1])}")
-        print("--------------------------------------------------")
+        _announce("--------------------------------------------------")
+        _announce("Scoring Summary:")
+        _announce("  Total Scored: %s", len(scored))
+        _announce("  TRADE Pool  : %s", len(scored[scored['pool_type']=='TRADE']))
+        _announce("  WATCH Pool  : %s", len(scored[scored['pool_type']=='WATCH']))
+        _announce("  Shadow TRADE: %s", len(scored[scored['pool_type_shadow']=='TRADE']))
+        _announce("  Threshold   : %s/%s (%s)", threshold_decision.trade_threshold, threshold_decision.watch_threshold, threshold_decision.reason)
+        _announce("  Self-Select : %s", len(scored[scored['is_self_selected']==1]))
+        _announce("--------------------------------------------------")
         
         # Limit pools logic (optional, respecting config if needed)
         # For simplicity, we save all qualifying.
@@ -741,6 +753,7 @@ def main():
         save_scores_to_db(df_to_save, asof_date)
 
     except Exception as e:
+        logger.exception("Execution failed")
         print(f"Execution failed: {e}")
         import traceback
         traceback.print_exc()

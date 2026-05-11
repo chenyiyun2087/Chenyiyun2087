@@ -17,6 +17,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import average_precision_score, brier_score_loss, mean_absolute_error, r2_score, roc_auc_score
 from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
@@ -75,7 +76,7 @@ def _split_col_for_target(target: str) -> str:
     return f"split_{target}"
 
 
-def _build_pipeline(df: pd.DataFrame, feature_cols: list[str]) -> Pipeline:
+def _build_pipeline(df: pd.DataFrame, feature_cols: list[str], model_kind: str = "logistic_calibrated") -> Pipeline:
     categorical = [
         c
         for c in feature_cols
@@ -83,12 +84,10 @@ def _build_pipeline(df: pd.DataFrame, feature_cols: list[str]) -> Pipeline:
     ]
     numeric = [c for c in feature_cols if c not in categorical]
 
-    numeric_pipe = Pipeline(
-        [
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-        ]
-    )
+    numeric_steps = [("imputer", SimpleImputer(strategy="median"))]
+    if model_kind == "logistic_calibrated":
+        numeric_steps.append(("scaler", StandardScaler()))
+    numeric_pipe = Pipeline(numeric_steps)
     categorical_pipe = Pipeline(
         [
             ("imputer", SimpleImputer(strategy="most_frequent")),
@@ -102,21 +101,24 @@ def _build_pipeline(df: pd.DataFrame, feature_cols: list[str]) -> Pipeline:
         ],
         remainder="drop",
     )
-    return Pipeline(
-        [
-            ("preprocess", preprocessor),
-            (
-                "model",
-                LogisticRegression(
-                    C=0.3,
-                    class_weight="balanced",
-                    solver="liblinear",
-                    max_iter=1000,
-                    random_state=42,
-                ),
-            ),
-        ]
-    )
+    if model_kind == "random_forest":
+        estimator = RandomForestClassifier(
+            n_estimators=240,
+            min_samples_leaf=8,
+            max_depth=6,
+            class_weight="balanced_subsample",
+            random_state=42,
+            n_jobs=-1,
+        )
+    else:
+        estimator = LogisticRegression(
+            C=0.3,
+            class_weight="balanced",
+            solver="liblinear",
+            max_iter=1000,
+            random_state=42,
+        )
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
 
 
 def _build_regression_pipeline(df: pd.DataFrame, feature_cols: list[str]) -> Pipeline:
@@ -364,7 +366,13 @@ def _write_report(path: Path, summary: dict, metrics: list[dict], latest_path: P
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def train(dataset_dir: Path, target: str, risk_target: str | None = None) -> dict:
+def _model_file_name(model_kind: str, target: str) -> str:
+    if model_kind == "logistic_calibrated":
+        return f"logistic_calibrated_{target}.joblib"
+    return f"{model_kind}_{target}.joblib"
+
+
+def train(dataset_dir: Path, target: str, risk_target: str | None = None, model_kind: str = "logistic_calibrated") -> dict:
     events_path = dataset_dir / "first_buy_events_labeled.csv"
     latest_path = dataset_dir / "latest_b_candidates.csv"
     if not events_path.exists():
@@ -390,23 +398,23 @@ def train(dataset_dir: Path, target: str, risk_target: str | None = None) -> dic
     val_df = usable[usable[split_col] == "validation"].copy()
     test_df = usable[usable[split_col] == "test"].copy()
     if train_df.empty or not _has_two_classes(train_df[target]):
-        raise ValueError("Need non-empty train split with both classes for calibrated logistic model.")
+        raise ValueError("Need non-empty train split with both classes for calibrated model.")
 
     calibration_method = "heldout_validation"
     if not val_df.empty and _has_two_classes(val_df[target]):
-        base_model = _build_pipeline(events, feature_cols)
+        base_model = _build_pipeline(events, feature_cols, model_kind=model_kind)
         base_model.fit(train_df[feature_cols], train_df[target].astype(int))
         calibrated = CalibratedClassifierCV(FrozenEstimator(base_model), method="sigmoid")
         calibrated.fit(val_df[feature_cols], val_df[target].astype(int))
     else:
         calibration_method = "train_cv_fallback"
-        calibrated = CalibratedClassifierCV(_build_pipeline(events, feature_cols), method="sigmoid", cv=3)
+        calibrated = CalibratedClassifierCV(_build_pipeline(events, feature_cols, model_kind=model_kind), method="sigmoid", cv=3)
         calibrated.fit(train_df[feature_cols], train_df[target].astype(int))
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = MODEL_ROOT / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
-    model_path = out_dir / f"logistic_calibrated_{target}.joblib"
+    model_path = out_dir / _model_file_name(model_kind, target)
     risk_model = None
     risk_metrics = []
     if risk_target and risk_target in usable.columns:
@@ -432,6 +440,7 @@ def train(dataset_dir: Path, target: str, risk_target: str | None = None) -> dic
         "feature_schema_hash": _feature_schema_hash(feature_cols),
         "risk_model": risk_model,
         "risk_target": risk_target if risk_model is not None else None,
+        "model_kind": model_kind,
     }
     joblib.dump(bundle, model_path)
 
@@ -442,7 +451,7 @@ def train(dataset_dir: Path, target: str, risk_target: str | None = None) -> dic
         scored = frame.copy()
         scored["p_signal"] = _predict_proba(calibrated, scored, feature_cols)
         item = _evaluate_split(split_name, scored, target, "p_signal")
-        item["model"] = "logistic_calibrated"
+        item["model"] = model_kind
         metrics.append(item)
     metrics.extend(_baseline_metrics(usable, target, split_col))
 
@@ -478,6 +487,7 @@ def train(dataset_dir: Path, target: str, risk_target: str | None = None) -> dic
         "dataset_dir": str(dataset_dir),
         "output_dir": str(out_dir),
         "target": target,
+        "model_kind": model_kind,
         "risk_target": risk_target if risk_model is not None else None,
         "feature_count": len(feature_cols),
         "feature_schema_hash": _feature_schema_hash(feature_cols),
@@ -519,6 +529,7 @@ def train(dataset_dir: Path, target: str, risk_target: str | None = None) -> dic
         "model_version": out_dir.name,
         "model_path": str(model_path),
         "target": target,
+        "model_kind": model_kind,
         "risk_target": risk_target if risk_model is not None else None,
         "feature_schema_hash": summary["feature_schema_hash"],
         "feature_cols": feature_cols,
@@ -537,9 +548,22 @@ def main() -> None:
     parser.add_argument("--dataset-dir", type=Path, default=None, help="Export dataset directory. Defaults to latest export.")
     parser.add_argument("--target", default="hit_20_10pct", help="Binary target column.")
     parser.add_argument("--risk-target", default=None, help="Regression target for risk head. Defaults to matching mdd_N.")
+    parser.add_argument(
+        "--model-kind",
+        default="logistic_calibrated",
+        choices=["logistic_calibrated", "random_forest", "all"],
+        help="Classifier family to train. 'all' trains comparable model bundles.",
+    )
     args = parser.parse_args()
     dataset_dir = args.dataset_dir or _latest_dataset_dir()
-    train(dataset_dir, args.target, risk_target=args.risk_target)
+    if args.model_kind == "all":
+        summaries = [
+            train(dataset_dir, args.target, risk_target=args.risk_target, model_kind=kind)
+            for kind in ("logistic_calibrated", "random_forest")
+        ]
+        print(json.dumps({"models": summaries}, ensure_ascii=False, indent=2))
+    else:
+        train(dataset_dir, args.target, risk_target=args.risk_target, model_kind=args.model_kind)
 
 
 if __name__ == "__main__":

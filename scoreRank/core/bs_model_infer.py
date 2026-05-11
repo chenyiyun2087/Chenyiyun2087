@@ -44,10 +44,20 @@ def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str =
         return None
     paths = []
     for model_dir in sorted([p for p in root.glob("*") if p.is_dir()], reverse=True):
-        preferred = model_dir / f"logistic_calibrated_{target}.joblib"
-        if preferred.exists():
-            return preferred
-        paths.extend(sorted(model_dir.glob("logistic_calibrated_*.joblib"), reverse=True))
+        manifest = model_dir / "model_manifest.json"
+        if manifest.exists():
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                manifest_path = Path(str(data.get("model_path", "")))
+                if manifest_path.exists() and data.get("target", target) == target:
+                    return manifest_path
+            except Exception:
+                pass
+        for name in (f"logistic_calibrated_{target}.joblib", f"random_forest_{target}.joblib"):
+            preferred = model_dir / name
+            if preferred.exists():
+                return preferred
+        paths.extend(sorted(model_dir.glob(f"*_{target}.joblib"), reverse=True))
     return paths[0] if paths else None
 
 

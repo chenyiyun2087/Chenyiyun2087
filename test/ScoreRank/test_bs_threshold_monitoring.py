@@ -8,9 +8,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from scoreRank.core.bs_monitoring import compare_distributions, shadow_pool_overlap, topn_rank_report  # noqa: E402
+from scoreRank.core.bs_monitoring import compare_distributions, cost_sensitive_topn_report, shadow_pool_overlap, topn_rank_report  # noqa: E402
 from scoreRank.core.bs_threshold_policy import assign_shadow_pool, resolve_bs_thresholds  # noqa: E402
 from scoreRank.core.external_features import attach_external_features  # noqa: E402
+from scripts.evaluate_bs_holding_policy import assign_holding_actions, evaluate_holding_policy  # noqa: E402
+from scripts.optimize_bs_thresholds import evaluate_threshold_candidate  # noqa: E402
+from scripts.train_bs_signal_model import _build_pipeline, _model_file_name  # noqa: E402
 
 
 class TestBSThresholdMonitoring(unittest.TestCase):
@@ -99,6 +102,63 @@ class TestBSThresholdMonitoring(unittest.TestCase):
 
         self.assertIn("industry", out.columns)
         self.assertIn("fund_pe_ttm", out.columns)
+
+    def test_cost_sensitive_topn_subtracts_round_trip_cost(self):
+        df = pd.DataFrame(
+            [
+                {"event_date": "2026-01-01", "score_a": 90, "hit_20_10pct": 1, "ret_20": 0.10, "max_ret_20": 0.2, "mdd_20": -0.02},
+                {"event_date": "2026-01-01", "score_a": 80, "hit_20_10pct": 0, "ret_20": 0.02, "max_ret_20": 0.05, "mdd_20": -0.08},
+            ]
+        )
+        report = cost_sensitive_topn_report(df, ["score_a"], horizon=20, top_ns=(1,), cost_bps=10, slippage_bps=5)
+
+        self.assertAlmostEqual(float(report.iloc[0]["avg_net_ret"]), 0.097)
+
+    def test_threshold_candidate_scores_trade_pool(self):
+        df = pd.DataFrame(
+            [
+                {"is_bs_candidate": 1, "bs_gate_label": "可买", "bs_consensus_score": 70, "bs_model_rank_score": 64, "bs_score_v2": 60, "hit_20_10pct": 1, "ret_20": 0.08, "max_ret_20": 0.15, "mdd_20": -0.03},
+                {"is_bs_candidate": 1, "bs_gate_label": "过滤", "bs_consensus_score": 90, "bs_model_rank_score": 90, "bs_score_v2": 90, "hit_20_10pct": 0, "ret_20": -0.05, "max_ret_20": 0.01, "mdd_20": -0.12},
+            ]
+        )
+        result = evaluate_threshold_candidate(
+            df,
+            {
+                "consensus_trade": 66,
+                "consensus_watch": 54,
+                "model_trade": 62,
+                "model_watch": 52,
+                "v2_trade": 72,
+                "v2_watch": 58,
+            },
+            horizon=20,
+            min_trade_rows=1,
+        )
+
+        self.assertEqual(result["trade_rows"], 1)
+        self.assertEqual(result["trade_hit_rate"], 1.0)
+
+    def test_holding_policy_assigns_actions(self):
+        df = pd.DataFrame(
+            [
+                {"bs_gate_label": "可买", "bs_consensus_score": 66, "bs_model_rank_score": 60, "ret_3": 0.01, "ret_5": 0.02, "mdd_10": -0.02, "hit_5_10pct": 0, "hit_20_10pct": 1, "ret_20": 0.12, "mdd_20": -0.04},
+                {"bs_gate_label": "过滤", "bs_consensus_score": 80, "bs_model_rank_score": 80, "ret_3": 0.01, "ret_5": 0.01, "mdd_10": -0.01, "hit_5_10pct": 0, "hit_20_10pct": 0, "ret_20": -0.06, "mdd_20": -0.10},
+            ]
+        )
+        actions = assign_holding_actions(df)
+        report = evaluate_holding_policy(df, horizon=20)
+
+        self.assertEqual(actions.iloc[0], "ADD")
+        self.assertEqual(actions.iloc[1], "EXIT")
+        self.assertEqual(report["action_counts"]["ADD"], 1)
+
+    def test_random_forest_pipeline_and_model_name(self):
+        df = pd.DataFrame({"feature": [1, 2, 3, 4, 5, 6], "sector": ["a", "a", "b", "b", "c", "c"], "target": [0, 0, 0, 1, 1, 1]})
+        pipe = _build_pipeline(df, ["feature", "sector"], model_kind="random_forest")
+        pipe.fit(df[["feature", "sector"]], df["target"])
+
+        self.assertEqual(_model_file_name("random_forest", "hit_20_10pct"), "random_forest_hit_20_10pct.joblib")
+        self.assertEqual(pipe.predict_proba(df[["feature", "sector"]]).shape, (6, 2))
 
 
 if __name__ == "__main__":
