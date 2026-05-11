@@ -583,6 +583,8 @@ python3 scripts/export_signal_enhancement_dataset.py
 
 数据包同时包含市场环境特征：沪深300当日与近 5/20 日表现、当日 B 点拥挤度、市场涨停率、市场平均 V2/研究分，以及 `market_regime`。这些字段用于解释行情阶段差异，避免模型把市场环境误学成个股质量。
 
+新版数据包还会尝试接入 AShareDataCenter 的同日可见 ADS/DWS/ODS 因子，并统一以 `adc_*` 前缀输出，包括技术形态、资金流、融资情绪、筹码、流动性、风险、综合评分、前复权技术指标和 B/S 信号确认字段。若本地库缺少部分 AShareDataCenter 表或字段，导出会保留空列并继续完成，训练仍以 `feature_whitelist.json` 为准。
+
 基线模型训练入口：
 
 ```bash
@@ -620,9 +622,21 @@ python3 scoreRank/cli/build_bs_consensus.py --date 20260508
 完整闭环入口：
 
 ```bash
-python3 scripts/run_bs_signal_enhancement_cycle.py --target hit_20_10pct
+python3 scripts/run_bs_signal_enhancement_cycle.py --target hit_20_10pct --model-kind all
 ```
 
 该脚本会依次完成“专家数据包导出 -> 研究报告生成 -> 基线模型训练 -> 最新候选模型分入库”，并在 `exports/bs_signal_cycles/<timestamp>/cycle_manifest.json` 留存本轮数据包、研究报告、模型目录、入库结果和核心测试集指标。
+
+月度自动闭环入口：
+
+```bash
+python3 scripts/ops/run_monthly_bs_signal_enhancement_cycle.py
+```
+
+该入口按“当月首个交易日”守卫执行；Web Admin 中的 `B点模型月度闭环` 任务默认 21:45 触发，但非当月首个交易日或当月已完成时只记录跳过，不重复训练。手动指定日期重跑可使用：
+
+```bash
+python3 scripts/ops/run_monthly_bs_signal_enhancement_cycle.py --date 20260511 --force
+```
 
 当前样本仍以 2026 年以来的短期历史为主，20 日标签样本量有限。已验证更复杂的树模型在当前样本上不稳定，校准 Logistic 暂时是更稳的基线。后续应随着每日新增 B 点事件持续重跑闭环；当 20 日有效标签达到约 1500 条、60 日有效标签达到约 500 条后，再重新评估分市场阶段模型、非线性模型和分行业模型。

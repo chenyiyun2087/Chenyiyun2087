@@ -2059,6 +2059,29 @@ def init_tasks():
                                 TASKS[name]['schedule_time'] = normalized
                         if row.get('next_run'):
                             TASKS[name]['next_run'] = row['next_run'].strftime('%Y-%m-%d %H:%M:%S')
+                for name, task in TASKS.items():
+                    last_run = None if task.get('last_run') == "Never" else task.get('last_run')
+                    next_run_dt = _compute_next_run(task.get('schedule_time'), bool(task.get('schedule_enabled')))
+                    task['next_run'] = next_run_dt.strftime('%Y-%m-%d %H:%M:%S') if next_run_dt else '-'
+                    cursor.execute(
+                        """
+                        INSERT INTO app_task_status (task_name, last_run, status, switched_day, schedule_enabled, schedule_time, next_run)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            schedule_enabled = VALUES(schedule_enabled),
+                            schedule_time = VALUES(schedule_time),
+                            next_run = VALUES(next_run)
+                        """,
+                        (
+                            name,
+                            last_run,
+                            task.get('status') or "Idle",
+                            int(bool(task.get('switched_day'))),
+                            int(bool(task.get('schedule_enabled'))),
+                            task.get('schedule_time') or '00:00',
+                            next_run_dt,
+                        ),
+                    )
             conn.commit()
         conn.close()
         _refresh_task_next_runs()
@@ -5254,8 +5277,10 @@ def admin():
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             notification_channels = _load_notification_channels_from_cursor(cursor)
-        task_results = _get_task_history(limit=200)
-        task_locks = _get_task_lock_rows(limit=50)
+        if active_tab == "result-tab":
+            task_results = _get_task_history(limit=50)
+        elif active_tab == "lock-tab":
+            task_locks = _get_task_lock_rows(limit=50)
     except Exception as e:
         print(f"Failed to load stock pools in admin: {e}")
 
@@ -5269,6 +5294,35 @@ def admin():
                            task_locks=task_locks,
                            notification_channels=notification_channels,
                            active_tab=active_tab)
+
+
+@app.route('/admin/task_result/<int:result_id>')
+def admin_task_result_detail(result_id):
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                SELECT status, exit_code, message
+                FROM app_task_history
+                WHERE id = %s
+                """,
+                (result_id,),
+            )
+            row = cursor.fetchone()
+    except Exception as e:
+        return jsonify({"error": f"failed to load task result: {e}"}), 500
+
+    if not row:
+        return jsonify({"error": "task result not found"}), 404
+
+    return jsonify({
+        "status": row.get("status"),
+        "exit_code": row.get("exit_code"),
+        "message": row.get("message") or "",
+    })
+
 
 def update_task_db(task_name):
     """Save task status to database"""

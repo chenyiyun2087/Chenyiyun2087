@@ -3,10 +3,11 @@
    Modern data-dense dashboard with anti-jitter foundations
    ═══════════════════════════════════════════════════════════════ */
 
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
-
 /* ── Design Tokens ── */
 :root {
+    --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
     --primary: #7C3AED;
     --primary-light: #A78BFA;
     --primary-dark: #5B21B6;
@@ -74,7 +75,7 @@ body {
     background-color: var(--bg);
     color: var(--text);
     margin: 0;
-    font-family: 'Fira Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: var(--font-sans);
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
@@ -114,7 +115,7 @@ a:hover {
     font-size: 16px;
     font-weight: 700;
     color: #FFFFFF;
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
     padding: 12px 14px;
     text-align: center;
     border: 2px solid var(--primary-light);
@@ -182,7 +183,7 @@ a:hover {
 }
 
 .topbar h1 {
-    font-family: 'Fira Sans', sans-serif;
+    font-family: var(--font-sans);
     font-size: 24px;
     font-weight: 700;
     color: var(--text);
@@ -192,7 +193,7 @@ a:hover {
 .timestamp {
     font-size: 12px;
     color: var(--text-muted);
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
 }
 
 /* ── Tabs (top-level page tabs) ── */
@@ -244,7 +245,7 @@ a:hover {
     padding: 10px 16px;
     font-weight: 600;
     font-size: 13px;
-    font-family: 'Fira Sans', sans-serif;
+    font-family: var(--font-sans);
     color: var(--text-muted);
     cursor: pointer;
     border-bottom: 2px solid transparent;
@@ -313,7 +314,7 @@ a:hover {
 }
 
 .panel-title {
-    font-family: 'Fira Sans', sans-serif;
+    font-family: var(--font-sans);
     font-size: 16px;
     font-weight: 700;
     color: var(--text);
@@ -413,7 +414,7 @@ input[type="submit"] {
     padding: 8px 18px;
     font-weight: 600;
     font-size: 13px;
-    font-family: 'Fira Sans', sans-serif;
+    font-family: var(--font-sans);
     color: #FFFFFF;
     background: var(--primary);
     border: 1px solid var(--primary);
@@ -466,7 +467,7 @@ button:disabled {
 select,
 input,
 textarea {
-    font-family: 'Fira Sans', sans-serif;
+    font-family: var(--font-sans);
     font-size: 13px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -513,7 +514,7 @@ input[type="checkbox"] {
     display: flex;
     gap: 6px;
     align-items: center;
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
     font-weight: 600;
     font-size: 11px;
 }
@@ -571,7 +572,7 @@ input[type="checkbox"] {
     font-size: 20px;
     font-weight: 700;
     margin-top: 4px;
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
     color: var(--text);
 }
 
@@ -793,7 +794,7 @@ input[type="checkbox"] {
     margin: 0;
     padding: 14px;
     font-size: 12px;
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
     white-space: pre-wrap;
     word-break: break-all;
     background: var(--bg-card);
@@ -820,14 +821,14 @@ input[type="checkbox"] {
 .task-id {
     font-size: 10px;
     color: var(--text-light);
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
 }
 
 /* ── Time display ── */
 .time-display {
     font-size: 12px;
     color: var(--text-muted);
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
     line-height: 1.6;
 }
 
@@ -955,14 +956,14 @@ input[type="checkbox"] {
 }
 
 .strat-header .strat-date {
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
     font-size: 14px;
     font-weight: 600;
     color: var(--text);
 }
 
 .strat-header .strat-time {
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-muted);
 }
@@ -1119,7 +1120,7 @@ input[type="checkbox"] {
 .kpi-card .v {
     font-size: 18px;
     font-weight: 700;
-    font-family: 'Fira Code', monospace;
+    font-family: var(--font-mono);
     color: var(--text);
     margin-top: 2px;
 }
@@ -1164,7 +1165,7 @@ input[type="checkbox"] {
     border: 1px solid var(--primary-light);
     border-radius: var(--radius-sm);
     cursor: pointer;
-    font-family: 'Fira Sans', sans-serif;
+    font-family: var(--font-sans);
     font-weight: 600;
     transition: all var(--transition);
 }

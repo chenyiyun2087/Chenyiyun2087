@@ -4,13 +4,17 @@
 {% block content %}
 
 <div class="sub-tabs">
-    <button id="tab-btn-center-tab" class="sub-tab" onclick="showTab('center-tab')">后台任务中心</button>
-    <button id="tab-btn-lock-tab" class="sub-tab" onclick="showTab('lock-tab')">任务锁状态</button>
-    <button id="tab-btn-result-tab" class="sub-tab" onclick="showTab('result-tab')">任务结果查询</button>
+    <a id="tab-btn-center-tab" class="sub-tab {% if active_tab == 'center-tab' %}active{% endif %}"
+        href="{{ url_for('admin', tab='center-tab') }}">后台任务中心</a>
+    <a id="tab-btn-lock-tab" class="sub-tab {% if active_tab == 'lock-tab' %}active{% endif %}"
+        href="{{ url_for('admin', tab='lock-tab') }}">任务锁状态</a>
+    <a id="tab-btn-result-tab" class="sub-tab {% if active_tab == 'result-tab' %}active{% endif %}"
+        href="{{ url_for('admin', tab='result-tab') }}">任务结果查询</a>
 </div>
 
 <div id="admin-action-feedback" class="admin-action-feedback" aria-live="polite"></div>
 
+{% if active_tab == 'center-tab' %}
 <div id="center-tab" class="admin-tab-content">
     <section class="panel">
         <div class="panel-title">后台任务中心</div>
@@ -160,8 +164,9 @@
         </form>
     </section>
 </div>
+{% elif active_tab == 'lock-tab' %}
 
-<div id="lock-tab" class="admin-tab-content" style="display:none;">
+<div id="lock-tab" class="admin-tab-content">
     <section class="panel">
         <div class="panel-title">任务锁状态（同任务单实例）</div>
         <div class="table-container" style="max-height: 550px; overflow-y: auto;">
@@ -202,10 +207,11 @@
         </div>
     </section>
 </div>
+{% elif active_tab == 'result-tab' %}
 
-<div id="result-tab" class="admin-tab-content" style="display:none;">
+<div id="result-tab" class="admin-tab-content">
     <section class="panel">
-        <div class="panel-title">任务结果查询（最近200条）</div>
+        <div class="panel-title">任务结果查询（最近50条）</div>
         <div class="table-container" style="max-height: 650px; overflow-y: auto;">
             <table>
                 <thead>
@@ -260,6 +266,7 @@
                         </td>
                         <td>
                             <button type="button" class="btn btn-sm btn-outline"
+                                data-detail-url="{{ url_for('admin_task_result_detail', result_id=row.id) }}"
                                 onclick="toggleResultDetail('{{ row.id }}', this)">详细</button>
                         </td>
                     </tr>
@@ -272,7 +279,7 @@
                             <div style="font-size: 12px; margin-bottom: 8px; color: var(--text-muted);">
                                 <strong style="color: var(--text);">脚本输出与校验：</strong>
                             </div>
-                            <pre>{{ row.message or '无脚本输出/校验输出（旧记录或未启用校验）' }}</pre>
+                            <pre id="detail-message-{{ row.id }}" data-loaded="0">点击后加载脚本输出...</pre>
                         </td>
                     </tr>
                     {% else %}
@@ -286,6 +293,7 @@
         </div>
     </section>
 </div>
+{% endif %}
 
 <script>
     function activateTab(tabId) {
@@ -371,12 +379,29 @@
         }
     }
 
-    function toggleResultDetail(rowId, btn) {
+    async function toggleResultDetail(rowId, btn) {
         const detailRow = document.getElementById('detail-row-' + rowId);
         if (!detailRow) return;
         const hidden = detailRow.style.display === 'none';
         detailRow.style.display = hidden ? 'table-row' : 'none';
         btn.textContent = hidden ? '收起' : '详细';
+        if (!hidden) return;
+
+        const output = document.getElementById('detail-message-' + rowId);
+        if (!output || output.dataset.loaded === '1') return;
+
+        output.textContent = '加载中...';
+        try {
+            const res = await fetch(btn.dataset.detailUrl, {
+                headers: { 'Accept': 'application/json' },
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || '加载失败');
+            output.textContent = data.message || '无脚本输出/校验输出（旧记录或未启用校验）';
+            output.dataset.loaded = '1';
+        } catch (err) {
+            output.textContent = '加载失败：请刷新页面后重试。';
+        }
     }
 
     document.addEventListener('DOMContentLoaded', function () {
