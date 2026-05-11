@@ -53,7 +53,11 @@ def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str =
                     return manifest_path
             except Exception:
                 pass
-        for name in (f"logistic_calibrated_{target}.joblib", f"random_forest_{target}.joblib"):
+        for name in (
+            f"logistic_calibrated_{target}.joblib",
+            f"random_forest_{target}.joblib",
+            f"hist_gradient_boosting_{target}.joblib",
+        ):
             preferred = model_dir / name
             if preferred.exists():
                 return preferred

@@ -17,7 +17,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import average_precision_score, brier_score_loss, mean_absolute_error, r2_score, roc_auc_score
 from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
@@ -100,6 +100,7 @@ def _build_pipeline(df: pd.DataFrame, feature_cols: list[str], model_kind: str =
             ("cat", categorical_pipe, categorical),
         ],
         remainder="drop",
+        sparse_threshold=0.0 if model_kind == "hist_gradient_boosting" else 0.3,
     )
     if model_kind == "random_forest":
         estimator = RandomForestClassifier(
@@ -109,6 +110,14 @@ def _build_pipeline(df: pd.DataFrame, feature_cols: list[str], model_kind: str =
             class_weight="balanced_subsample",
             random_state=42,
             n_jobs=-1,
+        )
+    elif model_kind == "hist_gradient_boosting":
+        estimator = HistGradientBoostingClassifier(
+            max_iter=180,
+            learning_rate=0.04,
+            max_leaf_nodes=16,
+            l2_regularization=0.2,
+            random_state=42,
         )
     else:
         estimator = LogisticRegression(
@@ -372,6 +381,29 @@ def _model_file_name(model_kind: str, target: str) -> str:
     return f"{model_kind}_{target}.joblib"
 
 
+def _write_model_comparison(path: Path, summaries: list[dict]) -> None:
+    rows = []
+    for summary in summaries:
+        metrics_path = Path(summary["output_dir"]) / "metrics.json"
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8")).get("metrics", [])
+        test_items = [m for m in metrics if m.get("split") == "test" and m.get("model") == summary.get("model_kind")]
+        best = test_items[0] if test_items else {}
+        rows.append(
+            {
+                "model_kind": summary.get("model_kind"),
+                "target": summary.get("target"),
+                "test_rows": summary.get("test_rows"),
+                "roc_auc": best.get("roc_auc"),
+                "average_precision": best.get("average_precision"),
+                "brier": best.get("brier"),
+                "ece": best.get("ece"),
+                "precision_at_20": best.get("precision_at_20"),
+                "model_path": summary.get("model_path"),
+            }
+        )
+    path.write_text(json.dumps({"models": rows}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def train(dataset_dir: Path, target: str, risk_target: str | None = None, model_kind: str = "logistic_calibrated") -> dict:
     events_path = dataset_dir / "first_buy_events_labeled.csv"
     latest_path = dataset_dir / "latest_b_candidates.csv"
@@ -551,7 +583,7 @@ def main() -> None:
     parser.add_argument(
         "--model-kind",
         default="logistic_calibrated",
-        choices=["logistic_calibrated", "random_forest", "all"],
+        choices=["logistic_calibrated", "random_forest", "hist_gradient_boosting", "all"],
         help="Classifier family to train. 'all' trains comparable model bundles.",
     )
     args = parser.parse_args()
@@ -559,8 +591,12 @@ def main() -> None:
     if args.model_kind == "all":
         summaries = [
             train(dataset_dir, args.target, risk_target=args.risk_target, model_kind=kind)
-            for kind in ("logistic_calibrated", "random_forest")
+            for kind in ("logistic_calibrated", "random_forest", "hist_gradient_boosting")
         ]
+        comparison_path = MODEL_ROOT / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_model_comparison.json"
+        _write_model_comparison(comparison_path, summaries)
+        for summary in summaries:
+            summary["comparison_path"] = str(comparison_path)
         print(json.dumps({"models": summaries}, ensure_ascii=False, indent=2))
     else:
         train(dataset_dir, args.target, risk_target=args.risk_target, model_kind=args.model_kind)

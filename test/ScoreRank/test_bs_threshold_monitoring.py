@@ -8,9 +8,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from scoreRank.core.bs_monitoring import compare_distributions, cost_sensitive_topn_report, shadow_pool_overlap, topn_rank_report  # noqa: E402
+from scoreRank.core.bs_monitoring import (  # noqa: E402
+    compare_distributions,
+    cost_scenario_topn_report,
+    cost_sensitive_topn_report,
+    portfolio_risk_report,
+    shadow_pool_overlap,
+    topn_rank_report,
+)
 from scoreRank.core.bs_threshold_policy import assign_shadow_pool, resolve_bs_thresholds  # noqa: E402
 from scoreRank.core.external_features import attach_external_features  # noqa: E402
+from scripts.export_signal_enhancement_dataset import _add_split_column, _field_contract_report  # noqa: E402
 from scripts.evaluate_bs_holding_policy import assign_holding_actions, evaluate_holding_policy  # noqa: E402
 from scripts.optimize_bs_thresholds import evaluate_threshold_candidate  # noqa: E402
 from scripts.train_bs_signal_model import _build_pipeline, _model_file_name  # noqa: E402
@@ -114,6 +122,17 @@ class TestBSThresholdMonitoring(unittest.TestCase):
 
         self.assertAlmostEqual(float(report.iloc[0]["avg_net_ret"]), 0.097)
 
+    def test_cost_scenario_topn_reports_three_cost_profiles(self):
+        df = pd.DataFrame(
+            [
+                {"event_date": "2026-01-01", "score_a": 90, "hit_20_10pct": 1, "ret_20": 0.10},
+                {"event_date": "2026-01-02", "score_a": 85, "hit_20_10pct": 1, "ret_20": 0.08},
+            ]
+        )
+        report = cost_scenario_topn_report(df, ["score_a"], horizon=20, top_ns=(1,))
+
+        self.assertEqual(set(report["scenario"]), {"optimistic", "base", "conservative"})
+
     def test_threshold_candidate_scores_trade_pool(self):
         df = pd.DataFrame(
             [
@@ -151,6 +170,7 @@ class TestBSThresholdMonitoring(unittest.TestCase):
         self.assertEqual(actions.iloc[0], "ADD")
         self.assertEqual(actions.iloc[1], "EXIT")
         self.assertEqual(report["action_counts"]["ADD"], 1)
+        self.assertIn("benchmark_avg_ret", report)
 
     def test_random_forest_pipeline_and_model_name(self):
         df = pd.DataFrame({"feature": [1, 2, 3, 4, 5, 6], "sector": ["a", "a", "b", "b", "c", "c"], "target": [0, 0, 0, 1, 1, 1]})
@@ -159,6 +179,56 @@ class TestBSThresholdMonitoring(unittest.TestCase):
 
         self.assertEqual(_model_file_name("random_forest", "hit_20_10pct"), "random_forest_hit_20_10pct.joblib")
         self.assertEqual(pipe.predict_proba(df[["feature", "sector"]]).shape, (6, 2))
+
+    def test_hist_gradient_boosting_pipeline_and_model_name(self):
+        df = pd.DataFrame({"feature": [1, 2, 3, 4, 5, 6], "sector": ["a", "a", "b", "b", "c", "c"], "target": [0, 0, 0, 1, 1, 1]})
+        pipe = _build_pipeline(df, ["feature", "sector"], model_kind="hist_gradient_boosting")
+        pipe.fit(df[["feature", "sector"]], df["target"])
+
+        self.assertEqual(_model_file_name("hist_gradient_boosting", "hit_20_10pct"), "hist_gradient_boosting_hit_20_10pct.joblib")
+        self.assertEqual(pipe.predict_proba(df[["feature", "sector"]]).shape, (6, 2))
+
+    def test_field_contract_report_marks_groups_complete(self):
+        frame = pd.DataFrame(
+            {
+                "event_date": ["2026-01-01"],
+                "event_uid": ["u1"],
+                "symbol": ["000001"],
+                "ts_code": ["000001.SZ"],
+                "name": ["A"],
+                "score": [70],
+                "hit_20_10pct": [1],
+            }
+        )
+        report = _field_contract_report(frame)
+
+        self.assertTrue(report["labels"]["complete"])
+        self.assertTrue(report["identity"]["complete"])
+
+    def test_horizon_aware_split_creates_target_specific_columns(self):
+        df = pd.DataFrame(
+            {
+                "event_date": pd.date_range("2026-01-01", periods=20, freq="D"),
+                "hit_20_10pct": [1] * 18 + [None, None],
+            }
+        )
+        out = _add_split_column(df, primary_horizon=20)
+
+        self.assertIn("split_hit_20_10pct", out.columns)
+        self.assertEqual(set(out.loc[out["hit_20_10pct"].isna(), "split_hit_20_10pct"]), {"unlabeled"})
+
+    def test_portfolio_risk_report_applies_constraints(self):
+        df = pd.DataFrame(
+            [
+                {"event_date": "2026-01-01", "symbol": "000001", "industry": "tech", "score_a": 90, "bs_model_prob": 0.6, "bs_model_expected_mdd": -0.05, "hit_20_10pct": 1, "ret_20": 0.12, "mdd_20": -0.04},
+                {"event_date": "2026-01-01", "symbol": "000002", "industry": "tech", "score_a": 85, "bs_model_prob": 0.4, "bs_model_expected_mdd": -0.08, "hit_20_10pct": 0, "ret_20": -0.02, "mdd_20": -0.10},
+                {"event_date": "2026-01-01", "symbol": "000003", "industry": "bank", "score_a": 80, "bs_model_prob": 0.3, "bs_model_expected_mdd": -0.03, "hit_20_10pct": 1, "ret_20": 0.04, "mdd_20": -0.02},
+            ]
+        )
+        report = portfolio_risk_report(df, "score_a", horizon=20, top_n=3, max_position_weight=0.6, max_industry_weight=0.7)
+
+        self.assertEqual(report["days"], 1)
+        self.assertLessEqual(report["avg_max_position_weight"], 0.6)
 
 
 if __name__ == "__main__":

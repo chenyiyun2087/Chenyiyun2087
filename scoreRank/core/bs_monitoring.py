@@ -196,6 +196,149 @@ def cost_sensitive_topn_report(
     )
 
 
+def cost_scenario_topn_report(
+    frame: pd.DataFrame,
+    score_cols: Iterable[str],
+    horizon: int = 20,
+    top_ns: Iterable[int] = (3, 5, 10, 20),
+    scenarios: Iterable[tuple[str, float, float]] = (
+        ("optimistic", 10.0, 15.0),
+        ("base", 20.0, 15.0),
+        ("conservative", 30.0, 20.0),
+    ),
+    capital_per_trade: float | None = None,
+    capacity_col: str = "avg_amount20",
+    max_avg_amount_ratio: float = 0.02,
+) -> pd.DataFrame:
+    frames = []
+    for name, cost_bps, slippage_bps in scenarios:
+        report = cost_sensitive_topn_report(
+            frame,
+            score_cols=score_cols,
+            horizon=horizon,
+            top_ns=top_ns,
+            cost_bps=cost_bps,
+            slippage_bps=slippage_bps,
+            capital_per_trade=capital_per_trade,
+            capacity_col=capacity_col,
+            max_avg_amount_ratio=max_avg_amount_ratio,
+        )
+        if report.empty:
+            continue
+        report = report.copy()
+        report["scenario"] = name
+        report["cost_bps"] = float(cost_bps)
+        report["slippage_bps"] = float(slippage_bps)
+        frames.append(report)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def portfolio_risk_report(
+    frame: pd.DataFrame,
+    score_col: str,
+    horizon: int = 20,
+    top_n: int = 10,
+    weight_mode: str = "risk_adjusted",
+    max_position_weight: float = 0.20,
+    max_industry_weight: float = 0.40,
+    cost_bps: float = 20.0,
+    slippage_bps: float = 15.0,
+    industry_col: str = "industry",
+    capacity_col: str = "avg_amount20",
+    capital: float | None = None,
+    max_avg_amount_ratio: float = 0.02,
+) -> dict:
+    target = f"hit_{horizon}_10pct"
+    ret_col = f"ret_{horizon}"
+    mdd_col = f"mdd_{horizon}"
+    if frame.empty or score_col not in frame.columns or ret_col not in frame.columns:
+        return {"score_col": score_col, "rows": int(len(frame)), "days": 0, "portfolios": []}
+
+    d = frame[frame[target].notna() if target in frame.columns else frame[ret_col].notna()].copy()
+    d["_score"] = pd.to_numeric(d[score_col], errors="coerce")
+    d["_ret"] = pd.to_numeric(d[ret_col], errors="coerce")
+    d["_mdd"] = pd.to_numeric(d[mdd_col], errors="coerce") if mdd_col in d.columns else np.nan
+    d = d.dropna(subset=["event_date", "_score", "_ret"])
+    if d.empty:
+        return {"score_col": score_col, "rows": int(len(frame)), "days": 0, "portfolios": []}
+
+    round_trip_cost = 2.0 * (float(cost_bps) + float(slippage_bps)) / 10000.0
+    rows: list[dict] = []
+    for day, group in d.groupby("event_date"):
+        ranked = group.sort_values("_score", ascending=False).head(int(top_n)).copy()
+        if ranked.empty:
+            continue
+        if capital and capacity_col in ranked.columns:
+            cap = pd.to_numeric(ranked[capacity_col], errors="coerce")
+            ranked = ranked[cap * float(max_avg_amount_ratio) >= float(capital) / max(1, int(top_n))]
+        if ranked.empty:
+            continue
+        industry_labels = ranked.get(industry_col, pd.Series("UNKNOWN", index=ranked.index)).fillna("UNKNOWN")
+        industry_constraint_feasible = (
+            max_industry_weight >= 1.0
+            or industry_col not in ranked.columns
+            or int(industry_labels.nunique()) >= int(np.ceil(1.0 / max(float(max_industry_weight), 1e-9)))
+        )
+
+        if weight_mode == "probability" and "bs_model_prob" in ranked.columns:
+            raw = pd.to_numeric(ranked["bs_model_prob"], errors="coerce").clip(lower=0).fillna(0)
+        elif weight_mode == "risk_adjusted":
+            prob = pd.to_numeric(ranked.get("bs_model_prob", ranked["_score"] / 100.0), errors="coerce").clip(lower=0).fillna(0)
+            risk = pd.to_numeric(ranked.get("bs_model_expected_mdd", ranked["_mdd"].abs()), errors="coerce").abs().replace(0, np.nan).fillna(0.08)
+            raw = prob / risk.clip(lower=0.02)
+        else:
+            raw = pd.Series(1.0, index=ranked.index)
+        if not raw.notna().any() or float(raw.sum()) <= 0:
+            raw = pd.Series(1.0, index=ranked.index)
+        weights = raw / raw.sum()
+        weights = weights.clip(upper=float(max_position_weight))
+        weights = weights / weights.sum()
+
+        if industry_col in ranked.columns and max_industry_weight < 1.0:
+            for _ in range(3):
+                industry_weight = weights.groupby(ranked[industry_col].fillna("UNKNOWN")).transform("sum")
+                over = industry_weight > float(max_industry_weight)
+                if not over.any():
+                    break
+                weights.loc[over] *= float(max_industry_weight) / industry_weight.loc[over]
+                weights = weights / weights.sum()
+
+        net_ret = ranked["_ret"] - round_trip_cost
+        rows.append(
+            {
+                "event_date": day,
+                "selected": int(len(ranked)),
+                "portfolio_ret": float((weights * net_ret).sum()),
+                "portfolio_gross_ret": float((weights * ranked["_ret"]).sum()),
+                "portfolio_mdd": float((weights * ranked["_mdd"]).sum()) if ranked["_mdd"].notna().any() else np.nan,
+                "max_position_weight": float(weights.max()),
+                "max_industry_weight": float(weights.groupby(industry_labels).sum().max()),
+                "industry_constraint_feasible": bool(industry_constraint_feasible),
+            }
+        )
+
+    raw_report = pd.DataFrame(rows)
+    if raw_report.empty:
+        return {"score_col": score_col, "rows": int(len(frame)), "days": 0, "portfolios": []}
+    return {
+        "score_col": score_col,
+        "horizon": horizon,
+        "top_n": int(top_n),
+        "weight_mode": weight_mode,
+        "cost_bps": float(cost_bps),
+        "slippage_bps": float(slippage_bps),
+        "days": int(raw_report["event_date"].nunique()),
+        "avg_selected": round(float(raw_report["selected"].mean()), 6),
+        "avg_net_ret": round(float(raw_report["portfolio_ret"].mean()), 6),
+        "avg_gross_ret": round(float(raw_report["portfolio_gross_ret"].mean()), 6),
+        "avg_mdd": round(float(raw_report["portfolio_mdd"].mean()), 6) if raw_report["portfolio_mdd"].notna().any() else None,
+        "avg_max_position_weight": round(float(raw_report["max_position_weight"].mean()), 6),
+        "avg_max_industry_weight": round(float(raw_report["max_industry_weight"].mean()), 6),
+        "industry_constraint_feasible_rate": round(float(raw_report["industry_constraint_feasible"].mean()), 6),
+        "portfolios": raw_report.to_dict("records"),
+    }
+
+
 def shadow_pool_overlap(frame: pd.DataFrame) -> dict:
     if frame.empty or "pool_type" not in frame.columns or "pool_type_shadow" not in frame.columns:
         return {"rows": int(len(frame)), "overlap_rate": None}

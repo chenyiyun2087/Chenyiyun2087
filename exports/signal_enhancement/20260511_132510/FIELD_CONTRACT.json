@@ -1,0 +1,342 @@
+{
+  "field_groups": {
+    "identity": [
+      "event_date",
+      "event_uid",
+      "symbol",
+      "ts_code",
+      "name"
+    ],
+    "score_atoms": [
+      "score",
+      "base_score",
+      "penalty",
+      "s_trend",
+      "s_breakout",
+      "s_volume",
+      "s_rs",
+      "s_contraction",
+      "s_liquidity"
+    ],
+    "optimizer_atoms": [
+      "opt_score",
+      "opt_momentum",
+      "opt_value",
+      "opt_quality",
+      "opt_technical",
+      "opt_capital",
+      "opt_chip",
+      "opt_size"
+    ],
+    "claude_atoms": [
+      "claude_score",
+      "score_momentum",
+      "score_value",
+      "score_quality",
+      "score_technical",
+      "score_capital",
+      "score_chip"
+    ],
+    "external_atoms": [
+      "industry",
+      "fund_pe_ttm",
+      "fund_pb",
+      "fund_roe",
+      "fund_netprofit_yoy"
+    ],
+    "bs_rule_scores": [
+      "bs_score",
+      "bs_entry_score",
+      "bs_score_v2",
+      "bs_research_score",
+      "bs_gate_score",
+      "bs_gate_pass",
+      "bs_consensus_score"
+    ],
+    "model_outputs": [
+      "bs_model_prob",
+      "bs_model_expected_mdd",
+      "bs_model_risk_score",
+      "bs_model_rank_score",
+      "bs_model_version"
+    ],
+    "market_context": [
+      "market_hs300_pct_chg",
+      "market_hs300_ret_5",
+      "market_hs300_ret_20",
+      "market_scored_count",
+      "market_bs_count",
+      "market_bs_ratio",
+      "market_limit_up_rate",
+      "market_avg_score",
+      "market_avg_v2",
+      "market_avg_research_score",
+      "market_avg_price_change",
+      "market_regime"
+    ],
+    "engineered": [
+      "score_opt_gap",
+      "score_claude_gap",
+      "opt_claude_gap",
+      "score_dispersion",
+      "rs_liquidity_combo",
+      "breakout_volume_combo",
+      "overextended_flag",
+      "pullback_flag"
+    ]
+  },
+  "report": {
+    "identity": {
+      "required_columns": [
+        "event_date",
+        "event_uid",
+        "symbol",
+        "ts_code",
+        "name"
+      ],
+      "present_columns": [
+        "event_date",
+        "event_uid",
+        "symbol",
+        "ts_code",
+        "name"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "score_atoms": {
+      "required_columns": [
+        "score",
+        "base_score",
+        "penalty",
+        "s_trend",
+        "s_breakout",
+        "s_volume",
+        "s_rs",
+        "s_contraction",
+        "s_liquidity"
+      ],
+      "present_columns": [
+        "score",
+        "base_score",
+        "penalty",
+        "s_trend",
+        "s_breakout",
+        "s_volume",
+        "s_rs",
+        "s_contraction",
+        "s_liquidity"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "optimizer_atoms": {
+      "required_columns": [
+        "opt_score",
+        "opt_momentum",
+        "opt_value",
+        "opt_quality",
+        "opt_technical",
+        "opt_capital",
+        "opt_chip",
+        "opt_size"
+      ],
+      "present_columns": [
+        "opt_score",
+        "opt_momentum",
+        "opt_value",
+        "opt_quality",
+        "opt_technical",
+        "opt_capital",
+        "opt_chip",
+        "opt_size"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "claude_atoms": {
+      "required_columns": [
+        "claude_score",
+        "score_momentum",
+        "score_value",
+        "score_quality",
+        "score_technical",
+        "score_capital",
+        "score_chip"
+      ],
+      "present_columns": [
+        "claude_score",
+        "score_momentum",
+        "score_value",
+        "score_quality",
+        "score_technical",
+        "score_capital",
+        "score_chip"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "external_atoms": {
+      "required_columns": [
+        "industry",
+        "fund_pe_ttm",
+        "fund_pb",
+        "fund_roe",
+        "fund_netprofit_yoy"
+      ],
+      "present_columns": [
+        "industry",
+        "fund_pe_ttm",
+        "fund_pb",
+        "fund_roe",
+        "fund_netprofit_yoy"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "bs_rule_scores": {
+      "required_columns": [
+        "bs_score",
+        "bs_entry_score",
+        "bs_score_v2",
+        "bs_research_score",
+        "bs_gate_score",
+        "bs_gate_pass",
+        "bs_consensus_score"
+      ],
+      "present_columns": [
+        "bs_score",
+        "bs_entry_score",
+        "bs_score_v2",
+        "bs_research_score",
+        "bs_gate_score",
+        "bs_gate_pass",
+        "bs_consensus_score"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "model_outputs": {
+      "required_columns": [
+        "bs_model_prob",
+        "bs_model_expected_mdd",
+        "bs_model_risk_score",
+        "bs_model_rank_score",
+        "bs_model_version"
+      ],
+      "present_columns": [
+        "bs_model_prob",
+        "bs_model_expected_mdd",
+        "bs_model_risk_score",
+        "bs_model_rank_score",
+        "bs_model_version"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "market_context": {
+      "required_columns": [
+        "market_hs300_pct_chg",
+        "market_hs300_ret_5",
+        "market_hs300_ret_20",
+        "market_scored_count",
+        "market_bs_count",
+        "market_bs_ratio",
+        "market_limit_up_rate",
+        "market_avg_score",
+        "market_avg_v2",
+        "market_avg_research_score",
+        "market_avg_price_change",
+        "market_regime"
+      ],
+      "present_columns": [
+        "market_hs300_pct_chg",
+        "market_hs300_ret_5",
+        "market_hs300_ret_20",
+        "market_scored_count",
+        "market_bs_count",
+        "market_bs_ratio",
+        "market_limit_up_rate",
+        "market_avg_score",
+        "market_avg_v2",
+        "market_avg_research_score",
+        "market_avg_price_change",
+        "market_regime"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "engineered": {
+      "required_columns": [
+        "score_opt_gap",
+        "score_claude_gap",
+        "opt_claude_gap",
+        "score_dispersion",
+        "rs_liquidity_combo",
+        "breakout_volume_combo",
+        "overextended_flag",
+        "pullback_flag"
+      ],
+      "present_columns": [
+        "score_opt_gap",
+        "score_claude_gap",
+        "opt_claude_gap",
+        "score_dispersion",
+        "rs_liquidity_combo",
+        "breakout_volume_combo",
+        "overextended_flag",
+        "pullback_flag"
+      ],
+      "missing_columns": [],
+      "complete": true
+    },
+    "labels": {
+      "present_columns": [
+        "ret_1",
+        "max_ret_1",
+        "mdd_1",
+        "hit_1_5pct",
+        "hit_1_10pct",
+        "days_to_10pct_within_1",
+        "ret_3",
+        "max_ret_3",
+        "mdd_3",
+        "hit_3_5pct",
+        "hit_3_10pct",
+        "days_to_10pct_within_3",
+        "ret_5",
+        "max_ret_5",
+        "mdd_5",
+        "hit_5_5pct",
+        "hit_5_10pct",
+        "days_to_10pct_within_5",
+        "ret_10",
+        "max_ret_10",
+        "mdd_10",
+        "hit_10_5pct",
+        "hit_10_10pct",
+        "days_to_10pct_within_10",
+        "ret_20",
+        "max_ret_20",
+        "mdd_20",
+        "hit_20_5pct",
+        "hit_20_10pct",
+        "days_to_10pct_within_20",
+        "ret_60",
+        "max_ret_60",
+        "mdd_60",
+        "hit_60_5pct",
+        "hit_60_10pct",
+        "days_to_10pct_within_60"
+      ],
+      "leak_guard_prefixes": [
+        "ret_",
+        "max_ret_",
+        "mdd_",
+        "hit_",
+        "days_to_"
+      ],
+      "complete": true
+    }
+  }
+}

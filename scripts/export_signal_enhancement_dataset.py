@@ -178,6 +178,51 @@ MARKET_CONTEXT_COLUMNS = [
     "market_avg_price_change",
     "market_regime",
 ]
+FIELD_GROUPS = {
+    "identity": ["event_date", "event_uid", "symbol", "ts_code", "name"],
+    "score_atoms": [
+        "score",
+        "base_score",
+        "penalty",
+        "s_trend",
+        "s_breakout",
+        "s_volume",
+        "s_rs",
+        "s_contraction",
+        "s_liquidity",
+    ],
+    "optimizer_atoms": ["opt_score", "opt_momentum", "opt_value", "opt_quality", "opt_technical", "opt_capital", "opt_chip", "opt_size"],
+    "claude_atoms": ["claude_score", "score_momentum", "score_value", "score_quality", "score_technical", "score_capital", "score_chip"],
+    "external_atoms": list(EXTERNAL_FEATURE_COLUMNS),
+    "bs_rule_scores": [
+        "bs_score",
+        "bs_entry_score",
+        "bs_score_v2",
+        "bs_research_score",
+        "bs_gate_score",
+        "bs_gate_pass",
+        "bs_consensus_score",
+    ],
+    "model_outputs": ["bs_model_prob", "bs_model_expected_mdd", "bs_model_risk_score", "bs_model_rank_score", "bs_model_version"],
+    "market_context": MARKET_CONTEXT_COLUMNS,
+    "engineered": [
+        "score_opt_gap",
+        "score_claude_gap",
+        "opt_claude_gap",
+        "score_dispersion",
+        "rs_liquidity_combo",
+        "breakout_volume_combo",
+        "overextended_flag",
+        "pullback_flag",
+    ],
+}
+SPLIT_PROTOCOL = {
+    "name": "horizon_aware_embargo_walk_forward",
+    "horizons": list(DEFAULT_HORIZONS),
+    "split_ratios": {"train": 0.70, "validation": 0.15, "test": 0.15},
+    "embargo_days": {str(h): h for h in DEFAULT_HORIZONS},
+    "eligible_rule": "Rows are eligible for split_N only when hit_N_10pct is non-null.",
+}
 
 
 def _connect():
@@ -792,6 +837,51 @@ def _horizon_labels(events: pd.DataFrame, prices: pd.DataFrame, horizons=DEFAULT
     return out, paths
 
 
+def _panel_horizon_labels(panel: pd.DataFrame, prices: pd.DataFrame, horizons=DEFAULT_HORIZONS) -> pd.DataFrame:
+    if panel.empty or prices.empty:
+        return panel.copy()
+
+    px_groups = {s: g.reset_index(drop=True) for s, g in prices.groupby("symbol", sort=False)}
+    rows = []
+    for row in panel.itertuples(index=False):
+        symbol = row.symbol
+        event_date = pd.Timestamp(row.event_date)
+        g = px_groups.get(symbol)
+        label: dict[str, object] = {}
+
+        if g is not None and not g.empty:
+            matches = g.index[g["trade_date"] == event_date].tolist()
+            if matches:
+                idx = matches[-1]
+                c0 = float(g.iloc[idx]["close"])
+                if c0 > 0:
+                    for h in horizons:
+                        if idx + h < len(g):
+                            window = g.iloc[idx : idx + h + 1]["close"].astype(float)
+                            rel_window = window / c0 - 1.0
+                            label[f"ret_{h}"] = round(float(rel_window.iloc[-1]), 6)
+                            label[f"max_ret_{h}"] = round(float(rel_window.max()), 6)
+                            label[f"mdd_{h}"] = round(float(rel_window.min()), 6)
+                            label[f"hit_{h}_5pct"] = int(rel_window.max() >= 0.05)
+                            label[f"hit_{h}_10pct"] = int(rel_window.max() >= 0.10)
+                            hit_idx = np.flatnonzero(rel_window.to_numpy() >= 0.10)
+                            label[f"days_to_10pct_within_{h}"] = int(hit_idx[0]) if len(hit_idx) else None
+                        else:
+                            label[f"ret_{h}"] = None
+                            label[f"max_ret_{h}"] = None
+                            label[f"mdd_{h}"] = None
+                            label[f"hit_{h}_5pct"] = None
+                            label[f"hit_{h}_10pct"] = None
+                            label[f"days_to_10pct_within_{h}"] = None
+        rows.append(label)
+
+    labels = pd.DataFrame(rows, index=panel.index)
+    out = panel.copy()
+    for col in labels.columns:
+        out[col] = labels[col]
+    return out
+
+
 def _time_split_for_mask(dates: pd.Series, mask: pd.Series, embargo_days: int = 0) -> pd.Series:
     split = pd.Series("unlabeled", index=dates.index, dtype=object)
     eligible_dates = sorted(pd.to_datetime(dates[mask]).dt.date.unique())
@@ -853,12 +943,34 @@ def _feature_whitelist(df: pd.DataFrame) -> list[str]:
     ]
 
 
+def _field_contract_report(frame: pd.DataFrame) -> dict:
+    report: dict[str, dict] = {}
+    for group, columns in FIELD_GROUPS.items():
+        present = [c for c in columns if c in frame.columns]
+        missing = [c for c in columns if c not in frame.columns]
+        report[group] = {
+            "required_columns": columns,
+            "present_columns": present,
+            "missing_columns": missing,
+            "complete": not missing,
+        }
+    label_columns = [c for c in frame.columns if c.startswith(LEAKY_PREFIXES)]
+    report["labels"] = {
+        "present_columns": label_columns,
+        "leak_guard_prefixes": list(LEAKY_PREFIXES),
+        "complete": bool(label_columns),
+    }
+    return report
+
+
 def _quality_report(first_labeled: pd.DataFrame, active_panel: pd.DataFrame, latest: pd.DataFrame) -> dict:
     report = {
         "first_buy_rows": int(len(first_labeled)),
         "active_panel_rows": int(len(active_panel)),
         "latest_candidates_rows": int(len(latest)),
         "leak_guard_prefixes": list(LEAKY_PREFIXES),
+        "split_protocol": SPLIT_PROTOCOL,
+        "field_contract": _field_contract_report(first_labeled),
         "label_completeness": {},
         "split_counts": {},
         "missing_rate_top20": {},
@@ -910,6 +1022,8 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 - `DATA_DICTIONARY.md`：字段解释。
 - `feature_whitelist.json`：允许进入模型的特征白名单，已排除未来标签。
 - `quality_report.json`：标签完整性、split 分布、缺失率摘要。
+- `FIELD_CONTRACT.json`：数据包字段分组契约，标记身份字段、原子特征、模型输出、市场上下文、标签等字段是否齐备。
+- `split_protocol.json`：horizon-aware walk-forward + embargo 切分协议。
 - `summary.json`：本次导出的统计摘要。
 
 ## 防泄漏约束
@@ -946,6 +1060,7 @@ def _write_docs(out_dir: Path, summary: dict) -> None:
 - `symbol` / `ts_code` / `name`：股票代码、带交易所后缀的代码和名称。CSV 被 Excel 打开时优先使用 `ts_code`，避免前导 0 丢失。
 - `event_seq_for_symbol`：同一股票第几次出现 B 点事件。
 - `sample_split`：按时间切分的 train / validation / test，避免随机切分导致时间泄漏。
+- `split_hit_N_10pct`：每个目标 horizon 的独立切分列，仅对该 horizon 标签完整的行分配 train / validation / test，窗口边界处标记为 `embargo`。
 
 ## 当时可见信号字段
 
@@ -1029,6 +1144,7 @@ def main() -> None:
     market_context = _load_market_context(start, end)
 
     first_labeled, price_paths = _horizon_labels(first_buy, prices)
+    active_panel = _panel_horizon_labels(active_panel, prices)
     first_labeled = _add_engineered_features(first_labeled)
     active_panel = _add_engineered_features(active_panel)
     latest = _add_engineered_features(latest)
@@ -1131,6 +1247,10 @@ def main() -> None:
     quality = _quality_report(first_labeled, active_panel, latest)
     with (out_dir / "quality_report.json").open("w", encoding="utf-8") as f:
         json.dump(quality, f, ensure_ascii=False, indent=2)
+    with (out_dir / "FIELD_CONTRACT.json").open("w", encoding="utf-8") as f:
+        json.dump({"field_groups": FIELD_GROUPS, "report": quality["field_contract"]}, f, ensure_ascii=False, indent=2)
+    with (out_dir / "split_protocol.json").open("w", encoding="utf-8") as f:
+        json.dump(SPLIT_PROTOCOL, f, ensure_ascii=False, indent=2)
 
     summary = {
         "exported_at": datetime.now().isoformat(timespec="seconds"),
@@ -1153,6 +1273,8 @@ def main() -> None:
             "DATA_DICTIONARY.md",
             "feature_whitelist.json",
             "quality_report.json",
+            "FIELD_CONTRACT.json",
+            "split_protocol.json",
         ],
     }
 

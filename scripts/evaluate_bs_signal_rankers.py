@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from scoreRank.core.bs_monitoring import cost_sensitive_topn_report, shadow_pool_overlap, topn_rank_report
+from scoreRank.core.bs_monitoring import cost_scenario_topn_report, cost_sensitive_topn_report, shadow_pool_overlap, topn_rank_report
 
 
 DATASET_ROOT = PROJECT_ROOT / "exports" / "signal_enhancement"
@@ -58,6 +58,13 @@ def build_ranker_report(
         capital_per_trade=capital_per_trade,
         max_avg_amount_ratio=capacity_ratio,
     )
+    scenario_topn = cost_scenario_topn_report(
+        events,
+        score_cols=score_cols,
+        horizon=horizon,
+        capital_per_trade=capital_per_trade,
+        max_avg_amount_ratio=capacity_ratio,
+    )
     return {
         "dataset_dir": str(dataset_dir),
         "horizon": horizon,
@@ -69,6 +76,7 @@ def build_ranker_report(
         "rows": int(len(events)),
         "topn": topn.to_dict("records"),
         "cost_sensitive_topn": cost_topn.to_dict("records"),
+        "cost_scenario_topn": scenario_topn.to_dict("records"),
         "shadow_pool_overlap_latest": shadow_pool_overlap(latest),
     }
 
@@ -95,6 +103,12 @@ def _write_report(report: dict, out_dir: Path) -> dict:
         pd.DataFrame(report.get("cost_sensitive_topn", [])).to_markdown(index=False)
         if report.get("cost_sensitive_topn")
         else "_无可用成本敏感 TopN 数据_",
+        "",
+        "## 多成本档 TopN",
+        "",
+        pd.DataFrame(report.get("cost_scenario_topn", [])).to_markdown(index=False)
+        if report.get("cost_scenario_topn")
+        else "_无可用多成本档 TopN 数据_",
         "",
         "## 影子池重叠",
         "",

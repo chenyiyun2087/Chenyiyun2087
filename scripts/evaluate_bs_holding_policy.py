@@ -79,10 +79,17 @@ def evaluate_holding_policy(frame: pd.DataFrame, horizon: int = 20) -> dict:
 
     action_order = {"ADD": 0, "HOLD": 1, "REDUCE": 2, "EXIT": 3}
     rows.sort(key=lambda x: action_order.get(str(x["action"]), 99))
+    benchmark = None
+    if ret_col in d.columns:
+        benchmark = round(float(pd.to_numeric(d[ret_col], errors="coerce").mean()), 6)
+        for item in rows:
+            if "avg_ret" in item and item["avg_ret"] is not None:
+                item["avg_ret_delta_vs_all"] = round(float(item["avg_ret"] - benchmark), 6)
     requested_metrics = [hit_col, ret_col, max_ret_col, mdd_col]
     return {
         "rows": int(len(d)),
         "horizon": horizon,
+        "benchmark_avg_ret": benchmark,
         "available_metric_columns": [c for c in requested_metrics if c in d.columns],
         "missing_metric_columns": [c for c in requested_metrics if c not in d.columns],
         "actions": rows,
