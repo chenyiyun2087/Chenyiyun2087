@@ -1,0 +1,9 @@
+trade_date,returncode,elapsed_seconds,industry_updated,model_rows_cleared,rule_bs_updated,score_rows,empty_industry_rows,null_score_rows,null_liquidity_rows,null_bs_v2_rows,null_consensus_rows,model_field_rows,score_log,status,error
+2026-03-16,0,78.125,0,5174,5174,5174,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260601_211621_336478_74291_2025_full/logs/score_rank_20260316.log,PASS,
+2026-04-07,0,76.241,0,5168,5168,5168,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260601_211621_336478_74291_2025_full/logs/score_rank_20260407.log,PASS,
+2026-04-10,0,76.19,0,5174,5174,5174,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260601_211621_336478_74291_2025_full/logs/score_rank_20260410.log,PASS,
+2026-04-15,0,76.477,0,5172,5172,5172,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260601_211621_336478_74291_2025_full/logs/score_rank_20260415.log,PASS,
+2026-04-16,0,76.728,0,5173,5173,5173,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260601_211621_336478_74291_2025_full/logs/score_rank_20260416.log,PASS,
+2026-04-17,0,76.133,0,5171,5171,5171,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260601_211621_336478_74291_2025_full/logs/score_rank_20260417.log,PASS,
+2026-04-20,0,81.163,0,5166,5166,5166,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260601_211621_336478_74291_2025_full/logs/score_rank_20260420.log,PASS,
+2026-04-21,0,146.219,0,5169,5169,5169,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260601_211621_336478_74291_2025_full/logs/score_rank_20260421.log,PASS,

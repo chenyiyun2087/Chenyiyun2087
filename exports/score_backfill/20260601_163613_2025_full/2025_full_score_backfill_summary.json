@@ -1,0 +1,36 @@
+{
+  "range": {
+    "start_date": "2025-06-30",
+    "end_date": "2025-06-30"
+  },
+  "totals": {
+    "trade_days": 1,
+    "price_days": 1,
+    "score_days": 1,
+    "missing_score_days": 0,
+    "low_score_days": 0,
+    "score_rows": 5125,
+    "empty_industry_rows": 0,
+    "null_score_rows": 0,
+    "null_liquidity_rows": 0,
+    "null_bs_v2_rows": 0,
+    "null_consensus_rows": 0,
+    "model_field_rows": 0
+  },
+  "missing_score_days": [],
+  "low_score_days": [],
+  "monthly": [
+    {
+      "month": "2025-06",
+      "score_days": 1,
+      "score_rows": 5125
+    }
+  ],
+  "bs_detection_coverage": {
+    "min_batch_date": null,
+    "max_batch_date": null,
+    "rows_count": 0,
+    "batch_days": 0
+  },
+  "ready_for_recent_year_backtest": true
+}

@@ -1,0 +1,51 @@
+{
+  "range": {
+    "start_date": "2025-02-17",
+    "end_date": "2025-05-30"
+  },
+  "totals": {
+    "trade_days": 71,
+    "price_days": 71,
+    "score_days": 71,
+    "missing_score_days": 0,
+    "low_score_days": 0,
+    "score_rows": 362568,
+    "empty_industry_rows": 0,
+    "null_score_rows": 0,
+    "null_liquidity_rows": 0,
+    "null_bs_v2_rows": 0,
+    "null_consensus_rows": 0,
+    "model_field_rows": 0
+  },
+  "missing_score_days": [],
+  "low_score_days": [],
+  "monthly": [
+    {
+      "month": "2025-02",
+      "score_days": 10,
+      "score_rows": 50983
+    },
+    {
+      "month": "2025-03",
+      "score_days": 21,
+      "score_rows": 107072
+    },
+    {
+      "month": "2025-04",
+      "score_days": 21,
+      "score_rows": 107290
+    },
+    {
+      "month": "2025-05",
+      "score_days": 19,
+      "score_rows": 97223
+    }
+  ],
+  "bs_detection_coverage": {
+    "min_batch_date": null,
+    "max_batch_date": null,
+    "rows_count": 0,
+    "batch_days": 0
+  },
+  "ready_for_recent_year_backtest": true
+}
