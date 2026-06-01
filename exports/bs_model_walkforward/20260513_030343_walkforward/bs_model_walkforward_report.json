@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-05-13T03:03:43",
+  "dataset_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_enhancement/20260511_143431",
+  "target": "hit_20_10pct",
+  "risk_target": "mdd_20",
+  "feature_count": 149,
+  "aggregate": {
+    "months": 2,
+    "prediction_rows": 243,
+    "avg_precision_at_10": 0.3,
+    "avg_precision_at_20": 0.35,
+    "avg_roc_auc": 0.763560157790927,
+    "avg_average_precision": 0.5775096400870539
+  },
+  "files": {
+    "summary_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_model_walkforward/20260513_030343_walkforward/bs_model_walkforward_summary.csv",
+    "predictions_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_model_walkforward/20260513_030343_walkforward/bs_model_walkforward_predictions.csv",
+    "markdown": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_model_walkforward/20260513_030343_walkforward/bs_model_walkforward_report.md",
+    "json": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_model_walkforward/20260513_030343_walkforward/bs_model_walkforward_report.json"
+  }
+}
