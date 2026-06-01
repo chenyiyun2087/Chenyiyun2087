@@ -16,8 +16,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
-from scoreRank.core.bs_model_infer import apply_bs_model_scores, load_latest_bs_model
+from scoreRank.core.ashare_data_center_features import attach_adc_features
+from scoreRank.core.bs_model_infer import add_model_engineered_features, apply_bs_model_scores, load_latest_bs_model
 from scoreRank.core.config import CONFIG
+from scoreRank.core.db_io import query_df
 
 
 SCORE_UPDATE_COLUMNS = [
@@ -86,6 +88,7 @@ def ensure_score_rank_daily_score_columns(cursor) -> None:
     cursor.execute("SHOW COLUMNS FROM score_rank_daily")
     existing = {row["Field"] if isinstance(row, dict) else row[0] for row in cursor.fetchall()}
     additions = {
+        "s_liquidity": "ALTER TABLE score_rank_daily ADD COLUMN s_liquidity DECIMAL(10,2) NULL COMMENT '流动性分' AFTER s_contraction",
         "bs_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_score DECIMAL(10,2) NULL COMMENT 'B点增强分' AFTER claude_score",
         "bs_entry_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_entry_score DECIMAL(10,2) NULL COMMENT '买点后节奏分' AFTER bs_score",
         "bs_score_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_score_label VARCHAR(16) NULL COMMENT 'B点增强分标签' AFTER bs_entry_score",
@@ -106,6 +109,13 @@ def ensure_score_rank_daily_score_columns(cursor) -> None:
         "bs_consensus_score": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_score DECIMAL(10,2) NULL COMMENT 'B点综合建议分' AFTER bs_model_version",
         "bs_consensus_label": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_label VARCHAR(16) NULL COMMENT 'B点综合建议标签' AFTER bs_consensus_score",
         "bs_consensus_reason": "ALTER TABLE score_rank_daily ADD COLUMN bs_consensus_reason VARCHAR(128) NULL COMMENT 'B点综合建议原因' AFTER bs_consensus_label",
+        "buy_signal_description": "ALTER TABLE score_rank_daily ADD COLUMN buy_signal_description VARCHAR(255) NULL COMMENT '最近买点描述' AFTER buy_point_close",
+        "sell_signal_description": "ALTER TABLE score_rank_daily ADD COLUMN sell_signal_description VARCHAR(255) NULL COMMENT '最近卖点描述' AFTER buy_signal_description",
+        "total_b_points": "ALTER TABLE score_rank_daily ADD COLUMN total_b_points INT NULL COMMENT '最近批次B点总数' AFTER sell_signal_description",
+        "total_s_points": "ALTER TABLE score_rank_daily ADD COLUMN total_s_points INT NULL COMMENT '最近批次S点总数' AFTER total_b_points",
+        "buy_points_count": "ALTER TABLE score_rank_daily ADD COLUMN buy_points_count INT NULL COMMENT '最近批次买点数量' AFTER total_s_points",
+        "sell_points_count": "ALTER TABLE score_rank_daily ADD COLUMN sell_points_count INT NULL COMMENT '最近批次卖点数量' AFTER buy_points_count",
+        "event_seq_for_symbol": "ALTER TABLE score_rank_daily ADD COLUMN event_seq_for_symbol INT NULL COMMENT '该股票历史B点序号' AFTER sell_points_count",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -138,12 +148,17 @@ def fetch_score_rows(cursor, trade_date, only_bs_candidates: bool = False) -> li
     return list(cursor.fetchall() or [])
 
 
-def enrich_score_rows(rows: list[dict]) -> list[dict]:
+def enrich_score_rows(rows: list[dict], only_bs_candidates: bool = False) -> list[dict]:
     if not rows:
         return []
     out = add_bs_enhanced_scores(pd.DataFrame(rows))
+    if "trade_date" in out.columns:
+        out["score_date_key"] = pd.to_datetime(out["trade_date"], errors="coerce").dt.strftime("%Y%m%d")
+        out["score_date_key"] = pd.to_numeric(out["score_date_key"], errors="coerce").astype("Int64")
+        out = attach_adc_features(out, "score_date_key", lambda sql, params=None: query_df(CONFIG, sql, params))
+    out = add_model_engineered_features(out)
     model_bundle = load_latest_bs_model(target=CONFIG.get("bs_model_target", "hit_20_10pct"))
-    out = apply_bs_model_scores(out, model_bundle=model_bundle, only_candidates=True)
+    out = apply_bs_model_scores(out, model_bundle=model_bundle, only_candidates=only_bs_candidates)
     out = add_bs_enhanced_scores(out)
     records = out.to_dict("records")
     return [
@@ -185,7 +200,7 @@ def build_bs_consensus_scores(date_value: str | None = None, only_bs_candidates:
                 raise RuntimeError("No score_rank_daily trade_date found.")
 
             rows = fetch_score_rows(cursor, trade_date, only_bs_candidates=only_bs_candidates)
-            enriched = enrich_score_rows(rows)
+            enriched = enrich_score_rows(rows, only_bs_candidates=only_bs_candidates)
             updated = 0 if dry_run else update_score_rows(cursor, trade_date, enriched)
 
         if dry_run:

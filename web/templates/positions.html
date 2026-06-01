@@ -49,6 +49,12 @@
         <button class="btn btn-sm" type="submit">提交现金调整</button>
         <span class="positions-hint">示例：10000 表示加现金，-5000 表示减现金。</span>
     </form>
+    <form method="post" action="{{ url_for('reset_live_assets') }}" class="asset-reset-form"
+        onsubmit="return confirm('确认将资产重置为初始状态？这会清空当前持仓，并将账户现金重置为50万，累计收益率和年化收益率归0。');">
+        <input type="hidden" name="return_page" value="{{ pagination.page if pagination else 1 }}">
+        <button class="btn btn-sm btn-danger" type="submit">一键恢复初始资产</button>
+        <span class="positions-hint">初始状态：现金500000.00，持仓为空，累计/年化收益率为0。</span>
+    </form>
 </section>
 
 <section class="panel">

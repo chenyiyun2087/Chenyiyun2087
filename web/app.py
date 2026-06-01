@@ -75,6 +75,7 @@ DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
     "position_ratio": 1.0,
     "holding_days": 20,
 }
+INITIAL_LIVE_CAPITAL = Decimal("500000.00")
 
 # Task Status Storage (Loaded from DB on start)
 TASKS = {
@@ -123,6 +124,30 @@ TASKS = {
         "switched_day": False,
         "schedule_enabled": False,
         "schedule_time": "21:20",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "trusted_strategy_candidates": {
+        "name": "可信全量池候选导出",
+        "description": "导出全量池可信策略 Top5 候选名单，用于次日人工复核与生产执行",
+        "script": "scripts/ops/export_trusted_strategy_candidates.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": True,
+        "schedule_time": "21:25",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
+    "trusted_strategy_shadow_monitor": {
+        "name": "可信策略影子盘监控",
+        "description": "复盘上一信号日订单在执行日开盘的可成交性、滑点和风险状态",
+        "script": "scripts/ops/run_trusted_strategy_shadow_monitor.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": True,
+        "schedule_time": "21:28",
         "next_run": "-",
         "trading_day_only": True,
     },
@@ -199,8 +224,8 @@ TASKS = {
         "trading_day_only": False,
     },
     "chenyiyun_selected": {
-        "name": "陈依云信号检查（09:05）",
-        "description": "检查是否触发买卖信号，生成调仓建议",
+        "name": "陈依云旧精选信号检查（Legacy）",
+        "description": "旧高股息/小市值策略，仅保留归档；已从生产选股链路隔离，禁止在任务中心执行",
         "script": "scripts/ops/run_chenyiyun_signal_check.py",
         "last_run": "Never",
         "status": "Idle",
@@ -209,6 +234,7 @@ TASKS = {
         "schedule_time": "09:05",
         "next_run": "-",
         "trading_day_only": True,
+        "legacy": True,
     },
     "chenyiyun_weekly_rebalance": {
         "name": "陈依云周调仓（周一09:30）",
@@ -255,6 +281,8 @@ SCHEDULED_TASK_WHITELIST = {
     "sina_analyse",
     "sina_score",
     "sina_bs_consensus",
+    "trusted_strategy_candidates",
+    "trusted_strategy_shadow_monitor",
     "sina_m8",
     "sina_snapshot",
     "sina_m7_sell",
@@ -1338,6 +1366,76 @@ def _verify_sina_m8_result(started_at, finished_at):
         return False, [f"result=FAIL; verifier_error={e}"]
 
 
+def _verify_trusted_strategy_candidates_result(started_at, finished_at, run_options=None):
+    lines = []
+    try:
+        _ = run_options
+        project_root = Path(app.root_path).parent
+        out_root = project_root / "exports" / "production_candidates"
+        if not out_root.exists():
+            return False, [f"result=FAIL; reason=missing_output_root; path={out_root}"]
+
+        candidates = []
+        for path in out_root.glob("*/trusted_strategy_candidates.json"):
+            try:
+                mtime = datetime.fromtimestamp(path.stat().st_mtime)
+            except OSError:
+                continue
+            if (started_at - timedelta(seconds=30)) <= mtime <= (finished_at + timedelta(seconds=300)):
+                candidates.append((mtime, path))
+        if not candidates:
+            return False, ["result=FAIL; reason=no_candidate_export_created_in_window"]
+
+        latest_path = sorted(candidates, key=lambda item: item[0], reverse=True)[0][1]
+        payload = json.loads(latest_path.read_text(encoding="utf-8"))
+        rows = payload.get("candidates") or []
+        params = payload.get("params") or {}
+        warnings = payload.get("warnings") or []
+        price_max_date = str(params.get("price_max_date") or "")
+        asof_date = str(params.get("asof_date") or "")
+        price_cutoff_ok = bool(asof_date and price_max_date and price_max_date <= asof_date)
+        db_candidate_rows = 0
+        db_signal_rows = 0
+        try:
+            conn = pymysql.connect(**DB_CONFIG)
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS c
+                    FROM ads_trusted_strategy_candidates
+                    WHERE trade_date = %s AND strategy = %s
+                    """,
+                    (asof_date, params.get("strategy") or "baseline_full_dynamic_factor_industry_cap2"),
+                )
+                db_candidate_rows = int((cursor.fetchone() or {}).get("c") or 0)
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS c
+                    FROM ads_chenyiyun_selected_signals
+                    WHERE trade_date = %s
+                    """,
+                    (asof_date,),
+                )
+                db_signal_rows = int((cursor.fetchone() or {}).get("c") or 0)
+            conn.close()
+        except Exception as db_error:
+            lines.append(f"db_verify_error={db_error}")
+        ok = bool(len(rows) > 0 and price_cutoff_ok and db_candidate_rows > 0)
+        lines.append(
+            "result="
+            + ("PASS" if ok else "FAIL")
+            + f"; rows={len(rows)}; asof_date={asof_date or '-'}; price_max_date={price_max_date or '-'}"
+        )
+        lines.append(f"price_cutoff_ok={price_cutoff_ok}; warnings={len(warnings)}")
+        lines.append(f"db_candidate_rows={db_candidate_rows}; db_signal_rows={db_signal_rows}")
+        lines.append(f"output={latest_path}")
+        if warnings:
+            lines.append("warning_detail=" + " | ".join(str(item) for item in warnings[:5]))
+        return ok, lines
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
 def _verify_sina_m7_sell_result(started_at, finished_at, run_options=None):
     lines = []
     try:
@@ -1396,6 +1494,8 @@ def _run_task_result_verification(task_name, started_at, finished_at, run_option
         return _verify_sina_score_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_bs_consensus":
         return _verify_sina_bs_consensus_result(started_at, finished_at, run_options=run_options)
+    if task_name == "trusted_strategy_candidates":
+        return _verify_trusted_strategy_candidates_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_m8":
         return _verify_sina_m8_result(started_at, finished_at)
     if task_name == "sina_m7_sell":
@@ -2004,6 +2104,28 @@ def _build_task_script_parts(task_name, run_options=None):
         if datestr:
             return [script, '--date', datestr]
         return [script]
+    if task_name == 'trusted_strategy_candidates':
+        args = [
+            '--strategy',
+            'baseline_full_dynamic_factor_industry_cap2',
+            '--top-n',
+            '5',
+            '--hold-days',
+            '10',
+            '--max-total-positions',
+            '5',
+            '--write-db',
+            '--emit-orders',
+            '--notify-feishu',
+        ]
+        if datestr:
+            args.extend(['--date', datestr])
+        return [script, *args]
+    if task_name == 'trusted_strategy_shadow_monitor':
+        args = ['--write-db', '--notify-feishu', '--allow-empty']
+        if datestr:
+            args.extend(['--execution-date', datestr])
+        return [script, *args]
     if task_name == 'sina_m8':
         return [script, '--lookback-dates', '60']
     if task_name == 'sina_snapshot':
@@ -2025,10 +2147,18 @@ def _build_task_script_parts(task_name, run_options=None):
     if task_name == 'eastmoney':
         return [script, '--export', 'result']
     if task_name == 'chenyiyun_selected':
+        legacy_args = [
+            '--order-table',
+            'chenyiyun.ads_legacy_chenyiyun_orders',
+            '--signal-snapshot-table',
+            'chenyiyun.ads_legacy_chenyiyun_selected_signals',
+            '--signal-table',
+            'chenyiyun.ads_legacy_chenyiyun_daily_signals',
+        ]
         if datestr and len(datestr) == 8:
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
-            return [script, '--date', date_iso]
-        return [script]
+            return [script, '--date', date_iso, *legacy_args]
+        return [script, *legacy_args]
     if task_name in {'chenyiyun_weekly_rebalance', 'chenyiyun_limitup_check', 'chenyiyun_position_update'}:
         if datestr and len(datestr) == 8:
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
@@ -2060,6 +2190,8 @@ def init_tasks():
                         if row.get('next_run'):
                             TASKS[name]['next_run'] = row['next_run'].strftime('%Y-%m-%d %H:%M:%S')
                 for name, task in TASKS.items():
+                    if task.get("legacy"):
+                        task["schedule_enabled"] = False
                     last_run = None if task.get('last_run') == "Never" else task.get('last_run')
                     next_run_dt = _compute_next_run(task.get('schedule_time'), bool(task.get('schedule_enabled')))
                     task['next_run'] = next_run_dt.strftime('%Y-%m-%d %H:%M:%S') if next_run_dt else '-'
@@ -2098,8 +2230,12 @@ def get_db():
 
 @app.teardown_appcontext
 def close_db(error):
-    if 'db' in g:
-        g.db.close()
+    db = g.pop('db', None)
+    if db is not None:
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 def _ensure_chenyiyun_selected_settings_table(cursor):
@@ -2250,6 +2386,7 @@ def _ensure_score_rank_daily_score_columns(cursor):
     cursor.execute("SHOW COLUMNS FROM score_rank_daily")
     existing = {row["Field"] for row in cursor.fetchall()}
     additions = {
+        "s_liquidity": "ALTER TABLE score_rank_daily ADD COLUMN s_liquidity DECIMAL(10,2) NULL COMMENT '流动性分' AFTER s_contraction",
         "score_momentum": "ALTER TABLE score_rank_daily ADD COLUMN score_momentum DECIMAL(10,2) NULL COMMENT 'Claude动量子分' AFTER claude_score",
         "score_value": "ALTER TABLE score_rank_daily ADD COLUMN score_value DECIMAL(10,2) NULL COMMENT 'Claude估值子分' AFTER score_momentum",
         "score_quality": "ALTER TABLE score_rank_daily ADD COLUMN score_quality DECIMAL(10,2) NULL COMMENT 'Claude质量子分' AFTER score_value",
@@ -2521,6 +2658,86 @@ def adjust_positions():
     return redirect(url_for('positions', page=return_page))
 
 
+def _ensure_live_asset_tables(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS live_positions (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            symbol VARCHAR(16) NOT NULL UNIQUE COMMENT '股票代码',
+            name VARCHAR(32) COMMENT '股票名称',
+            shares INT NOT NULL COMMENT '持仓数量',
+            avg_cost DECIMAL(12, 4) NOT NULL COMMENT '平均成本',
+            entry_date DATE NOT NULL COMMENT '首次买入日期',
+            current_price DECIMAL(12, 4) COMMENT '当前价格',
+            highest_since_entry DECIMAL(12,4) NULL COMMENT '建仓后最高价',
+            holding_trade_days INT NOT NULL DEFAULT 0 COMMENT '持仓交易日天数',
+            pending_forced_exit TINYINT(1) NOT NULL DEFAULT 0 COMMENT '强制卖出挂起标记',
+            pending_exit_reason VARCHAR(128) NULL COMMENT '挂起原因',
+            rebuy_cooldown_until DATE NULL COMMENT '禁买截止日',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='实盘持仓'
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS live_daily_snapshots (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            snapshot_date DATE NOT NULL UNIQUE COMMENT '快照日期',
+            cash DECIMAL(16, 2) NOT NULL COMMENT '现金余额',
+            positions_value DECIMAL(16, 2) NOT NULL COMMENT '持仓市值',
+            total_equity DECIMAL(16, 2) NOT NULL COMMENT '总权益',
+            daily_pnl DECIMAL(16, 2) COMMENT '当日盈亏',
+            daily_return_pct DECIMAL(8, 4) COMMENT '当日收益率(%)',
+            csi300_return_pct DECIMAL(8, 4) COMMENT '沪深300当日收益率(%)',
+            excess_return_pct DECIMAL(8, 4) COMMENT '超额收益率(%)',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每日账户快照'
+        """
+    )
+
+
+@app.route('/sina/assets/reset', methods=['POST'])
+def reset_live_assets():
+    return_page = request.form.get('return_page', type=int) or 1
+    today = datetime.now().date()
+    initial_capital = INITIAL_LIVE_CAPITAL.quantize(Decimal("0.01"))
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            _ensure_live_asset_tables(cursor)
+            cursor.execute("DELETE FROM live_positions")
+            cursor.execute("DELETE FROM live_daily_snapshots")
+            cursor.execute(
+                """
+                INSERT INTO live_daily_snapshots
+                (snapshot_date, cash, positions_value, total_equity, daily_pnl, daily_return_pct, csi300_return_pct, excess_return_pct)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    today,
+                    str(initial_capital),
+                    "0.00",
+                    str(initial_capital),
+                    "0.00",
+                    "0.0000",
+                    "0.0000",
+                    "0.0000",
+                ),
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        flash(f'资产重置失败: {e}', 'danger')
+        return redirect(url_for('positions', page=return_page))
+
+    flash(
+        f'资产已重置为初始状态：现金 {initial_capital:.2f}，持仓为空，收益率和年化收益率归0。',
+        'success',
+    )
+    return redirect(url_for('positions', page=1))
+
+
 @app.route('/sina/cash/adjust', methods=['POST'])
 def adjust_cash():
     amount_raw = (request.form.get('cash_adjust_amount') or '').strip()
@@ -2643,6 +2860,10 @@ def chenyiyun_selected_dashboard():
         side_filter = 'BUY'
     signals = []
     positions = []
+    trusted_candidates = []
+    latest_shadow_summary = None
+    shadow_fills = []
+    latest_trusted_candidate_date = None
     strategy_settings = _normalize_chenyiyun_selected_settings(DEFAULT_CHENYIYUN_SELECTED_SETTINGS)
     latest_snapshot_equity = None
     latest_signal_trade_date = None
@@ -2689,6 +2910,55 @@ def chenyiyun_selected_dashboard():
 
             cursor.execute("SELECT MAX(trade_date) AS d FROM ads_chenyiyun_selected_signals")
             latest_signal_trade_date = (cursor.fetchone() or {}).get("d")
+
+            cursor.execute("SHOW TABLES LIKE 'ads_trusted_strategy_candidates'")
+            if cursor.fetchone() is not None:
+                cursor.execute("SELECT MAX(trade_date) AS d FROM ads_trusted_strategy_candidates")
+                latest_trusted_candidate_date = (cursor.fetchone() or {}).get("d")
+                if latest_trusted_candidate_date is not None:
+                    cursor.execute(
+                        """
+                        SELECT trade_date, strategy, rank_no, symbol, stock_name, industry, rank_score,
+                               effective_weight, latest_close, dynamic_factor_score, liquidity_detail_score,
+                               s_liquidity, market_liquidity_bucket, index_bucket
+                        FROM ads_trusted_strategy_candidates
+                        WHERE trade_date = %s
+                        ORDER BY rank_no ASC
+                        """,
+                        (latest_trusted_candidate_date,),
+                    )
+                    trusted_candidates = cursor.fetchall()
+
+            cursor.execute("SHOW TABLES LIKE 'ads_trusted_strategy_shadow_daily'")
+            if cursor.fetchone() is not None:
+                cursor.execute(
+                    """
+                    SELECT signal_date, execution_date, total_orders, buy_orders, sell_orders,
+                           executable_orders, blocked_orders, warning_orders, planned_amount,
+                           execution_amount, avg_slippage_bps, max_adverse_slippage_bps,
+                           blocked_symbols
+                    FROM ads_trusted_strategy_shadow_daily
+                    ORDER BY execution_date DESC
+                    LIMIT 1
+                    """
+                )
+                latest_shadow_summary = cursor.fetchone()
+                if latest_shadow_summary:
+                    cursor.execute("SHOW TABLES LIKE 'ads_trusted_strategy_shadow_fills'")
+                    if cursor.fetchone() is not None:
+                        cursor.execute(
+                            """
+                            SELECT execution_date, signal_date, ts_code, stock_name, side, planned_price,
+                                   execution_open, allocated_shares, planned_amount, execution_amount,
+                                   slippage_bps, tradable_flag, tradable_status, risk_reason
+                            FROM ads_trusted_strategy_shadow_fills
+                            WHERE execution_date = %s
+                            ORDER BY tradable_flag ASC, ABS(COALESCE(slippage_bps, 0)) DESC, side ASC, ts_code ASC
+                            LIMIT 20
+                            """,
+                            (latest_shadow_summary.get("execution_date"),),
+                        )
+                        shadow_fills = cursor.fetchall()
 
             where_clauses = []
             params = []
@@ -2765,6 +3035,10 @@ def chenyiyun_selected_dashboard():
         strategy_settings=strategy_settings,
         latest_snapshot_equity=latest_snapshot_equity,
         latest_signal_trade_date=latest_signal_trade_date,
+        latest_trusted_candidate_date=latest_trusted_candidate_date,
+        trusted_candidates=trusted_candidates,
+        latest_shadow_summary=latest_shadow_summary,
+        shadow_fills=shadow_fills,
         signal_stats=signal_stats,
         scope=scope,
         side_filter=side_filter,
@@ -2886,7 +3160,7 @@ def sina_scores():
             all_scores = _enrich_bs_score_rows(cursor.fetchall())
 
             reverse = order == 'DESC'
-            if sort_by in {'bs_consensus_score', 'bs_model_rank_score', 'bs_model_prob', 'bs_model_risk_score', 'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score'}:
+            if sort_by in {'bs_consensus_score', 'bs_model_rank_score', 'bs_model_prob', 'bs_model_risk_score', 'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score', 's_liquidity'}:
                 all_scores.sort(key=lambda row: _safe_sort_float(row, sort_by), reverse=reverse)
             else:
                 all_scores.sort(
@@ -3012,6 +3286,8 @@ def sina_all_scores():
                 order_stmt = f"ORDER BY srd.opt_score {order}"
             elif sort_by == 'claude_score':
                 order_stmt = f"ORDER BY srd.claude_score {order}"
+            elif sort_by == 's_liquidity':
+                order_stmt = f"ORDER BY srd.s_liquidity {order}"
             elif sort_by == 'bs_score':
                 order_stmt = f"ORDER BY srd.bs_score {order}"
             elif sort_by == 'bs_score_v2':
@@ -3128,6 +3404,8 @@ def sina_self_selected():
                 order_stmt = f"ORDER BY opt_score {order}"
             elif sort_by == 'claude_score':
                 order_stmt = f"ORDER BY claude_score {order}"
+            elif sort_by == 's_liquidity':
+                order_stmt = f"ORDER BY s_liquidity {order}"
             elif sort_by == 'bs_score':
                 order_stmt = f"ORDER BY bs_score {order}"
             elif sort_by == 'bs_score_v2':
@@ -4924,7 +5202,8 @@ def _ensure_seed_pools(cursor):
         INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
         VALUES
             ('SELF_SELECTED', '自选股池', 'MANUAL', 1, 1),
-            ('RECENT_BUY', '最近有买点股票池', 'SIGNAL_SYNC', 1, 0)
+            ('RECENT_BUY', '最近有买点股票池', 'SIGNAL_SYNC', 1, 0),
+            ('TRUSTED_FULL_POOL_TOP5', '可信全量池Top5', 'SIGNAL_SYNC', 1, 0)
         ON DUPLICATE KEY UPDATE
             pool_name = VALUES(pool_name),
             source_type = VALUES(source_type),
@@ -5375,6 +5654,14 @@ def update_task_schedule(task_name):
         flash(f"Unknown task: {task_name}", 'danger')
         return redirect(url_for('admin'))
 
+    if TASKS[task_name].get("legacy"):
+        with TASKS_LOCK:
+            TASKS[task_name]['schedule_enabled'] = False
+            TASKS[task_name]['next_run'] = '-'
+        update_task_db(task_name)
+        flash(f"任务 {TASKS[task_name]['name']} 已标记为 Legacy，不允许开启调度。", 'warning')
+        return redirect(url_for('admin'))
+
     schedule_time = _normalize_schedule_time(request.form.get('schedule_time'))
     if schedule_time is None:
         flash('调度时间格式非法，请使用 HH:MM。', 'danger')
@@ -5459,6 +5746,17 @@ def run_task(task_name):
             http_code=404,
             started=False,
             reason='UNKNOWN_TASK',
+        )
+
+    if TASKS[task_name].get("legacy"):
+        return _json_or_redirect(
+            ok=False,
+            message=f"任务 {TASKS[task_name]['name']} 已标记为 Legacy，已从生产选股链路隔离，禁止从任务中心执行。",
+            category='warning',
+            http_code=409,
+            started=False,
+            reason='LEGACY_DISABLED',
+            task_status=TASKS[task_name].get('status'),
         )
 
     requested_datestr = _normalize_datestr(request.form.get('datestr') or request.args.get('datestr'))

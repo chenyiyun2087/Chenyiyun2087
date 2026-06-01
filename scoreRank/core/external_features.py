@@ -14,6 +14,7 @@ EXTERNAL_FEATURE_COLUMNS = [
     "fund_roe",
     "fund_netprofit_yoy",
 ]
+UNKNOWN_INDUSTRY = "未知"
 
 
 def _empty_features(symbols: pd.Series | list[str]) -> pd.DataFrame:
@@ -28,6 +29,15 @@ def _safe_read(query_fn: Callable, sql: str, params=None) -> pd.DataFrame:
         return query_fn(sql, params)
     except Exception:
         return pd.DataFrame()
+
+
+def _fill_unknown_industry(frame: pd.DataFrame) -> pd.DataFrame:
+    if "industry" not in frame.columns:
+        frame["industry"] = UNKNOWN_INDUSTRY
+        return frame
+    industry = frame["industry"].astype("string").str.strip()
+    frame["industry"] = industry.mask(industry.isna() | (industry == ""), UNKNOWN_INDUSTRY)
+    return frame
 
 
 def load_external_features(symbols: list[str], asof_date: pd.Timestamp, query_fn: Callable[[str, object | None], pd.DataFrame]) -> pd.DataFrame:
@@ -90,6 +100,7 @@ def load_external_features(symbols: list[str], asof_date: pd.Timestamp, query_fn
     for col in EXTERNAL_FEATURE_COLUMNS:
         if col not in base.columns:
             base[col] = None
+    base = _fill_unknown_industry(base)
     return base[["symbol", *EXTERNAL_FEATURE_COLUMNS]]
 
 
@@ -99,6 +110,7 @@ def attach_external_features(df: pd.DataFrame, asof_date: pd.Timestamp, query_fn
         for col in EXTERNAL_FEATURE_COLUMNS:
             if col not in out.columns:
                 out[col] = None
+        out = _fill_unknown_industry(out)
         return out
     out = df.copy()
     out["symbol"] = out["symbol"].astype(str).str.zfill(6)

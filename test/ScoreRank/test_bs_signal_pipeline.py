@@ -1,5 +1,7 @@
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from scoreRank.core.bs_model_infer import apply_bs_model_scores  # noqa: E402
+from scoreRank.core.bs_model_infer import apply_bs_model_scores, latest_model_path, load_latest_bs_model  # noqa: E402
 from scoreRank.core.ashare_data_center_features import attach_adc_features  # noqa: E402
 from scoreRank.core.db_config import build_sqlalchemy_url, symbol_to_ts_code, symbols_to_ts_codes  # noqa: E402
 from scripts.export_signal_enhancement_dataset import _feature_whitelist, _time_split_for_mask  # noqa: E402
@@ -141,6 +143,58 @@ class TestBSSignalPipeline(unittest.TestCase):
 
         self.assertIn("total_b_points", out.attrs["bs_model_missing_features"])
         self.assertAlmostEqual(float(out.loc[0, "bs_model_prob"]), 0.8)
+
+    def test_load_latest_bs_model_falls_back_when_joblib_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp) / "20260511_210000"
+            model_dir.mkdir()
+            (model_dir / "logistic_calibrated_hit_20_10pct.joblib").write_bytes(b"placeholder")
+
+            original_import = __import__
+
+            def fake_import(name, *args, **kwargs):
+                if name == "joblib":
+                    raise ModuleNotFoundError("No module named 'joblib'", name="joblib")
+                return original_import(name, *args, **kwargs)
+
+            with patch("builtins.__import__", side_effect=fake_import), self.assertWarns(RuntimeWarning):
+                bundle = load_latest_bs_model(model_root=tmp, target="hit_20_10pct")
+
+            self.assertIsNone(bundle)
+
+    def test_load_latest_bs_model_falls_back_when_bundle_load_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp) / "20260511_210000"
+            model_dir.mkdir()
+            (model_dir / "logistic_calibrated_hit_20_10pct.joblib").write_bytes(b"placeholder")
+
+            class FakeJoblib:
+                @staticmethod
+                def load(_path):
+                    raise AttributeError("incompatible sklearn bundle")
+
+            with patch.dict(sys.modules, {"joblib": FakeJoblib}), self.assertWarns(RuntimeWarning):
+                bundle = load_latest_bs_model(model_root=tmp, target="hit_20_10pct")
+
+            self.assertIsNone(bundle)
+
+    def test_latest_model_path_prefers_active_model_pointer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            older_dir = root / "20260511_210000"
+            newer_dir = root / "20260511_220000"
+            older_dir.mkdir()
+            newer_dir.mkdir()
+            active_model = older_dir / "random_forest_hit_20_10pct.joblib"
+            fallback_model = newer_dir / "hist_gradient_boosting_hit_20_10pct.joblib"
+            active_model.write_bytes(b"active")
+            fallback_model.write_bytes(b"fallback")
+            (root / "active_model.json").write_text(
+                '{"target": "hit_20_10pct", "model_path": "' + str(active_model) + '"}',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(latest_model_path(root, "hit_20_10pct"), active_model)
 
     def test_db_config_builds_urls_without_embedded_secret_default(self):
         self.assertEqual(symbol_to_ts_code("600000"), "600000.SH")

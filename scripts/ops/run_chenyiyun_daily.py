@@ -29,6 +29,9 @@ DEFAULT_SETTINGS = {
     "position_ratio": 1.0,
     "holding_days": 20,
 }
+LEGACY_ORDER_TABLE = "chenyiyun.ads_legacy_chenyiyun_orders"
+LEGACY_SIGNAL_SNAPSHOT_TABLE = "chenyiyun.ads_legacy_chenyiyun_selected_signals"
+LEGACY_SIGNAL_TABLE = "chenyiyun.ads_legacy_chenyiyun_daily_signals"
 
 
 def _is_safe_table_name(table: str) -> bool:
@@ -181,13 +184,13 @@ def main() -> None:
     parser.add_argument("--holding-days", type=int, default=None)
     parser.add_argument("--position-ratio", type=float, default=None, help="0~1, e.g. 0.8 means 80%% equity")
     parser.add_argument("--position-table", default="chenyiyun.live_positions")
-    parser.add_argument("--order-table", default="chenyiyun.ads_local_strategy_orders")
-    parser.add_argument("--signal-snapshot-table", default="chenyiyun.ads_chenyiyun_selected_signals")
+    parser.add_argument("--order-table", default=LEGACY_ORDER_TABLE)
+    parser.add_argument("--signal-snapshot-table", default=LEGACY_SIGNAL_SNAPSHOT_TABLE)
     parser.add_argument("--lot-size", type=int, default=100)
     parser.add_argument("--min-trade-value", type=float, default=500.0)
     parser.add_argument("--webhook-url", default=None)
     parser.add_argument("--emit-signals", action="store_true")
-    parser.add_argument("--signal-table", default="chenyiyun.ads_local_strategy_signals")
+    parser.add_argument("--signal-table", default=LEGACY_SIGNAL_TABLE)
     args = parser.parse_args()
 
     date_iso = _normalize_date(args.date)

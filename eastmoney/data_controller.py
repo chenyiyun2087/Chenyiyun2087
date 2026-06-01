@@ -111,7 +111,11 @@ def _get_driver(force_refresh: bool = False):
         _thread_local.request_count = 0
     return _thread_local.driver
 
-def _fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[DuokongSnapshot, float]:
+def _fetch_duokong_snapshot_selenium(
+    code: str,
+    debug: bool = False,
+    force_driver_refresh: bool = False,
+) -> tuple[DuokongSnapshot, float]:
     """使用Selenium获取动态加载的多空看盘数据 (Internal)."""
     start_time = time.time()
     try:
@@ -135,7 +139,7 @@ def _fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[Du
     url = f"https://guba.eastmoney.com/list,{code}.html"
     
     try:
-        driver = _get_driver(force_refresh=force_refresh)
+        driver = _get_driver(force_refresh=force_refresh or force_driver_refresh)
         # Set Referrer for the request
         driver.execute_cdp_cmd("Network.setExtraHTTPHeaders", {"headers": {"Referer": "https://guba.eastmoney.com/"}})
         
@@ -172,29 +176,47 @@ def _fetch_duokong_snapshot_selenium(code: str, debug: bool = False) -> tuple[Du
         return snapshot, duration
 
     except TimeoutException:
-        # Save screenshot for debugging
-        try:
-            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "debug_screenshots")
-            os.makedirs(log_dir, exist_ok=True)
-            screenshot_path = os.path.join(log_dir, f"timeout_{code}_{datetime.now().strftime('%H%M%S')}.png")
-            _thread_local.driver.save_screenshot(screenshot_path)
-            logger.warning("Timeout for %s, screenshot saved to %s", code, screenshot_path)
-        except Exception as e:
-            logger.debug("Failed to save debug screenshot: %s", e)
+        if debug:
+            try:
+                log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "debug_screenshots")
+                os.makedirs(log_dir, exist_ok=True)
+                screenshot_path = os.path.join(log_dir, f"timeout_{code}_{datetime.now().strftime('%H%M%S')}.png")
+                _thread_local.driver.save_screenshot(screenshot_path)
+                logger.warning("Timeout for %s, screenshot saved to %s", code, screenshot_path)
+            except Exception as e:
+                logger.debug("Failed to save debug screenshot: %s", e)
         
         raise RuntimeError(f"Timeout (elapsed: {time.time() - start_time:.2f}s)")
     except Exception as e:
         raise e
 
-def _worker_task(code: str, debug: bool) -> BatchResult:
+def _worker_task(code: str, debug: bool, max_retries: int = 1) -> BatchResult:
     """Worker function for threading."""
     start_time = time.time()
-    try:
-        snapshot, duration = _fetch_duokong_snapshot_selenium(code, debug)
-        return BatchResult(stock_code=code, snapshot=snapshot, duration_seconds=duration)
-    except Exception as exc:
-        duration = time.time() - start_time
-        return BatchResult(stock_code=code, error=str(exc), duration_seconds=duration)
+    last_error: Exception | None = None
+    retry_budget = max(0, max_retries)
+    for attempt in range(retry_budget + 1):
+        try:
+            snapshot, _ = _fetch_duokong_snapshot_selenium(
+                code,
+                debug=debug,
+                force_driver_refresh=attempt > 0,
+            )
+            return BatchResult(stock_code=code, snapshot=snapshot, duration_seconds=time.time() - start_time)
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Sentiment scan failed for %s on attempt %d/%d: %s",
+                code,
+                attempt + 1,
+                retry_budget + 1,
+                exc,
+            )
+            if attempt < retry_budget:
+                time.sleep(min(2.0, 0.5 * (attempt + 1)))
+
+    duration = time.time() - start_time
+    return BatchResult(stock_code=code, error=str(last_error or "unknown error"), duration_seconds=duration)
 
 
 # --- Controller Class ---
@@ -211,6 +233,8 @@ class DataController:
         max_workers: int = 3,
         task_type: str = "all",
         trade_date: date | None = None,
+        retry_attempts: int = 1,
+        debug_screenshots: bool = False,
     ) -> dict:
         """执行多空情绪扫描，并保存结果到数据库。"""
         if not stock_codes:
@@ -220,12 +244,20 @@ class DataController:
         if not codes:
             return {"total": 0, "success": 0, "saved": 0, "duration": 0, "results": []}
 
-        logger.info("开始扫描 %d 只股票, 并发: %d", len(codes), max_workers)
+        logger.info(
+            "开始扫描 %d 只股票, 并发: %d, 重试: %d",
+            len(codes),
+            max_workers,
+            retry_attempts,
+        )
         
         start_time = time.time()
         results: List[BatchResult] = []
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            future_map = {pool.submit(_worker_task, code, False): code for code in codes}
+            future_map = {
+                pool.submit(_worker_task, code, debug_screenshots, retry_attempts): code
+                for code in codes
+            }
             for future in as_completed(future_map):
                 results.append(future.result())
         

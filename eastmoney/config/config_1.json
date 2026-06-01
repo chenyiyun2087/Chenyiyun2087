@@ -1,6 +1,8 @@
 {
   "stock_codes_file": "stock_codes.txt",
   "max_workers": 4,
+  "retry_attempts": 1,
+  "min_success_rate": 0.5,
   "mysql": {
     "host": "localhost",
     "port": 3306,

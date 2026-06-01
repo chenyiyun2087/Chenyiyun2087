@@ -148,9 +148,10 @@ def run_script(script_rel_path, args, log_name):
         return False
 
 
-def run_pipeline(target_date):
+def run_pipeline(target_date) -> bool:
     """Run the 21:00 pipeline tasks sequentially."""
     date_str = target_date.strftime("%Y%m%d")
+    date_iso = target_date.strftime("%Y-%m-%d")
     
     # 1. Wait for Data
     logger.info("Waiting for TuShare data readiness...")
@@ -160,7 +161,7 @@ def run_pipeline(target_date):
     while not is_data_ready(target_date):
         if retries >= max_retries:
              logger.error("Timeout waiting for data readiness.")
-             return
+             return False
         logger.info(f"Data for {date_str} not ready yet. Retrying in 5 minutes...")
         time.sleep(300)
         retries += 1
@@ -172,35 +173,83 @@ def run_pipeline(target_date):
     # [UPDATED] Export to result/ directory
     if not run_script("eastmoney/run_strategy.py", ["--export", "result"], "eastmoney_strategy"):
         logger.error("Pipeline aborted at eastmoney Strategy.")
-        return
+        return False
 
     # 3. Run scoreRank
-    # scoreRank/run_daily.py runs for "latest available date".
-    if not run_script("scoreRank/run_daily.py", [], "score_rank"):
+    # scoreRank/run_daily.py is pinned to the pipeline trade date for deterministic reruns.
+    if not run_script("scoreRank/run_daily.py", ["--date", date_str, "--force"], "score_rank"):
         logger.error("Pipeline aborted at scoreRank.")
-        return
+        return False
 
-    # 4. Persist B-signal consensus scores used by /sina/scores.
-    if not run_script("scoreRank/cli/build_bs_consensus.py", [], "bs_consensus"):
+    # 4. Backfill any empty industries before downstream strategy selection.
+    if not run_script(
+        "scripts/backfill_score_rank_daily_industry.py",
+        ["--start-date", date_iso, "--end-date", date_iso, "--execute"],
+        "score_rank_industry_backfill",
+    ):
+        logger.error("Pipeline aborted at score_rank_daily industry backfill.")
+        return False
+
+    # 5. Persist B-signal consensus scores used by /sina/scores.
+    if not run_script("scoreRank/cli/build_bs_consensus.py", ["--date", date_str], "bs_consensus"):
         logger.error("Pipeline aborted at B-signal consensus scoring.")
-        return
+        return False
 
-    # 5. Build M1 event+kpi tables for strategy stages
+    # 6. Export trusted full-pool strategy candidates for production review.
+    if not run_script(
+        "scripts/ops/export_trusted_strategy_candidates.py",
+        [
+            "--date",
+            date_str,
+            "--strategy",
+            "baseline_full_dynamic_factor_industry_cap2",
+            "--top-n",
+            "5",
+            "--hold-days",
+            "10",
+            "--max-total-positions",
+            "5",
+            "--write-db",
+            "--emit-orders",
+            "--notify-feishu",
+        ],
+        "trusted_strategy_candidates",
+    ):
+        logger.error("Pipeline aborted at trusted strategy candidate export.")
+        return False
+
+    # 7. Review previous signal day's executable quality at today's open.
+    if not run_script(
+        "scripts/ops/run_trusted_strategy_shadow_monitor.py",
+        [
+            "--execution-date",
+            date_str,
+            "--write-db",
+            "--notify-feishu",
+            "--allow-empty",
+        ],
+        "trusted_strategy_shadow_monitor",
+    ):
+        logger.error("Pipeline aborted at trusted strategy shadow monitor.")
+        return False
+
+    # 8. Build M1 event+kpi tables for strategy stages
     if not run_script("scoreRank/cli/build_b_event_kpi.py", [], "m1_event_kpi"):
         logger.error("Pipeline aborted at M1 Event KPI build.")
-        return
+        return False
 
-    # 6. Run M8 strategy regression + parameter search and persist
+    # 9. Run M8 strategy regression + parameter search and persist
     if not run_script("scoreRank/cli/run_m8_cycle.py", ["--lookback-dates", "60"], "strategy_m8"):
         logger.error("Pipeline aborted at M8 cycle.")
-        return
+        return False
 
-    # 7. Run Live Sync
+    # 10. Run Live Sync
     if not run_script("sina/live_tracker/run_live_tracker.py", ["sync"], "live_sync"):
         logger.error("Pipeline aborted at Live Sync.")
-        return
+        return False
 
     logger.info("Daily Pipeline completed successfully.")
+    return True
 
 
 # Main Scheduler Loop
@@ -258,7 +307,8 @@ def main():
             date_str = today.strftime("%Y%m%d")
 
             if config.get("type") == "pipeline":
-                run_pipeline(today)
+                if not run_pipeline(today):
+                    logger.error("Task %s did not complete successfully.", task_name)
             else:
                 # Run Script Task
                 # For sina and eastmoney main, append date argument

@@ -3,6 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 from web.strategy_playbook import evaluate_m2_presets, evaluate_m3_optimizer
 

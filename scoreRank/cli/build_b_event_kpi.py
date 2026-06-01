@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
+import sys
 
 import pandas as pd
 from sqlalchemy import bindparam, text
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 from scoreRank.core.db_io import get_engine
 from scoreRank.core.db_config import symbols_to_ts_codes

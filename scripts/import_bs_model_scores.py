@@ -14,12 +14,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.export_signal_enhancement_dataset import DB_CONFIG
 from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal
+from scoreRank.core.bs_model_infer import latest_model_path
 
 
 MODEL_ROOT = PROJECT_ROOT / "exports" / "bs_signal_models"
 
 
 def _latest_model_dir() -> Path:
+    active_model = latest_model_path(MODEL_ROOT)
+    if active_model is not None:
+        return active_model.parent
     candidates = sorted([p for p in MODEL_ROOT.glob("20*") if p.is_dir()])
     if not candidates:
         raise FileNotFoundError("No model output directory found.")

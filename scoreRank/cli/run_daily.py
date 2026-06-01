@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import timedelta, datetime
 from pathlib import Path
 import sys
@@ -18,7 +20,8 @@ from scoreRank.core.db_io import (
 # from scorer import build_features_from_qfq, attach_liquidity_from_raw, score_asof_date  # DEPRECATED
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
 from scoreRank.core.db_config import symbols_to_ts_codes
-from scoreRank.core.bs_model_infer import apply_bs_model_scores, load_latest_bs_model
+from scoreRank.core.ashare_data_center_features import attach_adc_features
+from scoreRank.core.bs_model_infer import add_model_engineered_features, apply_bs_model_scores, load_latest_bs_model
 from scoreRank.core.bs_threshold_policy import assign_shadow_pool, attach_threshold_columns, resolve_bs_thresholds
 from scoreRank.core.external_features import EXTERNAL_FEATURE_COLUMNS, attach_external_features
 from scoreRank.core.logging_utils import get_score_rank_logger
@@ -110,6 +113,7 @@ def _ensure_score_rank_daily_schema(cursor):
     cursor.execute("SHOW COLUMNS FROM score_rank_daily")
     existing = {row["Field"] for row in cursor.fetchall()}
     additions = {
+        "s_liquidity": "ALTER TABLE score_rank_daily ADD COLUMN s_liquidity DECIMAL(10,2) NULL COMMENT '流动性分' AFTER s_contraction",
         "score_momentum": "ALTER TABLE score_rank_daily ADD COLUMN score_momentum DECIMAL(10,2) NULL COMMENT 'Claude动量子分' AFTER claude_score",
         "score_value": "ALTER TABLE score_rank_daily ADD COLUMN score_value DECIMAL(10,2) NULL COMMENT 'Claude估值子分' AFTER score_momentum",
         "score_quality": "ALTER TABLE score_rank_daily ADD COLUMN score_quality DECIMAL(10,2) NULL COMMENT 'Claude质量子分' AFTER score_value",
@@ -154,6 +158,13 @@ def _ensure_score_rank_daily_schema(cursor):
         "fund_pb": "ALTER TABLE score_rank_daily ADD COLUMN fund_pb DECIMAL(12,4) NULL COMMENT '市净率' AFTER fund_pe_ttm",
         "fund_roe": "ALTER TABLE score_rank_daily ADD COLUMN fund_roe DECIMAL(12,4) NULL COMMENT 'ROE' AFTER fund_pb",
         "fund_netprofit_yoy": "ALTER TABLE score_rank_daily ADD COLUMN fund_netprofit_yoy DECIMAL(12,4) NULL COMMENT '归母净利润同比' AFTER fund_roe",
+        "buy_signal_description": "ALTER TABLE score_rank_daily ADD COLUMN buy_signal_description VARCHAR(255) NULL COMMENT '最近买点描述' AFTER buy_point_close",
+        "sell_signal_description": "ALTER TABLE score_rank_daily ADD COLUMN sell_signal_description VARCHAR(255) NULL COMMENT '最近卖点描述' AFTER buy_signal_description",
+        "total_b_points": "ALTER TABLE score_rank_daily ADD COLUMN total_b_points INT NULL COMMENT '最近批次B点总数' AFTER sell_signal_description",
+        "total_s_points": "ALTER TABLE score_rank_daily ADD COLUMN total_s_points INT NULL COMMENT '最近批次S点总数' AFTER total_b_points",
+        "buy_points_count": "ALTER TABLE score_rank_daily ADD COLUMN buy_points_count INT NULL COMMENT '最近批次买点数量' AFTER total_s_points",
+        "sell_points_count": "ALTER TABLE score_rank_daily ADD COLUMN sell_points_count INT NULL COMMENT '最近批次卖点数量' AFTER buy_points_count",
+        "event_seq_for_symbol": "ALTER TABLE score_rank_daily ADD COLUMN event_seq_for_symbol INT NULL COMMENT '该股票历史B点序号' AFTER sell_points_count",
         "market_hs300_pct_chg": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_pct_chg DECIMAL(10,4) NULL COMMENT '沪深300当日涨跌幅' AFTER bs_research_reason",
         "market_hs300_ret_5": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_ret_5 DECIMAL(10,6) NULL COMMENT '沪深300近5日收益' AFTER market_hs300_pct_chg",
         "market_hs300_ret_20": "ALTER TABLE score_rank_daily ADD COLUMN market_hs300_ret_20 DECIMAL(10,6) NULL COMMENT '沪深300近20日收益' AFTER market_hs300_ret_5",
@@ -302,6 +313,13 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'is_limit_up': 'is_limit_up',
         'close_price': 'close_price',
         'buy_point_close': 'buy_point_close',
+        'buy_signal_description': 'buy_signal_description',
+        'sell_signal_description': 'sell_signal_description',
+        'total_b_points': 'total_b_points',
+        'total_s_points': 'total_s_points',
+        'buy_points_count': 'buy_points_count',
+        'sell_points_count': 'sell_points_count',
+        'event_seq_for_symbol': 'event_seq_for_symbol',
         'price_change_ratio': 'price_change_ratio',
         'opt_score': 'opt_score',
         'opt_momentum': 'opt_momentum',
@@ -696,13 +714,16 @@ def main():
         market_context = build_daily_market_context(scored, asof_date, engine)
         scored = attach_market_context(scored, market_context)
         scored = attach_external_features(scored, asof_date, lambda sql, params=None: _query_df(engine, sql, params))
+        scored["asof_date_key"] = int(pd.Timestamp(asof_date).strftime("%Y%m%d"))
+        scored = attach_adc_features(scored, "asof_date_key", lambda sql, params=None: _query_df(engine, sql, params))
         scored = add_bs_enhanced_scores(scored)
+        scored = add_model_engineered_features(scored)
         model_bundle = load_latest_bs_model(target=CONFIG.get("bs_model_target", "hit_20_10pct"))
         if model_bundle:
             _announce("Applying B-signal model: %s", model_bundle.get("version"))
         else:
             _announce("No trained B-signal model found; bs_model_* columns will remain empty.")
-        scored = apply_bs_model_scores(scored, model_bundle=model_bundle, only_candidates=True)
+        scored = apply_bs_model_scores(scored, model_bundle=model_bundle, only_candidates=False)
         scored = add_bs_enhanced_scores(scored)
         threshold_decision = resolve_bs_thresholds(market_context, CONFIG)
         scored = attach_threshold_columns(scored, threshold_decision)
@@ -757,6 +778,7 @@ def main():
         print(f"Execution failed: {e}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -161,6 +161,15 @@
                             order=='DESC' else '⇅') }}
                         </a>
                     </th>
+                    <th>
+                        <a href="{{ url_for(request.endpoint, sort='s_liquidity', order='asc' if sort_by=='s_liquidity' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
+                            style="text-decoration: none; color: inherit;">
+                            流动性分 {{ '▲' if sort_by=='s_liquidity' and order=='ASC' else ('▼' if
+                            sort_by=='s_liquidity'
+                            and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
                     <th>现价</th>
                     <th>买点价格</th>
                     <th>涨幅</th>
@@ -206,6 +215,7 @@
                             if row.opt_score is not none else '-' }}</span></td>
                     <td><span class="tag {{ 'text-up' if claude_val > 60 else '' }}">{{
                             "%.1f"|format(claude_val) if row.claude_score is not none else '-' }}</span></td>
+                    <td>{{ "%.2f"|format(row.s_liquidity) if row.s_liquidity is not none else '-' }}</td>
                     <td>{{ row.close_price if row.close_price is not none else '-' }}</td>
                     <td>{{ row.buy_point_close or '-' }}</td>
                     <td class="{{ 'text-up' if price_change_val > 0 else 'text-down' }}">{{ "%.2f"|format(price_change_val)
@@ -223,7 +233,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="27" class="empty">暂无评分数据</td>
+                    <td colspan="28" class="empty">暂无评分数据</td>
                 </tr>
                 {% endfor %}
             </tbody>

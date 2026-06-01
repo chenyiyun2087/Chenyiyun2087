@@ -32,6 +32,51 @@ def _empty_model_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def add_model_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if out.empty:
+        return out
+
+    for col in (
+        "score",
+        "opt_score",
+        "claude_score",
+        "s_rs",
+        "s_liquidity",
+        "s_breakout",
+        "s_volume",
+        "price_change_ratio",
+    ):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    idx = out.index
+    score = out.get("score", pd.Series(np.nan, index=idx))
+    opt_norm = pd.to_numeric(out.get("opt_score", pd.Series(0.0, index=idx)), errors="coerce").fillna(0.0)
+    opt_norm = pd.Series(np.where(opt_norm <= 12, opt_norm * 10.0, opt_norm), index=idx)
+    claude = out.get("claude_score", pd.Series(np.nan, index=idx))
+    rs = out.get("s_rs", pd.Series(0.0, index=idx)).fillna(0.0).clip(lower=0)
+    liquidity = out.get("s_liquidity", pd.Series(0.0, index=idx)).fillna(0.0).clip(lower=0)
+    breakout = out.get("s_breakout", pd.Series(0.0, index=idx)).fillna(0.0)
+    volume = out.get("s_volume", pd.Series(0.0, index=idx)).fillna(0.0)
+    gain = out.get("price_change_ratio", pd.Series(0.0, index=idx)).fillna(0.0)
+
+    engineered = pd.DataFrame(
+        {
+            "score_opt_gap": score - opt_norm,
+            "score_claude_gap": score - claude,
+            "opt_claude_gap": opt_norm - claude,
+            "score_dispersion": pd.concat([score, opt_norm, claude], axis=1).std(axis=1),
+            "rs_liquidity_combo": (rs * liquidity) ** 0.5,
+            "breakout_volume_combo": 0.65 * breakout + 0.35 * volume,
+            "overextended_flag": (gain >= 22).astype(int),
+            "pullback_flag": (gain <= -6).astype(int),
+        },
+        index=idx,
+    )
+    return out.drop(columns=[c for c in engineered.columns if c in out.columns], errors="ignore").join(engineered)
+
+
 def _risk_score_from_mdd(values: np.ndarray | pd.Series) -> np.ndarray:
     mdd = pd.to_numeric(pd.Series(values), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(-0.30)
     score = 100.0 * (1.0 + mdd.clip(lower=-0.30, upper=0.0) / 0.30)
@@ -42,6 +87,16 @@ def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str =
     root = Path(model_root)
     if not root.exists():
         return None
+    active_manifest = root / "active_model.json"
+    if active_manifest.exists():
+        try:
+            data = json.loads(active_manifest.read_text(encoding="utf-8"))
+            manifest_target = data.get("target")
+            model_path = Path(str(data.get("model_path", "")))
+            if manifest_target in (None, target) and model_path.exists():
+                return model_path
+        except Exception:
+            pass
     paths = []
     for model_dir in sorted([p for p in root.glob("*") if p.is_dir()], reverse=True):
         manifest = model_dir / "model_manifest.json"
@@ -69,9 +124,26 @@ def load_latest_bs_model(model_root: Path | str = DEFAULT_MODEL_ROOT, target: st
     model_path = latest_model_path(model_root, target)
     if model_path is None:
         return None
-    import joblib
+    try:
+        import joblib
 
-    bundle = joblib.load(model_path)
+        bundle = joblib.load(model_path)
+    except ModuleNotFoundError as exc:
+        warnings.warn(
+            f"B-signal model dependencies are unavailable ({exc.name}); "
+            "continuing without bs_model_* scores.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+    except Exception as exc:
+        warnings.warn(
+            f"B-signal model could not be loaded from {model_path}: {exc}; "
+            "continuing without bs_model_* scores.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
     if not isinstance(bundle, dict) or "model" not in bundle:
         raise ValueError(f"Invalid B-signal model bundle: {model_path}")
     bundle = dict(bundle)
@@ -123,9 +195,13 @@ def apply_bs_model_scores(
         )
         out.attrs["bs_model_missing_features"] = missing_features
 
-    for col in feature_cols:
-        if col not in out.columns:
-            out[col] = np.nan
+    missing_for_model = [col for col in feature_cols if col not in out.columns]
+    if missing_for_model:
+        out = pd.concat(
+            [out, pd.DataFrame({col: np.nan for col in missing_for_model}, index=out.index)],
+            axis=1,
+        )
+        out.attrs["bs_model_missing_features"] = missing_for_model
 
     mask = pd.Series(True, index=out.index)
     if only_candidates and "is_bs_candidate" in out.columns:
@@ -141,6 +217,7 @@ def apply_bs_model_scores(
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
+        warnings.filterwarnings("ignore", message="Skipping features without any observed values:*")
         probs = _safe_prob(model.predict_proba(out.loc[mask, feature_cols])[:, 1])
     v2 = pd.to_numeric(out.loc[mask, "bs_score_v2"], errors="coerce").fillna(0.0) if "bs_score_v2" in out.columns else 0.0
     risk_model = model_bundle.get("risk_model")
@@ -149,6 +226,7 @@ def apply_bs_model_scores(
     if risk_model is not None:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
+            warnings.filterwarnings("ignore", message="Skipping features without any observed values:*")
             expected_mdd = (
                 pd.Series(risk_model.predict(out.loc[mask, feature_cols]), index=out.loc[mask].index)
                 .replace([np.inf, -np.inf], np.nan)

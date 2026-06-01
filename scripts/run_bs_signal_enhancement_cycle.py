@@ -11,6 +11,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_ROOT = PROJECT_ROOT / "exports" / "bs_signal_cycles"
+MODEL_ROOT = PROJECT_ROOT / "exports" / "bs_signal_models"
 
 
 def _run(cmd: list[str]) -> tuple[dict, str]:
@@ -104,6 +105,23 @@ def _run_optional(cmd: list[str], enabled: bool) -> tuple[dict | None, str]:
     return _run(cmd)
 
 
+def _activate_model(summary: dict) -> Path:
+    model_path = Path(str(summary.get("model_path") or ""))
+    active_path = MODEL_ROOT / "active_model.json"
+    payload = {
+        "activated_at": datetime.now().isoformat(timespec="seconds"),
+        "model_dir": str(Path(str(summary["output_dir"]))),
+        "model_path": str(model_path),
+        "target": summary.get("target"),
+        "model_kind": summary.get("model_kind"),
+        "risk_target": summary.get("risk_target"),
+        "feature_schema_hash": summary.get("feature_schema_hash"),
+        "selection_source": "run_bs_signal_enhancement_cycle",
+    }
+    active_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return active_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run full B-signal enhancement cycle.")
     parser.add_argument("--target", default="hit_20_10pct")
@@ -158,6 +176,7 @@ def main() -> None:
     summaries = _model_summaries(train_summary)
     deploy_summary = _select_deploy_model(summaries, args.deploy_model_kind, args.deploy_metric)
     model_dir = Path(deploy_summary["output_dir"])
+    active_model_path = _activate_model(deploy_summary)
 
     import_summary = None
     import_log = ""
@@ -253,6 +272,7 @@ def main() -> None:
         "dataset_zip": export_summary.get("zip_path"),
         "research_dir": research_summary.get("output_dir") if research_summary else None,
         "model_dir": str(model_dir),
+        "active_model": str(active_model_path),
         "model_summaries": summaries,
         "model_import": import_summary,
         "metrics": metrics,

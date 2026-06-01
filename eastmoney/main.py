@@ -38,7 +38,18 @@ def main() -> None:
     )
     parser.add_argument("--stock", help="指定单只股票代码 (覆盖数据库模式)")
     parser.add_argument("--stock-codes", nargs="+", help="指定多只股票代码 (覆盖数据库模式)")
-    parser.add_argument("--max-workers", type=int, default=3, help="并发数量")
+    parser.add_argument("--max-workers", type=int, help="并发数量，默认读取配置文件 max_workers")
+    parser.add_argument("--retry-attempts", type=int, help="单只股票失败后的重试次数，默认读取配置文件 retry_attempts")
+    parser.add_argument(
+        "--debug-screenshots",
+        action="store_true",
+        help="超时时保存浏览器截图；默认关闭，避免批任务产生大量图片",
+    )
+    parser.add_argument(
+        "--min-success-rate",
+        type=float,
+        help="最低扫描成功率，低于该值时以非零状态退出；默认读取配置或 0.5",
+    )
     parser.add_argument(
         "--task-type",
         choices=["all", "custom"],
@@ -80,6 +91,13 @@ def main() -> None:
 
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
+    max_workers = args.max_workers if args.max_workers is not None else int(config.get("max_workers", 3))
+    retry_attempts = args.retry_attempts if args.retry_attempts is not None else int(config.get("retry_attempts", 1))
+    min_success_rate = (
+        args.min_success_rate
+        if args.min_success_rate is not None
+        else float(config.get("min_success_rate", 0.5))
+    )
 
     # Initialize Controller
     mysql_config = config.get("mysql")
@@ -104,7 +122,14 @@ def main() -> None:
         logger.error("未找到任何股票代码 (数据库为空或连接失败?)")
         sys.exit(1)
 
-    logger.info("日期: %s, 股票数量: %d, 并发: %d, 类型: %s", trade_date, len(stock_codes), args.max_workers, args.task_type)
+    logger.info(
+        "日期: %s, 股票数量: %d, 并发: %d, 重试: %d, 类型: %s",
+        trade_date,
+        len(stock_codes),
+        max_workers,
+        retry_attempts,
+        args.task_type,
+    )
     
     global_start_time = time.time()
     
@@ -114,9 +139,11 @@ def main() -> None:
     
     scan_output = controller.scan_sentiment(
         stock_codes,
-        max_workers=args.max_workers,
+        max_workers=max_workers,
         task_type=args.task_type,
         trade_date=trade_date,
+        retry_attempts=retry_attempts,
+        debug_screenshots=args.debug_screenshots,
     )
     
     # 打印结果表
@@ -156,6 +183,15 @@ def main() -> None:
     print(f"Data Saved            : {scan_output['saved']}")
     print(f"Total Execution Time  : {total_time:.2f}s")
     print("=" * 60 + "\n")
+
+    success_rate = (scan_output["success"] / len(stock_codes)) if stock_codes else 0.0
+    if success_rate < min_success_rate:
+        logger.error(
+            "扫描成功率 %.2f%% 低于阈值 %.2f%%",
+            success_rate * 100,
+            min_success_rate * 100,
+        )
+        sys.exit(2)
 
 
 if __name__ == "__main__":

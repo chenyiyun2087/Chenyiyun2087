@@ -379,6 +379,16 @@ tbody tr:hover {
     flex-wrap: wrap;
 }
 
+.asset-reset-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-light);
+}
+
 .cash-input {
     width: 280px;
     max-width: 100%;
@@ -455,6 +465,16 @@ button:disabled {
 .btn-outline:hover {
     background: var(--primary-bg);
     border-color: var(--primary);
+}
+
+.btn-danger {
+    background: var(--danger);
+    border-color: var(--danger);
+}
+
+.btn-danger:hover {
+    background: #DC2626;
+    border-color: #DC2626;
 }
 
 /* Small variant */

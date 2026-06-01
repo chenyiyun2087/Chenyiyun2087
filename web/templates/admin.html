@@ -36,6 +36,9 @@
                         <div class="task-name">{{ task.name }}</div>
                         <div class="task-desc">{{ task.description or '-' }}</div>
                         <code class="task-id">ID: {{ name }}</code>
+                        {% if task.legacy %}
+                        <div class="task-desc danger" style="margin-top:4px;">Legacy：已隔离，不参与生产选股</div>
+                        {% endif %}
                     </td>
                     <td>
                         <span id="task-status-{{ name }}" class="status-badge
@@ -61,19 +64,19 @@
                             <div class="schedule-row">
                                 <label class="schedule-label">
                                     <input type="checkbox" name="schedule_enabled" {% if task.schedule_enabled
-                                        %}checked{% endif %}>
+                                        %}checked{% endif %} {% if task.legacy %}disabled{% endif %}>
                                     自动
                                 </label>
                                 <input type="time" name="schedule_time" value="{{ task.schedule_time or '00:00' }}"
-                                    class="schedule-time" required>
+                                    class="schedule-time" required {% if task.legacy %}disabled{% endif %}>
                             </div>
-                            <button class="btn schedule-btn">更新配置</button>
+                            <button class="btn schedule-btn" {% if task.legacy %}disabled{% endif %}>更新配置</button>
                         </form>
                     </td>
                     <td>
                         <form method="post" action="{{ url_for('run_task', task_name=name) }}" class="js-run-task-form"
                             data-task-id="{{ name }}">
-                            <button class="btn btn-run-task">运行</button>
+                            <button class="btn btn-run-task" {% if task.legacy %}disabled title="Legacy任务已隔离，禁止从任务中心执行"{% endif %}>运行</button>
                         </form>
                     </td>
                 </tr>

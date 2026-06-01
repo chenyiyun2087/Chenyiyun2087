@@ -28,6 +28,119 @@
 </div>
 
 <div class="panel">
+    <div class="panel-title">可信全量池实盘候选</div>
+    <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
+        最新候选日：{{ latest_trusted_candidate_date or '-' }}，来源策略：baseline_full_dynamic_factor_industry_cap2
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>排名</th>
+                <th>交易日</th>
+                <th>股票代码</th>
+                <th>股票名称</th>
+                <th>行业</th>
+                <th>排序分</th>
+                <th>目标权重</th>
+                <th>最新价</th>
+                <th>动态分</th>
+                <th>流动性细分</th>
+                <th>市场流动性</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in trusted_candidates %}
+            <tr>
+                <td>{{ row.rank_no }}</td>
+                <td>{{ row.trade_date }}</td>
+                <td>{{ row.symbol }}</td>
+                <td>{{ row.stock_name }}</td>
+                <td>{{ row.industry or '-' }}</td>
+                <td>{{ '%.2f'|format((row.rank_score or 0)|float) }}</td>
+                <td>{{ '%.1f%%'|format((row.effective_weight or 0)|float * 100) }}</td>
+                <td>{{ '%.2f'|format((row.latest_close or 0)|float) }}</td>
+                <td>{{ '%.2f'|format((row.dynamic_factor_score or 0)|float) }}</td>
+                <td>{{ '%.2f'|format((row.liquidity_detail_score or 0)|float) }}</td>
+                <td>{{ row.market_liquidity_bucket or '-' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="11" class="empty">暂无可信全量池候选</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="panel">
+    <div class="panel-title">影子盘成交监控</div>
+    {% if latest_shadow_summary %}
+    <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
+        信号日：{{ latest_shadow_summary.signal_date }}，
+        执行日：{{ latest_shadow_summary.execution_date }}，
+        订单：{{ latest_shadow_summary.total_orders }}，
+        可成交：{{ latest_shadow_summary.executable_orders }}，
+        不可成交：{{ latest_shadow_summary.blocked_orders }}，
+        大滑点警告：{{ latest_shadow_summary.warning_orders }}，
+        平均滑点：{{ '%.1f bps'|format((latest_shadow_summary.avg_slippage_bps or 0)|float) }}，
+        最大不利滑点：{{ '%.1f bps'|format((latest_shadow_summary.max_adverse_slippage_bps or 0)|float) }}
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>股票代码</th>
+                <th>股票名称</th>
+                <th>方向</th>
+                <th>计划价</th>
+                <th>执行开盘价</th>
+                <th>股数</th>
+                <th>计划金额</th>
+                <th>执行金额</th>
+                <th>滑点</th>
+                <th>状态</th>
+                <th>说明</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in shadow_fills %}
+            <tr>
+                <td>{{ row.ts_code }}</td>
+                <td>{{ row.stock_name or '-' }}</td>
+                <td>
+                    {% if row.side == 'BUY' %}
+                    <span class="tag trade">BUY</span>
+                    {% else %}
+                    <span class="tag watch">SELL</span>
+                    {% endif %}
+                </td>
+                <td>{{ '%.2f'|format((row.planned_price or 0)|float) }}</td>
+                <td>{{ '%.2f'|format((row.execution_open or 0)|float) }}</td>
+                <td>{{ row.allocated_shares }}</td>
+                <td>{{ '%.0f'|format((row.planned_amount or 0)|float) }}</td>
+                <td>{{ '%.0f'|format((row.execution_amount or 0)|float) }}</td>
+                <td>{{ '%.1f bps'|format((row.slippage_bps or 0)|float) }}</td>
+                <td>
+                    {% if row.tradable_flag %}
+                    <span class="tag trade">{{ row.tradable_status }}</span>
+                    {% else %}
+                    <span class="tag watch">{{ row.tradable_status }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ row.risk_reason or '-' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="11" class="empty">暂无影子盘明细</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">暂无影子盘成交监控数据</div>
+    {% endif %}
+</div>
+
+<div class="panel">
     <div class="panel-title">每日信号</div>
     <form method="get" style="display:flex; gap:10px; align-items:end; margin-bottom:10px; flex-wrap:wrap;">
         <label>
