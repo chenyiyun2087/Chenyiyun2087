@@ -1,0 +1,25 @@
+{
+  "name": "horizon_aware_embargo_walk_forward",
+  "horizons": [
+    1,
+    3,
+    5,
+    10,
+    20,
+    60
+  ],
+  "split_ratios": {
+    "train": 0.7,
+    "validation": 0.15,
+    "test": 0.15
+  },
+  "embargo_days": {
+    "1": 1,
+    "3": 3,
+    "5": 5,
+    "10": 10,
+    "20": 20,
+    "60": 60
+  },
+  "eligible_rule": "Rows are eligible for split_N only when hit_N_10pct is non-null."
+}
