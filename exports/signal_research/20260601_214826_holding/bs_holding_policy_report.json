@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-06-01T21:48:26",
+  "dataset_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_enhancement/20260601_214503",
+  "model_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260601_214818_154996",
+  "model_kind": "random_forest",
+  "rows": 42338,
+  "horizon": 20,
+  "benchmark_avg_ret": 0.012601,
+  "available_metric_columns": [
+    "hit_20_10pct",
+    "ret_20",
+    "mdd_20"
+  ],
+  "missing_metric_columns": [
+    "max_ret_20"
+  ],
+  "actions": [
+    {
+      "action": "ADD",
+      "rows": 2459,
+      "share": 0.05808,
+      "hit_rate": 0.999567,
+      "avg_ret": 0.148548,
+      "avg_mdd": -0.024198,
+      "avg_ret_delta_vs_all": 0.135947
+    },
+    {
+      "action": "HOLD",
+      "rows": 2785,
+      "share": 0.06578,
+      "hit_rate": 0.581777,
+      "avg_ret": 0.074967,
+      "avg_mdd": -0.036973,
+      "avg_ret_delta_vs_all": 0.062366
+    },
+    {
+      "action": "REDUCE",
+      "rows": 10485,
+      "share": 0.24765,
+      "hit_rate": 0.349474,
+      "avg_ret": 0.033371,
+      "avg_mdd": -0.043087,
+      "avg_ret_delta_vs_all": 0.02077
+    },
+    {
+      "action": "EXIT",
+      "rows": 26609,
+      "share": 0.62849,
+      "hit_rate": 0.226722,
+      "avg_ret": -0.01571,
+      "avg_mdd": -0.086456,
+      "avg_ret_delta_vs_all": -0.028311
+    }
+  ],
+  "action_counts": {
+    "EXIT": 26609,
+    "REDUCE": 10485,
+    "HOLD": 2785,
+    "ADD": 2459
+  }
+}

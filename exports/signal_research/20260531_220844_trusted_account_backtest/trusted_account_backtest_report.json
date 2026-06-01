@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-05-31T22:08:44",
+  "params": {
+    "start_date": "2026-01-05",
+    "end_date": "2026-05-29",
+    "initial_cash": 500000.0,
+    "top_n": 5,
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "lot_size": 100,
+    "min_trade_value": 500.0,
+    "max_total_positions": 12,
+    "min_pool_size": 5000,
+    "dynamic_lookback_dates": 20,
+    "strategies": [
+      "baseline_full_dynamic_factor_industry_cap2"
+    ],
+    "score_dates": 87,
+    "score_rows": 462058,
+    "price_dates": 172
+  },
+  "summary": [
+    {
+      "first_date": "2026-01-06",
+      "last_date": "2026-05-29",
+      "trading_days": 94,
+      "initial_cash": 500000.0,
+      "final_equity": 974492.9377549998,
+      "total_return": 0.9489858755099998,
+      "annualized_return": 5.099413378147491,
+      "max_drawdown": -0.21248555996988305,
+      "daily_win_rate": 0.6170212765957447,
+      "best_day": 0.10213572533603377,
+      "worst_day": -0.05988679465749058,
+      "avg_gross_exposure": 0.9833691676039883,
+      "avg_position_count": 11.042553191489361,
+      "trade_count": 208,
+      "buy_count": 110,
+      "sell_count": 98,
+      "turnover": 18.65329323941312,
+      "total_cost": 10425.382245,
+      "strategy": "baseline_full_dynamic_factor_industry_cap2",
+      "sort_col": "dynamic_factor_score",
+      "pool": "full",
+      "top_n": 5,
+      "hold_days": 10,
+      "trade_cost_rate": 0.00075,
+      "slippage_rate": 0.0,
+      "lot_size": 100,
+      "min_trade_value": 500.0,
+      "max_total_positions": 12
+    }
+  ],
+  "files": {
+    "summary_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_summary.csv",
+    "nav_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_nav.csv",
+    "trades_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_trades.csv",
+    "positions_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_positions.csv",
+    "candidates_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_candidates.csv",
+    "dynamic_weights_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_dynamic_weights.csv",
+    "market_environment_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_market_environment.csv",
+    "json": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_report.json",
+    "markdown": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260531_220844_trusted_account_backtest/trusted_account_backtest_report.md"
+  },
+  "pit_control": [
+    "Signals use score_rank_daily rows on signal date T.",
+    "Execution uses T+1 open; NAV uses prices up to the configured end date.",
+    "Dynamic factor weights only use history whose labeled exit date is before the current signal date.",
+    "Only trusted strategy specs are accepted by this script."
+  ]
+}

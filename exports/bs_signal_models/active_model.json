@@ -1,0 +1,10 @@
+{
+  "activated_at": "2026-06-01T21:48:20",
+  "model_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260601_214818_154996",
+  "model_path": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260601_214818_154996/random_forest_hit_20_10pct.joblib",
+  "target": "hit_20_10pct",
+  "model_kind": "random_forest",
+  "risk_target": "mdd_20",
+  "feature_schema_hash": "0571ea172db41c67",
+  "selection_source": "run_bs_signal_enhancement_cycle"
+}

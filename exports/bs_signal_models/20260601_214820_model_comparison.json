@@ -1,0 +1,37 @@
+{
+  "models": [
+    {
+      "model_kind": "logistic_calibrated",
+      "target": "hit_20_10pct",
+      "test_rows": 226,
+      "roc_auc": 0.522035,
+      "average_precision": 0.491594,
+      "brier": 0.349418,
+      "ece": 0.326067,
+      "precision_at_20": 0.6,
+      "model_path": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260601_214817_662526/logistic_calibrated_hit_20_10pct.joblib"
+    },
+    {
+      "model_kind": "random_forest",
+      "target": "hit_20_10pct",
+      "test_rows": 226,
+      "roc_auc": 0.661298,
+      "average_precision": 0.560901,
+      "brier": 0.361828,
+      "ece": 0.358214,
+      "precision_at_20": 0.65,
+      "model_path": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260601_214818_154996/random_forest_hit_20_10pct.joblib"
+    },
+    {
+      "model_kind": "hist_gradient_boosting",
+      "target": "hit_20_10pct",
+      "test_rows": 226,
+      "roc_auc": 0.579247,
+      "average_precision": 0.50796,
+      "brier": 0.347557,
+      "ece": 0.328278,
+      "precision_at_20": 0.65,
+      "model_path": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260601_214819_835529/hist_gradient_boosting_hit_20_10pct.joblib"
+    }
+  ]
+}

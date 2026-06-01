@@ -1,0 +1,9 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-01,000791,000791,SELL,9.63,47000,0,-47000,47000,0.5246274091758576,0.0,-0.5246274091758576,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-01,600507,600507,SELL,4.84,16700,0,-16700,16700,0.09368901312137648,0.0,-0.09368901312137648,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-01,600522,600522,SELL,39.39,7600,0,-7600,7600,0.34699754694001766,0.0,-0.34699754694001766,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-01,000636,风华高科,BUY,55.05,0,3100,3100,3100,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-01,002028,思源电气,BUY,216.0,0,700,700,700,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-01,300433,蓝思科技,BUY,41.83,0,4100,4100,4100,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-01,600011,华能国际,BUY,9.76,0,17600,17600,17600,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-01,600863,内蒙华电,BUY,7.92,0,21700,21700,21700,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5

@@ -1,0 +1,9 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-05-15,000791,000791,SELL,9.29,47000,0,-47000,47000,0.5233282029278907,0.0,-0.5233282029278907,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d
+2026-05-15,600507,600507,SELL,5.02,16700,0,-16700,16700,0.10048026146681813,0.0,-0.10048026146681813,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d
+2026-05-15,600522,600522,SELL,40.99,7600,0,-7600,7600,0.37338088333121466,0.0,-0.37338088333121466,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d
+2026-05-15,300274,阳光电源,BUY,152.95,0,1000,1000,1000,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d
+2026-05-15,300433,蓝思科技,BUY,34.21,0,4800,4800,4800,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d
+2026-05-15,603986,兆易创新,BUY,375.34,0,400,400,400,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d
+2026-05-15,688012,中微公司,BUY,432.9,0,300,300,300,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d
+2026-05-15,688017,绿的谐波,BUY,305.5,0,500,500,500,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d

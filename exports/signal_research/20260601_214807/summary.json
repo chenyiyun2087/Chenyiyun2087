@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-06-01T21:48:15",
+  "output_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260601_214807",
+  "event_rows": 1037,
+  "unique_symbols": 417,
+  "first_per_symbol_rows": 95,
+  "db": {
+    "bs_min_date": "20260122",
+    "bs_max_date": "20260601",
+    "bs_rows": "33272",
+    "buy_rows": "1037",
+    "buy_symbols": "417",
+    "score_min_date": "2026-01-05",
+    "score_max_date": "2026-06-01",
+    "score_rows": "508587",
+    "score_bs_rows": "19519"
+  }
+}
