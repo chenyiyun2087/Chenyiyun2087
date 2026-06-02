@@ -76,6 +76,7 @@ DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
     "holding_days": 20,
 }
 INITIAL_LIVE_CAPITAL = Decimal("500000.00")
+TRUSTED_PRODUCTION_STRATEGY = "tiered_liquidity_then_bs_v2"
 
 # Task Status Storage (Loaded from DB on start)
 TASKS = {
@@ -1405,7 +1406,7 @@ def _verify_trusted_strategy_candidates_result(started_at, finished_at, run_opti
                     FROM ads_trusted_strategy_candidates
                     WHERE trade_date = %s AND strategy = %s
                     """,
-                    (asof_date, params.get("strategy") or "baseline_full_dynamic_factor_industry_cap2"),
+                    (asof_date, params.get("strategy") or TRUSTED_PRODUCTION_STRATEGY),
                 )
                 db_candidate_rows = int((cursor.fetchone() or {}).get("c") or 0)
                 cursor.execute(
@@ -2107,7 +2108,7 @@ def _build_task_script_parts(task_name, run_options=None):
     if task_name == 'trusted_strategy_candidates':
         args = [
             '--strategy',
-            'baseline_full_dynamic_factor_industry_cap2',
+            TRUSTED_PRODUCTION_STRATEGY,
             '--top-n',
             '5',
             '--hold-days',
@@ -2861,6 +2862,7 @@ def chenyiyun_selected_dashboard():
     signals = []
     positions = []
     trusted_candidates = []
+    latest_trusted_strategy = None
     latest_shadow_summary = None
     shadow_fills = []
     latest_trusted_candidate_date = None
@@ -2913,19 +2915,28 @@ def chenyiyun_selected_dashboard():
 
             cursor.execute("SHOW TABLES LIKE 'ads_trusted_strategy_candidates'")
             if cursor.fetchone() is not None:
-                cursor.execute("SELECT MAX(trade_date) AS d FROM ads_trusted_strategy_candidates")
-                latest_trusted_candidate_date = (cursor.fetchone() or {}).get("d")
-                if latest_trusted_candidate_date is not None:
+                cursor.execute(
+                    """
+                    SELECT trade_date AS d, strategy
+                    FROM ads_trusted_strategy_candidates
+                    ORDER BY trade_date DESC, signal_time DESC, create_time DESC
+                    LIMIT 1
+                    """
+                )
+                latest_candidate_meta = cursor.fetchone() or {}
+                latest_trusted_candidate_date = latest_candidate_meta.get("d")
+                latest_trusted_strategy = latest_candidate_meta.get("strategy")
+                if latest_trusted_candidate_date is not None and latest_trusted_strategy:
                     cursor.execute(
                         """
                         SELECT trade_date, strategy, rank_no, symbol, stock_name, industry, rank_score,
                                effective_weight, latest_close, dynamic_factor_score, liquidity_detail_score,
                                s_liquidity, market_liquidity_bucket, index_bucket
                         FROM ads_trusted_strategy_candidates
-                        WHERE trade_date = %s
+                        WHERE trade_date = %s AND strategy = %s
                         ORDER BY rank_no ASC
                         """,
-                        (latest_trusted_candidate_date,),
+                        (latest_trusted_candidate_date, latest_trusted_strategy),
                     )
                     trusted_candidates = cursor.fetchall()
 
@@ -3036,6 +3047,7 @@ def chenyiyun_selected_dashboard():
         latest_snapshot_equity=latest_snapshot_equity,
         latest_signal_trade_date=latest_signal_trade_date,
         latest_trusted_candidate_date=latest_trusted_candidate_date,
+        latest_trusted_strategy=latest_trusted_strategy,
         trusted_candidates=trusted_candidates,
         latest_shadow_summary=latest_shadow_summary,
         shadow_fills=shadow_fills,

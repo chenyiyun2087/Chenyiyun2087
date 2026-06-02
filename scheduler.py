@@ -202,7 +202,7 @@ def run_pipeline(target_date) -> bool:
             "--date",
             date_str,
             "--strategy",
-            "baseline_full_dynamic_factor_industry_cap2",
+            "tiered_liquidity_then_bs_v2",
             "--top-n",
             "5",
             "--hold-days",
