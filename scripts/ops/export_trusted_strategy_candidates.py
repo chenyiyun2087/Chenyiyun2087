@@ -45,7 +45,13 @@ from scripts.research_full_pool_liquidity_strategies import (
 
 
 OUT_ROOT = PROJECT_ROOT / "exports" / "production_candidates"
-DEFAULT_STRATEGY = "baseline_full_dynamic_factor_industry_cap2"
+DEFAULT_STRATEGY = "tiered_liquidity_then_bs_v2"
+ORDER_DETAIL_STRATEGIES = (
+    "tiered_liquidity_then_bs_v2",
+    "baseline_full_dynamic_factor_industry_cap2",
+    "baseline_full_liquidity_detail",
+    "baseline_full_score",
+)
 DEFAULT_POOL_KEY = "TRUSTED_FULL_POOL_TOP5"
 DEFAULT_POOL_NAME = "可信全量池Top5"
 
@@ -347,6 +353,7 @@ def _format_order_notification(
     orders: pd.DataFrame,
     files: dict[str, str],
     total_equity_used: float,
+    strategy_order_details: dict[str, dict[str, pd.DataFrame]] | None = None,
 ) -> str:
     buy_orders = orders[orders["side"].eq("BUY")] if not orders.empty else pd.DataFrame()
     sell_orders = orders[orders["side"].eq("SELL")] if not orders.empty else pd.DataFrame()
@@ -380,28 +387,103 @@ def _format_order_notification(
     position_cap_line = f"账户持仓上限：{max_positions if max_positions > 0 else '不限制'}"
     if skipped_by_cap:
         position_cap_line += "；因上限跳过买入：" + ", ".join(skipped_by_cap[:8]) + ("..." if len(skipped_by_cap) > 8 else "")
-    return "\n".join(
-        [
-            "【核心精选本地订单草案已生成】",
-            f"信号日：{asof_date}",
-            f"策略：{strategy}",
-            f"资金基数：{total_equity_used:,.2f}",
-            hold_gate_line,
-            position_cap_line,
-            f"候选数：{len(candidates)}",
-            f"订单数：{len(orders)}（BUY {len(buy_orders)} / SELL {len(sell_orders)}）",
-            f"买入额：{buy_amount:,.2f}",
-            f"卖出额：{sell_amount:,.2f}",
-            "",
-            "候选Top5：",
-            *candidate_lines,
-            "",
-            "订单草案：",
-            *order_lines,
-            "",
-            f"候选报告：{files.get('markdown') or '-'}",
-        ]
-    )
+    lines = [
+        "【核心精选本地订单草案已生成】",
+        f"信号日：{asof_date}",
+        f"策略：{strategy}",
+        f"资金基数：{total_equity_used:,.2f}",
+        hold_gate_line,
+        position_cap_line,
+        f"候选数：{len(candidates)}",
+        f"订单数：{len(orders)}（BUY {len(buy_orders)} / SELL {len(sell_orders)}）",
+        f"买入额：{buy_amount:,.2f}",
+        f"卖出额：{sell_amount:,.2f}",
+        "",
+        "候选Top5：",
+        *candidate_lines,
+        "",
+        "订单草案：",
+        *order_lines,
+    ]
+    if strategy_order_details:
+        lines.extend(["", "策略订单对照："])
+        for detail_strategy, detail in strategy_order_details.items():
+            detail_candidates = detail.get("candidates", pd.DataFrame())
+            detail_orders = detail.get("orders", pd.DataFrame())
+            detail_buy = detail_orders[detail_orders["side"].eq("BUY")] if not detail_orders.empty else pd.DataFrame()
+            detail_sell = detail_orders[detail_orders["side"].eq("SELL")] if not detail_orders.empty else pd.DataFrame()
+            lines.append("")
+            lines.append(
+                f"【{detail_strategy}】候选{len(detail_candidates)}；"
+                f"订单{len(detail_orders)}（BUY {len(detail_buy)} / SELL {len(detail_sell)}）"
+            )
+            for row in detail_orders.head(8).to_dict("records") if not detail_orders.empty else []:
+                lines.append(
+                    f"- {row.get('side')} {row.get('ts_code')} {row.get('stock_name') or ''} "
+                    f"Δ{int(row.get('delta_shares') or 0):+d}股 @ {float(row.get('price') or 0):.2f}"
+                )
+            if detail_orders.empty:
+                for row in detail_candidates.sort_values("rank").head(5).to_dict("records"):
+                    lines.append(
+                        f"- 候选 {str(row.get('symbol') or '').zfill(6)} {row.get('name') or ''} "
+                        f"权重={float(row.get('effective_weight') or 0):.1%}"
+                    )
+    lines.extend(["", f"候选报告：{files.get('markdown') or '-'}"])
+    return "\n".join(lines)
+
+
+def _build_candidate_rows(
+    selected: pd.DataFrame,
+    spec,
+    asof_date: str,
+    latest_prices: dict[str, float],
+    top_n: int,
+) -> pd.DataFrame:
+    selected_count = int(len(selected))
+    rows: list[dict] = []
+    for rank, (_, row) in enumerate(selected.iterrows(), start=1):
+        position_weight = _position_weight(row, spec, selected_count=selected_count, top_n=top_n)
+        market_scale = _market_exposure_scale(row, spec)
+        symbol = str(row.get("symbol", "")).zfill(6)
+        industry = str(row.get("industry") or "").strip() or "未知"
+        rows.append(
+            {
+                "rank": rank,
+                "signal_date": asof_date,
+                "strategy": spec.name,
+                "symbol": symbol,
+                "name": row.get("name"),
+                "industry": industry,
+                "industry_key": industry if industry != "未知" else f"UNKNOWN_{symbol}",
+                "sort_col": spec.sort_col,
+                "rank_score": _safe_float(row.get("_rank_score")),
+                "position_weight": position_weight,
+                "market_exposure_scale": market_scale,
+                "effective_weight": position_weight * market_scale,
+                "latest_close": _safe_float(latest_prices.get(symbol)),
+                "score": _safe_float(row.get("score")),
+                "dynamic_factor_score": _safe_float(row.get("dynamic_factor_score")),
+                "dynamic_ic_factor_score": _safe_float(row.get("dynamic_ic_factor_score")),
+                "liquidity_detail_score": _safe_float(row.get("liquidity_detail_score")),
+                "s_liquidity": _safe_float(row.get("s_liquidity")),
+                "s_breakout": _safe_float(row.get("s_breakout")),
+                "s_rs": _safe_float(row.get("s_rs")),
+                "s_relative_amount": _safe_float(row.get("s_relative_amount")),
+                "s_amount_ratio_5_20": _safe_float(row.get("s_amount_ratio_5_20")),
+                "s_low_impact_cost": _safe_float(row.get("s_low_impact_cost")),
+                "s_amount_stability": _safe_float(row.get("s_amount_stability")),
+                "bs_score_v2": _safe_float(row.get("bs_score_v2")),
+                "is_bs_candidate": int(_safe_float(row.get("is_bs_candidate"), 0)),
+                "pool_type": row.get("pool_type"),
+                "bs_gate_label": row.get("bs_gate_label"),
+                "market_amount_ratio_20": _safe_float(row.get("market_amount_ratio_20")),
+                "market_liquidity_bucket": row.get("market_liquidity_bucket"),
+                "index_bucket": row.get("index_bucket"),
+                "vol_20": _safe_float(row.get("vol_20")),
+                "hist_mdd_20": _safe_float(row.get("hist_mdd_20")),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _load_trade_days(engine, start_date: date, end_date: date) -> list[date]:
@@ -1080,57 +1162,13 @@ def export_candidates(args: argparse.Namespace) -> dict:
     if selected.empty:
         raise RuntimeError(f"No candidates selected for {asof_date} with strategy `{spec.name}`.")
 
-    selected_count = int(len(selected))
     latest_prices = (
         prices[prices["trade_date"].eq(signal_date)]
         .drop_duplicates("symbol")
         .set_index("symbol")["adj_close"]
         .to_dict()
     )
-    rows: list[dict] = []
-    for rank, (_, row) in enumerate(selected.iterrows(), start=1):
-        position_weight = _position_weight(row, spec, selected_count=selected_count, top_n=args.top_n)
-        market_scale = _market_exposure_scale(row, spec)
-        symbol = str(row.get("symbol", "")).zfill(6)
-        industry = str(row.get("industry") or "").strip() or "未知"
-        rows.append(
-            {
-                "rank": rank,
-                "signal_date": asof_date,
-                "strategy": spec.name,
-                "symbol": symbol,
-                "name": row.get("name"),
-                "industry": industry,
-                "industry_key": industry if industry != "未知" else f"UNKNOWN_{symbol}",
-                "sort_col": spec.sort_col,
-                "rank_score": _safe_float(row.get("_rank_score")),
-                "position_weight": position_weight,
-                "market_exposure_scale": market_scale,
-                "effective_weight": position_weight * market_scale,
-                "latest_close": _safe_float(latest_prices.get(symbol)),
-                "score": _safe_float(row.get("score")),
-                "dynamic_factor_score": _safe_float(row.get("dynamic_factor_score")),
-                "dynamic_ic_factor_score": _safe_float(row.get("dynamic_ic_factor_score")),
-                "liquidity_detail_score": _safe_float(row.get("liquidity_detail_score")),
-                "s_liquidity": _safe_float(row.get("s_liquidity")),
-                "s_breakout": _safe_float(row.get("s_breakout")),
-                "s_rs": _safe_float(row.get("s_rs")),
-                "s_relative_amount": _safe_float(row.get("s_relative_amount")),
-                "s_amount_ratio_5_20": _safe_float(row.get("s_amount_ratio_5_20")),
-                "s_low_impact_cost": _safe_float(row.get("s_low_impact_cost")),
-                "s_amount_stability": _safe_float(row.get("s_amount_stability")),
-                "bs_score_v2": _safe_float(row.get("bs_score_v2")),
-                "is_bs_candidate": int(_safe_float(row.get("is_bs_candidate"), 0)),
-                "pool_type": row.get("pool_type"),
-                "bs_gate_label": row.get("bs_gate_label"),
-                "market_amount_ratio_20": _safe_float(row.get("market_amount_ratio_20")),
-                "market_liquidity_bucket": row.get("market_liquidity_bucket"),
-                "index_bucket": row.get("index_bucket"),
-                "vol_20": _safe_float(row.get("vol_20")),
-                "hist_mdd_20": _safe_float(row.get("hist_mdd_20")),
-            }
-        )
-    candidates = pd.DataFrame(rows)
+    candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
 
     warnings: list[str] = []
     if candidates["industry"].fillna("").str.strip().eq("").any():
@@ -1180,10 +1218,11 @@ def export_candidates(args: argparse.Namespace) -> dict:
         total_equity = float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine)
         total_equity = total_equity * float(args.position_ratio)
         positions = _load_current_positions(engine, args.position_table, asof_date=asof_date)
+        latest_price_lookup = {str(k).zfill(6): float(v) for k, v in latest_prices.items()}
         orders = _build_rebalance_orders(
             candidates,
             positions=positions,
-            latest_price_lookup={str(k).zfill(6): float(v) for k, v in latest_prices.items()},
+            latest_price_lookup=latest_price_lookup,
             total_equity=total_equity,
             lot_size=args.lot_size,
             min_trade_value=args.min_trade_value,
@@ -1216,6 +1255,41 @@ def export_candidates(args: argparse.Namespace) -> dict:
                     "Feishu notification requested but no enabled webhook was found. "
                     "Configure FEISHU_WEBHOOK_URL or chenyiyun.app_notification_channel."
                 )
+            strategy_order_details: dict[str, dict[str, pd.DataFrame]] = {}
+            trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
+            for detail_name in ORDER_DETAIL_STRATEGIES:
+                detail_spec = trusted_specs.get(detail_name)
+                if detail_spec is None:
+                    continue
+                detail_selected = _select_candidates(day_scores, detail_spec, top_n=args.top_n)
+                if detail_selected.empty:
+                    strategy_order_details[detail_name] = {
+                        "candidates": pd.DataFrame(),
+                        "orders": pd.DataFrame(),
+                    }
+                    continue
+                detail_candidates = _build_candidate_rows(
+                    detail_selected,
+                    detail_spec,
+                    asof_date,
+                    latest_prices,
+                    args.top_n,
+                )
+                detail_orders = _build_rebalance_orders(
+                    detail_candidates,
+                    positions=positions,
+                    latest_price_lookup=latest_price_lookup,
+                    total_equity=total_equity,
+                    lot_size=args.lot_size,
+                    min_trade_value=args.min_trade_value,
+                    include_sells=not args.buy_only,
+                    min_holding_days=args.hold_days,
+                    max_total_positions=args.max_total_positions,
+                )
+                strategy_order_details[detail_name] = {
+                    "candidates": detail_candidates,
+                    "orders": detail_orders,
+                }
             content = _format_order_notification(
                 asof_date=asof_date,
                 strategy=spec.name,
@@ -1223,6 +1297,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 orders=orders,
                 files=files,
                 total_equity_used=total_equity,
+                strategy_order_details=strategy_order_details,
             )
             ok, reason = _send_feishu_text(webhook_url, content)
             db_write["feishu_notify"] = reason
