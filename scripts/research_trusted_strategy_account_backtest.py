@@ -40,12 +40,15 @@ from scripts.research_full_pool_liquidity_strategies import (
 OUT_ROOT = PROJECT_ROOT / "exports" / "signal_research"
 DEFAULT_STRATEGIES = [
     "adaptive_style_switch",
+    "adaptive_style_switch_dynamic_position",
     "tiered_liquidity_then_bs_v2",
     "baseline_full_dynamic_factor_industry_cap2",
     "baseline_full_liquidity_detail",
     "baseline_full_score",
 ]
 ADAPTIVE_STRATEGY_NAME = "adaptive_style_switch"
+ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME = "adaptive_style_switch_dynamic_position"
+ADAPTIVE_STRATEGY_NAMES = {ADAPTIVE_STRATEGY_NAME, ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME}
 ADAPTIVE_UNDERLYING = {
     "attack": "tiered_liquidity_then_bs_v2",
     "balanced": "baseline_full_dynamic_factor_industry_cap2",
@@ -88,14 +91,15 @@ def _parse_strategies(raw: str | None) -> list[str]:
 def _strategy_specs(names: Iterable[str]):
     trusted = filter_strategy_specs(build_strategy_specs(), trusted_only=True)
     by_name = {spec.name: spec for spec in trusted}
-    missing = [name for name in names if name not in by_name and name != ADAPTIVE_STRATEGY_NAME]
+    missing = [name for name in names if name not in by_name and name not in ADAPTIVE_STRATEGY_NAMES]
     if missing:
-        available = ", ".join(sorted([*by_name, ADAPTIVE_STRATEGY_NAME]))
+        available = ", ".join(sorted([*by_name, *ADAPTIVE_STRATEGY_NAMES]))
         raise ValueError(f"Unknown trusted strategy: {', '.join(missing)}. Available: {available}")
     specs = []
     for name in names:
-        if name == ADAPTIVE_STRATEGY_NAME:
+        if name in ADAPTIVE_STRATEGY_NAMES:
             specs.append(StrategySpec(ADAPTIVE_STRATEGY_NAME, "adaptive", "adaptive"))
+            object.__setattr__(specs[-1], "name", name)
         else:
             specs.append(by_name[name])
     return specs
@@ -438,6 +442,44 @@ def _choose_adaptive_role(
     }
     row.update({key: _safe_float(value) if key.endswith(("avg_ret", "win_rate", "max_drawdown")) else int(value) for key, value in metrics.items()})
     return row
+
+
+def _adaptive_position_scale(decision: dict[str, object]) -> tuple[float, str]:
+    """Map point-in-time adaptive state to a portfolio exposure scale."""
+    role = str(decision.get("active_role") or "")
+    reason = str(decision.get("reason") or "")
+    market_amount_ratio = _safe_float(decision.get("market_amount_ratio_20"), np.nan)
+    index_bucket = str(decision.get("index_bucket") or "")
+    attack_short_avg_ret = _safe_float(decision.get("attack_short_avg_ret"), np.nan)
+    attack_max_drawdown = _safe_float(decision.get("attack_max_drawdown"), np.nan)
+
+    if role == "attack":
+        scale = 1.0
+        scale_reason = "attack_full_position"
+    elif role == "balanced":
+        scale = 0.85
+        scale_reason = "balanced_reduce_to_85pct"
+    elif role == "defensive":
+        scale = 0.65
+        scale_reason = "defensive_reduce_to_65pct"
+    else:
+        scale = 0.50
+        scale_reason = "fallback_reduce_to_50pct"
+
+    if np.isfinite(market_amount_ratio) and market_amount_ratio < 0.8 and index_bucket == "index_weak":
+        scale = min(scale, 0.60)
+        scale_reason = "weak_index_low_liquidity_cap_60pct"
+    if np.isfinite(attack_short_avg_ret) and attack_short_avg_ret < 0.0:
+        scale = min(scale, 0.65)
+        scale_reason = "attack_recent_completed_samples_negative_cap_65pct"
+    if np.isfinite(attack_max_drawdown) and attack_max_drawdown < -0.20:
+        scale = min(scale, 0.70)
+        scale_reason = "attack_completed_history_drawdown_cap_70pct"
+    if "fallback_missing" in reason or "fallback_insufficient" in reason:
+        scale = min(scale, 0.50)
+        scale_reason = "fallback_data_or_history_cap_50pct"
+
+    return float(max(0.0, min(1.0, scale))), scale_reason
 
 
 def _rebalance(
@@ -799,7 +841,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 day_scores = scores_by_date.get(signal_date, pd.DataFrame())
                 rebalance_spec = spec
                 adaptive_meta: dict[str, object] = {}
-                if spec.name == ADAPTIVE_STRATEGY_NAME:
+                rebalance_position_ratio = float(args.position_ratio)
+                if spec.name in ADAPTIVE_STRATEGY_NAMES:
                     decision = _choose_adaptive_role(
                         signal_date=signal_date,
                         day_scores=day_scores,
@@ -823,6 +866,19 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "adaptive_market_amount_ratio_20": decision.get("market_amount_ratio_20"),
                         "adaptive_index_bucket": decision.get("index_bucket"),
                     }
+                    if spec.name == ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME:
+                        position_scale, position_reason = _adaptive_position_scale(decision)
+                        rebalance_position_ratio = max(0.0, min(1.0, float(args.position_ratio) * position_scale))
+                        decision["adaptive_position_scale"] = float(position_scale)
+                        decision["adaptive_target_position_ratio"] = float(rebalance_position_ratio)
+                        decision["adaptive_position_reason"] = position_reason
+                        adaptive_meta.update(
+                            {
+                                "adaptive_position_scale": float(position_scale),
+                                "adaptive_target_position_ratio": float(rebalance_position_ratio),
+                                "adaptive_position_reason": position_reason,
+                            }
+                        )
                 trades, candidates, rebalance_meta = _rebalance(
                     account=account,
                     signal_date=signal_date,
@@ -836,15 +892,17 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     trade_cost_rate=args.trade_cost_rate,
                     slippage_rate=args.slippage_rate,
                     max_total_positions=args.max_total_positions,
-                    position_ratio=args.position_ratio,
+                    position_ratio=rebalance_position_ratio,
                     calendar=calendar,
                     open_prices=price_lookup,
                 )
-                if spec.name == ADAPTIVE_STRATEGY_NAME:
+                if spec.name in ADAPTIVE_STRATEGY_NAMES:
                     for item in candidates:
                         item["adaptive_role"] = adaptive_meta.get("adaptive_role")
                         item["adaptive_underlying_strategy"] = adaptive_meta.get("adaptive_underlying_strategy")
                         item["adaptive_reason"] = adaptive_meta.get("adaptive_reason")
+                        item["adaptive_target_position_ratio"] = adaptive_meta.get("adaptive_target_position_ratio")
+                        item["adaptive_position_reason"] = adaptive_meta.get("adaptive_position_reason")
                 trade_rows.extend(trades)
                 candidate_rows.extend(candidates)
                 meta = dict(rebalance_meta or {})
@@ -876,7 +934,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             else:
                 frame.insert(0, "strategy", spec.name)
         summary = _summarize_strategy(nav, trades, float(args.initial_cash))
-        if spec.name == ADAPTIVE_STRATEGY_NAME and not adaptive_decisions.empty:
+        if spec.name in ADAPTIVE_STRATEGY_NAMES and not adaptive_decisions.empty:
             summary["adaptive_switch_count"] = int(
                 adaptive_decisions["active_role"].ne(adaptive_decisions["active_role"].shift()).sum() - 1
             )
@@ -884,6 +942,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             summary["adaptive_balanced_days"] = int(adaptive_decisions["active_role"].eq("balanced").sum())
             summary["adaptive_defensive_days"] = int(adaptive_decisions["active_role"].eq("defensive").sum())
             summary["adaptive_fallback_days"] = int(adaptive_decisions["active_role"].eq("fallback").sum())
+            if "adaptive_target_position_ratio" in adaptive_decisions.columns:
+                ratios = pd.to_numeric(adaptive_decisions["adaptive_target_position_ratio"], errors="coerce").dropna()
+                if not ratios.empty:
+                    summary["adaptive_avg_target_position_ratio"] = float(ratios.mean())
+                    summary["adaptive_min_target_position_ratio"] = float(ratios.min())
+                    summary["adaptive_max_target_position_ratio"] = float(ratios.max())
         summary.update(
             {
                 "strategy": spec.name,
@@ -958,6 +1022,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "dynamic_lookback_dates": int(args.dynamic_lookback_dates),
         "strategies": [spec.name for spec in specs],
         "adaptive_strategy_name": ADAPTIVE_STRATEGY_NAME,
+        "adaptive_dynamic_position_strategy_name": ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
         "adaptive_underlying": ADAPTIVE_UNDERLYING,
         "adaptive_min_state_days": ADAPTIVE_MIN_STATE_DAYS,
         "score_dates": int(scores["trade_date"].nunique()),
@@ -974,6 +1039,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             "Execution uses T+1 open; NAV uses prices up to the configured end date.",
             "Dynamic factor weights only use history whose labeled exit date is before the current signal date.",
             "Adaptive strategy selection only uses market fields on signal date T and strategy cycles whose exit_date is before T.",
+            "Adaptive dynamic position scaling only uses the same point-in-time decision row; it does not inspect future NAV or future trades.",
             "Only trusted strategy specs are accepted by this script.",
         ],
     }

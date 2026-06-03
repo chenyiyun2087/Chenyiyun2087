@@ -1,0 +1,6 @@
+strategy,strategy_display_name,candidate_count,order_count,buy_count,sell_count,adaptive_role,adaptive_underlying_strategy,adaptive_underlying_display_name,adaptive_position_scale,adaptive_position_reason,adaptive_reason
+tiered_liquidity_then_bs_v2,流动性分层B点进攻策略,5,5,5,0,,,-,,,
+baseline_full_dynamic_factor_industry_cap2,动态因子均衡策略（单行业最多2只）,5,4,4,0,,,-,,,
+baseline_full_liquidity_detail,流动性质量防守策略,5,3,3,0,,,-,,,
+baseline_full_score,基础综合评分策略,5,5,5,0,,,-,,,
+adaptive_style_switch_dynamic_position,市场风格自适应切换策略（动态仓位）,5,5,5,0,attack,tiered_liquidity_then_bs_v2,流动性分层B点进攻策略,1.0,attack_full_position,attack_default_with_enough_history

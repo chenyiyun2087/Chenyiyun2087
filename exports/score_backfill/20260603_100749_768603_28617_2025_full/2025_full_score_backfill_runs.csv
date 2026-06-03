@@ -1,0 +1,4 @@
+trade_date,returncode,elapsed_seconds,industry_updated,model_rows_cleared,rule_bs_updated,score_rows,empty_industry_rows,null_score_rows,null_liquidity_rows,null_bs_v2_rows,null_consensus_rows,model_field_rows,score_log,status,error
+2023-01-03,0,71.234,0,4774,4774,4774,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260603_100749_768603_28617_2025_full/logs/score_rank_20230103.log,FAIL_QUALITY,
+2023-01-04,0,69.179,0,4776,4776,4776,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260603_100749_768603_28617_2025_full/logs/score_rank_20230104.log,FAIL_QUALITY,
+2023-01-05,0,67.657,0,4776,4776,4776,0,0,0,0,0,0,/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/20260603_100749_768603_28617_2025_full/logs/score_rank_20230105.log,FAIL_QUALITY,

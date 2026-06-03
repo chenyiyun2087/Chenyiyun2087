@@ -179,17 +179,27 @@ def choose_target_dates(
     score_coverage: pd.DataFrame,
     min_price_symbols: int,
     min_score_rows: int,
+    min_score_coverage_ratio: float,
     include_existing: bool,
 ) -> list[str]:
     price_by_date = dict(zip(price_coverage.get("trade_date", []), price_coverage.get("price_symbols", [])))
     score_by_date = dict(zip(score_coverage.get("trade_date", []), score_coverage.get("score_rows", [])))
     targets = []
     for trade_date in trade_dates:
-        if int(price_by_date.get(trade_date, 0) or 0) < int(min_price_symbols):
+        price_symbols = int(price_by_date.get(trade_date, 0) or 0)
+        if price_symbols < int(min_price_symbols):
             continue
-        if include_existing or int(score_by_date.get(trade_date, 0) or 0) < int(min_score_rows):
+        required_rows = min_required_score_rows(price_symbols, min_score_rows, min_score_coverage_ratio)
+        if include_existing or int(score_by_date.get(trade_date, 0) or 0) < required_rows:
             targets.append(trade_date)
     return targets
+
+
+def min_required_score_rows(price_symbols: int, min_score_rows: int, min_score_coverage_ratio: float) -> int:
+    if int(price_symbols or 0) <= 0:
+        return int(min_score_rows)
+    ratio_required = int(float(price_symbols) * float(min_score_coverage_ratio))
+    return max(1, min(int(min_score_rows), ratio_required))
 
 
 def run_score_daily(date_text: str, log_dir: Path | None = None) -> tuple[int, float, str]:
@@ -300,7 +310,13 @@ def score_quality_stats(engine, trade_date: str) -> dict[str, Any]:
     return {key: int(value or 0) for key, value in dict(row).items()}
 
 
-def build_summary(engine, start_date: str, end_date: str, min_score_rows: int) -> dict[str, Any]:
+def build_summary(
+    engine,
+    start_date: str,
+    end_date: str,
+    min_score_rows: int,
+    min_score_coverage_ratio: float,
+) -> dict[str, Any]:
     trade_dates = load_trade_dates(engine, start_date, end_date)
     price = load_price_coverage(engine, start_date, end_date)
     scores = load_score_coverage(engine, start_date, end_date)
@@ -309,7 +325,13 @@ def build_summary(engine, start_date: str, end_date: str, min_score_rows: int) -
     missing = [d for d in trade_dates if d not in score_dates]
     low = []
     if not scores.empty:
-        low = scores.loc[pd.to_numeric(scores["score_rows"], errors="coerce").fillna(0).lt(min_score_rows), "trade_date"].tolist()
+        score_check = scores.merge(price[["trade_date", "price_symbols"]], on="trade_date", how="left")
+        score_check["price_symbols"] = pd.to_numeric(score_check["price_symbols"], errors="coerce").fillna(0).astype(int)
+        score_check["score_rows"] = pd.to_numeric(score_check["score_rows"], errors="coerce").fillna(0).astype(int)
+        score_check["min_required_score_rows"] = score_check["price_symbols"].apply(
+            lambda value: min_required_score_rows(value, min_score_rows, min_score_coverage_ratio)
+        )
+        low = score_check.loc[score_check["score_rows"].lt(score_check["min_required_score_rows"]), "trade_date"].tolist()
     totals = {
         "trade_days": len(trade_dates),
         "price_days": int(price["trade_date"].nunique()) if not price.empty else 0,
@@ -345,6 +367,8 @@ def build_summary(engine, start_date: str, end_date: str, min_score_rows: int) -
     )
     return {
         "range": {"start_date": start_date, "end_date": end_date},
+        "min_score_rows": int(min_score_rows),
+        "min_score_coverage_ratio": float(min_score_coverage_ratio),
         "totals": totals,
         "missing_score_days": missing[:50],
         "low_score_days": low[:50],
@@ -378,6 +402,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         score_coverage,
         args.min_price_symbols,
         args.min_score_rows,
+        args.min_score_coverage_ratio,
         args.include_existing,
     )
     if args.max_dates and args.max_dates > 0:
@@ -394,7 +419,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     }
     print(json.dumps({"precheck": precheck}, ensure_ascii=False, indent=2, default=str))
     if not args.execute:
-        summary = build_summary(engine, start_date, end_date, args.min_score_rows)
+        summary = build_summary(engine, start_date, end_date, args.min_score_rows, args.min_score_coverage_ratio)
         report = write_report(out_dir, summary)
         return {"precheck": precheck, "summary": summary, "report": str(report), "executed": False}
 
@@ -407,6 +432,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "model_rows_cleared",
         "rule_bs_updated",
         "score_rows",
+        "min_required_score_rows",
         "empty_industry_rows",
         "null_score_rows",
         "null_liquidity_rows",
@@ -429,6 +455,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "model_rows_cleared": 0,
                 "rule_bs_updated": 0,
                 "score_rows": 0,
+                "min_required_score_rows": 0,
                 "empty_industry_rows": 0,
                 "null_score_rows": 0,
                 "null_liquidity_rows": 0,
@@ -455,8 +482,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 row["model_rows_cleared"] = ensure_no_model_columns(engine, trade_date)
                 row["rule_bs_updated"] = recompute_rule_bs_scores(engine, trade_date, chunk_size=args.update_chunk_size)
                 row.update(score_quality_stats(engine, trade_date))
+                price_rows_for_date = price_coverage.loc[price_coverage["trade_date"].eq(trade_date), "price_symbols"]
+                price_symbols_for_date = int(price_rows_for_date.iloc[0]) if not price_rows_for_date.empty else 0
+                min_required_rows = min_required_score_rows(
+                    price_symbols_for_date,
+                    args.min_score_rows,
+                    args.min_score_coverage_ratio,
+                )
+                row["min_required_score_rows"] = min_required_rows
                 ok = (
-                    row["score_rows"] >= args.min_score_rows
+                    row["score_rows"] >= min_required_rows
                     and row["empty_industry_rows"] == 0
                     and row["null_score_rows"] == 0
                     and row["null_liquidity_rows"] == 0
@@ -479,7 +514,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             if args.sleep_seconds > 0:
                 time.sleep(float(args.sleep_seconds))
 
-    summary = build_summary(engine, start_date, end_date, args.min_score_rows)
+    summary = build_summary(engine, start_date, end_date, args.min_score_rows, args.min_score_coverage_ratio)
     report = write_report(out_dir, summary)
     return {
         "precheck": precheck,
@@ -496,6 +531,12 @@ def main() -> None:
     parser.add_argument("--end-date", default="2025-12-31")
     parser.add_argument("--min-price-symbols", type=int, default=4000)
     parser.add_argument("--min-score-rows", type=int, default=5000)
+    parser.add_argument(
+        "--min-score-coverage-ratio",
+        type=float,
+        default=0.95,
+        help="A scored day passes row-count quality when score_rows >= min(min_score_rows, price_symbols * ratio).",
+    )
     parser.add_argument("--include-existing", action="store_true")
     parser.add_argument("--max-dates", type=int, default=0)
     parser.add_argument("--skip-score", action="store_true", help="Only repair industry/model/rule B/S fields for selected dates.")

@@ -1,0 +1,30 @@
+[
+  {
+    "experiment_id": 1,
+    "group": "smoke",
+    "name": "current_baseline",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260602_154414_715895_trusted_account_backtest"
+  },
+  {
+    "experiment_id": 2,
+    "group": "smoke",
+    "name": "industry_cap2",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2_industry_cap2"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260602_154825_081623_trusted_account_backtest"
+  }
+]

@@ -1,0 +1,72 @@
+[
+  {
+    "experiment_id": 1,
+    "group": "stop_loss",
+    "name": "stop0",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_214056_320460_trusted_account_backtest"
+  },
+  {
+    "experiment_id": 2,
+    "group": "stop_loss",
+    "name": "stop8",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 8.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_215436_328174_trusted_account_backtest"
+  },
+  {
+    "experiment_id": 3,
+    "group": "stop_loss",
+    "name": "stop10",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 10.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_220802_947703_trusted_account_backtest"
+  },
+  {
+    "experiment_id": 4,
+    "group": "stop_loss",
+    "name": "stop12",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 12.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_222027_296639_trusted_account_backtest"
+  },
+  {
+    "experiment_id": 5,
+    "group": "stop_loss",
+    "name": "stop15",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 15.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_223247_337451_trusted_account_backtest"
+  }
+]

@@ -144,6 +144,9 @@ def build_strategy_specs() -> list[StrategySpec]:
         StrategySpec("liq_top_10_then_score_industry_penalty_10pt", "full", "score", liquidity_top_pct=0.10, industry_penalty_step=10.0),
         StrategySpec("tiered_liquidity_then_score_industry_cap2", "liquidity_tiered", "score", max_per_industry=2),
         StrategySpec("tiered_liquidity_then_score_industry_penalty_5pt", "liquidity_tiered", "score", industry_penalty_step=5.0),
+        StrategySpec("tiered_liquidity_then_bs_v2_industry_cap2", "liquidity_tiered", "bs_score_v2", max_per_industry=2),
+        StrategySpec("tiered_liquidity_then_bs_v2_industry_cap1", "liquidity_tiered", "bs_score_v2", max_per_industry=1),
+        StrategySpec("tiered_liquidity_then_bs_v2_industry_penalty_5pt", "liquidity_tiered", "bs_score_v2", industry_penalty_step=5.0),
     ]
     for sort_col in ("score", "bs_score_v2", "bs_model_rank_score"):
         pit_status = "model_risk" if sort_col == "bs_model_rank_score" else "trusted"

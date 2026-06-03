@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-06-03T10:05:06",
+  "summary": {
+    "start_date": "2026-06-01",
+    "end_date": "2026-06-02",
+    "execute": true,
+    "residual_dates": 2,
+    "model_rows_cleared": 10323,
+    "rule_bs_rows_recomputed": 10323,
+    "model_field_rows_after": 0,
+    "core_null_rows_after": 0,
+    "rule_null_rows_after": 0
+  },
+  "files": {
+    "daily_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/model_field_cleanup_20260603_100506/model_field_cleanup_daily.csv",
+    "json": "/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/model_field_cleanup_20260603_100506/model_field_cleanup_summary.json",
+    "markdown": "/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/model_field_cleanup_20260603_100506/model_field_cleanup_report.md"
+  }
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "experiment_id": 1,
+    "group": "adaptive",
+    "name": "attack_defensive_fallback_review",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2",
+      "baseline_full_liquidity_detail",
+      "baseline_full_score",
+      "adaptive_style_switch",
+      "adaptive_style_switch_dynamic_position"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_233846_978311_trusted_account_backtest"
+  }
+]

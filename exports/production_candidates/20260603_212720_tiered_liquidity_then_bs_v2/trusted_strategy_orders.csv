@@ -1,0 +1,6 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-03,002897,意华股份,BUY,91.2,0,1000,1000,1000,0.0,0.2,0.2,trusted_strategy:tiered_liquidity_then_bs_v2; hold_gate=10d; max_positions=5
+2026-06-03,300179,四方达,BUY,51.3,0,1900,1900,1900,0.0,0.2,0.2,trusted_strategy:tiered_liquidity_then_bs_v2; hold_gate=10d; max_positions=5
+2026-06-03,300394,天孚通信,BUY,497.38,0,200,200,200,0.0,0.2,0.2,trusted_strategy:tiered_liquidity_then_bs_v2; hold_gate=10d; max_positions=5
+2026-06-03,300433,蓝思科技,BUY,44.39,0,2200,2200,2200,0.0,0.2,0.2,trusted_strategy:tiered_liquidity_then_bs_v2; hold_gate=10d; max_positions=5
+2026-06-03,603678,火炬电子,BUY,63.93,0,1500,1500,1500,0.0,0.2,0.2,trusted_strategy:tiered_liquidity_then_bs_v2; hold_gate=10d; max_positions=5

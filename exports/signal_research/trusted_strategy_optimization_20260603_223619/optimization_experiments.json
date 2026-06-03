@@ -1,0 +1,19 @@
+[
+  {
+    "experiment_id": 1,
+    "group": "industry",
+    "name": "tiered_industry_controls",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2",
+      "tiered_liquidity_then_bs_v2_industry_cap2",
+      "tiered_liquidity_then_bs_v2_industry_cap1",
+      "tiered_liquidity_then_bs_v2_industry_penalty_5pt"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_224846_796423_trusted_account_backtest"
+  }
+]

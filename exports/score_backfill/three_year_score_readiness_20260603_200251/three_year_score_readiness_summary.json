@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-06-03T20:02:51",
+  "summary": {
+    "start_date": "2023-01-01",
+    "end_date": "2026-06-02",
+    "min_score_rows": 5000,
+    "min_score_coverage_ratio": 0.95,
+    "core_columns": [
+      "industry",
+      "score",
+      "s_liquidity",
+      "bs_score_v2",
+      "bs_consensus_score"
+    ],
+    "model_columns_forbidden_in_trusted_backtest": [
+      "bs_model_prob",
+      "bs_model_expected_mdd",
+      "bs_model_risk_score",
+      "bs_model_rank_score",
+      "bs_model_version"
+    ],
+    "trade_days": 824,
+    "price_days": 824,
+    "score_days": 824,
+    "ready_days": 824,
+    "missing_score_days": 0,
+    "low_score_days": 0,
+    "core_null_days": 0,
+    "model_residual_days": 0,
+    "missing_score_dates_preview": [],
+    "low_score_dates_preview": [],
+    "core_null_dates_preview": [],
+    "model_residual_dates_preview": [],
+    "bs_detection_coverage": {
+      "min_batch_date": "20250810",
+      "max_batch_date": "20260602",
+      "rows_count": 60297,
+      "batch_days": 128
+    },
+    "ready_for_trusted_backtest": true
+  },
+  "files": {
+    "daily_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/three_year_score_readiness_20260603_200251/three_year_score_readiness_daily.csv",
+    "monthly_csv": "/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/three_year_score_readiness_20260603_200251/three_year_score_readiness_monthly.csv",
+    "json": "/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/three_year_score_readiness_20260603_200251/three_year_score_readiness_summary.json",
+    "markdown": "/Volumes/extension/projects/Chenyiyun2087/exports/score_backfill/three_year_score_readiness_20260603_200251/three_year_score_readiness_report.md"
+  }
+}

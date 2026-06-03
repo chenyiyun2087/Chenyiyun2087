@@ -1,0 +1,70 @@
+[
+  {
+    "experiment_id": 1,
+    "group": "hold_cost",
+    "name": "hold8_cost0.00075_slip0",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2",
+      "baseline_full_liquidity_detail",
+      "baseline_full_dynamic_factor_industry_cap2",
+      "baseline_full_score"
+    ],
+    "hold_days": 8,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_204606_979857_trusted_account_backtest"
+  },
+  {
+    "experiment_id": 2,
+    "group": "hold_cost",
+    "name": "hold10_cost0.00075_slip0",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2",
+      "baseline_full_liquidity_detail",
+      "baseline_full_dynamic_factor_industry_cap2",
+      "baseline_full_score"
+    ],
+    "hold_days": 10,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_205943_703539_trusted_account_backtest"
+  },
+  {
+    "experiment_id": 3,
+    "group": "hold_cost",
+    "name": "hold12_cost0.00075_slip0",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2",
+      "baseline_full_liquidity_detail",
+      "baseline_full_dynamic_factor_industry_cap2",
+      "baseline_full_score"
+    ],
+    "hold_days": 12,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_211333_928588_trusted_account_backtest"
+  },
+  {
+    "experiment_id": 4,
+    "group": "hold_cost",
+    "name": "hold15_cost0.00075_slip0",
+    "strategies": [
+      "tiered_liquidity_then_bs_v2",
+      "baseline_full_liquidity_detail",
+      "baseline_full_dynamic_factor_industry_cap2",
+      "baseline_full_score"
+    ],
+    "hold_days": 15,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "hard_stop_loss_pct": 0.0,
+    "position_ratio": 1.0,
+    "source_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260603_212756_857678_trusted_account_backtest"
+  }
+]

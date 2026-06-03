@@ -1,0 +1,3 @@
+trade_date,status,score_rows_before,model_field_rows_before,core_null_rows_before,rule_null_rows_before,model_rows_cleared,rule_bs_rows_recomputed,model_field_rows_after,core_null_rows_after,rule_null_rows_after,elapsed_seconds
+2026-06-01,execute,5162,5162,0,0,5162,5162,0,0,0,1.847
+2026-06-02,execute,5161,5161,0,0,5161,5161,0,0,0,1.732

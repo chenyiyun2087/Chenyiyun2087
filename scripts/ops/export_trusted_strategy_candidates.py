@@ -27,6 +27,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_config import build_sqlalchemy_url
+from scripts.strategy_display import strategy_display_name
+from scripts.research_trusted_strategy_account_backtest import (
+    ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
+    ADAPTIVE_UNDERLYING,
+    _adaptive_position_scale,
+    _build_adaptive_perf_table,
+    _choose_adaptive_role,
+)
 from scripts.research_full_pool_liquidity_strategies import (
     _market_exposure_scale,
     _position_weight,
@@ -50,7 +58,44 @@ ORDER_DETAIL_STRATEGIES = (
     "tiered_liquidity_then_bs_v2",
     "baseline_full_dynamic_factor_industry_cap2",
     "baseline_full_liquidity_detail",
+    "baseline_full_liquidity_detail_hold12_shadow",
+    "baseline_full_liquidity_detail_market_gate_pos50_shadow",
     "baseline_full_score",
+    "adaptive_style_switch_dynamic_position",
+)
+ORDER_DETAIL_CONFIGS = (
+    {
+        "detail_id": "tiered_liquidity_then_bs_v2",
+        "base_strategy": "tiered_liquidity_then_bs_v2",
+    },
+    {
+        "detail_id": "baseline_full_dynamic_factor_industry_cap2",
+        "base_strategy": "baseline_full_dynamic_factor_industry_cap2",
+    },
+    {
+        "detail_id": "baseline_full_liquidity_detail",
+        "base_strategy": "baseline_full_liquidity_detail",
+    },
+    {
+        "detail_id": "baseline_full_liquidity_detail_hold12_shadow",
+        "base_strategy": "baseline_full_liquidity_detail",
+        "hold_days": 12,
+        "shadow_note": "三年优化矩阵相对较稳：防守策略持有12日。",
+    },
+    {
+        "detail_id": "baseline_full_liquidity_detail_market_gate_pos50_shadow",
+        "base_strategy": "baseline_full_liquidity_detail_market_gate",
+        "position_ratio": 0.5,
+        "shadow_note": "三年优化矩阵回撤控制相对较好：市场门禁防守策略50%仓位。",
+    },
+    {
+        "detail_id": "baseline_full_score",
+        "base_strategy": "baseline_full_score",
+    },
+    {
+        "detail_id": "adaptive_style_switch_dynamic_position",
+        "base_strategy": "adaptive_style_switch_dynamic_position",
+    },
 )
 DEFAULT_POOL_KEY = "TRUSTED_FULL_POOL_TOP5"
 DEFAULT_POOL_NAME = "可信全量池Top5"
@@ -355,6 +400,7 @@ def _format_order_notification(
     total_equity_used: float,
     strategy_order_details: dict[str, dict[str, pd.DataFrame]] | None = None,
 ) -> str:
+    strategy_name = strategy_display_name(strategy)
     buy_orders = orders[orders["side"].eq("BUY")] if not orders.empty else pd.DataFrame()
     sell_orders = orders[orders["side"].eq("SELL")] if not orders.empty else pd.DataFrame()
     buy_amount = float((buy_orders["allocated_shares"] * buy_orders["price"]).sum()) if not buy_orders.empty else 0.0
@@ -390,7 +436,7 @@ def _format_order_notification(
     lines = [
         "【核心精选本地订单草案已生成】",
         f"信号日：{asof_date}",
-        f"策略：{strategy}",
+        f"策略：{strategy_name}",
         f"资金基数：{total_equity_used:,.2f}",
         hold_gate_line,
         position_cap_line,
@@ -408,15 +454,37 @@ def _format_order_notification(
     if strategy_order_details:
         lines.extend(["", "策略订单对照："])
         for detail_strategy, detail in strategy_order_details.items():
+            detail_strategy_name = strategy_display_name(detail_strategy)
             detail_candidates = detail.get("candidates", pd.DataFrame())
             detail_orders = detail.get("orders", pd.DataFrame())
+            detail_meta = detail.get("meta") or {}
             detail_buy = detail_orders[detail_orders["side"].eq("BUY")] if not detail_orders.empty else pd.DataFrame()
             detail_sell = detail_orders[detail_orders["side"].eq("SELL")] if not detail_orders.empty else pd.DataFrame()
             lines.append("")
             lines.append(
-                f"【{detail_strategy}】候选{len(detail_candidates)}；"
+                f"【{detail_strategy_name}】候选{len(detail_candidates)}；"
                 f"订单{len(detail_orders)}（BUY {len(detail_buy)} / SELL {len(detail_sell)}）"
             )
+            if detail_meta:
+                meta_parts = []
+                if detail_meta.get("active_role"):
+                    meta_parts.append(f"状态={detail_meta.get('active_role')}")
+                if detail_meta.get("base_strategy"):
+                    meta_parts.append(f"基础={strategy_display_name(detail_meta.get('base_strategy'))}")
+                if detail_meta.get("hold_days"):
+                    meta_parts.append(f"持有期={int(detail_meta.get('hold_days') or 0)}日")
+                if detail_meta.get("position_ratio") is not None:
+                    meta_parts.append(f"目标仓位={float(detail_meta.get('position_ratio') or 0):.0%}")
+                if detail_meta.get("adaptive_underlying_strategy"):
+                    meta_parts.append(f"底层={strategy_display_name(detail_meta.get('adaptive_underlying_strategy'))}")
+                if detail_meta.get("adaptive_position_scale") is not None:
+                    meta_parts.append(f"仓位={float(detail_meta.get('adaptive_position_scale') or 0):.0%}")
+                if detail_meta.get("adaptive_position_reason"):
+                    meta_parts.append(f"原因={detail_meta.get('adaptive_position_reason')}")
+                if detail_meta.get("shadow_note"):
+                    meta_parts.append(f"备注={detail_meta.get('shadow_note')}")
+                if meta_parts:
+                    lines.append("- " + "；".join(meta_parts))
             for row in detail_orders.head(8).to_dict("records") if not detail_orders.empty else []:
                 lines.append(
                     f"- {row.get('side')} {row.get('ts_code')} {row.get('stock_name') or ''} "
@@ -430,6 +498,135 @@ def _format_order_notification(
                     )
     lines.extend(["", f"候选报告：{files.get('markdown') or '-'}"])
     return "\n".join(lines)
+
+
+def _write_strategy_order_detail_outputs(
+    out_dir: Path,
+    strategy_order_details: dict[str, dict[str, pd.DataFrame]],
+) -> dict[str, str]:
+    summary_rows: list[dict[str, object]] = []
+    candidate_rows: list[dict[str, object]] = []
+    order_rows: list[dict[str, object]] = []
+    for strategy_id, detail in strategy_order_details.items():
+        display_name = strategy_display_name(strategy_id)
+        candidates = detail.get("candidates", pd.DataFrame())
+        orders = detail.get("orders", pd.DataFrame())
+        meta = detail.get("meta") or {}
+        buy_count = int(orders["side"].eq("BUY").sum()) if not orders.empty and "side" in orders.columns else 0
+        sell_count = int(orders["side"].eq("SELL").sum()) if not orders.empty and "side" in orders.columns else 0
+        summary_rows.append(
+            {
+                "strategy": strategy_id,
+                "strategy_display_name": display_name,
+                "candidate_count": int(len(candidates)),
+                "order_count": int(len(orders)),
+                "buy_count": buy_count,
+                "sell_count": sell_count,
+                "adaptive_role": meta.get("active_role"),
+                "adaptive_underlying_strategy": meta.get("adaptive_underlying_strategy"),
+                "adaptive_underlying_display_name": strategy_display_name(meta.get("adaptive_underlying_strategy")),
+                "adaptive_position_scale": meta.get("adaptive_position_scale"),
+                "adaptive_position_reason": meta.get("adaptive_position_reason"),
+                "adaptive_reason": meta.get("reason"),
+                "base_strategy": meta.get("base_strategy"),
+                "base_strategy_display_name": strategy_display_name(meta.get("base_strategy")),
+                "hold_days": meta.get("hold_days"),
+                "position_ratio": meta.get("position_ratio"),
+                "total_equity_used": meta.get("total_equity_used"),
+                "shadow_note": meta.get("shadow_note"),
+            }
+        )
+        for row in candidates.to_dict("records") if not candidates.empty else []:
+            candidate_rows.append(
+                {
+                    "strategy": strategy_id,
+                    "strategy_display_name": display_name,
+                    "rank": row.get("rank"),
+                    "signal_date": row.get("signal_date"),
+                    "symbol": row.get("symbol"),
+                    "name": row.get("name"),
+                    "industry": row.get("industry"),
+                    "rank_score": row.get("rank_score"),
+                    "effective_weight": row.get("effective_weight"),
+                    "sort_col": row.get("sort_col"),
+                    "adaptive_role": row.get("adaptive_role"),
+                    "adaptive_underlying_strategy": row.get("adaptive_underlying_strategy"),
+                    "adaptive_position_scale": row.get("adaptive_position_scale"),
+                    "adaptive_position_reason": row.get("adaptive_position_reason"),
+                    "base_strategy": meta.get("base_strategy"),
+                    "hold_days": meta.get("hold_days"),
+                    "position_ratio": meta.get("position_ratio"),
+                }
+            )
+        for row in orders.to_dict("records") if not orders.empty else []:
+            order_rows.append(
+                {
+                    "strategy": strategy_id,
+                    "strategy_display_name": display_name,
+                    "trade_date": row.get("trade_date"),
+                    "ts_code": row.get("ts_code"),
+                    "stock_name": row.get("stock_name"),
+                    "side": row.get("side"),
+                    "price": row.get("price"),
+                    "current_shares": row.get("current_shares"),
+                    "target_shares": row.get("target_shares"),
+                    "delta_shares": row.get("delta_shares"),
+                    "allocated_shares": row.get("allocated_shares"),
+                    "current_weight": row.get("current_weight"),
+                    "target_weight": row.get("target_weight"),
+                    "delta_weight": row.get("delta_weight"),
+                    "note": row.get("note"),
+                    "base_strategy": meta.get("base_strategy"),
+                    "hold_days": meta.get("hold_days"),
+                    "position_ratio": meta.get("position_ratio"),
+                }
+            )
+
+    summary = pd.DataFrame(summary_rows)
+    candidates = pd.DataFrame(candidate_rows)
+    orders = pd.DataFrame(order_rows)
+    summary_path = out_dir / "trusted_strategy_order_detail_summary.csv"
+    candidates_path = out_dir / "trusted_strategy_order_detail_candidates.csv"
+    orders_path = out_dir / "trusted_strategy_order_detail_orders.csv"
+    json_path = out_dir / "trusted_strategy_order_detail_report.json"
+    md_path = out_dir / "trusted_strategy_order_detail_report.md"
+    summary.to_csv(summary_path, index=False)
+    candidates.to_csv(candidates_path, index=False)
+    orders.to_csv(orders_path, index=False)
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "summary": summary_rows,
+        "candidates": candidate_rows,
+        "orders": order_rows,
+        "files": {
+            "summary_csv": str(summary_path),
+            "candidates_csv": str(candidates_path),
+            "orders_csv": str(orders_path),
+            "json": str(json_path),
+            "markdown": str(md_path),
+        },
+    }
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    md_lines = [
+        "# 可信策略订单对照",
+        "",
+        "## 汇总",
+        "",
+        summary.to_markdown(index=False) if not summary.empty else "_无对照策略_",
+        "",
+        "## 订单明细",
+        "",
+        orders.to_markdown(index=False) if not orders.empty else "_无订单_",
+        "",
+        "## 输出文件",
+        "",
+        f"- Summary CSV: `{summary_path}`",
+        f"- Candidates CSV: `{candidates_path}`",
+        f"- Orders CSV: `{orders_path}`",
+        f"- JSON: `{json_path}`",
+    ]
+    md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+    return payload["files"]
 
 
 def _build_candidate_rows(
@@ -484,6 +681,76 @@ def _build_candidate_rows(
             }
         )
     return pd.DataFrame(rows)
+
+
+def _latest_adaptive_decision(
+    scores: pd.DataFrame,
+    trusted_specs: dict[str, object],
+    signal_date: object,
+    top_n: int,
+) -> dict[str, object]:
+    underlying_specs = {role: trusted_specs[name] for role, name in ADAPTIVE_UNDERLYING.items()}
+    scores_by_date = {day: group.copy() for day, group in scores.groupby("trade_date", sort=True)}
+    adaptive_perf = _build_adaptive_perf_table(scores_by_date, underlying_specs, top_n=top_n)
+    current_role: str | None = None
+    current_role_days = 0
+    latest: dict[str, object] | None = None
+    for day in sorted(scores_by_date):
+        decision = _choose_adaptive_role(
+            signal_date=day,
+            day_scores=scores_by_date[day],
+            perf=adaptive_perf,
+            current_role=current_role,
+            current_role_days=current_role_days,
+        )
+        active_role = str(decision["active_role"])
+        if active_role == current_role:
+            current_role_days += 1
+        else:
+            current_role = active_role
+            current_role_days = 1
+        decision["current_role_days_after"] = int(current_role_days)
+        latest = decision
+        if pd.Timestamp(day).date() >= pd.Timestamp(signal_date).date():
+            break
+    if latest is None:
+        raise RuntimeError("Failed to build adaptive strategy decision.")
+    return latest
+
+
+def _build_adaptive_dynamic_position_detail(
+    scores: pd.DataFrame,
+    day_scores: pd.DataFrame,
+    trusted_specs: dict[str, object],
+    asof_date: str,
+    latest_prices: dict[str, float],
+    top_n: int,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    signal_date = pd.Timestamp(asof_date).date()
+    decision = _latest_adaptive_decision(scores, trusted_specs, signal_date, top_n=top_n)
+    active_role = str(decision.get("active_role") or "fallback")
+    underlying_name = ADAPTIVE_UNDERLYING[active_role]
+    underlying_spec = trusted_specs[underlying_name]
+    selected = _select_candidates(day_scores, underlying_spec, top_n=top_n)
+    if selected.empty:
+        return pd.DataFrame(), decision
+    candidates = _build_candidate_rows(selected, underlying_spec, asof_date, latest_prices, top_n)
+    position_scale, position_reason = _adaptive_position_scale(decision)
+    candidates["strategy"] = ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME
+    candidates["sort_col"] = f"adaptive:{underlying_spec.name}:{underlying_spec.sort_col}"
+    candidates["effective_weight"] = pd.to_numeric(candidates["effective_weight"], errors="coerce").fillna(0.0) * float(position_scale)
+    candidates["market_exposure_scale"] = pd.to_numeric(
+        candidates["market_exposure_scale"], errors="coerce"
+    ).fillna(1.0) * float(position_scale)
+    candidates["adaptive_role"] = active_role
+    candidates["adaptive_underlying_strategy"] = underlying_spec.name
+    candidates["adaptive_reason"] = decision.get("reason")
+    candidates["adaptive_position_scale"] = float(position_scale)
+    candidates["adaptive_position_reason"] = position_reason
+    decision["adaptive_position_scale"] = float(position_scale)
+    decision["adaptive_position_reason"] = position_reason
+    decision["adaptive_underlying_strategy"] = underlying_spec.name
+    return candidates, decision
 
 
 def _load_trade_days(engine, start_date: date, end_date: date) -> list[date]:
@@ -1065,6 +1332,7 @@ def _write_outputs(
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "params": params,
+        "strategy_display_name": strategy_display_name(params.get("strategy")),
         "warnings": warnings,
         "candidates": candidates.to_dict("records"),
         "files": {
@@ -1086,7 +1354,8 @@ def _write_outputs(
         "",
         "## 口径",
         "",
-        f"- 策略：`{params['strategy']}`，排序字段：`{params['sort_col']}`。",
+        f"- 策略：`{strategy_display_name(params['strategy'])}`，排序字段：`{params['sort_col']}`。",
+        f"- 策略ID：`{params['strategy']}`。",
         f"- 信号日：`{params['asof_date']}`；候选数：Top {params['top_n']}。",
         "- 数据截断：价格与评分数据只读取到信号日当天；动态权重只使用已完成持有期的历史样本。",
         "- 执行方式：人工复核后，下一交易日开盘附近按 `effective_weight` 建仓，计划持有 10 个交易日。",
@@ -1215,8 +1484,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
             pool_name=args.pool_name,
         )
     if args.emit_orders:
-        total_equity = float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine)
-        total_equity = total_equity * float(args.position_ratio)
+        account_total_equity = float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine)
+        total_equity = account_total_equity * float(args.position_ratio)
         positions = _load_current_positions(engine, args.position_table, asof_date=asof_date)
         latest_price_lookup = {str(k).zfill(6): float(v) for k, v in latest_prices.items()}
         orders = _build_rebalance_orders(
@@ -1257,8 +1526,62 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 )
             strategy_order_details: dict[str, dict[str, pd.DataFrame]] = {}
             trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
-            for detail_name in ORDER_DETAIL_STRATEGIES:
-                detail_spec = trusted_specs.get(detail_name)
+            for detail_config in ORDER_DETAIL_CONFIGS:
+                detail_name = str(detail_config["detail_id"])
+                base_strategy = str(detail_config.get("base_strategy") or detail_name)
+                detail_hold_days = int(detail_config.get("hold_days") or args.hold_days)
+                detail_position_ratio = float(detail_config.get("position_ratio", args.position_ratio))
+                detail_total_equity = account_total_equity * detail_position_ratio
+                detail_meta: dict[str, object] = {
+                    "base_strategy": base_strategy,
+                    "hold_days": detail_hold_days,
+                    "position_ratio": detail_position_ratio,
+                    "total_equity_used": detail_total_equity,
+                    "shadow_note": detail_config.get("shadow_note"),
+                }
+                if base_strategy == ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME:
+                    detail_candidates, detail_meta = _build_adaptive_dynamic_position_detail(
+                        scores=scores,
+                        day_scores=day_scores,
+                        trusted_specs=trusted_specs,
+                        asof_date=asof_date,
+                        latest_prices=latest_prices,
+                        top_n=args.top_n,
+                    )
+                    detail_meta.update(
+                        {
+                            "base_strategy": base_strategy,
+                            "hold_days": detail_hold_days,
+                            "position_ratio": detail_position_ratio,
+                            "total_equity_used": detail_total_equity,
+                            "shadow_note": detail_config.get("shadow_note"),
+                        }
+                    )
+                    if detail_candidates.empty:
+                        strategy_order_details[detail_name] = {
+                            "candidates": pd.DataFrame(),
+                            "orders": pd.DataFrame(),
+                            "meta": detail_meta,
+                        }
+                        continue
+                    detail_orders = _build_rebalance_orders(
+                        detail_candidates,
+                        positions=positions,
+                        latest_price_lookup=latest_price_lookup,
+                        total_equity=detail_total_equity,
+                        lot_size=args.lot_size,
+                        min_trade_value=args.min_trade_value,
+                        include_sells=not args.buy_only,
+                        min_holding_days=detail_hold_days,
+                        max_total_positions=args.max_total_positions,
+                    )
+                    strategy_order_details[detail_name] = {
+                        "candidates": detail_candidates,
+                        "orders": detail_orders,
+                        "meta": detail_meta,
+                    }
+                    continue
+                detail_spec = trusted_specs.get(base_strategy)
                 if detail_spec is None:
                     continue
                 detail_selected = _select_candidates(day_scores, detail_spec, top_n=args.top_n)
@@ -1266,6 +1589,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                     strategy_order_details[detail_name] = {
                         "candidates": pd.DataFrame(),
                         "orders": pd.DataFrame(),
+                        "meta": detail_meta,
                     }
                     continue
                 detail_candidates = _build_candidate_rows(
@@ -1275,21 +1599,27 @@ def export_candidates(args: argparse.Namespace) -> dict:
                     latest_prices,
                     args.top_n,
                 )
+                if detail_name != base_strategy:
+                    detail_candidates["strategy"] = detail_name
+                    detail_candidates["sort_col"] = f"{base_strategy}:{detail_spec.sort_col}"
                 detail_orders = _build_rebalance_orders(
                     detail_candidates,
                     positions=positions,
                     latest_price_lookup=latest_price_lookup,
-                    total_equity=total_equity,
+                    total_equity=detail_total_equity,
                     lot_size=args.lot_size,
                     min_trade_value=args.min_trade_value,
                     include_sells=not args.buy_only,
-                    min_holding_days=args.hold_days,
+                    min_holding_days=detail_hold_days,
                     max_total_positions=args.max_total_positions,
                 )
                 strategy_order_details[detail_name] = {
                     "candidates": detail_candidates,
                     "orders": detail_orders,
+                    "meta": detail_meta,
                 }
+            detail_files = _write_strategy_order_detail_outputs(out_dir, strategy_order_details)
+            db_write["strategy_order_detail_files"] = detail_files
             content = _format_order_notification(
                 asof_date=asof_date,
                 strategy=spec.name,

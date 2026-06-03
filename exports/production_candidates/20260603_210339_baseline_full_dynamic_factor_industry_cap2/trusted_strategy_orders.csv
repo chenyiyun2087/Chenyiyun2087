@@ -1,0 +1,5 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-03,300285,国瓷材料,BUY,60.47,0,1600,1600,1600,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-03,300394,天孚通信,BUY,497.38,0,200,200,200,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-03,300433,蓝思科技,BUY,44.39,0,2200,2200,2200,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-03,601208,东材科技,BUY,56.49,0,1700,1700,1700,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
