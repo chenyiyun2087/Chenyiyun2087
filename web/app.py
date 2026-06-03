@@ -3,6 +3,7 @@ import sys
 import os
 import pymysql
 import json
+import csv
 from pathlib import Path
 from datetime import datetime, timedelta, date
 from decimal import Decimal, InvalidOperation
@@ -19,6 +20,7 @@ enforce_direct_network()
 
 from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2, calculate_bs_trade_gate
 from scoreRank.core.db_config import build_pymysql_config
+from scripts.strategy_display import strategy_display_name
 
 try:
     from sina.live_tracker.live_tracker import LiveTracker
@@ -2284,7 +2286,6 @@ def _get_chenyiyun_selected_settings(conn):
         row = cursor.fetchone()
         if row:
             return _normalize_chenyiyun_selected_settings(row)
-
         defaults = _normalize_chenyiyun_selected_settings(DEFAULT_CHENYIYUN_SELECTED_SETTINGS)
         cursor.execute(
             """
@@ -2295,6 +2296,35 @@ def _get_chenyiyun_selected_settings(conn):
         )
         conn.commit()
         return defaults
+
+
+def _load_strategy_order_detail_summary(output_json_path):
+    if not output_json_path:
+        return [], None
+    try:
+        base_path = Path(str(output_json_path)).expanduser()
+        detail_path = base_path.parent / "trusted_strategy_order_detail_summary.csv"
+        if not detail_path.exists():
+            return [], str(detail_path)
+        rows = []
+        with detail_path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                item = dict(row)
+                strategy_id = item.get("strategy")
+                item["strategy_display_name"] = item.get("strategy_display_name") or strategy_display_name(strategy_id)
+                item["adaptive_underlying_display_name"] = (
+                    item.get("adaptive_underlying_display_name")
+                    or strategy_display_name(item.get("adaptive_underlying_strategy"))
+                )
+                item["base_strategy_display_name"] = (
+                    item.get("base_strategy_display_name")
+                    or strategy_display_name(item.get("base_strategy"))
+                )
+                rows.append(item)
+        return rows, str(detail_path)
+    except Exception as e:
+        print(f"Failed to load strategy order detail summary: {e}")
+        return [], None
 
 
 def _save_chenyiyun_selected_settings(conn, stock_count, position_ratio, holding_days):
@@ -2862,7 +2892,10 @@ def chenyiyun_selected_dashboard():
     signals = []
     positions = []
     trusted_candidates = []
+    strategy_order_detail_summary = []
+    strategy_order_detail_summary_path = None
     latest_trusted_strategy = None
+    latest_trusted_strategy_display = None
     latest_shadow_summary = None
     shadow_fills = []
     latest_trusted_candidate_date = None
@@ -2917,7 +2950,7 @@ def chenyiyun_selected_dashboard():
             if cursor.fetchone() is not None:
                 cursor.execute(
                     """
-                    SELECT trade_date AS d, strategy
+                    SELECT trade_date AS d, strategy, output_json_path
                     FROM ads_trusted_strategy_candidates
                     ORDER BY trade_date DESC, signal_time DESC, create_time DESC
                     LIMIT 1
@@ -2926,6 +2959,10 @@ def chenyiyun_selected_dashboard():
                 latest_candidate_meta = cursor.fetchone() or {}
                 latest_trusted_candidate_date = latest_candidate_meta.get("d")
                 latest_trusted_strategy = latest_candidate_meta.get("strategy")
+                latest_trusted_strategy_display = strategy_display_name(latest_trusted_strategy)
+                strategy_order_detail_summary, strategy_order_detail_summary_path = _load_strategy_order_detail_summary(
+                    latest_candidate_meta.get("output_json_path")
+                )
                 if latest_trusted_candidate_date is not None and latest_trusted_strategy:
                     cursor.execute(
                         """
@@ -3048,7 +3085,10 @@ def chenyiyun_selected_dashboard():
         latest_signal_trade_date=latest_signal_trade_date,
         latest_trusted_candidate_date=latest_trusted_candidate_date,
         latest_trusted_strategy=latest_trusted_strategy,
+        latest_trusted_strategy_display=latest_trusted_strategy_display,
         trusted_candidates=trusted_candidates,
+        strategy_order_detail_summary=strategy_order_detail_summary,
+        strategy_order_detail_summary_path=strategy_order_detail_summary_path,
         latest_shadow_summary=latest_shadow_summary,
         shadow_fills=shadow_fills,
         signal_stats=signal_stats,

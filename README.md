@@ -11,6 +11,22 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 - Web 看板与任务运维（Flask + Admin）
 - 定时调度（Web 内置调度，`scheduler.py` 当前未启用）
 
+## 文档中心
+
+项目文档已按“总览、策略研究、个股研究、回测归档、实盘记录、外部研报、提示词库”整理：
+
+| 入口 | 说明 |
+|---|---|
+| `docs/00_project_overview/PROJECT_DIRECTORY.md` | 项目目录说明和文件归档规则。 |
+| `docs/00_project_overview/RUNBOOK.md` | 主流程、常用命令和未来函数红线。 |
+| `docs/01_strategy_research/STRATEGY_RESEARCH_INDEX.md` | 策略研究统一入口。 |
+| `docs/02_stock_research/STOCK_RESEARCH_INDEX.md` | 个股研究统一入口。 |
+| `docs/03_backtest_reports/BACKTEST_INDEX.md` | 回测报告索引。 |
+| `docs/06_prompt_library/PROMPT_INDEX.md` | 提示词库索引。 |
+| `AGENTS.md` | 后续协作和 agent 默认遵守的项目管理规范。 |
+
+后续新增文件默认遵守 `AGENTS.md` 和 `docs/00_project_overview/PROJECT_DIRECTORY.md`：代码、数据、回测、研究文档、实盘记录、提示词和归档资料分离管理；自动导出结果留在 `exports/`，人工摘要和索引写入 `docs/`。
+
 ## 1. 架构总览（按代码实现）
 
 | 层 | 目录/文件 | 说明 | 典型入口 |

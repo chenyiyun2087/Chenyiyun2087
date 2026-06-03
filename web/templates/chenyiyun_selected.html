@@ -30,7 +30,7 @@
 <div class="panel">
     <div class="panel-title">可信全量池实盘候选</div>
     <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
-        最新候选日：{{ latest_trusted_candidate_date or '-' }}，来源策略：{{ latest_trusted_strategy or '-' }}
+        最新候选日：{{ latest_trusted_candidate_date or '-' }}，来源策略：{{ latest_trusted_strategy_display or '-' }}
     </div>
     <table>
         <thead>
@@ -70,6 +70,73 @@
             {% endfor %}
         </tbody>
     </table>
+</div>
+
+<div class="panel">
+    <div class="panel-title">策略订单对照</div>
+    {% if strategy_order_detail_summary %}
+    <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
+        归档文件：{{ strategy_order_detail_summary_path or '-' }}
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>策略</th>
+                <th>候选</th>
+                <th>订单</th>
+                <th>BUY</th>
+                <th>SELL</th>
+                <th>基础策略</th>
+                <th>持有期</th>
+                <th>状态</th>
+                <th>底层策略</th>
+                <th>目标仓位</th>
+                <th>说明</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in strategy_order_detail_summary %}
+            <tr>
+                <td>{{ row.strategy_display_name or row.strategy or '-' }}</td>
+                <td>{{ row.candidate_count or 0 }}</td>
+                <td>{{ row.order_count or 0 }}</td>
+                <td>{{ row.buy_count or 0 }}</td>
+                <td>{{ row.sell_count or 0 }}</td>
+                <td>{{ row.base_strategy_display_name or '-' }}</td>
+                <td>
+                    {% if row.hold_days %}
+                    {{ row.hold_days }}日
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td>{{ row.adaptive_role or '-' }}</td>
+                <td>{{ row.adaptive_underlying_display_name or '-' }}</td>
+                <td>
+                    {% if row.position_ratio %}
+                    {{ '%.0f%%'|format((row.position_ratio or 0)|float * 100) }}
+                    {% elif row.adaptive_position_scale %}
+                    {{ '%.0f%%'|format((row.adaptive_position_scale or 0)|float * 100) }}
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td>
+                    {% if row.shadow_note %}
+                    {{ row.shadow_note }}
+                    {% elif row.adaptive_position_reason %}
+                    {{ row.adaptive_position_reason }}
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">暂无策略订单对照归档；下一次带飞书通知的候选导出后自动生成。</div>
+    {% endif %}
 </div>
 
 <div class="panel">
