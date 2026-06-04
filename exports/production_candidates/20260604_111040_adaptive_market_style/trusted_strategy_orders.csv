@@ -1,0 +1,5 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-02,300408,三环集团,BUY,134.46,0,700,700,700,0.0,0.2,0.2,trusted_strategy:adaptive_market_style; hold_gate=10d; max_positions=5
+2026-06-02,300620,光库科技,BUY,320.02,0,300,300,300,0.0,0.2,0.2,trusted_strategy:adaptive_market_style; hold_gate=10d; max_positions=5
+2026-06-02,600036,招商银行,BUY,38.8,0,2500,2500,2500,0.0,0.2,0.2,trusted_strategy:adaptive_market_style; hold_gate=10d; max_positions=5
+2026-06-02,600183,生益科技,BUY,141.07,0,700,700,700,0.0,0.2,0.2,trusted_strategy:adaptive_market_style; hold_gate=10d; max_positions=5

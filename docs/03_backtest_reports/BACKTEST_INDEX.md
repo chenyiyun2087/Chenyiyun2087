@@ -4,6 +4,8 @@
 
 | 策略名称 | 资金规模 | 回测周期 | 期末权益 | 年化收益 | 最大回撤 | 结论 | 文件夹 |
 |---|---:|---|---:|---:|---:|---|---|
+| `adaptive_market_style` / 核心风格切换 v2 | 50 万 | 2023-01-04 至 2026-06-02 | 551,658 | +3.06% | -51.28% | 三年收益与回撤均优于当前 fixed balanced；最近一年 +81.10%、最大回撤 -17.94% | `exports/signal_research/20260604_110749_591938_trusted_account_backtest/` |
+| 核心策略风格画像研究 | - | 2023-01-04 至 2026-06-02 | - | - | - | 输出市场/行业/量能分组、网格阈值和每日 adaptive 决策表 | `exports/signal_research/20260604_105452_core_strategy_style_research/` |
 | `baseline_full_liquidity_detail_market_gate` / 50% 仓位 | 50 万 | 2023-01-04 至 2026-06-02 | 475,270 | -1.54% | -43.42% | 三年回撤控制相对最好，可做防守影子候选 | `exports/signal_research/trusted_strategy_optimization_20260603_224953/` |
 | `baseline_full_liquidity_detail` / hold12 | 50 万 | 2023-01-04 至 2026-06-02 | 489,717 | -0.64% | -65.17% | 三年持仓期矩阵相对最好，仍需降回撤 | `exports/signal_research/trusted_strategy_optimization_20260603_203215/` |
 | `tiered_liquidity_then_bs_v2` / stop8 | 50 万 | 2023-01-04 至 2026-06-02 | 123,306 | -34.90% | -90.45% | 硬止损未修复进攻策略长期风险，不建议默认上线 | `exports/signal_research/trusted_strategy_optimization_20260603_212905/` |

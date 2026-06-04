@@ -89,6 +89,8 @@ ORDER_DETAIL_STRATEGIES = (
     "baseline_full_liquidity_detail_hold12_shadow",
     "baseline_full_liquidity_detail_market_gate_pos50_shadow",
     "baseline_full_liquidity_shadow",
+    "baseline_full_liquidity_detail_vol_position_shadow",
+    "baseline_full_liquidity_detail_hist_mdd_position_shadow",
     "baseline_full_score",
     "adaptive_style_switch_dynamic_position",
     "adaptive_style_shadow",
@@ -123,6 +125,18 @@ ORDER_DETAIL_CONFIGS = (
         "base_strategy": "baseline_full_liquidity",
         "position_ratio": 0.5,
         "shadow_note": "最近三个月表现较强的纯流动性防守影子策略。",
+    },
+    {
+        "detail_id": "baseline_full_liquidity_detail_vol_position_shadow",
+        "base_strategy": "baseline_full_liquidity_detail_vol_position",
+        "position_ratio": 0.7,
+        "shadow_note": "高波动且流动性尚可时的稳健仓位影子对照。",
+    },
+    {
+        "detail_id": "baseline_full_liquidity_detail_hist_mdd_position_shadow",
+        "base_strategy": "baseline_full_liquidity_detail_hist_mdd_position",
+        "position_ratio": 0.7,
+        "shadow_note": "近期回撤扩大时的稳健仓位影子对照。",
     },
     {
         "detail_id": "baseline_full_score",
@@ -1527,24 +1541,36 @@ def export_candidates(args: argparse.Namespace) -> dict:
 
     scores = add_liquidity_derived_features(scores, prices)
     scores = add_forward_returns(scores, prices, args.hold_days)
-    scores, factor_weights = add_dynamic_factor_score(
-        scores,
-        lookback_dates=args.dynamic_lookback_dates,
-        top_n=args.top_n,
+    trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
+    needed_specs: list[object] = []
+    if args.strategy == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
+        needed_specs = [trusted_specs[name] for name in set(ADAPTIVE_UNDERLYING.values()) if name in trusted_specs]
+    elif spec is not None:
+        needed_specs = [spec]
+    needs_dynamic = any(
+        getattr(item, "sort_col", "") in {"dynamic_factor_score", "dynamic_ic_factor_score"}
+        for item in needed_specs
     )
-    scores, ic_weights = add_dynamic_ic_factor_score(
-        scores,
-        lookback_dates=args.dynamic_lookback_dates,
-    )
-    if not factor_weights.empty:
-        factor_weights["method"] = "long_topn_return"
-    factor_weights = pd.concat([factor_weights, ic_weights], ignore_index=True, sort=False)
+    if needs_dynamic:
+        scores, factor_weights = add_dynamic_factor_score(
+            scores,
+            lookback_dates=args.dynamic_lookback_dates,
+            top_n=args.top_n,
+        )
+        scores, ic_weights = add_dynamic_ic_factor_score(
+            scores,
+            lookback_dates=args.dynamic_lookback_dates,
+        )
+        if not factor_weights.empty:
+            factor_weights["method"] = "long_topn_return"
+        factor_weights = pd.concat([factor_weights, ic_weights], ignore_index=True, sort=False)
+    else:
+        factor_weights = pd.DataFrame()
     market_env = build_market_environment(scores, prices)
     scores = attach_market_environment(scores, market_env)
 
     signal_date = pd.Timestamp(asof_date).date()
     day_scores = scores[scores["trade_date"].eq(signal_date)].copy()
-    trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
     adaptive_decision: dict[str, object] | None = None
     target_position_ratio = float(args.position_ratio)
     if args.strategy == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:

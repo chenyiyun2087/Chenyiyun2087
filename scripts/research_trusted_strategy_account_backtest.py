@@ -74,8 +74,11 @@ DEFAULT_STRATEGIES = [
     "adaptive_style_switch",
     "adaptive_style_switch_dynamic_position",
     "tiered_liquidity_then_bs_v2",
-    "baseline_full_dynamic_factor_industry_cap2",
+    "baseline_full_liquidity_detail_market_gate",
     "baseline_full_liquidity_detail",
+    "baseline_full_liquidity",
+    "baseline_full_liquidity_detail_vol_position",
+    "baseline_full_liquidity_detail_hist_mdd_position",
     "baseline_full_score",
 ]
 ADAPTIVE_MARKET_STYLE_STRATEGY_NAME = "adaptive_market_style"
@@ -90,9 +93,18 @@ ADAPTIVE_STRATEGY_NAMES = {
 ADAPTIVE_UNDERLYING = {
     "attack": "tiered_liquidity_then_bs_v2",
     "balanced": "baseline_full_liquidity_detail_market_gate",
+    "robust": "baseline_full_liquidity_detail_vol_position",
     "defensive": "baseline_full_liquidity",
     "fallback": "baseline_full_liquidity",
 }
+CORE_STRATEGY_NAMES = [
+    "tiered_liquidity_then_bs_v2",
+    "baseline_full_liquidity_detail_market_gate",
+    "baseline_full_liquidity",
+    "baseline_full_liquidity_detail_vol_position",
+    "baseline_full_liquidity_detail_hist_mdd_position",
+    ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+]
 ADAPTIVE_MIN_STATE_DAYS = 3
 ADAPTIVE_LONG_WINDOW = 20
 ADAPTIVE_SHORT_WINDOW = 10
@@ -364,12 +376,74 @@ def _build_targets(
     return pd.DataFrame(rows)
 
 
+def _industry_concentration(selected: pd.DataFrame) -> dict[str, object]:
+    if selected.empty:
+        return {"top_industry": None, "top_industry_weight": np.nan, "industry_count": 0}
+    keys = [
+        str(row.get("industry") or "").strip() or f"UNKNOWN_{str(row.get('symbol') or '').zfill(6)}"
+        for _, row in selected.iterrows()
+    ]
+    counts = pd.Series(keys).value_counts()
+    return {
+        "top_industry": str(counts.index[0]) if not counts.empty else None,
+        "top_industry_weight": float(counts.iloc[0] / max(1, len(keys))) if not counts.empty else np.nan,
+        "industry_count": int(len(counts)),
+    }
+
+
+def _day_style_features(day_scores: pd.DataFrame, selected: pd.DataFrame | None = None) -> dict[str, object]:
+    selected = selected if selected is not None else pd.DataFrame()
+    industry = _industry_concentration(selected)
+    market_amount_ratio = _safe_float(
+        day_scores.get("market_amount_ratio_20", pd.Series(np.nan)).dropna().median(),
+        np.nan,
+    )
+    index_bucket = (
+        str(day_scores.get("index_bucket", pd.Series([""])).dropna().iloc[0])
+        if "index_bucket" in day_scores and not day_scores["index_bucket"].dropna().empty
+        else ""
+    )
+    market_liquidity_bucket = (
+        str(day_scores.get("market_liquidity_bucket", pd.Series([""])).dropna().iloc[0])
+        if "market_liquidity_bucket" in day_scores and not day_scores["market_liquidity_bucket"].dropna().empty
+        else ""
+    )
+    return {
+        "market_amount_ratio_20": market_amount_ratio,
+        "market_liquidity_bucket": market_liquidity_bucket,
+        "index_bucket": index_bucket,
+        "market_bs_ratio": _safe_float(day_scores.get("market_bs_ratio", pd.Series(np.nan)).dropna().median(), np.nan),
+        "market_avg_score": _safe_float(day_scores.get("score", pd.Series(np.nan)).dropna().mean(), np.nan),
+        "avg_s_liquidity": _safe_float(day_scores.get("s_liquidity", pd.Series(np.nan)).dropna().mean(), np.nan),
+        "avg_relative_amount": _safe_float(day_scores.get("s_relative_amount", pd.Series(np.nan)).dropna().mean(), np.nan),
+        "avg_amount_ratio_5_20": _safe_float(day_scores.get("s_amount_ratio_5_20", pd.Series(np.nan)).dropna().mean(), np.nan),
+        "avg_low_impact_cost": _safe_float(day_scores.get("s_low_impact_cost", pd.Series(np.nan)).dropna().mean(), np.nan),
+        "avg_amount_stability": _safe_float(day_scores.get("s_amount_stability", pd.Series(np.nan)).dropna().mean(), np.nan),
+        "avg_vol_20": _safe_float(day_scores.get("vol_20", pd.Series(np.nan)).dropna().mean(), np.nan),
+        "median_hist_mdd_20": _safe_float(day_scores.get("hist_mdd_20", pd.Series(np.nan)).dropna().median(), np.nan),
+        **industry,
+    }
+
+
+def _build_targets_cache(
+    scores_by_date: dict[object, pd.DataFrame],
+    specs_by_name: dict[str, object],
+    top_n: int,
+) -> dict[tuple[object, str], pd.DataFrame]:
+    cache: dict[tuple[object, str], pd.DataFrame] = {}
+    for signal_date, day_scores in scores_by_date.items():
+        for strategy_name, spec in specs_by_name.items():
+            cache[(signal_date, strategy_name)] = _build_targets(day_scores, spec, top_n=top_n)
+    return cache
+
+
 def _strategy_cycle_return(
     day_scores: pd.DataFrame,
     spec,
     top_n: int,
+    targets: pd.DataFrame | None = None,
 ) -> tuple[float, int, object | None]:
-    targets = _build_targets(day_scores, spec, top_n=top_n)
+    targets = targets if targets is not None else _build_targets(day_scores, spec, top_n=top_n)
     if targets.empty or "forward_ret" not in targets.columns:
         return np.nan, 0, None
     returns = pd.to_numeric(targets["forward_ret"], errors="coerce")
@@ -390,11 +464,23 @@ def _build_adaptive_perf_table(
     scores_by_date: dict[object, pd.DataFrame],
     underlying_specs: dict[str, object],
     top_n: int,
+    targets_cache: dict[tuple[object, str], pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
+    computed: dict[tuple[object, str], tuple[float, int, object | None, dict[str, object]]] = {}
     for signal_date, day_scores in scores_by_date.items():
         for role, spec in underlying_specs.items():
-            cycle_ret, selected_count, exit_date = _strategy_cycle_return(day_scores, spec, top_n=top_n)
+            key = (signal_date, spec.name)
+            if key not in computed:
+                targets = targets_cache.get(key) if targets_cache is not None else None
+                cycle_ret, selected_count, exit_date = _strategy_cycle_return(
+                    day_scores,
+                    spec,
+                    top_n=top_n,
+                    targets=targets,
+                )
+                computed[key] = (cycle_ret, selected_count, exit_date, _day_style_features(day_scores, targets))
+            cycle_ret, selected_count, exit_date, features = computed[key]
             rows.append(
                 {
                     "signal_date": signal_date,
@@ -403,6 +489,7 @@ def _build_adaptive_perf_table(
                     "underlying_strategy": spec.name,
                     "cycle_ret": cycle_ret,
                     "selected_count": selected_count,
+                    **features,
                 }
             )
     return pd.DataFrame(rows)
@@ -435,10 +522,13 @@ def _choose_adaptive_role(
     current_role: str | None,
     current_role_days: int,
 ) -> dict[str, object]:
-    market_amount_ratio = _safe_float(day_scores.get("market_amount_ratio_20", pd.Series(np.nan)).dropna().median(), np.nan)
-    index_bucket = str(day_scores.get("index_bucket", pd.Series([""])).dropna().iloc[0]) if "index_bucket" in day_scores and not day_scores["index_bucket"].dropna().empty else ""
-    market_bs_ratio = _safe_float(day_scores.get("market_bs_ratio", pd.Series(np.nan)).dropna().median(), np.nan)
-    market_avg_score = _safe_float(day_scores.get("score", pd.Series(np.nan)).dropna().mean(), np.nan)
+    features = _day_style_features(day_scores)
+    market_amount_ratio = _safe_float(features.get("market_amount_ratio_20"), np.nan)
+    index_bucket = str(features.get("index_bucket") or "")
+    market_liquidity_bucket = str(features.get("market_liquidity_bucket") or "")
+    market_bs_ratio = _safe_float(features.get("market_bs_ratio"), np.nan)
+    market_avg_score = _safe_float(features.get("market_avg_score"), np.nan)
+    avg_vol_20 = _safe_float(features.get("avg_vol_20"), np.nan)
     fields_ok = np.isfinite(market_amount_ratio) and bool(index_bucket) and np.isfinite(market_avg_score)
     metrics = {
         f"{role}_{suffix}": value
@@ -447,6 +537,7 @@ def _choose_adaptive_role(
     }
     attack_short = _rolling_perf(perf, "attack", signal_date, ADAPTIVE_SHORT_WINDOW)
     balanced_long = _rolling_perf(perf, "balanced", signal_date, ADAPTIVE_LONG_WINDOW)
+    robust_long = _rolling_perf(perf, "robust", signal_date, ADAPTIVE_LONG_WINDOW)
     attack_long = {
         "count": metrics.get("attack_count", 0),
         "avg_ret": metrics.get("attack_avg_ret", np.nan),
@@ -459,35 +550,69 @@ def _choose_adaptive_role(
         "win_rate": metrics.get("defensive_win_rate", np.nan),
         "max_drawdown": metrics.get("defensive_max_drawdown", np.nan),
     }
+    robust_history_ok = int(robust_long["count"]) >= ADAPTIVE_SHORT_WINDOW
     enough_history = int(attack_long["count"]) >= ADAPTIVE_SHORT_WINDOW
     low_liq_weak = np.isfinite(market_amount_ratio) and market_amount_ratio < 0.8 and index_bucket == "index_weak"
     attack_failed = int(attack_short["count"]) >= ADAPTIVE_SHORT_WINDOW and _safe_float(attack_short["avg_ret"], np.nan) < 0.0
+    attack_drawdown_expanded = (
+        int(attack_long["count"]) >= ADAPTIVE_SHORT_WINDOW
+        and _safe_float(attack_long["max_drawdown"], np.nan) < -0.20
+    )
     attack_ok = (
         enough_history
         and _safe_float(attack_long["avg_ret"], np.nan) > -0.01
         and _safe_float(attack_long["max_drawdown"], np.nan) > -0.25
     )
     risk_on = (np.isfinite(market_amount_ratio) and market_amount_ratio > 1.2) or index_bucket == "index_strong"
+    high_vol_liquid = (
+        np.isfinite(avg_vol_20)
+        and avg_vol_20 > 0.045
+        and market_liquidity_bucket != "low_liquidity"
+        and robust_history_ok
+        and _safe_float(robust_long["avg_ret"], -999.0) >= _safe_float(defensive_long["avg_ret"], -999.0)
+    )
+    industry_concentration_high = (
+        "top_industry_weight" in perf.columns
+        and not perf[
+            perf["role"].eq("attack")
+            & pd.to_datetime(perf["exit_date"], errors="coerce").dt.date.lt(pd.Timestamp(signal_date).date())
+        ].tail(1).empty
+        and _safe_float(
+            perf[
+                perf["role"].eq("attack")
+                & pd.to_datetime(perf["exit_date"], errors="coerce").dt.date.lt(pd.Timestamp(signal_date).date())
+            ].tail(1)["top_industry_weight"].iloc[0],
+            np.nan,
+        )
+        >= 0.6
+    )
     balanced_leads = (
         int(balanced_long["count"]) >= ADAPTIVE_SHORT_WINDOW
         and _safe_float(balanced_long["avg_ret"], -999.0) > _safe_float(attack_long["avg_ret"], -999.0)
         and _safe_float(balanced_long["avg_ret"], -999.0) > _safe_float(defensive_long["avg_ret"], -999.0)
     )
+    weak_completed_attack = attack_failed or attack_drawdown_expanded
     if not fields_ok:
         desired_role = "fallback"
         reason = "fallback_missing_market_fields"
-    elif low_liq_weak or attack_failed:
+    elif high_vol_liquid:
+        desired_role = "robust"
+        reason = "robust_high_volatility_liquid_market"
+    elif low_liq_weak:
         desired_role = "defensive"
-        reason = "defensive_low_liquidity_weak_index_or_attack_failed"
+        reason = "defensive_low_liquidity_weak_index"
     elif risk_on and attack_ok:
         desired_role = "attack"
         reason = "attack_risk_on_and_attack_not_failed"
     elif balanced_leads:
         desired_role = "balanced"
         reason = "balanced_rolling_performance_leads"
+    elif weak_completed_attack and (market_amount_ratio < 0.9 or index_bucket == "index_weak" or industry_concentration_high):
+        desired_role = "defensive"
+        reason = "defensive_attack_weak_with_market_or_industry_risk"
     elif enough_history:
-        desired_role = "attack"
-        reason = "attack_default_with_enough_history"
+        desired_role = "balanced"
+        reason = "balanced_default_with_enough_history"
     else:
         desired_role = "fallback"
         reason = "fallback_insufficient_completed_history"
@@ -511,11 +636,16 @@ def _choose_adaptive_role(
         "index_bucket": index_bucket,
         "market_bs_ratio": market_bs_ratio,
         "market_avg_score": market_avg_score,
+        "market_liquidity_bucket": market_liquidity_bucket,
+        "avg_vol_20": avg_vol_20,
         "data_cutoff_date": signal_date,
         "completed_history_rule": "exit_date < signal_date",
         "attack_short_count": int(attack_short["count"]),
         "attack_short_avg_ret": _safe_float(attack_short["avg_ret"]),
+        "industry_concentration_high": int(bool(industry_concentration_high)),
+        "attack_drawdown_expanded": int(bool(attack_drawdown_expanded)),
     }
+    row.update(features)
     row.update({key: _safe_float(value) if key.endswith(("avg_ret", "win_rate", "max_drawdown")) else int(value) for key, value in metrics.items()})
     return row
 
@@ -535,6 +665,9 @@ def _adaptive_position_scale(decision: dict[str, object]) -> tuple[float, str]:
     elif role == "balanced":
         scale = 0.80
         scale_reason = "balanced_reduce_to_80pct"
+    elif role == "robust":
+        scale = 0.70
+        scale_reason = "robust_reduce_to_70pct"
     elif role == "defensive":
         scale = 0.50
         scale_reason = "defensive_reduce_to_50pct"
@@ -574,10 +707,11 @@ def _rebalance(
     position_ratio: float,
     calendar: list[object],
     open_prices: dict[str, dict[str, float]],
+    targets: pd.DataFrame | None = None,
 ) -> tuple[list[dict], list[dict], dict[str, object]]:
     trade_rows: list[dict] = []
     candidate_rows: list[dict] = []
-    targets = _build_targets(day_scores, spec, top_n=top_n)
+    targets = targets if targets is not None else _build_targets(day_scores, spec, top_n=top_n)
     if targets.empty:
         return trade_rows, candidate_rows, {"locked_count": 0, "candidate_count": 0, "executed": 0}
 
@@ -905,30 +1039,46 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
 
     scores = add_liquidity_derived_features(scores, prices)
     scores = add_forward_returns(scores, prices, args.hold_days)
-    scores, factor_weights = add_dynamic_factor_score(
-        scores,
-        lookback_dates=args.dynamic_lookback_dates,
-        top_n=args.top_n,
-    )
-    scores, ic_weights = add_dynamic_ic_factor_score(
-        scores,
-        lookback_dates=args.dynamic_lookback_dates,
-    )
-    if not factor_weights.empty:
-        factor_weights["method"] = "long_topn_return"
-    factor_weights = pd.concat([factor_weights, ic_weights], ignore_index=True, sort=False)
-    market_env = build_market_environment(scores, prices)
-    scores = attach_market_environment(scores, market_env)
-
     specs = _strategy_specs(_parse_strategies(args.strategies))
     trusted_by_name = {spec.name: spec for spec in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
     adaptive_underlying_specs = {role: trusted_by_name[name] for role, name in ADAPTIVE_UNDERLYING.items()}
+    needed_specs = [spec for spec in specs if spec.name not in ADAPTIVE_STRATEGY_NAMES]
+    if any(spec.name in ADAPTIVE_STRATEGY_NAMES for spec in specs):
+        needed_specs.extend(adaptive_underlying_specs.values())
+    needs_dynamic = any(
+        getattr(spec, "sort_col", "") in {"dynamic_factor_score", "dynamic_ic_factor_score"}
+        for spec in needed_specs
+    )
+    if needs_dynamic:
+        scores, factor_weights = add_dynamic_factor_score(
+            scores,
+            lookback_dates=args.dynamic_lookback_dates,
+            top_n=args.top_n,
+        )
+        scores, ic_weights = add_dynamic_ic_factor_score(
+            scores,
+            lookback_dates=args.dynamic_lookback_dates,
+        )
+        if not factor_weights.empty:
+            factor_weights["method"] = "long_topn_return"
+        factor_weights = pd.concat([factor_weights, ic_weights], ignore_index=True, sort=False)
+    else:
+        factor_weights = pd.DataFrame()
+    market_env = build_market_environment(scores, prices)
+    scores = attach_market_environment(scores, market_env)
     calendar = sorted(prices["trade_date"].dropna().unique().tolist())
     price_by_date = {
         day: group.drop_duplicates("symbol").set_index("symbol")[["adj_open", "adj_close"]].to_dict("index")
         for day, group in prices.groupby("trade_date", sort=True)
     }
     scores_by_date = {day: group.copy() for day, group in scores.groupby("trade_date", sort=True)}
+    cache_specs: dict[str, object] = {}
+    for spec in specs:
+        if spec.name not in ADAPTIVE_STRATEGY_NAMES:
+            cache_specs[spec.name] = spec
+    for spec in adaptive_underlying_specs.values():
+        cache_specs[spec.name] = spec
+    targets_cache = _build_targets_cache(scores_by_date, cache_specs, top_n=args.top_n)
     signal_to_exec = {
         day: _next_trade_date(calendar, day)
         for day in sorted(scores["trade_date"].dropna().unique().tolist())
@@ -945,7 +1095,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     all_candidates: list[pd.DataFrame] = []
     all_adaptive_decisions: list[pd.DataFrame] = []
     summary_rows: list[dict] = []
-    adaptive_perf = _build_adaptive_perf_table(scores_by_date, adaptive_underlying_specs, top_n=args.top_n)
+    adaptive_perf = _build_adaptive_perf_table(
+        scores_by_date,
+        adaptive_underlying_specs,
+        top_n=args.top_n,
+        targets_cache=targets_cache,
+    )
 
     for spec in specs:
         account = AccountState(cash=float(args.initial_cash))
@@ -1028,6 +1183,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                                 "target_position_ratio": float(rebalance_position_ratio),
                             }
                         )
+                target_override = targets_cache.get((signal_date, rebalance_spec.name))
                 trades, candidates, rebalance_meta = _rebalance(
                     account=account,
                     signal_date=signal_date,
@@ -1044,6 +1200,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     position_ratio=rebalance_position_ratio,
                     calendar=calendar,
                     open_prices=price_lookup,
+                    targets=target_override,
                 )
                 if spec.name in ADAPTIVE_STRATEGY_NAMES:
                     for item in candidates:
@@ -1093,6 +1250,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             )
             summary["adaptive_attack_days"] = int(adaptive_decisions["active_role"].eq("attack").sum())
             summary["adaptive_balanced_days"] = int(adaptive_decisions["active_role"].eq("balanced").sum())
+            summary["adaptive_robust_days"] = int(adaptive_decisions["active_role"].eq("robust").sum())
             summary["adaptive_defensive_days"] = int(adaptive_decisions["active_role"].eq("defensive").sum())
             summary["adaptive_fallback_days"] = int(adaptive_decisions["active_role"].eq("fallback").sum())
             if "adaptive_target_position_ratio" in adaptive_decisions.columns:
