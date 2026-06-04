@@ -84,6 +84,7 @@
 | 2026-06-03 | 三年优化矩阵分组执行 | 完成 | `scripts/research/run_trusted_strategy_optimization_matrix.py` 新增 `--groups`，支持按 `hold_cost`、`stop_loss`、`industry`、`market_gate_position`、`adaptive` 分组执行，避免三年窗口一次性跑全矩阵耗时过长。已完成三年持仓期、进攻止损、行业约束、市场门禁/仓位、自适应切换五组矩阵，输出分别位于 `exports/signal_research/trusted_strategy_optimization_20260603_203215`、`exports/signal_research/trusted_strategy_optimization_20260603_212905`、`exports/signal_research/trusted_strategy_optimization_20260603_223619`、`exports/signal_research/trusted_strategy_optimization_20260603_224953`、`exports/signal_research/trusted_strategy_optimization_20260603_232619`。 |
 | 2026-06-03 | 防守影子策略接入飞书对照 | 完成 | `export_trusted_strategy_candidates.py` 的“策略订单对照”新增 `baseline_full_liquidity_detail_hold12_shadow` 和 `baseline_full_liquidity_detail_market_gate_pos50_shadow`，分别代表“流动性质量防守策略（12日持有影子）”与“流动性质量防守策略（市场门禁50%仓位影子）”。两者只进入飞书/归档/Web 对照，不写入生产候选主策略，不替换当前进攻策略。已用本地假飞书、不写库方式验证 2026-06-02 候选导出，测试产物位于 `exports/production_candidates/20260603_234550_tiered_liquidity_then_bs_v2`。 |
 | 2026-06-03 | Web 策略订单对照字段增强 | 完成 | 核心精选页“策略订单对照”新增基础策略、持有期、目标仓位和说明字段，可展示新增防守 12 日与防守半仓影子策略的关键差异；`web/app.py` 为 `base_strategy_display_name` 增加兜底中文名。已完成模板解析、后端语法、离线渲染和 5001 运行服务验证。 |
+| 2026-06-04 | 生产风险档位升级 | 完成 | 新增 `--risk-profile offensive|balanced|defensive`。生产默认切为 `balanced`：`baseline_full_liquidity_detail_market_gate`、12 日持有、80% 基准仓位、最多 5 只；低市场成交环境由市场门禁把实际敞口降至约 50%。日终调度、Web 任务中心、候选导出报告、飞书通知、账户级回测汇总和核心精选页均已显示风险档位。 |
 
 ## 当前发现
 
@@ -142,3 +143,4 @@
 - 2026-06-03 三年自适应切换复核显示，`adaptive_style_switch_dynamic_position` 收益约 -46.23%、最大回撤约 -66.46%、平均目标仓位约 72.13%，优于硬切换 `adaptive_style_switch` 的收益约 -80.08%、最大回撤约 -88.72%，但仍弱于防守半仓和防守 12 日持有。结论：动态仓位自适应可继续作为影子盘/告警逻辑，不应直接生产化；硬切换版本需要重构规则后再评估。
 - 2026-06-03 防守半仓和防守 12 日已接入生产前置影子对照。飞书通知会在“策略订单对照”中显示两条新增影子策略的候选、订单、基础策略、持有期、目标仓位和三年研究备注；`trusted_strategy_order_detail_summary.csv` 也会记录 `base_strategy`、`hold_days`、`position_ratio`、`total_equity_used` 和 `shadow_note`。测试验证中，12 日防守影子资金基数 500,000、持有期 12 日；防守半仓影子资金基数 250,000、目标仓位 50%。
 - 2026-06-03 Web 核心精选页已能展示防守影子策略对照差异：基础策略、持有期、目标仓位和研究说明会直接出现在“策略订单对照”表格中。离线渲染验证确认页面包含“流动性质量防守策略（12日持有影子）”“12日”“50%”“市场门禁50%仓位影子”等关键文本；5001 运行服务已重启并验证页面实际 HTML 包含“基础策略”“持有期”“目标仓位”“说明”表头。当前页面引用的最新正式归档仍是旧导出，下一次真实日终带飞书通知的候选导出后会自动显示新增影子行。
+- 2026-06-04 生产默认口径已从单一进攻满仓切换为 `balanced` 风险档位。三年 T+1 账户级回测优先级高于最近一年高收益结果；`tiered_liquidity_then_bs_v2` 保留为 `offensive` 档和订单对照，不再作为未经门禁的长期满仓默认。

@@ -53,7 +53,28 @@ from scripts.research_full_pool_liquidity_strategies import (
 
 
 OUT_ROOT = PROJECT_ROOT / "exports" / "production_candidates"
-DEFAULT_STRATEGY = "tiered_liquidity_then_bs_v2"
+DEFAULT_RISK_PROFILE = "balanced"
+RISK_PROFILE_DEFAULTS = {
+    "offensive": {
+        "strategy": "tiered_liquidity_then_bs_v2",
+        "position_ratio": 1.0,
+        "hold_days": 10,
+        "description": "进攻档：流动性分层+B点增强，满仓观察，仅适合人工确认后的进攻阶段。",
+    },
+    "balanced": {
+        "strategy": "baseline_full_liquidity_detail_market_gate",
+        "position_ratio": 0.8,
+        "hold_days": 12,
+        "description": "均衡档：流动性质量防守策略+市场门禁，基准80%仓位，弱市场由门禁降至约50%。",
+    },
+    "defensive": {
+        "strategy": "baseline_full_liquidity_detail_market_gate",
+        "position_ratio": 0.5,
+        "hold_days": 12,
+        "description": "防守档：流动性质量防守策略，12日持有，目标50%仓位。",
+    },
+}
+DEFAULT_STRATEGY = RISK_PROFILE_DEFAULTS[DEFAULT_RISK_PROFILE]["strategy"]
 ORDER_DETAIL_STRATEGIES = (
     "tiered_liquidity_then_bs_v2",
     "baseline_full_dynamic_factor_industry_cap2",
@@ -146,6 +167,39 @@ def _pick_strategy(name: str):
         available = ", ".join(sorted(by_name))
         raise ValueError(f"Strategy `{name}` is not a trusted strategy. Available trusted strategies: {available}")
     return by_name[name]
+
+
+def _normalize_risk_profile(raw: str | None) -> str:
+    value = str(raw or DEFAULT_RISK_PROFILE).strip().lower()
+    if value not in RISK_PROFILE_DEFAULTS:
+        available = ", ".join(sorted(RISK_PROFILE_DEFAULTS))
+        raise ValueError(f"Unknown risk profile `{raw}`. Available risk profiles: {available}")
+    return value
+
+
+def _apply_risk_profile_defaults(
+    args: argparse.Namespace,
+    *,
+    strategy_explicit: bool = False,
+    hold_days_explicit: bool = False,
+    position_ratio_explicit: bool = False,
+) -> argparse.Namespace:
+    risk_profile = _normalize_risk_profile(getattr(args, "risk_profile", None))
+    defaults = RISK_PROFILE_DEFAULTS[risk_profile]
+    args.risk_profile = risk_profile
+    if not strategy_explicit and not getattr(args, "strategy", None):
+        args.strategy = str(defaults["strategy"])
+    elif not getattr(args, "strategy", None):
+        args.strategy = DEFAULT_STRATEGY
+    if not hold_days_explicit and getattr(args, "hold_days", None) is None:
+        args.hold_days = int(defaults["hold_days"])
+    if not position_ratio_explicit and getattr(args, "position_ratio", None) is None:
+        args.position_ratio = float(defaults["position_ratio"])
+    if getattr(args, "hold_days", None) is None:
+        args.hold_days = 10
+    if getattr(args, "position_ratio", None) is None:
+        args.position_ratio = 1.0
+    return args
 
 
 def _candidate_columns(frame: pd.DataFrame) -> list[str]:
@@ -398,6 +452,8 @@ def _format_order_notification(
     orders: pd.DataFrame,
     files: dict[str, str],
     total_equity_used: float,
+    risk_profile: str = DEFAULT_RISK_PROFILE,
+    risk_profile_description: str | None = None,
     strategy_order_details: dict[str, dict[str, pd.DataFrame]] | None = None,
 ) -> str:
     strategy_name = strategy_display_name(strategy)
@@ -437,6 +493,7 @@ def _format_order_notification(
         "【核心精选本地订单草案已生成】",
         f"信号日：{asof_date}",
         f"策略：{strategy_name}",
+        f"风险档位：{risk_profile}（{risk_profile_description or RISK_PROFILE_DEFAULTS.get(risk_profile, {}).get('description', '')}）",
         f"资金基数：{total_equity_used:,.2f}",
         hold_gate_line,
         position_cap_line,
@@ -1356,9 +1413,11 @@ def _write_outputs(
         "",
         f"- 策略：`{strategy_display_name(params['strategy'])}`，排序字段：`{params['sort_col']}`。",
         f"- 策略ID：`{params['strategy']}`。",
+        f"- 风险档位：`{params.get('risk_profile')}`；{params.get('risk_profile_description')}",
         f"- 信号日：`{params['asof_date']}`；候选数：Top {params['top_n']}。",
+        f"- 执行层：目标资金比例 `{float(params.get('position_ratio') or 0):.0%}`；持有 `{params.get('hold_days')}` 个交易日；最多持仓 `{params.get('max_total_positions')}` 只。",
         "- 数据截断：价格与评分数据只读取到信号日当天；动态权重只使用已完成持有期的历史样本。",
-        "- 执行方式：人工复核后，下一交易日开盘附近按 `effective_weight` 建仓，计划持有 10 个交易日。",
+        "- 执行方式：人工复核后，下一交易日开盘附近按 `effective_weight` 建仓。",
         "",
         "## 风险提示",
         "",
@@ -1385,6 +1444,7 @@ def _write_outputs(
 
 
 def export_candidates(args: argparse.Namespace) -> dict:
+    args = _apply_risk_profile_defaults(args)
     engine = create_engine(build_sqlalchemy_url())
     asof_date = _normalize_date(args.date) or _latest_score_date(engine)
     start_date = (pd.Timestamp(asof_date) - pd.Timedelta(days=int(args.history_days))).strftime("%Y-%m-%d")
@@ -1459,6 +1519,9 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "top_n": int(args.top_n),
         "hold_days": int(args.hold_days),
         "max_total_positions": int(args.max_total_positions),
+        "position_ratio": float(args.position_ratio),
+        "risk_profile": str(args.risk_profile),
+        "risk_profile_description": str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
         "dynamic_lookback_dates": int(args.dynamic_lookback_dates),
         "min_pool_size": int(args.min_pool_size),
         "score_dates": int(scores["trade_date"].nunique()),
@@ -1466,6 +1529,11 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "price_max_date": str(max(prices["trade_date"].dropna())),
         "pit_status": spec.pit_status,
         "risk_note": spec.risk_note,
+        "market_gate": bool(spec.market_gate),
+        "market_gate_triggered": bool(
+            "market_exposure_scale" in candidates.columns
+            and (pd.to_numeric(candidates["market_exposure_scale"], errors="coerce").fillna(1.0) < 1.0).any()
+        ),
     }
     out_dir = OUT_ROOT / datetime.now().strftime(f"%Y%m%d_%H%M%S_{spec.name}")
     files = _write_outputs(out_dir, candidates, factor_weights, market_env, params, warnings)
@@ -1627,6 +1695,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 orders=orders,
                 files=files,
                 total_equity_used=total_equity,
+                risk_profile=str(args.risk_profile),
+                risk_profile_description=str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
                 strategy_order_details=strategy_order_details,
             )
             ok, reason = _send_feishu_text(webhook_url, content)
@@ -1645,9 +1715,15 @@ def export_candidates(args: argparse.Namespace) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export latest trusted strategy candidates for production review.")
     parser.add_argument("--date", default=None, help="Signal date, YYYY-MM-DD or YYYYMMDD. Defaults to latest score date.")
-    parser.add_argument("--strategy", default=DEFAULT_STRATEGY)
+    parser.add_argument(
+        "--risk-profile",
+        default=DEFAULT_RISK_PROFILE,
+        choices=sorted(RISK_PROFILE_DEFAULTS),
+        help="Production risk profile. Defaults fill strategy, hold-days, and position-ratio when those args are omitted.",
+    )
+    parser.add_argument("--strategy", default=None)
     parser.add_argument("--top-n", type=int, default=5)
-    parser.add_argument("--hold-days", type=int, default=10)
+    parser.add_argument("--hold-days", type=int, default=None)
     parser.add_argument("--history-days", type=int, default=220)
     parser.add_argument("--dynamic-lookback-dates", type=int, default=20)
     parser.add_argument("--min-pool-size", type=int, default=5000)
@@ -1660,7 +1736,7 @@ def main() -> None:
     parser.add_argument("--order-table", default="chenyiyun.ads_local_strategy_orders")
     parser.add_argument("--signal-snapshot-table", default="chenyiyun.ads_chenyiyun_selected_signals")
     parser.add_argument("--total-equity", type=float, default=None)
-    parser.add_argument("--position-ratio", type=float, default=1.0)
+    parser.add_argument("--position-ratio", type=float, default=None)
     parser.add_argument("--lot-size", type=int, default=100)
     parser.add_argument("--min-trade-value", type=float, default=500.0)
     parser.add_argument(
@@ -1671,7 +1747,14 @@ def main() -> None:
     )
     parser.add_argument("--buy-only", action="store_true", help="Do not generate SELL rebalance orders.")
     parser.add_argument("--notify-feishu", action="store_true", help="Send Feishu notification after local order draft generation.")
+    raw_argv = sys.argv[1:]
     args = parser.parse_args()
+    args = _apply_risk_profile_defaults(
+        args,
+        strategy_explicit="--strategy" in raw_argv,
+        hold_days_explicit="--hold-days" in raw_argv,
+        position_ratio_explicit="--position-ratio" in raw_argv,
+    )
     print(json.dumps(export_candidates(args), ensure_ascii=False, indent=2, default=str))
 
 

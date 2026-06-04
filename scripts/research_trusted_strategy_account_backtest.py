@@ -38,6 +38,30 @@ from scripts.research_full_pool_liquidity_strategies import (
 
 
 OUT_ROOT = PROJECT_ROOT / "exports" / "signal_research"
+DEFAULT_RISK_PROFILE = "balanced"
+RISK_PROFILE_DEFAULTS = {
+    "offensive": {
+        "strategies": "tiered_liquidity_then_bs_v2",
+        "position_ratio": 1.0,
+        "hold_days": 10,
+        "max_total_positions": 5,
+        "description": "进攻档：流动性分层+B点增强，满仓观察。",
+    },
+    "balanced": {
+        "strategies": "baseline_full_liquidity_detail_market_gate",
+        "position_ratio": 0.8,
+        "hold_days": 12,
+        "max_total_positions": 5,
+        "description": "均衡档：流动性质量防守策略+市场门禁，基准80%仓位。",
+    },
+    "defensive": {
+        "strategies": "baseline_full_liquidity_detail_market_gate",
+        "position_ratio": 0.5,
+        "hold_days": 12,
+        "max_total_positions": 5,
+        "description": "防守档：流动性质量防守策略，12日持有，目标50%仓位。",
+    },
+}
 DEFAULT_STRATEGIES = [
     "adaptive_style_switch",
     "adaptive_style_switch_dynamic_position",
@@ -58,6 +82,44 @@ ADAPTIVE_UNDERLYING = {
 ADAPTIVE_MIN_STATE_DAYS = 3
 ADAPTIVE_LONG_WINDOW = 20
 ADAPTIVE_SHORT_WINDOW = 10
+
+
+def _normalize_risk_profile(raw: str | None) -> str:
+    value = str(raw or DEFAULT_RISK_PROFILE).strip().lower()
+    if value not in RISK_PROFILE_DEFAULTS:
+        available = ", ".join(sorted(RISK_PROFILE_DEFAULTS))
+        raise ValueError(f"Unknown risk profile `{raw}`. Available risk profiles: {available}")
+    return value
+
+
+def _apply_risk_profile_defaults(
+    args: argparse.Namespace,
+    *,
+    strategies_explicit: bool = False,
+    hold_days_explicit: bool = False,
+    position_ratio_explicit: bool = False,
+    max_total_positions_explicit: bool = False,
+) -> argparse.Namespace:
+    risk_profile = _normalize_risk_profile(getattr(args, "risk_profile", None))
+    defaults = RISK_PROFILE_DEFAULTS[risk_profile]
+    args.risk_profile = risk_profile
+    if not strategies_explicit and not getattr(args, "strategies", None):
+        args.strategies = str(defaults["strategies"])
+    elif not getattr(args, "strategies", None):
+        args.strategies = ",".join(DEFAULT_STRATEGIES)
+    if not hold_days_explicit and getattr(args, "hold_days", None) is None:
+        args.hold_days = int(defaults["hold_days"])
+    if not position_ratio_explicit and getattr(args, "position_ratio", None) is None:
+        args.position_ratio = float(defaults["position_ratio"])
+    if not max_total_positions_explicit and getattr(args, "max_total_positions", None) is None:
+        args.max_total_positions = int(defaults["max_total_positions"])
+    if getattr(args, "hold_days", None) is None:
+        args.hold_days = 10
+    if getattr(args, "position_ratio", None) is None:
+        args.position_ratio = 1.0
+    if getattr(args, "max_total_positions", None) is None:
+        args.max_total_positions = 0
+    return args
 
 
 @dataclass
@@ -739,6 +801,7 @@ def _summarize_strategy(nav: pd.DataFrame, trades: pd.DataFrame, initial_cash: f
 
 
 def run_account_backtest(args: argparse.Namespace) -> dict:
+    args = _apply_risk_profile_defaults(args)
     engine = create_engine(build_sqlalchemy_url())
     scores = load_scores(
         engine,
@@ -961,6 +1024,9 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 "min_trade_value": float(args.min_trade_value),
                 "max_total_positions": int(args.max_total_positions),
                 "position_ratio": float(args.position_ratio),
+                "risk_profile": str(args.risk_profile),
+                "risk_profile_description": str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
+                "market_gate": bool(spec.market_gate),
                 "hard_stop_loss_pct": float(args.hard_stop_loss_pct),
             }
         )
@@ -1017,6 +1083,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "min_trade_value": float(args.min_trade_value),
         "max_total_positions": int(args.max_total_positions),
         "position_ratio": float(args.position_ratio),
+        "risk_profile": str(args.risk_profile),
+        "risk_profile_description": str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
         "hard_stop_loss_pct": float(args.hard_stop_loss_pct),
         "min_pool_size": int(args.min_pool_size),
         "dynamic_lookback_dates": int(args.dynamic_lookback_dates),
@@ -1059,6 +1127,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         f"- 信号：T 日收盘后选股，T+1 开盘调仓。",
         f"- 组合：Top {args.top_n}，未满 {args.hold_days} 个交易日的持仓不卖、不减仓，并先占用预算。",
         f"- 持仓上限：{int(args.max_total_positions) if int(args.max_total_positions) > 0 else '不限制'}。",
+        f"- 风险档位：`{args.risk_profile}`；{RISK_PROFILE_DEFAULTS[str(args.risk_profile)]['description']}",
         f"- 目标总仓位：{float(args.position_ratio):.0%}。",
         f"- 硬止损：{float(args.hard_stop_loss_pct):.1f}%" if float(args.hard_stop_loss_pct) > 0 else "- 硬止损：不启用。",
         f"- 撮合：按 {args.lot_size} 股整数手，单笔低于 {float(args.min_trade_value):,.2f} 不交易。",
@@ -1080,13 +1149,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Account-level backtest for trusted full-pool production strategies.")
     parser.add_argument("--start-date", default="2026-01-05")
     parser.add_argument("--end-date", default=None)
-    parser.add_argument("--strategies", default=",".join(DEFAULT_STRATEGIES))
+    parser.add_argument(
+        "--risk-profile",
+        default=DEFAULT_RISK_PROFILE,
+        choices=sorted(RISK_PROFILE_DEFAULTS),
+        help="Production risk profile. Defaults fill strategies, hold-days, and position-ratio when omitted.",
+    )
+    parser.add_argument("--strategies", default=None)
     parser.add_argument("--initial-cash", type=float, default=500000.0)
     parser.add_argument("--top-n", type=int, default=5)
-    parser.add_argument("--hold-days", type=int, default=10)
+    parser.add_argument("--hold-days", type=int, default=None)
     parser.add_argument("--trade-cost-rate", type=float, default=0.00075, help="Single-side cost rate. 0.00075 approximates 0.15%% round trip.")
     parser.add_argument("--slippage-rate", type=float, default=0.0)
-    parser.add_argument("--position-ratio", type=float, default=1.0, help="Target gross exposure ratio before locked-position budget.")
+    parser.add_argument("--position-ratio", type=float, default=None, help="Target gross exposure ratio before locked-position budget.")
     parser.add_argument(
         "--hard-stop-loss-pct",
         type=float,
@@ -1098,12 +1173,20 @@ def main() -> None:
     parser.add_argument(
         "--max-total-positions",
         type=int,
-        default=0,
+        default=None,
         help="Maximum account-level holding names after unlocked rebalance. 0 means unlimited.",
     )
     parser.add_argument("--min-pool-size", type=int, default=5000)
     parser.add_argument("--dynamic-lookback-dates", type=int, default=20)
+    raw_argv = sys.argv[1:]
     args = parser.parse_args()
+    args = _apply_risk_profile_defaults(
+        args,
+        strategies_explicit="--strategies" in raw_argv,
+        hold_days_explicit="--hold-days" in raw_argv,
+        position_ratio_explicit="--position-ratio" in raw_argv,
+        max_total_positions_explicit="--max-total-positions" in raw_argv,
+    )
     print(json.dumps(run_account_backtest(args), ensure_ascii=False, indent=2, default=str))
 
 

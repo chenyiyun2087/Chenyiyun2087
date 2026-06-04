@@ -2,20 +2,22 @@
 
 ## 当前推荐策略
 
-主策略使用 `baseline_full_dynamic_factor_industry_cap2`：
+当前生产默认使用风险档位 `balanced`，不再使用未经门禁的长期满仓进攻口径：
 
-- 股票池：全量评分池。
-- 排序：`dynamic_factor_score`，该分数只用已完成持有期的历史样本估计近期有效因子权重。
-- 组合：Top5 等权，每只目标权重约 20%。
-- 持有：10 个交易日。
-- 执行层：账户总持仓数上限 5；未满 10 个交易日的持仓不卖、不减仓，若持仓上限已满，则不再因每日新 Top5 额外扩仓。
-- 风控：单行业最多 2 只；不使用被标记为 `model_risk` 的模型排序策略。
+- 主策略：`baseline_full_liquidity_detail_market_gate`（流动性质量防守策略 + 市场门禁）。
+- 组合：Top5，账户总持仓数上限 5。
+- 持有：12 个交易日。
+- 仓位：基准目标资金比例 80%；当市场成交环境触发门禁时，候选有效权重会自动降档，实际敞口约 50%。
+- 执行层：未满持有期的持仓不卖、不减仓，若持仓上限已满，则不再因每日新 Top5 额外扩仓。
+- 风控：以三年 T+1 账户级回测为最高优先级验收口径；不使用被标记为 `model_risk` 的模型排序策略。
 
 备选复核策略：
 
 - `baseline_full_score`：最朴素综合分排序，适合动态权重历史样本不足时做兜底。
-- `baseline_full_liquidity_detail`：衍生流动性排序，回撤较低，但仍要关注市场风格切换。
-- `tiered_liquidity_then_bs_v2`：流动性分层后使用 B 点增强分，适合作为信号确认视角。
+- `baseline_full_liquidity_detail`：衍生流动性排序，回撤较低，可作为防守复核。
+- `baseline_full_liquidity_detail_hold12_shadow`：防守策略 12 日持有影子对照。
+- `baseline_full_liquidity_detail_market_gate_pos50_shadow`：防守市场门禁 50% 仓位影子对照。
+- `tiered_liquidity_then_bs_v2`：流动性分层后使用 B 点增强分，仅作为进攻观察/对照，不作为未经门禁的长期满仓默认。
 - `adaptive_style_switch`：市场风格自适应硬切换研究策略，仅用于回测和影子盘观察；最近一年未跑赢固定 `tiered_liquidity_then_bs_v2`，暂不替换生产默认。
 
 ## 每日生产流程
@@ -27,7 +29,7 @@
 3. 执行 `scoreRank/run_daily.py --date <交易日> --force`，评分日期显式绑定到本次 pipeline 交易日。
 4. 执行 `scripts/backfill_score_rank_daily_industry.py --execute`，仅回填当日空行业。
 5. 执行 `scoreRank/cli/build_bs_consensus.py --date <交易日>`。
-6. 执行 `scripts/ops/export_trusted_strategy_candidates.py --write-db --emit-orders --notify-feishu --max-total-positions 5`，导出可信全量池候选名单，并自动写入候选表、Web 股票池、核心精选信号和本地订单表；订单草案生成后发送飞书通知。
+6. 执行 `scripts/ops/export_trusted_strategy_candidates.py --risk-profile balanced --write-db --emit-orders --notify-feishu --max-total-positions 5`，导出可信全量池候选名单，并自动写入候选表、Web 股票池、核心精选信号和本地订单表；订单草案生成后发送飞书通知。
 7. 执行 `scripts/ops/run_trusted_strategy_shadow_monitor.py --execution-date <交易日> --write-db --notify-feishu --allow-empty`，复盘上一信号日订单在本交易日开盘的可成交性、涨跌停风险和滑点，并发送飞书通知。
 8. 继续执行 M1、M8 和实盘快照同步。
 
@@ -66,11 +68,10 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
    ```bash
    CHENYIYUN_DB_PASSWORD=你的密码 \
    python3 scripts/ops/export_trusted_strategy_candidates.py \
-     --strategy baseline_full_dynamic_factor_industry_cap2 \
+     --risk-profile balanced \
+     --strategy baseline_full_liquidity_detail_market_gate \
      --top-n 5 \
-     --hold-days 10 \
      --max-total-positions 5 \
-     --position-ratio 1.0 \
      --write-db \
      --emit-orders \
      --notify-feishu
@@ -97,7 +98,8 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 
    - 未满 `--hold-days` 的持仓锁定，不卖出、不减仓，并先占用组合预算。
    - 账户总持仓数不超过 `--max-total-positions`。当前默认值为 5；若锁定持仓已经占满上限，则当日只允许卖出到期/未入选持仓，不再新增买入。
-   - `--position-ratio` 控制目标总仓位。当前生产默认 1.0；若希望把账户级最大回撤压到约 15% 附近，可临时用 0.8 生成订单草案，但会显著降低预期收益。
+   - `--risk-profile` 控制生产风险档位。当前默认 `balanced`：防守市场门禁策略、12 日持有、80% 基准仓位；弱市场由门禁把实际敞口降到约 50%。
+   - `--position-ratio` 可覆盖风险档位的目标总仓位。人工降风险时优先使用 `defensive` 或显式降低该参数。
 
    生成本地订单前会强制校验前置条件：当日全量评分行数、空行业、总分、流动性分、B点增强分、B点综合分、账户权益。任一条件不满足，脚本返回非 0，日终批量任务失败。
 
@@ -123,7 +125,7 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 
 6. 持仓管理。
 
-- 计划持有 10 个交易日。
+- 当前 `balanced` 档计划持有 12 个交易日；若人工切换 `offensive` 档，才回到 10 个交易日。
 - 账户总持仓数原则上保持不超过 5 只；除非已有锁定持仓因数据异常超过上限，否则新订单不会继续扩仓。
 - 到期日收盘前后退出，或按现有账户风控规则提前退出。
    - 若已有日内止损、涨停检查、持仓更新任务，继续照常运行：
@@ -154,9 +156,9 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 
 ## 当前限制
 
-- 当前可信回测样本仍偏短，`rebalance_step=10` 只有 7 个完整周期，生产初期建议模拟盘或小仓位观察。
-- 账户级验证显示，加入 `max_total_positions=5` 后能显著抑制每日 Top5 滚动带来的持仓扩散；但最大回撤仍约 20% 量级，生产仍需资金比例控制和人工风控。
-- 仓位比例是主要风险预算旋钮：账户级验证中 80% 仓位收益约 +77.94%、最大回撤约 -16.52%；满仓收益约 +110.86%、最大回撤约 -20.40%。生产默认保留满仓，人工降风险时优先调低 `--position-ratio`。
+- 最近一年强势策略不能直接外推到三年窗口。三年 T+1 账户级回测显示，未经门禁的进攻策略回撤极深，因此当前生产默认转为 `balanced` 风险档。
+- 账户级验证显示，加入 `max_total_positions=5` 后能显著抑制每日 Top5 滚动带来的持仓扩散；但长期窗口仍需资金比例控制和人工风控。
+- 仓位比例是主要风险预算旋钮：当前默认不再满仓，`balanced` 以 80% 为基准，`defensive` 以 50% 为基准。
 - 硬止损目前不作为默认订单规则。账户级验证中 8%/10% 止损能把最大回撤降到约 -13.67%/-11.63%，但收益降到约 +60.24%/+56.77%；若后续实盘风险偏好转防守，可先用模拟盘或人工单独执行，不直接写入日终默认买卖。
 - 脚本会自动生成本地调仓订单草案并发送飞书通知；目前没有接入券商真实委托 API，不会向券商柜台发送订单。
 - 模型排序相关策略仍需更多 walk-forward 样本验证，暂不作为生产默认方案。
