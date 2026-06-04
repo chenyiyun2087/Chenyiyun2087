@@ -31,7 +31,45 @@
     <div class="panel-title">可信全量池实盘候选</div>
     <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
         最新候选日：{{ latest_trusted_candidate_date or '-' }}，来源策略：{{ latest_trusted_strategy_display or '-' }}
+        {% if latest_trusted_params %}
+        ，风险档位：{{ latest_trusted_params.risk_profile or '-' }}
+        ，目标仓位：{{ '%.0f%%'|format((latest_trusted_params.position_ratio or 0)|float * 100) }}
+        ，持有期：{{ latest_trusted_params.hold_days or '-' }}日
+        ，最多持仓：{{ latest_trusted_params.max_total_positions or '-' }}只
+        ，市场门禁：{% if latest_trusted_params.market_gate_triggered %}已触发{% elif latest_trusted_params.market_gate %}未触发{% else %}未启用{% endif %}
+        {% endif %}
     </div>
+    {% if latest_trusted_params and latest_trusted_params.risk_profile_description %}
+    <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
+        {{ latest_trusted_params.risk_profile_description }}
+    </div>
+    {% endif %}
+    {% if latest_trusted_params and latest_trusted_params.market_style_state %}
+    <div style="margin: 0 0 12px 0; padding: 12px 0; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb;">
+        <div style="font-weight: 600; margin-bottom: 8px;">市场风格状态</div>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px;">
+            <div>
+                <div class="muted" style="font-size: 12px;">当前状态</div>
+                <strong>{{ latest_trusted_params.market_style_state }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">底层策略</div>
+                <strong>{{ latest_trusted_params.selected_strategy_display_name or latest_trusted_params.selected_strategy or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">目标仓位</div>
+                <strong>{{ '%.0f%%'|format((latest_trusted_params.target_position_ratio or latest_trusted_params.position_ratio or 0)|float * 100) }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">是否防守</div>
+                <strong>{% if latest_trusted_params.market_style_state == 'defensive' %}已触发{% else %}未触发{% endif %}</strong>
+            </div>
+        </div>
+        <div class="muted" style="margin-top: 8px; font-size: 12px;">
+            {{ latest_trusted_params.style_reason or latest_trusted_params.adaptive_position_reason or '-' }}
+        </div>
+    </div>
+    {% endif %}
     <table>
         <thead>
             <tr>

@@ -2,12 +2,13 @@
 
 ## 当前推荐策略
 
-当前生产默认使用风险档位 `balanced`，不再使用未经门禁的长期满仓进攻口径：
+当前生产默认使用风险档位 `adaptive`，不再使用固定单一满仓口径：
 
-- 主策略：`baseline_full_liquidity_detail_market_gate`（流动性质量防守策略 + 市场门禁）。
+- 主策略：`adaptive_market_style`（市场风格识别 + 底层策略切换 + 动态仓位）。
+- 默认映射：`attack` -> `tiered_liquidity_then_bs_v2`，`balanced` -> `baseline_full_liquidity_detail_market_gate`，`defensive` -> `baseline_full_liquidity`。
 - 组合：Top5，账户总持仓数上限 5。
-- 持有：12 个交易日。
-- 仓位：基准目标资金比例 80%；当市场成交环境触发门禁时，候选有效权重会自动降档，实际敞口约 50%。
+- 持有：10 个交易日。
+- 仓位：由市场风格状态动态调整到约 50% / 80% / 100%。
 - 执行层：未满持有期的持仓不卖、不减仓，若持仓上限已满，则不再因每日新 Top5 额外扩仓。
 - 风控：以三年 T+1 账户级回测为最高优先级验收口径；不使用被标记为 `model_risk` 的模型排序策略。
 
@@ -18,7 +19,9 @@
 - `baseline_full_liquidity_detail_hold12_shadow`：防守策略 12 日持有影子对照。
 - `baseline_full_liquidity_detail_market_gate_pos50_shadow`：防守市场门禁 50% 仓位影子对照。
 - `tiered_liquidity_then_bs_v2`：流动性分层后使用 B 点增强分，仅作为进攻观察/对照，不作为未经门禁的长期满仓默认。
-- `adaptive_style_switch`：市场风格自适应硬切换研究策略，仅用于回测和影子盘观察；最近一年未跑赢固定 `tiered_liquidity_then_bs_v2`，暂不替换生产默认。
+- `baseline_full_liquidity_shadow`：纯流动性防守影子对照。
+- `adaptive_style_shadow`：自适应生产策略影子对照，展示当天状态、底层策略和目标仓位。
+- `adaptive_style_switch`：旧市场风格自适应硬切换研究策略，仅用于历史对照。
 
 ## 每日生产流程
 
@@ -29,7 +32,7 @@
 3. 执行 `scoreRank/run_daily.py --date <交易日> --force`，评分日期显式绑定到本次 pipeline 交易日。
 4. 执行 `scripts/backfill_score_rank_daily_industry.py --execute`，仅回填当日空行业。
 5. 执行 `scoreRank/cli/build_bs_consensus.py --date <交易日>`。
-6. 执行 `scripts/ops/export_trusted_strategy_candidates.py --risk-profile balanced --write-db --emit-orders --notify-feishu --max-total-positions 5`，导出可信全量池候选名单，并自动写入候选表、Web 股票池、核心精选信号和本地订单表；订单草案生成后发送飞书通知。
+6. 执行 `scripts/ops/export_trusted_strategy_candidates.py --risk-profile adaptive --write-db --emit-orders --notify-feishu --max-total-positions 5`，导出可信全量池候选名单，并自动写入候选表、Web 股票池、核心精选信号和本地订单表；订单草案生成后发送飞书通知。
 7. 执行 `scripts/ops/run_trusted_strategy_shadow_monitor.py --execution-date <交易日> --write-db --notify-feishu --allow-empty`，复盘上一信号日订单在本交易日开盘的可成交性、涨跌停风险和滑点，并发送飞书通知。
 8. 继续执行 M1、M8 和实盘快照同步。
 
@@ -68,8 +71,8 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
    ```bash
    CHENYIYUN_DB_PASSWORD=你的密码 \
    python3 scripts/ops/export_trusted_strategy_candidates.py \
-     --risk-profile balanced \
-     --strategy baseline_full_liquidity_detail_market_gate \
+     --risk-profile adaptive \
+     --strategy adaptive_market_style \
      --top-n 5 \
      --max-total-positions 5 \
      --write-db \
@@ -98,7 +101,7 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 
    - 未满 `--hold-days` 的持仓锁定，不卖出、不减仓，并先占用组合预算。
    - 账户总持仓数不超过 `--max-total-positions`。当前默认值为 5；若锁定持仓已经占满上限，则当日只允许卖出到期/未入选持仓，不再新增买入。
-   - `--risk-profile` 控制生产风险档位。当前默认 `balanced`：防守市场门禁策略、12 日持有、80% 基准仓位；弱市场由门禁把实际敞口降到约 50%。
+   - `--risk-profile` 控制生产风险档位。当前默认 `adaptive`：按 T 日市场风格切换底层策略，并把实际敞口调到约 50% / 80% / 100%。
    - `--position-ratio` 可覆盖风险档位的目标总仓位。人工降风险时优先使用 `defensive` 或显式降低该参数。
 
    生成本地订单前会强制校验前置条件：当日全量评分行数、空行业、总分、流动性分、B点增强分、B点综合分、账户权益。任一条件不满足，脚本返回非 0，日终批量任务失败。

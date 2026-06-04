@@ -78,7 +78,8 @@ DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
     "holding_days": 20,
 }
 INITIAL_LIVE_CAPITAL = Decimal("500000.00")
-TRUSTED_PRODUCTION_STRATEGY = "tiered_liquidity_then_bs_v2"
+TRUSTED_PRODUCTION_RISK_PROFILE = "adaptive"
+TRUSTED_PRODUCTION_STRATEGY = "adaptive_market_style"
 
 # Task Status Storage (Loaded from DB on start)
 TASKS = {
@@ -2109,12 +2110,12 @@ def _build_task_script_parts(task_name, run_options=None):
         return [script]
     if task_name == 'trusted_strategy_candidates':
         args = [
+            '--risk-profile',
+            TRUSTED_PRODUCTION_RISK_PROFILE,
             '--strategy',
             TRUSTED_PRODUCTION_STRATEGY,
             '--top-n',
             '5',
-            '--hold-days',
-            '10',
             '--max-total-positions',
             '5',
             '--write-db',
@@ -2325,6 +2326,27 @@ def _load_strategy_order_detail_summary(output_json_path):
     except Exception as e:
         print(f"Failed to load strategy order detail summary: {e}")
         return [], None
+
+
+def _load_trusted_candidate_params(output_json_path):
+    if not output_json_path:
+        return {}
+    try:
+        path = Path(str(output_json_path)).expanduser()
+        if not path.exists():
+            return {}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        params = payload.get("params") if isinstance(payload, dict) else {}
+        if not isinstance(params, dict):
+            return {}
+        params["strategy_display_name"] = params.get("strategy_display_name") or strategy_display_name(params.get("strategy"))
+        params["selected_strategy_display_name"] = params.get("selected_strategy_display_name") or strategy_display_name(
+            params.get("selected_strategy")
+        )
+        return params
+    except Exception as e:
+        print(f"Failed to load trusted candidate params: {e}")
+        return {}
 
 
 def _save_chenyiyun_selected_settings(conn, stock_count, position_ratio, holding_days):
@@ -2896,6 +2918,7 @@ def chenyiyun_selected_dashboard():
     strategy_order_detail_summary_path = None
     latest_trusted_strategy = None
     latest_trusted_strategy_display = None
+    latest_trusted_params = {}
     latest_shadow_summary = None
     shadow_fills = []
     latest_trusted_candidate_date = None
@@ -2960,6 +2983,7 @@ def chenyiyun_selected_dashboard():
                 latest_trusted_candidate_date = latest_candidate_meta.get("d")
                 latest_trusted_strategy = latest_candidate_meta.get("strategy")
                 latest_trusted_strategy_display = strategy_display_name(latest_trusted_strategy)
+                latest_trusted_params = _load_trusted_candidate_params(latest_candidate_meta.get("output_json_path"))
                 strategy_order_detail_summary, strategy_order_detail_summary_path = _load_strategy_order_detail_summary(
                     latest_candidate_meta.get("output_json_path")
                 )
@@ -3086,6 +3110,7 @@ def chenyiyun_selected_dashboard():
         latest_trusted_candidate_date=latest_trusted_candidate_date,
         latest_trusted_strategy=latest_trusted_strategy,
         latest_trusted_strategy_display=latest_trusted_strategy_display,
+        latest_trusted_params=latest_trusted_params,
         trusted_candidates=trusted_candidates,
         strategy_order_detail_summary=strategy_order_detail_summary,
         strategy_order_detail_summary_path=strategy_order_detail_summary_path,

@@ -30,6 +30,7 @@ from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.strategy_display import strategy_display_name
 from scripts.research_trusted_strategy_account_backtest import (
     ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
+    ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
     ADAPTIVE_UNDERLYING,
     _adaptive_position_scale,
     _build_adaptive_perf_table,
@@ -68,10 +69,16 @@ RISK_PROFILE_DEFAULTS = {
         "description": "均衡档：流动性质量防守策略+市场门禁，基准80%仓位，弱市场由门禁降至约50%。",
     },
     "defensive": {
-        "strategy": "baseline_full_liquidity_detail_market_gate",
+        "strategy": "baseline_full_liquidity",
         "position_ratio": 0.5,
         "hold_days": 12,
-        "description": "防守档：流动性质量防守策略，12日持有，目标50%仓位。",
+        "description": "防守档：纯流动性策略，12日持有，目标50%仓位。",
+    },
+    "adaptive": {
+        "strategy": ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+        "position_ratio": 1.0,
+        "hold_days": 10,
+        "description": "自适应档：按T日市场风格在进攻/均衡/防守策略间切换，并动态调整50%-100%仓位。",
     },
 }
 DEFAULT_STRATEGY = RISK_PROFILE_DEFAULTS[DEFAULT_RISK_PROFILE]["strategy"]
@@ -81,8 +88,10 @@ ORDER_DETAIL_STRATEGIES = (
     "baseline_full_liquidity_detail",
     "baseline_full_liquidity_detail_hold12_shadow",
     "baseline_full_liquidity_detail_market_gate_pos50_shadow",
+    "baseline_full_liquidity_shadow",
     "baseline_full_score",
     "adaptive_style_switch_dynamic_position",
+    "adaptive_style_shadow",
 )
 ORDER_DETAIL_CONFIGS = (
     {
@@ -110,12 +119,23 @@ ORDER_DETAIL_CONFIGS = (
         "shadow_note": "三年优化矩阵回撤控制相对较好：市场门禁防守策略50%仓位。",
     },
     {
+        "detail_id": "baseline_full_liquidity_shadow",
+        "base_strategy": "baseline_full_liquidity",
+        "position_ratio": 0.5,
+        "shadow_note": "最近三个月表现较强的纯流动性防守影子策略。",
+    },
+    {
         "detail_id": "baseline_full_score",
         "base_strategy": "baseline_full_score",
     },
     {
         "detail_id": "adaptive_style_switch_dynamic_position",
         "base_strategy": "adaptive_style_switch_dynamic_position",
+    },
+    {
+        "detail_id": "adaptive_style_shadow",
+        "base_strategy": ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+        "shadow_note": "市场风格状态驱动的自适应生产候选影子对照。",
     },
 )
 DEFAULT_POOL_KEY = "TRUSTED_FULL_POOL_TOP5"
@@ -161,6 +181,8 @@ def _load_prices_asof(engine, start_date: object, asof_date: object) -> pd.DataF
 
 
 def _pick_strategy(name: str):
+    if name == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
+        return None
     specs = filter_strategy_specs(build_strategy_specs(), trusted_only=True)
     by_name = {spec.name: spec for spec in specs}
     if name not in by_name:
@@ -235,6 +257,10 @@ def _candidate_columns(frame: pd.DataFrame) -> list[str]:
         "market_amount_ratio_20",
         "market_liquidity_bucket",
         "index_bucket",
+        "market_style_state",
+        "selected_strategy",
+        "target_position_ratio",
+        "style_reason",
         "vol_20",
         "hist_mdd_20",
     ]
@@ -585,6 +611,13 @@ def _write_strategy_order_detail_outputs(
                 "adaptive_position_scale": meta.get("adaptive_position_scale"),
                 "adaptive_position_reason": meta.get("adaptive_position_reason"),
                 "adaptive_reason": meta.get("reason"),
+                "market_style_state": meta.get("market_style_state") or meta.get("active_role"),
+                "selected_strategy": meta.get("selected_strategy") or meta.get("adaptive_underlying_strategy"),
+                "selected_strategy_display_name": strategy_display_name(
+                    meta.get("selected_strategy") or meta.get("adaptive_underlying_strategy")
+                ),
+                "target_position_ratio": meta.get("target_position_ratio") or meta.get("adaptive_position_scale"),
+                "style_reason": meta.get("style_reason") or meta.get("reason"),
                 "base_strategy": meta.get("base_strategy"),
                 "base_strategy_display_name": strategy_display_name(meta.get("base_strategy")),
                 "hold_days": meta.get("hold_days"),
@@ -610,6 +643,10 @@ def _write_strategy_order_detail_outputs(
                     "adaptive_underlying_strategy": row.get("adaptive_underlying_strategy"),
                     "adaptive_position_scale": row.get("adaptive_position_scale"),
                     "adaptive_position_reason": row.get("adaptive_position_reason"),
+                    "market_style_state": row.get("market_style_state"),
+                    "selected_strategy": row.get("selected_strategy"),
+                    "target_position_ratio": row.get("target_position_ratio"),
+                    "style_reason": row.get("style_reason"),
                     "base_strategy": meta.get("base_strategy"),
                     "hold_days": meta.get("hold_days"),
                     "position_ratio": meta.get("position_ratio"),
@@ -782,6 +819,7 @@ def _build_adaptive_dynamic_position_detail(
     asof_date: str,
     latest_prices: dict[str, float],
     top_n: int,
+    strategy_name: str = ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     signal_date = pd.Timestamp(asof_date).date()
     decision = _latest_adaptive_decision(scores, trusted_specs, signal_date, top_n=top_n)
@@ -793,8 +831,11 @@ def _build_adaptive_dynamic_position_detail(
         return pd.DataFrame(), decision
     candidates = _build_candidate_rows(selected, underlying_spec, asof_date, latest_prices, top_n)
     position_scale, position_reason = _adaptive_position_scale(decision)
-    candidates["strategy"] = ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME
+    candidates["strategy"] = strategy_name
     candidates["sort_col"] = f"adaptive:{underlying_spec.name}:{underlying_spec.sort_col}"
+    candidates["underlying_market_exposure_scale"] = pd.to_numeric(
+        candidates["market_exposure_scale"], errors="coerce"
+    ).fillna(1.0)
     candidates["effective_weight"] = pd.to_numeric(candidates["effective_weight"], errors="coerce").fillna(0.0) * float(position_scale)
     candidates["market_exposure_scale"] = pd.to_numeric(
         candidates["market_exposure_scale"], errors="coerce"
@@ -804,9 +845,17 @@ def _build_adaptive_dynamic_position_detail(
     candidates["adaptive_reason"] = decision.get("reason")
     candidates["adaptive_position_scale"] = float(position_scale)
     candidates["adaptive_position_reason"] = position_reason
+    candidates["market_style_state"] = active_role
+    candidates["selected_strategy"] = underlying_spec.name
+    candidates["target_position_ratio"] = float(position_scale)
+    candidates["style_reason"] = decision.get("reason")
     decision["adaptive_position_scale"] = float(position_scale)
     decision["adaptive_position_reason"] = position_reason
     decision["adaptive_underlying_strategy"] = underlying_spec.name
+    decision["market_style_state"] = active_role
+    decision["selected_strategy"] = underlying_spec.name
+    decision["target_position_ratio"] = float(position_scale)
+    decision["style_reason"] = decision.get("reason")
     return candidates, decision
 
 
@@ -1414,6 +1463,14 @@ def _write_outputs(
         f"- 策略：`{strategy_display_name(params['strategy'])}`，排序字段：`{params['sort_col']}`。",
         f"- 策略ID：`{params['strategy']}`。",
         f"- 风险档位：`{params.get('risk_profile')}`；{params.get('risk_profile_description')}",
+        (
+            f"- 市场风格：`{params.get('market_style_state')}`；底层策略："
+            f"`{strategy_display_name(params.get('selected_strategy'))}`；"
+            f"目标仓位：`{float(params.get('target_position_ratio') or params.get('position_ratio') or 0):.0%}`；"
+            f"原因：`{params.get('style_reason')}`。"
+            if params.get("market_style_state")
+            else ""
+        ),
         f"- 信号日：`{params['asof_date']}`；候选数：Top {params['top_n']}。",
         f"- 执行层：目标资金比例 `{float(params.get('position_ratio') or 0):.0%}`；持有 `{params.get('hold_days')}` 个交易日；最多持仓 `{params.get('max_total_positions')}` 只。",
         "- 数据截断：价格与评分数据只读取到信号日当天；动态权重只使用已完成持有期的历史样本。",
@@ -1487,9 +1544,33 @@ def export_candidates(args: argparse.Namespace) -> dict:
 
     signal_date = pd.Timestamp(asof_date).date()
     day_scores = scores[scores["trade_date"].eq(signal_date)].copy()
-    selected = _select_candidates(day_scores, spec, top_n=args.top_n)
+    trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
+    adaptive_decision: dict[str, object] | None = None
+    target_position_ratio = float(args.position_ratio)
+    if args.strategy == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
+        candidates, adaptive_decision = _build_adaptive_dynamic_position_detail(
+            scores=scores,
+            day_scores=day_scores,
+            trusted_specs=trusted_specs,
+            asof_date=asof_date,
+            latest_prices=(
+                prices[prices["trade_date"].eq(signal_date)]
+                .drop_duplicates("symbol")
+                .set_index("symbol")["adj_close"]
+                .to_dict()
+            ),
+            top_n=args.top_n,
+            strategy_name=ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+        )
+        selected_strategy = str(adaptive_decision.get("adaptive_underlying_strategy") or adaptive_decision.get("selected_strategy"))
+        spec = trusted_specs[selected_strategy]
+        target_position_ratio = max(0.0, min(1.0, float(args.position_ratio) * float(adaptive_decision.get("adaptive_position_scale") or 1.0)))
+        selected = pd.DataFrame()
+    else:
+        selected = _select_candidates(day_scores, spec, top_n=args.top_n)
     if selected.empty:
-        raise RuntimeError(f"No candidates selected for {asof_date} with strategy `{spec.name}`.")
+        if args.strategy != ADAPTIVE_MARKET_STYLE_STRATEGY_NAME or candidates.empty:
+            raise RuntimeError(f"No candidates selected for {asof_date} with strategy `{args.strategy}`.")
 
     latest_prices = (
         prices[prices["trade_date"].eq(signal_date)]
@@ -1497,13 +1578,14 @@ def export_candidates(args: argparse.Namespace) -> dict:
         .set_index("symbol")["adj_close"]
         .to_dict()
     )
-    candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
+    if args.strategy != ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
+        candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
 
     warnings: list[str] = []
     if candidates["industry"].fillna("").str.strip().eq("").any():
         warnings.append("存在空行业字段，请先运行 industry 回填。")
     if candidates["effective_weight"].sum() < 0.95:
-        warnings.append(f"组合有效仓位为 {candidates['effective_weight'].sum():.2%}，请确认是否由市场门禁降仓触发。")
+        warnings.append(f"组合有效仓位为 {candidates['effective_weight'].sum():.2%}，请确认是否由市场门禁或风格状态降仓触发。")
     latest_weight = factor_weights[factor_weights["trade_date"].astype(str).eq(asof_date)] if not factor_weights.empty else pd.DataFrame()
     if latest_weight.empty:
         warnings.append("未找到信号日动态权重记录，动态排序可能退化为等权因子。")
@@ -1515,11 +1597,14 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "start_date": start_date,
         "history_days": int(args.history_days),
         "strategy": spec.name,
+        "selected_strategy": spec.name,
+        "selected_strategy_display_name": strategy_display_name(spec.name),
         "sort_col": spec.sort_col,
         "top_n": int(args.top_n),
         "hold_days": int(args.hold_days),
         "max_total_positions": int(args.max_total_positions),
         "position_ratio": float(args.position_ratio),
+        "target_position_ratio": float(target_position_ratio),
         "risk_profile": str(args.risk_profile),
         "risk_profile_description": str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
         "dynamic_lookback_dates": int(args.dynamic_lookback_dates),
@@ -1531,11 +1616,35 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "risk_note": spec.risk_note,
         "market_gate": bool(spec.market_gate),
         "market_gate_triggered": bool(
+            "underlying_market_exposure_scale" in candidates.columns
+            and (pd.to_numeric(candidates["underlying_market_exposure_scale"], errors="coerce").fillna(1.0) < 1.0).any()
+        )
+        if adaptive_decision
+        else bool(
             "market_exposure_scale" in candidates.columns
             and (pd.to_numeric(candidates["market_exposure_scale"], errors="coerce").fillna(1.0) < 1.0).any()
         ),
     }
-    out_dir = OUT_ROOT / datetime.now().strftime(f"%Y%m%d_%H%M%S_{spec.name}")
+    if adaptive_decision:
+        params.update(
+            {
+                "strategy": ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+                "strategy_display_name": strategy_display_name(ADAPTIVE_MARKET_STYLE_STRATEGY_NAME),
+                "sort_col": f"adaptive:{spec.name}:{spec.sort_col}",
+                "market_style_state": adaptive_decision.get("market_style_state") or adaptive_decision.get("active_role"),
+                "style_reason": adaptive_decision.get("style_reason") or adaptive_decision.get("reason"),
+                "selected_strategy": spec.name,
+                "selected_strategy_display_name": strategy_display_name(spec.name),
+                "target_position_ratio": float(target_position_ratio),
+                "adaptive_position_scale": adaptive_decision.get("adaptive_position_scale"),
+                "adaptive_position_reason": adaptive_decision.get("adaptive_position_reason"),
+                "adaptive_underlying_strategy": spec.name,
+                "adaptive_data_cutoff_date": adaptive_decision.get("data_cutoff_date"),
+                "adaptive_completed_history_rule": adaptive_decision.get("completed_history_rule"),
+            }
+        )
+    output_strategy_name = str(params.get("strategy") or spec.name)
+    out_dir = OUT_ROOT / datetime.now().strftime(f"%Y%m%d_%H%M%S_{output_strategy_name}")
     files = _write_outputs(out_dir, candidates, factor_weights, market_env, params, warnings)
     db_write: dict[str, object] = {}
     if args.write_db:
@@ -1571,6 +1680,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
         orders.to_csv(order_path, index=False)
         db_write["orders_csv"] = str(order_path)
         db_write["total_equity_used"] = total_equity
+        db_write["target_position_ratio"] = float(target_position_ratio)
         db_write["order_rows"] = int(len(orders))
         db_write["hold_gate_min_days"] = int(args.hold_days)
         db_write["hold_gate_locked_positions"] = int(len(orders.attrs.get("hold_gate_locked_symbols") or []))
@@ -1607,7 +1717,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                     "total_equity_used": detail_total_equity,
                     "shadow_note": detail_config.get("shadow_note"),
                 }
-                if base_strategy == ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME:
+                if base_strategy in {ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME, ADAPTIVE_MARKET_STYLE_STRATEGY_NAME}:
                     detail_candidates, detail_meta = _build_adaptive_dynamic_position_detail(
                         scores=scores,
                         day_scores=day_scores,
@@ -1615,6 +1725,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                         asof_date=asof_date,
                         latest_prices=latest_prices,
                         top_n=args.top_n,
+                        strategy_name=detail_name,
                     )
                     detail_meta.update(
                         {
@@ -1625,6 +1736,11 @@ def export_candidates(args: argparse.Namespace) -> dict:
                             "shadow_note": detail_config.get("shadow_note"),
                         }
                     )
+                    if detail_meta.get("adaptive_position_scale") is not None:
+                        detail_meta["target_position_ratio"] = max(
+                            0.0,
+                            min(1.0, detail_position_ratio * float(detail_meta.get("adaptive_position_scale") or 1.0)),
+                        )
                     if detail_candidates.empty:
                         strategy_order_details[detail_name] = {
                             "candidates": pd.DataFrame(),

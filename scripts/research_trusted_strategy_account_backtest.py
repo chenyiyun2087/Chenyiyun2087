@@ -55,14 +55,22 @@ RISK_PROFILE_DEFAULTS = {
         "description": "均衡档：流动性质量防守策略+市场门禁，基准80%仓位。",
     },
     "defensive": {
-        "strategies": "baseline_full_liquidity_detail_market_gate",
+        "strategies": "baseline_full_liquidity",
         "position_ratio": 0.5,
         "hold_days": 12,
         "max_total_positions": 5,
-        "description": "防守档：流动性质量防守策略，12日持有，目标50%仓位。",
+        "description": "防守档：纯流动性策略，12日持有，目标50%仓位。",
+    },
+    "adaptive": {
+        "strategies": "adaptive_market_style",
+        "position_ratio": 1.0,
+        "hold_days": 10,
+        "max_total_positions": 5,
+        "description": "自适应档：按T日市场风格在进攻/均衡/防守策略间切换，并动态调整50%-100%仓位。",
     },
 }
 DEFAULT_STRATEGIES = [
+    "adaptive_market_style",
     "adaptive_style_switch",
     "adaptive_style_switch_dynamic_position",
     "tiered_liquidity_then_bs_v2",
@@ -70,14 +78,20 @@ DEFAULT_STRATEGIES = [
     "baseline_full_liquidity_detail",
     "baseline_full_score",
 ]
+ADAPTIVE_MARKET_STYLE_STRATEGY_NAME = "adaptive_market_style"
 ADAPTIVE_STRATEGY_NAME = "adaptive_style_switch"
 ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME = "adaptive_style_switch_dynamic_position"
-ADAPTIVE_STRATEGY_NAMES = {ADAPTIVE_STRATEGY_NAME, ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME}
+ADAPTIVE_POSITIONED_STRATEGY_NAMES = {ADAPTIVE_MARKET_STYLE_STRATEGY_NAME, ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME}
+ADAPTIVE_STRATEGY_NAMES = {
+    ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+    ADAPTIVE_STRATEGY_NAME,
+    ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
+}
 ADAPTIVE_UNDERLYING = {
     "attack": "tiered_liquidity_then_bs_v2",
-    "balanced": "baseline_full_dynamic_factor_industry_cap2",
-    "defensive": "baseline_full_liquidity_detail",
-    "fallback": "baseline_full_score",
+    "balanced": "baseline_full_liquidity_detail_market_gate",
+    "defensive": "baseline_full_liquidity",
+    "fallback": "baseline_full_liquidity",
 }
 ADAPTIVE_MIN_STATE_DAYS = 3
 ADAPTIVE_LONG_WINDOW = 20
@@ -519,21 +533,21 @@ def _adaptive_position_scale(decision: dict[str, object]) -> tuple[float, str]:
         scale = 1.0
         scale_reason = "attack_full_position"
     elif role == "balanced":
-        scale = 0.85
-        scale_reason = "balanced_reduce_to_85pct"
+        scale = 0.80
+        scale_reason = "balanced_reduce_to_80pct"
     elif role == "defensive":
-        scale = 0.65
-        scale_reason = "defensive_reduce_to_65pct"
+        scale = 0.50
+        scale_reason = "defensive_reduce_to_50pct"
     else:
         scale = 0.50
         scale_reason = "fallback_reduce_to_50pct"
 
     if np.isfinite(market_amount_ratio) and market_amount_ratio < 0.8 and index_bucket == "index_weak":
-        scale = min(scale, 0.60)
-        scale_reason = "weak_index_low_liquidity_cap_60pct"
+        scale = min(scale, 0.50)
+        scale_reason = "weak_index_low_liquidity_cap_50pct"
     if np.isfinite(attack_short_avg_ret) and attack_short_avg_ret < 0.0:
-        scale = min(scale, 0.65)
-        scale_reason = "attack_recent_completed_samples_negative_cap_65pct"
+        scale = min(scale, 0.50)
+        scale_reason = "attack_recent_completed_samples_negative_cap_50pct"
     if np.isfinite(attack_max_drawdown) and attack_max_drawdown < -0.20:
         scale = min(scale, 0.70)
         scale_reason = "attack_completed_history_drawdown_cap_70pct"
@@ -800,6 +814,71 @@ def _summarize_strategy(nav: pd.DataFrame, trades: pd.DataFrame, initial_cash: f
     }
 
 
+def _summarize_window_nav(nav: pd.DataFrame, initial_cash: float, window_start: object) -> dict:
+    d = nav.sort_values("trade_date").copy()
+    d["trade_date"] = pd.to_datetime(d["trade_date"], errors="coerce")
+    d = d[d["trade_date"].ge(pd.Timestamp(window_start))].copy()
+    if d.empty:
+        return {}
+    d["daily_return"] = d["total_equity"].pct_change().fillna(0.0)
+    first_equity = float(d["total_equity"].iloc[0])
+    last_equity = float(d["total_equity"].iloc[-1])
+    total_return = float(last_equity / first_equity - 1.0) if first_equity > 0 else np.nan
+    daily_returns = pd.to_numeric(d["daily_return"], errors="coerce").dropna()
+    annualized_vol = float(daily_returns.std(ddof=0) * np.sqrt(252.0)) if not daily_returns.empty else np.nan
+    return {
+        "window_start": str(d["trade_date"].iloc[0].date()),
+        "window_end": str(d["trade_date"].iloc[-1].date()),
+        "trading_days": int(len(d)),
+        "initial_cash": float(initial_cash),
+        "window_start_equity": first_equity,
+        "window_end_equity": last_equity,
+        "total_return": total_return,
+        "max_drawdown": _max_drawdown(d["total_equity"] / first_equity) if first_equity > 0 else np.nan,
+        "annualized_volatility": annualized_vol,
+        "daily_win_rate": float((daily_returns > 0).mean()) if not daily_returns.empty else np.nan,
+        "avg_gross_exposure": float(pd.to_numeric(d["gross_exposure"], errors="coerce").mean()),
+        "avg_position_count": float(pd.to_numeric(d["position_count"], errors="coerce").mean()),
+    }
+
+
+def _build_window_summary(nav: pd.DataFrame, initial_cash: float) -> pd.DataFrame:
+    if nav.empty:
+        return pd.DataFrame()
+    end_ts = pd.to_datetime(nav["trade_date"], errors="coerce").max()
+    windows = [
+        ("3m", end_ts - pd.DateOffset(months=3)),
+        ("6m", end_ts - pd.DateOffset(months=6)),
+        ("1y", end_ts - pd.DateOffset(years=1)),
+        ("3y", end_ts - pd.DateOffset(years=3)),
+    ]
+    rows: list[dict[str, object]] = []
+    for strategy, group in nav.groupby("strategy", sort=False):
+        for window_name, start_ts in windows:
+            summary = _summarize_window_nav(group, initial_cash, start_ts)
+            if not summary:
+                continue
+            summary.update({"strategy": strategy, "window": window_name})
+            rows.append(summary)
+    columns = [
+        "strategy",
+        "window",
+        "window_start",
+        "window_end",
+        "trading_days",
+        "initial_cash",
+        "window_start_equity",
+        "window_end_equity",
+        "total_return",
+        "max_drawdown",
+        "annualized_volatility",
+        "daily_win_rate",
+        "avg_gross_exposure",
+        "avg_position_count",
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
 def run_account_backtest(args: argparse.Namespace) -> dict:
     args = _apply_risk_profile_defaults(args)
     engine = create_engine(build_sqlalchemy_url())
@@ -928,18 +1007,25 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "adaptive_reason": decision.get("reason"),
                         "adaptive_market_amount_ratio_20": decision.get("market_amount_ratio_20"),
                         "adaptive_index_bucket": decision.get("index_bucket"),
+                        "market_style_state": active_role,
+                        "selected_strategy": rebalance_spec.name,
+                        "style_reason": decision.get("reason"),
                     }
-                    if spec.name == ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME:
+                    if spec.name in ADAPTIVE_POSITIONED_STRATEGY_NAMES:
                         position_scale, position_reason = _adaptive_position_scale(decision)
                         rebalance_position_ratio = max(0.0, min(1.0, float(args.position_ratio) * position_scale))
                         decision["adaptive_position_scale"] = float(position_scale)
                         decision["adaptive_target_position_ratio"] = float(rebalance_position_ratio)
                         decision["adaptive_position_reason"] = position_reason
+                        decision["market_style_state"] = active_role
+                        decision["target_position_ratio"] = float(rebalance_position_ratio)
+                        decision["style_reason"] = decision.get("reason")
                         adaptive_meta.update(
                             {
                                 "adaptive_position_scale": float(position_scale),
                                 "adaptive_target_position_ratio": float(rebalance_position_ratio),
                                 "adaptive_position_reason": position_reason,
+                                "target_position_ratio": float(rebalance_position_ratio),
                             }
                         )
                 trades, candidates, rebalance_meta = _rebalance(
@@ -966,6 +1052,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["adaptive_reason"] = adaptive_meta.get("adaptive_reason")
                         item["adaptive_target_position_ratio"] = adaptive_meta.get("adaptive_target_position_ratio")
                         item["adaptive_position_reason"] = adaptive_meta.get("adaptive_position_reason")
+                        item["market_style_state"] = adaptive_meta.get("market_style_state")
+                        item["selected_strategy"] = adaptive_meta.get("selected_strategy")
+                        item["target_position_ratio"] = adaptive_meta.get("target_position_ratio")
+                        item["style_reason"] = adaptive_meta.get("style_reason")
                 trade_rows.extend(trades)
                 candidate_rows.extend(candidates)
                 meta = dict(rebalance_meta or {})
@@ -1045,6 +1135,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     candidates = pd.concat(all_candidates, ignore_index=True) if all_candidates else pd.DataFrame()
     adaptive_decisions = pd.concat(all_adaptive_decisions, ignore_index=True) if all_adaptive_decisions else pd.DataFrame()
     summary = pd.DataFrame(summary_rows).sort_values("total_return", ascending=False)
+    window_summary = _build_window_summary(nav, float(args.initial_cash))
 
     out_dir = OUT_ROOT / datetime.now().strftime("%Y%m%d_%H%M%S_%f_trusted_account_backtest")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1056,6 +1147,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "candidates_csv": out_dir / "trusted_account_backtest_candidates.csv",
         "dynamic_weights_csv": out_dir / "trusted_account_backtest_dynamic_weights.csv",
         "market_environment_csv": out_dir / "trusted_account_backtest_market_environment.csv",
+        "window_summary_csv": out_dir / "trusted_account_backtest_window_summary.csv",
         "adaptive_decisions_csv": out_dir / "trusted_account_backtest_adaptive_decisions.csv",
         "adaptive_perf_csv": out_dir / "trusted_account_backtest_adaptive_perf.csv",
         "json": out_dir / "trusted_account_backtest_report.json",
@@ -1068,6 +1160,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     candidates.to_csv(paths["candidates_csv"], index=False)
     factor_weights.to_csv(paths["dynamic_weights_csv"], index=False)
     market_env.to_csv(paths["market_environment_csv"], index=False)
+    window_summary.to_csv(paths["window_summary_csv"], index=False)
     adaptive_decisions.to_csv(paths["adaptive_decisions_csv"], index=False)
     adaptive_perf.to_csv(paths["adaptive_perf_csv"], index=False)
 
@@ -1090,6 +1183,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "dynamic_lookback_dates": int(args.dynamic_lookback_dates),
         "strategies": [spec.name for spec in specs],
         "adaptive_strategy_name": ADAPTIVE_STRATEGY_NAME,
+        "adaptive_market_style_strategy_name": ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
         "adaptive_dynamic_position_strategy_name": ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
         "adaptive_underlying": ADAPTIVE_UNDERLYING,
         "adaptive_min_state_days": ADAPTIVE_MIN_STATE_DAYS,
@@ -1101,6 +1195,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "params": params,
         "summary": summary.to_dict("records"),
+        "window_summary": window_summary.to_dict("records"),
         "files": {key: str(value) for key, value in paths.items()},
         "pit_control": [
             "Signals use score_rank_daily rows on signal date T.",
@@ -1114,10 +1209,14 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     paths["json"].write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     show = summary.copy()
+    window_show = window_summary.copy()
     pct_cols = ["total_return", "annualized_return", "max_drawdown", "daily_win_rate", "best_day", "worst_day", "avg_gross_exposure"]
     for col in pct_cols:
         if col in show.columns:
             show[col] = show[col].map(lambda x: "" if pd.isna(x) else f"{float(x) * 100:.2f}%")
+    for col in ("total_return", "max_drawdown", "annualized_volatility", "daily_win_rate", "avg_gross_exposure"):
+        if col in window_show.columns:
+            window_show[col] = window_show[col].map(lambda x: "" if pd.isna(x) else f"{float(x) * 100:.2f}%")
     lines = [
         "# 可信策略账户级回测报告",
         "",
@@ -1136,6 +1235,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "## 汇总",
         "",
         show.to_markdown(index=False) if not show.empty else "_无结果_",
+        "",
+        "## 窗口收益风险",
+        "",
+        window_show.to_markdown(index=False) if not window_show.empty else "_无窗口结果_",
         "",
         "## 输出文件",
         "",

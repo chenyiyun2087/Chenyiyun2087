@@ -85,6 +85,7 @@
 | 2026-06-03 | 防守影子策略接入飞书对照 | 完成 | `export_trusted_strategy_candidates.py` 的“策略订单对照”新增 `baseline_full_liquidity_detail_hold12_shadow` 和 `baseline_full_liquidity_detail_market_gate_pos50_shadow`，分别代表“流动性质量防守策略（12日持有影子）”与“流动性质量防守策略（市场门禁50%仓位影子）”。两者只进入飞书/归档/Web 对照，不写入生产候选主策略，不替换当前进攻策略。已用本地假飞书、不写库方式验证 2026-06-02 候选导出，测试产物位于 `exports/production_candidates/20260603_234550_tiered_liquidity_then_bs_v2`。 |
 | 2026-06-03 | Web 策略订单对照字段增强 | 完成 | 核心精选页“策略订单对照”新增基础策略、持有期、目标仓位和说明字段，可展示新增防守 12 日与防守半仓影子策略的关键差异；`web/app.py` 为 `base_strategy_display_name` 增加兜底中文名。已完成模板解析、后端语法、离线渲染和 5001 运行服务验证。 |
 | 2026-06-04 | 生产风险档位升级 | 完成 | 新增 `--risk-profile offensive|balanced|defensive`。生产默认切为 `balanced`：`baseline_full_liquidity_detail_market_gate`、12 日持有、80% 基准仓位、最多 5 只；低市场成交环境由市场门禁把实际敞口降至约 50%。日终调度、Web 任务中心、候选导出报告、飞书通知、账户级回测汇总和核心精选页均已显示风险档位。 |
+| 2026-06-04 | 系统策略风格切换生产化 | 完成 | 新增 `--risk-profile adaptive` 和 `adaptive_market_style`。生产默认从固定 `balanced` 升级为“市场风格状态 + 底层策略切换 + 动态仓位”：`attack` 使用 `tiered_liquidity_then_bs_v2`，`balanced` 使用 `baseline_full_liquidity_detail_market_gate`，`defensive` 使用 `baseline_full_liquidity`；候选导出、飞书/归档策略订单对照、账户级回测窗口汇总、日终调度和核心精选页均已展示状态、底层策略、目标仓位和触发原因。 |
 
 ## 当前发现
 
