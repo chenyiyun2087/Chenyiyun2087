@@ -24,6 +24,10 @@ STRATEGY_DISPLAY_NAMES = {
     "adaptive_style_shadow": "市场风格自适应生产策略（影子）",
     "adaptive_style_switch": "市场风格自适应切换策略",
     "adaptive_style_switch_dynamic_position": "市场风格自适应切换策略（动态仓位）",
+    "dual_system_adaptive_route": "双系统自适应路由策略",
+    "ashare_auto_shadow": "AShare AUTO策略（影子）",
+    "ashare_trend_breakout_shadow": "AShare趋势突破策略（影子）",
+    "ashare_hybrid_conservative_shadow": "AShare保守混合策略（影子）",
 }
 
 

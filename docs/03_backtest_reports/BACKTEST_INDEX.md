@@ -1,10 +1,15 @@
 # 回测报告索引
 
-> 2026-06-04 更新：生产策略选择以三年 T+1 账户级回测为最高优先级；最近一年结果只用于判断阶段性市场风格，不再作为长期满仓进攻策略的充分依据。当前默认生产风险档位升级为 `adaptive`：`adaptive_market_style` 根据 T 日市场风格在进攻、均衡、防守策略间切换，并把目标仓位动态调整到约 50% / 80% / 100%。
+> 2026-06-04 更新：当前 `adaptive_market_style` 从单纯三年低回撤口径升级为“最近 3 个月收益优先 + 长期风险约束 + 日检周切”。近期冠军默认指向 `baseline_full_liquidity_detail_vol_position`，系统每天检测市场、行业和量能状态，最多每周切换一次底层基准，目标仓位约 50% / 70% / 80%。`tiered_liquidity_then_bs_v2` 只在强市场短期增强，不作为长期满仓默认。
+
+> 2026-06-04 双系统路由更新：新增 `dual_system_adaptive_route`、`ashare_auto_shadow`、`ashare_trend_breakout_shadow`、`ashare_hybrid_conservative_shadow`。最近 3 个月账户级对照中，AShare AUTO 影子收益约 +8.72%、最大回撤约 -17.28%，`adaptive_market_style` 收益约 +7.36%、最大回撤约 -10.97%，双系统路由收益约 +5.27%、最大回撤约 -12.06%。当前结论：AShare AUTO 有收益弹性但波动更大，dual route 风控较保守，需继续优化 AShare 周线门禁和候选缓存后再跑三年验收。
 
 | 策略名称 | 资金规模 | 回测周期 | 期末权益 | 年化收益 | 最大回撤 | 结论 | 文件夹 |
 |---|---:|---|---:|---:|---:|---|---|
-| `adaptive_market_style` / 核心风格切换 v2 | 50 万 | 2023-01-04 至 2026-06-02 | 551,658 | +3.06% | -51.28% | 三年收益与回撤均优于当前 fixed balanced；最近一年 +81.10%、最大回撤 -17.94% | `exports/signal_research/20260604_110749_591938_trusted_account_backtest/` |
+| `dual_system_adaptive_route` / 双系统路由 | 50 万 | 2026-03-03 至 2026-06-02 | 526,350 | +24.07% | -12.06% | 最近 3 个月收益约 +5.27%，低于 `adaptive_market_style` 和 AShare AUTO；路由状态含 18 天 attack、22 天 neutral、14 天 defensive、7 天 freeze | `exports/signal_research/20260604_163941_308980_trusted_account_backtest/` |
+| `ashare_auto_shadow` / AShare AUTO 影子 | 50 万 | 2026-03-03 至 2026-06-02 | 543,590 | +42.06% | -17.28% | 最近 3 个月收益约 +8.72%，收益弹性最高但波动和回撤也最高，仅作外部源影子观察 | `exports/signal_research/20260604_163941_308980_trusted_account_backtest/` |
+| `adaptive_market_style` / 双系统对照窗口 | 50 万 | 2026-03-03 至 2026-06-02 | 536,817 | +34.77% | -10.97% | 最近 3 个月收益约 +7.36%，回撤低于 AShare AUTO，是当前双系统路由的主要对照基准 | `exports/signal_research/20260604_163941_308980_trusted_account_backtest/` |
+| `adaptive_market_style` / 3个月收益优先周切换 | 50 万 | 2023-01-04 至 2026-06-02 | 696,564 | +10.71% | -43.01% | 三年收益约 +39.31%，回撤低于单独 `vol_position`；最近 3 个月 +6.39%、半年 +41.73%、一年 +47.67% | `exports/signal_research/20260604_152142_206060_trusted_account_backtest/` |
 | 核心策略风格画像研究 | - | 2023-01-04 至 2026-06-02 | - | - | - | 输出市场/行业/量能分组、网格阈值和每日 adaptive 决策表 | `exports/signal_research/20260604_105452_core_strategy_style_research/` |
 | `baseline_full_liquidity_detail_market_gate` / 50% 仓位 | 50 万 | 2023-01-04 至 2026-06-02 | 475,270 | -1.54% | -43.42% | 三年回撤控制相对最好，可做防守影子候选 | `exports/signal_research/trusted_strategy_optimization_20260603_224953/` |
 | `baseline_full_liquidity_detail` / hold12 | 50 万 | 2023-01-04 至 2026-06-02 | 489,717 | -0.64% | -65.17% | 三年持仓期矩阵相对最好，仍需降回撤 | `exports/signal_research/trusted_strategy_optimization_20260603_203215/` |

@@ -2,7 +2,7 @@
 
 | 主题 | 目录/文件 | 当前状态 | 最新结论 |
 |---|---|---|---|
-| 可信全量池流动性策略 | `docs/tasks/20260512-full-pool-liquidity-strategy.md` | 持续迭代 | 最近一年固定 `tiered_liquidity_then_bs_v2` 表现最好；自适应切换暂不替换生产默认。 |
+| 可信全量池流动性策略 | `docs/tasks/20260512-full-pool-liquidity-strategy.md` | 持续迭代 | 当前生产默认升级为 `adaptive_market_style`，按市场风格在进攻、均衡、稳健、防守策略间切换。 |
 | 生产操作手册 | `docs/production_trusted_strategy_usage.md` | 可用 | 日终候选导出、订单草案、飞书通知和影子盘监控已接入。 |
 | 行业研究 | `docs/01_strategy_research/industry/` | 待迁入 | 半导体、机器人、农业、互联网基金等主题待整理。 |
 | 资产配置 | `docs/01_strategy_research/portfolio/` | 待迁入 | 个人资产配置、基金风险收益等主题待整理。 |
@@ -12,11 +12,14 @@
 
 | 策略 | 类型 | 用途 | 备注 |
 |---|---|---|---|
+| `adaptive_market_style` | 生产默认 | 市场风格自适应生产策略 | 当前默认生产风险档 `adaptive` 使用该策略。三年 T+1 账户级回测收益约 +10.33%，最大回撤约 -51.28%；最近一年收益约 +81.10%，最大回撤约 -17.94%。 |
 | `tiered_liquidity_then_bs_v2` | 进攻 | 最近一年账户级回测第一 | 适合作为重点研究和生产候选对照。 |
-| `baseline_full_dynamic_factor_industry_cap2` | 均衡 | 当前生产默认候选策略之一 | 使用已完成样本估计动态因子权重。 |
-| `baseline_full_liquidity_detail` | 防守 | 低回撤/流动性质量对照 | 可作为风险偏好下降时的备选。 |
+| `baseline_full_liquidity_detail_market_gate` | 均衡 | adaptive 的 balanced 底层策略 | 普通市场环境默认使用，目标仓位约 80%。 |
+| `baseline_full_liquidity_detail_vol_position` | 稳健 | adaptive 的 robust 底层策略 | 高波动但流动性尚可时使用，目标仓位约 70%。 |
+| `baseline_full_liquidity` | 防守 | adaptive 的 defensive / fallback 底层策略 | 弱市场、缩量或数据不足时使用，目标仓位约 50%。 |
+| `baseline_full_liquidity_detail` | 防守对照 | 流动性质量对照 | 可作为风险偏好下降时的备选和回测对照。 |
 | `baseline_full_score` | 兜底 | 综合分基准 | 历史样本不足或增强字段异常时使用。 |
-| `adaptive_style_switch` | 研究 | 市场风格硬切换 | 最近一年未跑赢固定进攻策略，暂不生产化。 |
+| `adaptive_style_switch` | 历史研究 | 市场风格硬切换 | 旧硬切换版本，三年和最近一年均不作为生产默认。 |
 
 ## 后续整理项
 

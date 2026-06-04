@@ -1,0 +1,4 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-03,300502,新易盛,BUY,782.25,0,100,100,100,0.0,0.19999999999999998,0.19999999999999998,trusted_strategy:dual_system_adaptive_route; hold_gate=10d; max_positions=5
+2026-06-03,603986,兆易创新,BUY,492.23,0,200,200,200,0.0,0.19999999999999998,0.19999999999999998,trusted_strategy:dual_system_adaptive_route; hold_gate=10d; max_positions=5
+2026-06-03,688008,澜起科技,BUY,253.9,0,300,300,300,0.0,0.19999999999999998,0.19999999999999998,trusted_strategy:dual_system_adaptive_route; hold_gate=10d; max_positions=5

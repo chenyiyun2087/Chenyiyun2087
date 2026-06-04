@@ -11,7 +11,7 @@ from typing import Iterable
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -66,11 +66,22 @@ RISK_PROFILE_DEFAULTS = {
         "position_ratio": 1.0,
         "hold_days": 10,
         "max_total_positions": 5,
-        "description": "自适应档：按T日市场风格在进攻/均衡/防守策略间切换，并动态调整50%-100%仓位。",
+        "description": "自适应档：最近3个月收益优先选择冠军策略，并按T日市场/行业状态动态调整50%-80%仓位，强进攻阶段才短期开到进攻策略。",
+    },
+    "dual-adaptive": {
+        "strategies": "dual_system_adaptive_route",
+        "position_ratio": 1.0,
+        "hold_days": 10,
+        "max_total_positions": 5,
+        "description": "双系统自适应档：Chenyiyun生产执行层融合AShare AUTO/趋势/保守策略源，收益优先并保留弱市降仓与风险否决。",
     },
 }
 DEFAULT_STRATEGIES = [
+    "dual_system_adaptive_route",
     "adaptive_market_style",
+    "ashare_auto_shadow",
+    "ashare_trend_breakout_shadow",
+    "ashare_hybrid_conservative_shadow",
     "adaptive_style_switch",
     "adaptive_style_switch_dynamic_position",
     "tiered_liquidity_then_bs_v2",
@@ -82,6 +93,10 @@ DEFAULT_STRATEGIES = [
     "baseline_full_score",
 ]
 ADAPTIVE_MARKET_STYLE_STRATEGY_NAME = "adaptive_market_style"
+DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME = "dual_system_adaptive_route"
+ASHARE_AUTO_SHADOW_STRATEGY_NAME = "ashare_auto_shadow"
+ASHARE_TREND_BREAKOUT_SHADOW_STRATEGY_NAME = "ashare_trend_breakout_shadow"
+ASHARE_HYBRID_CONSERVATIVE_SHADOW_STRATEGY_NAME = "ashare_hybrid_conservative_shadow"
 ADAPTIVE_STRATEGY_NAME = "adaptive_style_switch"
 ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME = "adaptive_style_switch_dynamic_position"
 ADAPTIVE_POSITIONED_STRATEGY_NAMES = {ADAPTIVE_MARKET_STYLE_STRATEGY_NAME, ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME}
@@ -90,8 +105,34 @@ ADAPTIVE_STRATEGY_NAMES = {
     ADAPTIVE_STRATEGY_NAME,
     ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
 }
+ASHARE_STRATEGY_VERSION_BY_NAME = {
+    ASHARE_AUTO_SHADOW_STRATEGY_NAME: "AUTO",
+    ASHARE_TREND_BREAKOUT_SHADOW_STRATEGY_NAME: "trend_breakout_v1",
+    ASHARE_HYBRID_CONSERVATIVE_SHADOW_STRATEGY_NAME: "hybrid_conservative_v1",
+}
+ASHARE_STRATEGY_VERSION_ALIASES = {
+    "AUTO": (
+        "AUTO",
+        "classic",
+        "plate_enhanced",
+        "plate_enhanced_v2",
+        "plate_enhanced_v3",
+        "local_bs_detection_pool",
+    ),
+    "trend_breakout_v1": (
+        "trend_breakout_v1",
+        "local_bs_detection_pool",
+    ),
+    "hybrid_conservative_v1": ("hybrid_conservative_v1",),
+}
+DUAL_SYSTEM_STRATEGY_NAMES = {
+    DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+    *ASHARE_STRATEGY_VERSION_BY_NAME,
+}
+PSEUDO_STRATEGY_NAMES = ADAPTIVE_STRATEGY_NAMES | DUAL_SYSTEM_STRATEGY_NAMES
 ADAPTIVE_UNDERLYING = {
     "attack": "tiered_liquidity_then_bs_v2",
+    "recent_champion": "baseline_full_liquidity_detail_vol_position",
     "balanced": "baseline_full_liquidity_detail_market_gate",
     "robust": "baseline_full_liquidity_detail_vol_position",
     "defensive": "baseline_full_liquidity",
@@ -105,9 +146,11 @@ CORE_STRATEGY_NAMES = [
     "baseline_full_liquidity_detail_hist_mdd_position",
     ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
 ]
-ADAPTIVE_MIN_STATE_DAYS = 3
+ADAPTIVE_MIN_STATE_DAYS = 5
 ADAPTIVE_LONG_WINDOW = 20
 ADAPTIVE_SHORT_WINDOW = 10
+ADAPTIVE_RECENT_CHAMPION_WINDOW = 63
+ADAPTIVE_RECENT_CHAMPION_MAX_DRAWDOWN = -0.25
 
 
 def _normalize_risk_profile(raw: str | None) -> str:
@@ -179,13 +222,13 @@ def _parse_strategies(raw: str | None) -> list[str]:
 def _strategy_specs(names: Iterable[str]):
     trusted = filter_strategy_specs(build_strategy_specs(), trusted_only=True)
     by_name = {spec.name: spec for spec in trusted}
-    missing = [name for name in names if name not in by_name and name not in ADAPTIVE_STRATEGY_NAMES]
+    missing = [name for name in names if name not in by_name and name not in PSEUDO_STRATEGY_NAMES]
     if missing:
-        available = ", ".join(sorted([*by_name, *ADAPTIVE_STRATEGY_NAMES]))
+        available = ", ".join(sorted([*by_name, *PSEUDO_STRATEGY_NAMES]))
         raise ValueError(f"Unknown trusted strategy: {', '.join(missing)}. Available: {available}")
     specs = []
     for name in names:
-        if name in ADAPTIVE_STRATEGY_NAMES:
+        if name in PSEUDO_STRATEGY_NAMES:
             specs.append(StrategySpec(ADAPTIVE_STRATEGY_NAME, "adaptive", "adaptive"))
             object.__setattr__(specs[-1], "name", name)
         else:
@@ -376,6 +419,346 @@ def _build_targets(
     return pd.DataFrame(rows)
 
 
+def _symbol_from_ts_code(value: object) -> str:
+    text_value = str(value or "").strip()
+    digits = "".join(ch for ch in text_value if ch.isdigit())
+    return digits[-6:].zfill(6) if digits else ""
+
+
+def _date_to_yyyymmdd(value: object) -> int:
+    return int(pd.Timestamp(value).strftime("%Y%m%d"))
+
+
+def _load_ashare_strategy_candidates(
+    engine,
+    start_date: object,
+    end_date: object,
+) -> pd.DataFrame:
+    """Load AShareDataCenter strategy final rows as a point-in-time external source."""
+    start_key = _date_to_yyyymmdd(start_date)
+    end_key = _date_to_yyyymmdd(end_date)
+    try:
+        columns = {
+            str(row["Field"])
+            for row in engine.connect().execute(text("SHOW COLUMNS FROM tushare_stock.ads_strategy_stock_final_di")).mappings()
+        }
+    except Exception:
+        return pd.DataFrame()
+    required = {"trade_date", "strategy_version", "ts_code"}
+    if not required.issubset(columns):
+        return pd.DataFrame()
+
+    def select_expr(col: str, alias: str | None = None, default: str = "NULL") -> str:
+        target = alias or col
+        return f"{col} AS {target}" if col in columns else f"{default} AS {target}"
+
+    gate_parts = []
+    if "risk_veto_flag" in columns:
+        gate_parts.append("COALESCE(risk_veto_flag, 0) > 0")
+    if "gate_decision" in columns:
+        gate_parts.append("LOWER(COALESCE(gate_decision, 'pass')) IN ('block', 'blocked', 'veto', 'reject', 'rejected', 'fail', 'risk_veto')")
+    if "visible_date_guard_pass" in columns:
+        gate_parts.append("COALESCE(visible_date_guard_pass, 1) = 0")
+    if "plate_governance_hint" in columns:
+        gate_parts.append("plate_governance_hint IN ('block_new_positions', 'risk_off')")
+    risk_expr = f"CASE WHEN {' OR '.join(gate_parts)} THEN 1 ELSE 0 END AS risk_veto_flag" if gate_parts else "0 AS risk_veto_flag"
+
+    select_columns = [
+        "trade_date",
+        "strategy_version",
+        "ts_code",
+        select_expr("stock_name"),
+        select_expr("industry"),
+        select_expr("selected_strategy"),
+        select_expr("selection_rank"),
+        select_expr("selection_reason"),
+        select_expr("signal_stage"),
+        select_expr("signal_quality_score"),
+        select_expr("plate_context_score"),
+        select_expr("cross_domain_resonance_score"),
+        select_expr("resonance_score", alias="legacy_resonance_score"),
+        select_expr("rank_score"),
+        select_expr("overall_score"),
+        select_expr("weekly_confirm_pass", default="1"),
+        risk_expr,
+        select_expr("entry_market_regime"),
+        select_expr("plate_governance_hint"),
+        select_expr("plate_governance_reason"),
+        select_expr("visible_date_guard_pass", default="1"),
+        select_expr("disclosure_visible_date"),
+        select_expr("event_source_date"),
+    ]
+    sql = f"""
+        SELECT {", ".join(select_columns)}
+        FROM tushare_stock.ads_strategy_stock_final_di
+        WHERE trade_date BETWEEN :start_key AND :end_key
+    """
+    try:
+        frame = pd.read_sql(text(sql), engine, params={"start_key": start_key, "end_key": end_key})
+    except Exception:
+        return pd.DataFrame()
+    if frame.empty:
+        return frame
+    frame["trade_date"] = pd.to_datetime(frame["trade_date"].astype(str), format="%Y%m%d", errors="coerce").dt.date
+    frame["signal_date"] = frame["trade_date"]
+    for visible_col in ("disclosure_visible_date", "event_source_date"):
+        if visible_col in frame.columns:
+            visible_dates = pd.to_datetime(frame[visible_col].astype(str), format="%Y%m%d", errors="coerce").dt.date
+            frame = frame[visible_dates.isna() | (visible_dates <= frame["signal_date"])].copy()
+    frame["symbol"] = frame["ts_code"].map(_symbol_from_ts_code)
+    frame["strategy_source"] = "AShareDataCenter"
+    frame["source_strategy"] = frame["selected_strategy"].fillna(frame["strategy_version"]).astype(str)
+    frame["source_rank"] = pd.to_numeric(frame.get("selection_rank"), errors="coerce")
+    if "rank_main" in frame.columns:
+        frame["source_rank"] = frame["source_rank"].fillna(pd.to_numeric(frame["rank_main"], errors="coerce"))
+    score_cols = [
+        col
+        for col in (
+            "signal_quality_score",
+            "plate_context_score",
+            "cross_domain_resonance_score",
+            "legacy_resonance_score",
+            "rank_score",
+            "overall_score",
+        )
+        if col in frame.columns
+    ]
+    frame["source_score"] = frame[score_cols].apply(
+        lambda row: max([_safe_float(item, 0.0) for item in row] or [0.0]),
+        axis=1,
+    ) if score_cols else 0.0
+    for col in (
+        "signal_quality_score",
+        "plate_context_score",
+        "cross_domain_resonance_score",
+        "weekly_confirm_pass",
+        "risk_veto_flag",
+    ):
+        if col in frame.columns:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    return frame.dropna(subset=["signal_date", "symbol"])
+
+
+def _ashare_candidates_for_day(
+    ashare_candidates: pd.DataFrame,
+    signal_date: object,
+    strategy_version: str | None = None,
+) -> pd.DataFrame:
+    if ashare_candidates.empty:
+        return pd.DataFrame()
+    day = pd.Timestamp(signal_date).date()
+    out = ashare_candidates[pd.to_datetime(ashare_candidates["signal_date"], errors="coerce").dt.date.eq(day)].copy()
+    if strategy_version:
+        versions = ASHARE_STRATEGY_VERSION_ALIASES.get(str(strategy_version), (str(strategy_version),))
+        out = out[out["strategy_version"].astype(str).isin(versions)].copy()
+    return out
+
+
+def _build_ashare_targets(
+    day_scores: pd.DataFrame,
+    ashare_day: pd.DataFrame,
+    top_n: int,
+    *,
+    strategy_name: str,
+    position_ratio: float = 1.0,
+) -> pd.DataFrame:
+    if day_scores.empty or ashare_day.empty:
+        return pd.DataFrame()
+    base = day_scores.copy()
+    base["symbol"] = base["symbol"].astype(str).str.zfill(6)
+    source = ashare_day.copy()
+    source["symbol"] = source["symbol"].astype(str).str.zfill(6)
+    source = source.sort_values(["source_rank", "source_score", "symbol"], ascending=[True, False, True])
+    source = source.drop_duplicates("symbol", keep="first")
+    merged = source.merge(base, on="symbol", how="inner", suffixes=("_ashare", ""))
+    if merged.empty:
+        return pd.DataFrame()
+    veto = pd.to_numeric(merged.get("risk_veto_flag", 0), errors="coerce").fillna(0).astype(int)
+    weekly = pd.to_numeric(merged.get("weekly_confirm_pass", 1), errors="coerce").fillna(1).astype(int)
+    merged = merged[(veto <= 0) & (weekly >= 1)].copy()
+    if merged.empty:
+        return pd.DataFrame()
+    merged["rank_score"] = pd.to_numeric(merged.get("source_score"), errors="coerce").fillna(0.0)
+    merged = merged.sort_values(["source_rank", "rank_score", "symbol"], ascending=[True, False, True]).head(int(top_n)).copy()
+    selected_count = max(1, len(merged))
+    rows = []
+    for rank, (_, row) in enumerate(merged.iterrows(), start=1):
+        out = row.to_dict()
+        out["rank"] = rank
+        out["strategy"] = strategy_name
+        out["strategy_source"] = "AShareDataCenter"
+        out["source_strategy"] = row.get("source_strategy")
+        out["position_weight"] = 1.0 / float(selected_count)
+        out["market_exposure_scale"] = 1.0
+        out["effective_weight"] = 1.0 / float(selected_count)
+        out["name"] = row.get("name") or row.get("stock_name") or row.get("stock_name_ashare")
+        out["industry"] = row.get("industry") or row.get("industry_ashare")
+        out["rank_score"] = _safe_float(row.get("rank_score"), 0.0)
+        rows.append(out)
+    return pd.DataFrame(rows)
+
+
+def _ashare_risk_summary(ashare_day: pd.DataFrame) -> dict[str, object]:
+    if ashare_day.empty:
+        return {
+            "ashare_available": 0,
+            "ashare_candidate_count": 0,
+            "ashare_risk_veto_ratio": np.nan,
+            "ashare_market_regime": "",
+            "ashare_governance_hint": "",
+        }
+    veto = pd.to_numeric(ashare_day.get("risk_veto_flag", 0), errors="coerce").fillna(0)
+    regimes = ashare_day.get("entry_market_regime", pd.Series(dtype=object)).dropna().astype(str)
+    hints = ashare_day.get("plate_governance_hint", pd.Series(dtype=object)).dropna().astype(str)
+    return {
+        "ashare_available": 1,
+        "ashare_candidate_count": int(len(ashare_day)),
+        "ashare_risk_veto_ratio": float((veto > 0).mean()) if len(veto) else np.nan,
+        "ashare_market_regime": regimes.mode().iloc[0] if not regimes.empty else "",
+        "ashare_governance_hint": hints.mode().iloc[0] if not hints.empty else "",
+    }
+
+
+def _build_dual_system_targets(
+    *,
+    signal_date: object,
+    day_scores: pd.DataFrame,
+    chenyiyun_targets: pd.DataFrame,
+    ashare_day: pd.DataFrame,
+    top_n: int,
+    strategy_name: str,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    risk = _ashare_risk_summary(ashare_day)
+    if chenyiyun_targets.empty and ashare_day.empty:
+        return pd.DataFrame(), {"strategy_source": "fallback_empty", **risk}
+
+    market_amount_ratio = _safe_float(day_scores.get("market_amount_ratio_20", pd.Series(np.nan)).dropna().median(), np.nan)
+    index_bucket = (
+        str(day_scores.get("index_bucket", pd.Series([""])).dropna().iloc[0])
+        if "index_bucket" in day_scores and not day_scores["index_bucket"].dropna().empty
+        else ""
+    )
+    ashare_regime = str(risk.get("ashare_market_regime") or "").upper()
+    governance_hint = str(risk.get("ashare_governance_hint") or "")
+    veto_ratio = _safe_float(risk.get("ashare_risk_veto_ratio"), np.nan)
+    crash_or_veto = ashare_regime == "CRASH" or (np.isfinite(veto_ratio) and veto_ratio >= 0.60) or governance_hint == "block_new_positions"
+    weak = index_bucket == "index_weak" or (np.isfinite(market_amount_ratio) and market_amount_ratio < 0.9) or ashare_regime == "RISK_OFF"
+    strong = index_bucket == "index_strong" or (np.isfinite(market_amount_ratio) and market_amount_ratio >= 1.15) or ashare_regime == "RISK_ON"
+
+    target_ratio = 0.70
+    route_reason = "dual_neutral_intersection_union"
+    if crash_or_veto:
+        target_ratio = 0.0
+        route_reason = "dual_freeze_ashare_crash_or_high_veto"
+    elif weak:
+        target_ratio = 0.50
+        route_reason = "dual_defensive_weak_market_or_ashare_risk_off"
+    elif strong:
+        target_ratio = 0.80
+        route_reason = "dual_attack_strong_market_or_ashare_risk_on"
+
+    if target_ratio <= 0:
+        return pd.DataFrame(), {
+            "strategy_source": "dual_system",
+            "selected_strategy": "observe_only",
+            "target_position_ratio": 0.0,
+            "route_reason": route_reason,
+            "risk_veto_reason": route_reason,
+            **risk,
+        }
+
+    ch = chenyiyun_targets.copy()
+    if not ch.empty:
+        ch["symbol"] = ch["symbol"].astype(str).str.zfill(6)
+        ch["chenyiyun_rank"] = pd.to_numeric(ch.get("rank"), errors="coerce")
+        ch["chenyiyun_score"] = pd.to_numeric(ch.get("rank_score"), errors="coerce").fillna(0.0)
+    ash = ashare_day.copy()
+    if not ash.empty:
+        ash["symbol"] = ash["symbol"].astype(str).str.zfill(6)
+        ash = ash.sort_values(["source_rank", "source_score", "symbol"], ascending=[True, False, True])
+        ash = ash.drop_duplicates("symbol", keep="first")
+    if ch.empty:
+        base = _build_ashare_targets(day_scores, ash, top_n, strategy_name=strategy_name, position_ratio=target_ratio)
+        source_label = "AShareDataCenter"
+    else:
+        ashare_merge_columns = [
+            "symbol",
+            "strategy_version",
+            "source_strategy",
+            "source_rank",
+            "source_score",
+            "signal_quality_score",
+            "plate_context_score",
+            "cross_domain_resonance_score",
+            "weekly_confirm_pass",
+            "risk_veto_flag",
+            "selection_reason",
+        ]
+        if not ash.empty:
+            for col in ashare_merge_columns:
+                if col not in ash.columns:
+                    ash[col] = np.nan
+        base = ch.merge(
+            ash[ashare_merge_columns] if not ash.empty else pd.DataFrame(columns=["symbol"]),
+            on="symbol",
+            how="left",
+            suffixes=("", "_ashare"),
+        )
+        source_label = "dual_intersection" if base.get("source_strategy", pd.Series()).notna().any() else "Chenyiyun2087"
+        if len(base) < int(top_n) and not ash.empty:
+            supplement = _build_ashare_targets(day_scores, ash[~ash["symbol"].isin(base["symbol"])], top_n - len(base), strategy_name=strategy_name, position_ratio=target_ratio)
+            if not supplement.empty:
+                base = pd.concat([base, supplement], ignore_index=True, sort=False)
+                source_label = "dual_union"
+    if base.empty:
+        return chenyiyun_targets.copy(), {"strategy_source": "Chenyiyun2087_fallback", **risk}
+
+    source_strategy = base["source_strategy"] if "source_strategy" in base.columns else pd.Series(index=base.index, dtype=object)
+    source_score = base["source_score"] if "source_score" in base.columns else pd.Series(0.0, index=base.index)
+    chenyiyun_score = (
+        base["chenyiyun_score"]
+        if "chenyiyun_score" in base.columns
+        else base["rank_score"]
+        if "rank_score" in base.columns
+        else pd.Series(0.0, index=base.index)
+    )
+    base["ashare_hit"] = source_strategy.notna().astype(int)
+    base["ashare_source_score"] = pd.to_numeric(source_score, errors="coerce").fillna(0.0)
+    base["dual_route_score"] = (
+        pd.to_numeric(chenyiyun_score, errors="coerce").fillna(0.0)
+        + base["ashare_hit"] * 20.0
+        + base["ashare_source_score"] * 0.10
+    )
+    if "risk_veto_flag" in base.columns:
+        base = base[pd.to_numeric(base["risk_veto_flag"], errors="coerce").fillna(0) <= 0].copy()
+    if "weekly_confirm_pass" in base.columns:
+        base = base[pd.to_numeric(base["weekly_confirm_pass"], errors="coerce").fillna(1) >= 1].copy()
+    base = base.sort_values(["dual_route_score", "rank_score", "symbol"], ascending=[False, False, True]).head(int(top_n)).copy()
+    selected_count = max(1, len(base))
+    for rank, idx in enumerate(base.index, start=1):
+        base.at[idx, "rank"] = rank
+    base["strategy"] = strategy_name
+    base["strategy_source"] = source_label
+    base["market_style_state"] = "dual_attack" if strong and not weak else ("dual_defensive" if weak else "dual_neutral")
+    base["selected_strategy"] = DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME
+    base["target_position_ratio"] = float(target_ratio)
+    base["route_reason"] = route_reason
+    base["risk_veto_reason"] = "" if not crash_or_veto else route_reason
+    base["position_weight"] = 1.0 / float(selected_count)
+    base["market_exposure_scale"] = 1.0
+    base["effective_weight"] = 1.0 / float(selected_count)
+    return base, {
+        "strategy_source": source_label,
+        "selected_strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+        "target_position_ratio": float(target_ratio),
+        "route_reason": route_reason,
+        "risk_veto_reason": "" if not crash_or_veto else route_reason,
+        "dual_intersection_count": int(base["ashare_hit"].sum()) if "ashare_hit" in base.columns else 0,
+        "dual_union_count": int(len(base)),
+        **risk,
+    }
+
+
 def _industry_concentration(selected: pd.DataFrame) -> dict[str, object]:
     if selected.empty:
         return {"top_industry": None, "top_industry_weight": np.nan, "industry_count": 0}
@@ -497,14 +880,14 @@ def _build_adaptive_perf_table(
 
 def _rolling_perf(perf: pd.DataFrame, role: str, signal_date: object, window: int) -> dict[str, float]:
     if perf.empty:
-        return {"count": 0, "avg_ret": np.nan, "win_rate": np.nan, "max_drawdown": np.nan}
+        return {"count": 0, "avg_ret": np.nan, "win_rate": np.nan, "max_drawdown": np.nan, "total_return": np.nan}
     d = perf[
         perf["role"].eq(role)
         & pd.to_datetime(perf["exit_date"], errors="coerce").dt.date.lt(pd.Timestamp(signal_date).date())
     ].sort_values("signal_date")
     d = d.dropna(subset=["cycle_ret"]).tail(int(window))
     if d.empty:
-        return {"count": 0, "avg_ret": np.nan, "win_rate": np.nan, "max_drawdown": np.nan}
+        return {"count": 0, "avg_ret": np.nan, "win_rate": np.nan, "max_drawdown": np.nan, "total_return": np.nan}
     nav = (1.0 + d["cycle_ret"].astype(float)).cumprod()
     drawdown = nav / nav.cummax() - 1.0
     return {
@@ -512,6 +895,91 @@ def _rolling_perf(perf: pd.DataFrame, role: str, signal_date: object, window: in
         "avg_ret": float(d["cycle_ret"].mean()),
         "win_rate": float((d["cycle_ret"] > 0).mean()),
         "max_drawdown": float(drawdown.min()),
+        "total_return": float(nav.iloc[-1] - 1.0),
+    }
+
+
+def _completed_perf(perf: pd.DataFrame, role: str, signal_date: object) -> dict[str, float]:
+    if perf.empty:
+        return {"count": 0, "avg_ret": np.nan, "win_rate": np.nan, "max_drawdown": np.nan, "total_return": np.nan}
+    d = perf[
+        perf["role"].eq(role)
+        & pd.to_datetime(perf["exit_date"], errors="coerce").dt.date.lt(pd.Timestamp(signal_date).date())
+    ].sort_values("signal_date")
+    d = d.dropna(subset=["cycle_ret"])
+    if d.empty:
+        return {"count": 0, "avg_ret": np.nan, "win_rate": np.nan, "max_drawdown": np.nan, "total_return": np.nan}
+    nav = (1.0 + d["cycle_ret"].astype(float)).cumprod()
+    drawdown = nav / nav.cummax() - 1.0
+    return {
+        "count": int(len(d)),
+        "avg_ret": float(d["cycle_ret"].mean()),
+        "win_rate": float((d["cycle_ret"] > 0).mean()),
+        "max_drawdown": float(drawdown.min()),
+        "total_return": float(nav.iloc[-1] - 1.0),
+    }
+
+
+def _choose_recent_champion(perf: pd.DataFrame, signal_date: object) -> dict[str, object]:
+    candidates = ("robust", "balanced", "defensive")
+    rows: list[dict[str, object]] = []
+    for role in candidates:
+        recent = _rolling_perf(perf, role, signal_date, ADAPTIVE_RECENT_CHAMPION_WINDOW)
+        long = _completed_perf(perf, role, signal_date)
+        recent_total = _safe_float(recent.get("total_return"), np.nan)
+        recent_mdd = _safe_float(recent.get("max_drawdown"), np.nan)
+        long_total = _safe_float(long.get("total_return"), np.nan)
+        recent_count = int(recent.get("count") or 0)
+        long_count = int(long.get("count") or 0)
+        eligible = (
+            recent_count >= ADAPTIVE_LONG_WINDOW
+            and long_count >= ADAPTIVE_RECENT_CHAMPION_WINDOW
+            and np.isfinite(recent_total)
+            and np.isfinite(recent_mdd)
+            and np.isfinite(long_total)
+            and long_total >= 0.0
+            and recent_mdd >= ADAPTIVE_RECENT_CHAMPION_MAX_DRAWDOWN
+        )
+        score = recent_total + min(0.0, recent_mdd - ADAPTIVE_RECENT_CHAMPION_MAX_DRAWDOWN)
+        rows.append(
+            {
+                "role": role,
+                "strategy": ADAPTIVE_UNDERLYING[role],
+                "eligible": int(bool(eligible)),
+                "score": float(score) if np.isfinite(score) else np.nan,
+                "recent_count": recent_count,
+                "recent_total_return": recent_total,
+                "recent_max_drawdown": recent_mdd,
+                "recent_win_rate": _safe_float(recent.get("win_rate"), np.nan),
+                "long_count": long_count,
+                "long_total_return": long_total,
+                "long_max_drawdown": _safe_float(long.get("max_drawdown"), np.nan),
+            }
+        )
+    eligible_rows = [row for row in rows if row["eligible"]]
+    if not eligible_rows:
+        return {
+            "recent_champion_role": "robust",
+            "recent_champion_strategy": ADAPTIVE_UNDERLYING["robust"],
+            "champion_score": _safe_float(
+                next((row.get("score") for row in rows if row.get("role") == "robust"), np.nan),
+                np.nan,
+            ),
+            "champion_eligible": 1,
+            "champion_reason": "configured_default_recent_champion_until_constraints_select_another",
+        }
+    best = max(eligible_rows, key=lambda row: _safe_float(row.get("score"), -999.0))
+    return {
+        "recent_champion_role": best["role"],
+        "recent_champion_strategy": best["strategy"],
+        "champion_score": best["score"],
+        "champion_eligible": 1,
+        "champion_reason": "recent_3m_return_leader_with_long_term_non_negative_constraint",
+        "champion_recent_total_return": best["recent_total_return"],
+        "champion_recent_max_drawdown": best["recent_max_drawdown"],
+        "champion_recent_win_rate": best["recent_win_rate"],
+        "champion_long_total_return": best["long_total_return"],
+        "champion_long_max_drawdown": best["long_max_drawdown"],
     }
 
 
@@ -529,6 +997,7 @@ def _choose_adaptive_role(
     market_bs_ratio = _safe_float(features.get("market_bs_ratio"), np.nan)
     market_avg_score = _safe_float(features.get("market_avg_score"), np.nan)
     avg_vol_20 = _safe_float(features.get("avg_vol_20"), np.nan)
+    top_industry_weight = _safe_float(features.get("top_industry_weight"), np.nan)
     fields_ok = np.isfinite(market_amount_ratio) and bool(index_bucket) and np.isfinite(market_avg_score)
     metrics = {
         f"{role}_{suffix}": value
@@ -543,13 +1012,16 @@ def _choose_adaptive_role(
         "avg_ret": metrics.get("attack_avg_ret", np.nan),
         "win_rate": metrics.get("attack_win_rate", np.nan),
         "max_drawdown": metrics.get("attack_max_drawdown", np.nan),
+        "total_return": metrics.get("attack_total_return", np.nan),
     }
     defensive_long = {
         "count": metrics.get("defensive_count", 0),
         "avg_ret": metrics.get("defensive_avg_ret", np.nan),
         "win_rate": metrics.get("defensive_win_rate", np.nan),
         "max_drawdown": metrics.get("defensive_max_drawdown", np.nan),
+        "total_return": metrics.get("defensive_total_return", np.nan),
     }
+    champion = _choose_recent_champion(perf, signal_date)
     robust_history_ok = int(robust_long["count"]) >= ADAPTIVE_SHORT_WINDOW
     enough_history = int(attack_long["count"]) >= ADAPTIVE_SHORT_WINDOW
     low_liq_weak = np.isfinite(market_amount_ratio) and market_amount_ratio < 0.8 and index_bucket == "index_weak"
@@ -560,10 +1032,16 @@ def _choose_adaptive_role(
     )
     attack_ok = (
         enough_history
-        and _safe_float(attack_long["avg_ret"], np.nan) > -0.01
-        and _safe_float(attack_long["max_drawdown"], np.nan) > -0.25
+        and _safe_float(attack_long["avg_ret"], np.nan) > 0.01
+        and _safe_float(attack_long["total_return"], np.nan) > 0.05
+        and _safe_float(attack_long["max_drawdown"], np.nan) > -0.15
     )
     risk_on = (np.isfinite(market_amount_ratio) and market_amount_ratio > 1.2) or index_bucket == "index_strong"
+    strong_market = (
+        fields_ok
+        and market_liquidity_bucket != "low_liquidity"
+        and ((np.isfinite(market_amount_ratio) and market_amount_ratio >= 1.05) or index_bucket == "index_strong")
+    )
     high_vol_liquid = (
         np.isfinite(avg_vol_20)
         and avg_vol_20 > 0.045
@@ -586,6 +1064,7 @@ def _choose_adaptive_role(
         )
         >= 0.6
     )
+    current_industry_concentration_high = np.isfinite(top_industry_weight) and top_industry_weight >= 0.6
     balanced_leads = (
         int(balanced_long["count"]) >= ADAPTIVE_SHORT_WINDOW
         and _safe_float(balanced_long["avg_ret"], -999.0) > _safe_float(attack_long["avg_ret"], -999.0)
@@ -595,21 +1074,28 @@ def _choose_adaptive_role(
     if not fields_ok:
         desired_role = "fallback"
         reason = "fallback_missing_market_fields"
-    elif high_vol_liquid:
-        desired_role = "robust"
-        reason = "robust_high_volatility_liquid_market"
     elif low_liq_weak:
         desired_role = "defensive"
         reason = "defensive_low_liquidity_weak_index"
-    elif risk_on and attack_ok:
+    elif (
+        index_bucket == "index_weak"
+        or (np.isfinite(market_amount_ratio) and market_amount_ratio < 0.9)
+        or (weak_completed_attack and (industry_concentration_high or current_industry_concentration_high))
+    ):
+        desired_role = "defensive"
+        reason = "defensive_weak_market_or_attack_industry_risk"
+    elif risk_on and attack_ok and not current_industry_concentration_high:
         desired_role = "attack"
         reason = "attack_risk_on_and_attack_not_failed"
+    elif int(champion.get("champion_eligible") or 0) and not current_industry_concentration_high:
+        desired_role = "recent_champion"
+        reason = "recent_champion_default_3m_return_priority"
+    elif high_vol_liquid:
+        desired_role = "robust"
+        reason = "robust_high_volatility_liquid_market"
     elif balanced_leads:
         desired_role = "balanced"
         reason = "balanced_rolling_performance_leads"
-    elif weak_completed_attack and (market_amount_ratio < 0.9 or index_bucket == "index_weak" or industry_concentration_high):
-        desired_role = "defensive"
-        reason = "defensive_attack_weak_with_market_or_industry_risk"
     elif enough_history:
         desired_role = "balanced"
         reason = "balanced_default_with_enough_history"
@@ -628,10 +1114,18 @@ def _choose_adaptive_role(
         "signal_date": signal_date,
         "desired_role": desired_role,
         "active_role": active_role,
-        "selected_strategy": ADAPTIVE_UNDERLYING[active_role],
+        "selected_strategy": (
+            champion.get("recent_champion_strategy")
+            if active_role == "recent_champion"
+            else ADAPTIVE_UNDERLYING[active_role]
+        ),
         "reason": reason,
+        "switch_reason": reason,
         "switch_blocked": switch_blocked,
+        "weekly_switch_allowed": int(not current_role or current_role_days >= ADAPTIVE_MIN_STATE_DAYS),
         "current_role_days_before": int(current_role_days),
+        "market_state": index_bucket or market_liquidity_bucket,
+        "industry_state": "concentrated" if current_industry_concentration_high else "normal",
         "market_amount_ratio_20": market_amount_ratio,
         "index_bucket": index_bucket,
         "market_bs_ratio": market_bs_ratio,
@@ -642,11 +1136,19 @@ def _choose_adaptive_role(
         "completed_history_rule": "exit_date < signal_date",
         "attack_short_count": int(attack_short["count"]),
         "attack_short_avg_ret": _safe_float(attack_short["avg_ret"]),
-        "industry_concentration_high": int(bool(industry_concentration_high)),
+        "industry_concentration_high": int(bool(industry_concentration_high or current_industry_concentration_high)),
         "attack_drawdown_expanded": int(bool(attack_drawdown_expanded)),
     }
+    row.update(champion)
     row.update(features)
-    row.update({key: _safe_float(value) if key.endswith(("avg_ret", "win_rate", "max_drawdown")) else int(value) for key, value in metrics.items()})
+    row.update(
+        {
+            key: _safe_float(value)
+            if key.endswith(("avg_ret", "win_rate", "max_drawdown", "total_return"))
+            else int(value)
+            for key, value in metrics.items()
+        }
+    )
     return row
 
 
@@ -660,8 +1162,11 @@ def _adaptive_position_scale(decision: dict[str, object]) -> tuple[float, str]:
     attack_max_drawdown = _safe_float(decision.get("attack_max_drawdown"), np.nan)
 
     if role == "attack":
-        scale = 1.0
-        scale_reason = "attack_full_position"
+        scale = 0.80
+        scale_reason = "attack_enhancement_cap_80pct"
+    elif role == "recent_champion":
+        scale = 0.70
+        scale_reason = "recent_champion_default_70pct"
     elif role == "balanced":
         scale = 0.80
         scale_reason = "balanced_reduce_to_80pct"
@@ -678,6 +1183,9 @@ def _adaptive_position_scale(decision: dict[str, object]) -> tuple[float, str]:
     if np.isfinite(market_amount_ratio) and market_amount_ratio < 0.8 and index_bucket == "index_weak":
         scale = min(scale, 0.50)
         scale_reason = "weak_index_low_liquidity_cap_50pct"
+    elif role == "recent_champion" and np.isfinite(market_amount_ratio) and market_amount_ratio >= 1.2 and index_bucket == "index_strong":
+        scale = max(scale, 0.80)
+        scale_reason = "recent_champion_strong_market_raise_to_80pct"
     if np.isfinite(attack_short_avg_ret) and attack_short_avg_ret < 0.0:
         scale = min(scale, 0.50)
         scale_reason = "attack_recent_completed_samples_negative_cap_50pct"
@@ -1042,8 +1550,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     specs = _strategy_specs(_parse_strategies(args.strategies))
     trusted_by_name = {spec.name: spec for spec in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
     adaptive_underlying_specs = {role: trusted_by_name[name] for role, name in ADAPTIVE_UNDERLYING.items()}
-    needed_specs = [spec for spec in specs if spec.name not in ADAPTIVE_STRATEGY_NAMES]
-    if any(spec.name in ADAPTIVE_STRATEGY_NAMES for spec in specs):
+    needed_specs = [spec for spec in specs if spec.name not in PSEUDO_STRATEGY_NAMES]
+    if any(spec.name in (ADAPTIVE_STRATEGY_NAMES | {DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME}) for spec in specs):
         needed_specs.extend(adaptive_underlying_specs.values())
     needs_dynamic = any(
         getattr(spec, "sort_col", "") in {"dynamic_factor_score", "dynamic_ic_factor_score"}
@@ -1074,11 +1582,16 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     scores_by_date = {day: group.copy() for day, group in scores.groupby("trade_date", sort=True)}
     cache_specs: dict[str, object] = {}
     for spec in specs:
-        if spec.name not in ADAPTIVE_STRATEGY_NAMES:
+        if spec.name not in PSEUDO_STRATEGY_NAMES:
             cache_specs[spec.name] = spec
     for spec in adaptive_underlying_specs.values():
         cache_specs[spec.name] = spec
     targets_cache = _build_targets_cache(scores_by_date, cache_specs, top_n=args.top_n)
+    ashare_candidates = (
+        _load_ashare_strategy_candidates(engine, scores["trade_date"].min(), scores["trade_date"].max())
+        if any(spec.name in DUAL_SYSTEM_STRATEGY_NAMES for spec in specs)
+        else pd.DataFrame()
+    )
     signal_to_exec = {
         day: _next_trade_date(calendar, day)
         for day in sorted(scores["trade_date"].dropna().unique().tolist())
@@ -1139,7 +1652,89 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 rebalance_spec = spec
                 adaptive_meta: dict[str, object] = {}
                 rebalance_position_ratio = float(args.position_ratio)
-                if spec.name in ADAPTIVE_STRATEGY_NAMES:
+                target_override = None
+                if spec.name in ASHARE_STRATEGY_VERSION_BY_NAME:
+                    ashare_day = _ashare_candidates_for_day(
+                        ashare_candidates,
+                        signal_date,
+                        ASHARE_STRATEGY_VERSION_BY_NAME[spec.name],
+                    )
+                    target_override = _build_ashare_targets(
+                        day_scores,
+                        ashare_day,
+                        args.top_n,
+                        strategy_name=spec.name,
+                        position_ratio=float(args.position_ratio),
+                    )
+                    adaptive_meta = {
+                        "market_style_state": "ashare_shadow",
+                        "selected_strategy": spec.name,
+                        "strategy_source": "AShareDataCenter",
+                        "ashare_resolved_strategy": ASHARE_STRATEGY_VERSION_BY_NAME[spec.name],
+                        "target_position_ratio": float(args.position_ratio),
+                        "route_reason": "ashare_shadow_fixed_source",
+                        **_ashare_risk_summary(ashare_day),
+                    }
+                elif spec.name == DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME:
+                    decision = _choose_adaptive_role(
+                        signal_date=signal_date,
+                        day_scores=day_scores,
+                        perf=adaptive_perf,
+                        current_role=current_adaptive_role,
+                        current_role_days=current_adaptive_role_days,
+                    )
+                    active_role = str(decision["active_role"])
+                    if active_role == current_adaptive_role:
+                        current_adaptive_role_days += 1
+                    else:
+                        current_adaptive_role = active_role
+                        current_adaptive_role_days = 1
+                    decision["current_role_days_after"] = int(current_adaptive_role_days)
+                    selected_strategy_name = str(decision.get("selected_strategy") or ADAPTIVE_UNDERLYING[active_role])
+                    rebalance_spec = trusted_by_name[selected_strategy_name]
+                    chenyiyun_targets = targets_cache.get((signal_date, rebalance_spec.name), pd.DataFrame())
+                    ashare_day = _ashare_candidates_for_day(ashare_candidates, signal_date)
+                    target_override, dual_meta = _build_dual_system_targets(
+                        signal_date=signal_date,
+                        day_scores=day_scores,
+                        chenyiyun_targets=chenyiyun_targets,
+                        ashare_day=ashare_day,
+                        top_n=args.top_n,
+                        strategy_name=spec.name,
+                    )
+                    position_scale = _safe_float(dual_meta.get("target_position_ratio"), 0.7)
+                    rebalance_position_ratio = max(0.0, min(1.0, float(args.position_ratio) * position_scale))
+                    decision.update(
+                        {
+                            "active_role": target_override["market_style_state"].iloc[0] if not target_override.empty and "market_style_state" in target_override.columns else "dual_freeze",
+                            "market_style_state": target_override["market_style_state"].iloc[0] if not target_override.empty and "market_style_state" in target_override.columns else "dual_freeze",
+                            "selected_strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+                            "strategy_source": dual_meta.get("strategy_source"),
+                            "ashare_resolved_strategy": dual_meta.get("ashare_market_regime"),
+                            "target_position_ratio": float(rebalance_position_ratio),
+                            "route_reason": dual_meta.get("route_reason"),
+                            "risk_veto_reason": dual_meta.get("risk_veto_reason"),
+                            "dual_intersection_count": dual_meta.get("dual_intersection_count"),
+                            "dual_union_count": dual_meta.get("dual_union_count"),
+                        }
+                    )
+                    decision.update(dual_meta)
+                    adaptive_decision_rows.append(decision)
+                    adaptive_meta = {
+                        "adaptive_role": decision.get("active_role"),
+                        "adaptive_underlying_strategy": rebalance_spec.name,
+                        "market_style_state": decision.get("market_style_state"),
+                        "selected_strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+                        "strategy_source": dual_meta.get("strategy_source"),
+                        "ashare_resolved_strategy": dual_meta.get("ashare_market_regime"),
+                        "target_position_ratio": float(rebalance_position_ratio),
+                        "route_reason": dual_meta.get("route_reason"),
+                        "risk_veto_reason": dual_meta.get("risk_veto_reason"),
+                        "dual_intersection_count": dual_meta.get("dual_intersection_count"),
+                        "dual_union_count": dual_meta.get("dual_union_count"),
+                        **dual_meta,
+                    }
+                elif spec.name in ADAPTIVE_STRATEGY_NAMES:
                     decision = _choose_adaptive_role(
                         signal_date=signal_date,
                         day_scores=day_scores,
@@ -1155,7 +1750,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         current_adaptive_role_days = 1
                     decision["current_role_days_after"] = int(current_adaptive_role_days)
                     adaptive_decision_rows.append(decision)
-                    rebalance_spec = adaptive_underlying_specs[active_role]
+                    selected_strategy_name = str(decision.get("selected_strategy") or ADAPTIVE_UNDERLYING[active_role])
+                    rebalance_spec = trusted_by_name[selected_strategy_name]
                     adaptive_meta = {
                         "adaptive_role": active_role,
                         "adaptive_underlying_strategy": rebalance_spec.name,
@@ -1165,6 +1761,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "market_style_state": active_role,
                         "selected_strategy": rebalance_spec.name,
                         "style_reason": decision.get("reason"),
+                        "switch_reason": decision.get("switch_reason") or decision.get("reason"),
+                        "recent_champion_strategy": decision.get("recent_champion_strategy"),
+                        "champion_score": decision.get("champion_score"),
+                        "weekly_switch_allowed": decision.get("weekly_switch_allowed"),
+                        "market_state": decision.get("market_state"),
+                        "industry_state": decision.get("industry_state"),
                     }
                     if spec.name in ADAPTIVE_POSITIONED_STRATEGY_NAMES:
                         position_scale, position_reason = _adaptive_position_scale(decision)
@@ -1183,7 +1785,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                                 "target_position_ratio": float(rebalance_position_ratio),
                             }
                         )
-                target_override = targets_cache.get((signal_date, rebalance_spec.name))
+                if target_override is None:
+                    target_override = targets_cache.get((signal_date, rebalance_spec.name))
                 trades, candidates, rebalance_meta = _rebalance(
                     account=account,
                     signal_date=signal_date,
@@ -1202,7 +1805,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     open_prices=price_lookup,
                     targets=target_override,
                 )
-                if spec.name in ADAPTIVE_STRATEGY_NAMES:
+                if spec.name in PSEUDO_STRATEGY_NAMES:
                     for item in candidates:
                         item["adaptive_role"] = adaptive_meta.get("adaptive_role")
                         item["adaptive_underlying_strategy"] = adaptive_meta.get("adaptive_underlying_strategy")
@@ -1213,6 +1816,18 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["selected_strategy"] = adaptive_meta.get("selected_strategy")
                         item["target_position_ratio"] = adaptive_meta.get("target_position_ratio")
                         item["style_reason"] = adaptive_meta.get("style_reason")
+                        item["switch_reason"] = adaptive_meta.get("switch_reason")
+                        item["recent_champion_strategy"] = adaptive_meta.get("recent_champion_strategy")
+                        item["champion_score"] = adaptive_meta.get("champion_score")
+                        item["weekly_switch_allowed"] = adaptive_meta.get("weekly_switch_allowed")
+                        item["market_state"] = adaptive_meta.get("market_state")
+                        item["industry_state"] = adaptive_meta.get("industry_state")
+                        item["strategy_source"] = adaptive_meta.get("strategy_source")
+                        item["ashare_resolved_strategy"] = adaptive_meta.get("ashare_resolved_strategy")
+                        item["route_reason"] = adaptive_meta.get("route_reason")
+                        item["risk_veto_reason"] = adaptive_meta.get("risk_veto_reason")
+                        item["dual_intersection_count"] = adaptive_meta.get("dual_intersection_count")
+                        item["dual_union_count"] = adaptive_meta.get("dual_union_count")
                 trade_rows.extend(trades)
                 candidate_rows.extend(candidates)
                 meta = dict(rebalance_meta or {})
@@ -1244,15 +1859,20 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             else:
                 frame.insert(0, "strategy", spec.name)
         summary = _summarize_strategy(nav, trades, float(args.initial_cash))
-        if spec.name in ADAPTIVE_STRATEGY_NAMES and not adaptive_decisions.empty:
+        if spec.name in (ADAPTIVE_STRATEGY_NAMES | {DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME}) and not adaptive_decisions.empty:
             summary["adaptive_switch_count"] = int(
                 adaptive_decisions["active_role"].ne(adaptive_decisions["active_role"].shift()).sum() - 1
             )
             summary["adaptive_attack_days"] = int(adaptive_decisions["active_role"].eq("attack").sum())
+            summary["adaptive_recent_champion_days"] = int(adaptive_decisions["active_role"].eq("recent_champion").sum())
             summary["adaptive_balanced_days"] = int(adaptive_decisions["active_role"].eq("balanced").sum())
             summary["adaptive_robust_days"] = int(adaptive_decisions["active_role"].eq("robust").sum())
             summary["adaptive_defensive_days"] = int(adaptive_decisions["active_role"].eq("defensive").sum())
             summary["adaptive_fallback_days"] = int(adaptive_decisions["active_role"].eq("fallback").sum())
+            summary["dual_attack_days"] = int(adaptive_decisions["active_role"].eq("dual_attack").sum())
+            summary["dual_neutral_days"] = int(adaptive_decisions["active_role"].eq("dual_neutral").sum())
+            summary["dual_defensive_days"] = int(adaptive_decisions["active_role"].eq("dual_defensive").sum())
+            summary["dual_freeze_days"] = int(adaptive_decisions["active_role"].eq("dual_freeze").sum())
             if "adaptive_target_position_ratio" in adaptive_decisions.columns:
                 ratios = pd.to_numeric(adaptive_decisions["adaptive_target_position_ratio"], errors="coerce").dropna()
                 if not ratios.empty:

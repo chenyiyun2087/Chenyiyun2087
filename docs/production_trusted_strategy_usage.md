@@ -4,13 +4,13 @@
 
 当前生产默认使用风险档位 `adaptive`，不再使用固定单一满仓口径：
 
-- 主策略：`adaptive_market_style`（市场风格识别 + 底层策略切换 + 动态仓位）。
-- 默认映射：`attack` -> `tiered_liquidity_then_bs_v2`，`balanced` -> `baseline_full_liquidity_detail_market_gate`，`robust` -> `baseline_full_liquidity_detail_vol_position`，`defensive` -> `baseline_full_liquidity`。
+- 主策略：`adaptive_market_style`（最近 3 个月收益优先冠军 + 市场/行业状态切换 + 动态仓位）。
+- 默认映射：`recent_champion` -> `baseline_full_liquidity_detail_vol_position`（当前近期冠军），`attack` -> `tiered_liquidity_then_bs_v2`，`balanced` -> `baseline_full_liquidity_detail_market_gate`，`defensive` -> `baseline_full_liquidity`。
 - 组合：Top5，账户总持仓数上限 5。
 - 持有：10 个交易日。
-- 仓位：由市场风格状态动态调整到约 50% / 70% / 80% / 100%。
+- 仓位：由市场风格状态动态调整到约 50% / 70% / 80%；进攻策略只在强市场短期增强，不再默认满仓。
 - 执行层：未满持有期的持仓不卖、不减仓，若持仓上限已满，则不再因每日新 Top5 额外扩仓。
-- 风控：以三年 T+1 账户级回测为最高优先级验收口径；不使用被标记为 `model_risk` 的模型排序策略。
+- 风控：最近 3 个月收益优先，但候选策略必须满足长期已完成样本非负、近期回撤约束；不使用被标记为 `model_risk` 的模型排序策略。
 
 备选复核策略：
 
@@ -103,7 +103,8 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 
    - 未满 `--hold-days` 的持仓锁定，不卖出、不减仓，并先占用组合预算。
    - 账户总持仓数不超过 `--max-total-positions`。当前默认值为 5；若锁定持仓已经占满上限，则当日只允许卖出到期/未入选持仓，不再新增买入。
-   - `--risk-profile` 控制生产风险档位。当前默认 `adaptive`：按 T 日市场风格切换底层策略，并把实际敞口调到约 50% / 70% / 80% / 100%。
+   - `--risk-profile` 控制生产风险档位。当前默认 `adaptive`：按最近 3 个月收益优先选择冠军策略，每天检测市场/行业状态，最多每周切换一次底层基准，并把实际敞口调到约 50% / 70% / 80%。
+   - 可选 `--risk-profile dual-adaptive` 或 `--strategy dual_system_adaptive_route` 启用 Chenyiyun2087 × AShareDataCenter 双系统路由。Chenyiyun 仍是生产入口；AShare 只作为外部策略、板块、周线确认和风险门禁信号源。
    - `--position-ratio` 可覆盖风险档位的目标总仓位。人工降风险时优先使用 `defensive` 或显式降低该参数。
 
    生成本地订单前会强制校验前置条件：当日全量评分行数、空行业、总分、流动性分、B点增强分、B点综合分、账户权益。任一条件不满足，脚本返回非 0，日终批量任务失败。
@@ -157,13 +158,15 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 - 评分数据只读取到 `--date` 指定日期，默认最新评分日。
 - 行情数据只读取到信号日当天，不读取 T+1 或退出日价格。
 - 动态因子权重只使用“退出日早于当前信号日”的历史样本。
+- 双系统路由读取 AShareDataCenter `ads_strategy_stock_final_di` 时，事件/披露日期必须满足 `visible_date <= signal_date`；若 AShare 表提供 `visible_date_guard_pass`、`gate_decision` 或板块治理门禁，则会转成 Chenyiyun 的风险否决字段。
 - 默认只允许 `pit_status=trusted` 的策略；模型版本穿越风险策略不会作为主策略。
 
 ## 当前限制
 
-- 最近一年强势策略不能直接外推到三年窗口。三年 T+1 账户级回测显示，未经门禁的进攻策略回撤极深，因此当前生产默认转为 `balanced` 风险档。
+- 最近一年强势策略不能直接外推到三年窗口。三年 T+1 账户级回测显示，未经门禁的进攻策略回撤极深，因此当前生产默认转为 `adaptive` 风险档，由 `adaptive_market_style` 在近期冠军、进攻增强和防守状态间切换。
 - 账户级验证显示，加入 `max_total_positions=5` 后能显著抑制每日 Top5 滚动带来的持仓扩散；但长期窗口仍需资金比例控制和人工风控。
-- 仓位比例是主要风险预算旋钮：当前默认不再满仓，`balanced` 以 80% 为基准，`defensive` 以 50% 为基准。
+- 仓位比例是主要风险预算旋钮：当前默认不再固定满仓，`recent_champion` 约 70%，强市场可升至 80%，`attack` 增强上限约 80%，`defensive` / `fallback` 约 50%。
 - 硬止损目前不作为默认订单规则。账户级验证中 8%/10% 止损能把最大回撤降到约 -13.67%/-11.63%，但收益降到约 +60.24%/+56.77%；若后续实盘风险偏好转防守，可先用模拟盘或人工单独执行，不直接写入日终默认买卖。
 - 脚本会自动生成本地调仓订单草案并发送飞书通知；目前没有接入券商真实委托 API，不会向券商柜台发送订单。
 - 模型排序相关策略仍需更多 walk-forward 样本验证，暂不作为生产默认方案。
+- `dual_system_adaptive_route` 第一阶段已接入生产 dry-run、订单对照和 Web 展示。2026-06-03 信号日 AShare 外部源可加载 144 条候选，但周线确认字段均未通过，因此主路由回退到 Chenyiyun 候选并给出 70% 中性仓位。该策略目前适合影子观察；三年多策略对照需完成 AShare 候选缓存优化后再作为验收结论。

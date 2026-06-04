@@ -65,8 +65,47 @@
                 <strong>{% if latest_trusted_params.market_style_state == 'defensive' %}已触发{% else %}未触发{% endif %}</strong>
             </div>
         </div>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 10px;">
+            <div>
+                <div class="muted" style="font-size: 12px;">近期冠军</div>
+                <strong>{{ latest_trusted_params.recent_champion_display_name or latest_trusted_params.recent_champion_strategy or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">市场状态</div>
+                <strong>{{ latest_trusted_params.market_state or latest_trusted_params.index_bucket or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">行业状态</div>
+                <strong>{{ latest_trusted_params.industry_state or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">周切换</div>
+                <strong>{% if latest_trusted_params.weekly_switch_allowed in [1, true, '1', 'true', 'True'] %}允许{% else %}锁定{% endif %}</strong>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 10px;">
+            <div>
+                <div class="muted" style="font-size: 12px;">策略来源</div>
+                <strong>{{ latest_trusted_params.strategy_source or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">AShare策略</div>
+                <strong>{{ latest_trusted_params.ashare_resolved_strategy or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">交集/并集</div>
+                <strong>{{ latest_trusted_params.dual_intersection_count or 0 }}/{{ latest_trusted_params.dual_union_count or 0 }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">风险否决</div>
+                <strong>{{ latest_trusted_params.risk_veto_reason or '无' }}</strong>
+            </div>
+        </div>
         <div class="muted" style="margin-top: 8px; font-size: 12px;">
-            {{ latest_trusted_params.style_reason or latest_trusted_params.adaptive_position_reason or '-' }}
+            {{ latest_trusted_params.route_reason or latest_trusted_params.switch_reason or latest_trusted_params.style_reason or latest_trusted_params.adaptive_position_reason or '-' }}
+        </div>
+        <div class="muted" style="margin-top: 6px; font-size: 12px;">
+            AShare候选 {{ latest_trusted_params.ashare_candidate_count or 0 }} 条；风险否决占比 {{ latest_trusted_params.ashare_risk_veto_ratio if latest_trusted_params.ashare_risk_veto_ratio is not none else '-' }}；市场状态 {{ latest_trusted_params.ashare_market_regime or '-' }}
         </div>
     </div>
     {% endif %}

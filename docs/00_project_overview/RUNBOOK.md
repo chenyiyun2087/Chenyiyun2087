@@ -59,7 +59,7 @@ score_rank_daily 完整性校验
     -> 影子盘成交监控
 ```
 
-当前生产候选导出仍以 `docs/production_trusted_strategy_usage.md` 为准。研究策略 `adaptive_style_switch` 仅用于回测和影子盘观察，不替换生产默认。
+当前生产候选导出仍以 `docs/production_trusted_strategy_usage.md` 为准。生产默认风险档为 `adaptive`，主策略为 `adaptive_market_style`；旧研究策略 `adaptive_style_switch` 仅保留为历史回测对照。
 
 ## 5. 常用命令
 

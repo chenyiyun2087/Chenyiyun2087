@@ -2343,6 +2343,9 @@ def _load_trusted_candidate_params(output_json_path):
         params["selected_strategy_display_name"] = params.get("selected_strategy_display_name") or strategy_display_name(
             params.get("selected_strategy")
         )
+        params["recent_champion_display_name"] = params.get("recent_champion_display_name") or strategy_display_name(
+            params.get("recent_champion_strategy")
+        )
         return params
     except Exception as e:
         print(f"Failed to load trusted candidate params: {e}")

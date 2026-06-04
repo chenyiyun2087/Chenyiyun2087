@@ -1,9 +1,16 @@
 # Trusted Account 回测归档
 
+> 当前生产默认已升级为 `adaptive_market_style`。本页第 3 节保留的是 2025-06-03 至 2026-05-29 的旧最近一年核心策略回测归档；最新三年生产口径请优先查看 `docs/03_backtest_reports/BACKTEST_INDEX.md`。
+
 ## 1. 策略列表
 
+- `adaptive_market_style`
 - `tiered_liquidity_then_bs_v2`
 - `adaptive_style_switch`
+- `adaptive_style_switch_dynamic_position`
+- `baseline_full_liquidity_detail_market_gate`
+- `baseline_full_liquidity_detail_vol_position`
+- `baseline_full_liquidity`
 - `baseline_full_dynamic_factor_industry_cap2`
 - `baseline_full_liquidity_detail`
 - `baseline_full_score`
