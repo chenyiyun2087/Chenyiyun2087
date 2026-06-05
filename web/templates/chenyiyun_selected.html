@@ -30,8 +30,106 @@
 <div class="panel">
     <div class="panel-title">可信全量池实盘候选</div>
     <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
-        最新候选日：{{ latest_trusted_candidate_date or '-' }}，来源策略：{{ latest_trusted_strategy or '-' }}
+        最新候选日：{{ latest_trusted_candidate_date or '-' }}，来源策略：{{ latest_trusted_strategy_display or '-' }}
+        {% if latest_trusted_params %}
+        ，风险档位：{{ latest_trusted_params.risk_profile or '-' }}
+        ，目标仓位：{{ '%.0f%%'|format((latest_trusted_params.position_ratio or 0)|float * 100) }}
+        ，持有期：{{ latest_trusted_params.hold_days or '-' }}日
+        ，最多持仓：{{ latest_trusted_params.max_total_positions or '-' }}只
+        ，市场门禁：{% if latest_trusted_params.market_gate_triggered %}已触发{% elif latest_trusted_params.market_gate %}未触发{% else %}未启用{% endif %}
+        {% endif %}
     </div>
+    {% if latest_trusted_params and latest_trusted_params.risk_profile_description %}
+    <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
+        {{ latest_trusted_params.risk_profile_description }}
+    </div>
+    {% endif %}
+    {% if latest_trusted_params and latest_trusted_params.market_style_state %}
+    <div style="margin: 0 0 12px 0; padding: 12px 0; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb;">
+        <div style="font-weight: 600; margin-bottom: 8px;">市场风格状态</div>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px;">
+            <div>
+                <div class="muted" style="font-size: 12px;">当前状态</div>
+                <strong>{{ latest_trusted_params.market_style_state }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">底层策略</div>
+                <strong>{{ latest_trusted_params.selected_strategy_display_name or latest_trusted_params.selected_strategy or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">目标仓位</div>
+                <strong>{{ '%.0f%%'|format((latest_trusted_params.target_position_ratio or latest_trusted_params.position_ratio or 0)|float * 100) }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">是否防守</div>
+                <strong>{% if latest_trusted_params.market_style_state == 'defensive' %}已触发{% else %}未触发{% endif %}</strong>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 10px;">
+            <div>
+                <div class="muted" style="font-size: 12px;">近期冠军</div>
+                <strong>{{ latest_trusted_params.recent_champion_display_name or latest_trusted_params.recent_champion_strategy or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">市场状态</div>
+                <strong>{{ latest_trusted_params.market_state or latest_trusted_params.index_bucket or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">行业状态</div>
+                <strong>{{ latest_trusted_params.industry_state or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">周切换</div>
+                <strong>{% if latest_trusted_params.weekly_switch_allowed in [1, true, '1', 'true', 'True'] %}允许{% else %}锁定{% endif %}</strong>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 10px;">
+            <div>
+                <div class="muted" style="font-size: 12px;">Adaptive版本</div>
+                <strong>{{ latest_trusted_params.adaptive_version or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">AShare权重</div>
+                <strong>{{ latest_trusted_params.ashare_weight_profile or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">放权档位</div>
+                <strong>{{ latest_trusted_params.ashare_release_tier or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">补位上限</div>
+                <strong>{{ latest_trusted_params.ashare_supplement_limit if latest_trusted_params.ashare_supplement_limit is not none else '-' }}</strong>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 10px;">
+            <div>
+                <div class="muted" style="font-size: 12px;">策略来源</div>
+                <strong>{{ latest_trusted_params.strategy_source or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">AShare策略</div>
+                <strong>{{ latest_trusted_params.ashare_resolved_strategy or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">交集/并集</div>
+                <strong>{{ latest_trusted_params.dual_intersection_count or 0 }}/{{ latest_trusted_params.dual_union_count or 0 }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">风险否决</div>
+                <strong>{{ latest_trusted_params.risk_veto_reason or '无' }}</strong>
+            </div>
+        </div>
+        <div class="muted" style="margin-top: 8px; font-size: 12px;">
+            {{ latest_trusted_params.route_reason or latest_trusted_params.switch_reason or latest_trusted_params.style_reason or latest_trusted_params.adaptive_position_reason or '-' }}
+        </div>
+        <div class="muted" style="margin-top: 6px; font-size: 12px;">
+            AShare候选 {{ latest_trusted_params.ashare_candidate_count or 0 }} 条；风险否决占比 {{ latest_trusted_params.ashare_risk_veto_ratio if latest_trusted_params.ashare_risk_veto_ratio is not none else '-' }}；市场状态 {{ latest_trusted_params.ashare_market_regime or '-' }}
+        </div>
+        <div class="muted" style="margin-top: 6px; font-size: 12px;">
+            AShare加权 {{ latest_trusted_params.ashare_weighted_hit_count or 0 }} 只；补位 {{ latest_trusted_params.ashare_supplement_count or 0 }} 只；周线降权 {{ latest_trusted_params.ashare_weekly_penalty_count or 0 }} 只；风险过滤 {{ latest_trusted_params.ashare_risk_veto_filtered_count or 0 }} 只
+        </div>
+    </div>
+    {% endif %}
     <table>
         <thead>
             <tr>
@@ -70,6 +168,73 @@
             {% endfor %}
         </tbody>
     </table>
+</div>
+
+<div class="panel">
+    <div class="panel-title">策略订单对照</div>
+    {% if strategy_order_detail_summary %}
+    <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
+        归档文件：{{ strategy_order_detail_summary_path or '-' }}
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>策略</th>
+                <th>候选</th>
+                <th>订单</th>
+                <th>BUY</th>
+                <th>SELL</th>
+                <th>基础策略</th>
+                <th>持有期</th>
+                <th>状态</th>
+                <th>底层策略</th>
+                <th>目标仓位</th>
+                <th>说明</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in strategy_order_detail_summary %}
+            <tr>
+                <td>{{ row.strategy_display_name or row.strategy or '-' }}</td>
+                <td>{{ row.candidate_count or 0 }}</td>
+                <td>{{ row.order_count or 0 }}</td>
+                <td>{{ row.buy_count or 0 }}</td>
+                <td>{{ row.sell_count or 0 }}</td>
+                <td>{{ row.base_strategy_display_name or '-' }}</td>
+                <td>
+                    {% if row.hold_days %}
+                    {{ row.hold_days }}日
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td>{{ row.adaptive_role or '-' }}</td>
+                <td>{{ row.adaptive_underlying_display_name or '-' }}</td>
+                <td>
+                    {% if row.position_ratio %}
+                    {{ '%.0f%%'|format((row.position_ratio or 0)|float * 100) }}
+                    {% elif row.adaptive_position_scale %}
+                    {{ '%.0f%%'|format((row.adaptive_position_scale or 0)|float * 100) }}
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td>
+                    {% if row.shadow_note %}
+                    {{ row.shadow_note }}
+                    {% elif row.adaptive_position_reason %}
+                    {{ row.adaptive_position_reason }}
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">暂无策略订单对照归档；下一次带飞书通知的候选导出后自动生成。</div>
+    {% endif %}
 </div>
 
 <div class="panel">

@@ -30,10 +30,26 @@ from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.strategy_display import strategy_display_name
 from scripts.research_trusted_strategy_account_backtest import (
     ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
+    ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
     ADAPTIVE_UNDERLYING,
+    ASHARE_ADAPTIVE_VERSION,
+    ASHARE_AUTO_SHADOW_STRATEGY_NAME,
+    ASHARE_DEFAULT_WEIGHT_PROFILE,
+    ASHARE_WEIGHT_PROFILE_DEFAULTS,
+    ASHARE_HYBRID_CONSERVATIVE_SHADOW_STRATEGY_NAME,
+    ASHARE_STRATEGY_VERSION_BY_NAME,
+    ASHARE_TREND_BREAKOUT_SHADOW_STRATEGY_NAME,
+    DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+    DUAL_SYSTEM_STRATEGY_NAMES,
     _adaptive_position_scale,
+    _ashare_candidates_for_day,
+    _ashare_risk_summary,
     _build_adaptive_perf_table,
+    _build_ashare_targets,
+    _build_ashare_weighted_targets,
+    _build_dual_system_targets,
     _choose_adaptive_role,
+    _load_ashare_strategy_candidates,
 )
 from scripts.research_full_pool_liquidity_strategies import (
     _market_exposure_scale,
@@ -53,15 +69,56 @@ from scripts.research_full_pool_liquidity_strategies import (
 
 
 OUT_ROOT = PROJECT_ROOT / "exports" / "production_candidates"
-DEFAULT_STRATEGY = "tiered_liquidity_then_bs_v2"
+DEFAULT_RISK_PROFILE = "balanced"
+RISK_PROFILE_DEFAULTS = {
+    "offensive": {
+        "strategy": "tiered_liquidity_then_bs_v2",
+        "position_ratio": 1.0,
+        "hold_days": 10,
+        "description": "进攻档：流动性分层+B点增强，满仓观察，仅适合人工确认后的进攻阶段。",
+    },
+    "balanced": {
+        "strategy": "baseline_full_liquidity_detail_market_gate",
+        "position_ratio": 0.8,
+        "hold_days": 12,
+        "description": "均衡档：流动性质量防守策略+市场门禁，基准80%仓位，弱市场由门禁降至约50%。",
+    },
+    "defensive": {
+        "strategy": "baseline_full_liquidity",
+        "position_ratio": 0.5,
+        "hold_days": 12,
+        "description": "防守档：纯流动性策略，12日持有，目标50%仓位。",
+    },
+    "adaptive": {
+        "strategy": ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+        "position_ratio": 1.0,
+        "hold_days": 10,
+        "description": "自适应档：最近3个月收益优先选择冠军策略，并按T日市场/行业状态动态调整50%-80%仓位，强进攻阶段才短期开到进攻策略。",
+    },
+    "dual-adaptive": {
+        "strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+        "position_ratio": 1.0,
+        "hold_days": 10,
+        "description": "双系统自适应档：融合Chenyiyun adaptive与AShare AUTO/趋势/保守策略源，收益优先并保留弱市降仓与风险否决。",
+    },
+}
+DEFAULT_STRATEGY = RISK_PROFILE_DEFAULTS[DEFAULT_RISK_PROFILE]["strategy"]
 ORDER_DETAIL_STRATEGIES = (
     "tiered_liquidity_then_bs_v2",
     "baseline_full_dynamic_factor_industry_cap2",
     "baseline_full_liquidity_detail",
     "baseline_full_liquidity_detail_hold12_shadow",
     "baseline_full_liquidity_detail_market_gate_pos50_shadow",
+    "baseline_full_liquidity_shadow",
+    "baseline_full_liquidity_detail_vol_position_shadow",
+    "baseline_full_liquidity_detail_hist_mdd_position_shadow",
     "baseline_full_score",
     "adaptive_style_switch_dynamic_position",
+    "adaptive_style_shadow",
+    ASHARE_AUTO_SHADOW_STRATEGY_NAME,
+    ASHARE_TREND_BREAKOUT_SHADOW_STRATEGY_NAME,
+    ASHARE_HYBRID_CONSERVATIVE_SHADOW_STRATEGY_NAME,
+    DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
 )
 ORDER_DETAIL_CONFIGS = (
     {
@@ -89,12 +146,55 @@ ORDER_DETAIL_CONFIGS = (
         "shadow_note": "三年优化矩阵回撤控制相对较好：市场门禁防守策略50%仓位。",
     },
     {
+        "detail_id": "baseline_full_liquidity_shadow",
+        "base_strategy": "baseline_full_liquidity",
+        "position_ratio": 0.5,
+        "shadow_note": "最近三个月表现较强的纯流动性防守影子策略。",
+    },
+    {
+        "detail_id": "baseline_full_liquidity_detail_vol_position_shadow",
+        "base_strategy": "baseline_full_liquidity_detail_vol_position",
+        "position_ratio": 0.7,
+        "shadow_note": "高波动且流动性尚可时的稳健仓位影子对照。",
+    },
+    {
+        "detail_id": "baseline_full_liquidity_detail_hist_mdd_position_shadow",
+        "base_strategy": "baseline_full_liquidity_detail_hist_mdd_position",
+        "position_ratio": 0.7,
+        "shadow_note": "近期回撤扩大时的稳健仓位影子对照。",
+    },
+    {
         "detail_id": "baseline_full_score",
         "base_strategy": "baseline_full_score",
     },
     {
         "detail_id": "adaptive_style_switch_dynamic_position",
         "base_strategy": "adaptive_style_switch_dynamic_position",
+    },
+    {
+        "detail_id": "adaptive_style_shadow",
+        "base_strategy": ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+        "shadow_note": "市场风格状态驱动的自适应生产候选影子对照。",
+    },
+    {
+        "detail_id": ASHARE_AUTO_SHADOW_STRATEGY_NAME,
+        "base_strategy": ASHARE_AUTO_SHADOW_STRATEGY_NAME,
+        "shadow_note": "AShareDataCenter AUTO策略源影子对照。",
+    },
+    {
+        "detail_id": ASHARE_TREND_BREAKOUT_SHADOW_STRATEGY_NAME,
+        "base_strategy": ASHARE_TREND_BREAKOUT_SHADOW_STRATEGY_NAME,
+        "shadow_note": "AShareDataCenter trend_breakout_v1策略源影子对照。",
+    },
+    {
+        "detail_id": ASHARE_HYBRID_CONSERVATIVE_SHADOW_STRATEGY_NAME,
+        "base_strategy": ASHARE_HYBRID_CONSERVATIVE_SHADOW_STRATEGY_NAME,
+        "shadow_note": "AShareDataCenter hybrid_conservative_v1策略源影子对照。",
+    },
+    {
+        "detail_id": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+        "base_strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+        "shadow_note": "Chenyiyun与AShare双系统路由融合策略。",
     },
 )
 DEFAULT_POOL_KEY = "TRUSTED_FULL_POOL_TOP5"
@@ -140,12 +240,47 @@ def _load_prices_asof(engine, start_date: object, asof_date: object) -> pd.DataF
 
 
 def _pick_strategy(name: str):
+    if name == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME or name in DUAL_SYSTEM_STRATEGY_NAMES:
+        return None
     specs = filter_strategy_specs(build_strategy_specs(), trusted_only=True)
     by_name = {spec.name: spec for spec in specs}
     if name not in by_name:
         available = ", ".join(sorted(by_name))
         raise ValueError(f"Strategy `{name}` is not a trusted strategy. Available trusted strategies: {available}")
     return by_name[name]
+
+
+def _normalize_risk_profile(raw: str | None) -> str:
+    value = str(raw or DEFAULT_RISK_PROFILE).strip().lower()
+    if value not in RISK_PROFILE_DEFAULTS:
+        available = ", ".join(sorted(RISK_PROFILE_DEFAULTS))
+        raise ValueError(f"Unknown risk profile `{raw}`. Available risk profiles: {available}")
+    return value
+
+
+def _apply_risk_profile_defaults(
+    args: argparse.Namespace,
+    *,
+    strategy_explicit: bool = False,
+    hold_days_explicit: bool = False,
+    position_ratio_explicit: bool = False,
+) -> argparse.Namespace:
+    risk_profile = _normalize_risk_profile(getattr(args, "risk_profile", None))
+    defaults = RISK_PROFILE_DEFAULTS[risk_profile]
+    args.risk_profile = risk_profile
+    if not strategy_explicit and not getattr(args, "strategy", None):
+        args.strategy = str(defaults["strategy"])
+    elif not getattr(args, "strategy", None):
+        args.strategy = DEFAULT_STRATEGY
+    if not hold_days_explicit and getattr(args, "hold_days", None) is None:
+        args.hold_days = int(defaults["hold_days"])
+    if not position_ratio_explicit and getattr(args, "position_ratio", None) is None:
+        args.position_ratio = float(defaults["position_ratio"])
+    if getattr(args, "hold_days", None) is None:
+        args.hold_days = 10
+    if getattr(args, "position_ratio", None) is None:
+        args.position_ratio = 1.0
+    return args
 
 
 def _candidate_columns(frame: pd.DataFrame) -> list[str]:
@@ -181,6 +316,34 @@ def _candidate_columns(frame: pd.DataFrame) -> list[str]:
         "market_amount_ratio_20",
         "market_liquidity_bucket",
         "index_bucket",
+        "market_style_state",
+        "selected_strategy",
+        "recent_champion_strategy",
+        "champion_score",
+        "weekly_switch_allowed",
+        "market_state",
+        "industry_state",
+        "adaptive_version",
+        "strategy_source",
+        "ashare_resolved_strategy",
+        "ashare_release_tier",
+        "ashare_weight_profile",
+        "ashare_supplement_limit",
+        "dual_intersection_count",
+        "dual_union_count",
+        "ashare_weighted_hit_count",
+        "ashare_supplement_count",
+        "ashare_weekly_penalty_count",
+        "ashare_risk_veto_filtered_count",
+        "ashare_weight_penalty",
+        "ashare_weight_reason",
+        "ashare_supplement",
+        "ashare_weight_cache_key",
+        "target_position_ratio",
+        "style_reason",
+        "switch_reason",
+        "route_reason",
+        "risk_veto_reason",
         "vol_20",
         "hist_mdd_20",
     ]
@@ -398,6 +561,8 @@ def _format_order_notification(
     orders: pd.DataFrame,
     files: dict[str, str],
     total_equity_used: float,
+    risk_profile: str = DEFAULT_RISK_PROFILE,
+    risk_profile_description: str | None = None,
     strategy_order_details: dict[str, dict[str, pd.DataFrame]] | None = None,
 ) -> str:
     strategy_name = strategy_display_name(strategy)
@@ -433,10 +598,21 @@ def _format_order_notification(
     position_cap_line = f"账户持仓上限：{max_positions if max_positions > 0 else '不限制'}"
     if skipped_by_cap:
         position_cap_line += "；因上限跳过买入：" + ", ".join(skipped_by_cap[:8]) + ("..." if len(skipped_by_cap) > 8 else "")
+    adaptive_line = ""
+    if not candidates.empty and "adaptive_version" in candidates.columns:
+        first_candidate = candidates.iloc[0]
+        adaptive_line = (
+            f"Adaptive版本：{first_candidate.get('adaptive_version') or '-'}；"
+            f"AShare权重：{first_candidate.get('ashare_weight_profile') or '-'}；"
+            f"放权档位：{first_candidate.get('ashare_release_tier') or '-'}；"
+            f"补位上限：{int(float(first_candidate.get('ashare_supplement_limit') or 0))}"
+        )
     lines = [
         "【核心精选本地订单草案已生成】",
         f"信号日：{asof_date}",
         f"策略：{strategy_name}",
+        f"风险档位：{risk_profile}（{risk_profile_description or RISK_PROFILE_DEFAULTS.get(risk_profile, {}).get('description', '')}）",
+        adaptive_line,
         f"资金基数：{total_equity_used:,.2f}",
         hold_gate_line,
         position_cap_line,
@@ -451,6 +627,7 @@ def _format_order_notification(
         "订单草案：",
         *order_lines,
     ]
+    lines = [line for line in lines if line]
     if strategy_order_details:
         lines.extend(["", "策略订单对照："])
         for detail_strategy, detail in strategy_order_details.items():
@@ -477,6 +654,12 @@ def _format_order_notification(
                     meta_parts.append(f"目标仓位={float(detail_meta.get('position_ratio') or 0):.0%}")
                 if detail_meta.get("adaptive_underlying_strategy"):
                     meta_parts.append(f"底层={strategy_display_name(detail_meta.get('adaptive_underlying_strategy'))}")
+                if detail_meta.get("adaptive_version"):
+                    meta_parts.append(f"版本={detail_meta.get('adaptive_version')}")
+                if detail_meta.get("ashare_weight_profile"):
+                    meta_parts.append(f"AShare权重={detail_meta.get('ashare_weight_profile')}")
+                if detail_meta.get("ashare_supplement_limit") is not None:
+                    meta_parts.append(f"补位上限={int(float(detail_meta.get('ashare_supplement_limit') or 0))}")
                 if detail_meta.get("adaptive_position_scale") is not None:
                     meta_parts.append(f"仓位={float(detail_meta.get('adaptive_position_scale') or 0):.0%}")
                 if detail_meta.get("adaptive_position_reason"):
@@ -528,6 +711,35 @@ def _write_strategy_order_detail_outputs(
                 "adaptive_position_scale": meta.get("adaptive_position_scale"),
                 "adaptive_position_reason": meta.get("adaptive_position_reason"),
                 "adaptive_reason": meta.get("reason"),
+                "market_style_state": meta.get("market_style_state") or meta.get("active_role"),
+                "selected_strategy": meta.get("selected_strategy") or meta.get("adaptive_underlying_strategy"),
+                "selected_strategy_display_name": strategy_display_name(
+                    meta.get("selected_strategy") or meta.get("adaptive_underlying_strategy")
+                ),
+                "recent_champion_strategy": meta.get("recent_champion_strategy"),
+                "recent_champion_display_name": strategy_display_name(meta.get("recent_champion_strategy")),
+                "champion_score": meta.get("champion_score"),
+                "weekly_switch_allowed": meta.get("weekly_switch_allowed"),
+                "market_state": meta.get("market_state"),
+                "industry_state": meta.get("industry_state"),
+                "adaptive_version": meta.get("adaptive_version"),
+                "strategy_source": meta.get("strategy_source"),
+                "ashare_resolved_strategy": meta.get("ashare_resolved_strategy"),
+                "ashare_release_tier": meta.get("ashare_release_tier"),
+                "ashare_weight_profile": meta.get("ashare_weight_profile"),
+                "ashare_supplement_limit": meta.get("ashare_supplement_limit"),
+                "ashare_weight_cache_key": meta.get("ashare_weight_cache_key"),
+                "dual_intersection_count": meta.get("dual_intersection_count"),
+                "dual_union_count": meta.get("dual_union_count"),
+                "ashare_weighted_hit_count": meta.get("ashare_weighted_hit_count"),
+                "ashare_supplement_count": meta.get("ashare_supplement_count"),
+                "ashare_weekly_penalty_count": meta.get("ashare_weekly_penalty_count"),
+                "ashare_risk_veto_filtered_count": meta.get("ashare_risk_veto_filtered_count"),
+                "target_position_ratio": meta.get("target_position_ratio") or meta.get("adaptive_position_scale"),
+                "style_reason": meta.get("style_reason") or meta.get("reason"),
+                "switch_reason": meta.get("switch_reason") or meta.get("reason"),
+                "route_reason": meta.get("route_reason"),
+                "risk_veto_reason": meta.get("risk_veto_reason"),
                 "base_strategy": meta.get("base_strategy"),
                 "base_strategy_display_name": strategy_display_name(meta.get("base_strategy")),
                 "hold_days": meta.get("hold_days"),
@@ -553,6 +765,34 @@ def _write_strategy_order_detail_outputs(
                     "adaptive_underlying_strategy": row.get("adaptive_underlying_strategy"),
                     "adaptive_position_scale": row.get("adaptive_position_scale"),
                     "adaptive_position_reason": row.get("adaptive_position_reason"),
+                    "market_style_state": row.get("market_style_state"),
+                    "selected_strategy": row.get("selected_strategy"),
+                    "recent_champion_strategy": row.get("recent_champion_strategy"),
+                    "champion_score": row.get("champion_score"),
+                    "weekly_switch_allowed": row.get("weekly_switch_allowed"),
+                    "market_state": row.get("market_state"),
+                    "industry_state": row.get("industry_state"),
+                    "adaptive_version": row.get("adaptive_version"),
+                    "strategy_source": row.get("strategy_source"),
+                    "ashare_resolved_strategy": row.get("ashare_resolved_strategy"),
+                    "ashare_release_tier": row.get("ashare_release_tier"),
+                    "ashare_weight_profile": row.get("ashare_weight_profile"),
+                    "ashare_supplement_limit": row.get("ashare_supplement_limit"),
+                    "ashare_weight_cache_key": row.get("ashare_weight_cache_key"),
+                    "dual_intersection_count": row.get("dual_intersection_count"),
+                    "dual_union_count": row.get("dual_union_count"),
+                    "ashare_weighted_hit_count": row.get("ashare_weighted_hit_count"),
+                    "ashare_supplement_count": row.get("ashare_supplement_count"),
+                    "ashare_weekly_penalty_count": row.get("ashare_weekly_penalty_count"),
+                    "ashare_risk_veto_filtered_count": row.get("ashare_risk_veto_filtered_count"),
+                    "ashare_weight_penalty": row.get("ashare_weight_penalty"),
+                    "ashare_weight_reason": row.get("ashare_weight_reason"),
+                    "ashare_supplement": row.get("ashare_supplement"),
+                    "target_position_ratio": row.get("target_position_ratio"),
+                    "style_reason": row.get("style_reason"),
+                    "switch_reason": row.get("switch_reason"),
+                    "route_reason": row.get("route_reason"),
+                    "risk_veto_reason": row.get("risk_veto_reason"),
                     "base_strategy": meta.get("base_strategy"),
                     "hold_days": meta.get("hold_days"),
                     "position_ratio": meta.get("position_ratio"),
@@ -725,19 +965,52 @@ def _build_adaptive_dynamic_position_detail(
     asof_date: str,
     latest_prices: dict[str, float],
     top_n: int,
+    strategy_name: str = ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
+    ashare_weight_profile: str | None = None,
+    ashare_release_tier: str | None = None,
+    ashare_supplement_limit: int | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     signal_date = pd.Timestamp(asof_date).date()
     decision = _latest_adaptive_decision(scores, trusted_specs, signal_date, top_n=top_n)
     active_role = str(decision.get("active_role") or "fallback")
-    underlying_name = ADAPTIVE_UNDERLYING[active_role]
+    underlying_name = str(decision.get("selected_strategy") or ADAPTIVE_UNDERLYING[active_role])
     underlying_spec = trusted_specs[underlying_name]
     selected = _select_candidates(day_scores, underlying_spec, top_n=top_n)
     if selected.empty:
         return pd.DataFrame(), decision
     candidates = _build_candidate_rows(selected, underlying_spec, asof_date, latest_prices, top_n)
     position_scale, position_reason = _adaptive_position_scale(decision)
-    candidates["strategy"] = ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME
+    if strategy_name == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
+        ashare_all = _load_ashare_strategy_candidates(
+            create_engine(build_sqlalchemy_url()),
+            scores["trade_date"].min(),
+            signal_date,
+        )
+        ashare_day = _ashare_candidates_for_day(ashare_all, signal_date)
+        enhanced_candidates, enhancement_meta = _build_ashare_weighted_targets(
+            signal_date=signal_date,
+            day_scores=day_scores,
+            chenyiyun_targets=candidates,
+            ashare_day=ashare_day,
+            top_n=top_n,
+            strategy_name=strategy_name,
+            selected_strategy=underlying_spec.name,
+            market_style_state=active_role,
+            target_position_ratio=float(position_scale),
+            route_reason="adaptive_v22_ashare_weighted_enhancement",
+            weight_profile=ashare_weight_profile,
+            release_tier=ashare_release_tier,
+            supplement_limit=ashare_supplement_limit,
+        )
+        if not enhanced_candidates.empty:
+            candidates = enhanced_candidates
+            candidates["latest_close"] = candidates["symbol"].astype(str).str.zfill(6).map(latest_prices)
+            decision.update(enhancement_meta)
+    candidates["strategy"] = strategy_name
     candidates["sort_col"] = f"adaptive:{underlying_spec.name}:{underlying_spec.sort_col}"
+    candidates["underlying_market_exposure_scale"] = pd.to_numeric(
+        candidates["market_exposure_scale"], errors="coerce"
+    ).fillna(1.0)
     candidates["effective_weight"] = pd.to_numeric(candidates["effective_weight"], errors="coerce").fillna(0.0) * float(position_scale)
     candidates["market_exposure_scale"] = pd.to_numeric(
         candidates["market_exposure_scale"], errors="coerce"
@@ -747,10 +1020,141 @@ def _build_adaptive_dynamic_position_detail(
     candidates["adaptive_reason"] = decision.get("reason")
     candidates["adaptive_position_scale"] = float(position_scale)
     candidates["adaptive_position_reason"] = position_reason
+    candidates["market_style_state"] = active_role
+    candidates["selected_strategy"] = underlying_spec.name
+    candidates["recent_champion_strategy"] = decision.get("recent_champion_strategy")
+    candidates["champion_score"] = decision.get("champion_score")
+    candidates["weekly_switch_allowed"] = decision.get("weekly_switch_allowed")
+    candidates["market_state"] = decision.get("market_state")
+    candidates["industry_state"] = decision.get("industry_state")
+    candidates["target_position_ratio"] = float(position_scale)
+    candidates["style_reason"] = decision.get("reason")
+    candidates["switch_reason"] = decision.get("switch_reason") or decision.get("reason")
     decision["adaptive_position_scale"] = float(position_scale)
     decision["adaptive_position_reason"] = position_reason
     decision["adaptive_underlying_strategy"] = underlying_spec.name
+    decision["market_style_state"] = active_role
+    decision["selected_strategy"] = underlying_spec.name
+    decision["recent_champion_strategy"] = decision.get("recent_champion_strategy")
+    decision["target_position_ratio"] = float(position_scale)
+    decision["style_reason"] = decision.get("reason")
+    decision["switch_reason"] = decision.get("switch_reason") or decision.get("reason")
     return candidates, decision
+
+
+def _scale_candidate_weights_for_export(candidates: pd.DataFrame, target_position_ratio: float) -> pd.DataFrame:
+    if candidates.empty:
+        return candidates
+    out = candidates.copy()
+    target = max(0.0, min(1.0, float(target_position_ratio)))
+    weights = pd.to_numeric(out.get("effective_weight"), errors="coerce").fillna(0.0)
+    weight_sum = float(weights.sum())
+    if weight_sum > 0:
+        out["effective_weight"] = weights / weight_sum * target
+    else:
+        out["effective_weight"] = target / max(1, len(out))
+    out["market_exposure_scale"] = target
+    out["target_position_ratio"] = target
+    return out
+
+
+def _build_ashare_shadow_detail(
+    *,
+    scores: pd.DataFrame,
+    day_scores: pd.DataFrame,
+    asof_date: str,
+    latest_prices: dict[str, float],
+    top_n: int,
+    strategy_name: str,
+    position_ratio: float,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    signal_date = pd.Timestamp(asof_date).date()
+    strategy_version = ASHARE_STRATEGY_VERSION_BY_NAME[strategy_name]
+    ashare_all = _load_ashare_strategy_candidates(
+        create_engine(build_sqlalchemy_url()),
+        scores["trade_date"].min(),
+        signal_date,
+    )
+    ashare_day = _ashare_candidates_for_day(ashare_all, signal_date, strategy_version)
+    candidates = _build_ashare_targets(
+        day_scores,
+        ashare_day,
+        top_n,
+        strategy_name=strategy_name,
+        position_ratio=float(position_ratio),
+    )
+    if not candidates.empty:
+        candidates["latest_close"] = candidates["symbol"].astype(str).str.zfill(6).map(latest_prices)
+        candidates = _scale_candidate_weights_for_export(candidates, float(position_ratio))
+    meta = {
+        "market_style_state": "ashare_shadow",
+        "selected_strategy": strategy_name,
+        "strategy_source": "AShareDataCenter",
+        "ashare_resolved_strategy": strategy_version,
+        "target_position_ratio": float(position_ratio),
+        "route_reason": "ashare_shadow_fixed_source",
+        **_ashare_risk_summary(ashare_day),
+    }
+    return candidates, meta
+
+
+def _build_dual_system_candidate_detail(
+    *,
+    scores: pd.DataFrame,
+    day_scores: pd.DataFrame,
+    trusted_specs: dict[str, object],
+    asof_date: str,
+    latest_prices: dict[str, float],
+    top_n: int,
+    ashare_weight_profile: str | None = None,
+    ashare_release_tier: str | None = None,
+    ashare_supplement_limit: int | None = None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    signal_date = pd.Timestamp(asof_date).date()
+    decision = _latest_adaptive_decision(scores, trusted_specs, signal_date, top_n=top_n)
+    active_role = str(decision.get("active_role") or "fallback")
+    underlying_name = str(decision.get("selected_strategy") or ADAPTIVE_UNDERLYING[active_role])
+    underlying_spec = trusted_specs[underlying_name]
+    selected = _select_candidates(day_scores, underlying_spec, top_n=top_n)
+    if selected.empty:
+        chenyiyun_targets = pd.DataFrame()
+    else:
+        chenyiyun_targets = _build_candidate_rows(selected, underlying_spec, asof_date, latest_prices, top_n)
+    ashare_all = _load_ashare_strategy_candidates(
+        create_engine(build_sqlalchemy_url()),
+        scores["trade_date"].min(),
+        signal_date,
+    )
+    ashare_day = _ashare_candidates_for_day(ashare_all, signal_date)
+    candidates, meta = _build_dual_system_targets(
+        signal_date=signal_date,
+        day_scores=day_scores,
+        chenyiyun_targets=chenyiyun_targets,
+        ashare_day=ashare_day,
+        top_n=top_n,
+        strategy_name=DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+        weight_profile=ashare_weight_profile,
+        release_tier=ashare_release_tier,
+        supplement_limit=ashare_supplement_limit,
+    )
+    if not candidates.empty:
+        candidates["latest_close"] = candidates["symbol"].astype(str).str.zfill(6).map(latest_prices)
+        candidates = _scale_candidate_weights_for_export(candidates, _safe_float(meta.get("target_position_ratio"), 0.7))
+        candidates["strategy"] = DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME
+        candidates["sort_col"] = "dual_system_route_score"
+    meta.update(
+        {
+            "market_style_state": candidates["market_style_state"].iloc[0] if not candidates.empty and "market_style_state" in candidates.columns else "dual_freeze",
+            "selected_strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+            "adaptive_underlying_strategy": underlying_spec.name,
+            "ashare_resolved_strategy": meta.get("ashare_market_regime") or "",
+            "style_reason": meta.get("route_reason"),
+            "switch_reason": meta.get("route_reason"),
+            "adaptive_completed_history_rule": "exit_date < signal_date",
+            "adaptive_data_cutoff_date": signal_date,
+        }
+    )
+    return candidates, meta
 
 
 def _load_trade_days(engine, start_date: date, end_date: date) -> list[date]:
@@ -1356,9 +1760,30 @@ def _write_outputs(
         "",
         f"- 策略：`{strategy_display_name(params['strategy'])}`，排序字段：`{params['sort_col']}`。",
         f"- 策略ID：`{params['strategy']}`。",
+        f"- 风险档位：`{params.get('risk_profile')}`；{params.get('risk_profile_description')}",
+        (
+            f"- 市场风格：`{params.get('market_style_state')}`；底层策略："
+            f"`{strategy_display_name(params.get('selected_strategy'))}`；"
+            f"近期冠军：`{strategy_display_name(params.get('recent_champion_strategy'))}`；"
+            f"市场状态：`{params.get('market_state')}`；行业状态：`{params.get('industry_state')}`；"
+            f"周切换：`{'允许' if params.get('weekly_switch_allowed') else '锁定'}`；"
+            f"目标仓位：`{float(params.get('target_position_ratio') or params.get('position_ratio') or 0):.0%}`；"
+            f"原因：`{params.get('switch_reason') or params.get('style_reason')}`。"
+            if params.get("market_style_state")
+            else ""
+        ),
+        (
+            f"- Adaptive 版本：`{params.get('adaptive_version')}`；AShare 权重："
+            f"`{params.get('ashare_weight_profile')}`；放权档位："
+            f"`{params.get('ashare_release_tier')}`；补位上限："
+            f"`{params.get('ashare_supplement_limit')}`。"
+            if params.get("adaptive_version")
+            else ""
+        ),
         f"- 信号日：`{params['asof_date']}`；候选数：Top {params['top_n']}。",
+        f"- 执行层：目标资金比例 `{float(params.get('position_ratio') or 0):.0%}`；持有 `{params.get('hold_days')}` 个交易日；最多持仓 `{params.get('max_total_positions')}` 只。",
         "- 数据截断：价格与评分数据只读取到信号日当天；动态权重只使用已完成持有期的历史样本。",
-        "- 执行方式：人工复核后，下一交易日开盘附近按 `effective_weight` 建仓，计划持有 10 个交易日。",
+        "- 执行方式：人工复核后，下一交易日开盘附近按 `effective_weight` 建仓。",
         "",
         "## 风险提示",
         "",
@@ -1385,6 +1810,7 @@ def _write_outputs(
 
 
 def export_candidates(args: argparse.Namespace) -> dict:
+    args = _apply_risk_profile_defaults(args)
     engine = create_engine(build_sqlalchemy_url())
     asof_date = _normalize_date(args.date) or _latest_score_date(engine)
     start_date = (pd.Timestamp(asof_date) - pd.Timedelta(days=int(args.history_days))).strftime("%Y-%m-%d")
@@ -1410,26 +1836,127 @@ def export_candidates(args: argparse.Namespace) -> dict:
 
     scores = add_liquidity_derived_features(scores, prices)
     scores = add_forward_returns(scores, prices, args.hold_days)
-    scores, factor_weights = add_dynamic_factor_score(
-        scores,
-        lookback_dates=args.dynamic_lookback_dates,
-        top_n=args.top_n,
+    trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
+    needed_specs: list[object] = []
+    if args.strategy == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME or args.strategy in DUAL_SYSTEM_STRATEGY_NAMES:
+        needed_specs = [trusted_specs[name] for name in set(ADAPTIVE_UNDERLYING.values()) if name in trusted_specs]
+    elif spec is not None:
+        needed_specs = [spec]
+    needs_dynamic = any(
+        getattr(item, "sort_col", "") in {"dynamic_factor_score", "dynamic_ic_factor_score"}
+        for item in needed_specs
     )
-    scores, ic_weights = add_dynamic_ic_factor_score(
-        scores,
-        lookback_dates=args.dynamic_lookback_dates,
-    )
-    if not factor_weights.empty:
-        factor_weights["method"] = "long_topn_return"
-    factor_weights = pd.concat([factor_weights, ic_weights], ignore_index=True, sort=False)
+    if needs_dynamic:
+        scores, factor_weights = add_dynamic_factor_score(
+            scores,
+            lookback_dates=args.dynamic_lookback_dates,
+            top_n=args.top_n,
+        )
+        scores, ic_weights = add_dynamic_ic_factor_score(
+            scores,
+            lookback_dates=args.dynamic_lookback_dates,
+        )
+        if not factor_weights.empty:
+            factor_weights["method"] = "long_topn_return"
+        factor_weights = pd.concat([factor_weights, ic_weights], ignore_index=True, sort=False)
+    else:
+        factor_weights = pd.DataFrame()
     market_env = build_market_environment(scores, prices)
     scores = attach_market_environment(scores, market_env)
 
     signal_date = pd.Timestamp(asof_date).date()
     day_scores = scores[scores["trade_date"].eq(signal_date)].copy()
-    selected = _select_candidates(day_scores, spec, top_n=args.top_n)
+    adaptive_decision: dict[str, object] | None = None
+    target_position_ratio = float(args.position_ratio)
+    if args.strategy == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
+        candidates, adaptive_decision = _build_adaptive_dynamic_position_detail(
+            scores=scores,
+            day_scores=day_scores,
+            trusted_specs=trusted_specs,
+            asof_date=asof_date,
+            latest_prices=(
+                prices[prices["trade_date"].eq(signal_date)]
+                .drop_duplicates("symbol")
+                .set_index("symbol")["adj_close"]
+                .to_dict()
+            ),
+            top_n=args.top_n,
+            strategy_name=ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+            ashare_weight_profile=args.ashare_weight_profile,
+            ashare_release_tier=args.ashare_release_tier,
+            ashare_supplement_limit=args.ashare_supplement_limit,
+        )
+        selected_strategy = str(adaptive_decision.get("adaptive_underlying_strategy") or adaptive_decision.get("selected_strategy"))
+        spec = trusted_specs[selected_strategy]
+        target_position_ratio = max(0.0, min(1.0, float(args.position_ratio) * float(adaptive_decision.get("adaptive_position_scale") or 1.0)))
+        selected = pd.DataFrame()
+    elif args.strategy == DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME:
+        candidates, adaptive_decision = _build_dual_system_candidate_detail(
+            scores=scores,
+            day_scores=day_scores,
+            trusted_specs=trusted_specs,
+            asof_date=asof_date,
+            latest_prices=(
+                prices[prices["trade_date"].eq(signal_date)]
+                .drop_duplicates("symbol")
+                .set_index("symbol")["adj_close"]
+                .to_dict()
+            ),
+            top_n=args.top_n,
+            ashare_weight_profile=args.ashare_weight_profile,
+            ashare_release_tier=args.ashare_release_tier,
+            ashare_supplement_limit=args.ashare_supplement_limit,
+        )
+        if candidates.empty:
+            warnings_msg = "AShare双系统路由无可用候选，回退 adaptive_market_style。"
+            candidates, adaptive_decision = _build_adaptive_dynamic_position_detail(
+                scores=scores,
+                day_scores=day_scores,
+                trusted_specs=trusted_specs,
+                asof_date=asof_date,
+                latest_prices=(
+                    prices[prices["trade_date"].eq(signal_date)]
+                    .drop_duplicates("symbol")
+                    .set_index("symbol")["adj_close"]
+                    .to_dict()
+                ),
+                top_n=args.top_n,
+                strategy_name=DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+                ashare_weight_profile=args.ashare_weight_profile,
+                ashare_release_tier=args.ashare_release_tier,
+                ashare_supplement_limit=args.ashare_supplement_limit,
+            )
+            adaptive_decision["route_reason"] = warnings_msg
+            adaptive_decision["strategy_source"] = "Chenyiyun2087_fallback"
+        selected_strategy = str(adaptive_decision.get("adaptive_underlying_strategy") or "baseline_full_liquidity")
+        spec = trusted_specs.get(selected_strategy) or trusted_specs["baseline_full_liquidity"]
+        target_position_ratio = max(0.0, min(1.0, float(adaptive_decision.get("target_position_ratio") or args.position_ratio)))
+        selected = pd.DataFrame()
+    elif args.strategy in ASHARE_STRATEGY_VERSION_BY_NAME:
+        candidates, adaptive_decision = _build_ashare_shadow_detail(
+            scores=scores,
+            day_scores=day_scores,
+            asof_date=asof_date,
+            latest_prices=(
+                prices[prices["trade_date"].eq(signal_date)]
+                .drop_duplicates("symbol")
+                .set_index("symbol")["adj_close"]
+                .to_dict()
+            ),
+            top_n=args.top_n,
+            strategy_name=args.strategy,
+            position_ratio=float(args.position_ratio),
+        )
+        selected_strategy = "baseline_full_liquidity"
+        spec = trusted_specs[selected_strategy]
+        target_position_ratio = float(args.position_ratio)
+        selected = pd.DataFrame()
+    else:
+        selected = _select_candidates(day_scores, spec, top_n=args.top_n)
+    pseudo_strategy_names = {ADAPTIVE_MARKET_STYLE_STRATEGY_NAME, *DUAL_SYSTEM_STRATEGY_NAMES}
     if selected.empty:
-        raise RuntimeError(f"No candidates selected for {asof_date} with strategy `{spec.name}`.")
+        if args.strategy not in pseudo_strategy_names or candidates.empty:
+            raise RuntimeError(f"No candidates selected for {asof_date} with strategy `{args.strategy}`.")
 
     latest_prices = (
         prices[prices["trade_date"].eq(signal_date)]
@@ -1437,13 +1964,14 @@ def export_candidates(args: argparse.Namespace) -> dict:
         .set_index("symbol")["adj_close"]
         .to_dict()
     )
-    candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
+    if args.strategy not in pseudo_strategy_names:
+        candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
 
     warnings: list[str] = []
     if candidates["industry"].fillna("").str.strip().eq("").any():
         warnings.append("存在空行业字段，请先运行 industry 回填。")
     if candidates["effective_weight"].sum() < 0.95:
-        warnings.append(f"组合有效仓位为 {candidates['effective_weight'].sum():.2%}，请确认是否由市场门禁降仓触发。")
+        warnings.append(f"组合有效仓位为 {candidates['effective_weight'].sum():.2%}，请确认是否由市场门禁或风格状态降仓触发。")
     latest_weight = factor_weights[factor_weights["trade_date"].astype(str).eq(asof_date)] if not factor_weights.empty else pd.DataFrame()
     if latest_weight.empty:
         warnings.append("未找到信号日动态权重记录，动态排序可能退化为等权因子。")
@@ -1455,10 +1983,20 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "start_date": start_date,
         "history_days": int(args.history_days),
         "strategy": spec.name,
+        "selected_strategy": spec.name,
+        "selected_strategy_display_name": strategy_display_name(spec.name),
         "sort_col": spec.sort_col,
         "top_n": int(args.top_n),
         "hold_days": int(args.hold_days),
         "max_total_positions": int(args.max_total_positions),
+        "position_ratio": float(args.position_ratio),
+        "target_position_ratio": float(target_position_ratio),
+        "risk_profile": str(args.risk_profile),
+        "risk_profile_description": str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
+        "adaptive_version": ASHARE_ADAPTIVE_VERSION if args.strategy == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME else None,
+        "ashare_weight_profile": str(args.ashare_weight_profile),
+        "ashare_release_tier": str(args.ashare_release_tier or ""),
+        "ashare_supplement_limit": args.ashare_supplement_limit,
         "dynamic_lookback_dates": int(args.dynamic_lookback_dates),
         "min_pool_size": int(args.min_pool_size),
         "score_dates": int(scores["trade_date"].nunique()),
@@ -1466,8 +2004,67 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "price_max_date": str(max(prices["trade_date"].dropna())),
         "pit_status": spec.pit_status,
         "risk_note": spec.risk_note,
+        "market_gate": bool(spec.market_gate),
+        "market_gate_triggered": bool(
+            "underlying_market_exposure_scale" in candidates.columns
+            and (pd.to_numeric(candidates["underlying_market_exposure_scale"], errors="coerce").fillna(1.0) < 1.0).any()
+        )
+        if adaptive_decision
+        else bool(
+            "market_exposure_scale" in candidates.columns
+            and (pd.to_numeric(candidates["market_exposure_scale"], errors="coerce").fillna(1.0) < 1.0).any()
+        ),
     }
-    out_dir = OUT_ROOT / datetime.now().strftime(f"%Y%m%d_%H%M%S_{spec.name}")
+    if adaptive_decision:
+        strategy_for_params = str(args.strategy)
+        sort_prefix = "adaptive" if strategy_for_params == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME else strategy_for_params
+        params.update(
+            {
+                "strategy": strategy_for_params,
+                "strategy_display_name": strategy_display_name(strategy_for_params),
+                "sort_col": f"{sort_prefix}:{spec.name}:{spec.sort_col}",
+                "market_style_state": adaptive_decision.get("market_style_state") or adaptive_decision.get("active_role"),
+                "style_reason": adaptive_decision.get("style_reason") or adaptive_decision.get("reason"),
+                "switch_reason": adaptive_decision.get("switch_reason") or adaptive_decision.get("route_reason") or adaptive_decision.get("reason"),
+                "selected_strategy": adaptive_decision.get("selected_strategy") or spec.name,
+                "selected_strategy_display_name": strategy_display_name(adaptive_decision.get("selected_strategy") or spec.name),
+                "recent_champion_strategy": adaptive_decision.get("recent_champion_strategy"),
+                "recent_champion_display_name": strategy_display_name(adaptive_decision.get("recent_champion_strategy")),
+                "champion_score": adaptive_decision.get("champion_score"),
+                "weekly_switch_allowed": adaptive_decision.get("weekly_switch_allowed"),
+                "market_state": adaptive_decision.get("market_state"),
+                "industry_state": adaptive_decision.get("industry_state"),
+                "adaptive_version": adaptive_decision.get("adaptive_version") or ASHARE_ADAPTIVE_VERSION,
+                "strategy_source": adaptive_decision.get("strategy_source"),
+                "ashare_resolved_strategy": adaptive_decision.get("ashare_resolved_strategy"),
+                "ashare_release_tier": adaptive_decision.get("ashare_release_tier"),
+                "ashare_weight_profile": adaptive_decision.get("ashare_weight_profile"),
+                "ashare_supplement_limit": adaptive_decision.get("ashare_supplement_limit"),
+                "ashare_weight_cache_key": adaptive_decision.get("ashare_weight_cache_key"),
+                "ashare_available": adaptive_decision.get("ashare_available"),
+                "ashare_candidate_count": adaptive_decision.get("ashare_candidate_count"),
+                "ashare_risk_veto_ratio": adaptive_decision.get("ashare_risk_veto_ratio"),
+                "ashare_market_regime": adaptive_decision.get("ashare_market_regime"),
+                "ashare_governance_hint": adaptive_decision.get("ashare_governance_hint"),
+                "dual_intersection_count": adaptive_decision.get("dual_intersection_count"),
+                "dual_union_count": adaptive_decision.get("dual_union_count"),
+                "ashare_weighted_hit_count": adaptive_decision.get("ashare_weighted_hit_count"),
+                "ashare_supplement_count": adaptive_decision.get("ashare_supplement_count"),
+                "ashare_weekly_penalty_count": adaptive_decision.get("ashare_weekly_penalty_count"),
+                "ashare_risk_veto_filtered_count": adaptive_decision.get("ashare_risk_veto_filtered_count"),
+                "ashare_industry_concentration_triggered": adaptive_decision.get("ashare_industry_concentration_triggered"),
+                "route_reason": adaptive_decision.get("route_reason"),
+                "risk_veto_reason": adaptive_decision.get("risk_veto_reason"),
+                "target_position_ratio": float(target_position_ratio),
+                "adaptive_position_scale": adaptive_decision.get("adaptive_position_scale"),
+                "adaptive_position_reason": adaptive_decision.get("adaptive_position_reason"),
+                "adaptive_underlying_strategy": spec.name,
+                "adaptive_data_cutoff_date": adaptive_decision.get("data_cutoff_date") or adaptive_decision.get("adaptive_data_cutoff_date"),
+                "adaptive_completed_history_rule": adaptive_decision.get("completed_history_rule") or adaptive_decision.get("adaptive_completed_history_rule"),
+            }
+        )
+    output_strategy_name = str(params.get("strategy") or spec.name)
+    out_dir = OUT_ROOT / datetime.now().strftime(f"%Y%m%d_%H%M%S_{output_strategy_name}")
     files = _write_outputs(out_dir, candidates, factor_weights, market_env, params, warnings)
     db_write: dict[str, object] = {}
     if args.write_db:
@@ -1503,6 +2100,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
         orders.to_csv(order_path, index=False)
         db_write["orders_csv"] = str(order_path)
         db_write["total_equity_used"] = total_equity
+        db_write["target_position_ratio"] = float(target_position_ratio)
         db_write["order_rows"] = int(len(orders))
         db_write["hold_gate_min_days"] = int(args.hold_days)
         db_write["hold_gate_locked_positions"] = int(len(orders.attrs.get("hold_gate_locked_symbols") or []))
@@ -1517,91 +2115,47 @@ def export_candidates(args: argparse.Namespace) -> dict:
                     signal_snapshot_table=args.signal_snapshot_table,
                 )
             )
-        if args.notify_feishu:
-            webhook_url = _load_feishu_webhook(engine)
-            if not webhook_url:
-                raise RuntimeError(
-                    "Feishu notification requested but no enabled webhook was found. "
-                    "Configure FEISHU_WEBHOOK_URL or chenyiyun.app_notification_channel."
+        strategy_order_details: dict[str, dict[str, pd.DataFrame]] = {}
+        trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
+        for detail_config in ORDER_DETAIL_CONFIGS:
+            detail_name = str(detail_config["detail_id"])
+            base_strategy = str(detail_config.get("base_strategy") or detail_name)
+            detail_hold_days = int(detail_config.get("hold_days") or args.hold_days)
+            detail_position_ratio = float(detail_config.get("position_ratio", args.position_ratio))
+            detail_total_equity = account_total_equity * detail_position_ratio
+            detail_meta: dict[str, object] = {
+                "base_strategy": base_strategy,
+                "hold_days": detail_hold_days,
+                "position_ratio": detail_position_ratio,
+                "total_equity_used": detail_total_equity,
+                "shadow_note": detail_config.get("shadow_note"),
+            }
+            if base_strategy in ASHARE_STRATEGY_VERSION_BY_NAME:
+                detail_candidates, detail_meta = _build_ashare_shadow_detail(
+                    scores=scores,
+                    day_scores=day_scores,
+                    asof_date=asof_date,
+                    latest_prices=latest_prices,
+                    top_n=args.top_n,
+                    strategy_name=base_strategy,
+                    position_ratio=detail_position_ratio,
                 )
-            strategy_order_details: dict[str, dict[str, pd.DataFrame]] = {}
-            trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
-            for detail_config in ORDER_DETAIL_CONFIGS:
-                detail_name = str(detail_config["detail_id"])
-                base_strategy = str(detail_config.get("base_strategy") or detail_name)
-                detail_hold_days = int(detail_config.get("hold_days") or args.hold_days)
-                detail_position_ratio = float(detail_config.get("position_ratio", args.position_ratio))
-                detail_total_equity = account_total_equity * detail_position_ratio
-                detail_meta: dict[str, object] = {
-                    "base_strategy": base_strategy,
-                    "hold_days": detail_hold_days,
-                    "position_ratio": detail_position_ratio,
-                    "total_equity_used": detail_total_equity,
-                    "shadow_note": detail_config.get("shadow_note"),
-                }
-                if base_strategy == ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME:
-                    detail_candidates, detail_meta = _build_adaptive_dynamic_position_detail(
-                        scores=scores,
-                        day_scores=day_scores,
-                        trusted_specs=trusted_specs,
-                        asof_date=asof_date,
-                        latest_prices=latest_prices,
-                        top_n=args.top_n,
-                    )
-                    detail_meta.update(
-                        {
-                            "base_strategy": base_strategy,
-                            "hold_days": detail_hold_days,
-                            "position_ratio": detail_position_ratio,
-                            "total_equity_used": detail_total_equity,
-                            "shadow_note": detail_config.get("shadow_note"),
-                        }
-                    )
-                    if detail_candidates.empty:
-                        strategy_order_details[detail_name] = {
-                            "candidates": pd.DataFrame(),
-                            "orders": pd.DataFrame(),
-                            "meta": detail_meta,
-                        }
-                        continue
-                    detail_orders = _build_rebalance_orders(
-                        detail_candidates,
-                        positions=positions,
-                        latest_price_lookup=latest_price_lookup,
-                        total_equity=detail_total_equity,
-                        lot_size=args.lot_size,
-                        min_trade_value=args.min_trade_value,
-                        include_sells=not args.buy_only,
-                        min_holding_days=detail_hold_days,
-                        max_total_positions=args.max_total_positions,
-                    )
-                    strategy_order_details[detail_name] = {
-                        "candidates": detail_candidates,
-                        "orders": detail_orders,
-                        "meta": detail_meta,
+                detail_meta.update(
+                    {
+                        "base_strategy": base_strategy,
+                        "hold_days": detail_hold_days,
+                        "position_ratio": detail_position_ratio,
+                        "total_equity_used": detail_total_equity,
+                        "shadow_note": detail_config.get("shadow_note"),
                     }
-                    continue
-                detail_spec = trusted_specs.get(base_strategy)
-                if detail_spec is None:
-                    continue
-                detail_selected = _select_candidates(day_scores, detail_spec, top_n=args.top_n)
-                if detail_selected.empty:
+                )
+                if detail_candidates.empty:
                     strategy_order_details[detail_name] = {
                         "candidates": pd.DataFrame(),
                         "orders": pd.DataFrame(),
                         "meta": detail_meta,
                     }
                     continue
-                detail_candidates = _build_candidate_rows(
-                    detail_selected,
-                    detail_spec,
-                    asof_date,
-                    latest_prices,
-                    args.top_n,
-                )
-                if detail_name != base_strategy:
-                    detail_candidates["strategy"] = detail_name
-                    detail_candidates["sort_col"] = f"{base_strategy}:{detail_spec.sort_col}"
                 detail_orders = _build_rebalance_orders(
                     detail_candidates,
                     positions=positions,
@@ -1618,8 +2172,146 @@ def export_candidates(args: argparse.Namespace) -> dict:
                     "orders": detail_orders,
                     "meta": detail_meta,
                 }
-            detail_files = _write_strategy_order_detail_outputs(out_dir, strategy_order_details)
-            db_write["strategy_order_detail_files"] = detail_files
+                continue
+            if base_strategy == DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME:
+                detail_candidates, detail_meta = _build_dual_system_candidate_detail(
+                    scores=scores,
+                    day_scores=day_scores,
+                    trusted_specs=trusted_specs,
+                    asof_date=asof_date,
+                    latest_prices=latest_prices,
+                    top_n=args.top_n,
+                )
+                detail_meta.update(
+                    {
+                        "base_strategy": base_strategy,
+                        "hold_days": detail_hold_days,
+                        "position_ratio": detail_position_ratio,
+                        "total_equity_used": detail_total_equity,
+                        "shadow_note": detail_config.get("shadow_note"),
+                    }
+                )
+                if detail_candidates.empty:
+                    strategy_order_details[detail_name] = {
+                        "candidates": pd.DataFrame(),
+                        "orders": pd.DataFrame(),
+                        "meta": detail_meta,
+                    }
+                    continue
+                detail_orders = _build_rebalance_orders(
+                    detail_candidates,
+                    positions=positions,
+                    latest_price_lookup=latest_price_lookup,
+                    total_equity=detail_total_equity,
+                    lot_size=args.lot_size,
+                    min_trade_value=args.min_trade_value,
+                    include_sells=not args.buy_only,
+                    min_holding_days=detail_hold_days,
+                    max_total_positions=args.max_total_positions,
+                )
+                strategy_order_details[detail_name] = {
+                    "candidates": detail_candidates,
+                    "orders": detail_orders,
+                    "meta": detail_meta,
+                }
+                continue
+            if base_strategy in {ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME, ADAPTIVE_MARKET_STYLE_STRATEGY_NAME}:
+                detail_candidates, detail_meta = _build_adaptive_dynamic_position_detail(
+                    scores=scores,
+                    day_scores=day_scores,
+                    trusted_specs=trusted_specs,
+                    asof_date=asof_date,
+                    latest_prices=latest_prices,
+                    top_n=args.top_n,
+                    strategy_name=detail_name,
+                    ashare_weight_profile=args.ashare_weight_profile,
+                    ashare_release_tier=args.ashare_release_tier,
+                    ashare_supplement_limit=args.ashare_supplement_limit,
+                )
+                detail_meta.update(
+                    {
+                        "base_strategy": base_strategy,
+                        "hold_days": detail_hold_days,
+                        "position_ratio": detail_position_ratio,
+                        "total_equity_used": detail_total_equity,
+                        "shadow_note": detail_config.get("shadow_note"),
+                    }
+                )
+                if detail_meta.get("adaptive_position_scale") is not None:
+                    detail_meta["target_position_ratio"] = max(
+                        0.0,
+                        min(1.0, detail_position_ratio * float(detail_meta.get("adaptive_position_scale") or 1.0)),
+                    )
+                if detail_candidates.empty:
+                    strategy_order_details[detail_name] = {
+                        "candidates": pd.DataFrame(),
+                        "orders": pd.DataFrame(),
+                        "meta": detail_meta,
+                    }
+                    continue
+                detail_orders = _build_rebalance_orders(
+                    detail_candidates,
+                    positions=positions,
+                    latest_price_lookup=latest_price_lookup,
+                    total_equity=detail_total_equity,
+                    lot_size=args.lot_size,
+                    min_trade_value=args.min_trade_value,
+                    include_sells=not args.buy_only,
+                    min_holding_days=detail_hold_days,
+                    max_total_positions=args.max_total_positions,
+                )
+                strategy_order_details[detail_name] = {
+                    "candidates": detail_candidates,
+                    "orders": detail_orders,
+                    "meta": detail_meta,
+                }
+                continue
+            detail_spec = trusted_specs.get(base_strategy)
+            if detail_spec is None:
+                continue
+            detail_selected = _select_candidates(day_scores, detail_spec, top_n=args.top_n)
+            if detail_selected.empty:
+                strategy_order_details[detail_name] = {
+                    "candidates": pd.DataFrame(),
+                    "orders": pd.DataFrame(),
+                    "meta": detail_meta,
+                }
+                continue
+            detail_candidates = _build_candidate_rows(
+                detail_selected,
+                detail_spec,
+                asof_date,
+                latest_prices,
+                args.top_n,
+            )
+            if detail_name != base_strategy:
+                detail_candidates["strategy"] = detail_name
+                detail_candidates["sort_col"] = f"{base_strategy}:{detail_spec.sort_col}"
+            detail_orders = _build_rebalance_orders(
+                detail_candidates,
+                positions=positions,
+                latest_price_lookup=latest_price_lookup,
+                total_equity=detail_total_equity,
+                lot_size=args.lot_size,
+                min_trade_value=args.min_trade_value,
+                include_sells=not args.buy_only,
+                min_holding_days=detail_hold_days,
+                max_total_positions=args.max_total_positions,
+            )
+            strategy_order_details[detail_name] = {
+                "candidates": detail_candidates,
+                "orders": detail_orders,
+                "meta": detail_meta,
+            }
+        detail_files = _write_strategy_order_detail_outputs(out_dir, strategy_order_details)
+        db_write["strategy_order_detail_files"] = detail_files
+        if args.notify_feishu:
+            webhook_url = _load_feishu_webhook(engine)
+            if not webhook_url:
+                raise RuntimeError(
+                    "Feishu notification requested but no enabled webhook was found. "
+                    "Configure FEISHU_WEBHOOK_URL or chenyiyun.app_notification_channel."
+                )
             content = _format_order_notification(
                 asof_date=asof_date,
                 strategy=spec.name,
@@ -1627,6 +2319,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 orders=orders,
                 files=files,
                 total_equity_used=total_equity,
+                risk_profile=str(args.risk_profile),
+                risk_profile_description=str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
                 strategy_order_details=strategy_order_details,
             )
             ok, reason = _send_feishu_text(webhook_url, content)
@@ -1645,9 +2339,32 @@ def export_candidates(args: argparse.Namespace) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export latest trusted strategy candidates for production review.")
     parser.add_argument("--date", default=None, help="Signal date, YYYY-MM-DD or YYYYMMDD. Defaults to latest score date.")
-    parser.add_argument("--strategy", default=DEFAULT_STRATEGY)
+    parser.add_argument(
+        "--risk-profile",
+        default=DEFAULT_RISK_PROFILE,
+        choices=sorted(RISK_PROFILE_DEFAULTS),
+        help="Production risk profile. Defaults fill strategy, hold-days, and position-ratio when those args are omitted.",
+    )
+    parser.add_argument("--strategy", default=None)
+    parser.add_argument(
+        "--ashare-weight-profile",
+        default=ASHARE_DEFAULT_WEIGHT_PROFILE,
+        choices=sorted(ASHARE_WEIGHT_PROFILE_DEFAULTS),
+        help="AShare weighted enhancement profile for adaptive_market_style and dual route.",
+    )
+    parser.add_argument(
+        "--ashare-release-tier",
+        default=None,
+        help="Override AShare release tier label written to reports. Defaults to the profile tier.",
+    )
+    parser.add_argument(
+        "--ashare-supplement-limit",
+        type=int,
+        default=None,
+        help="Override max AShare supplement names when Chenyiyun candidates are underfilled or concentrated.",
+    )
     parser.add_argument("--top-n", type=int, default=5)
-    parser.add_argument("--hold-days", type=int, default=10)
+    parser.add_argument("--hold-days", type=int, default=None)
     parser.add_argument("--history-days", type=int, default=220)
     parser.add_argument("--dynamic-lookback-dates", type=int, default=20)
     parser.add_argument("--min-pool-size", type=int, default=5000)
@@ -1660,7 +2377,7 @@ def main() -> None:
     parser.add_argument("--order-table", default="chenyiyun.ads_local_strategy_orders")
     parser.add_argument("--signal-snapshot-table", default="chenyiyun.ads_chenyiyun_selected_signals")
     parser.add_argument("--total-equity", type=float, default=None)
-    parser.add_argument("--position-ratio", type=float, default=1.0)
+    parser.add_argument("--position-ratio", type=float, default=None)
     parser.add_argument("--lot-size", type=int, default=100)
     parser.add_argument("--min-trade-value", type=float, default=500.0)
     parser.add_argument(
@@ -1671,7 +2388,14 @@ def main() -> None:
     )
     parser.add_argument("--buy-only", action="store_true", help="Do not generate SELL rebalance orders.")
     parser.add_argument("--notify-feishu", action="store_true", help="Send Feishu notification after local order draft generation.")
+    raw_argv = sys.argv[1:]
     args = parser.parse_args()
+    args = _apply_risk_profile_defaults(
+        args,
+        strategy_explicit="--strategy" in raw_argv,
+        hold_days_explicit="--hold-days" in raw_argv,
+        position_ratio_explicit="--position-ratio" in raw_argv,
+    )
     print(json.dumps(export_candidates(args), ensure_ascii=False, indent=2, default=str))
 
 
