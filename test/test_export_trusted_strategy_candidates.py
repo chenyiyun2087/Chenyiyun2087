@@ -2,7 +2,11 @@ import pandas as pd
 
 from scripts.ops.export_trusted_strategy_candidates import _build_rebalance_orders
 from scripts.research_trusted_strategy_account_backtest import (
+    ASHARE_ADAPTIVE_VERSION,
+    ASHARE_WEEKLY_UNCONFIRMED_WEIGHT,
+    _ashare_weight_cache_key,
     _build_dual_system_targets,
+    _resolve_ashare_weight_config,
     _symbol_from_ts_code,
 )
 
@@ -117,3 +121,154 @@ def test_dual_system_targets_freeze_on_high_ashare_veto_ratio():
     assert targets.empty
     assert meta["target_position_ratio"] == 0.0
     assert meta["risk_veto_reason"] == "dual_freeze_ashare_crash_or_high_veto"
+
+
+def test_dual_system_targets_downweight_weekly_unconfirmed_without_dropping():
+    day_scores = pd.DataFrame(
+        [
+            {"trade_date": "2026-06-03", "symbol": "000001", "score": 80, "index_bucket": "index_neutral", "market_amount_ratio_20": 1.0},
+            {"trade_date": "2026-06-03", "symbol": "000002", "score": 70, "index_bucket": "index_neutral", "market_amount_ratio_20": 1.0},
+        ]
+    )
+    chenyiyun = pd.DataFrame(
+        [
+            {"symbol": "000001", "rank": 1, "rank_score": 80, "effective_weight": 0.5, "name": "A", "industry": "I1"},
+            {"symbol": "000002", "rank": 2, "rank_score": 70, "effective_weight": 0.5, "name": "B", "industry": "I2"},
+        ]
+    )
+    ashare = pd.DataFrame(
+        [
+            {
+                "symbol": "000002",
+                "strategy_version": "AUTO",
+                "source_strategy": "AUTO",
+                "source_rank": 1,
+                "source_score": 90,
+                "risk_veto_flag": 0,
+                "weekly_confirm_pass": 0,
+            }
+        ]
+    )
+
+    targets, meta = _build_dual_system_targets(
+        signal_date="2026-06-03",
+        day_scores=day_scores,
+        chenyiyun_targets=chenyiyun,
+        ashare_day=ashare,
+        top_n=2,
+        strategy_name="dual_system_adaptive_route",
+    )
+
+    row = targets[targets["symbol"].eq("000002")].iloc[0]
+    assert row["ashare_hit"] == 1
+    assert row["ashare_weight_penalty"] == ASHARE_WEEKLY_UNCONFIRMED_WEIGHT
+    assert meta["ashare_weekly_penalty_count"] == 1
+
+
+def test_dual_system_targets_cap_ashare_supplements_when_chenyiyun_is_concentrated():
+    day_scores = pd.DataFrame(
+        [
+            {"trade_date": "2026-06-03", "symbol": f"00000{i}", "score": 80 - i, "index_bucket": "index_neutral", "market_amount_ratio_20": 1.0}
+            for i in range(1, 9)
+        ]
+    )
+    chenyiyun = pd.DataFrame(
+        [
+            {"symbol": f"00000{i}", "rank": i, "rank_score": 80 - i, "effective_weight": 0.2, "name": f"C{i}", "industry": "I1"}
+            for i in range(1, 6)
+        ]
+    )
+    ashare = pd.DataFrame(
+        [
+            {
+                "symbol": f"00000{i}",
+                "strategy_version": "AUTO",
+                "source_strategy": "AUTO",
+                "source_rank": i,
+                "source_score": 100 - i,
+                "risk_veto_flag": 0,
+                "weekly_confirm_pass": 1,
+                "stock_name": f"A{i}",
+            }
+            for i in range(6, 9)
+        ]
+    )
+
+    targets, meta = _build_dual_system_targets(
+        signal_date="2026-06-03",
+        day_scores=day_scores,
+        chenyiyun_targets=chenyiyun,
+        ashare_day=ashare,
+        top_n=5,
+        strategy_name="dual_system_adaptive_route",
+    )
+
+    assert int(targets["ashare_supplement"].fillna(0).sum()) <= 2
+    assert meta["ashare_supplement_count"] <= 2
+
+
+def test_ashare_weight_profile_rejects_unknown_profile():
+    try:
+        _resolve_ashare_weight_config(profile="not_a_profile")
+    except ValueError as exc:
+        assert "Unknown AShare weight profile" in str(exc)
+    else:
+        raise AssertionError("unknown AShare weight profile should fail")
+
+
+def test_ashare_research_stage2_allows_three_supplements_and_records_v22_fields():
+    day_scores = pd.DataFrame(
+        [
+            {"trade_date": "2026-06-03", "symbol": f"00000{i}", "score": 80 - i, "index_bucket": "index_neutral", "market_amount_ratio_20": 1.0}
+            for i in range(1, 10)
+        ]
+    )
+    chenyiyun = pd.DataFrame(
+        [
+            {"symbol": f"00000{i}", "rank": i, "rank_score": 80 - i, "effective_weight": 0.2, "name": f"C{i}", "industry": "I1"}
+            for i in range(1, 6)
+        ]
+    )
+    ashare = pd.DataFrame(
+        [
+            {
+                "symbol": f"00000{i}",
+                "strategy_version": "AUTO",
+                "source_strategy": "AUTO",
+                "source_rank": i,
+                "source_score": 100 - i,
+                "risk_veto_flag": 0,
+                "weekly_confirm_pass": 1,
+                "stock_name": f"A{i}",
+            }
+            for i in range(6, 10)
+        ]
+    )
+
+    targets, meta = _build_dual_system_targets(
+        signal_date="2026-06-03",
+        day_scores=day_scores,
+        chenyiyun_targets=chenyiyun,
+        ashare_day=ashare,
+        top_n=5,
+        strategy_name="dual_system_adaptive_route",
+        weight_profile="research_stage2",
+    )
+
+    assert int(targets["ashare_supplement"].fillna(0).sum()) <= 3
+    assert meta["ashare_supplement_limit"] == 3
+    assert meta["adaptive_version"] == ASHARE_ADAPTIVE_VERSION
+    assert meta["ashare_weight_profile"] == "research_stage2"
+    assert "v2.2" in meta["ashare_weight_cache_key"]
+
+
+def test_ashare_weight_cache_key_includes_release_tier_and_limit():
+    config = _resolve_ashare_weight_config(
+        profile="prod_stage1",
+        release_tier="custom_tier",
+        supplement_limit=1,
+    )
+    key = _ashare_weight_cache_key(config, "2026-06-03", "baseline_full_liquidity", 5)
+
+    assert "custom_tier" in key
+    assert "limit1" in key

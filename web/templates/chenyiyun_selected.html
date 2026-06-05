@@ -85,6 +85,24 @@
         </div>
         <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 10px;">
             <div>
+                <div class="muted" style="font-size: 12px;">Adaptive版本</div>
+                <strong>{{ latest_trusted_params.adaptive_version or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">AShare权重</div>
+                <strong>{{ latest_trusted_params.ashare_weight_profile or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">放权档位</div>
+                <strong>{{ latest_trusted_params.ashare_release_tier or '-' }}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">补位上限</div>
+                <strong>{{ latest_trusted_params.ashare_supplement_limit if latest_trusted_params.ashare_supplement_limit is not none else '-' }}</strong>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 10px;">
+            <div>
                 <div class="muted" style="font-size: 12px;">策略来源</div>
                 <strong>{{ latest_trusted_params.strategy_source or '-' }}</strong>
             </div>
@@ -106,6 +124,9 @@
         </div>
         <div class="muted" style="margin-top: 6px; font-size: 12px;">
             AShare候选 {{ latest_trusted_params.ashare_candidate_count or 0 }} 条；风险否决占比 {{ latest_trusted_params.ashare_risk_veto_ratio if latest_trusted_params.ashare_risk_veto_ratio is not none else '-' }}；市场状态 {{ latest_trusted_params.ashare_market_regime or '-' }}
+        </div>
+        <div class="muted" style="margin-top: 6px; font-size: 12px;">
+            AShare加权 {{ latest_trusted_params.ashare_weighted_hit_count or 0 }} 只；补位 {{ latest_trusted_params.ashare_supplement_count or 0 }} 只；周线降权 {{ latest_trusted_params.ashare_weekly_penalty_count or 0 }} 只；风险过滤 {{ latest_trusted_params.ashare_risk_veto_filtered_count or 0 }} 只
         </div>
     </div>
     {% endif %}

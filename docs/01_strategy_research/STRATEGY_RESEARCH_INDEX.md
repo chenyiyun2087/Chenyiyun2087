@@ -12,7 +12,7 @@
 
 | 策略 | 类型 | 用途 | 备注 |
 |---|---|---|---|
-| `adaptive_market_style` | 生产默认 | 市场风格自适应生产策略 | 当前默认生产风险档 `adaptive` 使用该策略。三年 T+1 账户级回测收益约 +10.33%，最大回撤约 -51.28%；最近一年收益约 +81.10%，最大回撤约 -17.94%。 |
+| `adaptive_market_style` | 生产默认 | 市场风格自适应生产策略 | 当前默认生产风险档 `adaptive` 使用 v2.2：三年 T+1 账户级回测收益约 +42.09%，年化约 +11.36%，最大回撤约 -37.33%；AShare 增强默认最多补位 2 只。 |
 | `tiered_liquidity_then_bs_v2` | 进攻 | 最近一年账户级回测第一 | 适合作为重点研究和生产候选对照。 |
 | `baseline_full_liquidity_detail_market_gate` | 均衡 | adaptive 的 balanced 底层策略 | 普通市场环境默认使用，目标仓位约 80%。 |
 | `baseline_full_liquidity_detail_vol_position` | 稳健 | adaptive 的 robust 底层策略 | 高波动但流动性尚可时使用，目标仓位约 70%。 |

@@ -4,8 +4,15 @@
 
 > 2026-06-04 双系统路由更新：新增 `dual_system_adaptive_route`、`ashare_auto_shadow`、`ashare_trend_breakout_shadow`、`ashare_hybrid_conservative_shadow`。最近 3 个月账户级对照中，AShare AUTO 影子收益约 +8.72%、最大回撤约 -17.28%，`adaptive_market_style` 收益约 +7.36%、最大回撤约 -10.97%，双系统路由收益约 +5.27%、最大回撤约 -12.06%。当前结论：AShare AUTO 有收益弹性但波动更大，dual route 风控较保守，需继续优化 AShare 周线门禁和候选缓存后再跑三年验收。
 
+> 2026-06-04 v2.1 更新：`adaptive_market_style` 已加入 AShare 加权增强，AShare 周线未确认不再硬剔除，而是降权；AShare 补位最多 2 只，ST 类外部候选硬过滤。最近半年窗口收益约 +35.14%、最大回撤约 -11.09%。三年硬底线 `-45%` 尚未完成自动验收，三年单策略回测超过 4 分钟未返回，需继续缓存 adaptive perf 与路由目标后复跑。
+
+> 2026-06-05 v2.2 更新：`adaptive_market_style` 升级为收益优先生产版，正式标记 `adaptive_version=v2.2`、`ashare_weight_profile=prod_stage1`、`ashare_release_tier=production_stage1`，默认 AShare 补位上限 2 只。新增路由磁盘缓存与防守态风险叠加：防守状态且近期冠军分数转负时，目标仓位从 50% 降至 45%。三年 T+1 账户级回测收益约 +42.09%、年化约 +11.36%、最大回撤约 -37.33%，满足三年最大回撤不劣于 -45% 的硬底线。
+
 | 策略名称 | 资金规模 | 回测周期 | 期末权益 | 年化收益 | 最大回撤 | 结论 | 文件夹 |
 |---|---:|---|---:|---:|---:|---|---|
+| `adaptive_market_style` / AShare 加权增强 v2.2 | 50 万 | 2023-01-04 至 2026-06-04 | 710,445 | +11.36% | -37.33% | 三年收益约 +42.09%，默认 AShare 补位上限 2 只；防守态近期冠军转负时降至 45% 仓位，已通过 `-45%` 回撤硬底线 | `exports/signal_research/20260605_004258_229723_trusted_account_backtest/` |
+| `adaptive_market_style` / AShare 加权增强 v2.1 | 50 万 | 2025-12-04 至 2026-06-04 | 675,724 | +91.30% | -11.09% | 半年收益约 +35.14%，周线未确认走降权，AShare 补位最多 2 只；三年硬底线待缓存优化后复跑 | `exports/signal_research/20260604_231724_811158_trusted_account_backtest/` |
+| `dual_system_adaptive_route` / v2.1 对照 | 50 万 | 2025-12-04 至 2026-06-04 | 640,090 | +70.23% | -9.26% | 半年收益约 +28.02%，回撤低于 adaptive，但收益也低于正式 adaptive | `exports/signal_research/20260604_231724_811158_trusted_account_backtest/` |
 | `dual_system_adaptive_route` / 双系统路由 | 50 万 | 2026-03-03 至 2026-06-02 | 526,350 | +24.07% | -12.06% | 最近 3 个月收益约 +5.27%，低于 `adaptive_market_style` 和 AShare AUTO；路由状态含 18 天 attack、22 天 neutral、14 天 defensive、7 天 freeze | `exports/signal_research/20260604_163941_308980_trusted_account_backtest/` |
 | `ashare_auto_shadow` / AShare AUTO 影子 | 50 万 | 2026-03-03 至 2026-06-02 | 543,590 | +42.06% | -17.28% | 最近 3 个月收益约 +8.72%，收益弹性最高但波动和回撤也最高，仅作外部源影子观察 | `exports/signal_research/20260604_163941_308980_trusted_account_backtest/` |
 | `adaptive_market_style` / 双系统对照窗口 | 50 万 | 2026-03-03 至 2026-06-02 | 536,817 | +34.77% | -10.97% | 最近 3 个月收益约 +7.36%，回撤低于 AShare AUTO，是当前双系统路由的主要对照基准 | `exports/signal_research/20260604_163941_308980_trusted_account_backtest/` |

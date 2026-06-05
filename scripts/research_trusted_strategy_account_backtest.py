@@ -38,6 +38,7 @@ from scripts.research_full_pool_liquidity_strategies import (
 
 
 OUT_ROOT = PROJECT_ROOT / "exports" / "signal_research"
+ASHARE_ROUTE_CACHE_ROOT = OUT_ROOT / "cache" / "adaptive_market_style_v22"
 DEFAULT_RISK_PROFILE = "balanced"
 RISK_PROFILE_DEFAULTS = {
     "offensive": {
@@ -151,6 +152,130 @@ ADAPTIVE_LONG_WINDOW = 20
 ADAPTIVE_SHORT_WINDOW = 10
 ADAPTIVE_RECENT_CHAMPION_WINDOW = 63
 ADAPTIVE_RECENT_CHAMPION_MAX_DRAWDOWN = -0.25
+ASHARE_ADAPTIVE_VERSION = "v2.2"
+ASHARE_WEEKLY_UNCONFIRMED_WEIGHT = 0.35
+ASHARE_INTERSECTION_BOOST = 20.0
+ASHARE_SOURCE_SCORE_WEIGHT = 0.10
+ASHARE_SUPPLEMENT_SOURCE_SCORE_WEIGHT = 0.45
+ASHARE_INDUSTRY_CONCENTRATION_THRESHOLD = 0.60
+ASHARE_DEFAULT_WEIGHT_PROFILE = "prod_stage1"
+ASHARE_DEFAULT_RELEASE_TIER = "production_stage1"
+
+
+@dataclass(frozen=True)
+class AShareWeightConfig:
+    profile: str
+    release_tier: str
+    supplement_limit: int
+    intersection_boost: float
+    source_score_weight: float
+    supplement_source_score_weight: float
+    weekly_unconfirmed_weight: float
+    industry_concentration_threshold: float
+
+
+ASHARE_WEIGHT_PROFILE_DEFAULTS: dict[str, AShareWeightConfig] = {
+    "prod_stage1": AShareWeightConfig(
+        profile="prod_stage1",
+        release_tier=ASHARE_DEFAULT_RELEASE_TIER,
+        supplement_limit=2,
+        intersection_boost=ASHARE_INTERSECTION_BOOST,
+        source_score_weight=ASHARE_SOURCE_SCORE_WEIGHT,
+        supplement_source_score_weight=ASHARE_SUPPLEMENT_SOURCE_SCORE_WEIGHT,
+        weekly_unconfirmed_weight=ASHARE_WEEKLY_UNCONFIRMED_WEIGHT,
+        industry_concentration_threshold=ASHARE_INDUSTRY_CONCENTRATION_THRESHOLD,
+    ),
+    "research_stage2": AShareWeightConfig(
+        profile="research_stage2",
+        release_tier="research_validated",
+        supplement_limit=3,
+        intersection_boost=ASHARE_INTERSECTION_BOOST,
+        source_score_weight=ASHARE_SOURCE_SCORE_WEIGHT,
+        supplement_source_score_weight=ASHARE_SUPPLEMENT_SOURCE_SCORE_WEIGHT,
+        weekly_unconfirmed_weight=ASHARE_WEEKLY_UNCONFIRMED_WEIGHT,
+        industry_concentration_threshold=ASHARE_INDUSTRY_CONCENTRATION_THRESHOLD,
+    ),
+}
+
+
+def _resolve_ashare_weight_config(
+    *,
+    profile: str | None = None,
+    release_tier: str | None = None,
+    supplement_limit: int | None = None,
+    intersection_boost: float | None = None,
+    source_score_weight: float | None = None,
+    supplement_source_score_weight: float | None = None,
+    weekly_unconfirmed_weight: float | None = None,
+    industry_concentration_threshold: float | None = None,
+) -> AShareWeightConfig:
+    normalized_profile = str(profile or ASHARE_DEFAULT_WEIGHT_PROFILE).strip()
+    if normalized_profile not in ASHARE_WEIGHT_PROFILE_DEFAULTS:
+        available = ", ".join(sorted(ASHARE_WEIGHT_PROFILE_DEFAULTS))
+        raise ValueError(f"Unknown AShare weight profile `{profile}`. Available profiles: {available}")
+    base = ASHARE_WEIGHT_PROFILE_DEFAULTS[normalized_profile]
+    limit = int(base.supplement_limit if supplement_limit is None else supplement_limit)
+    if limit < 0:
+        raise ValueError("AShare supplement limit must be >= 0.")
+    return AShareWeightConfig(
+        profile=normalized_profile,
+        release_tier=str(release_tier or base.release_tier),
+        supplement_limit=limit,
+        intersection_boost=float(base.intersection_boost if intersection_boost is None else intersection_boost),
+        source_score_weight=float(base.source_score_weight if source_score_weight is None else source_score_weight),
+        supplement_source_score_weight=float(
+            base.supplement_source_score_weight if supplement_source_score_weight is None else supplement_source_score_weight
+        ),
+        weekly_unconfirmed_weight=float(base.weekly_unconfirmed_weight if weekly_unconfirmed_weight is None else weekly_unconfirmed_weight),
+        industry_concentration_threshold=float(
+            base.industry_concentration_threshold if industry_concentration_threshold is None else industry_concentration_threshold
+        ),
+    )
+
+
+def _ashare_weight_cache_key(config: AShareWeightConfig, signal_date: object, selected_strategy: str, top_n: int) -> str:
+    date_key = pd.Timestamp(signal_date).strftime("%Y%m%d")
+    return (
+        f"{ASHARE_ADAPTIVE_VERSION}|{config.profile}|{config.release_tier}|"
+        f"limit{config.supplement_limit}|top{int(top_n)}|{selected_strategy}|{date_key}"
+    )
+
+
+def _ashare_route_cache_path(cache_dir: str | Path | None, cache_key: str) -> Path | None:
+    if not cache_dir:
+        return None
+    safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in cache_key)
+    return Path(cache_dir) / f"{safe_name}.json"
+
+
+def _load_ashare_route_cache(cache_dir: str | Path | None, cache_key: str) -> tuple[pd.DataFrame, dict[str, object]] | None:
+    path = _ashare_route_cache_path(cache_dir, cache_key)
+    if path is None or not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    targets = pd.DataFrame(payload.get("targets") or [])
+    meta = dict(payload.get("meta") or {})
+    meta["ashare_route_cache_hit"] = 1
+    return targets, meta
+
+
+def _write_ashare_route_cache(
+    cache_dir: str | Path | None,
+    cache_key: str,
+    targets: pd.DataFrame,
+    meta: dict[str, object],
+) -> None:
+    path = _ashare_route_cache_path(cache_dir, cache_key)
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "cache_key": cache_key,
+        "meta": meta,
+        "targets": targets.to_dict("records") if not targets.empty else [],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 
 def _normalize_risk_profile(raw: str | None) -> str:
@@ -554,6 +679,32 @@ def _ashare_candidates_for_day(
     return out
 
 
+def _build_ashare_candidates_by_date(ashare_candidates: pd.DataFrame) -> dict[object, pd.DataFrame]:
+    if ashare_candidates.empty:
+        return {}
+    frame = ashare_candidates.copy()
+    frame["_signal_date_key"] = pd.to_datetime(frame["signal_date"], errors="coerce").dt.date
+    return {
+        day: group.drop(columns=["_signal_date_key"]).copy()
+        for day, group in frame.dropna(subset=["_signal_date_key"]).groupby("_signal_date_key", sort=True)
+    }
+
+
+def _ashare_candidates_for_day_cached(
+    ashare_by_date: dict[object, pd.DataFrame],
+    signal_date: object,
+    strategy_version: str | None = None,
+) -> pd.DataFrame:
+    day = pd.Timestamp(signal_date).date()
+    out = ashare_by_date.get(day, pd.DataFrame()).copy()
+    if out.empty:
+        return out
+    if strategy_version:
+        versions = ASHARE_STRATEGY_VERSION_ALIASES.get(str(strategy_version), (str(strategy_version),))
+        out = out[out["strategy_version"].astype(str).isin(versions)].copy()
+    return out
+
+
 def _build_ashare_targets(
     day_scores: pd.DataFrame,
     ashare_day: pd.DataFrame,
@@ -568,6 +719,13 @@ def _build_ashare_targets(
     base["symbol"] = base["symbol"].astype(str).str.zfill(6)
     source = ashare_day.copy()
     source["symbol"] = source["symbol"].astype(str).str.zfill(6)
+    source_name_text = (
+        source.get("stock_name", pd.Series("", index=source.index)).fillna("").astype(str)
+        + source.get("name", pd.Series("", index=source.index)).fillna("").astype(str)
+    ).str.upper()
+    if "risk_veto_flag" not in source.columns:
+        source["risk_veto_flag"] = 0
+    source.loc[source_name_text.str.contains("ST", regex=False), "risk_veto_flag"] = 1
     source = source.sort_values(["source_rank", "source_score", "symbol"], ascending=[True, False, True])
     source = source.drop_duplicates("symbol", keep="first")
     merged = source.merge(base, on="symbol", how="inner", suffixes=("_ashare", ""))
@@ -575,11 +733,15 @@ def _build_ashare_targets(
         return pd.DataFrame()
     veto = pd.to_numeric(merged.get("risk_veto_flag", 0), errors="coerce").fillna(0).astype(int)
     weekly = pd.to_numeric(merged.get("weekly_confirm_pass", 1), errors="coerce").fillna(1).astype(int)
-    merged = merged[(veto <= 0) & (weekly >= 1)].copy()
+    merged = merged[veto <= 0].copy()
     if merged.empty:
         return pd.DataFrame()
+    weekly = pd.to_numeric(merged.get("weekly_confirm_pass", 1), errors="coerce").fillna(1).astype(int)
+    merged["ashare_weekly_confirm_pass"] = weekly
+    merged["ashare_weight_penalty"] = np.where(weekly >= 1, 1.0, ASHARE_WEEKLY_UNCONFIRMED_WEIGHT)
     merged["rank_score"] = pd.to_numeric(merged.get("source_score"), errors="coerce").fillna(0.0)
-    merged = merged.sort_values(["source_rank", "rank_score", "symbol"], ascending=[True, False, True]).head(int(top_n)).copy()
+    merged["ashare_adjusted_source_score"] = merged["rank_score"] * merged["ashare_weight_penalty"]
+    merged = merged.sort_values(["source_rank", "ashare_adjusted_source_score", "symbol"], ascending=[True, False, True]).head(int(top_n)).copy()
     selected_count = max(1, len(merged))
     rows = []
     for rank, (_, row) in enumerate(merged.iterrows(), start=1):
@@ -588,6 +750,10 @@ def _build_ashare_targets(
         out["strategy"] = strategy_name
         out["strategy_source"] = "AShareDataCenter"
         out["source_strategy"] = row.get("source_strategy")
+        out["ashare_hit"] = 1
+        out["ashare_weekly_confirm_pass"] = row.get("ashare_weekly_confirm_pass")
+        out["ashare_weight_penalty"] = row.get("ashare_weight_penalty")
+        out["ashare_weight_reason"] = "weekly_confirm_pass" if _safe_float(row.get("ashare_weekly_confirm_pass"), 0) >= 1 else "weekly_unconfirmed_downweighted"
         out["position_weight"] = 1.0 / float(selected_count)
         out["market_exposure_scale"] = 1.0
         out["effective_weight"] = 1.0 / float(selected_count)
@@ -608,14 +774,262 @@ def _ashare_risk_summary(ashare_day: pd.DataFrame) -> dict[str, object]:
             "ashare_governance_hint": "",
         }
     veto = pd.to_numeric(ashare_day.get("risk_veto_flag", 0), errors="coerce").fillna(0)
+    weekly = pd.to_numeric(ashare_day.get("weekly_confirm_pass", 1), errors="coerce").fillna(1)
     regimes = ashare_day.get("entry_market_regime", pd.Series(dtype=object)).dropna().astype(str)
     hints = ashare_day.get("plate_governance_hint", pd.Series(dtype=object)).dropna().astype(str)
     return {
         "ashare_available": 1,
         "ashare_candidate_count": int(len(ashare_day)),
         "ashare_risk_veto_ratio": float((veto > 0).mean()) if len(veto) else np.nan,
+        "ashare_weekly_unconfirmed_count": int((weekly < 1).sum()) if len(weekly) else 0,
         "ashare_market_regime": regimes.mode().iloc[0] if not regimes.empty else "",
         "ashare_governance_hint": hints.mode().iloc[0] if not hints.empty else "",
+    }
+
+
+def _ashare_merge_columns() -> list[str]:
+    return [
+        "symbol",
+        "strategy_version",
+        "source_strategy",
+        "source_rank",
+        "source_score",
+        "signal_quality_score",
+        "plate_context_score",
+        "cross_domain_resonance_score",
+        "weekly_confirm_pass",
+        "risk_veto_flag",
+        "selection_reason",
+    ]
+
+
+def _normalize_ashare_for_weighting(ashare_day: pd.DataFrame, config: AShareWeightConfig | None = None) -> pd.DataFrame:
+    config = config or _resolve_ashare_weight_config()
+    if ashare_day.empty:
+        return pd.DataFrame(columns=_ashare_merge_columns())
+    ash = ashare_day.copy()
+    ash["symbol"] = ash["symbol"].astype(str).str.zfill(6)
+    for col in _ashare_merge_columns():
+        if col not in ash.columns:
+            ash[col] = np.nan
+    ash["source_rank"] = pd.to_numeric(ash["source_rank"], errors="coerce").fillna(999999)
+    ash["source_score"] = pd.to_numeric(ash["source_score"], errors="coerce").fillna(0.0)
+    ash["risk_veto_flag"] = pd.to_numeric(ash["risk_veto_flag"], errors="coerce").fillna(0).astype(int)
+    name_text = (
+        ash.get("stock_name", pd.Series("", index=ash.index)).fillna("").astype(str)
+        + ash.get("name", pd.Series("", index=ash.index)).fillna("").astype(str)
+    ).str.upper()
+    ash.loc[name_text.str.contains("ST", regex=False), "risk_veto_flag"] = 1
+    ash["weekly_confirm_pass"] = pd.to_numeric(ash["weekly_confirm_pass"], errors="coerce").fillna(1).astype(int)
+    ash["ashare_weight_penalty"] = np.where(ash["weekly_confirm_pass"] >= 1, 1.0, config.weekly_unconfirmed_weight)
+    ash["ashare_weight_reason"] = np.where(ash["weekly_confirm_pass"] >= 1, "weekly_confirm_pass", "weekly_unconfirmed_downweighted")
+    ash = ash.sort_values(["source_rank", "source_score", "symbol"], ascending=[True, False, True])
+    return ash.drop_duplicates("symbol", keep="first")
+
+
+def _build_ashare_weighted_targets(
+    *,
+    signal_date: object,
+    day_scores: pd.DataFrame,
+    chenyiyun_targets: pd.DataFrame,
+    ashare_day: pd.DataFrame,
+    top_n: int,
+    strategy_name: str,
+    selected_strategy: str,
+    market_style_state: str,
+    target_position_ratio: float,
+    route_reason: str,
+    weight_profile: str | None = None,
+    release_tier: str | None = None,
+    supplement_limit: int | None = None,
+    weight_config: AShareWeightConfig | None = None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    config = weight_config or _resolve_ashare_weight_config(
+        profile=weight_profile,
+        release_tier=release_tier,
+        supplement_limit=supplement_limit,
+    )
+    risk = _ashare_risk_summary(ashare_day)
+    ch = chenyiyun_targets.copy()
+    if not ch.empty:
+        ch["symbol"] = ch["symbol"].astype(str).str.zfill(6)
+        ch["chenyiyun_rank"] = pd.to_numeric(ch.get("rank"), errors="coerce")
+        ch["chenyiyun_score"] = pd.to_numeric(ch.get("rank_score"), errors="coerce").fillna(0.0)
+        ch["ashare_supplement"] = 0
+    ash = _normalize_ashare_for_weighting(ashare_day, config)
+    ash_ok = ash[pd.to_numeric(ash.get("risk_veto_flag", 0), errors="coerce").fillna(0).le(0)].copy() if not ash.empty else ash
+    risk_veto_filtered = int(len(ash) - len(ash_ok)) if not ash.empty else 0
+
+    if ch.empty and ash_ok.empty:
+        return pd.DataFrame(), {
+            "strategy_source": "fallback_empty",
+            "target_position_ratio": float(target_position_ratio),
+            "route_reason": route_reason,
+            "risk_veto_reason": "ashare_risk_veto_or_no_candidates" if risk_veto_filtered else "",
+            "adaptive_version": ASHARE_ADAPTIVE_VERSION,
+            "ashare_release_tier": config.release_tier,
+            "ashare_weight_profile": config.profile,
+            "ashare_supplement_limit": int(config.supplement_limit),
+            "ashare_weight_cache_key": _ashare_weight_cache_key(config, signal_date, selected_strategy, top_n),
+            "ashare_risk_veto_filtered_count": risk_veto_filtered,
+            **risk,
+        }
+
+    if ch.empty:
+        base = pd.DataFrame()
+    else:
+        base = ch.merge(
+            ash[_ashare_merge_columns() + ["ashare_weight_penalty", "ashare_weight_reason"]] if not ash.empty else pd.DataFrame(columns=["symbol"]),
+            on="symbol",
+            how="left",
+            suffixes=("", "_ashare"),
+        )
+
+    concentration = _industry_concentration(ch) if not ch.empty else {"top_industry_weight": np.nan}
+    concentrated = _safe_float(concentration.get("top_industry_weight"), np.nan) >= config.industry_concentration_threshold
+    needs_supplement = len(base) < int(top_n) or bool(concentrated)
+    base_supplement_limit = int(top_n) if ch.empty else max(0, int(top_n) - len(base))
+    if concentrated and not ch.empty:
+        base_supplement_limit = min(int(top_n), base_supplement_limit + int(config.supplement_limit))
+    if not ch.empty:
+        base_supplement_limit = min(int(top_n), base_supplement_limit)
+    supplement = pd.DataFrame()
+    if needs_supplement and base_supplement_limit > 0 and not ash_ok.empty and not day_scores.empty:
+        base_symbols = set(base["symbol"].astype(str)) if not base.empty and "symbol" in base.columns else set()
+        day_base = day_scores.copy()
+        day_base["symbol"] = day_base["symbol"].astype(str).str.zfill(6)
+        supplement = ash_ok[~ash_ok["symbol"].isin(base_symbols)].merge(
+            day_base,
+            on="symbol",
+            how="inner",
+            suffixes=("_ashare", ""),
+        )
+        if not supplement.empty:
+            supplement["chenyiyun_rank"] = np.nan
+            supplement["chenyiyun_score"] = 0.0
+            supplement["ashare_supplement"] = 1
+            supplement["rank_score"] = pd.to_numeric(supplement.get("source_score"), errors="coerce").fillna(0.0)
+            supplement["name"] = supplement.get("name").fillna(supplement.get("stock_name")) if "name" in supplement.columns else supplement.get("stock_name")
+            supplement["industry"] = supplement.get("industry").fillna(supplement.get("industry_ashare")) if "industry" in supplement.columns else supplement.get("industry_ashare")
+
+    if not supplement.empty:
+        base = pd.concat([base, supplement], ignore_index=True, sort=False) if not base.empty else supplement
+    if base.empty:
+        return pd.DataFrame(), {
+            "strategy_source": "fallback_empty",
+            "target_position_ratio": float(target_position_ratio),
+            "route_reason": route_reason,
+            "risk_veto_reason": "ashare_risk_veto_or_no_candidates" if risk_veto_filtered else "",
+            "adaptive_version": ASHARE_ADAPTIVE_VERSION,
+            "ashare_release_tier": config.release_tier,
+            "ashare_weight_profile": config.profile,
+            "ashare_supplement_limit": int(config.supplement_limit),
+            "ashare_weight_cache_key": _ashare_weight_cache_key(config, signal_date, selected_strategy, top_n),
+            "ashare_risk_veto_filtered_count": risk_veto_filtered,
+            **risk,
+        }
+
+    for col in ("source_strategy", "source_score", "weekly_confirm_pass", "risk_veto_flag", "ashare_weight_penalty", "ashare_weight_reason", "ashare_supplement"):
+        if col not in base.columns:
+            base[col] = np.nan
+    base["risk_veto_flag"] = pd.to_numeric(base["risk_veto_flag"], errors="coerce").fillna(0).astype(int)
+    base = base[base["risk_veto_flag"].le(0)].copy()
+    if base.empty:
+        return pd.DataFrame(), {
+            "strategy_source": "ashare_risk_veto_filtered",
+            "target_position_ratio": float(target_position_ratio),
+            "route_reason": route_reason,
+            "risk_veto_reason": "ashare_risk_veto_filtered_all_candidates",
+            "adaptive_version": ASHARE_ADAPTIVE_VERSION,
+            "ashare_release_tier": config.release_tier,
+            "ashare_weight_profile": config.profile,
+            "ashare_supplement_limit": int(config.supplement_limit),
+            "ashare_weight_cache_key": _ashare_weight_cache_key(config, signal_date, selected_strategy, top_n),
+            "ashare_risk_veto_filtered_count": risk_veto_filtered,
+            **risk,
+        }
+
+    source_strategy = base["source_strategy"] if "source_strategy" in base.columns else pd.Series(index=base.index, dtype=object)
+    source_score = pd.to_numeric(base["source_score"], errors="coerce").fillna(0.0)
+    penalty = pd.to_numeric(base["ashare_weight_penalty"], errors="coerce").fillna(1.0)
+    supplement_flag = pd.to_numeric(base["ashare_supplement"], errors="coerce").fillna(0).astype(int)
+    chenyiyun_score = pd.to_numeric(base.get("chenyiyun_score", base.get("rank_score")), errors="coerce").fillna(0.0)
+    base["ashare_hit"] = source_strategy.notna().astype(int)
+    base["ashare_source_score"] = source_score
+    base["ashare_weight_penalty"] = np.where(base["ashare_hit"].eq(1), penalty, np.nan)
+    base["ashare_weight_adjustment"] = base["ashare_hit"] * (config.intersection_boost + source_score * config.source_score_weight) * penalty
+    base["dual_route_score"] = (
+        chenyiyun_score
+        + base["ashare_weight_adjustment"]
+        + supplement_flag * source_score * config.supplement_source_score_weight
+    )
+    base = base.sort_values(["dual_route_score", "rank_score", "symbol"], ascending=[False, False, True]).copy()
+    if base_supplement_limit < int(top_n):
+        selected_indices = []
+        used_supplements = 0
+        for idx, row in base.iterrows():
+            is_supplement = int(_safe_float(row.get("ashare_supplement"), 0)) == 1
+            if is_supplement and used_supplements >= base_supplement_limit:
+                continue
+            selected_indices.append(idx)
+            used_supplements += int(is_supplement)
+            if len(selected_indices) >= int(top_n):
+                break
+        base = base.loc[selected_indices].copy()
+    else:
+        base = base.head(int(top_n)).copy()
+    selected_count = max(1, len(base))
+    for rank, idx in enumerate(base.index, start=1):
+        base.at[idx, "rank"] = rank
+    base["strategy"] = strategy_name
+    selected_hit_count = int(pd.to_numeric(base.get("ashare_hit"), errors="coerce").fillna(0).sum())
+    supplement_count = int(pd.to_numeric(base.get("ashare_supplement"), errors="coerce").fillna(0).sum())
+    intersection_count = int(((pd.to_numeric(base.get("ashare_hit"), errors="coerce").fillna(0) > 0) & (pd.to_numeric(base.get("ashare_supplement"), errors="coerce").fillna(0) <= 0)).sum())
+    penalty_count = int((pd.to_numeric(base.get("ashare_weight_penalty"), errors="coerce").fillna(1.0) < 1.0).sum())
+    if supplement_count:
+        source_label = "Chenyiyun2087+AShare_supplement"
+    elif selected_hit_count:
+        source_label = "Chenyiyun2087+AShare_weighted"
+    else:
+        source_label = "Chenyiyun2087"
+    base["strategy_source"] = source_label
+    base["market_style_state"] = market_style_state
+    base["selected_strategy"] = selected_strategy
+    base["target_position_ratio"] = float(target_position_ratio)
+    base["route_reason"] = route_reason
+    base["risk_veto_reason"] = "" if not risk_veto_filtered else "ashare_risk_veto_filtered"
+    base["adaptive_version"] = ASHARE_ADAPTIVE_VERSION
+    base["ashare_release_tier"] = config.release_tier
+    base["ashare_weight_profile"] = config.profile
+    base["ashare_supplement_limit"] = int(config.supplement_limit)
+    base["ashare_weight_cache_key"] = _ashare_weight_cache_key(config, signal_date, selected_strategy, top_n)
+    base["dual_intersection_count"] = intersection_count
+    base["dual_union_count"] = int(len(base))
+    base["ashare_weighted_hit_count"] = selected_hit_count
+    base["ashare_supplement_count"] = supplement_count
+    base["ashare_weekly_penalty_count"] = penalty_count
+    base["position_weight"] = 1.0 / float(selected_count)
+    base["market_exposure_scale"] = 1.0
+    base["effective_weight"] = 1.0 / float(selected_count)
+    return base, {
+        "strategy_source": source_label,
+        "selected_strategy": selected_strategy,
+        "target_position_ratio": float(target_position_ratio),
+        "route_reason": route_reason,
+        "risk_veto_reason": "" if not risk_veto_filtered else "ashare_risk_veto_filtered",
+        "adaptive_version": ASHARE_ADAPTIVE_VERSION,
+        "ashare_release_tier": config.release_tier,
+        "ashare_weight_profile": config.profile,
+        "ashare_supplement_limit": int(config.supplement_limit),
+        "ashare_weight_cache_key": _ashare_weight_cache_key(config, signal_date, selected_strategy, top_n),
+        "dual_intersection_count": intersection_count,
+        "dual_union_count": int(len(base)),
+        "ashare_weighted_hit_count": selected_hit_count,
+        "ashare_supplement_count": supplement_count,
+        "ashare_weekly_penalty_count": penalty_count,
+        "ashare_risk_veto_filtered_count": risk_veto_filtered,
+        "ashare_industry_concentration_triggered": int(bool(concentrated)),
+        **risk,
     }
 
 
@@ -627,10 +1041,26 @@ def _build_dual_system_targets(
     ashare_day: pd.DataFrame,
     top_n: int,
     strategy_name: str,
+    weight_profile: str | None = None,
+    release_tier: str | None = None,
+    supplement_limit: int | None = None,
+    weight_config: AShareWeightConfig | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
+    config = weight_config or _resolve_ashare_weight_config(
+        profile=weight_profile,
+        release_tier=release_tier,
+        supplement_limit=supplement_limit,
+    )
     risk = _ashare_risk_summary(ashare_day)
     if chenyiyun_targets.empty and ashare_day.empty:
-        return pd.DataFrame(), {"strategy_source": "fallback_empty", **risk}
+        return pd.DataFrame(), {
+            "strategy_source": "fallback_empty",
+            "adaptive_version": ASHARE_ADAPTIVE_VERSION,
+            "ashare_release_tier": config.release_tier,
+            "ashare_weight_profile": config.profile,
+            "ashare_supplement_limit": int(config.supplement_limit),
+            **risk,
+        }
 
     market_amount_ratio = _safe_float(day_scores.get("market_amount_ratio_20", pd.Series(np.nan)).dropna().median(), np.nan)
     index_bucket = (
@@ -664,99 +1094,29 @@ def _build_dual_system_targets(
             "target_position_ratio": 0.0,
             "route_reason": route_reason,
             "risk_veto_reason": route_reason,
+            "adaptive_version": ASHARE_ADAPTIVE_VERSION,
+            "ashare_release_tier": config.release_tier,
+            "ashare_weight_profile": config.profile,
+            "ashare_supplement_limit": int(config.supplement_limit),
             **risk,
         }
 
-    ch = chenyiyun_targets.copy()
-    if not ch.empty:
-        ch["symbol"] = ch["symbol"].astype(str).str.zfill(6)
-        ch["chenyiyun_rank"] = pd.to_numeric(ch.get("rank"), errors="coerce")
-        ch["chenyiyun_score"] = pd.to_numeric(ch.get("rank_score"), errors="coerce").fillna(0.0)
-    ash = ashare_day.copy()
-    if not ash.empty:
-        ash["symbol"] = ash["symbol"].astype(str).str.zfill(6)
-        ash = ash.sort_values(["source_rank", "source_score", "symbol"], ascending=[True, False, True])
-        ash = ash.drop_duplicates("symbol", keep="first")
-    if ch.empty:
-        base = _build_ashare_targets(day_scores, ash, top_n, strategy_name=strategy_name, position_ratio=target_ratio)
-        source_label = "AShareDataCenter"
-    else:
-        ashare_merge_columns = [
-            "symbol",
-            "strategy_version",
-            "source_strategy",
-            "source_rank",
-            "source_score",
-            "signal_quality_score",
-            "plate_context_score",
-            "cross_domain_resonance_score",
-            "weekly_confirm_pass",
-            "risk_veto_flag",
-            "selection_reason",
-        ]
-        if not ash.empty:
-            for col in ashare_merge_columns:
-                if col not in ash.columns:
-                    ash[col] = np.nan
-        base = ch.merge(
-            ash[ashare_merge_columns] if not ash.empty else pd.DataFrame(columns=["symbol"]),
-            on="symbol",
-            how="left",
-            suffixes=("", "_ashare"),
-        )
-        source_label = "dual_intersection" if base.get("source_strategy", pd.Series()).notna().any() else "Chenyiyun2087"
-        if len(base) < int(top_n) and not ash.empty:
-            supplement = _build_ashare_targets(day_scores, ash[~ash["symbol"].isin(base["symbol"])], top_n - len(base), strategy_name=strategy_name, position_ratio=target_ratio)
-            if not supplement.empty:
-                base = pd.concat([base, supplement], ignore_index=True, sort=False)
-                source_label = "dual_union"
-    if base.empty:
-        return chenyiyun_targets.copy(), {"strategy_source": "Chenyiyun2087_fallback", **risk}
-
-    source_strategy = base["source_strategy"] if "source_strategy" in base.columns else pd.Series(index=base.index, dtype=object)
-    source_score = base["source_score"] if "source_score" in base.columns else pd.Series(0.0, index=base.index)
-    chenyiyun_score = (
-        base["chenyiyun_score"]
-        if "chenyiyun_score" in base.columns
-        else base["rank_score"]
-        if "rank_score" in base.columns
-        else pd.Series(0.0, index=base.index)
+    return _build_ashare_weighted_targets(
+        signal_date=signal_date,
+        day_scores=day_scores,
+        chenyiyun_targets=chenyiyun_targets,
+        ashare_day=ashare_day,
+        top_n=top_n,
+        strategy_name=strategy_name,
+        selected_strategy=DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+        market_style_state="dual_attack" if strong and not weak else ("dual_defensive" if weak else "dual_neutral"),
+        target_position_ratio=float(target_ratio),
+        route_reason=route_reason,
+        weight_profile=weight_profile,
+        release_tier=release_tier,
+        supplement_limit=supplement_limit,
+        weight_config=config,
     )
-    base["ashare_hit"] = source_strategy.notna().astype(int)
-    base["ashare_source_score"] = pd.to_numeric(source_score, errors="coerce").fillna(0.0)
-    base["dual_route_score"] = (
-        pd.to_numeric(chenyiyun_score, errors="coerce").fillna(0.0)
-        + base["ashare_hit"] * 20.0
-        + base["ashare_source_score"] * 0.10
-    )
-    if "risk_veto_flag" in base.columns:
-        base = base[pd.to_numeric(base["risk_veto_flag"], errors="coerce").fillna(0) <= 0].copy()
-    if "weekly_confirm_pass" in base.columns:
-        base = base[pd.to_numeric(base["weekly_confirm_pass"], errors="coerce").fillna(1) >= 1].copy()
-    base = base.sort_values(["dual_route_score", "rank_score", "symbol"], ascending=[False, False, True]).head(int(top_n)).copy()
-    selected_count = max(1, len(base))
-    for rank, idx in enumerate(base.index, start=1):
-        base.at[idx, "rank"] = rank
-    base["strategy"] = strategy_name
-    base["strategy_source"] = source_label
-    base["market_style_state"] = "dual_attack" if strong and not weak else ("dual_defensive" if weak else "dual_neutral")
-    base["selected_strategy"] = DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME
-    base["target_position_ratio"] = float(target_ratio)
-    base["route_reason"] = route_reason
-    base["risk_veto_reason"] = "" if not crash_or_veto else route_reason
-    base["position_weight"] = 1.0 / float(selected_count)
-    base["market_exposure_scale"] = 1.0
-    base["effective_weight"] = 1.0 / float(selected_count)
-    return base, {
-        "strategy_source": source_label,
-        "selected_strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
-        "target_position_ratio": float(target_ratio),
-        "route_reason": route_reason,
-        "risk_veto_reason": "" if not crash_or_veto else route_reason,
-        "dual_intersection_count": int(base["ashare_hit"].sum()) if "ashare_hit" in base.columns else 0,
-        "dual_union_count": int(len(base)),
-        **risk,
-    }
 
 
 def _industry_concentration(selected: pd.DataFrame) -> dict[str, object]:
@@ -1158,6 +1518,7 @@ def _adaptive_position_scale(decision: dict[str, object]) -> tuple[float, str]:
     reason = str(decision.get("reason") or "")
     market_amount_ratio = _safe_float(decision.get("market_amount_ratio_20"), np.nan)
     index_bucket = str(decision.get("index_bucket") or "")
+    champion_score = _safe_float(decision.get("champion_score"), np.nan)
     attack_short_avg_ret = _safe_float(decision.get("attack_short_avg_ret"), np.nan)
     attack_max_drawdown = _safe_float(decision.get("attack_max_drawdown"), np.nan)
 
@@ -1183,6 +1544,9 @@ def _adaptive_position_scale(decision: dict[str, object]) -> tuple[float, str]:
     if np.isfinite(market_amount_ratio) and market_amount_ratio < 0.8 and index_bucket == "index_weak":
         scale = min(scale, 0.50)
         scale_reason = "weak_index_low_liquidity_cap_50pct"
+    if role == "defensive" and np.isfinite(champion_score) and champion_score < 0.0:
+        scale = min(scale, 0.45)
+        scale_reason = "defensive_recent_champion_negative_cap_45pct"
     elif role == "recent_champion" and np.isfinite(market_amount_ratio) and market_amount_ratio >= 1.2 and index_bucket == "index_strong":
         scale = max(scale, 0.80)
         scale_reason = "recent_champion_strong_market_raise_to_80pct"
@@ -1523,6 +1887,12 @@ def _build_window_summary(nav: pd.DataFrame, initial_cash: float) -> pd.DataFram
 
 def run_account_backtest(args: argparse.Namespace) -> dict:
     args = _apply_risk_profile_defaults(args)
+    ashare_weight_config = _resolve_ashare_weight_config(
+        profile=getattr(args, "ashare_weight_profile", None),
+        release_tier=getattr(args, "ashare_release_tier", None),
+        supplement_limit=getattr(args, "ashare_supplement_limit", None),
+    )
+    ashare_target_cache_dir = getattr(args, "ashare_target_cache_dir", None) or ASHARE_ROUTE_CACHE_ROOT
     engine = create_engine(build_sqlalchemy_url())
     scores = load_scores(
         engine,
@@ -1589,9 +1959,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     targets_cache = _build_targets_cache(scores_by_date, cache_specs, top_n=args.top_n)
     ashare_candidates = (
         _load_ashare_strategy_candidates(engine, scores["trade_date"].min(), scores["trade_date"].max())
-        if any(spec.name in DUAL_SYSTEM_STRATEGY_NAMES for spec in specs)
+        if any(spec.name in (DUAL_SYSTEM_STRATEGY_NAMES | {ADAPTIVE_MARKET_STYLE_STRATEGY_NAME}) for spec in specs)
         else pd.DataFrame()
     )
+    ashare_by_date = _build_ashare_candidates_by_date(ashare_candidates)
     signal_to_exec = {
         day: _next_trade_date(calendar, day)
         for day in sorted(scores["trade_date"].dropna().unique().tolist())
@@ -1654,8 +2025,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 rebalance_position_ratio = float(args.position_ratio)
                 target_override = None
                 if spec.name in ASHARE_STRATEGY_VERSION_BY_NAME:
-                    ashare_day = _ashare_candidates_for_day(
-                        ashare_candidates,
+                    ashare_day = _ashare_candidates_for_day_cached(
+                        ashare_by_date,
                         signal_date,
                         ASHARE_STRATEGY_VERSION_BY_NAME[spec.name],
                     )
@@ -1693,15 +2064,27 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     selected_strategy_name = str(decision.get("selected_strategy") or ADAPTIVE_UNDERLYING[active_role])
                     rebalance_spec = trusted_by_name[selected_strategy_name]
                     chenyiyun_targets = targets_cache.get((signal_date, rebalance_spec.name), pd.DataFrame())
-                    ashare_day = _ashare_candidates_for_day(ashare_candidates, signal_date)
-                    target_override, dual_meta = _build_dual_system_targets(
-                        signal_date=signal_date,
-                        day_scores=day_scores,
-                        chenyiyun_targets=chenyiyun_targets,
-                        ashare_day=ashare_day,
-                        top_n=args.top_n,
-                        strategy_name=spec.name,
+                    ashare_day = _ashare_candidates_for_day_cached(ashare_by_date, signal_date)
+                    dual_cache_key = _ashare_weight_cache_key(
+                        ashare_weight_config,
+                        signal_date,
+                        DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
+                        args.top_n,
                     )
+                    cached_dual = _load_ashare_route_cache(ashare_target_cache_dir, dual_cache_key)
+                    if cached_dual is not None:
+                        target_override, dual_meta = cached_dual
+                    else:
+                        target_override, dual_meta = _build_dual_system_targets(
+                            signal_date=signal_date,
+                            day_scores=day_scores,
+                            chenyiyun_targets=chenyiyun_targets,
+                            ashare_day=ashare_day,
+                            top_n=args.top_n,
+                            strategy_name=spec.name,
+                            weight_config=ashare_weight_config,
+                        )
+                        _write_ashare_route_cache(ashare_target_cache_dir, dual_cache_key, target_override, dual_meta)
                     position_scale = _safe_float(dual_meta.get("target_position_ratio"), 0.7)
                     rebalance_position_ratio = max(0.0, min(1.0, float(args.position_ratio) * position_scale))
                     decision.update(
@@ -1785,6 +2168,41 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                                 "target_position_ratio": float(rebalance_position_ratio),
                             }
                         )
+                    if spec.name == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
+                        chenyiyun_targets = targets_cache.get((signal_date, rebalance_spec.name), pd.DataFrame())
+                        ashare_day = _ashare_candidates_for_day_cached(ashare_by_date, signal_date)
+                        adaptive_cache_key = _ashare_weight_cache_key(
+                            ashare_weight_config,
+                            signal_date,
+                            rebalance_spec.name,
+                            args.top_n,
+                        )
+                        cached_adaptive = _load_ashare_route_cache(ashare_target_cache_dir, adaptive_cache_key)
+                        if cached_adaptive is not None:
+                            enhanced_targets, enhancement_meta = cached_adaptive
+                        else:
+                            enhanced_targets, enhancement_meta = _build_ashare_weighted_targets(
+                                signal_date=signal_date,
+                                day_scores=day_scores,
+                                chenyiyun_targets=chenyiyun_targets,
+                                ashare_day=ashare_day,
+                                top_n=args.top_n,
+                                strategy_name=ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+                                selected_strategy=rebalance_spec.name,
+                                market_style_state=active_role,
+                                target_position_ratio=float(rebalance_position_ratio),
+                                route_reason="adaptive_v22_ashare_weighted_enhancement",
+                                weight_config=ashare_weight_config,
+                            )
+                            _write_ashare_route_cache(ashare_target_cache_dir, adaptive_cache_key, enhanced_targets, enhancement_meta)
+                        if not enhanced_targets.empty:
+                            target_override = enhanced_targets
+                            target_override["target_position_ratio"] = float(rebalance_position_ratio)
+                            decision.update(enhancement_meta)
+                            adaptive_meta.update(enhancement_meta)
+                            adaptive_meta["market_style_state"] = active_role
+                            adaptive_meta["selected_strategy"] = rebalance_spec.name
+                            adaptive_meta["target_position_ratio"] = float(rebalance_position_ratio)
                 if target_override is None:
                     target_override = targets_cache.get((signal_date, rebalance_spec.name))
                 trades, candidates, rebalance_meta = _rebalance(
@@ -1828,6 +2246,15 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["risk_veto_reason"] = adaptive_meta.get("risk_veto_reason")
                         item["dual_intersection_count"] = adaptive_meta.get("dual_intersection_count")
                         item["dual_union_count"] = adaptive_meta.get("dual_union_count")
+                        item["adaptive_version"] = adaptive_meta.get("adaptive_version")
+                        item["ashare_release_tier"] = adaptive_meta.get("ashare_release_tier")
+                        item["ashare_weight_profile"] = adaptive_meta.get("ashare_weight_profile")
+                        item["ashare_supplement_limit"] = adaptive_meta.get("ashare_supplement_limit")
+                        item["ashare_weight_cache_key"] = adaptive_meta.get("ashare_weight_cache_key")
+                        item["ashare_weighted_hit_count"] = adaptive_meta.get("ashare_weighted_hit_count")
+                        item["ashare_supplement_count"] = adaptive_meta.get("ashare_supplement_count")
+                        item["ashare_weekly_penalty_count"] = adaptive_meta.get("ashare_weekly_penalty_count")
+                        item["ashare_risk_veto_filtered_count"] = adaptive_meta.get("ashare_risk_veto_filtered_count")
                 trade_rows.extend(trades)
                 candidate_rows.extend(candidates)
                 meta = dict(rebalance_meta or {})
@@ -1962,6 +2389,11 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "strategies": [spec.name for spec in specs],
         "adaptive_strategy_name": ADAPTIVE_STRATEGY_NAME,
         "adaptive_market_style_strategy_name": ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+        "adaptive_version": ASHARE_ADAPTIVE_VERSION,
+        "ashare_release_tier": ashare_weight_config.release_tier,
+        "ashare_weight_profile": ashare_weight_config.profile,
+        "ashare_supplement_limit": int(ashare_weight_config.supplement_limit),
+        "ashare_target_cache_dir": str(ashare_target_cache_dir),
         "adaptive_dynamic_position_strategy_name": ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
         "adaptive_underlying": ADAPTIVE_UNDERLYING,
         "adaptive_min_state_days": ADAPTIVE_MIN_STATE_DAYS,
@@ -2005,6 +2437,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         f"- 组合：Top {args.top_n}，未满 {args.hold_days} 个交易日的持仓不卖、不减仓，并先占用预算。",
         f"- 持仓上限：{int(args.max_total_positions) if int(args.max_total_positions) > 0 else '不限制'}。",
         f"- 风险档位：`{args.risk_profile}`；{RISK_PROFILE_DEFAULTS[str(args.risk_profile)]['description']}",
+        (
+            f"- Adaptive 版本：`{ASHARE_ADAPTIVE_VERSION}`；AShare 权重："
+            f"`{report['params'].get('ashare_weight_profile')}`；放权档位："
+            f"`{report['params'].get('ashare_release_tier')}`；补位上限："
+            f"{report['params'].get('ashare_supplement_limit')} 只。"
+        ),
         f"- 目标总仓位：{float(args.position_ratio):.0%}。",
         f"- 硬止损：{float(args.hard_stop_loss_pct):.1f}%" if float(args.hard_stop_loss_pct) > 0 else "- 硬止损：不启用。",
         f"- 撮合：按 {args.lot_size} 股整数手，单笔低于 {float(args.min_trade_value):,.2f} 不交易。",
@@ -2059,6 +2497,28 @@ def main() -> None:
     )
     parser.add_argument("--min-pool-size", type=int, default=5000)
     parser.add_argument("--dynamic-lookback-dates", type=int, default=20)
+    parser.add_argument(
+        "--ashare-weight-profile",
+        default=ASHARE_DEFAULT_WEIGHT_PROFILE,
+        choices=sorted(ASHARE_WEIGHT_PROFILE_DEFAULTS),
+        help="AShare weighted enhancement profile for adaptive_market_style and dual route.",
+    )
+    parser.add_argument(
+        "--ashare-release-tier",
+        default=None,
+        help="Override AShare release tier label written to reports. Defaults to the profile tier.",
+    )
+    parser.add_argument(
+        "--ashare-supplement-limit",
+        type=int,
+        default=None,
+        help="Override max AShare supplement names when Chenyiyun candidates are underfilled or concentrated.",
+    )
+    parser.add_argument(
+        "--ashare-target-cache-dir",
+        default=str(ASHARE_ROUTE_CACHE_ROOT),
+        help="Disk cache directory for daily AShare weighted route targets.",
+    )
     raw_argv = sys.argv[1:]
     args = parser.parse_args()
     args = _apply_risk_profile_defaults(

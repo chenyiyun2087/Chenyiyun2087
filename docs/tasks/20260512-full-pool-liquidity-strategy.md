@@ -89,6 +89,8 @@
 | 2026-06-04 | 核心策略风格画像与切换规则 v2 | 完成 | 新增 `scripts/research/core_strategy_style_research.py`，围绕进攻、均衡、防守、波动仓位、回撤仓位五类核心可信策略输出市场/行业/量能分组、阈值网格、窗口收益风险和每日 adaptive 决策表。`adaptive_market_style` 新增 `robust` 状态，高波动且流动性尚可时使用 `baseline_full_liquidity_detail_vol_position`，并优化三年回测性能：不需要动态分的策略跳过动态权重计算，账户回测复用每日 TopN 目标缓存。三年 T+1 账户级回测输出位于 `exports/signal_research/20260604_110749_591938_trusted_account_backtest`，期末权益约 551,658，收益约 +10.33%，年化约 +3.06%，最大回撤约 -51.28%；最近一年收益约 +81.10%，最大回撤约 -17.94%。 |
 | 2026-06-04 | 3个月收益优先执行与周切换风控 | 完成 | `adaptive_market_style` 新增 `recent_champion` 执行态，按最近 3 个月收益优先、长期已完成样本非负和近期回撤约束选择冠军策略，当前默认指向 `baseline_full_liquidity_detail_vol_position`；生产每天检测市场/行业/量能和已完成策略绩效，但底层基准最少持有 5 个交易日，日常只允许降仓。候选导出、策略订单对照和核心精选页新增 `recent_champion_strategy`、`champion_score`、`weekly_switch_allowed`、`market_state`、`industry_state` 和 `switch_reason` 字段。三年验收输出位于 `exports/signal_research/20260604_152142_206060_trusted_account_backtest`：收益约 +39.31%，年化约 +10.71%，最大回撤约 -43.01%。 |
 | 2026-06-04 | Chenyiyun × AShare 双系统路由第一阶段 | 完成 | 新增 `dual_system_adaptive_route`、`ashare_auto_shadow`、`ashare_trend_breakout_shadow`、`ashare_hybrid_conservative_shadow` 和 `--risk-profile dual-adaptive`。生产入口仍为 Chenyiyun，AShareDataCenter 通过 `ads_strategy_stock_final_di` 提供外部候选、板块/周线/跨域和门禁信号；适配层支持当前实际版本 `classic`、`plate_enhanced*`、`local_bs_detection_pool`、`hybrid_conservative_v1`，并把 `gate_decision`、`visible_date_guard_pass`、板块治理门禁统一转为风险否决。候选导出、订单对照、Web 核心精选页均已显示策略来源、AShare 候选数、交集/并集、目标仓位和风险否决原因。最新 dry-run 输出位于 `exports/production_candidates/20260604_163744_dual_system_adaptive_route`；最近 3 个月回测输出位于 `exports/signal_research/20260604_163941_308980_trusted_account_backtest`。 |
+| 2026-06-04 | AShare 加权增强版 adaptive v2.1 | 完成 | `adaptive_market_style` 正式接入 AShare 加权增强：周线未确认降权不剔除，风险否决、不可见事件和 ST 类外部候选硬过滤；Chenyiyun 仍主导排序，AShare 交集加权，行业集中或候选不足时最多补位 2 只。生产 dry-run 输出位于 `exports/production_candidates/20260604_231602_adaptive_market_style`，信号日 2026-06-04 加载 AShare 候选 172 条、风险过滤 14 条、补位 2 只、目标仓位 50%。半年回测输出位于 `exports/signal_research/20260604_231724_811158_trusted_account_backtest`：收益约 +35.14%，年化约 +91.30%，最大回撤约 -11.09%。三年硬底线尚未完成自动验收，三年单策略回测超过 4 分钟未返回。 |
+| 2026-06-05 | 收益优先生产版 adaptive v2.2 | 完成 | `adaptive_market_style` 升级为 v2.2：正式生产标记 `adaptive_version=v2.2`、`ashare_weight_profile=prod_stage1`、`ashare_release_tier=production_stage1`，默认 AShare 补位上限 2 只；新增 AShare 路由磁盘缓存和研究网格脚本 `scripts/research/ashare_weighted_adaptive_v22_grid.py`。为满足三年硬底线，新增防守态风险叠加：防守状态且近期冠军分数转负时目标仓位从 50% 降至 45%。最新 dry-run 输出位于 `exports/production_candidates/20260605_004350_adaptive_market_style`；三年回测输出位于 `exports/signal_research/20260605_004258_229723_trusted_account_backtest`：收益约 +42.09%，年化约 +11.36%，最大回撤约 -37.33%，通过 `-45%` 回撤硬底线。 |
 
 ## 当前发现
 
@@ -115,6 +117,7 @@
 - 可信全量池生产订单已加入持仓期门禁，默认与回测持有期一致：未满 10 个交易日的持仓不会因每日 Top5 变化被常规卖出。
 - 当前“自动下单”实现范围是自动生成本地调仓订单草案并入库，尚未接入券商真实委托 API；如需真实券商下单，需要另起高风险生产化任务，并补成交回报、撤单、异常重试和审计设计。
 - 双系统路由下一步需要新增 AShare 每日候选/TopN 目标磁盘缓存，并分组跑三年验收；本次三年五策略对照连续运行约 5 分钟未完成，已手动终止，不能作为三年收益风险结论。
+- AShare 加权增强 v2.2 已加入每日加权路由磁盘缓存，并跑通三年单策略验收；当前瓶颈仍主要在 adaptive perf 和账户级循环，后续若要跑多 profile 三年网格，仍需继续缓存已完成绩效表和账户中间状态。
 - 2026-05-31 新增账户级回测后，默认生产策略 `baseline_full_dynamic_factor_industry_cap2` 在 2026-01-05 至 2026-05-29、50 万初始资金、单边成本 0.075% 口径下，期末权益约 966,468，收益约 +93.29%，最大回撤约 -20.60%，平均持仓数约 14.46，交易 268 笔。
 - 同一账户级口径下，`tiered_liquidity_then_bs_v2` 收益约 +82.95%、最大回撤约 -20.87%；`baseline_full_score` 收益约 +82.23%、最大回撤约 -30.89%；`baseline_full_liquidity_detail` 收益约 +64.17%、最大回撤约 -17.25%。默认策略收益最高，但不是回撤最低。
 - 在更保守的单边成本 0.10% + 单边滑点 0.10% 压力口径下，默认生产策略收益约 +87.05%、最大回撤约 -20.81%；`baseline_full_liquidity_detail` 收益约 +54.06%、最大回撤约 -17.67%。结论对执行摩擦有一定韧性，但账户回撤明显高于非重叠事件回测。
@@ -152,3 +155,4 @@
 - 2026-06-04 核心风格切换 v2 显示，过度防守会显著牺牲半年/一年收益；最终规则改为“均衡优先，弱市/缩量/行业集中风险才强制防守，高波动但流动性尚可时进入 `robust`”。该规则三年账户级收益和最大回撤均优于当前 fixed balanced，但事件级画像仍显示长期窗口存在极端回撤风险，后续应继续研究组合级止盈和磁盘化目标缓存。
 - 2026-06-04 双系统路由短窗口显示，AShare AUTO 影子最近 3 个月收益约 +8.72%、最大回撤约 -17.28%，收益弹性高但波动明显；`adaptive_market_style` 同窗口收益约 +7.36%、最大回撤约 -10.97%；`dual_system_adaptive_route` 收益约 +5.27%、最大回撤约 -12.06%。当前路由偏保守，未达到“收益优先”目标，但已提供完整候选、交易日志和每日路由决策表。
 - 2026-06-04 AShare 最新评分日 `2026-06-03` 可加载 144 条外部候选，风险否决比例 0，但 `weekly_confirm_pass=0` 导致可交易影子候选为空；这说明外部源不是缺数据，而是周线确认门禁过严或当前版本语义需要分层解释。
+- 2026-06-04 v2.1 已将周线确认从硬剔除改为降权。2026-06-04 最新 dry-run 中 AShare 候选 172 条，风险过滤 14 条，补位限制为 2 只，正式候选保留 3 只 Chenyiyun 原生候选，符合“AShare 增强但不接管生产”的目标。

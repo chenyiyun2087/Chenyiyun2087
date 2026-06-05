@@ -4,11 +4,13 @@
 
 当前生产默认使用风险档位 `adaptive`，不再使用固定单一满仓口径：
 
-- 主策略：`adaptive_market_style`（最近 3 个月收益优先冠军 + 市场/行业状态切换 + 动态仓位）。
+- 主策略：`adaptive_market_style` v2.2（最近 3 个月收益优先冠军 + 市场/行业状态切换 + AShare 加权增强 + 动态仓位）。
 - 默认映射：`recent_champion` -> `baseline_full_liquidity_detail_vol_position`（当前近期冠军），`attack` -> `tiered_liquidity_then_bs_v2`，`balanced` -> `baseline_full_liquidity_detail_market_gate`，`defensive` -> `baseline_full_liquidity`。
+- AShareDataCenter 作为增强源参与排序：Chenyiyun 仍主导生产候选，AShare 命中时加权，行业集中或候选不足时最多补位 2 只。
+- AShare `weekly_confirm_pass=0` 不再硬剔除，而是降权；明确风险否决、不可见事件和 ST 类外部候选仍硬过滤。
 - 组合：Top5，账户总持仓数上限 5。
 - 持有：10 个交易日。
-- 仓位：由市场风格状态动态调整到约 50% / 70% / 80%；进攻策略只在强市场短期增强，不再默认满仓。
+- 仓位：由市场风格状态动态调整到约 45% / 50% / 70% / 80%；防守态且近期冠军分数转负时降至 45%，进攻策略只在强市场短期增强，不再默认满仓。
 - 执行层：未满持有期的持仓不卖、不减仓，若持仓上限已满，则不再因每日新 Top5 额外扩仓。
 - 风控：最近 3 个月收益优先，但候选策略必须满足长期已完成样本非负、近期回撤约束；不使用被标记为 `model_risk` 的模型排序策略。
 
@@ -159,14 +161,16 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 - 行情数据只读取到信号日当天，不读取 T+1 或退出日价格。
 - 动态因子权重只使用“退出日早于当前信号日”的历史样本。
 - 双系统路由读取 AShareDataCenter `ads_strategy_stock_final_di` 时，事件/披露日期必须满足 `visible_date <= signal_date`；若 AShare 表提供 `visible_date_guard_pass`、`gate_decision` 或板块治理门禁，则会转成 Chenyiyun 的风险否决字段。
+- AShare 加权增强只使用信号日及以前可见字段；周线未确认只降低权重，不使用未来收益或未完成持仓表现。
 - 默认只允许 `pit_status=trusted` 的策略；模型版本穿越风险策略不会作为主策略。
 
 ## 当前限制
 
 - 最近一年强势策略不能直接外推到三年窗口。三年 T+1 账户级回测显示，未经门禁的进攻策略回撤极深，因此当前生产默认转为 `adaptive` 风险档，由 `adaptive_market_style` 在近期冠军、进攻增强和防守状态间切换。
 - 账户级验证显示，加入 `max_total_positions=5` 后能显著抑制每日 Top5 滚动带来的持仓扩散；但长期窗口仍需资金比例控制和人工风控。
-- 仓位比例是主要风险预算旋钮：当前默认不再固定满仓，`recent_champion` 约 70%，强市场可升至 80%，`attack` 增强上限约 80%，`defensive` / `fallback` 约 50%。
+- 仓位比例是主要风险预算旋钮：当前默认不再固定满仓，`recent_champion` 约 70%，强市场可升至 80%，`attack` 增强上限约 80%，`defensive` / `fallback` 约 50%；若防守态且近期冠军分数转负，v2.2 风险叠加会把目标仓位压到 45%。
 - 硬止损目前不作为默认订单规则。账户级验证中 8%/10% 止损能把最大回撤降到约 -13.67%/-11.63%，但收益降到约 +60.24%/+56.77%；若后续实盘风险偏好转防守，可先用模拟盘或人工单独执行，不直接写入日终默认买卖。
 - 脚本会自动生成本地调仓订单草案并发送飞书通知；目前没有接入券商真实委托 API，不会向券商柜台发送订单。
 - 模型排序相关策略仍需更多 walk-forward 样本验证，暂不作为生产默认方案。
 - `dual_system_adaptive_route` 第一阶段已接入生产 dry-run、订单对照和 Web 展示。2026-06-03 信号日 AShare 外部源可加载 144 条候选，但周线确认字段均未通过，因此主路由回退到 Chenyiyun 候选并给出 70% 中性仓位。该策略目前适合影子观察；三年多策略对照需完成 AShare 候选缓存优化后再作为验收结论。
+- `adaptive_market_style` v2.2 已接入收益优先生产口径。2026-06-04 dry-run 中 AShare 候选 172 条、风险过滤 14 条、补位 2 只、目标仓位 50%，输出目录为 `exports/production_candidates/20260605_004350_adaptive_market_style`。三年 T+1 账户级回测输出位于 `exports/signal_research/20260605_004258_229723_trusted_account_backtest`：收益约 +42.09%、年化约 +11.36%、最大回撤约 -37.33%，通过 `-45%` 回撤硬底线。
