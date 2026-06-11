@@ -79,7 +79,7 @@ DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
 }
 INITIAL_LIVE_CAPITAL = Decimal("500000.00")
 TRUSTED_PRODUCTION_RISK_PROFILE = "adaptive"
-TRUSTED_PRODUCTION_STRATEGY = "adaptive_market_style"
+TRUSTED_PRODUCTION_STRATEGY = "baseline_full_liquidity_detail_vol_position"
 
 # Task Status Storage (Loaded from DB on start)
 TASKS = {
@@ -154,6 +154,18 @@ TASKS = {
         "schedule_time": "21:28",
         "next_run": "-",
         "trading_day_only": True,
+    },
+    "sina_bs_image_weekly_cleanup": {
+        "name": "Sina检测图片周清理（周五）",
+        "description": "每周五删除上一周 Sina B/S 检测图片日期目录，降低本地图片占用",
+        "script": "scripts/ops/cleanup_sina_bs_detection_images.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": True,
+        "schedule_time": "22:05",
+        "next_run": "-",
+        "trading_day_only": False,
     },
     "sina_m8": {
         "name": "M8策略回归落库",
@@ -287,6 +299,7 @@ SCHEDULED_TASK_WHITELIST = {
     "sina_bs_consensus",
     "trusted_strategy_candidates",
     "trusted_strategy_shadow_monitor",
+    "sina_bs_image_weekly_cleanup",
     "sina_m8",
     "sina_snapshot",
     "sina_m7_sell",
@@ -2129,6 +2142,11 @@ def _build_task_script_parts(task_name, run_options=None):
         args = ['--write-db', '--notify-feishu', '--allow-empty']
         if datestr:
             args.extend(['--execution-date', datestr])
+        return [script, *args]
+    if task_name == 'sina_bs_image_weekly_cleanup':
+        args = ['--execute']
+        if datestr:
+            args.extend(['--date', datestr])
         return [script, *args]
     if task_name == 'sina_m8':
         return [script, '--lookback-dates', '60']
@@ -5911,7 +5929,7 @@ def _run_scheduled_tasks_loop():
                     # Cross-process idempotence: prevent duplicate "catch-up" runs for the same slot.
                     if _has_scheduled_run_in_slot(task_name, scheduled_for):
                         continue
-                    if not is_trade_day:
+                    if task.get('trading_day_only', True) and not is_trade_day:
                         skipped_non_trade_tasks.append((task_name, scheduled_for))
                     else:
                         due_tasks.append(task_name)

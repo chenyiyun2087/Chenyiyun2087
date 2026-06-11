@@ -8,8 +8,11 @@
 
 > 2026-06-05 v2.2 更新：`adaptive_market_style` 升级为收益优先生产版，正式标记 `adaptive_version=v2.2`、`ashare_weight_profile=prod_stage1`、`ashare_release_tier=production_stage1`，默认 AShare 补位上限 2 只。新增路由磁盘缓存与防守态风险叠加：防守状态且近期冠军分数转负时，目标仓位从 50% 降至 45%。三年 T+1 账户级回测收益约 +42.09%、年化约 +11.36%、最大回撤约 -37.33%，满足三年最大回撤不劣于 -45% 的硬底线。
 
+> 2026-06-05 主推送切换：飞书生产主策略改为 `baseline_full_liquidity_detail_vol_position`，默认仓位 70%。该策略最近 3 个月收益约 +36.71%、最大回撤约 -12.87%，最近半年收益约 +84.99%、最大回撤约 -28.75%，但完整三年裸跑最大回撤约 -66.41%。因此本次是“收益优先主推送”，不是长期满仓无门禁策略；`adaptive_market_style` v2.2 继续保留为每日市场/行业状态风控影子对照。
+
 | 策略名称 | 资金规模 | 回测周期 | 期末权益 | 年化收益 | 最大回撤 | 结论 | 文件夹 |
 |---|---:|---|---:|---:|---:|---|---|
+| `baseline_full_liquidity_detail_vol_position` / 飞书主推送 | 50 万 | 2023-01-04 至 2026-06-02 | 592,007 | +5.32% | -66.41% | 最近 3 个月 +36.71%、半年 +84.99%、一年 +177.92%；近期收益弹性最强，但三年回撤深，默认生产仓位降为 70%，并保留 adaptive 防守影子对照 | `exports/signal_research/20260604_152142_206060_trusted_account_backtest/` |
 | `adaptive_market_style` / AShare 加权增强 v2.2 | 50 万 | 2023-01-04 至 2026-06-04 | 710,445 | +11.36% | -37.33% | 三年收益约 +42.09%，默认 AShare 补位上限 2 只；防守态近期冠军转负时降至 45% 仓位，已通过 `-45%` 回撤硬底线 | `exports/signal_research/20260605_004258_229723_trusted_account_backtest/` |
 | `adaptive_market_style` / AShare 加权增强 v2.1 | 50 万 | 2025-12-04 至 2026-06-04 | 675,724 | +91.30% | -11.09% | 半年收益约 +35.14%，周线未确认走降权，AShare 补位最多 2 只；三年硬底线待缓存优化后复跑 | `exports/signal_research/20260604_231724_811158_trusted_account_backtest/` |
 | `dual_system_adaptive_route` / v2.1 对照 | 50 万 | 2025-12-04 至 2026-06-04 | 640,090 | +70.23% | -9.26% | 半年收益约 +28.02%，回撤低于 adaptive，但收益也低于正式 adaptive | `exports/signal_research/20260604_231724_811158_trusted_account_backtest/` |

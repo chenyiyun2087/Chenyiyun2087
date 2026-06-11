@@ -31,19 +31,32 @@ TASKS = {
         "script": "sina/bs_detection/main.py",
         "args": ["config_1"],
         "description": "sina B/S Detection",
-        "type": "script"
+        "type": "script",
+        "trading_day_only": True,
+    },
+    "sina_bs_image_weekly_cleanup": {
+        "time": "22:05",
+        "script": "scripts/ops/cleanup_sina_bs_detection_images.py",
+        "args": ["--execute"],
+        "description": "Weekly cleanup for previous-week Sina B/S detection images",
+        "type": "script",
+        "friday_only": True,
+        "trading_day_only": False,
+        "append_date": False,
     },
     "eastmoney_data": {
         "time": "16:30",
         "script": "eastmoney/main.py",
         "args": ["config_1"],
         "description": "eastmoney Data Fetch",
-        "type": "script"
+        "type": "script",
+        "trading_day_only": True,
     },
     "daily_pipeline": {
         "time": "21:00",
         "description": "Daily Data Pipeline",
-        "type": "pipeline"
+        "type": "pipeline",
+        "trading_day_only": True,
     }
 }
 
@@ -204,7 +217,7 @@ def run_pipeline(target_date) -> bool:
             "--risk-profile",
             "adaptive",
             "--strategy",
-            "adaptive_market_style",
+            "baseline_full_liquidity_detail_vol_position",
             "--top-n",
             "5",
             "--max-total-positions",
@@ -294,7 +307,12 @@ def main():
                 executed_tasks[task_name] = today
                 continue
 
-            if not today_is_trade_day:
+            if config.get("friday_only") and today.weekday() != 4:
+                logger.info(f"Triggering task: {task_name} -> success-skip (Friday-only task)")
+                executed_tasks[task_name] = today
+                continue
+
+            if bool(config.get("trading_day_only", True)) and not today_is_trade_day:
                 logger.info(
                     f"Triggering task: {task_name} -> success-skip "
                     f"(non-trading day from chenyiyun.dim_trade_cal)"
@@ -312,7 +330,11 @@ def main():
             else:
                 # Run Script Task
                 # For sina and eastmoney main, append date argument
-                args = config["args"] + [date_str]
+                args = list(config["args"])
+                if bool(config.get("append_date", True)):
+                    args.append(date_str)
+                elif task_name == "sina_bs_image_weekly_cleanup":
+                    args.extend(["--date", date_str])
                 run_script(config["script"], args, task_name)
 
             # Mark as executed

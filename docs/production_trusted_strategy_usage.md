@@ -2,17 +2,17 @@
 
 ## 当前推荐策略
 
-当前生产默认使用风险档位 `adaptive`，不再使用固定单一满仓口径：
+当前生产默认使用风险档位 `adaptive`，但飞书主推送策略已改为收益优先的 `baseline_full_liquidity_detail_vol_position`：
 
-- 主策略：`adaptive_market_style` v2.2（最近 3 个月收益优先冠军 + 市场/行业状态切换 + AShare 加权增强 + 动态仓位）。
-- 默认映射：`recent_champion` -> `baseline_full_liquidity_detail_vol_position`（当前近期冠军），`attack` -> `tiered_liquidity_then_bs_v2`，`balanced` -> `baseline_full_liquidity_detail_market_gate`，`defensive` -> `baseline_full_liquidity`。
-- AShareDataCenter 作为增强源参与排序：Chenyiyun 仍主导生产候选，AShare 命中时加权，行业集中或候选不足时最多补位 2 只。
-- AShare `weekly_confirm_pass=0` 不再硬剔除，而是降权；明确风险否决、不可见事件和 ST 类外部候选仍硬过滤。
+- 主策略：`baseline_full_liquidity_detail_vol_position`（简称 `vol_position`），作为最近 3 个月收益风险最平衡的主推送策略。
+- 主推送仓位：默认 `70%`；若人工确认强市场，可临时升至 `80%`，但不建议无门禁长期满仓。
+- 风控对照：`adaptive_market_style` v2.2 继续作为市场/行业/量能状态风控影子对照，用于判断是否需要从 `vol_position` 降仓或切回防守。
+- AShareDataCenter 仍作为影子增强源参与对照：Chenyiyun 主导生产候选，AShare 命中、补位、风险否决等信息继续在策略订单对照中展示。
 - 组合：Top5，账户总持仓数上限 5。
 - 持有：10 个交易日。
-- 仓位：由市场风格状态动态调整到约 45% / 50% / 70% / 80%；防守态且近期冠军分数转负时降至 45%，进攻策略只在强市场短期增强，不再默认满仓。
+- 仓位：主策略默认 70%；人工降风险时优先切 `defensive` 或显式降低 `--position-ratio`。`adaptive_market_style` 影子对照仍输出 45% / 50% / 70% / 80% 的状态建议。
 - 执行层：未满持有期的持仓不卖、不减仓，若持仓上限已满，则不再因每日新 Top5 额外扩仓。
-- 风控：最近 3 个月收益优先，但候选策略必须满足长期已完成样本非负、近期回撤约束；不使用被标记为 `model_risk` 的模型排序策略。
+- 风控：最近 3 个月收益优先，但必须每日复核 `vol_position` 回撤、市场流动性和行业集中度；不使用被标记为 `model_risk` 的模型排序策略。
 
 备选复核策略：
 
@@ -22,9 +22,8 @@
 - `baseline_full_liquidity_detail_market_gate_pos50_shadow`：防守市场门禁 50% 仓位影子对照。
 - `tiered_liquidity_then_bs_v2`：流动性分层后使用 B 点增强分，仅作为进攻观察/对照，不作为未经门禁的长期满仓默认。
 - `baseline_full_liquidity_shadow`：纯流动性防守影子对照。
-- `baseline_full_liquidity_detail_vol_position_shadow`：高波动环境稳健仓位影子对照。
+- `adaptive_style_shadow`：自适应生产策略影子对照，展示当天状态、底层策略和目标仓位，用于辅助判断 `vol_position` 是否需要降仓。
 - `baseline_full_liquidity_detail_hist_mdd_position_shadow`：近期回撤扩大时稳健仓位影子对照。
-- `adaptive_style_shadow`：自适应生产策略影子对照，展示当天状态、底层策略和目标仓位。
 - `adaptive_style_switch`：旧市场风格自适应硬切换研究策略，仅用于历史对照。
 
 ## 每日生产流程
@@ -36,11 +35,14 @@
 3. 执行 `scoreRank/run_daily.py --date <交易日> --force`，评分日期显式绑定到本次 pipeline 交易日。
 4. 执行 `scripts/backfill_score_rank_daily_industry.py --execute`，仅回填当日空行业。
 5. 执行 `scoreRank/cli/build_bs_consensus.py --date <交易日>`。
-6. 执行 `scripts/ops/export_trusted_strategy_candidates.py --risk-profile adaptive --write-db --emit-orders --notify-feishu --max-total-positions 5`，导出可信全量池候选名单，并自动写入候选表、Web 股票池、核心精选信号和本地订单表；订单草案生成后发送飞书通知。
+6. 执行 `scripts/ops/export_trusted_strategy_candidates.py --risk-profile adaptive --write-db --emit-orders --notify-feishu --max-total-positions 5`，导出 `vol_position` 主推送候选名单，并自动写入候选表、Web 股票池、核心精选信号和本地订单表；订单草案生成后发送飞书通知。
 7. 执行 `scripts/ops/run_trusted_strategy_shadow_monitor.py --execution-date <交易日> --write-db --notify-feishu --allow-empty`，复盘上一信号日订单在本交易日开盘的可成交性、涨跌停风险和滑点，并发送飞书通知。
-8. 继续执行 M1、M8 和实盘快照同步。
+8. 每周五 22:05 执行 `scripts/ops/cleanup_sina_bs_detection_images.py --execute`，删除上一周 `sina/bs_detection/SinaAppBS/config_1/YYYYMMDD/` 图片日期目录，降低检测图片占用。
+9. 继续执行 M1、M8 和实盘快照同步。
 
 Web 任务中心也已注册“可信全量池候选导出”和“可信策略影子盘监控”，默认交易日 `21:25`、`21:28` 执行，可手动触发或调整调度时间。
+
+Web 任务中心同时注册“Sina检测图片周清理（周五）”，默认 `22:05` 执行。该任务不依赖交易日，脚本自身只在周五执行删除；不带 `--execute` 时只做 dry-run。
 
 代码更新后需要重启独立 `scheduler.py` 进程和 Web 服务，新的流水线步骤与 Web 任务才会生效。
 
@@ -76,7 +78,7 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
    CHENYIYUN_DB_PASSWORD=你的密码 \
    python3 scripts/ops/export_trusted_strategy_candidates.py \
      --risk-profile adaptive \
-     --strategy adaptive_market_style \
+     --strategy baseline_full_liquidity_detail_vol_position \
      --top-n 5 \
      --max-total-positions 5 \
      --write-db \
@@ -105,7 +107,7 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 
    - 未满 `--hold-days` 的持仓锁定，不卖出、不减仓，并先占用组合预算。
    - 账户总持仓数不超过 `--max-total-positions`。当前默认值为 5；若锁定持仓已经占满上限，则当日只允许卖出到期/未入选持仓，不再新增买入。
-   - `--risk-profile` 控制生产风险档位。当前默认 `adaptive`：按最近 3 个月收益优先选择冠军策略，每天检测市场/行业状态，最多每周切换一次底层基准，并把实际敞口调到约 50% / 70% / 80%。
+   - `--risk-profile` 控制生产风险档位。当前默认 `adaptive`：主推送 `baseline_full_liquidity_detail_vol_position`，目标仓位 70%；每天用策略订单对照复核市场/行业状态，必要时人工降到 `defensive` 或降低 `--position-ratio`。
    - 可选 `--risk-profile dual-adaptive` 或 `--strategy dual_system_adaptive_route` 启用 Chenyiyun2087 × AShareDataCenter 双系统路由。Chenyiyun 仍是生产入口；AShare 只作为外部策略、板块、周线确认和风险门禁信号源。
    - `--position-ratio` 可覆盖风险档位的目标总仓位。人工降风险时优先使用 `defensive` 或显式降低该参数。
 
@@ -173,4 +175,4 @@ Web 任务中心也已注册“可信全量池候选导出”和“可信策略�
 - 脚本会自动生成本地调仓订单草案并发送飞书通知；目前没有接入券商真实委托 API，不会向券商柜台发送订单。
 - 模型排序相关策略仍需更多 walk-forward 样本验证，暂不作为生产默认方案。
 - `dual_system_adaptive_route` 第一阶段已接入生产 dry-run、订单对照和 Web 展示。2026-06-03 信号日 AShare 外部源可加载 144 条候选，但周线确认字段均未通过，因此主路由回退到 Chenyiyun 候选并给出 70% 中性仓位。该策略目前适合影子观察；三年多策略对照需完成 AShare 候选缓存优化后再作为验收结论。
-- `adaptive_market_style` v2.2 已接入收益优先生产口径。2026-06-04 dry-run 中 AShare 候选 172 条、风险过滤 14 条、补位 2 只、目标仓位 50%，输出目录为 `exports/production_candidates/20260605_004350_adaptive_market_style`。三年 T+1 账户级回测输出位于 `exports/signal_research/20260605_004258_229723_trusted_account_backtest`：收益约 +42.09%、年化约 +11.36%、最大回撤约 -37.33%，通过 `-45%` 回撤硬底线。
+- 2026-06-05 起，飞书主推送策略切为 `baseline_full_liquidity_detail_vol_position`，目标仓位 70%。其完整三年账户级回测收益约 +18.40%、年化约 +5.32%、最大回撤约 -66.41%；最近 3 个月收益约 +36.71%、最大回撤约 -12.87%，最近半年收益约 +84.99%、最大回撤约 -28.75%。结论是近期收益弹性强，但长期裸跑回撤很深，因此必须保留 `adaptive_market_style` 和防守策略作为每日风控对照。

@@ -69,7 +69,7 @@ from scripts.research_full_pool_liquidity_strategies import (
 
 
 OUT_ROOT = PROJECT_ROOT / "exports" / "production_candidates"
-DEFAULT_RISK_PROFILE = "balanced"
+DEFAULT_RISK_PROFILE = "adaptive"
 RISK_PROFILE_DEFAULTS = {
     "offensive": {
         "strategy": "tiered_liquidity_then_bs_v2",
@@ -90,10 +90,10 @@ RISK_PROFILE_DEFAULTS = {
         "description": "防守档：纯流动性策略，12日持有，目标50%仓位。",
     },
     "adaptive": {
-        "strategy": ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
-        "position_ratio": 1.0,
+        "strategy": "baseline_full_liquidity_detail_vol_position",
+        "position_ratio": 0.7,
         "hold_days": 10,
-        "description": "自适应档：最近3个月收益优先选择冠军策略，并按T日市场/行业状态动态调整50%-80%仓位，强进攻阶段才短期开到进攻策略。",
+        "description": "收益优先主推送档：使用最近3个月收益风险最平衡的vol_position作为主策略，默认70%仓位；adaptive_market_style保留为市场/行业状态风控影子对照。",
     },
     "dual-adaptive": {
         "strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
@@ -1966,16 +1966,27 @@ def export_candidates(args: argparse.Namespace) -> dict:
     )
     if args.strategy not in pseudo_strategy_names:
         candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
+    if spec.name == "baseline_full_liquidity_detail_vol_position":
+        candidates = _scale_candidate_weights_for_export(candidates, target_position_ratio)
 
     warnings: list[str] = []
     if candidates["industry"].fillna("").str.strip().eq("").any():
         warnings.append("存在空行业字段，请先运行 industry 回填。")
-    if candidates["effective_weight"].sum() < 0.95:
-        warnings.append(f"组合有效仓位为 {candidates['effective_weight'].sum():.2%}，请确认是否由市场门禁或风格状态降仓触发。")
+    candidate_weight_sum = float(pd.to_numeric(candidates["effective_weight"], errors="coerce").fillna(0.0).sum())
+    expected_weight_sum = max(0.0, min(1.0, float(target_position_ratio)))
+    if expected_weight_sum > 0 and candidate_weight_sum < expected_weight_sum * 0.95:
+        warnings.append(
+            f"组合有效仓位为 {candidate_weight_sum:.2%}，低于目标仓位 {expected_weight_sum:.2%}，请确认是否由市场门禁或风格状态降仓触发。"
+        )
     latest_weight = factor_weights[factor_weights["trade_date"].astype(str).eq(asof_date)] if not factor_weights.empty else pd.DataFrame()
-    if latest_weight.empty:
+    uses_dynamic_weights = "dynamic" in str(spec.sort_col)
+    if latest_weight.empty and uses_dynamic_weights:
         warnings.append("未找到信号日动态权重记录，动态排序可能退化为等权因子。")
-    elif "history_dates" in latest_weight.columns and pd.to_numeric(latest_weight["history_dates"], errors="coerce").max() < 5:
+    elif (
+        uses_dynamic_weights
+        and "history_dates" in latest_weight.columns
+        and pd.to_numeric(latest_weight["history_dates"], errors="coerce").max() < 5
+    ):
         warnings.append("动态权重可用历史周期少于 5 个，建议降低仓位或改用 baseline_full_score / baseline_full_liquidity_detail 复核。")
 
     params = {
@@ -2011,7 +2022,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
         )
         if adaptive_decision
         else bool(
-            "market_exposure_scale" in candidates.columns
+            spec.market_gate
+            and "market_exposure_scale" in candidates.columns
             and (pd.to_numeric(candidates["market_exposure_scale"], errors="coerce").fillna(1.0) < 1.0).any()
         ),
     }

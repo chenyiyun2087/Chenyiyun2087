@@ -1,6 +1,8 @@
+import argparse
+
 import pandas as pd
 
-from scripts.ops.export_trusted_strategy_candidates import _build_rebalance_orders
+from scripts.ops.export_trusted_strategy_candidates import _apply_risk_profile_defaults, _build_rebalance_orders
 from scripts.research_trusted_strategy_account_backtest import (
     ASHARE_ADAPTIVE_VERSION,
     ASHARE_WEEKLY_UNCONFIRMED_WEIGHT,
@@ -55,6 +57,16 @@ def test_rebalance_orders_respect_min_holding_gate_and_reserve_locked_weight():
 def test_symbol_from_ts_code_normalizes_exchange_suffix():
     assert _symbol_from_ts_code("600000.SH") == "600000"
     assert _symbol_from_ts_code("000001.SZ") == "000001"
+
+
+def test_adaptive_risk_profile_defaults_to_vol_position_main_push():
+    args = argparse.Namespace(risk_profile="adaptive", strategy=None, hold_days=None, position_ratio=None)
+
+    resolved = _apply_risk_profile_defaults(args)
+
+    assert resolved.strategy == "baseline_full_liquidity_detail_vol_position"
+    assert resolved.hold_days == 10
+    assert resolved.position_ratio == 0.7
 
 
 def test_dual_system_targets_boost_intersection_and_apply_position_ratio():
