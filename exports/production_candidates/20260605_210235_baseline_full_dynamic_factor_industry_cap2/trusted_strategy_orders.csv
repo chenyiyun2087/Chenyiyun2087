@@ -1,0 +1,6 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-05,000725,京东方Ａ,BUY,6.43,0,10800,10800,10800,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-05,600869,远东股份,BUY,28.51,0,2400,2400,2400,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-05,603773,沃格光电,BUY,132.4,0,500,500,500,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-05,605358,立昂微,BUY,66.77,0,1000,1000,1000,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-05,688146,中船特气,BUY,231.11,0,300,300,300,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5

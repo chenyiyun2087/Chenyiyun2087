@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-06-05T00:29:29",
+  "cache_key": "v2.2|prod_stage1|production_stage1|limit2|top5|dual_system_adaptive_route|20260402",
+  "meta": {
+    "strategy_source": "dual_system",
+    "selected_strategy": "observe_only",
+    "target_position_ratio": 0.0,
+    "route_reason": "dual_freeze_ashare_crash_or_high_veto",
+    "risk_veto_reason": "dual_freeze_ashare_crash_or_high_veto",
+    "adaptive_version": "v2.2",
+    "ashare_release_tier": "production_stage1",
+    "ashare_weight_profile": "prod_stage1",
+    "ashare_supplement_limit": 2,
+    "ashare_available": 1,
+    "ashare_candidate_count": 6,
+    "ashare_risk_veto_ratio": 0.3333333333333333,
+    "ashare_weekly_unconfirmed_count": 4,
+    "ashare_market_regime": "conservative",
+    "ashare_governance_hint": "block_new_positions"
+  },
+  "targets": []
+}

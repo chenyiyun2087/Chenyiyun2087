@@ -1,0 +1,5 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-04,300502,新易盛,BUY,775.94,0,100,100,100,0.0,0.2,0.2,trusted_strategy:adaptive_market_style; hold_gate=10d; max_positions=5
+2026-06-04,300720,海川智能,BUY,76.63,0,1300,1300,1300,0.0,0.2,0.2,trusted_strategy:adaptive_market_style; hold_gate=10d; max_positions=5
+2026-06-04,603725,天安新材,BUY,11.67,0,8500,8500,8500,0.0,0.2,0.2,trusted_strategy:adaptive_market_style; hold_gate=10d; max_positions=5
+2026-06-04,603986,兆易创新,BUY,529.31,0,100,100,100,0.0,0.2,0.2,trusted_strategy:adaptive_market_style; hold_gate=10d; max_positions=5

@@ -1,0 +1,6 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-08,600522,中天科技,BUY,49.53,0,1400,1400,1400,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-08,603773,沃格光电,BUY,136.5,0,500,500,500,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-08,688017,绿的谐波,BUY,428.25,0,100,100,100,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-08,688146,中船特气,BUY,252.18,0,200,200,200,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5
+2026-06-08,688322,奥比中光-UW,BUY,144.17,0,400,400,400,0.0,0.2,0.2,trusted_strategy:baseline_full_dynamic_factor_industry_cap2; hold_gate=10d; max_positions=5

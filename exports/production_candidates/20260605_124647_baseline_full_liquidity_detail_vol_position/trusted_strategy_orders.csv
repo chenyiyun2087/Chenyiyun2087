@@ -1,0 +1,6 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-04,002463,沪电股份,BUY,140.82,0,400,400,400,0.0,0.16422196234503905,0.16422196234503905,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-04,300620,光库科技,BUY,319.26,0,100,100,100,0.0,0.13311243182475374,0.13311243182475374,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-04,300750,宁德时代,BUY,408.2,0,300,300,300,0.0,0.3925482517974463,0.3925482517974463,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-04,600183,生益科技,BUY,143.96,0,400,400,400,0.0,0.17773734636599423,0.17773734636599423,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-04,688630,芯碁微装,BUY,408.0,0,100,100,100,0.0,0.13238000766676675,0.13238000766676675,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
