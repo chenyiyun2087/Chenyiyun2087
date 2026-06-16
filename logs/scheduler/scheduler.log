@@ -5305,3 +5305,431 @@
 2026-06-01 16:30:07,117 - INFO - Triggering task: eastmoney_data
 2026-06-01 16:30:07,121 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260601
 2026-06-01 16:34:55,475 - INFO - Finished eastmoney_data successfully.
+2026-06-01 21:00:00,736 - INFO - Triggering task: daily_pipeline
+2026-06-01 21:00:00,743 - INFO - Waiting for TuShare data readiness...
+2026-06-01 21:00:00,748 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-01 21:00:00,751 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-01 21:00:04,613 - INFO - Finished eastmoney_strategy successfully.
+2026-06-01 21:00:04,615 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260601 --force
+2026-06-01 21:01:16,229 - INFO - Finished score_rank successfully.
+2026-06-01 21:01:16,230 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-01 --end-date 2026-06-01 --execute
+2026-06-01 21:01:16,497 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-01 21:01:16,498 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260601
+2026-06-01 21:01:27,445 - INFO - Finished bs_consensus successfully.
+2026-06-01 21:01:27,447 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260601 --strategy baseline_full_dynamic_factor_industry_cap2 --top-n 5 --hold-days 10 --write-db --emit-orders --notify-feishu
+2026-06-01 21:07:24,427 - INFO - Finished trusted_strategy_candidates successfully.
+2026-06-01 21:07:24,430 - INFO - Starting m1_event_kpi: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_b_event_kpi.py
+2026-06-01 21:07:50,465 - INFO - Finished m1_event_kpi successfully.
+2026-06-01 21:07:50,468 - INFO - Starting strategy_m8: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/run_m8_cycle.py --lookback-dates 60
+2026-06-01 21:07:51,494 - INFO - Finished strategy_m8 successfully.
+2026-06-01 21:07:51,502 - INFO - Starting live_sync: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/live_tracker/run_live_tracker.py sync
+2026-06-01 21:07:51,917 - INFO - Finished live_sync successfully.
+2026-06-01 21:07:51,917 - INFO - Daily Pipeline completed successfully.
+2026-06-02 01:59:02,958 - INFO - Waiting for TuShare data readiness...
+2026-06-02 01:59:03,035 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-02 01:59:03,035 - INFO - Starting eastmoney_strategy: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-02 01:59:04,452 - INFO - Finished eastmoney_strategy successfully.
+2026-06-02 01:59:04,452 - INFO - Starting score_rank: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260601 --force
+2026-06-02 02:00:22,200 - INFO - Finished score_rank successfully.
+2026-06-02 02:00:22,201 - INFO - Starting score_rank_industry_backfill: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-01 --end-date 2026-06-01 --execute
+2026-06-02 02:00:22,462 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-02 02:00:22,463 - INFO - Starting bs_consensus: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260601
+2026-06-02 02:00:33,824 - INFO - Finished bs_consensus successfully.
+2026-06-02 02:00:33,824 - INFO - Starting trusted_strategy_candidates: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260601 --strategy baseline_full_dynamic_factor_industry_cap2 --top-n 5 --hold-days 10 --max-total-positions 5 --write-db --emit-orders --notify-feishu
+2026-06-02 02:01:53,043 - INFO - Finished trusted_strategy_candidates successfully.
+2026-06-02 02:01:53,046 - INFO - Starting trusted_strategy_shadow_monitor: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/scripts/ops/run_trusted_strategy_shadow_monitor.py --execution-date 20260601 --write-db --notify-feishu --allow-empty
+2026-06-02 02:01:54,007 - INFO - Finished trusted_strategy_shadow_monitor successfully.
+2026-06-02 02:01:54,007 - INFO - Starting m1_event_kpi: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_b_event_kpi.py
+2026-06-02 02:02:25,630 - INFO - Finished m1_event_kpi successfully.
+2026-06-02 02:02:25,631 - INFO - Starting strategy_m8: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/run_m8_cycle.py --lookback-dates 60
+2026-06-02 02:02:26,936 - INFO - Finished strategy_m8 successfully.
+2026-06-02 02:02:26,936 - INFO - Starting live_sync: /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 /Volumes/extension/projects/Chenyiyun2087/sina/live_tracker/run_live_tracker.py sync
+2026-06-02 02:02:27,321 - INFO - Finished live_sync successfully.
+2026-06-02 02:02:27,321 - INFO - Daily Pipeline completed successfully.
+2026-06-02 15:20:12,107 - INFO - Triggering task: sina_bs
+2026-06-02 15:20:12,123 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260602
+2026-06-02 16:02:42,905 - INFO - Finished sina_bs successfully.
+2026-06-02 16:30:13,375 - INFO - Triggering task: eastmoney_data
+2026-06-02 16:30:13,378 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260602
+2026-06-02 16:34:17,736 - INFO - Finished eastmoney_data successfully.
+2026-06-02 21:00:22,089 - INFO - Triggering task: daily_pipeline
+2026-06-02 21:00:22,095 - INFO - Waiting for TuShare data readiness...
+2026-06-02 21:00:22,106 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-02 21:00:22,110 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-02 21:00:24,694 - INFO - Finished eastmoney_strategy successfully.
+2026-06-02 21:00:24,696 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260602 --force
+2026-06-02 21:01:29,897 - INFO - Finished score_rank successfully.
+2026-06-02 21:01:29,900 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-02 --end-date 2026-06-02 --execute
+2026-06-02 21:01:30,122 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-02 21:01:30,123 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260602
+2026-06-02 21:01:34,636 - INFO - Finished bs_consensus successfully.
+2026-06-02 21:01:34,637 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260602 --strategy baseline_full_dynamic_factor_industry_cap2 --top-n 5 --hold-days 10 --write-db --emit-orders --notify-feishu
+2026-06-02 21:02:33,205 - INFO - Finished trusted_strategy_candidates successfully.
+2026-06-02 21:02:33,207 - INFO - Starting m1_event_kpi: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_b_event_kpi.py
+2026-06-02 21:02:57,303 - INFO - Finished m1_event_kpi successfully.
+2026-06-02 21:02:57,304 - INFO - Starting strategy_m8: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/run_m8_cycle.py --lookback-dates 60
+2026-06-02 21:02:58,069 - INFO - Finished strategy_m8 successfully.
+2026-06-02 21:02:58,070 - INFO - Starting live_sync: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/live_tracker/run_live_tracker.py sync
+2026-06-02 21:02:58,406 - INFO - Finished live_sync successfully.
+2026-06-02 21:02:58,407 - INFO - Daily Pipeline completed successfully.
+2026-06-03 15:20:20,131 - INFO - Triggering task: sina_bs
+2026-06-03 15:20:20,142 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260603
+2026-06-03 16:04:54,786 - INFO - Finished sina_bs successfully.
+2026-06-03 16:30:25,178 - INFO - Triggering task: eastmoney_data
+2026-06-03 16:30:25,179 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260603
+2026-06-03 16:34:36,668 - INFO - Finished eastmoney_data successfully.
+2026-06-03 21:00:12,594 - INFO - Triggering task: daily_pipeline
+2026-06-03 21:00:12,604 - INFO - Waiting for TuShare data readiness...
+2026-06-03 21:00:12,612 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-03 21:00:12,615 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-03 21:00:17,751 - INFO - Finished eastmoney_strategy successfully.
+2026-06-03 21:00:17,751 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260603 --force
+2026-06-03 21:01:51,100 - INFO - Finished score_rank successfully.
+2026-06-03 21:01:51,111 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-03 --end-date 2026-06-03 --execute
+2026-06-03 21:01:51,495 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-03 21:01:51,495 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260603
+2026-06-03 21:02:05,857 - INFO - Finished bs_consensus successfully.
+2026-06-03 21:02:05,858 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260603 --strategy baseline_full_dynamic_factor_industry_cap2 --top-n 5 --hold-days 10 --write-db --emit-orders --notify-feishu
+2026-06-03 21:03:48,432 - INFO - Finished trusted_strategy_candidates successfully.
+2026-06-03 21:03:48,434 - INFO - Starting m1_event_kpi: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_b_event_kpi.py
+2026-06-03 21:04:21,211 - INFO - Finished m1_event_kpi successfully.
+2026-06-03 21:04:21,213 - INFO - Starting strategy_m8: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/run_m8_cycle.py --lookback-dates 60
+2026-06-03 21:04:22,652 - INFO - Finished strategy_m8 successfully.
+2026-06-03 21:04:22,652 - INFO - Starting live_sync: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/live_tracker/run_live_tracker.py sync
+2026-06-03 21:04:23,200 - INFO - Finished live_sync successfully.
+2026-06-03 21:04:23,200 - INFO - Daily Pipeline completed successfully.
+2026-06-04 15:20:16,282 - INFO - Triggering task: sina_bs
+2026-06-04 15:20:16,315 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260604
+2026-06-04 16:05:02,673 - INFO - Finished sina_bs successfully.
+2026-06-04 16:30:03,051 - INFO - Triggering task: eastmoney_data
+2026-06-04 16:30:03,055 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260604
+2026-06-04 16:34:10,115 - INFO - Finished eastmoney_data successfully.
+2026-06-04 21:00:15,063 - INFO - Triggering task: daily_pipeline
+2026-06-04 21:00:15,069 - INFO - Waiting for TuShare data readiness...
+2026-06-04 21:00:15,078 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-04 21:00:15,079 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-04 21:00:21,253 - INFO - Finished eastmoney_strategy successfully.
+2026-06-04 21:00:21,255 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260604 --force
+2026-06-04 21:01:25,387 - INFO - Finished score_rank successfully.
+2026-06-04 21:01:25,390 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-04 --end-date 2026-06-04 --execute
+2026-06-04 21:01:25,608 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-04 21:01:25,609 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260604
+2026-06-04 21:01:30,069 - INFO - Finished bs_consensus successfully.
+2026-06-04 21:01:30,070 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260604 --strategy baseline_full_dynamic_factor_industry_cap2 --top-n 5 --hold-days 10 --write-db --emit-orders --notify-feishu
+2026-06-04 21:02:43,095 - ERROR - Task trusted_strategy_candidates failed with code 1. See logs/scheduler/trusted_strategy_candidates_20260604_210130.log
+2026-06-04 21:02:43,096 - ERROR - Pipeline aborted at trusted strategy candidate export.
+2026-06-04 21:02:43,096 - ERROR - Task daily_pipeline did not complete successfully.
+2026-06-05 15:20:04,212 - INFO - Triggering task: sina_bs
+2026-06-05 15:20:04,222 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260605
+2026-06-05 16:07:05,737 - INFO - Finished sina_bs successfully.
+2026-06-05 16:30:06,246 - INFO - Triggering task: eastmoney_data
+2026-06-05 16:30:06,252 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260605
+2026-06-05 16:35:41,270 - INFO - Finished eastmoney_data successfully.
+2026-06-05 21:00:16,086 - INFO - Triggering task: daily_pipeline
+2026-06-05 21:00:16,090 - INFO - Waiting for TuShare data readiness...
+2026-06-05 21:00:16,102 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-05 21:00:16,103 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-05 21:00:22,210 - INFO - Finished eastmoney_strategy successfully.
+2026-06-05 21:00:22,211 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260605 --force
+2026-06-05 21:01:26,516 - INFO - Finished score_rank successfully.
+2026-06-05 21:01:26,517 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-05 --end-date 2026-06-05 --execute
+2026-06-05 21:01:26,731 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-05 21:01:26,731 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260605
+2026-06-05 21:01:37,138 - INFO - Finished bs_consensus successfully.
+2026-06-05 21:01:37,138 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260605 --strategy baseline_full_dynamic_factor_industry_cap2 --top-n 5 --hold-days 10 --write-db --emit-orders --notify-feishu
+2026-06-05 21:02:49,872 - ERROR - Task trusted_strategy_candidates failed with code 1. See logs/scheduler/trusted_strategy_candidates_20260605_210137.log
+2026-06-05 21:02:49,872 - ERROR - Pipeline aborted at trusted strategy candidate export.
+2026-06-05 21:02:49,872 - ERROR - Task daily_pipeline did not complete successfully.
+2026-06-06 00:00:23,018 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 01:00:23,940 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 02:00:25,100 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 03:00:26,250 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 04:00:27,464 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 05:00:28,496 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 06:00:29,806 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 07:00:01,224 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 08:00:02,753 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 09:00:04,234 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 10:00:05,799 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 11:00:07,398 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 12:00:08,911 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 13:00:10,273 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 14:00:11,878 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 15:00:13,197 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 15:20:13,559 - INFO - Triggering task: sina_bs -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-06 16:00:14,176 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 16:30:14,742 - INFO - Triggering task: eastmoney_data -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-06 17:00:15,266 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 18:00:16,309 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 19:00:17,377 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 20:00:18,402 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 21:00:19,608 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 21:00:19,611 - INFO - Triggering task: daily_pipeline -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-06 22:00:20,689 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-06 23:00:21,988 - INFO - 2026-06-06 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 00:00:23,319 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 01:00:24,843 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 02:00:26,021 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 03:00:27,153 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 04:00:28,390 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 05:00:29,714 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 06:00:01,444 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 07:00:03,001 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 08:00:04,731 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 09:00:06,571 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 10:00:08,646 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 11:00:10,665 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 12:00:12,836 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 13:00:14,267 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 14:00:15,790 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 15:00:17,643 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 15:20:18,358 - INFO - Triggering task: sina_bs -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-07 16:00:19,631 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 16:30:20,667 - INFO - Triggering task: eastmoney_data -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-07 17:00:21,788 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 18:00:24,021 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 19:00:26,309 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 20:00:28,660 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 21:00:00,580 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 21:00:00,587 - INFO - Triggering task: daily_pipeline -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-07 22:00:02,431 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-07 23:00:04,556 - INFO - 2026-06-07 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-08 15:20:26,032 - INFO - Triggering task: sina_bs
+2026-06-08 15:20:26,045 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260608
+2026-06-08 16:03:24,338 - INFO - Finished sina_bs successfully.
+2026-06-08 16:30:24,735 - INFO - Triggering task: eastmoney_data
+2026-06-08 16:30:24,739 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260608
+2026-06-08 16:34:09,153 - INFO - Finished eastmoney_data successfully.
+2026-06-08 21:00:13,213 - INFO - Triggering task: daily_pipeline
+2026-06-08 21:00:13,216 - INFO - Waiting for TuShare data readiness...
+2026-06-08 21:00:13,227 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-08 21:00:13,228 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-08 21:00:16,719 - INFO - Finished eastmoney_strategy successfully.
+2026-06-08 21:00:16,720 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260608 --force
+2026-06-08 21:01:26,746 - INFO - Finished score_rank successfully.
+2026-06-08 21:01:26,748 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-08 --end-date 2026-06-08 --execute
+2026-06-08 21:01:27,017 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-08 21:01:27,017 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260608
+2026-06-08 21:01:32,166 - INFO - Finished bs_consensus successfully.
+2026-06-08 21:01:32,167 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260608 --strategy baseline_full_dynamic_factor_industry_cap2 --top-n 5 --hold-days 10 --write-db --emit-orders --notify-feishu
+2026-06-08 21:02:54,243 - ERROR - Task trusted_strategy_candidates failed with code 1. See logs/scheduler/trusted_strategy_candidates_20260608_210132.log
+2026-06-08 21:02:54,244 - ERROR - Pipeline aborted at trusted strategy candidate export.
+2026-06-08 21:02:54,244 - ERROR - Task daily_pipeline did not complete successfully.
+2026-06-09 09:32:38,124 - INFO - Scheduler started.
+2026-06-09 15:20:14,937 - INFO - Triggering task: sina_bs
+2026-06-09 15:20:14,938 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260609
+2026-06-09 16:06:18,324 - INFO - Finished sina_bs successfully.
+2026-06-09 16:30:18,732 - INFO - Triggering task: eastmoney_data
+2026-06-09 16:30:18,734 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260609
+2026-06-09 16:35:38,143 - INFO - Finished eastmoney_data successfully.
+2026-06-09 21:00:13,279 - INFO - Triggering task: daily_pipeline
+2026-06-09 21:00:13,281 - INFO - Waiting for TuShare data readiness...
+2026-06-09 21:00:13,290 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-09 21:00:13,291 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-09 21:00:19,147 - INFO - Finished eastmoney_strategy successfully.
+2026-06-09 21:00:19,148 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260609 --force
+2026-06-09 21:01:26,579 - INFO - Finished score_rank successfully.
+2026-06-09 21:01:26,581 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-09 --end-date 2026-06-09 --execute
+2026-06-09 21:01:26,831 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-09 21:01:26,832 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260609
+2026-06-09 21:01:37,245 - INFO - Finished bs_consensus successfully.
+2026-06-09 21:01:37,245 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260609 --risk-profile adaptive --strategy baseline_full_liquidity_detail_vol_position --top-n 5 --max-total-positions 5 --write-db --emit-orders --notify-feishu
+2026-06-09 21:02:02,686 - ERROR - Task trusted_strategy_candidates failed with code 1. See logs/scheduler/trusted_strategy_candidates_20260609_210137.log
+2026-06-09 21:02:02,686 - ERROR - Pipeline aborted at trusted strategy candidate export.
+2026-06-09 21:02:02,686 - ERROR - Task daily_pipeline did not complete successfully.
+2026-06-09 22:05:04,158 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-10 15:20:24,117 - INFO - Triggering task: sina_bs
+2026-06-10 15:20:24,123 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260610
+2026-06-10 16:22:02,554 - INFO - Finished sina_bs successfully.
+2026-06-10 16:30:02,734 - INFO - Triggering task: eastmoney_data
+2026-06-10 16:30:02,736 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260610
+2026-06-10 16:40:18,135 - INFO - Finished eastmoney_data successfully.
+2026-06-10 21:00:23,134 - INFO - Triggering task: daily_pipeline
+2026-06-10 21:00:23,137 - INFO - Waiting for TuShare data readiness...
+2026-06-10 21:00:23,145 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-10 21:00:23,146 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-10 21:00:26,172 - INFO - Finished eastmoney_strategy successfully.
+2026-06-10 21:00:26,172 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260610 --force
+2026-06-10 21:01:32,809 - INFO - Finished score_rank successfully.
+2026-06-10 21:01:32,810 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-10 --end-date 2026-06-10 --execute
+2026-06-10 21:01:33,048 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-10 21:01:33,048 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260610
+2026-06-10 21:01:38,525 - INFO - Finished bs_consensus successfully.
+2026-06-10 21:01:38,526 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260610 --risk-profile adaptive --strategy baseline_full_liquidity_detail_vol_position --top-n 5 --max-total-positions 5 --write-db --emit-orders --notify-feishu
+2026-06-10 21:02:03,607 - ERROR - Task trusted_strategy_candidates failed with code 1. See logs/scheduler/trusted_strategy_candidates_20260610_210138.log
+2026-06-10 21:02:03,608 - ERROR - Pipeline aborted at trusted strategy candidate export.
+2026-06-10 21:02:03,608 - ERROR - Task daily_pipeline did not complete successfully.
+2026-06-10 22:05:04,758 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-11 15:20:24,625 - INFO - Triggering task: sina_bs
+2026-06-11 15:20:24,634 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260611
+2026-06-11 16:05:33,308 - INFO - Finished sina_bs successfully.
+2026-06-11 16:30:03,712 - INFO - Triggering task: eastmoney_data
+2026-06-11 16:30:03,714 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260611
+2026-06-11 16:33:34,376 - INFO - Finished eastmoney_data successfully.
+2026-06-11 21:00:08,913 - INFO - Triggering task: daily_pipeline
+2026-06-11 21:00:08,916 - INFO - Waiting for TuShare data readiness...
+2026-06-11 21:00:08,924 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-11 21:00:08,926 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-11 21:00:14,159 - INFO - Finished eastmoney_strategy successfully.
+2026-06-11 21:00:14,160 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260611 --force
+2026-06-11 21:01:54,310 - INFO - Finished score_rank successfully.
+2026-06-11 21:01:54,312 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-11 --end-date 2026-06-11 --execute
+2026-06-11 21:01:54,733 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-11 21:01:54,734 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260611
+2026-06-11 21:02:09,972 - INFO - Finished bs_consensus successfully.
+2026-06-11 21:02:09,973 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260611 --risk-profile adaptive --strategy baseline_full_liquidity_detail_vol_position --top-n 5 --max-total-positions 5 --write-db --emit-orders --notify-feishu
+2026-06-11 21:02:50,184 - ERROR - Task trusted_strategy_candidates failed with code 1. See logs/scheduler/trusted_strategy_candidates_20260611_210209.log
+2026-06-11 21:02:50,185 - ERROR - Pipeline aborted at trusted strategy candidate export.
+2026-06-11 21:02:50,185 - ERROR - Task daily_pipeline did not complete successfully.
+2026-06-11 22:05:21,172 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-12 15:20:11,506 - INFO - Triggering task: sina_bs
+2026-06-12 15:20:11,518 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260612
+2026-06-12 16:05:51,946 - INFO - Finished sina_bs successfully.
+2026-06-12 16:30:22,383 - INFO - Triggering task: eastmoney_data
+2026-06-12 16:30:22,385 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260612
+2026-06-12 16:34:34,645 - INFO - Finished eastmoney_data successfully.
+2026-06-12 21:00:09,975 - INFO - Triggering task: daily_pipeline
+2026-06-12 21:00:09,978 - INFO - Waiting for TuShare data readiness...
+2026-06-12 21:00:09,983 - INFO - Data for 20260612 not ready yet. Retrying in 5 minutes...
+2026-06-12 21:05:09,991 - INFO - Data for 20260612 not ready yet. Retrying in 5 minutes...
+2026-06-12 21:10:10,069 - INFO - Data for 20260612 not ready yet. Retrying in 5 minutes...
+2026-06-12 21:15:10,081 - INFO - Data for 20260612 not ready yet. Retrying in 5 minutes...
+2026-06-12 21:20:10,094 - INFO - Data for 20260612 not ready yet. Retrying in 5 minutes...
+2026-06-12 21:25:10,113 - INFO - Data for 20260612 not ready yet. Retrying in 5 minutes...
+2026-06-12 21:30:10,122 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-12 21:30:10,125 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-12 21:30:16,055 - INFO - Finished eastmoney_strategy successfully.
+2026-06-12 21:30:16,057 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260612 --force
+2026-06-12 21:31:59,947 - INFO - Finished score_rank successfully.
+2026-06-12 21:31:59,949 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-12 --end-date 2026-06-12 --execute
+2026-06-12 21:32:00,282 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-12 21:32:00,337 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260612
+2026-06-12 21:32:10,815 - INFO - Finished bs_consensus successfully.
+2026-06-12 21:32:10,815 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260612 --risk-profile adaptive --strategy baseline_full_liquidity_detail_vol_position --top-n 5 --max-total-positions 5 --write-db --emit-orders --notify-feishu
+2026-06-12 21:32:46,970 - ERROR - Task trusted_strategy_candidates failed with code 1. See logs/scheduler/trusted_strategy_candidates_20260612_213210.log
+2026-06-12 21:32:46,971 - ERROR - Pipeline aborted at trusted strategy candidate export.
+2026-06-12 21:32:46,971 - ERROR - Task daily_pipeline did not complete successfully.
+2026-06-12 22:05:17,669 - INFO - Triggering task: sina_bs_image_weekly_cleanup
+2026-06-12 22:05:17,675 - INFO - Starting sina_bs_image_weekly_cleanup: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/cleanup_sina_bs_detection_images.py --execute --date 20260612
+2026-06-12 22:05:17,835 - INFO - Finished sina_bs_image_weekly_cleanup successfully.
+2026-06-13 00:00:19,650 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 01:00:20,965 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 02:00:21,907 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 03:00:23,087 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 04:00:24,353 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 05:00:25,551 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 06:00:26,825 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 07:00:28,155 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 08:00:29,428 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 09:00:00,614 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 10:00:01,729 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 11:00:02,929 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 12:00:04,186 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 13:00:05,341 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 14:00:05,883 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 15:00:06,798 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 15:20:07,100 - INFO - Triggering task: sina_bs -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-13 16:00:07,923 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 16:30:08,303 - INFO - Triggering task: eastmoney_data -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-13 17:00:08,769 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 18:00:09,851 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 19:00:10,880 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 20:00:11,922 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 21:00:13,172 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 21:00:13,175 - INFO - Triggering task: daily_pipeline -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-13 22:00:14,034 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-13 22:05:14,096 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-13 23:00:15,223 - INFO - 2026-06-13 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 00:00:16,508 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 01:00:19,915 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 02:00:21,077 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 03:00:22,328 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 04:00:23,541 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 05:00:24,444 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 06:00:25,610 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 07:00:26,943 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 08:00:28,240 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 09:00:29,522 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 10:00:00,807 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 11:00:02,040 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 12:00:03,314 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 13:00:04,344 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 14:00:05,487 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 15:00:06,774 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 15:20:07,159 - INFO - Triggering task: sina_bs -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-14 16:00:08,056 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 16:30:08,733 - INFO - Triggering task: eastmoney_data -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-14 17:00:09,380 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 18:00:10,561 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 19:00:11,711 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 20:00:12,893 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 21:00:13,977 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 21:00:13,980 - INFO - Triggering task: daily_pipeline -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-14 22:00:14,906 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-14 22:05:14,984 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-14 23:00:15,677 - INFO - 2026-06-14 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-15 15:20:01,809 - INFO - Triggering task: sina_bs
+2026-06-15 15:20:01,818 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260615
+2026-06-15 16:06:25,648 - INFO - Finished sina_bs successfully.
+2026-06-15 16:30:26,113 - INFO - Triggering task: eastmoney_data
+2026-06-15 16:30:26,115 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260615
+2026-06-15 16:37:05,758 - INFO - Finished eastmoney_data successfully.
+2026-06-15 21:00:10,981 - INFO - Triggering task: daily_pipeline
+2026-06-15 21:00:10,984 - INFO - Waiting for TuShare data readiness...
+2026-06-15 21:00:10,996 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-15 21:00:10,996 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-15 21:00:13,229 - INFO - Finished eastmoney_strategy successfully.
+2026-06-15 21:00:13,230 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260615 --force
+2026-06-15 21:01:30,710 - INFO - Finished score_rank successfully.
+2026-06-15 21:01:30,711 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-15 --end-date 2026-06-15 --execute
+2026-06-15 21:01:31,055 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-15 21:01:31,056 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260615
+2026-06-15 21:01:43,864 - INFO - Finished bs_consensus successfully.
+2026-06-15 21:01:43,864 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260615 --risk-profile adaptive --strategy baseline_full_liquidity_detail_vol_position --top-n 5 --max-total-positions 5 --write-db --emit-orders --notify-feishu
+2026-06-15 21:02:42,336 - INFO - Finished trusted_strategy_candidates successfully.
+2026-06-15 21:02:42,338 - INFO - Starting trusted_strategy_shadow_monitor: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/run_trusted_strategy_shadow_monitor.py --execution-date 20260615 --write-db --notify-feishu --allow-empty
+2026-06-15 21:02:43,395 - INFO - Finished trusted_strategy_shadow_monitor successfully.
+2026-06-15 21:02:43,395 - INFO - Starting m1_event_kpi: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_b_event_kpi.py
+2026-06-15 21:03:14,188 - INFO - Finished m1_event_kpi successfully.
+2026-06-15 21:03:14,190 - INFO - Starting strategy_m8: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/run_m8_cycle.py --lookback-dates 60
+2026-06-15 21:03:15,696 - INFO - Finished strategy_m8 successfully.
+2026-06-15 21:03:15,705 - INFO - Starting live_sync: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/live_tracker/run_live_tracker.py sync
+2026-06-15 21:03:16,577 - INFO - Finished live_sync successfully.
+2026-06-15 21:03:16,577 - INFO - Daily Pipeline completed successfully.
+2026-06-15 22:05:17,698 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-16 15:20:07,743 - INFO - Triggering task: sina_bs
+2026-06-16 15:20:07,760 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260616
+2026-06-16 16:09:41,036 - INFO - Finished sina_bs successfully.
+2026-06-16 16:30:11,403 - INFO - Triggering task: eastmoney_data
+2026-06-16 16:30:11,407 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260616
+2026-06-16 16:34:05,821 - INFO - Finished eastmoney_data successfully.
+2026-06-16 21:00:10,953 - INFO - Triggering task: daily_pipeline
+2026-06-16 21:00:10,963 - INFO - Waiting for TuShare data readiness...
+2026-06-16 21:00:10,976 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-16 21:00:10,979 - INFO - Starting eastmoney_strategy: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/run_strategy.py --export result
+2026-06-16 21:00:13,466 - INFO - Finished eastmoney_strategy successfully.
+2026-06-16 21:00:13,466 - INFO - Starting score_rank: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/run_daily.py --date 20260616 --force
+2026-06-16 21:01:23,738 - INFO - Finished score_rank successfully.
+2026-06-16 21:01:23,741 - INFO - Starting score_rank_industry_backfill: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/backfill_score_rank_daily_industry.py --start-date 2026-06-16 --end-date 2026-06-16 --execute
+2026-06-16 21:01:23,984 - INFO - Finished score_rank_industry_backfill successfully.
+2026-06-16 21:01:23,984 - INFO - Starting bs_consensus: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_bs_consensus.py --date 20260616
+2026-06-16 21:01:30,955 - INFO - Finished bs_consensus successfully.
+2026-06-16 21:01:30,956 - INFO - Starting trusted_strategy_candidates: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/export_trusted_strategy_candidates.py --date 20260616 --risk-profile adaptive --strategy baseline_full_liquidity_detail_vol_position --top-n 5 --max-total-positions 5 --write-db --emit-orders --notify-feishu
+2026-06-16 21:02:14,298 - INFO - Finished trusted_strategy_candidates successfully.
+2026-06-16 21:02:14,299 - INFO - Starting trusted_strategy_shadow_monitor: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scripts/ops/run_trusted_strategy_shadow_monitor.py --execution-date 20260616 --write-db --notify-feishu --allow-empty
+2026-06-16 21:02:15,304 - INFO - Finished trusted_strategy_shadow_monitor successfully.
+2026-06-16 21:02:15,305 - INFO - Starting m1_event_kpi: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/build_b_event_kpi.py
+2026-06-16 21:02:46,598 - INFO - Finished m1_event_kpi successfully.
+2026-06-16 21:02:46,600 - INFO - Starting strategy_m8: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/scoreRank/cli/run_m8_cycle.py --lookback-dates 60
+2026-06-16 21:02:47,759 - INFO - Finished strategy_m8 successfully.
+2026-06-16 21:02:47,759 - INFO - Starting live_sync: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/live_tracker/run_live_tracker.py sync
+2026-06-16 21:02:48,187 - INFO - Finished live_sync successfully.
+2026-06-16 21:02:48,187 - INFO - Daily Pipeline completed successfully.
+2026-06-16 22:05:19,270 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-16 23:54:41,079 - INFO - Scheduler started.
+2026-06-16 23:54:41,079 - INFO - Skipping stale task: sina_bs scheduled at 15:20 (grace 90s)
+2026-06-16 23:54:41,079 - INFO - Skipping stale task: eastmoney_data scheduled at 16:30 (grace 90s)
+2026-06-16 23:54:41,079 - INFO - Triggering task: daily_pipeline
+2026-06-16 23:54:41,079 - INFO - Waiting for TuShare data readiness...
+2026-06-16 23:54:41,079 - INFO - Data is ready! Starting pipeline tasks...
+2026-06-16 23:54:41,079 - INFO - Daily Pipeline completed successfully.

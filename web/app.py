@@ -155,6 +155,18 @@ TASKS = {
         "next_run": "-",
         "trading_day_only": True,
     },
+    "trusted_strategy_performance_review": {
+        "name": "可信策略收益评估",
+        "description": "汇总当前生产策略收益、回撤、候选订单、影子盘和实盘状态，并推送飞书",
+        "script": "scripts/ops/run_strategy_performance_review.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": True,
+        "schedule_time": "21:32",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
     "sina_bs_image_weekly_cleanup": {
         "name": "Sina检测图片周清理（周五）",
         "description": "每周五删除上一周 Sina B/S 检测图片日期目录，降低本地图片占用",
@@ -299,6 +311,7 @@ SCHEDULED_TASK_WHITELIST = {
     "sina_bs_consensus",
     "trusted_strategy_candidates",
     "trusted_strategy_shadow_monitor",
+    "trusted_strategy_performance_review",
     "sina_bs_image_weekly_cleanup",
     "sina_m8",
     "sina_snapshot",
@@ -1453,6 +1466,57 @@ def _verify_trusted_strategy_candidates_result(started_at, finished_at, run_opti
         return False, [f"result=FAIL; verifier_error={e}"]
 
 
+def _verify_trusted_strategy_performance_review_result(started_at, finished_at, run_options=None):
+    lines = []
+    try:
+        project_root = Path(app.root_path).parent
+        out_root = project_root / "exports" / "production_strategy_reviews"
+        if not out_root.exists():
+            return False, [f"result=FAIL; reason=missing_output_root; path={out_root}"]
+
+        candidates = []
+        for path in out_root.glob("*/strategy_performance_review.json"):
+            try:
+                mtime = datetime.fromtimestamp(path.stat().st_mtime)
+            except OSError:
+                continue
+            if (started_at - timedelta(seconds=30)) <= mtime <= (finished_at + timedelta(seconds=300)):
+                candidates.append((mtime, path))
+        if not candidates:
+            return False, ["result=FAIL; reason=no_strategy_performance_review_created_in_window"]
+
+        latest_path = sorted(candidates, key=lambda item: item[0], reverse=True)[0][1]
+        payload = json.loads(latest_path.read_text(encoding="utf-8"))
+        params = payload.get("params") or {}
+        current = payload.get("current") or {}
+        backtests = payload.get("backtests") or {}
+        judgement = payload.get("judgement") or {}
+        outputs = payload.get("outputs") or {}
+        target_datestr = _normalize_datestr((run_options or {}).get("datestr"))
+        review_date = str(params.get("review_date") or "")
+        review_datestr = review_date.replace("-", "") if review_date else ""
+        strategy_ok = params.get("strategy") == TRUSTED_PRODUCTION_STRATEGY
+        date_ok = True if not target_datestr else review_datestr == target_datestr
+        json_ok = bool(latest_path.exists())
+        md_ok = bool(outputs.get("markdown_path") and Path(outputs["markdown_path"]).exists())
+        summary_ok = bool(
+            current.get("candidate_summary", {}).get("rows", 0) > 0
+            and backtests.get("primary", {}).get("summary", {}).get("total_return") is not None
+            and judgement.get("decision")
+        )
+        ok = bool(json_ok and md_ok and strategy_ok and date_ok and summary_ok)
+        lines.append(
+            "result="
+            + ("PASS" if ok else "FAIL")
+            + f"; review_date={review_date or '-'}; strategy={params.get('strategy') or '-'}"
+        )
+        lines.append(f"date_ok={date_ok}; strategy_ok={strategy_ok}; summary_ok={summary_ok}; markdown_exists={md_ok}")
+        lines.append(f"output={latest_path}")
+        return ok, lines
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
 def _verify_sina_m7_sell_result(started_at, finished_at, run_options=None):
     lines = []
     try:
@@ -1513,6 +1577,8 @@ def _run_task_result_verification(task_name, started_at, finished_at, run_option
         return _verify_sina_bs_consensus_result(started_at, finished_at, run_options=run_options)
     if task_name == "trusted_strategy_candidates":
         return _verify_trusted_strategy_candidates_result(started_at, finished_at, run_options=run_options)
+    if task_name == "trusted_strategy_performance_review":
+        return _verify_trusted_strategy_performance_review_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_m8":
         return _verify_sina_m8_result(started_at, finished_at)
     if task_name == "sina_m7_sell":
@@ -2142,6 +2208,11 @@ def _build_task_script_parts(task_name, run_options=None):
         args = ['--write-db', '--notify-feishu', '--allow-empty']
         if datestr:
             args.extend(['--execution-date', datestr])
+        return [script, *args]
+    if task_name == 'trusted_strategy_performance_review':
+        args = ['--notify-feishu']
+        if datestr:
+            args.extend(['--date', datestr])
         return [script, *args]
     if task_name == 'sina_bs_image_weekly_cleanup':
         args = ['--execute']

@@ -1,0 +1,5 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-15,002240,盛新锂能,BUY,51.63,0,1300,1300,1300,0.0,0.19940115263610705,0.19940115263610705,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-15,002460,赣锋锂业,BUY,71.32,0,1300,1300,1300,0.0,0.27999652594936975,0.27999652594936975,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-15,002466,天齐锂业,BUY,63.72,0,1500,1500,1500,0.0,0.2882724542695317,0.2882724542695317,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-15,600869,远东股份,BUY,32.68,0,1500,1500,1500,0.0,0.1491466710271448,0.1491466710271448,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5

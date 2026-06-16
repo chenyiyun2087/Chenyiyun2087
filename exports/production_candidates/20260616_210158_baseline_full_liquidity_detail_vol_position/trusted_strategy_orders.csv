@@ -1,0 +1,6 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-16,000657,中钨高新,BUY,92.5,0,700,700,700,0.0,0.19918243010178713,0.19918243010178713,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-16,002466,天齐锂业,BUY,63.99,0,2000,2000,2000,0.0,0.3761076252964636,0.3761076252964636,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-16,301217,铜冠铜箔,BUY,178.17,0,200,200,200,0.0,0.14049095305860151,0.14049095305860151,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-16,600378,昊华科技,BUY,58.0,0,1000,1000,1000,0.0,0.17664987951071914,0.17664987951071914,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-16,688146,中船特气,BUY,323.0,0,100,100,100,0.0,0.10756911203242868,0.10756911203242868,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5

@@ -246,17 +246,30 @@ def run_pipeline(target_date) -> bool:
         logger.error("Pipeline aborted at trusted strategy shadow monitor.")
         return False
 
-    # 8. Build M1 event+kpi tables for strategy stages
+    # 8. Build and push daily trusted strategy performance review.
+    if not run_script(
+        "scripts/ops/run_strategy_performance_review.py",
+        [
+            "--date",
+            date_str,
+            "--notify-feishu",
+        ],
+        "trusted_strategy_performance_review",
+    ):
+        logger.error("Pipeline aborted at trusted strategy performance review.")
+        return False
+
+    # 9. Build M1 event+kpi tables for strategy stages
     if not run_script("scoreRank/cli/build_b_event_kpi.py", [], "m1_event_kpi"):
         logger.error("Pipeline aborted at M1 Event KPI build.")
         return False
 
-    # 9. Run M8 strategy regression + parameter search and persist
+    # 10. Run M8 strategy regression + parameter search and persist
     if not run_script("scoreRank/cli/run_m8_cycle.py", ["--lookback-dates", "60"], "strategy_m8"):
         logger.error("Pipeline aborted at M8 cycle.")
         return False
 
-    # 10. Run Live Sync
+    # 11. Run Live Sync
     if not run_script("sina/live_tracker/run_live_tracker.py", ["sync"], "live_sync"):
         logger.error("Pipeline aborted at Live Sync.")
         return False

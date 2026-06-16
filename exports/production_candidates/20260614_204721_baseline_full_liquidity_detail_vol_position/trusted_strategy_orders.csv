@@ -1,0 +1,5 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-12,000657,中钨高新,BUY,79.0,0,900,900,900,0.0,0.22371360011344815,0.22371360011344815,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-12,002466,天齐锂业,BUY,62.5,0,2200,2200,2200,0.0,0.4016742860466461,0.4016742860466461,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-12,600869,远东股份,BUY,32.43,0,2100,2100,2100,0.0,0.20177786214079932,0.20177786214079932,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-12,688146,中船特气,BUY,302.0,0,100,100,100,0.0,0.11002615727886705,0.11002615727886705,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5

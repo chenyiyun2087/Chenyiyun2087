@@ -37,10 +37,11 @@
 5. 执行 `scoreRank/cli/build_bs_consensus.py --date <交易日>`。
 6. 执行 `scripts/ops/export_trusted_strategy_candidates.py --risk-profile adaptive --write-db --emit-orders --notify-feishu --max-total-positions 5`，导出 `vol_position` 主推送候选名单，并自动写入候选表、Web 股票池、核心精选信号和本地订单表；订单草案生成后发送飞书通知。
 7. 执行 `scripts/ops/run_trusted_strategy_shadow_monitor.py --execution-date <交易日> --write-db --notify-feishu --allow-empty`，复盘上一信号日订单在本交易日开盘的可成交性、涨跌停风险和滑点，并发送飞书通知。
-8. 每周五 22:05 执行 `scripts/ops/cleanup_sina_bs_detection_images.py --execute`，删除上一周 `sina/bs_detection/SinaAppBS/config_1/YYYYMMDD/` 图片日期目录，降低检测图片占用。
-9. 继续执行 M1、M8 和实盘快照同步。
+8. 执行 `scripts/ops/run_strategy_performance_review.py --date <交易日> --notify-feishu`，汇总主策略收益、回撤、候选订单、影子盘和实盘同步状态，生成 `exports/production_strategy_reviews/` 审计文件，并单独发送飞书收益评估。
+9. 每周五 22:05 执行 `scripts/ops/cleanup_sina_bs_detection_images.py --execute`，删除上一周 `sina/bs_detection/SinaAppBS/config_1/YYYYMMDD/` 图片日期目录，降低检测图片占用。
+10. 继续执行 M1、M8 和实盘快照同步。
 
-Web 任务中心也已注册“可信全量池候选导出”和“可信策略影子盘监控”，默认交易日 `21:25`、`21:28` 执行，可手动触发或调整调度时间。
+Web 任务中心也已注册“可信全量池候选导出”、“可信策略影子盘监控”和“可信策略收益评估”，默认交易日 `21:25`、`21:28`、`21:32` 执行，可手动触发或调整调度时间。
 
 Web 任务中心同时注册“Sina检测图片周清理（周五）”，默认 `22:05` 执行。该任务不依赖交易日，脚本自身只在周五执行删除；不带 `--execute` 时只做 dry-run。
 
@@ -93,6 +94,12 @@ Web 任务中心同时注册“Sina检测图片周清理（周五）”，默认
    - `trusted_strategy_candidates.json`：机器可读结果。
    - `trusted_strategy_dynamic_weights.csv`：信号日动态因子权重记录。
    - `trusted_strategy_market_environment.csv`：市场流动性环境记录。
+
+   收益评估脚本会额外输出：
+
+   - `exports/production_strategy_reviews/YYYYMMDD_HHMMSS_<交易日>/strategy_performance_review.json`：机器可读评估结果。
+   - `exports/production_strategy_reviews/YYYYMMDD_HHMMSS_<交易日>/strategy_performance_review.md`：人工复核报告。
+   - `exports/production_strategy_reviews/YYYYMMDD_HHMMSS_<交易日>/strategy_performance_review_feishu.txt`：当日飞书推送正文留痕。
 
    同时会写入：
 

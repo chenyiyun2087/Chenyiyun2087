@@ -554,6 +554,16 @@ def _send_feishu_text(webhook_url: str, content: str) -> tuple[bool, str]:
         return False, f"exception={exc}"
 
 
+def _ranked_head(frame: pd.DataFrame, n: int = 5) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    if "rank" in frame.columns:
+        return frame.sort_values("rank").head(n)
+    if "rank_no" in frame.columns:
+        return frame.sort_values("rank_no").head(n)
+    return frame.head(n)
+
+
 def _format_order_notification(
     asof_date: str,
     strategy: str,
@@ -571,9 +581,10 @@ def _format_order_notification(
     buy_amount = float((buy_orders["allocated_shares"] * buy_orders["price"]).sum()) if not buy_orders.empty else 0.0
     sell_amount = float((sell_orders["allocated_shares"] * sell_orders["price"]).sum()) if not sell_orders.empty else 0.0
     candidate_lines = []
-    for row in candidates.sort_values("rank").head(5).to_dict("records"):
+    for row in _ranked_head(candidates, 5).to_dict("records"):
+        rank_no = row.get("rank", row.get("rank_no", 0))
         candidate_lines.append(
-            f"{int(row.get('rank') or 0)}. {str(row.get('symbol') or '').zfill(6)} "
+            f"{int(rank_no or 0)}. {str(row.get('symbol') or '').zfill(6)} "
             f"{row.get('name') or ''} 权重={float(row.get('effective_weight') or 0):.1%} "
             f"分={float(row.get('rank_score') or 0):.2f}"
         )
@@ -674,7 +685,7 @@ def _format_order_notification(
                     f"Δ{int(row.get('delta_shares') or 0):+d}股 @ {float(row.get('price') or 0):.2f}"
                 )
             if detail_orders.empty:
-                for row in detail_candidates.sort_values("rank").head(5).to_dict("records"):
+                for row in _ranked_head(detail_candidates, 5).to_dict("records"):
                     lines.append(
                         f"- 候选 {str(row.get('symbol') or '').zfill(6)} {row.get('name') or ''} "
                         f"权重={float(row.get('effective_weight') or 0):.1%}"
@@ -1393,6 +1404,19 @@ def _build_rebalance_orders(
     return out
 
 
+def _db_float(value) -> float | None:
+    value = _safe_float(value)
+    if value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
 def _write_candidates_to_db(
     engine,
     candidates: pd.DataFrame,
@@ -1443,15 +1467,15 @@ def _write_candidates_to_db(
                 "stock_name": row.get("name"),
                 "industry": row.get("industry"),
                 "sort_col": row.get("sort_col"),
-                "rank_score": _safe_float(row.get("rank_score")),
-                "effective_weight": _safe_float(row.get("effective_weight")),
-                "position_weight": _safe_float(row.get("position_weight")),
-                "latest_close": _safe_float(row.get("latest_close")),
-                "score": _safe_float(row.get("score")),
-                "dynamic_factor_score": _safe_float(row.get("dynamic_factor_score")),
-                "liquidity_detail_score": _safe_float(row.get("liquidity_detail_score")),
-                "s_liquidity": _safe_float(row.get("s_liquidity")),
-                "bs_score_v2": _safe_float(row.get("bs_score_v2")),
+                "rank_score": _db_float(row.get("rank_score")),
+                "effective_weight": _db_float(row.get("effective_weight")),
+                "position_weight": _db_float(row.get("position_weight")),
+                "latest_close": _db_float(row.get("latest_close")),
+                "score": _db_float(row.get("score")),
+                "dynamic_factor_score": _db_float(row.get("dynamic_factor_score")),
+                "liquidity_detail_score": _db_float(row.get("liquidity_detail_score")),
+                "s_liquidity": _db_float(row.get("s_liquidity")),
+                "bs_score_v2": _db_float(row.get("bs_score_v2")),
                 "is_bs_candidate": int(row.get("is_bs_candidate") or 0),
                 "market_liquidity_bucket": row.get("market_liquidity_bucket"),
                 "index_bucket": row.get("index_bucket"),
