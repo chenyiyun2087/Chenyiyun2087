@@ -22,6 +22,7 @@ from scripts.ops.production_config import load_production_config
 from scripts.ops.production_risk_governor import (
     build_risk_governor_decision,
     build_risk_governor_decision_v1_1_recovery,
+    build_risk_governor_decision_v1_2_recovery,
     build_risk_governor_decision_v2,
 )
 from scripts.research_full_pool_liquidity_strategies import (
@@ -87,6 +88,8 @@ DEFAULT_STRATEGIES = [
     "production_governed_vol_position",
     "production_governed_vol_position_v1_1_recovery",
     "production_governed_vol_position_v1_1_recovery_pattern_veto",
+    "production_governed_vol_position_v1_2_recovery",
+    "production_governed_vol_position_v1_2_recovery_pattern_veto",
     "production_governed_vol_position_v2",
     "production_governed_adaptive",
     "dual_system_adaptive_route",
@@ -111,6 +114,8 @@ DEFAULT_STRATEGIES = [
 PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME = "production_governed_vol_position"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME = "production_governed_vol_position_v1_1_recovery"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_1_recovery_pattern_veto"
+PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME = "production_governed_vol_position_v1_2_recovery"
+PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2_recovery_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME = "production_governed_vol_position_v2"
 PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME = "production_governed_adaptive"
 VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_rerank"
@@ -158,6 +163,8 @@ PRODUCTION_GOVERNED_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
     PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
@@ -169,6 +176,7 @@ PATTERN_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
     PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
 }
 PSEUDO_STRATEGY_NAMES = ADAPTIVE_STRATEGY_NAMES | DUAL_SYSTEM_STRATEGY_NAMES | PRODUCTION_GOVERNED_STRATEGY_NAMES | {
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
@@ -712,6 +720,16 @@ def _account_state_from_nav_rows(nav_rows: list[dict]) -> dict[str, object]:
         curve = window / window.cummax()
         drawdown_20d = float((curve - 1.0).min())
     return {"governed_nav_ret_10d": ret_10d, "governed_nav_drawdown_20d": drawdown_20d}
+
+
+def _recovery_streak_from_decisions(adaptive_decision_rows: list[dict]) -> int:
+    streak = 0
+    for row in reversed(adaptive_decision_rows):
+        if str(row.get("risk_decision") or "") == "recovery_reduce":
+            streak += 1
+        else:
+            break
+    return int(streak)
 
 
 def _symbol_from_ts_code(value: object) -> str:
@@ -2227,11 +2245,30 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     shadow_summary = {"fail_streak": 0, "worst_action": "none", "latest_status": "backtest_proxy"}
                     pattern_state = _pattern_state_from_targets(primary_targets)
                     account_state = _account_state_from_nav_rows(nav_rows)
+                    account_state["recovery_streak"] = _recovery_streak_from_decisions(adaptive_decision_rows)
                     if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME:
                         governor = build_risk_governor_decision_v2(
                             PRODUCTION_CONFIG,
                             adaptive_decision=decision,
                             recent_shadow_summary=shadow_summary,
+                        )
+                    elif spec.name in {
+                        PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME,
+                        PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
+                    }:
+                        governor = build_risk_governor_decision_v1_2_recovery(
+                            PRODUCTION_CONFIG,
+                            adaptive_decision=decision,
+                            recent_shadow_summary=shadow_summary,
+                            account_state=account_state,
+                            pattern_state=pattern_state,
+                            recovery_params={
+                                "champion_score_floor": float(args.v12_champion_score_floor),
+                                "recovery_position": float(args.v12_recovery_position),
+                                "nav_ret_10d_kill": float(args.v12_nav_ret_10d_kill),
+                                "nav_dd_20d_kill": float(args.v12_nav_dd_20d_kill),
+                                "max_recovery_streak": int(args.v12_max_recovery_streak),
+                            },
                         )
                     elif spec.name in {
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME,
@@ -2267,6 +2304,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     target_override = primary_targets if rebalance_spec.name == primary_spec.name else targets_cache.get((signal_date, rebalance_spec.name), pd.DataFrame())
                     if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME:
                         target_override = _apply_pattern_veto_to_targets(target_override)
+                    if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME:
+                        target_override = _apply_pattern_veto_to_targets(target_override)
                     rebalance_position_ratio = float(governor.get("target_position_ratio") or 0.0)
                     if risk_decision == "freeze_buy" or not bool(governor.get("allow_new_buys", True)):
                         rebalance_position_ratio = 0.0
@@ -2288,6 +2327,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "recovery_status": governor.get("recovery_status"),
                             "governed_nav_ret_10d": account_state.get("governed_nav_ret_10d"),
                             "governed_nav_drawdown_20d": account_state.get("governed_nav_drawdown_20d"),
+                            "recovery_streak": governor.get("recovery_streak", account_state.get("recovery_streak")),
+                            "champion_score_floor": governor.get("champion_score_floor"),
+                            "recovery_position": governor.get("recovery_position"),
+                            "nav_ret_10d_kill": governor.get("nav_ret_10d_kill"),
+                            "nav_dd_20d_kill": governor.get("nav_dd_20d_kill"),
+                            "max_recovery_streak": governor.get("max_recovery_streak"),
                             "pattern_top5_high_risk_count": governor.get("pattern_top5_high_risk_count"),
                             "pattern_top5_bullish_count": governor.get("pattern_top5_bullish_count"),
                             "pattern_top5_bearish_count": governor.get("pattern_top5_bearish_count"),
@@ -2308,7 +2353,16 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "risk_governor_version": decision["risk_governor_version"],
                         "recovery_status": decision.get("recovery_status"),
                         "governed_nav_ret_10d": decision.get("governed_nav_ret_10d"),
+                        "recovery_streak": decision.get("recovery_streak"),
+                        "champion_score_floor": decision.get("champion_score_floor"),
+                        "recovery_position": decision.get("recovery_position"),
+                        "nav_ret_10d_kill": decision.get("nav_ret_10d_kill"),
+                        "nav_dd_20d_kill": decision.get("nav_dd_20d_kill"),
+                        "max_recovery_streak": decision.get("max_recovery_streak"),
                         "governed_nav_drawdown_20d": decision.get("governed_nav_drawdown_20d"),
+                        "pattern_top5_high_risk_count": decision.get("pattern_top5_high_risk_count"),
+                        "pattern_top5_bullish_count": decision.get("pattern_top5_bullish_count"),
+                        "pattern_top5_bearish_count": decision.get("pattern_top5_bearish_count"),
                         "route_reason": "production_risk_governor_backtest",
                     }
                     if spec.name in {PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME}:
@@ -2570,6 +2624,15 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["recovery_status"] = adaptive_meta.get("recovery_status")
                         item["governed_nav_ret_10d"] = adaptive_meta.get("governed_nav_ret_10d")
                         item["governed_nav_drawdown_20d"] = adaptive_meta.get("governed_nav_drawdown_20d")
+                        item["recovery_streak"] = adaptive_meta.get("recovery_streak")
+                        item["champion_score_floor"] = adaptive_meta.get("champion_score_floor")
+                        item["recovery_position"] = adaptive_meta.get("recovery_position")
+                        item["nav_ret_10d_kill"] = adaptive_meta.get("nav_ret_10d_kill")
+                        item["nav_dd_20d_kill"] = adaptive_meta.get("nav_dd_20d_kill")
+                        item["max_recovery_streak"] = adaptive_meta.get("max_recovery_streak")
+                        item["pattern_top5_high_risk_count"] = adaptive_meta.get("pattern_top5_high_risk_count")
+                        item["pattern_top5_bullish_count"] = adaptive_meta.get("pattern_top5_bullish_count")
+                        item["pattern_top5_bearish_count"] = adaptive_meta.get("pattern_top5_bearish_count")
                         item["pattern_guard_enabled"] = adaptive_meta.get("pattern_guard_enabled")
                         item["pattern_strategy_mode"] = adaptive_meta.get("pattern_strategy_mode")
                 trade_rows.extend(trades)
@@ -2836,6 +2899,11 @@ def main() -> None:
         default=str(ASHARE_ROUTE_CACHE_ROOT),
         help="Disk cache directory for daily AShare weighted route targets.",
     )
+    parser.add_argument("--v12-champion-score-floor", type=float, default=-0.03)
+    parser.add_argument("--v12-recovery-position", type=float, default=0.58)
+    parser.add_argument("--v12-nav-ret-10d-kill", type=float, default=-0.04)
+    parser.add_argument("--v12-nav-dd-20d-kill", type=float, default=-0.08)
+    parser.add_argument("--v12-max-recovery-streak", type=int, default=5)
     raw_argv = sys.argv[1:]
     args = parser.parse_args()
     args = _apply_risk_profile_defaults(

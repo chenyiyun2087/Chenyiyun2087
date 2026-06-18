@@ -20,8 +20,8 @@ WORST_CASE_SCRIPT = PROJECT_ROOT / "scripts/research/analyze_production_worst_ca
 DEFAULT_STRATEGIES = ",".join(
     [
         "production_governed_vol_position",
-        "production_governed_vol_position_v1_1_recovery",
-        "production_governed_vol_position_v1_1_recovery_pattern_veto",
+        "production_governed_vol_position_v1_2_recovery",
+        "production_governed_vol_position_v1_2_recovery_pattern_veto",
         "adaptive_market_style",
         "baseline_full_liquidity_detail_vol_position",
     ]
@@ -52,6 +52,11 @@ def main() -> None:
     parser.add_argument("--max-total-positions", type=int, default=5)
     parser.add_argument("--strategies", default=DEFAULT_STRATEGIES)
     parser.add_argument("--skip-db-check", action="store_true")
+    parser.add_argument("--v12-champion-score-floor", type=float, default=-0.03)
+    parser.add_argument("--v12-recovery-position", type=float, default=0.58)
+    parser.add_argument("--v12-nav-ret-10d-kill", type=float, default=-0.04)
+    parser.add_argument("--v12-nav-dd-20d-kill", type=float, default=-0.08)
+    parser.add_argument("--v12-max-recovery-streak", type=int, default=5)
     args = parser.parse_args()
 
     if not args.skip_db_check:
@@ -76,6 +81,16 @@ def main() -> None:
         str(args.hold_days),
         "--max-total-positions",
         str(args.max_total_positions),
+        "--v12-champion-score-floor",
+        str(args.v12_champion_score_floor),
+        "--v12-recovery-position",
+        str(args.v12_recovery_position),
+        "--v12-nav-ret-10d-kill",
+        str(args.v12_nav_ret_10d_kill),
+        "--v12-nav-dd-20d-kill",
+        str(args.v12_nav_dd_20d_kill),
+        "--v12-max-recovery-streak",
+        str(args.v12_max_recovery_streak),
     ]
     if args.end_date:
         cmd.extend(["--end-date", args.end_date])
@@ -86,8 +101,8 @@ def main() -> None:
     if output_dir:
         for strategy in [
             "production_governed_vol_position",
-            "production_governed_vol_position_v1_1_recovery",
-            "production_governed_vol_position_v1_1_recovery_pattern_veto",
+            "production_governed_vol_position_v1_2_recovery",
+            "production_governed_vol_position_v1_2_recovery_pattern_veto",
             "production_governed_vol_position_v2",
         ]:
             if strategy not in set(str(args.strategies).split(",")):

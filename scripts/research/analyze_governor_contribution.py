@@ -16,6 +16,8 @@ GOVERNED = "production_governed_vol_position"
 GOVERNED_V2 = "production_governed_vol_position_v2"
 GOVERNED_V1_1 = "production_governed_vol_position_v1_1_recovery"
 GOVERNED_V1_1_PATTERN_VETO = "production_governed_vol_position_v1_1_recovery_pattern_veto"
+GOVERNED_V1_2 = "production_governed_vol_position_v1_2_recovery"
+GOVERNED_V1_2_PATTERN_VETO = "production_governed_vol_position_v1_2_recovery_pattern_veto"
 BASELINE = "baseline_full_liquidity_detail_vol_position"
 HORIZONS = (5, 10, 20)
 REDUCE_DECISIONS = {"reduce_position", "soft_reduce", "hard_reduce", "recovery_reduce"}
@@ -128,7 +130,9 @@ def build_risk_reason_effectiveness(reason_forward: pd.DataFrame) -> pd.DataFram
 
 def build_soft_vs_hard_reduce_compare(nav: pd.DataFrame) -> pd.DataFrame:
     frame = _daily_nav_returns(nav)
-    frame = frame[frame["strategy"].isin([GOVERNED, GOVERNED_V2, GOVERNED_V1_1, GOVERNED_V1_1_PATTERN_VETO])].copy()
+    frame = frame[
+        frame["strategy"].isin([GOVERNED, GOVERNED_V2, GOVERNED_V1_1, GOVERNED_V1_1_PATTERN_VETO, GOVERNED_V1_2, GOVERNED_V1_2_PATTERN_VETO])
+    ].copy()
     if frame.empty:
         return pd.DataFrame()
     meta_cols = ["strategy", "trade_date", "risk_decision", "target_position_ratio", "risk_governor_reasons"]
@@ -153,7 +157,7 @@ def build_soft_vs_hard_reduce_compare(nav: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_governor_version_compare(nav: pd.DataFrame) -> pd.DataFrame:
-    strategies = [GOVERNED, GOVERNED_V1_1, GOVERNED_V1_1_PATTERN_VETO, GOVERNED_V2]
+    strategies = [GOVERNED, GOVERNED_V1_1, GOVERNED_V1_1_PATTERN_VETO, GOVERNED_V1_2, GOVERNED_V1_2_PATTERN_VETO, GOVERNED_V2]
     frame = nav[nav["strategy"].isin(strategies)].copy()
     if frame.empty:
         return pd.DataFrame()
