@@ -14,7 +14,9 @@ from scripts.research.research_candle_pattern_alpha import (
     summarize_top_pattern_id_effectiveness,
 )
 from scripts.research.analyze_governor_contribution import (
+    REDUCE_DECISIONS,
     build_false_positive_reduce_days,
+    build_governor_version_compare,
     build_risk_decision_forward_returns,
     build_risk_reason_effectiveness,
     build_risk_reason_forward_returns,
@@ -29,8 +31,11 @@ from scripts.research.build_strategy_champion_monthly import _monthly_rows
 from scripts.research_trusted_strategy_account_backtest import (
     PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
     PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+    _apply_pattern_veto_to_targets,
     VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME,
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
     _build_pattern_adjusted_targets,
@@ -57,6 +62,8 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
     specs = _strategy_specs(
         [
             PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
             PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
             PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
@@ -64,9 +71,11 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
     )
 
     assert specs[0].name == PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME
-    assert specs[1].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
-    assert specs[2].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
-    assert specs[3].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
+    assert specs[1].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME
+    assert specs[2].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME
+    assert specs[3].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
+    assert specs[4].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
+    assert specs[5].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
 
 
 def test_pattern_rerank_does_not_expand_candidate_pool_and_penalty_downweights_high_risk():
@@ -117,6 +126,19 @@ def test_pattern_rerank_does_not_expand_candidate_pool_and_penalty_downweights_h
     high_risk = penalty[penalty["pattern_risk_level"].eq("high")]
     if not high_risk.empty:
         assert float(high_risk.iloc[0]["pattern_weight_multiplier"]) == 0.5
+
+
+def test_pattern_veto_removes_high_risk_bearish_targets_only():
+    targets = pd.DataFrame(
+        [
+            {"symbol": "000001", "rank": 1, "pattern_risk_level": "high", "bullish_pattern_count": 0, "bearish_pattern_count": 2},
+            {"symbol": "000002", "rank": 2, "pattern_risk_level": "high", "bullish_pattern_count": 2, "bearish_pattern_count": 1},
+            {"symbol": "000003", "rank": 3, "pattern_risk_level": "low", "bullish_pattern_count": 0, "bearish_pattern_count": 3},
+        ]
+    )
+    out = _apply_pattern_veto_to_targets(targets)
+    assert "000001" not in set(out["symbol"])
+    assert {"000002", "000003"}.issubset(set(out["symbol"]))
 
 
 def test_pattern_alpha_panel_outputs_forward_columns():
@@ -173,7 +195,7 @@ def test_governor_contribution_detects_false_positive_reduce_days():
             "trade_date": list(dates) * 2,
             "nav": [1.0 + i * 0.01 for i in range(30)] + [1.0 + i * 0.015 for i in range(30)],
             "gross_exposure": [0.5] * 60,
-            "risk_decision": ["reduce_position"] * 15 + ["normal"] * 15 + [None] * 30,
+            "risk_decision": ["recovery_reduce"] * 15 + ["normal"] * 15 + [None] * 30,
             "position_ratio": [0.5] * 60,
             "target_position_ratio": [0.5] * 60,
             "risk_governor_reasons": ["industry_concentration"] * 15 + ["normal_production_risk_budget"] * 15 + [None] * 30,
@@ -186,7 +208,8 @@ def test_governor_contribution_detects_false_positive_reduce_days():
     reason_effectiveness = build_risk_reason_effectiveness(reason_forward)
 
     assert not false_positive.empty
-    assert set(false_positive["risk_decision"]) == {"reduce_position"}
+    assert set(false_positive["risk_decision"]) == {"recovery_reduce"}
+    assert "recovery_reduce" in REDUCE_DECISIONS
     assert "industry_concentration" in set(reason_forward["risk_reason"])
     assert "false_positive_rate" in reason_effectiveness.columns
 
@@ -206,6 +229,25 @@ def test_governor_contribution_compares_soft_and_hard_reduce():
     )
     compare = build_soft_vs_hard_reduce_compare(nav)
     assert {"soft_reduce", "hard_reduce"}.issubset(set(compare["risk_decision"]))
+
+
+def test_governor_version_compare_includes_v1_1_recovery_days():
+    dates = pd.date_range("2026-01-01", periods=25, freq="D")
+    nav = pd.DataFrame(
+        {
+            "strategy": ["production_governed_vol_position"] * 25 + ["production_governed_vol_position_v1_1_recovery"] * 25,
+            "trade_date": list(dates) * 2,
+            "nav": [1.0 + i * 0.001 for i in range(25)] + [1.0 + i * 0.0015 for i in range(25)],
+            "gross_exposure": [0.5] * 25 + [0.6] * 25,
+            "risk_decision": ["reduce_position"] * 25 + ["recovery_reduce"] * 25,
+            "position_ratio": [0.5] * 50,
+            "target_position_ratio": [0.5] * 25 + [0.6] * 25,
+            "risk_governor_reasons": ["negative_recent_champion"] * 50,
+        }
+    )
+    compare = build_governor_version_compare(nav)
+    v11 = compare[compare["strategy"].eq("production_governed_vol_position_v1_1_recovery")].iloc[0]
+    assert int(v11["recovery_days"]) == 25
 
 
 def test_adaptive_vs_governed_outputs_compare_tables():
@@ -235,16 +277,35 @@ def test_adaptive_vs_governed_outputs_compare_tables():
 
 
 def test_strategy_champion_monthly_outputs_candidate_columns():
-    dates = pd.date_range("2026-01-01", periods=25, freq="D")
+    dates = pd.date_range("2026-01-01", periods=100, freq="D")
     nav = pd.DataFrame(
         {
-            "strategy": ["production_governed_vol_position"] * 25 + ["adaptive_market_style"] * 25,
+            "strategy": ["production_governed_vol_position"] * 100 + ["adaptive_market_style"] * 100,
             "trade_date": list(dates) * 2,
-            "nav": [1.0 + i * 0.001 for i in range(25)] + [1.0 + i * 0.002 for i in range(25)],
-            "gross_exposure": [0.6] * 25 + [0.4] * 25,
+            "nav": [1.0 + i * 0.001 for i in range(100)] + [1.0 + i * 0.002 for i in range(100)],
+            "gross_exposure": [0.6] * 100 + [0.4] * 100,
         }
     )
-    trades = pd.DataFrame({"strategy": ["adaptive_market_style"], "trade_date": ["2026-01-10"]})
+    trades = pd.DataFrame(
+        {
+            "strategy": ["adaptive_market_style"] * 12,
+            "trade_date": [
+                "2026-01-05",
+                "2026-01-10",
+                "2026-01-15",
+                "2026-02-05",
+                "2026-02-10",
+                "2026-02-15",
+                "2026-03-05",
+                "2026-03-10",
+                "2026-03-15",
+                "2026-04-05",
+                "2026-04-10",
+                "2026-04-15",
+            ],
+        }
+    )
     monthly = _monthly_rows(nav, trades)
     assert "champion_score" in monthly.columns
     assert "is_production_candidate" in monthly.columns
+    assert monthly[monthly["trade_count"].lt(3)]["is_production_candidate"].eq(False).all()

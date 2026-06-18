@@ -20,9 +20,10 @@ WORST_CASE_SCRIPT = PROJECT_ROOT / "scripts/research/analyze_production_worst_ca
 DEFAULT_STRATEGIES = ",".join(
     [
         "production_governed_vol_position",
-        "production_governed_vol_position_v2",
-        "baseline_full_liquidity_detail_vol_position",
+        "production_governed_vol_position_v1_1_recovery",
+        "production_governed_vol_position_v1_1_recovery_pattern_veto",
         "adaptive_market_style",
+        "baseline_full_liquidity_detail_vol_position",
     ]
 )
 
@@ -81,23 +82,17 @@ def main() -> None:
     backtest_report = _extract_json(_run(cmd))
     files = backtest_report.get("files") if isinstance(backtest_report.get("files"), dict) else {}
     output_dir = backtest_report.get("output_dir") or (str(Path(files["json"]).parent) if files.get("json") else None)
-    worst_report = None
-    v2_worst_report = None
+    worst_reports = {}
     if output_dir:
-        worst_report = _extract_json(
-            _run(
-                [
-                    sys.executable,
-                    str(WORST_CASE_SCRIPT),
-                    "--backtest-dir",
-                    str(output_dir),
-                    "--strategy",
-                    "production_governed_vol_position",
-                ]
-            )
-        )
-        if "production_governed_vol_position_v2" in set(str(args.strategies).split(",")):
-            v2_worst_report = _extract_json(
+        for strategy in [
+            "production_governed_vol_position",
+            "production_governed_vol_position_v1_1_recovery",
+            "production_governed_vol_position_v1_1_recovery_pattern_veto",
+            "production_governed_vol_position_v2",
+        ]:
+            if strategy not in set(str(args.strategies).split(",")):
+                continue
+            worst_reports[strategy] = _extract_json(
                 _run(
                     [
                         sys.executable,
@@ -105,7 +100,7 @@ def main() -> None:
                         "--backtest-dir",
                         str(output_dir),
                         "--strategy",
-                        "production_governed_vol_position_v2",
+                        strategy,
                     ]
                 )
             )
@@ -115,8 +110,8 @@ def main() -> None:
                 "strategy": "production_governed_vol_position",
                 "definition": "baseline_full_liquidity_detail_vol_position + adaptive_market_style v2.2 risk anchor + production risk-governor audit validation",
                 "backtest": backtest_report,
-                "worst_case_analysis": worst_report,
-                "v2_worst_case_analysis": v2_worst_report,
+                "worst_case_analysis": worst_reports.get("production_governed_vol_position"),
+                "research_worst_case_analysis": worst_reports,
             },
             ensure_ascii=False,
             indent=2,

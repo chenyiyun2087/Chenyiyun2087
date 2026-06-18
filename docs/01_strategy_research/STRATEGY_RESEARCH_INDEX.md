@@ -13,6 +13,8 @@
 | 策略 | 类型 | 用途 | 备注 |
 |---|---|---|---|
 | `production_governed_vol_position` | 生产默认底座 | vol_position 进攻引擎 + 生产风险总闸 | 2023-01-04 至 2026-06-17 三年收益 +19.94%、年化 +7.75%、最大回撤 -24.81%，`missed_risk_events=0`，已固化为当前生产默认。 |
+| `production_governed_vol_position_v1_1_recovery` | 强观察候选 | v1 底座 + selective recovery | 三年收益 +41.89%、年化 +15.44%、最大回撤 -25.65%，但 `missed_risk_events=8`、误降仓只从 132 天降至 118 天，未达上线门槛。 |
+| `production_governed_vol_position_v1_1_recovery_pattern_veto` | 强观察候选 | v1.1 + 图形风险否决 | 当前三年结果与 v1.1 相同，说明本轮图形 veto 未形成增量风险过滤；继续研究，不进生产默认。 |
 | `production_governed_vol_position_v2` | 研究失败候选 | soft/hard reduce 分层 governor | 三年收益 -1.80%、年化 -0.74%、最大回撤 -29.29%，`missed_risk_events=20`；误降仓仅从 132 天降至 122 天，不满足生产候选门槛。 |
 | `baseline_full_liquidity_detail_vol_position` | 底层选股引擎 | 收益优先近期冠军策略 | 继续作为 production governed 的主选股引擎；裸跑不再作为生产默认。 |
 | `adaptive_market_style` | 挑战者/风控影子 | 市场风格自适应生产策略 | 最新三年矩阵回测收益 +44.91%、年化 +16.44%、最大回撤 -26.68%，平均仓位 37.80%，资本效率明显高于 governed；先保留为每日对照和归因对象，不直接替换生产默认。 |

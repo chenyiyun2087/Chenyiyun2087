@@ -83,11 +83,24 @@ def _monthly_rows(nav: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame:
         + pd.to_numeric(out["calmar"], errors="coerce").fillna(0.0)
         + pd.to_numeric(out["monthly_return"], errors="coerce").fillna(0.0)
     )
-    out["is_production_candidate"] = (
+    out["eligible_monthly_champion"] = (
         out["month_rank"].eq(1)
+        & pd.to_numeric(out["monthly_return"], errors="coerce").gt(0.0)
+        & pd.to_numeric(out["trade_count"], errors="coerce").fillna(0).ge(3)
         & pd.to_numeric(out["max_drawdown"], errors="coerce").ge(-0.28)
         & pd.to_numeric(out["worst_20d_return"], errors="coerce").ge(-0.20)
     )
+    winners = out[out["eligible_monthly_champion"]].sort_values("month")[["month", "strategy"]].copy()
+    winner_keys = set()
+    if not winners.empty:
+        winners["prev_strategy_1"] = winners["strategy"].shift(1)
+        winners["prev_strategy_2"] = winners["strategy"].shift(2)
+        streak = winners[
+            winners["strategy"].eq(winners["prev_strategy_1"])
+            & winners["strategy"].eq(winners["prev_strategy_2"])
+        ]
+        winner_keys = set(zip(streak["month"], streak["strategy"]))
+    out["is_production_candidate"] = [bool((row["month"], row["strategy"]) in winner_keys) for _, row in out.iterrows()]
     columns = [
         "month",
         "strategy",
@@ -100,6 +113,7 @@ def _monthly_rows(nav: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame:
         "trade_count",
         "shadow_fail_ratio",
         "champion_score",
+        "eligible_monthly_champion",
         "is_production_candidate",
     ]
     return out[columns].sort_values(["month", "champion_score"], ascending=[True, False])

@@ -1,0 +1,3 @@
+strategy,total_return,annualized_return,max_drawdown,avg_gross_exposure,worst_20d_return,soft_reduce_days,hard_reduce_days,recovery_days,reduce_days,false_positive_reduce_days
+production_governed_vol_position,0.19010526000730388,0.07391910407626345,-0.24810418157264214,0.5563047881430155,-0.16760272265364218,0,0,0,366,132
+production_governed_vol_position_v2,-0.02562191676565939,-0.010579220205962914,-0.29287247008216444,0.6032243720315985,-0.1820769040455732,188,178,0,366,122

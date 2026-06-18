@@ -14,8 +14,11 @@ import pandas as pd
 DEFAULT_OUTPUT_ROOT = Path("exports/signal_research/governor_contribution")
 GOVERNED = "production_governed_vol_position"
 GOVERNED_V2 = "production_governed_vol_position_v2"
+GOVERNED_V1_1 = "production_governed_vol_position_v1_1_recovery"
+GOVERNED_V1_1_PATTERN_VETO = "production_governed_vol_position_v1_1_recovery_pattern_veto"
 BASELINE = "baseline_full_liquidity_detail_vol_position"
 HORIZONS = (5, 10, 20)
+REDUCE_DECISIONS = {"reduce_position", "soft_reduce", "hard_reduce", "recovery_reduce"}
 
 
 def _read(path: Path) -> pd.DataFrame:
@@ -125,7 +128,7 @@ def build_risk_reason_effectiveness(reason_forward: pd.DataFrame) -> pd.DataFram
 
 def build_soft_vs_hard_reduce_compare(nav: pd.DataFrame) -> pd.DataFrame:
     frame = _daily_nav_returns(nav)
-    frame = frame[frame["strategy"].isin([GOVERNED, GOVERNED_V2])].copy()
+    frame = frame[frame["strategy"].isin([GOVERNED, GOVERNED_V2, GOVERNED_V1_1, GOVERNED_V1_1_PATTERN_VETO])].copy()
     if frame.empty:
         return pd.DataFrame()
     meta_cols = ["strategy", "trade_date", "risk_decision", "target_position_ratio", "risk_governor_reasons"]
@@ -149,9 +152,10 @@ def build_soft_vs_hard_reduce_compare(nav: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_governor_v1_vs_v2_compare(nav: pd.DataFrame) -> pd.DataFrame:
-    frame = nav[nav["strategy"].isin([GOVERNED, GOVERNED_V2])].copy()
-    if frame.empty or GOVERNED_V2 not in set(frame["strategy"]):
+def build_governor_version_compare(nav: pd.DataFrame) -> pd.DataFrame:
+    strategies = [GOVERNED, GOVERNED_V1_1, GOVERNED_V1_1_PATTERN_VETO, GOVERNED_V2]
+    frame = nav[nav["strategy"].isin(strategies)].copy()
+    if frame.empty:
         return pd.DataFrame()
     rows: list[dict[str, object]] = []
     for strategy, part in frame.groupby("strategy"):
@@ -176,7 +180,8 @@ def build_governor_v1_vs_v2_compare(nav: pd.DataFrame) -> pd.DataFrame:
                 "worst_20d_return": float(worst20) if worst20 == worst20 else np.nan,
                 "soft_reduce_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).eq("soft_reduce").sum()),
                 "hard_reduce_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).eq("hard_reduce").sum()),
-                "reduce_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).isin(["reduce_position", "soft_reduce", "hard_reduce"]).sum()),
+                "recovery_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).eq("recovery_reduce").sum()),
+                "reduce_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).isin(REDUCE_DECISIONS).sum()),
                 "false_positive_reduce_days": int(false_positive_count),
             }
         )
@@ -235,7 +240,7 @@ def build_prevented_loss(opportunity: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_false_positive_reduce_days(forward: pd.DataFrame) -> pd.DataFrame:
-    out = forward[forward["risk_decision"].astype(str).isin(["reduce_position", "soft_reduce", "hard_reduce"])].copy()
+    out = forward[forward["risk_decision"].astype(str).isin(REDUCE_DECISIONS)].copy()
     mask = pd.to_numeric(out["next_10d_return"], errors="coerce").gt(0.03) | pd.to_numeric(out["next_20d_return"], errors="coerce").gt(0.05)
     out = out[mask].copy()
     out["false_positive_reason"] = "reduced_before_positive_forward_return"
@@ -256,13 +261,13 @@ def run_analysis(backtest_dir: Path, output_root: Path) -> dict[str, object]:
     reason_forward = build_risk_reason_forward_returns(forward, opportunity)
     reason_effectiveness = build_risk_reason_effectiveness(reason_forward)
     soft_vs_hard = build_soft_vs_hard_reduce_compare(nav)
-    v1_vs_v2 = build_governor_v1_vs_v2_compare(nav)
+    version_compare = build_governor_version_compare(nav)
     files = {
         "risk_decision_forward_returns": out_dir / "risk_decision_forward_returns.csv",
         "risk_reason_forward_returns": out_dir / "risk_reason_forward_returns.csv",
         "risk_reason_effectiveness": out_dir / "risk_reason_effectiveness.csv",
         "soft_vs_hard_reduce_compare": out_dir / "soft_vs_hard_reduce_compare.csv",
-        "governor_v1_vs_v2_compare": out_dir / "governor_v1_vs_v2_compare.csv",
+        "governor_version_compare": out_dir / "governor_version_compare.csv",
         "selected_strategy_contribution": out_dir / "selected_strategy_contribution.csv",
         "governor_opportunity_cost": out_dir / "governor_opportunity_cost.csv",
         "governor_prevented_loss": out_dir / "governor_prevented_loss.csv",
@@ -273,16 +278,20 @@ def run_analysis(backtest_dir: Path, output_root: Path) -> dict[str, object]:
     reason_forward.to_csv(files["risk_reason_forward_returns"], index=False)
     reason_effectiveness.to_csv(files["risk_reason_effectiveness"], index=False)
     soft_vs_hard.to_csv(files["soft_vs_hard_reduce_compare"], index=False)
-    v1_vs_v2.to_csv(files["governor_v1_vs_v2_compare"], index=False)
+    version_compare.to_csv(files["governor_version_compare"], index=False)
     selected.to_csv(files["selected_strategy_contribution"], index=False)
     opportunity.to_csv(files["governor_opportunity_cost"], index=False)
     prevented.to_csv(files["governor_prevented_loss"], index=False)
     false_positive.to_csv(files["false_positive_reduce_days"], index=False)
+    decision_text = forward["risk_decision"].astype(str)
     summary = {
         "backtest_dir": str(backtest_dir),
         "output_dir": str(out_dir),
-        "reduce_days": int(forward["risk_decision"].astype(str).eq("reduce_position").sum()),
-        "normal_days": int(forward["risk_decision"].astype(str).eq("normal").sum()),
+        "reduce_days": int(decision_text.isin(REDUCE_DECISIONS).sum()),
+        "soft_reduce_days": int(decision_text.eq("soft_reduce").sum()),
+        "hard_reduce_days": int(decision_text.eq("hard_reduce").sum()),
+        "recovery_days": int(decision_text.eq("recovery_reduce").sum()),
+        "normal_days": int(decision_text.eq("normal").sum()),
         "false_positive_reduce_days": int(len(false_positive)),
         "prevented_loss_days": int(len(prevented)),
         "files": {key: str(value) for key, value in files.items() if key != "summary"},

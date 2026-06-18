@@ -247,3 +247,78 @@ def build_risk_governor_decision_v2(
             "champion_score": champion_score,
         },
     }
+
+
+def build_risk_governor_decision_v1_1_recovery(
+    config: dict[str, Any],
+    adaptive_decision: dict[str, Any] | None = None,
+    recent_shadow_summary: dict[str, Any] | None = None,
+    account_state: dict[str, Any] | None = None,
+    pattern_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Research-only v1.1: start from v1 and selectively recover proven false positives."""
+
+    base = build_risk_governor_decision(config, adaptive_decision, recent_shadow_summary)
+    adaptive = dict(adaptive_decision or {})
+    shadow = dict(recent_shadow_summary or {})
+    account = dict(account_state or {})
+    pattern = dict(pattern_state or {})
+
+    if str(base.get("risk_decision") or "") != "reduce_position":
+        base["risk_governor_version"] = "v1.1_recovery"
+        return base
+
+    reasons = [str(item) for item in base.get("reasons") or []]
+    reason_set = set(reasons)
+    recovery_allowed_reasons = {"negative_recent_champion"}
+    if reason_set != recovery_allowed_reasons:
+        base["risk_governor_version"] = "v1.1_recovery"
+        base["recovery_status"] = "blocked_non_whitelisted_reason"
+        return base
+
+    active_role = str(adaptive.get("active_role") or adaptive.get("market_style_state") or "")
+    market_liquidity_bucket = str(adaptive.get("market_liquidity_bucket") or "")
+    industry_state = str(adaptive.get("industry_state") or "")
+    avg_vol_20 = _safe_float(adaptive.get("avg_vol_20"))
+    latest_status = str(shadow.get("latest_status") or "").lower()
+    nav_ret_10d = _safe_float(account.get("governed_nav_ret_10d"))
+    nav_drawdown_20d = _safe_float(account.get("governed_nav_drawdown_20d"))
+    pattern_top5_high_risk_count = int(pattern.get("pattern_top5_high_risk_count") or 0)
+
+    kill_reasons: list[str] = []
+    if nav_ret_10d is not None and nav_ret_10d < -0.06:
+        kill_reasons.append("account_10d_loss_kill_switch")
+    if nav_drawdown_20d is not None and nav_drawdown_20d < -0.10:
+        kill_reasons.append("account_20d_drawdown_kill_switch")
+    if kill_reasons:
+        out = dict(base)
+        out["risk_decision"] = "hard_reduce"
+        out["target_position_ratio"] = min(float(base.get("target_position_ratio") or 0.50), 0.45)
+        out["reasons"] = reasons + kill_reasons
+        out["risk_governor_version"] = "v1.1_recovery"
+        out["recovery_status"] = "blocked_kill_switch"
+        return out
+
+    recovery_checks = [
+        active_role in {"attack", "recent_champion"},
+        market_liquidity_bucket != "low_liquidity",
+        avg_vol_20 is None or avg_vol_20 <= 0.045,
+        industry_state != "concentrated",
+        latest_status in {"pass", "backtest_proxy", "unknown", ""},
+        pattern_top5_high_risk_count == 0,
+    ]
+    if not all(recovery_checks):
+        out = dict(base)
+        out["risk_governor_version"] = "v1.1_recovery"
+        out["recovery_status"] = "blocked_secondary_confirmation"
+        out["pattern_top5_high_risk_count"] = pattern_top5_high_risk_count
+        return out
+
+    out = dict(base)
+    out["risk_decision"] = "recovery_reduce"
+    out["target_position_ratio"] = min(0.60, max(float(base.get("target_position_ratio") or 0.0), 0.60))
+    out["reasons"] = reasons + ["v1_1_selective_recovery"]
+    out["risk_governor_version"] = "v1.1_recovery"
+    out["recovery_status"] = "recovered"
+    out["pattern_top5_high_risk_count"] = pattern_top5_high_risk_count
+    return out
