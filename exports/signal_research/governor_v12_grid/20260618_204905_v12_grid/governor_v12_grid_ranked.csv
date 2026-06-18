@@ -1,0 +1,2 @@
+champion_score_floor,recovery_position,nav_ret_10d_kill,nav_dd_20d_kill,max_recovery_streak,run_status,error,grid_index
+-0.01,0.55,-0.03,-0.06,3,failed,[Errno 2] No such file or directory: 'trusted_account_backtest_summary.csv',1

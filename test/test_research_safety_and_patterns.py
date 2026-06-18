@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from scripts.research.analyze_production_worst_cases import run_analysis
+from scripts.research.analyze_recovery_missed_risks import run_analysis as run_recovery_missed_risk_analysis
 from scripts.research.research_candle_pattern_alpha import (
     build_factor_ic,
     build_forward_pattern_panel,
@@ -33,6 +34,8 @@ from scripts.research_trusted_strategy_account_backtest import (
     PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
     _apply_pattern_veto_to_targets,
@@ -58,12 +61,87 @@ def test_worst_case_analysis_fails_when_strategy_missing(tmp_path: Path):
         run_analysis(backtest_dir, tmp_path / "out", "production_governed_vol_position")
 
 
+def test_recovery_missed_risk_analysis_outputs_context(tmp_path: Path):
+    backtest_dir = tmp_path / "backtest"
+    backtest_dir.mkdir()
+    strategy = "production_governed_vol_position_v1_1_recovery"
+    dates = pd.date_range("2026-01-01", periods=15, freq="D")
+    pd.DataFrame(
+        {
+            "strategy": [strategy] * 15,
+            "trade_date": dates,
+            "nav": [1.0, 1.02, 1.03, 1.04, 1.01, 0.98, 0.94, 0.90, 0.91, 0.93, 0.92, 0.94, 0.95, 0.96, 0.97],
+        }
+    ).to_csv(backtest_dir / "trusted_account_backtest_nav.csv", index=False)
+    pd.DataFrame(
+        {
+            "strategy": [strategy],
+            "trade_date": ["2026-01-07"],
+            "symbol": ["000001"],
+            "industry": ["I1"],
+            "weight": [0.6],
+        }
+    ).to_csv(backtest_dir / "trusted_account_backtest_positions.csv", index=False)
+    pd.DataFrame(
+        {
+            "strategy": [strategy],
+            "trade_date": ["2026-01-07"],
+            "symbol": ["000001"],
+            "industry": ["I1"],
+            "effective_weight": [0.6],
+        }
+    ).to_csv(backtest_dir / "trusted_account_backtest_candidates.csv", index=False)
+    pd.DataFrame(
+        {
+            "strategy": [strategy],
+            "trade_date": ["2026-01-07"],
+            "risk_decision": ["normal"],
+            "recovery_status": ["not_applicable"],
+            "risk_governor_reasons": ["normal_production_risk_budget"],
+            "active_role": ["recent_champion"],
+            "market_liquidity_bucket": ["normal"],
+            "index_bucket": ["neutral"],
+            "industry_state": ["normal"],
+            "avg_vol_20": [0.03],
+            "champion_score": [0.01],
+            "pattern_top5_high_risk_count": [0],
+            "pattern_top5_bearish_count": [1],
+            "pattern_top5_bullish_count": [2],
+        }
+    ).to_csv(backtest_dir / "trusted_account_backtest_adaptive_decisions.csv", index=False)
+
+    summary = run_recovery_missed_risk_analysis(backtest_dir, tmp_path / "out", strategy)
+    detail = pd.read_csv(summary["files"]["recovery_missed_risk_events"])
+
+    assert summary["missed_risk_events"] > 0
+    assert "trade_date_before_trough" in detail.columns
+    assert "selected_symbols" in detail.columns
+    assert set(detail["risk_decision"]) == {"normal"}
+
+
+def test_recovery_missed_risk_analysis_fails_when_strategy_missing(tmp_path: Path):
+    backtest_dir = tmp_path / "backtest"
+    backtest_dir.mkdir()
+    for name in [
+        "trusted_account_backtest_nav.csv",
+        "trusted_account_backtest_positions.csv",
+        "trusted_account_backtest_candidates.csv",
+        "trusted_account_backtest_adaptive_decisions.csv",
+    ]:
+        pd.DataFrame({"strategy": ["other"], "trade_date": ["2026-01-01"], "nav": [1.0]}).to_csv(backtest_dir / name, index=False)
+
+    with pytest.raises(RuntimeError, match="production_governed_vol_position_v1_1_recovery"):
+        run_recovery_missed_risk_analysis(backtest_dir, tmp_path / "out", "production_governed_vol_position_v1_1_recovery")
+
+
 def test_strategy_specs_include_production_governed_pseudo_strategy():
     specs = _strategy_specs(
         [
             PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
             PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
             PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
@@ -73,9 +151,11 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
     assert specs[0].name == PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME
     assert specs[1].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME
     assert specs[2].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME
-    assert specs[3].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
-    assert specs[4].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
-    assert specs[5].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
+    assert specs[3].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME
+    assert specs[4].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME
+    assert specs[5].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
+    assert specs[6].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
+    assert specs[7].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
 
 
 def test_pattern_rerank_does_not_expand_candidate_pool_and_penalty_downweights_high_risk():

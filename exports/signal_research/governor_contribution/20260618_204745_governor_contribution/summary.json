@@ -1,0 +1,22 @@
+{
+  "backtest_dir": "exports/signal_research/20260618_204722_645522_trusted_account_backtest",
+  "output_dir": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution",
+  "reduce_days": 366,
+  "soft_reduce_days": 0,
+  "hard_reduce_days": 0,
+  "recovery_days": 0,
+  "normal_days": 247,
+  "false_positive_reduce_days": 132,
+  "prevented_loss_days": 314,
+  "files": {
+    "risk_decision_forward_returns": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/risk_decision_forward_returns.csv",
+    "risk_reason_forward_returns": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/risk_reason_forward_returns.csv",
+    "risk_reason_effectiveness": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/risk_reason_effectiveness.csv",
+    "soft_vs_hard_reduce_compare": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/soft_vs_hard_reduce_compare.csv",
+    "governor_version_compare": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/governor_version_compare.csv",
+    "selected_strategy_contribution": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/selected_strategy_contribution.csv",
+    "governor_opportunity_cost": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/governor_opportunity_cost.csv",
+    "governor_prevented_loss": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/governor_prevented_loss.csv",
+    "false_positive_reduce_days": "exports/signal_research/governor_contribution/20260618_204745_governor_contribution/false_positive_reduce_days.csv"
+  }
+}

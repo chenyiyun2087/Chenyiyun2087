@@ -1,0 +1,9 @@
+{
+  "strategy": "production_governed_vol_position_v1_1_recovery",
+  "backtest_dir": "exports/signal_research/20260618_193951_941705_trusted_account_backtest",
+  "output_dir": "exports/signal_research/recovery_missed_risk_analysis/20260618_204806_production_governed_vol_position_v1_1_recovery_missed_risks",
+  "missed_risk_events": 8,
+  "files": {
+    "recovery_missed_risk_events": "exports/signal_research/recovery_missed_risk_analysis/20260618_204806_production_governed_vol_position_v1_1_recovery_missed_risks/recovery_missed_risk_events.csv"
+  }
+}

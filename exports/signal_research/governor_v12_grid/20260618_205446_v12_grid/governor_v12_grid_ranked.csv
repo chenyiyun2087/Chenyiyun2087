@@ -1,0 +1,2 @@
+champion_score_floor,recovery_position,nav_ret_10d_kill,nav_dd_20d_kill,max_recovery_streak,output_dir,total_return,annualized_return,max_drawdown,avg_gross_exposure,worst_20d_return,false_positive_reduce_days,baseline_false_positive_reduce_days,missed_risk_events,passes_hard_gates,run_status,grid_index
+-0.01,0.55,-0.03,-0.06,3,/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_205938_245612_trusted_account_backtest,0.1994069500650004,0.0774812678809828,-0.2481041815726421,0.5563047881430155,-0.16760272265364218,132,132,0,False,ok,1
