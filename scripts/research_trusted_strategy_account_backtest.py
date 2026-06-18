@@ -1824,6 +1824,50 @@ def _adaptive_position_scale(decision: dict[str, object]) -> tuple[float, str]:
     return float(max(0.0, min(1.0, scale))), scale_reason
 
 
+def _execution_proxy_fields(
+    symbol: str,
+    price_info: dict[str, object],
+    target_weight: float,
+    equity_before: float,
+) -> dict[str, float]:
+    adj_open = _safe_float(price_info.get("adj_open"))
+    prev_close = _safe_float(price_info.get("prev_adj_close"))
+    amount = _safe_float(price_info.get("amount"))
+    amount_ma20 = _safe_float(price_info.get("amount_ma20"))
+    if np.isfinite(adj_open) and adj_open > 0 and np.isfinite(prev_close) and prev_close > 0:
+        open_gap_proxy = float(adj_open / prev_close - 1.0)
+        large_slippage_proxy = abs(open_gap_proxy)
+        limit_up_buy_ratio = 1.0 if open_gap_proxy >= 0.095 else 0.0
+        limit_down_sell_ratio = 1.0 if open_gap_proxy <= -0.095 else 0.0
+    else:
+        open_gap_proxy = np.nan
+        large_slippage_proxy = np.nan
+        limit_up_buy_ratio = np.nan
+        limit_down_sell_ratio = np.nan
+
+    tradable_amount = amount if np.isfinite(amount) and amount > 0 else amount_ma20
+    target_order_value = float(max(0.0, target_weight) * max(0.0, equity_before))
+    if np.isfinite(tradable_amount) and tradable_amount > 0:
+        # Tushare amount is normally reported in thousand yuan.
+        estimated_turnover_impact = float(target_order_value / (tradable_amount * 1000.0))
+        amount_missing_or_zero = False
+    else:
+        estimated_turnover_impact = np.nan
+        amount_missing_or_zero = True
+    if amount_missing_or_zero or (np.isfinite(limit_up_buy_ratio) and limit_up_buy_ratio >= 1.0):
+        unfilled_ratio_proxy = 1.0
+    else:
+        unfilled_ratio_proxy = 0.0
+    return {
+        "large_slippage_proxy": large_slippage_proxy,
+        "limit_up_buy_ratio": limit_up_buy_ratio,
+        "unfilled_ratio_proxy": unfilled_ratio_proxy,
+        "limit_down_sell_ratio": limit_down_sell_ratio,
+        "open_gap_proxy": open_gap_proxy,
+        "estimated_turnover_impact": estimated_turnover_impact,
+    }
+
+
 def _rebalance(
     account: AccountState,
     signal_date: object,
@@ -1900,6 +1944,12 @@ def _rebalance(
         target_shares[symbol] = _round_lot(target_value / price, lot_size)
 
     for symbol, row in by_symbol.items():
+        execution_proxy = _execution_proxy_fields(
+            symbol=symbol,
+            price_info=open_prices.get(symbol, {}),
+            target_weight=float(adjusted_weights.get(symbol, 0.0)),
+            equity_before=float(equity_before),
+        )
         candidate_rows.append(
             {
                 "signal_date": signal_date,
@@ -1920,11 +1970,13 @@ def _rebalance(
                 "pattern_pass_count": _safe_float(row.get("pattern_pass_count")),
                 "bullish_pattern_count": _safe_float(row.get("bullish_pattern_count")),
                 "bearish_pattern_count": _safe_float(row.get("bearish_pattern_count")),
+                "top_pattern_ids": row.get("top_pattern_ids"),
                 "base_rank_score": _safe_float(row.get("base_rank_score")),
                 "pattern_adjustment_pct": _safe_float(row.get("pattern_adjustment_pct")),
                 "pattern_adjusted_rank_score": _safe_float(row.get("pattern_adjusted_rank_score")),
                 "pattern_strategy_mode": row.get("pattern_strategy_mode"),
                 "pattern_weight_multiplier": _safe_float(row.get("pattern_weight_multiplier")),
+                **execution_proxy,
             }
         )
 
@@ -2186,6 +2238,13 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     prices = prices[prices["trade_date"] <= max_nav_date].copy()
     if prices.empty:
         raise RuntimeError("No price rows remain after end-date cutoff.")
+    prices = prices.sort_values(["symbol", "trade_date"]).copy()
+    prices["prev_adj_close"] = prices.groupby("symbol")["adj_close"].shift(1)
+    if "amount" in prices.columns:
+        prices["amount_ma20"] = prices.groupby("symbol")["amount"].transform(lambda s: s.rolling(20, min_periods=5).mean())
+    else:
+        prices["amount"] = np.nan
+        prices["amount_ma20"] = np.nan
 
     scores = add_liquidity_derived_features(scores, prices)
     scores = add_forward_returns(scores, prices, args.hold_days)
@@ -2217,8 +2276,13 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     market_env = build_market_environment(scores, prices)
     scores = attach_market_environment(scores, market_env)
     calendar = sorted(prices["trade_date"].dropna().unique().tolist())
+    price_lookup_columns = [
+        col
+        for col in ["adj_open", "adj_high", "adj_low", "adj_close", "prev_adj_close", "amount", "amount_ma20"]
+        if col in prices.columns
+    ]
     price_by_date = {
-        day: group.drop_duplicates("symbol").set_index("symbol")[["adj_open", "adj_close"]].to_dict("index")
+        day: group.drop_duplicates("symbol").set_index("symbol")[price_lookup_columns].to_dict("index")
         for day, group in prices.groupby("trade_date", sort=True)
     }
     scores_by_date = {day: group.copy() for day, group in scores.groupby("trade_date", sort=True)}

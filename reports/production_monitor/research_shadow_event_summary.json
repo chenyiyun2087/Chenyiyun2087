@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-06-19T06:49:45",
+  "source_report_path": "reports/production_monitor/research_shadow_candidate_recovery_events.json",
+  "log_path": "reports/production_monitor/research_shadow_event_log.csv",
+  "incoming_recovery_events": 0,
+  "new_recovery_events": 0,
+  "total_recovery_events": 0,
+  "positive_theory_gap_events": 0,
+  "negative_theory_gap_events": 0,
+  "cumulative_recovery_theory_gap": 0.0,
+  "avg_position_diff": 0.0,
+  "max_position_diff": 0.0,
+  "execution_proxy_available_ratio": 0.0,
+  "execution_degraded_event_days": 0
+}

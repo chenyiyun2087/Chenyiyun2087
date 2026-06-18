@@ -1,0 +1,37 @@
+{
+  "generated_at": "2026-06-19T06:49:44",
+  "production_default": "production_governed_vol_position",
+  "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",
+  "research_shadow_candidate_enabled": false,
+  "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "compare_to": "production_governed_vol_position",
+  "calendar_window_pass": true,
+  "event_window_pass": false,
+  "execution_proxy_pass": false,
+  "promotion_ready": false,
+  "canary_ready": false,
+  "promotion_statuses": [
+    "NOT_READY_NO_EVENTS",
+    "NOT_READY_EXECUTION_PROXY",
+    "NOT_READY_PATTERN_LINEAGE"
+  ],
+  "pattern_lineage_status": "PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING",
+  "pattern_lineage_summary_path": "exports/signal_research/pattern_feature_lineage/20260619_061357_pattern_feature_lineage/summary.json",
+  "fp_separability_status": "SEPARABLE",
+  "fp_separability_summary_path": "exports/signal_research/v12b_false_positive_feature_separability/20260619_060518_v12b_false_positive_feature_separability/summary.json",
+  "latest_theory_gap_sum": 0.012266057747895132,
+  "latest_recovery_event_days": 0,
+  "total_recovery_events": 0,
+  "cumulative_recovery_theory_gap": 0.0,
+  "execution_proxy_available_ratio": 0.0,
+  "latest_shadow_fail_reasons": [],
+  "latest_event_fail_reasons": [
+    "insufficient_recovery_events",
+    "shadow_recovery_theory_gap_not_positive"
+  ],
+  "latest_execution_proxy_fail_reasons": [
+    "missing_execution_proxy"
+  ],
+  "manual_approval_required": true,
+  "production_change_allowed": false
+}

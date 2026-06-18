@@ -1,5 +1,6 @@
 from pathlib import Path
 from argparse import Namespace
+import json
 
 import pandas as pd
 import pytest
@@ -40,6 +41,8 @@ from scripts.ops.run_research_shadow_candidate_monitor import (
     evaluate_shadow_monitor,
     write_daily_report,
 )
+from scripts.ops.append_research_shadow_event_log import append_event_log
+from scripts.ops.report_research_shadow_promotion_status import build_promotion_status
 from scripts.research.audit_pattern_feature_lineage import audit_pattern_lineage
 from scripts.research.run_production_governed_vol_position_backtest import DEFAULT_STRATEGIES as PRODUCTION_GOVERNED_DEFAULT_STRATEGIES
 from scripts.research.analyze_adaptive_vs_governed import (
@@ -64,6 +67,7 @@ from scripts.research_trusted_strategy_account_backtest import (
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
     _champion_score_context_from_decisions,
+    _execution_proxy_fields,
     _apply_pattern_veto_to_targets,
     VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME,
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
@@ -802,6 +806,119 @@ def test_research_shadow_execution_proxy_missing_blocks_promotion_only():
     assert summary["calendar_window_pass"] is True
     assert summary["execution_proxy_pass"] is False
     assert "missing_execution_proxy" in summary["execution_proxy_fail_reasons"]
+
+
+def test_execution_proxy_fields_use_open_gap_and_turnover_impact():
+    fields = _execution_proxy_fields(
+        symbol="000001",
+        price_info={"adj_open": 10.5, "prev_adj_close": 10.0, "amount": 10000.0, "amount_ma20": 8000.0},
+        target_weight=0.2,
+        equity_before=1_000_000.0,
+    )
+
+    assert fields["open_gap_proxy"] == pytest.approx(0.05)
+    assert fields["large_slippage_proxy"] == pytest.approx(0.05)
+    assert fields["limit_up_buy_ratio"] == 0.0
+    assert fields["unfilled_ratio_proxy"] == 0.0
+    assert fields["estimated_turnover_impact"] == pytest.approx(0.02)
+
+
+def test_shadow_event_accumulator_is_idempotent_and_summarizes(tmp_path: Path):
+    report_path = tmp_path / "recovery_events.json"
+    log_path = tmp_path / "research_shadow_event_log.csv"
+    summary_path = tmp_path / "research_shadow_event_summary.json"
+    report = {
+        "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+        "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+        "events": [
+            {
+                "trade_date": "2026-01-01",
+                "production_target_position": 0.45,
+                "shadow_target_position": 0.58,
+                "position_diff": 0.13,
+                "theory_gap": 0.01,
+                "execution_feasibility": "pass",
+            },
+            {
+                "trade_date": "2026-01-02",
+                "production_target_position": 0.45,
+                "shadow_target_position": 0.58,
+                "position_diff": 0.13,
+                "theory_gap": -0.005,
+                "execution_feasibility": "degraded_large_slippage_proxy",
+            },
+        ],
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    first = append_event_log(report_path, log_path, summary_path)
+    second = append_event_log(report_path, log_path, summary_path)
+    log = pd.read_csv(log_path)
+
+    assert first["total_recovery_events"] == 2
+    assert second["total_recovery_events"] == 2
+    assert len(log) == 2
+    assert second["positive_theory_gap_events"] == 1
+    assert second["negative_theory_gap_events"] == 1
+    assert second["cumulative_recovery_theory_gap"] == pytest.approx(0.005)
+    assert second["execution_proxy_available_ratio"] == 1.0
+    assert second["execution_degraded_event_days"] == 1
+
+
+def test_shadow_event_accumulator_handles_empty_report(tmp_path: Path):
+    report_path = tmp_path / "recovery_events.json"
+    log_path = tmp_path / "research_shadow_event_log.csv"
+    summary_path = tmp_path / "research_shadow_event_summary.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = append_event_log(report_path, log_path, summary_path)
+
+    assert summary["total_recovery_events"] == 0
+    assert summary["incoming_recovery_events"] == 0
+    assert pd.read_csv(log_path).empty
+
+
+def test_research_shadow_promotion_status_stays_not_ready_when_events_execution_and_pattern_missing():
+    status = build_promotion_status(
+        daily_report={
+            "shadow_summary": {
+                "calendar_window_pass": True,
+                "event_window_pass": False,
+                "execution_proxy_pass": False,
+                "theory_gap_sum": 0.02,
+                "recovery_event_days": 0,
+                "execution_proxy_fail_reasons": ["missing_execution_proxy"],
+            }
+        },
+        event_summary={"total_recovery_events": 0, "cumulative_recovery_theory_gap": 0.0},
+        pattern_lineage_summary={"lineage_status": "PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING"},
+        fp_separability_summary={"separability_status": "NOT_SEPARABLE"},
+        config={
+            "primary_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+            "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",
+            "research_shadow_candidate": {
+                "enabled": False,
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "compare_to": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "min_recovery_events": 5,
+            },
+        },
+    )
+
+    assert status["promotion_ready"] is False
+    assert "NOT_READY_NO_EVENTS" in status["promotion_statuses"]
+    assert "NOT_READY_EXECUTION_PROXY" in status["promotion_statuses"]
+    assert "NOT_READY_PATTERN_LINEAGE" in status["promotion_statuses"]
+    assert status["production_change_allowed"] is False
 
 
 def test_research_shadow_candidate_monitor_fails_when_rows_are_insufficient():
