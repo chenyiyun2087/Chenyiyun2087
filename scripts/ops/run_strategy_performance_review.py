@@ -20,15 +20,18 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scoreRank.core.db_config import build_sqlalchemy_url
+from scripts.ops.production_config import load_production_config
+from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
 from scripts.strategy_display import strategy_display_name
 
 
-DEFAULT_RISK_PROFILE = "adaptive"
-DEFAULT_STRATEGY = "baseline_full_liquidity_detail_vol_position"
-DEFAULT_TOP_N = 5
-DEFAULT_MAX_TOTAL_POSITIONS = 5
-DEFAULT_POSITION_RATIO = 0.70
-DEFAULT_HOLD_DAYS = 10
+PRODUCTION_CONFIG = load_production_config()
+DEFAULT_RISK_PROFILE = str(PRODUCTION_CONFIG["risk_profile"])
+DEFAULT_STRATEGY = str(PRODUCTION_CONFIG["primary_strategy"])
+DEFAULT_TOP_N = int(PRODUCTION_CONFIG["top_n"])
+DEFAULT_MAX_TOTAL_POSITIONS = int(PRODUCTION_CONFIG["max_total_positions"])
+DEFAULT_POSITION_RATIO = float(PRODUCTION_CONFIG["position_ratio"])
+DEFAULT_HOLD_DAYS = int(PRODUCTION_CONFIG["hold_days"])
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "exports" / "production_strategy_reviews"
 DEFAULT_VOL_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260604_152142_206060_trusted_account_backtest"
 DEFAULT_ADAPTIVE_V22_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260605_004258_229723_trusted_account_backtest"
@@ -266,6 +269,39 @@ def _load_orders(engine, review_date: str) -> tuple[pd.DataFrame, dict]:
     return frame, {k: _safe_json_value(v) for k, v in meta.items()}
 
 
+def _load_recent_shadow_history(engine, review_date: str, lookback_days: int = 5) -> dict:
+    if not _table_exists(engine, "chenyiyun.ads_trusted_strategy_shadow_daily"):
+        return summarize_recent_shadow([])
+    frame = _read_sql(
+        engine,
+        """
+        SELECT execution_date, validation_status, validation_actions, shadow_vs_theory_gap
+        FROM chenyiyun.ads_trusted_strategy_shadow_daily
+        WHERE execution_date <= :review_date
+        ORDER BY execution_date DESC
+        LIMIT :lookback_days
+        """,
+        {"review_date": review_date, "lookback_days": int(max(1, lookback_days))},
+    )
+    return summarize_recent_shadow(_records(frame))
+
+
+def _load_candidate_output_params(candidates: pd.DataFrame) -> dict:
+    if candidates.empty or "output_json_path" not in candidates.columns:
+        return {}
+    path_raw = str(candidates.iloc[0].get("output_json_path") or "").strip()
+    if not path_raw:
+        return {}
+    path = Path(path_raw)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return dict(payload.get("params") or {})
+
+
 def _load_shadow(engine, review_date: str) -> tuple[pd.DataFrame, dict, dict]:
     if not _table_exists(engine, "chenyiyun.ads_trusted_strategy_shadow_daily"):
         return pd.DataFrame(), {}, {"warning": "missing table ads_trusted_strategy_shadow_daily"}
@@ -395,7 +431,14 @@ def _summarize_candidates(candidates: pd.DataFrame) -> dict:
 
 def _summarize_orders(orders: pd.DataFrame) -> dict:
     if orders.empty:
-        return {"rows": 0, "buy_orders": 0, "sell_orders": 0, "planned_amount": 0.0, "target_weight_sum": None}
+        return {
+            "rows": 0,
+            "buy_orders": 0,
+            "sell_orders": 0,
+            "planned_amount": 0.0,
+            "target_weight_sum": None,
+            "status_counts": {},
+        }
     d = orders.copy()
     d["side"] = d["side"].astype(str).str.upper() if "side" in d.columns else ""
     for col in ("delta_shares", "price", "target_weight", "delta_weight"):
@@ -410,16 +453,27 @@ def _summarize_orders(orders: pd.DataFrame) -> dict:
         "sell_orders": int(d["side"].eq("SELL").sum()) if "side" in d.columns else 0,
         "planned_amount": amount,
         "target_weight_sum": float(d["target_weight"].fillna(0).sum()) if "target_weight" in d.columns else None,
+        "status_counts": d["order_status"].fillna("planned").astype(str).value_counts().to_dict() if "order_status" in d.columns else {},
     }
 
 
-def _build_decision(backtests: dict, shadow_summary: dict, live: dict) -> dict:
+def _build_decision(backtests: dict, shadow_summary: dict, shadow_history: dict, live: dict, candidate_params: dict) -> dict:
     primary = backtests["primary"]["summary"]
     adaptive = backtests["adaptive_market_style_v22"]["summary"]
     primary_mdd = float(primary.get("max_drawdown") or 0)
     adaptive_mdd = float(adaptive.get("max_drawdown") or 0)
     blocked = int(shadow_summary.get("blocked_orders") or 0) if shadow_summary else 0
     live_positions = live.get("positions") or []
+    adaptive_state = {
+        "active_role": candidate_params.get("market_style_state"),
+        "market_liquidity_bucket": candidate_params.get("market_liquidity_bucket"),
+        "industry_state": candidate_params.get("industry_state"),
+        "champion_score": candidate_params.get("champion_score"),
+        "avg_vol_20": candidate_params.get("avg_vol_20"),
+        "market_state": candidate_params.get("market_state"),
+        "index_bucket": candidate_params.get("index_bucket"),
+    }
+    governor = build_risk_governor_decision(PRODUCTION_CONFIG, adaptive_state, shadow_history)
     decision = "继续运行70%主推送，但不升仓；保留 adaptive_market_style v2.2 作为风控锚"
     reasons = [
         f"主策略三年累计{_pct(primary.get('total_return'))}，近1年弹性强，但最大回撤{_pct(primary_mdd)}偏深。",
@@ -428,9 +482,12 @@ def _build_decision(backtests: dict, shadow_summary: dict, live: dict) -> dict:
     if blocked:
         decision = "继续运行但需人工复核不可成交订单；若连续出现成交受阻，降到 defensive 或降低仓位"
         reasons.append(f"今日影子盘不可成交订单 {blocked} 个。")
+    if governor.get("risk_decision") and governor.get("risk_decision") != "normal":
+        decision = f"风险总闸触发：{governor.get('risk_decision')}，目标仓位 {_pct(governor.get('target_position_ratio'))}"
+        reasons.append(" / ".join(str(item) for item in governor.get("reasons") or []))
     if not live_positions:
         reasons.append("实盘持仓为空或同步不足，不能用现有 live 表评价真实收益趋势。")
-    return {"decision": decision, "reasons": reasons}
+    return {"decision": decision, "reasons": reasons, "risk_governor": governor}
 
 
 def _format_candidate_line(row: dict) -> str:
@@ -449,6 +506,7 @@ def _format_feishu(payload: dict) -> str:
     candidate_summary = payload["current"]["candidate_summary"]
     order_summary = payload["current"]["order_summary"]
     shadow = payload["current"].get("shadow_summary") or {}
+    shadow_history = payload["current"].get("shadow_history") or {}
     live = payload["current"].get("live") or {}
     snapshot = live.get("snapshot") or {}
     decision = payload["judgement"]
@@ -469,10 +527,16 @@ def _format_feishu(payload: dict) -> str:
     if shadow:
         lines.append(
             f"- 影子盘：可成交 {shadow.get('executable_orders', 0)} / 不可成交 {shadow.get('blocked_orders', 0)}，"
-            f"均值滑点 {_num(shadow.get('avg_slippage_bps'), 1)} bps"
+            f"均值滑点 {_num(shadow.get('avg_slippage_bps'), 1)} bps；"
+            f"验收 {shadow.get('validation_status') or '-'} / {shadow.get('validation_actions') or '-'}"
         )
     else:
         lines.append("- 影子盘：今日无汇总记录，按数据缺口标注")
+    if shadow_history:
+        lines.append(
+            f"- 最近影子盘：fail_streak {shadow_history.get('fail_streak', 0)}，"
+            f"worst_action {shadow_history.get('worst_action') or '-'}"
+        )
     if snapshot:
         lines.append(
             f"- 实盘快照：总权益 {_money(snapshot.get('total_equity'))}，现金 {_money(snapshot.get('cash'))}，"
@@ -510,6 +574,7 @@ def _format_markdown(payload: dict) -> str:
     primary = bt["primary"]["summary"]
     adaptive = bt["adaptive_market_style_v22"]["summary"]
     current = payload["current"]
+    shadow_history = current.get("shadow_history") or {}
     lines = [
         f"# 核心精选策略收益评估 - {payload['params']['review_date']}",
         "",
@@ -526,6 +591,7 @@ def _format_markdown(payload: dict) -> str:
             f"- 风险档：`{DEFAULT_RISK_PROFILE}`",
             f"- 主策略：`{DEFAULT_STRATEGY}`",
             f"- TopN：{DEFAULT_TOP_N}；总持仓上限：{DEFAULT_MAX_TOTAL_POSITIONS}；持有期：{DEFAULT_HOLD_DAYS} 个交易日；默认仓位：{_pct(DEFAULT_POSITION_RATIO)}",
+            f"- 配置文件：`{PRODUCTION_CONFIG.get('config_path')}`",
             "- 回测口径：T 日信号、T+1 执行、账户级、初始资金 50 万，成本/滑点沿用既有回测导出。",
             "",
             "## 历史回测",
@@ -561,10 +627,15 @@ def _format_markdown(payload: dict) -> str:
             [
                 f"- 影子盘信号日：{shadow.get('signal_date')}；执行日：{shadow.get('execution_date')}",
                 f"- 可成交：{shadow.get('executable_orders')}；不可成交：{shadow.get('blocked_orders')}；警告：{shadow.get('warning_orders')}；平均滑点：{_num(shadow.get('avg_slippage_bps'), 1)} bps",
+                f"- 验收：{shadow.get('validation_status') or '-'} / {shadow.get('validation_actions') or '-'}；shadow/theory gap：{_pct(shadow.get('shadow_vs_theory_gap'))}",
             ]
         )
     else:
         lines.append("- 影子盘：当前日期无汇总记录。")
+    if shadow_history:
+        lines.append(
+            f"- 最近影子盘状态：fail_streak={shadow_history.get('fail_streak', 0)}；worst_action={shadow_history.get('worst_action') or '-'}"
+        )
     live = current.get("live") or {}
     snapshot = live.get("snapshot") or {}
     if snapshot:
@@ -634,16 +705,20 @@ def run_review(args: argparse.Namespace) -> dict:
     review_date = _normalize_date(args.date) or _latest_trade_date(engine)
     backtests = _load_backtests(args)
     candidates, candidate_meta = _load_candidates(engine, review_date)
+    candidate_params = _load_candidate_output_params(candidates)
     orders, order_meta = _load_orders(engine, review_date)
     shadow_fills, shadow_summary, shadow_meta = _load_shadow(engine, review_date)
+    shadow_history = _load_recent_shadow_history(engine, review_date)
     live = _load_live(engine, review_date)
     current = {
         "candidate_meta": candidate_meta,
+        "candidate_params": candidate_params,
         "order_meta": order_meta,
         "shadow_meta": shadow_meta,
         "candidates": _records(candidates),
         "orders": _records(orders),
         "shadow_summary": shadow_summary,
+        "shadow_history": shadow_history,
         "shadow_fills": _records(shadow_fills),
         "live": live,
         "candidate_summary": _summarize_candidates(candidates),
@@ -658,6 +733,10 @@ def run_review(args: argparse.Namespace) -> dict:
             "max_total_positions": DEFAULT_MAX_TOTAL_POSITIONS,
             "position_ratio": DEFAULT_POSITION_RATIO,
             "hold_days": DEFAULT_HOLD_DAYS,
+            "execution_mode": str(PRODUCTION_CONFIG["execution_mode"]),
+            "shadow_risk_strategy": str(PRODUCTION_CONFIG["shadow_risk_strategy"]),
+            "shadow_version": str(PRODUCTION_CONFIG["shadow_version"]),
+            "config_path": str(PRODUCTION_CONFIG["config_path"]),
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         },
         "backtests": backtests,
@@ -666,7 +745,7 @@ def run_review(args: argparse.Namespace) -> dict:
         "outputs": {},
         "notify_result": None,
     }
-    payload["judgement"] = _build_decision(backtests, shadow_summary, live)
+    payload["judgement"] = _build_decision(backtests, shadow_summary, shadow_history, live, candidate_params)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.output_root) / f"{timestamp}_{_date_compact(review_date)}"

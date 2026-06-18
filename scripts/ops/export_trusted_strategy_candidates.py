@@ -27,6 +27,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_config import build_sqlalchemy_url
+from scripts.ops.production_config import load_production_config, production_risk_profile_description
+from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
 from scripts.strategy_display import strategy_display_name
 from scripts.research_trusted_strategy_account_backtest import (
     ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
@@ -69,7 +71,8 @@ from scripts.research_full_pool_liquidity_strategies import (
 
 
 OUT_ROOT = PROJECT_ROOT / "exports" / "production_candidates"
-DEFAULT_RISK_PROFILE = "adaptive"
+PRODUCTION_CONFIG = load_production_config()
+DEFAULT_RISK_PROFILE = str(PRODUCTION_CONFIG["risk_profile"])
 RISK_PROFILE_DEFAULTS = {
     "offensive": {
         "strategy": "tiered_liquidity_then_bs_v2",
@@ -90,10 +93,10 @@ RISK_PROFILE_DEFAULTS = {
         "description": "防守档：纯流动性策略，12日持有，目标50%仓位。",
     },
     "adaptive": {
-        "strategy": "baseline_full_liquidity_detail_vol_position",
-        "position_ratio": 0.7,
-        "hold_days": 10,
-        "description": "收益优先主推送档：使用最近3个月收益风险最平衡的vol_position作为主策略，默认70%仓位；adaptive_market_style保留为市场/行业状态风控影子对照。",
+        "strategy": str(PRODUCTION_CONFIG["primary_strategy"]),
+        "position_ratio": float(PRODUCTION_CONFIG["position_ratio"]),
+        "hold_days": int(PRODUCTION_CONFIG["hold_days"]),
+        "description": production_risk_profile_description(),
     },
     "dual-adaptive": {
         "strategy": DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
@@ -199,6 +202,23 @@ ORDER_DETAIL_CONFIGS = (
 )
 DEFAULT_POOL_KEY = "TRUSTED_FULL_POOL_TOP5"
 DEFAULT_POOL_NAME = "可信全量池Top5"
+
+
+def _load_recent_shadow_validation(engine, lookback_days: int = 5) -> dict[str, object]:
+    table = "chenyiyun.ads_trusted_strategy_shadow_daily"
+    if not _table_exists(engine, table):
+        return summarize_recent_shadow([])
+    sql = text(
+        f"""
+        SELECT execution_date, validation_status, validation_actions, shadow_vs_theory_gap
+        FROM {table}
+        ORDER BY execution_date DESC
+        LIMIT :lookback_days
+        """
+    )
+    frame = pd.read_sql(sql, engine, params={"lookback_days": int(max(1, lookback_days))})
+    rows = frame.where(pd.notna(frame), None).to_dict("records") if not frame.empty else []
+    return summarize_recent_shadow(rows)
 
 
 def _normalize_date(raw: str | None) -> str | None:
@@ -638,6 +658,19 @@ def _format_order_notification(
         "订单草案：",
         *order_lines,
     ]
+    governor = candidates.attrs.get("risk_governor") or {}
+    if governor:
+        lines.extend(
+            [
+                "",
+                "风险总闸："
+                f"{governor.get('risk_decision') or '-'}；"
+                f"目标仓位={float(governor.get('target_position_ratio') or 0):.0%}；"
+                f"允许新买入={'是' if governor.get('allow_new_buys', True) else '否'}",
+            ]
+        )
+        if governor.get("reasons"):
+            lines.append("风险原因：" + " / ".join(str(item) for item in governor.get("reasons")[:5]))
     lines = [line for line in lines if line]
     if strategy_order_details:
         lines.extend(["", "策略订单对照："])
@@ -1288,6 +1321,7 @@ def _build_rebalance_orders(
     lot_size: int,
     min_trade_value: float,
     include_sells: bool,
+    allow_new_buys: bool = True,
     min_holding_days: int = 0,
     max_total_positions: int = 0,
 ) -> pd.DataFrame:
@@ -1367,6 +1401,8 @@ def _build_rebalance_orders(
         if delta_shares == 0 or trade_value < float(min_trade_value):
             continue
         side = "BUY" if delta_shares > 0 else "SELL"
+        if side == "BUY" and not allow_new_buys:
+            continue
         current_weight = (current_shares * price) / total_equity
         rows.append(
             {
@@ -1382,6 +1418,11 @@ def _build_rebalance_orders(
                 "current_weight": current_weight,
                 "target_weight": effective_weight,
                 "delta_weight": effective_weight - current_weight,
+                "order_status": "planned",
+                "submitted_at": None,
+                "filled_shares": None,
+                "filled_price": None,
+                "status_reason": None,
                 "note": (
                     f"trusted_strategy:{info.get('strategy') or DEFAULT_STRATEGY}; "
                     f"hold_gate={min_holding_days}d; max_positions={max_positions or 'unlimited'}"
@@ -1630,6 +1671,11 @@ def _write_orders_and_signal_snapshot(
             current_weight DOUBLE,
             target_weight DOUBLE,
             delta_weight DOUBLE,
+            order_status VARCHAR(24) NOT NULL DEFAULT 'planned',
+            submitted_at DATETIME NULL,
+            filled_shares INT NULL,
+            filled_price DOUBLE NULL,
+            status_reason VARCHAR(255) NULL,
             note VARCHAR(255),
             create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (trade_date, ts_code, side)
@@ -1672,9 +1718,20 @@ def _write_orders_and_signal_snapshot(
             "current_weight",
             "target_weight",
             "delta_weight",
+            "order_status",
+            "submitted_at",
+            "filled_shares",
+            "filled_price",
+            "status_reason",
             "note",
         ]
     ].to_dict("records")
+    for row in order_rows:
+        row["order_status"] = row.get("order_status") or "planned"
+        row["submitted_at"] = row.get("submitted_at")
+        row["filled_shares"] = row.get("filled_shares")
+        row["filled_price"] = row.get("filled_price")
+        row["status_reason"] = row.get("status_reason")
     signal_time = datetime.now()
     signal_rows = [
         {
@@ -1693,15 +1750,28 @@ def _write_orders_and_signal_snapshot(
     with engine.begin() as conn:
         conn.execute(create_orders)
         conn.execute(create_signals)
+        existing_order_cols = _columns_for_table(engine, order_table)
+        order_alters = {
+            "order_status": "ALTER TABLE {table} ADD COLUMN order_status VARCHAR(24) NOT NULL DEFAULT 'planned' AFTER delta_weight",
+            "submitted_at": "ALTER TABLE {table} ADD COLUMN submitted_at DATETIME NULL AFTER order_status",
+            "filled_shares": "ALTER TABLE {table} ADD COLUMN filled_shares INT NULL AFTER submitted_at",
+            "filled_price": "ALTER TABLE {table} ADD COLUMN filled_price DOUBLE NULL AFTER filled_shares",
+            "status_reason": "ALTER TABLE {table} ADD COLUMN status_reason VARCHAR(255) NULL AFTER filled_price",
+        }
+        for column, sql_tpl in order_alters.items():
+            if column not in existing_order_cols:
+                conn.execute(text(sql_tpl.format(table=order_table)))
         order_result = conn.execute(
             text(
                 f"""
                 INSERT INTO {order_table}
                     (trade_date, ts_code, side, price, current_shares, target_shares, delta_shares,
-                     current_weight, target_weight, delta_weight, note)
+                     current_weight, target_weight, delta_weight, order_status, submitted_at,
+                     filled_shares, filled_price, status_reason, note)
                 VALUES
                     (:trade_date, :ts_code, :side, :price, :current_shares, :target_shares, :delta_shares,
-                     :current_weight, :target_weight, :delta_weight, :note)
+                     :current_weight, :target_weight, :delta_weight, :order_status, :submitted_at,
+                     :filled_shares, :filled_price, :status_reason, :note)
                 ON DUPLICATE KEY UPDATE
                     price=VALUES(price),
                     current_shares=VALUES(current_shares),
@@ -1710,6 +1780,11 @@ def _write_orders_and_signal_snapshot(
                     current_weight=VALUES(current_weight),
                     target_weight=VALUES(target_weight),
                     delta_weight=VALUES(delta_weight),
+                    order_status=VALUES(order_status),
+                    submitted_at=VALUES(submitted_at),
+                    filled_shares=VALUES(filled_shares),
+                    filled_price=VALUES(filled_price),
+                    status_reason=VALUES(status_reason),
                     note=VALUES(note)
                 """
             ),
@@ -1891,6 +1966,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
     signal_date = pd.Timestamp(asof_date).date()
     day_scores = scores[scores["trade_date"].eq(signal_date)].copy()
     adaptive_decision: dict[str, object] | None = None
+    risk_governor: dict[str, object] | None = None
     target_position_ratio = float(args.position_ratio)
     if args.strategy == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
         candidates, adaptive_decision = _build_adaptive_dynamic_position_detail(
@@ -1988,10 +2064,28 @@ def export_candidates(args: argparse.Namespace) -> dict:
         .set_index("symbol")["adj_close"]
         .to_dict()
     )
+
+    recent_shadow_summary = _load_recent_shadow_validation(engine)
+    risk_governor = build_risk_governor_decision(
+        PRODUCTION_CONFIG,
+        adaptive_decision=adaptive_decision,
+        recent_shadow_summary=recent_shadow_summary,
+    )
+
+    governor_fallback = str(risk_governor.get("fallback_strategy") or "").strip()
+    if governor_fallback and governor_fallback in trusted_specs:
+        fallback_spec = trusted_specs[governor_fallback]
+        fallback_selected = _select_candidates(day_scores, fallback_spec, top_n=args.top_n)
+        if not fallback_selected.empty:
+            spec = fallback_spec
+            selected = fallback_selected
+
     if args.strategy not in pseudo_strategy_names:
         candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
-    if spec.name == "baseline_full_liquidity_detail_vol_position":
+    target_position_ratio = float(risk_governor.get("target_position_ratio") or target_position_ratio)
+    if spec.name == "baseline_full_liquidity_detail_vol_position" or governor_fallback:
         candidates = _scale_candidate_weights_for_export(candidates, target_position_ratio)
+    candidates.attrs["risk_governor"] = risk_governor
 
     warnings: list[str] = []
     if candidates["industry"].fillna("").str.strip().eq("").any():
@@ -2039,6 +2133,17 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "price_max_date": str(max(prices["trade_date"].dropna())),
         "pit_status": spec.pit_status,
         "risk_note": spec.risk_note,
+        "production_config_path": str(PRODUCTION_CONFIG["config_path"]),
+        "execution_mode": str(PRODUCTION_CONFIG["execution_mode"]),
+        "shadow_risk_strategy": str(PRODUCTION_CONFIG["shadow_risk_strategy"]),
+        "shadow_version": str(PRODUCTION_CONFIG["shadow_version"]),
+        "allow_model_risk_fields": bool(PRODUCTION_CONFIG["allow_model_risk_fields"]),
+        "shadow_validation": dict(PRODUCTION_CONFIG["shadow_validation"]),
+        "risk_decision": risk_governor.get("risk_decision") if risk_governor else None,
+        "risk_decision_reasons": list(risk_governor.get("reasons") or []) if risk_governor else [],
+        "risk_fallback_strategy": risk_governor.get("fallback_strategy") if risk_governor else None,
+        "allow_new_buys": bool(risk_governor.get("allow_new_buys", True)) if risk_governor else True,
+        "shadow_validation_state": recent_shadow_summary,
         "market_gate": bool(spec.market_gate),
         "market_gate_triggered": bool(
             "underlying_market_exposure_scale" in candidates.columns
@@ -2129,6 +2234,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
             lot_size=args.lot_size,
             min_trade_value=args.min_trade_value,
             include_sells=not args.buy_only,
+            allow_new_buys=bool(risk_governor.get("allow_new_buys", True)) if risk_governor else True,
             min_holding_days=args.hold_days,
             max_total_positions=args.max_total_positions,
         )
@@ -2142,6 +2248,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
         db_write["hold_gate_locked_positions"] = int(len(orders.attrs.get("hold_gate_locked_symbols") or []))
         db_write["max_total_positions"] = int(args.max_total_positions)
         db_write["position_cap_skipped"] = int(len(orders.attrs.get("position_cap_skipped_symbols") or []))
+        db_write["risk_decision"] = risk_governor.get("risk_decision") if risk_governor else None
+        db_write["allow_new_buys"] = bool(risk_governor.get("allow_new_buys", True)) if risk_governor else True
         if args.write_db:
             db_write.update(
                 _write_orders_and_signal_snapshot(
@@ -2369,6 +2477,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "files": files,
         "db_write": db_write,
         "candidates": candidates.to_dict("records"),
+        "risk_governor": risk_governor,
     }
 
 
@@ -2399,7 +2508,7 @@ def main() -> None:
         default=None,
         help="Override max AShare supplement names when Chenyiyun candidates are underfilled or concentrated.",
     )
-    parser.add_argument("--top-n", type=int, default=5)
+    parser.add_argument("--top-n", type=int, default=int(PRODUCTION_CONFIG["top_n"]))
     parser.add_argument("--hold-days", type=int, default=None)
     parser.add_argument("--history-days", type=int, default=220)
     parser.add_argument("--dynamic-lookback-dates", type=int, default=20)
@@ -2419,7 +2528,7 @@ def main() -> None:
     parser.add_argument(
         "--max-total-positions",
         type=int,
-        default=5,
+        default=int(PRODUCTION_CONFIG["max_total_positions"]),
         help="Maximum account-level holding names after unlocked rebalance. 0 disables the cap.",
     )
     parser.add_argument("--buy-only", action="store_true", help="Do not generate SELL rebalance orders.")
@@ -2432,6 +2541,8 @@ def main() -> None:
         hold_days_explicit="--hold-days" in raw_argv,
         position_ratio_explicit="--position-ratio" in raw_argv,
     )
+    if args.ashare_supplement_limit is None:
+        args.ashare_supplement_limit = int(PRODUCTION_CONFIG["ashare_supplement_limit"])
     print(json.dumps(export_candidates(args), ensure_ascii=False, indent=2, default=str))
 
 

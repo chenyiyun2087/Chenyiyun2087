@@ -2,6 +2,8 @@
 
 ## 当前推荐策略
 
+当前生产默认口径以 `config/production_strategy.yaml` 为唯一配置源；Web、scheduler、候选导出和收益评估均应与该文件保持一致。
+
 当前生产默认使用风险档位 `adaptive`，但飞书主推送策略已改为收益优先的 `baseline_full_liquidity_detail_vol_position`：
 
 - 主策略：`baseline_full_liquidity_detail_vol_position`（简称 `vol_position`），作为最近 3 个月收益风险最平衡的主推送策略。

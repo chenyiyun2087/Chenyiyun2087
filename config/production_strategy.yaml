@@ -1,0 +1,20 @@
+production:
+  primary_strategy: baseline_full_liquidity_detail_vol_position
+  risk_profile: adaptive
+  position_ratio: 0.70
+  top_n: 5
+  max_total_positions: 5
+  hold_days: 10
+  execution_mode: t_plus_1_open
+  shadow_risk_strategy: adaptive_market_style
+  shadow_version: v2.2
+  ashare_supplement_limit: 2
+  allow_model_risk_fields: false
+  defensive_fallback_strategy: baseline_full_liquidity_detail
+  shadow_validation:
+    max_large_slippage_bps: 300
+    max_unfilled_ratio: 0.20
+    max_limit_up_buy_ratio: 0.20
+    max_shadow_theory_gap: 0.03
+    consecutive_bad_days_to_reduce: 2
+    consecutive_bad_days_to_defensive: 3

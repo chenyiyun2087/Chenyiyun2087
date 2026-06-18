@@ -26,11 +26,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_config import build_sqlalchemy_url
+from scripts.ops.production_config import load_production_config
 
 
 DEFAULT_ORDER_TABLE = "chenyiyun.ads_local_strategy_orders"
 DEFAULT_FILL_TABLE = "chenyiyun.ads_trusted_strategy_shadow_fills"
 DEFAULT_SUMMARY_TABLE = "chenyiyun.ads_trusted_strategy_shadow_daily"
+PRODUCTION_CONFIG = load_production_config()
+SHADOW_VALIDATION = dict(PRODUCTION_CONFIG["shadow_validation"])
 
 
 def _normalize_date(raw: str | None) -> str | None:
@@ -51,6 +54,25 @@ def _safe_table_name(table: str) -> str:
     if not all(part.replace("_", "").isalnum() for part in value.split(".")):
         raise ValueError(f"invalid table name: {table}")
     return value
+
+
+def _columns_for_table(engine, full_table_name: str) -> set[str]:
+    table = _safe_table_name(full_table_name)
+    if "." in table:
+        schema, name = table.split(".", 1)
+    else:
+        schema, name = None, table
+    sql = text(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = COALESCE(:schema, DATABASE())
+          AND table_name = :name
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"schema": schema, "name": name}).fetchall()
+    return {str(row[0]) for row in rows}
 
 
 def _symbol_to_ts_code(symbol: str) -> str:
@@ -316,20 +338,72 @@ def summarize_fills(fills: pd.DataFrame, signal_date: str, execution_date: str) 
     buy = d[d["side"].astype(str).str.upper().eq("BUY")]
     sell = d[d["side"].astype(str).str.upper().eq("SELL")]
     blocked = d[d["tradable_flag"].fillna(0).astype(int).eq(0)]
+    warning = d[d["tradable_status"].astype(str).eq("EXECUTABLE_WITH_WARNING")]
+    limit_up_buy = d[
+        d["side"].astype(str).str.upper().eq("BUY")
+        & d["tradable_status"].astype(str).eq("BUY_LIMIT_UP_OPEN")
+    ]
+    limit_down_sell = d[
+        d["side"].astype(str).str.upper().eq("SELL")
+        & d["tradable_status"].astype(str).eq("SELL_LIMIT_DOWN_OPEN")
+    ]
+    planned_amount = float(d["planned_amount"].fillna(0).sum())
+    execution_amount = float(executable["execution_amount"].fillna(0).sum())
+    executable_ratio = execution_amount / planned_amount if planned_amount > 0 else np.nan
+    shadow_vs_theory_gap = max(0.0, 1.0 - executable_ratio) if planned_amount > 0 else np.nan
+    total_orders = int(len(d))
+    unfilled_ratio = float(len(blocked) / total_orders) if total_orders > 0 else np.nan
+    large_slippage_ratio = float(len(warning) / total_orders) if total_orders > 0 else np.nan
+    limit_up_buy_ratio = float(len(limit_up_buy) / max(1, len(buy))) if len(buy) > 0 else np.nan
+    limit_down_sell_ratio = float(len(limit_down_sell) / max(1, len(sell))) if len(sell) > 0 else np.nan
+
+    validation_status = "pass"
+    validation_actions = "none"
+    fail_reasons: list[str] = []
+    if large_slippage_ratio == large_slippage_ratio and large_slippage_ratio > 0:
+        max_slippage = float(executable["slippage_bps"].dropna().max()) if not executable.empty else np.nan
+    else:
+        max_slippage = np.nan
+    if max_slippage == max_slippage and max_slippage > float(SHADOW_VALIDATION["max_large_slippage_bps"]):
+        validation_status = "fail"
+        validation_actions = "reduce_position"
+        fail_reasons.append("large_slippage")
+    if unfilled_ratio == unfilled_ratio and unfilled_ratio > float(SHADOW_VALIDATION["max_unfilled_ratio"]):
+        validation_status = "fail"
+        validation_actions = "reduce_position"
+        fail_reasons.append("unfilled_ratio")
+    if limit_up_buy_ratio == limit_up_buy_ratio and limit_up_buy_ratio > float(SHADOW_VALIDATION["max_limit_up_buy_ratio"]):
+        validation_status = "fail"
+        validation_actions = "reduce_position"
+        fail_reasons.append("limit_up_buy_ratio")
+    if shadow_vs_theory_gap == shadow_vs_theory_gap and shadow_vs_theory_gap > float(SHADOW_VALIDATION["max_shadow_theory_gap"]):
+        validation_status = "fail"
+        validation_actions = "reduce_position"
+        fail_reasons.append("shadow_theory_gap")
+
     return {
         "signal_date": signal_date,
         "execution_date": execution_date,
-        "total_orders": int(len(d)),
+        "total_orders": total_orders,
         "buy_orders": int(len(buy)),
         "sell_orders": int(len(sell)),
         "executable_orders": int(len(executable)),
         "blocked_orders": int(len(blocked)),
         "warning_orders": int(d["tradable_status"].astype(str).eq("EXECUTABLE_WITH_WARNING").sum()),
-        "planned_amount": float(d["planned_amount"].fillna(0).sum()),
-        "execution_amount": float(executable["execution_amount"].fillna(0).sum()),
+        "planned_amount": planned_amount,
+        "execution_amount": execution_amount,
         "avg_slippage_bps": float(executable["slippage_bps"].dropna().mean()) if not executable.empty else np.nan,
         "max_adverse_slippage_bps": float(executable["slippage_bps"].dropna().max()) if not executable.empty else np.nan,
         "blocked_symbols": ",".join(blocked["ts_code"].astype(str).tolist()[:20]),
+        "unfilled_ratio": unfilled_ratio,
+        "large_slippage_ratio": large_slippage_ratio,
+        "limit_up_buy_ratio": limit_up_buy_ratio,
+        "limit_down_sell_ratio": limit_down_sell_ratio,
+        "planned_vs_executable_ratio": executable_ratio,
+        "shadow_vs_theory_gap": shadow_vs_theory_gap,
+        "validation_status": validation_status,
+        "validation_actions": validation_actions,
+        "validation_reason": ",".join(fail_reasons) if fail_reasons else "within_threshold",
     }
 
 
@@ -378,6 +452,15 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
             avg_slippage_bps DOUBLE NULL,
             max_adverse_slippage_bps DOUBLE NULL,
             blocked_symbols VARCHAR(255) NULL,
+            unfilled_ratio DOUBLE NULL,
+            large_slippage_ratio DOUBLE NULL,
+            limit_up_buy_ratio DOUBLE NULL,
+            limit_down_sell_ratio DOUBLE NULL,
+            planned_vs_executable_ratio DOUBLE NULL,
+            shadow_vs_theory_gap DOUBLE NULL,
+            validation_status VARCHAR(16) NULL,
+            validation_actions VARCHAR(32) NULL,
+            validation_reason VARCHAR(255) NULL,
             create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='可信策略影子盘成交质量日汇总'
@@ -388,6 +471,21 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
     with engine.begin() as conn:
         conn.execute(create_fills)
         conn.execute(create_summary)
+        existing_summary_cols = _columns_for_table(engine, summary_table)
+        summary_alters = {
+            "unfilled_ratio": "ALTER TABLE {table} ADD COLUMN unfilled_ratio DOUBLE NULL",
+            "large_slippage_ratio": "ALTER TABLE {table} ADD COLUMN large_slippage_ratio DOUBLE NULL",
+            "limit_up_buy_ratio": "ALTER TABLE {table} ADD COLUMN limit_up_buy_ratio DOUBLE NULL",
+            "limit_down_sell_ratio": "ALTER TABLE {table} ADD COLUMN limit_down_sell_ratio DOUBLE NULL",
+            "planned_vs_executable_ratio": "ALTER TABLE {table} ADD COLUMN planned_vs_executable_ratio DOUBLE NULL",
+            "shadow_vs_theory_gap": "ALTER TABLE {table} ADD COLUMN shadow_vs_theory_gap DOUBLE NULL",
+            "validation_status": "ALTER TABLE {table} ADD COLUMN validation_status VARCHAR(16) NULL",
+            "validation_actions": "ALTER TABLE {table} ADD COLUMN validation_actions VARCHAR(32) NULL",
+            "validation_reason": "ALTER TABLE {table} ADD COLUMN validation_reason VARCHAR(255) NULL",
+        }
+        for column, sql_tpl in summary_alters.items():
+            if column not in existing_summary_cols:
+                conn.execute(text(sql_tpl.format(table=summary_table)))
         fill_result = conn.execute(
             text(
                 f"""
@@ -423,11 +521,15 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
                 INSERT INTO {summary_table}
                     (signal_date, execution_date, total_orders, buy_orders, sell_orders, executable_orders,
                      blocked_orders, warning_orders, planned_amount, execution_amount, avg_slippage_bps,
-                     max_adverse_slippage_bps, blocked_symbols)
+                     max_adverse_slippage_bps, blocked_symbols, unfilled_ratio, large_slippage_ratio,
+                     limit_up_buy_ratio, limit_down_sell_ratio, planned_vs_executable_ratio,
+                     shadow_vs_theory_gap, validation_status, validation_actions, validation_reason)
                 VALUES
                     (:signal_date, :execution_date, :total_orders, :buy_orders, :sell_orders, :executable_orders,
                      :blocked_orders, :warning_orders, :planned_amount, :execution_amount, :avg_slippage_bps,
-                     :max_adverse_slippage_bps, :blocked_symbols)
+                     :max_adverse_slippage_bps, :blocked_symbols, :unfilled_ratio, :large_slippage_ratio,
+                     :limit_up_buy_ratio, :limit_down_sell_ratio, :planned_vs_executable_ratio,
+                     :shadow_vs_theory_gap, :validation_status, :validation_actions, :validation_reason)
                 ON DUPLICATE KEY UPDATE
                     signal_date=VALUES(signal_date),
                     total_orders=VALUES(total_orders),
@@ -440,7 +542,16 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
                     execution_amount=VALUES(execution_amount),
                     avg_slippage_bps=VALUES(avg_slippage_bps),
                     max_adverse_slippage_bps=VALUES(max_adverse_slippage_bps),
-                    blocked_symbols=VALUES(blocked_symbols)
+                    blocked_symbols=VALUES(blocked_symbols),
+                    unfilled_ratio=VALUES(unfilled_ratio),
+                    large_slippage_ratio=VALUES(large_slippage_ratio),
+                    limit_up_buy_ratio=VALUES(limit_up_buy_ratio),
+                    limit_down_sell_ratio=VALUES(limit_down_sell_ratio),
+                    planned_vs_executable_ratio=VALUES(planned_vs_executable_ratio),
+                    shadow_vs_theory_gap=VALUES(shadow_vs_theory_gap),
+                    validation_status=VALUES(validation_status),
+                    validation_actions=VALUES(validation_actions),
+                    validation_reason=VALUES(validation_reason)
                 """
             ),
             summary_row,
@@ -508,6 +619,7 @@ def _format_notification(summary: dict, fills: pd.DataFrame) -> str:
         f"可成交：{summary['executable_orders']}，不可成交：{summary['blocked_orders']}，大滑点警告：{summary['warning_orders']}",
         f"平均不利滑点：{float(summary.get('avg_slippage_bps') or 0):.1f} bps",
         f"最大不利滑点：{float(summary.get('max_adverse_slippage_bps') or 0):.1f} bps",
+        f"验收结果：{summary.get('validation_status') or '-'} / {summary.get('validation_actions') or '-'}",
     ]
     if not bad.empty:
         lines.append("不可成交/高风险：")

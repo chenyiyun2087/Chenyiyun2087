@@ -24,7 +24,11 @@ class TestSchedulerPipeline(unittest.TestCase):
             [
                 "eastmoney/run_strategy.py",
                 "scoreRank/run_daily.py",
+                "scripts/backfill_score_rank_daily_industry.py",
                 "scoreRank/cli/build_bs_consensus.py",
+                "scripts/ops/export_trusted_strategy_candidates.py",
+                "scripts/ops/run_trusted_strategy_shadow_monitor.py",
+                "scripts/ops/run_strategy_performance_review.py",
                 "scoreRank/cli/build_b_event_kpi.py",
                 "scoreRank/cli/run_m8_cycle.py",
                 "sina/live_tracker/run_live_tracker.py",

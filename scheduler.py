@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import create_engine, text
 from project_network import build_direct_network_env, enforce_direct_network
+from scripts.ops.production_config import load_production_config
 
 enforce_direct_network()
 
@@ -22,6 +23,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 PROJECT_ROOT = Path(__file__).resolve().parent
 PYTHON_EXE = sys.executable
 CATCH_UP_GRACE_SECONDS = int(os.getenv("SCHEDULER_CATCH_UP_GRACE_SECONDS", "90"))
+PRODUCTION_CONFIG = load_production_config()
 
 # Task Definitions
 # ------------------------------------------------------------------------------
@@ -215,13 +217,13 @@ def run_pipeline(target_date) -> bool:
             "--date",
             date_str,
             "--risk-profile",
-            "adaptive",
+            str(PRODUCTION_CONFIG["risk_profile"]),
             "--strategy",
-            "baseline_full_liquidity_detail_vol_position",
+            str(PRODUCTION_CONFIG["primary_strategy"]),
             "--top-n",
-            "5",
+            str(PRODUCTION_CONFIG["top_n"]),
             "--max-total-positions",
-            "5",
+            str(PRODUCTION_CONFIG["max_total_positions"]),
             "--write-db",
             "--emit-orders",
             "--notify-feishu",

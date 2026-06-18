@@ -36,6 +36,7 @@
         ，目标仓位：{{ '%.0f%%'|format((latest_trusted_params.position_ratio or 0)|float * 100) }}
         ，持有期：{{ latest_trusted_params.hold_days or '-' }}日
         ，最多持仓：{{ latest_trusted_params.max_total_positions or '-' }}只
+        ，风险总闸：{{ latest_trusted_params.risk_decision or '-' }}
         ，市场门禁：{% if latest_trusted_params.market_gate_triggered %}已触发{% elif latest_trusted_params.market_gate %}未触发{% else %}未启用{% endif %}
         {% endif %}
     </div>
@@ -63,6 +64,10 @@
             <div>
                 <div class="muted" style="font-size: 12px;">是否防守</div>
                 <strong>{% if latest_trusted_params.market_style_state == 'defensive' %}已触发{% else %}未触发{% endif %}</strong>
+            </div>
+            <div>
+                <div class="muted" style="font-size: 12px;">允许新买入</div>
+                <strong>{% if latest_trusted_params.allow_new_buys in [1, true, '1', 'true', 'True'] %}允许{% else %}冻结{% endif %}</strong>
             </div>
         </div>
         <div style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 10px;">
@@ -122,6 +127,11 @@
         <div class="muted" style="margin-top: 8px; font-size: 12px;">
             {{ latest_trusted_params.route_reason or latest_trusted_params.switch_reason or latest_trusted_params.style_reason or latest_trusted_params.adaptive_position_reason or '-' }}
         </div>
+        {% if latest_trusted_params.risk_decision_reasons %}
+        <div class="muted" style="margin-top: 6px; font-size: 12px;">
+            风险原因：{{ latest_trusted_params.risk_decision_reasons|join(' / ') }}
+        </div>
+        {% endif %}
         <div class="muted" style="margin-top: 6px; font-size: 12px;">
             AShare候选 {{ latest_trusted_params.ashare_candidate_count or 0 }} 条；风险否决占比 {{ latest_trusted_params.ashare_risk_veto_ratio if latest_trusted_params.ashare_risk_veto_ratio is not none else '-' }}；市场状态 {{ latest_trusted_params.ashare_market_regime or '-' }}
         </div>
@@ -248,7 +258,14 @@
         不可成交：{{ latest_shadow_summary.blocked_orders }}，
         大滑点警告：{{ latest_shadow_summary.warning_orders }}，
         平均滑点：{{ '%.1f bps'|format((latest_shadow_summary.avg_slippage_bps or 0)|float) }}，
-        最大不利滑点：{{ '%.1f bps'|format((latest_shadow_summary.max_adverse_slippage_bps or 0)|float) }}
+        最大不利滑点：{{ '%.1f bps'|format((latest_shadow_summary.max_adverse_slippage_bps or 0)|float) }}，
+        验收：{{ latest_shadow_summary.validation_status or '-' }}/{{ latest_shadow_summary.validation_actions or '-' }}
+    </div>
+    <div class="muted" style="margin-bottom: 10px; font-size: 12px;">
+        不可成交比例：{{ '%.1f%%'|format((latest_shadow_summary.unfilled_ratio or 0)|float * 100) }}，
+        大滑点比例：{{ '%.1f%%'|format((latest_shadow_summary.large_slippage_ratio or 0)|float * 100) }}，
+        涨停买入比例：{{ '%.1f%%'|format((latest_shadow_summary.limit_up_buy_ratio or 0)|float * 100) }}，
+        shadow/theory gap：{{ '%.1f%%'|format((latest_shadow_summary.shadow_vs_theory_gap or 0)|float * 100) }}
     </div>
     <table>
         <thead>

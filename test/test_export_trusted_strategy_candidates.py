@@ -3,6 +3,7 @@ import argparse
 import pandas as pd
 
 from scripts.ops.export_trusted_strategy_candidates import _apply_risk_profile_defaults, _build_rebalance_orders
+from scripts.ops.production_config import load_production_config
 from scripts.research_trusted_strategy_account_backtest import (
     ASHARE_ADAPTIVE_VERSION,
     ASHARE_WEEKLY_UNCONFIRMED_WEIGHT,
@@ -11,6 +12,7 @@ from scripts.research_trusted_strategy_account_backtest import (
     _resolve_ashare_weight_config,
     _symbol_from_ts_code,
 )
+from scripts.research_full_pool_liquidity_strategies import build_strategy_specs
 
 
 def test_rebalance_orders_respect_min_holding_gate_and_reserve_locked_weight():
@@ -67,6 +69,15 @@ def test_adaptive_risk_profile_defaults_to_vol_position_main_push():
     assert resolved.strategy == "baseline_full_liquidity_detail_vol_position"
     assert resolved.hold_days == 10
     assert resolved.position_ratio == 0.7
+
+
+def test_production_default_strategy_is_not_model_risk():
+    config = load_production_config()
+    specs = {spec.name: spec for spec in build_strategy_specs()}
+    spec = specs[config["primary_strategy"]]
+
+    assert config["allow_model_risk_fields"] is False
+    assert spec.pit_status == "trusted"
 
 
 def test_dual_system_targets_boost_intersection_and_apply_position_ratio():

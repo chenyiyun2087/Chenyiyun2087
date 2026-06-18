@@ -20,6 +20,7 @@ enforce_direct_network()
 
 from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2, calculate_bs_trade_gate
 from scoreRank.core.db_config import build_pymysql_config
+from scripts.ops.production_config import load_production_config
 from scripts.strategy_display import strategy_display_name
 
 try:
@@ -78,8 +79,9 @@ DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
     "holding_days": 20,
 }
 INITIAL_LIVE_CAPITAL = Decimal("500000.00")
-TRUSTED_PRODUCTION_RISK_PROFILE = "adaptive"
-TRUSTED_PRODUCTION_STRATEGY = "baseline_full_liquidity_detail_vol_position"
+TRUSTED_PRODUCTION_CONFIG = load_production_config()
+TRUSTED_PRODUCTION_RISK_PROFILE = str(TRUSTED_PRODUCTION_CONFIG["risk_profile"])
+TRUSTED_PRODUCTION_STRATEGY = str(TRUSTED_PRODUCTION_CONFIG["primary_strategy"])
 
 # Task Status Storage (Loaded from DB on start)
 TASKS = {
@@ -2194,9 +2196,9 @@ def _build_task_script_parts(task_name, run_options=None):
             '--strategy',
             TRUSTED_PRODUCTION_STRATEGY,
             '--top-n',
-            '5',
+            str(TRUSTED_PRODUCTION_CONFIG["top_n"]),
             '--max-total-positions',
-            '5',
+            str(TRUSTED_PRODUCTION_CONFIG["max_total_positions"]),
             '--write-db',
             '--emit-orders',
             '--notify-feishu',
