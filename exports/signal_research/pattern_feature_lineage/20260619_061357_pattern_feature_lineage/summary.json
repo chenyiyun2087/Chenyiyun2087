@@ -1,0 +1,14 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "backtest_dir": "exports/signal_research/20260619_005237_692696_trusted_account_backtest",
+  "lineage_status": "PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING",
+  "target_core_min_non_null_ratio": 0.0,
+  "all_strategy_max_core_non_null_ratio": 0.0,
+  "monitor_provided": true,
+  "raw_source_provided": false,
+  "output_dir": "exports/signal_research/pattern_feature_lineage/20260619_061357_pattern_feature_lineage",
+  "files": {
+    "pattern_feature_lineage": "exports/signal_research/pattern_feature_lineage/20260619_061357_pattern_feature_lineage/pattern_feature_lineage.csv",
+    "pattern_feature_date_alignment": "exports/signal_research/pattern_feature_lineage/20260619_061357_pattern_feature_lineage/pattern_feature_date_alignment.csv"
+  }
+}

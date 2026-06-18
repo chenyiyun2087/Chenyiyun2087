@@ -1,0 +1,24 @@
+{
+  "production_strategy": "production_governed_vol_position",
+  "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "mode": "manual_shadow_only",
+  "generated_at": "2026-06-19T06:14:08",
+  "event_summary": {
+    "recovery_event_days": 0,
+    "risk_decision_diff_days": 0,
+    "position_diff_nonzero_days": 0,
+    "shadow_extra_exposure_days": 0,
+    "position_diff_abs_sum": 0.0,
+    "shadow_recovery_theory_gap_sum": 0.0,
+    "shadow_recovery_theory_gap_mean": 0.0,
+    "event_execution_degraded_days": 0,
+    "event_execution_unknown_days": 0,
+    "event_window_pass": false,
+    "event_shadow_fail_reasons": [
+      "insufficient_recovery_events",
+      "shadow_recovery_theory_gap_not_positive"
+    ],
+    "min_recovery_events": 5
+  },
+  "events": []
+}

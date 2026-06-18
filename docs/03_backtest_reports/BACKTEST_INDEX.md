@@ -18,6 +18,8 @@
 
 > 2026-06-19 v1.2b gate tuned 手工 shadow 验收器更新：`run_research_shadow_candidate_monitor.py --rolling-days 20` 已升级为 20 日验收器，并生成 `reports/production_monitor/research_shadow_candidate_daily.json/md`。当前历史窗口烟测 rows=20、avg/min Top5 overlap=1.0、risk decision 差异 0 天、仓位差 0、理论收益差合计 +1.23%、执行降级 0 天，`shadow_pass=true`；这只表示历史样本满足手工 shadow 口径，不代表启用生产或 shadow 配置。feature separability 当前按规则给出 `SEPARABLE`，但最佳特征方向为 `champion_score_pctile_252` 越低越接近 benign，仍只作解释标签；pattern feature quality 为 `PATTERN_QUALITY_MONITOR_ONLY`，Top5/Top30 核心覆盖率 0%，不得进入风控。
 
+> 2026-06-19 v1.2b gate tuned 双门槛 shadow 更新：shadow monitor 新增 calendar/event 双验收、执行代理 pass 和 recovery-event 报告。最新 20 日历史窗口 `calendar_window_pass=true`，但 `event_window_pass=false`，原因是 `recovery_event_days=0` 且 `shadow_recovery_theory_gap_sum=0`；同时 `execution_proxy_pass=false`，因为 20 天均为 `unknown_missing_execution_proxy`。结论：v1.2b gate tuned 只能继续手工 shadow 观察，不能启用 `research_shadow_candidate.enabled`，不能进入 canary。Pattern lineage 审计显示 `PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING`，v1.2b gate tuned 的 pattern 核心字段覆盖仍为 0。
+
 > 2026-06-04 更新：当前 `adaptive_market_style` 从单纯三年低回撤口径升级为“最近 3 个月收益优先 + 长期风险约束 + 日检周切”。近期冠军默认指向 `baseline_full_liquidity_detail_vol_position`，系统每天检测市场、行业和量能状态，最多每周切换一次底层基准，目标仓位约 50% / 70% / 80%。`tiered_liquidity_then_bs_v2` 只在强市场短期增强，不作为长期满仓默认。
 
 > 2026-06-04 双系统路由更新：新增 `dual_system_adaptive_route`、`ashare_auto_shadow`、`ashare_trend_breakout_shadow`、`ashare_hybrid_conservative_shadow`。最近 3 个月账户级对照中，AShare AUTO 影子收益约 +8.72%、最大回撤约 -17.28%，`adaptive_market_style` 收益约 +7.36%、最大回撤约 -10.97%，双系统路由收益约 +5.27%、最大回撤约 -12.06%。当前结论：AShare AUTO 有收益弹性但波动更大，dual route 风控较保守，需继续优化 AShare 周线门禁和候选缓存后再跑三年验收。

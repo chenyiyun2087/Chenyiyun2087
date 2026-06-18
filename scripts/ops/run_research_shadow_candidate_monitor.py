@@ -32,7 +32,16 @@ SHADOW_ACCEPTANCE_DEFAULTS = {
     "max_large_slippage_proxy_days": 0,
     "max_limit_up_buy_risk_days": 0,
     "min_theory_gap_sum": 0.0,
+    "min_recovery_events": 5,
 }
+EXECUTION_PROXY_COLUMNS = (
+    "large_slippage_proxy",
+    "limit_up_buy_ratio",
+    "unfilled_ratio_proxy",
+    "limit_down_sell_ratio",
+    "open_gap_proxy",
+    "estimated_turnover_impact",
+)
 
 
 def _read_required(backtest_dir: Path, filename: str) -> pd.DataFrame:
@@ -152,13 +161,36 @@ def _candidate_ratio(candidates: pd.DataFrame, strategy: str, trade_date: str, c
     return None
 
 
-def _execution_feasibility(large_slippage_proxy: float | None, limit_up_buy_ratio: float | None) -> str:
-    if large_slippage_proxy is None and limit_up_buy_ratio is None:
+def _execution_feasibility(
+    large_slippage_proxy: float | None,
+    limit_up_buy_ratio: float | None,
+    unfilled_ratio_proxy: float | None = None,
+    limit_down_sell_ratio: float | None = None,
+    open_gap_proxy: float | None = None,
+    estimated_turnover_impact: float | None = None,
+) -> str:
+    proxies = {
+        "large_slippage_proxy": large_slippage_proxy,
+        "limit_up_buy_ratio": limit_up_buy_ratio,
+        "unfilled_ratio_proxy": unfilled_ratio_proxy,
+        "limit_down_sell_ratio": limit_down_sell_ratio,
+        "open_gap_proxy": open_gap_proxy,
+        "estimated_turnover_impact": estimated_turnover_impact,
+    }
+    if all(value is None for value in proxies.values()):
         return "unknown_missing_execution_proxy"
     if large_slippage_proxy is not None and large_slippage_proxy > 0.03:
         return "degraded_large_slippage_proxy"
     if limit_up_buy_ratio is not None and limit_up_buy_ratio > 0.20:
         return "degraded_limit_up_buy_ratio"
+    if unfilled_ratio_proxy is not None and unfilled_ratio_proxy > 0.20:
+        return "degraded_unfilled_ratio_proxy"
+    if limit_down_sell_ratio is not None and limit_down_sell_ratio > 0.20:
+        return "degraded_limit_down_sell_ratio"
+    if open_gap_proxy is not None and abs(open_gap_proxy) > 0.05:
+        return "degraded_open_gap_proxy"
+    if estimated_turnover_impact is not None and estimated_turnover_impact > 0.03:
+        return "degraded_estimated_turnover_impact"
     return "pass"
 
 
@@ -209,6 +241,10 @@ def build_shadow_monitor(
         if large_slippage_proxy is not None and large_slippage_proxy > 1:
             large_slippage_proxy = large_slippage_proxy / 10000
         limit_up_buy_ratio = _candidate_ratio(candidates, shadow_strategy, current_date, ("limit_up_buy_ratio", "is_limit_up_buy", "limit_up_buy"))
+        unfilled_ratio_proxy = _candidate_ratio(candidates, shadow_strategy, current_date, ("unfilled_ratio_proxy", "unfilled_ratio"))
+        limit_down_sell_ratio = _candidate_ratio(candidates, shadow_strategy, current_date, ("limit_down_sell_ratio", "is_limit_down_sell", "limit_down_sell"))
+        open_gap_proxy = _candidate_ratio(candidates, shadow_strategy, current_date, ("open_gap_proxy", "open_gap_ratio", "open_gap"))
+        estimated_turnover_impact = _candidate_ratio(candidates, shadow_strategy, current_date, ("estimated_turnover_impact", "turnover_impact_proxy"))
         production_theory_return = prod_returns.get(current_date)
         shadow_theory_return = shadow_returns.get(current_date)
         rows.append(
@@ -241,11 +277,33 @@ def build_shadow_monitor(
                 else None,
                 "large_slippage_proxy": large_slippage_proxy,
                 "limit_up_buy_ratio": limit_up_buy_ratio,
-                "execution_feasibility": _execution_feasibility(large_slippage_proxy, limit_up_buy_ratio),
+                "unfilled_ratio_proxy": unfilled_ratio_proxy,
+                "limit_down_sell_ratio": limit_down_sell_ratio,
+                "open_gap_proxy": open_gap_proxy,
+                "estimated_turnover_impact": estimated_turnover_impact,
+                "execution_feasibility": _execution_feasibility(
+                    large_slippage_proxy,
+                    limit_up_buy_ratio,
+                    unfilled_ratio_proxy,
+                    limit_down_sell_ratio,
+                    open_gap_proxy,
+                    estimated_turnover_impact,
+                ),
                 "fp_explanation_label": "unknown_pending_forward_return",
             }
         )
     return pd.DataFrame(rows)
+
+
+def build_recovery_event_monitor(monitor: pd.DataFrame) -> pd.DataFrame:
+    if monitor.empty:
+        return monitor.copy()
+    frame = monitor.copy()
+    position_diff = pd.to_numeric(frame.get("position_diff"), errors="coerce").fillna(0)
+    risk_diff = frame.get("risk_decision_diff", pd.Series(False, index=frame.index)).astype(bool)
+    recovery_decision = frame.get("shadow_risk_decision", pd.Series("", index=frame.index)).astype(str).eq("recovery_reduce")
+    recovery_status = frame.get("shadow_recovery_status", pd.Series("", index=frame.index)).astype(str).str.contains("recover", case=False, na=False)
+    return frame[recovery_decision | recovery_status | position_diff.ne(0) | risk_diff].copy()
 
 
 def evaluate_shadow_monitor(monitor: pd.DataFrame, thresholds: dict[str, float | int] | None = None) -> dict[str, object]:
@@ -259,6 +317,10 @@ def evaluate_shadow_monitor(monitor: pd.DataFrame, thresholds: dict[str, float |
     numeric["theory_gap"] = pd.to_numeric(numeric["theory_gap"], errors="coerce")
     numeric["large_slippage_proxy"] = pd.to_numeric(numeric["large_slippage_proxy"], errors="coerce")
     numeric["limit_up_buy_ratio"] = pd.to_numeric(numeric["limit_up_buy_ratio"], errors="coerce")
+    for col in EXECUTION_PROXY_COLUMNS:
+        if col not in numeric.columns:
+            numeric[col] = pd.NA
+        numeric[col] = pd.to_numeric(numeric[col], errors="coerce")
 
     rows = int(len(numeric))
     avg_top5_overlap = float(numeric["top5_overlap"].mean())
@@ -271,8 +333,14 @@ def evaluate_shadow_monitor(monitor: pd.DataFrame, thresholds: dict[str, float |
     theory_gap_sum = float(numeric["theory_gap"].fillna(0).sum())
     theory_gap_mean = float(numeric["theory_gap"].mean()) if numeric["theory_gap"].notna().any() else 0.0
     execution_degraded_days = int(numeric["execution_feasibility"].astype(str).str.startswith("degraded").sum())
+    execution_unknown_days = int(numeric["execution_feasibility"].astype(str).eq("unknown_missing_execution_proxy").sum())
     large_slippage_proxy_days = int(numeric["large_slippage_proxy"].gt(0.03).sum())
     limit_up_buy_risk_days = int(numeric["limit_up_buy_ratio"].gt(0.20).sum())
+    unfilled_proxy_days = int(numeric["unfilled_ratio_proxy"].gt(0.20).sum())
+    limit_down_sell_risk_days = int(numeric["limit_down_sell_ratio"].gt(0.20).sum())
+    open_gap_proxy_days = int(numeric["open_gap_proxy"].abs().gt(0.05).sum())
+    turnover_impact_days = int(numeric["estimated_turnover_impact"].gt(0.03).sum())
+    execution_proxy_pass = execution_unknown_days == 0 and execution_degraded_days == 0
 
     checks = {
         "insufficient_rows": rows < int(thresholds["min_rows"]),
@@ -286,6 +354,9 @@ def evaluate_shadow_monitor(monitor: pd.DataFrame, thresholds: dict[str, float |
         "theory_gap_sum_not_positive": theory_gap_sum <= float(thresholds["min_theory_gap_sum"]),
     }
     fail_reasons = [reason for reason, failed in checks.items() if failed]
+    execution_proxy_fail_reasons = []
+    if not execution_proxy_pass:
+        execution_proxy_fail_reasons.append("missing_execution_proxy" if execution_unknown_days else "degraded_execution_proxy")
     return {
         "rows": rows,
         "avg_top5_overlap": avg_top5_overlap,
@@ -298,11 +369,59 @@ def evaluate_shadow_monitor(monitor: pd.DataFrame, thresholds: dict[str, float |
         "theory_gap_sum": theory_gap_sum,
         "theory_gap_mean": theory_gap_mean,
         "execution_degraded_days": execution_degraded_days,
+        "execution_unknown_days": execution_unknown_days,
         "large_slippage_proxy_days": large_slippage_proxy_days,
         "limit_up_buy_risk_days": limit_up_buy_risk_days,
+        "unfilled_proxy_days": unfilled_proxy_days,
+        "limit_down_sell_risk_days": limit_down_sell_risk_days,
+        "open_gap_proxy_days": open_gap_proxy_days,
+        "turnover_impact_days": turnover_impact_days,
+        "execution_proxy_pass": execution_proxy_pass,
+        "execution_proxy_fail_reasons": execution_proxy_fail_reasons,
+        "calendar_window_pass": not fail_reasons,
         "shadow_pass": not fail_reasons,
         "shadow_fail_reasons": fail_reasons,
         "shadow_acceptance_thresholds": thresholds,
+    }
+
+
+def evaluate_recovery_events(
+    monitor: pd.DataFrame,
+    min_recovery_events: int = 5,
+) -> dict[str, object]:
+    events = build_recovery_event_monitor(monitor)
+    if events.empty:
+        recovery_theory_gap_sum = 0.0
+        recovery_theory_gap_mean = 0.0
+    else:
+        recovery_theory_gap = pd.to_numeric(events.get("theory_gap"), errors="coerce").fillna(0)
+        recovery_theory_gap_sum = float(recovery_theory_gap.sum())
+        recovery_theory_gap_mean = float(recovery_theory_gap.mean())
+    position_diff = pd.to_numeric(monitor.get("position_diff"), errors="coerce").fillna(0)
+    event_position_diff = pd.to_numeric(events.get("position_diff"), errors="coerce").fillna(0) if not events.empty else pd.Series(dtype=float)
+    event_execution_degraded_days = int(events.get("execution_feasibility", pd.Series(dtype=object)).astype(str).str.startswith("degraded").sum()) if not events.empty else 0
+    event_execution_unknown_days = int(events.get("execution_feasibility", pd.Series(dtype=object)).astype(str).eq("unknown_missing_execution_proxy").sum()) if not events.empty else 0
+    fail_reasons: list[str] = []
+    if len(events) < min_recovery_events:
+        fail_reasons.append("insufficient_recovery_events")
+    if recovery_theory_gap_sum <= 0:
+        fail_reasons.append("shadow_recovery_theory_gap_not_positive")
+    if event_execution_degraded_days > 0:
+        fail_reasons.append("degraded_execution_proxy")
+    return {
+        "recovery_event_days": int(len(events)),
+        "risk_decision_diff_days": int(monitor.get("risk_decision_diff", pd.Series(False, index=monitor.index)).astype(bool).sum()),
+        "position_diff_nonzero_days": int(position_diff.ne(0).sum()),
+        "shadow_extra_exposure_days": int(position_diff.gt(0).sum()),
+        "position_diff_abs_sum": float(position_diff.abs().sum()),
+        "shadow_recovery_theory_gap_sum": recovery_theory_gap_sum,
+        "shadow_recovery_theory_gap_mean": recovery_theory_gap_mean,
+        "event_execution_degraded_days": event_execution_degraded_days,
+        "event_execution_unknown_days": event_execution_unknown_days,
+        "event_window_pass": not fail_reasons,
+        "event_shadow_fail_reasons": fail_reasons,
+        "min_recovery_events": int(min_recovery_events),
+        "event_rows": events,
     }
 
 
@@ -328,6 +447,8 @@ def _daily_report_markdown(report: dict[str, object]) -> str:
         f"- shadow_strategy: `{report.get('shadow_strategy')}`",
         f"- shadow_pass: `{summary.get('shadow_pass')}`",
         f"- shadow_fail_reasons: `{', '.join(summary.get('shadow_fail_reasons') or [])}`",
+        f"- event_shadow_fail_reasons: `{', '.join(summary.get('event_shadow_fail_reasons') or [])}`",
+        f"- execution_proxy_fail_reasons: `{', '.join(summary.get('execution_proxy_fail_reasons') or [])}`",
         "",
         "| metric | value |",
         "|---|---:|",
@@ -339,6 +460,9 @@ def _daily_report_markdown(report: dict[str, object]) -> str:
         f"| execution_feasibility | {today.get('execution_feasibility')} |",
         f"| 20d_rows | {summary.get('rows')} |",
         f"| 20d_theory_gap_sum | {summary.get('theory_gap_sum')} |",
+        f"| calendar_window_pass | {summary.get('calendar_window_pass')} |",
+        f"| event_window_pass | {summary.get('event_window_pass')} |",
+        f"| execution_proxy_pass | {summary.get('execution_proxy_pass')} |",
         "",
         "This report is manual shadow-only and does not change production execution.",
     ]
@@ -369,6 +493,54 @@ def write_daily_report(
     return {"daily_json": str(json_path), "daily_markdown": str(md_path)}
 
 
+def _recovery_events_markdown(report: dict[str, object]) -> str:
+    summary = dict(report["event_summary"])
+    lines = [
+        "# Research Shadow Candidate Recovery Events",
+        "",
+        f"- production_strategy: `{report.get('production_strategy')}`",
+        f"- shadow_strategy: `{report.get('shadow_strategy')}`",
+        f"- event_window_pass: `{summary.get('event_window_pass')}`",
+        f"- recovery_event_days: `{summary.get('recovery_event_days')}`",
+        f"- event_shadow_fail_reasons: `{', '.join(summary.get('event_shadow_fail_reasons') or [])}`",
+        "",
+        "| trade_date | v1_position | shadow_position | position_diff | v1_decision | shadow_decision | theory_gap | execution |",
+        "|---|---:|---:|---:|---|---|---:|---|",
+    ]
+    for row in report.get("events", []):
+        lines.append(
+            "| {trade_date} | {production_target_position} | {shadow_target_position} | {position_diff} | {production_risk_decision} | {shadow_risk_decision} | {theory_gap} | {execution_feasibility} |".format(
+                **row
+            )
+        )
+    lines.extend(["", "This report is manual shadow-only and does not enable production shadow or canary."])
+    return "\n".join(lines) + "\n"
+
+
+def write_recovery_event_report(
+    events: pd.DataFrame,
+    event_summary: dict[str, object],
+    report_root: Path,
+    production_strategy: str,
+    shadow_strategy: str,
+) -> dict[str, str]:
+    report_root.mkdir(parents=True, exist_ok=True)
+    clean_summary = {key: value for key, value in event_summary.items() if key != "event_rows"}
+    report = {
+        "production_strategy": production_strategy,
+        "shadow_strategy": shadow_strategy,
+        "mode": "manual_shadow_only",
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "event_summary": clean_summary,
+        "events": [{key: _json_ready(value) for key, value in row.items()} for row in events.to_dict("records")],
+    }
+    json_path = report_root / "research_shadow_candidate_recovery_events.json"
+    md_path = report_root / "research_shadow_candidate_recovery_events.md"
+    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    md_path.write_text(_recovery_events_markdown(report), encoding="utf-8")
+    return {"recovery_events_json": str(json_path), "recovery_events_markdown": str(md_path)}
+
+
 def run_analysis(args: argparse.Namespace) -> dict[str, object]:
     config = load_production_config()
     shadow_config = dict(config.get("research_shadow_candidate") or {})
@@ -388,7 +560,7 @@ def run_analysis(args: argparse.Namespace) -> dict[str, object]:
         selected_trade_date = None
     if not selected_trade_date and not args.start_date and not selected_end_date and not args.rolling_days:
         selected_trade_date = max(set(nav["trade_date"]))
-    monitor = build_shadow_monitor(
+    full_monitor = build_shadow_monitor(
         nav,
         candidates,
         trades,
@@ -399,15 +571,27 @@ def run_analysis(args: argparse.Namespace) -> dict[str, object]:
         trade_date=selected_trade_date,
         rolling_days=args.rolling_days,
     )
+    event_summary = evaluate_recovery_events(full_monitor, min_recovery_events=args.min_recovery_events)
+    event_rows = event_summary["event_rows"]
+    monitor = event_rows.copy() if args.event_only else full_monitor
     if monitor.empty:
-        raise RuntimeError("Shadow monitor produced no rows.")
+        if args.event_only:
+            monitor = pd.DataFrame(columns=full_monitor.columns)
+        else:
+            raise RuntimeError("Shadow monitor produced no rows.")
 
     output_root = Path(args.output_root)
     out_dir = output_root / datetime.now().strftime("%Y%m%d_%H%M%S_research_shadow_candidate_monitor")
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "research_shadow_candidate_monitor.csv"
     monitor.to_csv(csv_path, index=False)
-    shadow_summary = evaluate_shadow_monitor(monitor)
+    shadow_summary = evaluate_shadow_monitor(full_monitor)
+    clean_event_summary = {key: value for key, value in event_summary.items() if key != "event_rows"}
+    combined_shadow_summary = {
+        **shadow_summary,
+        **clean_event_summary,
+        "promotion_ready": bool(shadow_summary["calendar_window_pass"] and clean_event_summary["event_window_pass"] and shadow_summary["execution_proxy_pass"]),
+    }
     summary = {
         "production_strategy": production_strategy,
         "shadow_strategy": shadow_strategy,
@@ -416,11 +600,13 @@ def run_analysis(args: argparse.Namespace) -> dict[str, object]:
         "backtest_dir": str(backtest_dir),
         "output_dir": str(out_dir),
         "rolling_days": args.rolling_days,
-        **shadow_summary,
+        **combined_shadow_summary,
         "files": {"research_shadow_candidate_monitor": str(csv_path)},
     }
-    report_files = write_daily_report(monitor, shadow_summary, Path(args.report_root), production_strategy, shadow_strategy)
+    report_files = write_daily_report(monitor, combined_shadow_summary, Path(args.report_root), production_strategy, shadow_strategy)
     summary["files"].update(report_files)
+    event_files = write_recovery_event_report(event_rows, event_summary, Path(args.report_root), production_strategy, shadow_strategy)
+    summary["files"].update(event_files)
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
 
@@ -434,6 +620,8 @@ def main() -> None:
     parser.add_argument("--start-date", default=None)
     parser.add_argument("--end-date", default=None)
     parser.add_argument("--rolling-days", type=int, default=None)
+    parser.add_argument("--event-only", action="store_true")
+    parser.add_argument("--min-recovery-events", type=int, default=5)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--report-root", default=str(DEFAULT_REPORT_ROOT))
     print(json.dumps(run_analysis(parser.parse_args()), ensure_ascii=False, indent=2))

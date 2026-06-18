@@ -33,7 +33,14 @@ from scripts.research.analyze_v12b_false_positive_feature_profile import build_f
 from scripts.research.analyze_v12b_false_positive_feature_separability import build_feature_separability, classify_separability
 from scripts.research.analyze_v12b_false_positive_gap import classify_false_positive, run_analysis as run_false_positive_gap
 from scripts.research.analyze_v12b_gate_stability import build_monthly_gate_check, build_yearly_breakdown
-from scripts.ops.run_research_shadow_candidate_monitor import build_shadow_monitor, evaluate_shadow_monitor, write_daily_report
+from scripts.ops.run_research_shadow_candidate_monitor import (
+    build_recovery_event_monitor,
+    build_shadow_monitor,
+    evaluate_recovery_events,
+    evaluate_shadow_monitor,
+    write_daily_report,
+)
+from scripts.research.audit_pattern_feature_lineage import audit_pattern_lineage
 from scripts.research.run_production_governed_vol_position_backtest import DEFAULT_STRATEGIES as PRODUCTION_GOVERNED_DEFAULT_STRATEGIES
 from scripts.research.analyze_adaptive_vs_governed import (
     build_exposure_efficiency_compare,
@@ -701,6 +708,102 @@ def test_research_shadow_candidate_monitor_rolling_acceptance_and_daily_report(t
     assert Path(files["daily_markdown"]).exists()
 
 
+def test_research_shadow_event_window_fails_when_paths_are_identical():
+    monitor = pd.DataFrame(
+        [
+            {
+                "trade_date": f"2026-01-{idx:02d}",
+                "top5_overlap": 1.0,
+                "position_diff": 0.0,
+                "risk_decision_diff": False,
+                "estimated_order_value_diff": 0.0,
+                "theory_gap": 0.001,
+                "execution_feasibility": "pass",
+                "large_slippage_proxy": 0.0,
+                "limit_up_buy_ratio": 0.0,
+                "unfilled_ratio_proxy": 0.0,
+                "limit_down_sell_ratio": 0.0,
+                "open_gap_proxy": 0.0,
+                "estimated_turnover_impact": 0.0,
+                "shadow_risk_decision": "normal",
+                "shadow_recovery_status": "not_applicable",
+            }
+            for idx in range(1, 21)
+        ]
+    )
+
+    calendar = evaluate_shadow_monitor(monitor)
+    events = evaluate_recovery_events(monitor, min_recovery_events=5)
+
+    assert calendar["calendar_window_pass"] is True
+    assert calendar["execution_proxy_pass"] is True
+    assert events["event_window_pass"] is False
+    assert events["recovery_event_days"] == 0
+    assert "insufficient_recovery_events" in events["event_shadow_fail_reasons"]
+
+
+def test_research_shadow_event_window_passes_with_recovery_events():
+    rows = []
+    for idx in range(1, 8):
+        rows.append(
+            {
+                "trade_date": f"2026-02-{idx:02d}",
+                "top5_overlap": 0.8,
+                "position_diff": 0.10 if idx <= 5 else 0.0,
+                "risk_decision_diff": idx <= 5,
+                "estimated_order_value_diff": 1000.0,
+                "theory_gap": 0.01 if idx <= 5 else 0.0,
+                "execution_feasibility": "pass",
+                "large_slippage_proxy": 0.0,
+                "limit_up_buy_ratio": 0.0,
+                "unfilled_ratio_proxy": 0.0,
+                "limit_down_sell_ratio": 0.0,
+                "open_gap_proxy": 0.0,
+                "estimated_turnover_impact": 0.0,
+                "shadow_risk_decision": "recovery_reduce" if idx <= 5 else "normal",
+                "shadow_recovery_status": "recovered" if idx <= 5 else "not_applicable",
+            }
+        )
+    monitor = pd.DataFrame(rows)
+
+    events = build_recovery_event_monitor(monitor)
+    summary = evaluate_recovery_events(monitor, min_recovery_events=5)
+
+    assert len(events) == 5
+    assert summary["event_window_pass"] is True
+    assert summary["recovery_event_days"] == 5
+    assert summary["position_diff_nonzero_days"] == 5
+    assert summary["shadow_extra_exposure_days"] == 5
+    assert summary["shadow_recovery_theory_gap_sum"] == pytest.approx(0.05)
+
+
+def test_research_shadow_execution_proxy_missing_blocks_promotion_only():
+    monitor = pd.DataFrame(
+        [
+            {
+                "trade_date": f"2026-03-{idx:02d}",
+                "top5_overlap": 1.0,
+                "position_diff": 0.0,
+                "risk_decision_diff": False,
+                "estimated_order_value_diff": 0.0,
+                "theory_gap": 0.001,
+                "execution_feasibility": "unknown_missing_execution_proxy",
+                "large_slippage_proxy": None,
+                "limit_up_buy_ratio": None,
+                "shadow_risk_decision": "normal",
+                "shadow_recovery_status": "not_applicable",
+            }
+            for idx in range(1, 21)
+        ]
+    )
+
+    summary = evaluate_shadow_monitor(monitor)
+
+    assert summary["calendar_window_pass"] is True
+    assert summary["execution_proxy_pass"] is False
+    assert "missing_execution_proxy" in summary["execution_proxy_fail_reasons"]
+
+
 def test_research_shadow_candidate_monitor_fails_when_rows_are_insufficient():
     monitor = pd.DataFrame(
         [
@@ -722,6 +825,43 @@ def test_research_shadow_candidate_monitor_fails_when_rows_are_insufficient():
 
     assert summary["shadow_pass"] is False
     assert "insufficient_rows" in summary["shadow_fail_reasons"]
+
+
+def test_pattern_lineage_audit_marks_target_strategy_not_inheriting(tmp_path: Path):
+    backtest_dir = tmp_path / "backtest"
+    backtest_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "strategy": "other_strategy",
+                "trade_date": "2026-01-01",
+                "symbol": "000001",
+                "pattern_score": 1.0,
+                "pattern_risk_level": "low",
+                "pattern_sentiment": "bullish",
+                "bullish_pattern_count": 1,
+                "bearish_pattern_count": 0,
+                "top_pattern_ids": "p1",
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000002",
+                "pattern_score": None,
+                "pattern_risk_level": None,
+                "pattern_sentiment": None,
+                "bullish_pattern_count": None,
+                "bearish_pattern_count": None,
+                "top_pattern_ids": None,
+            },
+        ]
+    ).to_csv(backtest_dir / "trusted_account_backtest_candidates.csv", index=False)
+
+    result = audit_pattern_lineage(backtest_dir, strategy=PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME)
+
+    assert result["summary"]["lineage_status"] == "PATTERN_LINEAGE_TARGET_STRATEGY_NOT_INHERITING"
+    target = result["lineage"][result["lineage"]["layer"].eq("backtest_candidates_target_strategy")]
+    assert set(target["missing_reason"]) == {"field_all_null"}
 
 
 def test_default_governed_backtest_matrix_archives_fp_classified():

@@ -2,7 +2,7 @@
   "production_strategy": "production_governed_vol_position",
   "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
   "mode": "manual_shadow_only",
-  "generated_at": "2026-06-19T06:05:18",
+  "generated_at": "2026-06-19T06:14:08",
   "today": {
     "trade_date": "2026-06-17",
     "production_strategy": "production_governed_vol_position",
@@ -30,6 +30,10 @@
     "theory_gap": 0.0012001176031690708,
     "large_slippage_proxy": null,
     "limit_up_buy_ratio": null,
+    "unfilled_ratio_proxy": null,
+    "limit_down_sell_ratio": null,
+    "open_gap_proxy": null,
+    "estimated_turnover_impact": null,
     "execution_feasibility": "unknown_missing_execution_proxy",
     "fp_explanation_label": "unknown_pending_forward_return"
   },
@@ -45,8 +49,18 @@
     "theory_gap_sum": 0.012266057747895132,
     "theory_gap_mean": 0.0006133028873947566,
     "execution_degraded_days": 0,
+    "execution_unknown_days": 20,
     "large_slippage_proxy_days": 0,
     "limit_up_buy_risk_days": 0,
+    "unfilled_proxy_days": 0,
+    "limit_down_sell_risk_days": 0,
+    "open_gap_proxy_days": 0,
+    "turnover_impact_days": 0,
+    "execution_proxy_pass": false,
+    "execution_proxy_fail_reasons": [
+      "missing_execution_proxy"
+    ],
+    "calendar_window_pass": true,
     "shadow_pass": true,
     "shadow_fail_reasons": [],
     "shadow_acceptance_thresholds": {
@@ -58,7 +72,23 @@
       "max_abs_position_diff": 0.35,
       "max_large_slippage_proxy_days": 0,
       "max_limit_up_buy_risk_days": 0,
-      "min_theory_gap_sum": 0.0
-    }
+      "min_theory_gap_sum": 0.0,
+      "min_recovery_events": 5
+    },
+    "recovery_event_days": 0,
+    "position_diff_nonzero_days": 0,
+    "shadow_extra_exposure_days": 0,
+    "position_diff_abs_sum": 0.0,
+    "shadow_recovery_theory_gap_sum": 0.0,
+    "shadow_recovery_theory_gap_mean": 0.0,
+    "event_execution_degraded_days": 0,
+    "event_execution_unknown_days": 0,
+    "event_window_pass": false,
+    "event_shadow_fail_reasons": [
+      "insufficient_recovery_events",
+      "shadow_recovery_theory_gap_not_positive"
+    ],
+    "min_recovery_events": 5,
+    "promotion_ready": false
   }
 }
