@@ -20,16 +20,9 @@ WORST_CASE_SCRIPT = PROJECT_ROOT / "scripts/research/analyze_production_worst_ca
 DEFAULT_STRATEGIES = ",".join(
     [
         "production_governed_vol_position",
+        "production_governed_vol_position_v2",
         "baseline_full_liquidity_detail_vol_position",
         "adaptive_market_style",
-        "production_governed_adaptive",
-        "baseline_full_liquidity_detail",
-        "baseline_full_liquidity",
-        "tiered_liquidity_then_bs_v2",
-        "baseline_full_liquidity_detail_vol_position_pattern_rerank",
-        "baseline_full_liquidity_detail_vol_position_pattern_risk_penalty",
-        "production_governed_vol_position_pattern_guard",
-        "production_governed_adaptive_pattern_guard",
     ]
 )
 
@@ -89,6 +82,7 @@ def main() -> None:
     files = backtest_report.get("files") if isinstance(backtest_report.get("files"), dict) else {}
     output_dir = backtest_report.get("output_dir") or (str(Path(files["json"]).parent) if files.get("json") else None)
     worst_report = None
+    v2_worst_report = None
     if output_dir:
         worst_report = _extract_json(
             _run(
@@ -102,6 +96,19 @@ def main() -> None:
                 ]
             )
         )
+        if "production_governed_vol_position_v2" in set(str(args.strategies).split(",")):
+            v2_worst_report = _extract_json(
+                _run(
+                    [
+                        sys.executable,
+                        str(WORST_CASE_SCRIPT),
+                        "--backtest-dir",
+                        str(output_dir),
+                        "--strategy",
+                        "production_governed_vol_position_v2",
+                    ]
+                )
+            )
     print(
         json.dumps(
             {
@@ -109,6 +116,7 @@ def main() -> None:
                 "definition": "baseline_full_liquidity_detail_vol_position + adaptive_market_style v2.2 risk anchor + production risk-governor audit validation",
                 "backtest": backtest_report,
                 "worst_case_analysis": worst_report,
+                "v2_worst_case_analysis": v2_worst_report,
             },
             ensure_ascii=False,
             indent=2,

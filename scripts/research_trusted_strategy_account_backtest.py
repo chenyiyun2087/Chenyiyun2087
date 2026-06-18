@@ -19,7 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.ops.production_config import load_production_config
-from scripts.ops.production_risk_governor import build_risk_governor_decision
+from scripts.ops.production_risk_governor import build_risk_governor_decision, build_risk_governor_decision_v2
 from scripts.research_full_pool_liquidity_strategies import (
     StrategySpec,
     _market_exposure_scale,
@@ -81,6 +81,7 @@ RISK_PROFILE_DEFAULTS = {
 }
 DEFAULT_STRATEGIES = [
     "production_governed_vol_position",
+    "production_governed_vol_position_v2",
     "production_governed_adaptive",
     "dual_system_adaptive_route",
     "adaptive_market_style",
@@ -102,6 +103,7 @@ DEFAULT_STRATEGIES = [
     "baseline_full_score",
 ]
 PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME = "production_governed_vol_position"
+PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME = "production_governed_vol_position_v2"
 PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME = "production_governed_adaptive"
 VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_rerank"
 VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_risk_penalty"
@@ -146,6 +148,7 @@ DUAL_SYSTEM_STRATEGY_NAMES = {
 }
 PRODUCTION_GOVERNED_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
     PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
     PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
@@ -2162,7 +2165,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     primary_strategy = str(PRODUCTION_CONFIG.get("primary_selection_strategy") or "baseline_full_liquidity_detail_vol_position")
                     primary_spec = trusted_by_name[primary_strategy]
                     primary_targets = targets_cache.get((signal_date, primary_spec.name), pd.DataFrame())
-                    governor = build_risk_governor_decision(
+                    governor_builder = (
+                        build_risk_governor_decision_v2
+                        if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
+                        else build_risk_governor_decision
+                    )
+                    governor = governor_builder(
                         PRODUCTION_CONFIG,
                         adaptive_decision=decision,
                         recent_shadow_summary={"fail_streak": 0, "worst_action": "none", "latest_status": "backtest_proxy"},
@@ -2198,6 +2206,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "fallback_strategy": governor.get("fallback_strategy"),
                             "allow_new_buys": int(bool(governor.get("allow_new_buys", True))),
                             "risk_governor_reasons": "|".join(str(item) for item in governor.get("reasons") or []),
+                            "risk_governor_version": "v2" if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME else "v1",
                             "pattern_top5_high_risk_count": governor.get("pattern_top5_high_risk_count"),
                             "pattern_top5_bullish_count": governor.get("pattern_top5_bullish_count"),
                             "pattern_top5_bearish_count": governor.get("pattern_top5_bearish_count"),
@@ -2215,6 +2224,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "fallback_strategy": governor.get("fallback_strategy"),
                         "allow_new_buys": bool(governor.get("allow_new_buys", True)),
                         "risk_governor_reasons": decision["risk_governor_reasons"],
+                        "risk_governor_version": decision["risk_governor_version"],
                         "route_reason": "production_risk_governor_backtest",
                     }
                     if spec.name in {PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME}:
@@ -2472,6 +2482,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["fallback_strategy"] = adaptive_meta.get("fallback_strategy")
                         item["allow_new_buys"] = adaptive_meta.get("allow_new_buys")
                         item["risk_governor_reasons"] = adaptive_meta.get("risk_governor_reasons")
+                        item["risk_governor_version"] = adaptive_meta.get("risk_governor_version")
                         item["pattern_guard_enabled"] = adaptive_meta.get("pattern_guard_enabled")
                         item["pattern_strategy_mode"] = adaptive_meta.get("pattern_strategy_mode")
                 trade_rows.extend(trades)

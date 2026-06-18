@@ -159,6 +159,103 @@ def build_factor_ic(panel: pd.DataFrame, horizons: tuple[int, ...] = HORIZONS) -
     return pd.DataFrame(rows)
 
 
+def summarize_high_risk_forward_drawdown(panel: pd.DataFrame, horizons: tuple[int, ...] = HORIZONS) -> pd.DataFrame:
+    if panel.empty:
+        return pd.DataFrame()
+    frame = panel.copy()
+    risk_level = frame.get("pattern_risk_level", pd.Series("", index=frame.index))
+    frame["is_high_risk"] = risk_level.fillna("").astype(str).str.lower().eq("high")
+    rows: list[dict[str, object]] = []
+    for is_high, part in frame.groupby("is_high_risk"):
+        row: dict[str, object] = {"pattern_risk_level": "high" if is_high else "non_high", "sample_count": int(len(part))}
+        for horizon in horizons:
+            dd = pd.to_numeric(part.get(f"max_dd_{horizon}d"), errors="coerce")
+            ret = pd.to_numeric(part.get(f"fwd_{horizon}d_return"), errors="coerce")
+            row[f"avg_max_dd_{horizon}d"] = float(dd.mean())
+            row[f"tail_dd_10pct_{horizon}d"] = float(dd.quantile(0.10)) if dd.notna().any() else np.nan
+            row[f"loss_rate_{horizon}d"] = float(ret.lt(0).mean())
+            row[f"large_drop_7pct_rate_{horizon}d"] = float(pd.to_numeric(part.get(f"large_drop_7pct_rate_{horizon}d"), errors="coerce").mean())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def summarize_bearish_vs_bullish_tail_risk(panel: pd.DataFrame, horizons: tuple[int, ...] = HORIZONS) -> pd.DataFrame:
+    if panel.empty:
+        return pd.DataFrame()
+    frame = panel.copy()
+    bullish = pd.to_numeric(frame.get("bullish_pattern_count", pd.Series(0, index=frame.index)), errors="coerce").fillna(0)
+    bearish = pd.to_numeric(frame.get("bearish_pattern_count", pd.Series(0, index=frame.index)), errors="coerce").fillna(0)
+    frame["pattern_pressure"] = np.select(
+        [bearish.gt(bullish), bullish.gt(bearish)],
+        ["bearish_gt_bullish", "bullish_gt_bearish"],
+        default="balanced_or_missing",
+    )
+    rows: list[dict[str, object]] = []
+    for pressure, part in frame.groupby("pattern_pressure"):
+        row: dict[str, object] = {"pattern_pressure": pressure, "sample_count": int(len(part))}
+        for horizon in horizons:
+            ret = pd.to_numeric(part.get(f"fwd_{horizon}d_return"), errors="coerce")
+            dd = pd.to_numeric(part.get(f"max_dd_{horizon}d"), errors="coerce")
+            row[f"loss_rate_{horizon}d"] = float(ret.lt(0).mean())
+            row[f"avg_fwd_{horizon}d_return"] = float(ret.mean())
+            row[f"avg_max_dd_{horizon}d"] = float(dd.mean())
+            row[f"large_drop_7pct_rate_{horizon}d"] = float(pd.to_numeric(part.get(f"large_drop_7pct_rate_{horizon}d"), errors="coerce").mean())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def summarize_pattern_slippage_tail_risk(panel: pd.DataFrame, horizons: tuple[int, ...] = HORIZONS) -> pd.DataFrame:
+    if panel.empty:
+        return pd.DataFrame()
+    frame = panel.copy()
+    gap_proxy = pd.to_numeric(frame.get("max_up_3d", pd.Series(np.nan, index=frame.index)), errors="coerce")
+    frame["pattern_slippage_proxy_bucket"] = pd.cut(
+        gap_proxy,
+        bins=[-np.inf, 0.03, 0.07, np.inf],
+        labels=["low_open_pressure", "medium_open_pressure", "high_open_pressure"],
+    ).astype(str)
+    rows: list[dict[str, object]] = []
+    for bucket, part in frame.groupby("pattern_slippage_proxy_bucket", dropna=False):
+        row: dict[str, object] = {"pattern_slippage_proxy_bucket": bucket, "sample_count": int(len(part))}
+        for horizon in horizons:
+            row[f"avg_fwd_{horizon}d_return"] = float(pd.to_numeric(part.get(f"fwd_{horizon}d_return"), errors="coerce").mean())
+            row[f"avg_max_dd_{horizon}d"] = float(pd.to_numeric(part.get(f"max_dd_{horizon}d"), errors="coerce").mean())
+            row[f"large_drop_7pct_rate_{horizon}d"] = float(pd.to_numeric(part.get(f"large_drop_7pct_rate_{horizon}d"), errors="coerce").mean())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def summarize_top_pattern_id_effectiveness(panel: pd.DataFrame, horizons: tuple[int, ...] = HORIZONS) -> pd.DataFrame:
+    if panel.empty or "top_pattern_ids" not in panel.columns:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for record in panel.to_dict("records"):
+        raw = str(record.get("top_pattern_ids") or "")
+        ids = [item.strip() for item in raw.replace(";", ",").replace("|", ",").split(",") if item.strip()]
+        for pattern_id in ids[:5]:
+            out = {"top_pattern_id": pattern_id}
+            for horizon in horizons:
+                out[f"fwd_{horizon}d_return"] = record.get(f"fwd_{horizon}d_return")
+                out[f"max_dd_{horizon}d"] = record.get(f"max_dd_{horizon}d")
+                out[f"large_drop_7pct_rate_{horizon}d"] = record.get(f"large_drop_7pct_rate_{horizon}d")
+            rows.append(out)
+    expanded = pd.DataFrame(rows)
+    if expanded.empty:
+        return expanded
+    summary_rows: list[dict[str, object]] = []
+    for pattern_id, part in expanded.groupby("top_pattern_id"):
+        row: dict[str, object] = {"top_pattern_id": pattern_id, "sample_count": int(len(part))}
+        for horizon in horizons:
+            ret = pd.to_numeric(part.get(f"fwd_{horizon}d_return"), errors="coerce")
+            dd = pd.to_numeric(part.get(f"max_dd_{horizon}d"), errors="coerce")
+            row[f"avg_fwd_{horizon}d_return"] = float(ret.mean())
+            row[f"loss_rate_{horizon}d"] = float(ret.lt(0).mean())
+            row[f"avg_max_dd_{horizon}d"] = float(dd.mean())
+            row[f"large_drop_7pct_rate_{horizon}d"] = float(pd.to_numeric(part.get(f"large_drop_7pct_rate_{horizon}d"), errors="coerce").mean())
+        summary_rows.append(row)
+    return pd.DataFrame(summary_rows).sort_values("sample_count", ascending=False)
+
+
 def run_research(args: argparse.Namespace) -> dict[str, object]:
     engine = create_engine(build_sqlalchemy_url())
     scores = load_scores(engine, start_date=args.start_date, end_date=args.end_date, min_pool_size=args.min_pool_size)
@@ -166,6 +263,10 @@ def run_research(args: argparse.Namespace) -> dict[str, object]:
     panel = build_forward_pattern_panel(scores, prices)
     buckets = summarize_buckets(panel)
     factor_ic = build_factor_ic(panel)
+    high_risk = summarize_high_risk_forward_drawdown(panel)
+    bearish_risk = summarize_bearish_vs_bullish_tail_risk(panel)
+    slippage_risk = summarize_pattern_slippage_tail_risk(panel)
+    top_pattern_ids = summarize_top_pattern_id_effectiveness(panel)
 
     out_dir = OUT_ROOT / datetime.now().strftime("%Y%m%d_%H%M%S_pattern_alpha")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -173,11 +274,19 @@ def run_research(args: argparse.Namespace) -> dict[str, object]:
         "pattern_event_study": out_dir / "pattern_event_study.csv",
         "pattern_bucket_forward_returns": out_dir / "pattern_bucket_forward_returns.csv",
         "pattern_factor_ic": out_dir / "pattern_factor_ic.csv",
+        "pattern_high_risk_forward_drawdown": out_dir / "pattern_high_risk_forward_drawdown.csv",
+        "bearish_vs_bullish_tail_risk": out_dir / "bearish_vs_bullish_tail_risk.csv",
+        "pattern_slippage_tail_risk": out_dir / "pattern_slippage_tail_risk.csv",
+        "top_pattern_id_effectiveness": out_dir / "top_pattern_id_effectiveness.csv",
         "summary": out_dir / "summary.json",
     }
     panel.to_csv(paths["pattern_event_study"], index=False)
     buckets.to_csv(paths["pattern_bucket_forward_returns"], index=False)
     factor_ic.to_csv(paths["pattern_factor_ic"], index=False)
+    high_risk.to_csv(paths["pattern_high_risk_forward_drawdown"], index=False)
+    bearish_risk.to_csv(paths["bearish_vs_bullish_tail_risk"], index=False)
+    slippage_risk.to_csv(paths["pattern_slippage_tail_risk"], index=False)
+    top_pattern_ids.to_csv(paths["top_pattern_id_effectiveness"], index=False)
     coverage = float(pd.to_numeric(panel.get("pattern_score"), errors="coerce").notna().mean()) if not panel.empty else 0.0
     summary = {
         "start_date": args.start_date,

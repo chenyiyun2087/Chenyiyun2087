@@ -4,19 +4,32 @@ import pandas as pd
 import pytest
 
 from scripts.research.analyze_production_worst_cases import run_analysis
-from scripts.research.research_candle_pattern_alpha import build_factor_ic, build_forward_pattern_panel, summarize_buckets
+from scripts.research.research_candle_pattern_alpha import (
+    build_factor_ic,
+    build_forward_pattern_panel,
+    summarize_bearish_vs_bullish_tail_risk,
+    summarize_buckets,
+    summarize_high_risk_forward_drawdown,
+    summarize_pattern_slippage_tail_risk,
+    summarize_top_pattern_id_effectiveness,
+)
 from scripts.research.analyze_governor_contribution import (
     build_false_positive_reduce_days,
     build_risk_decision_forward_returns,
+    build_risk_reason_effectiveness,
+    build_risk_reason_forward_returns,
+    build_soft_vs_hard_reduce_compare,
 )
 from scripts.research.analyze_adaptive_vs_governed import (
     build_exposure_efficiency_compare,
     build_monthly_return_compare,
     build_worst_period_compare,
 )
+from scripts.research.build_strategy_champion_monthly import _monthly_rows
 from scripts.research_trusted_strategy_account_backtest import (
     PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
     PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
     VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME,
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
@@ -41,11 +54,19 @@ def test_worst_case_analysis_fails_when_strategy_missing(tmp_path: Path):
 
 
 def test_strategy_specs_include_production_governed_pseudo_strategy():
-    specs = _strategy_specs([PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME])
+    specs = _strategy_specs(
+        [
+            PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
+        ]
+    )
 
     assert specs[0].name == PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME
-    assert specs[1].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
-    assert specs[2].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
+    assert specs[1].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
+    assert specs[2].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
+    assert specs[3].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
 
 
 def test_pattern_rerank_does_not_expand_candidate_pool_and_penalty_downweights_high_risk():
@@ -117,6 +138,31 @@ def test_pattern_alpha_panel_outputs_forward_columns():
     assert "limit_up_rate_10d" in panel.columns
     assert "avg_fwd_20d_return" in buckets.columns
     assert set(factor_ic["horizon"]) == {3, 5, 10, 20}
+    assert "avg_max_dd_20d" in summarize_high_risk_forward_drawdown(panel).columns
+    assert "pattern_pressure" in summarize_bearish_vs_bullish_tail_risk(panel).columns
+    assert "pattern_slippage_proxy_bucket" in summarize_pattern_slippage_tail_risk(panel).columns
+
+
+def test_top_pattern_id_effectiveness_splits_ids():
+    panel = pd.DataFrame(
+        {
+            "top_pattern_ids": ["A,B", "A"],
+            "fwd_3d_return": [0.01, -0.02],
+            "fwd_5d_return": [0.02, -0.01],
+            "fwd_10d_return": [0.03, -0.03],
+            "fwd_20d_return": [0.04, -0.04],
+            "max_dd_3d": [-0.01, -0.02],
+            "max_dd_5d": [-0.01, -0.02],
+            "max_dd_10d": [-0.01, -0.03],
+            "max_dd_20d": [-0.02, -0.04],
+            "large_drop_7pct_rate_3d": [0, 0],
+            "large_drop_7pct_rate_5d": [0, 0],
+            "large_drop_7pct_rate_10d": [0, 0.5],
+            "large_drop_7pct_rate_20d": [0, 0.5],
+        }
+    )
+    out = summarize_top_pattern_id_effectiveness(panel)
+    assert {"A", "B"}.issubset(set(out["top_pattern_id"]))
 
 
 def test_governor_contribution_detects_false_positive_reduce_days():
@@ -130,14 +176,36 @@ def test_governor_contribution_detects_false_positive_reduce_days():
             "risk_decision": ["reduce_position"] * 15 + ["normal"] * 15 + [None] * 30,
             "position_ratio": [0.5] * 60,
             "target_position_ratio": [0.5] * 60,
+            "risk_governor_reasons": ["industry_concentration"] * 15 + ["normal_production_risk_budget"] * 15 + [None] * 30,
         }
     )
 
     forward = build_risk_decision_forward_returns(nav)
     false_positive = build_false_positive_reduce_days(forward)
+    reason_forward = build_risk_reason_forward_returns(forward)
+    reason_effectiveness = build_risk_reason_effectiveness(reason_forward)
 
     assert not false_positive.empty
     assert set(false_positive["risk_decision"]) == {"reduce_position"}
+    assert "industry_concentration" in set(reason_forward["risk_reason"])
+    assert "false_positive_rate" in reason_effectiveness.columns
+
+
+def test_governor_contribution_compares_soft_and_hard_reduce():
+    dates = pd.date_range("2026-01-01", periods=8, freq="D")
+    nav = pd.DataFrame(
+        {
+            "strategy": ["production_governed_vol_position"] * 8 + ["production_governed_vol_position_v2"] * 8,
+            "trade_date": list(dates) * 2,
+            "nav": [1.0, 1.01, 1.0, 1.02, 1.03, 1.01, 1.04, 1.05] * 2,
+            "gross_exposure": [0.5] * 8 + [0.6] * 8,
+            "risk_decision": ["reduce_position"] * 8 + ["soft_reduce", "hard_reduce"] * 4,
+            "target_position_ratio": [0.5] * 8 + [0.6, 0.5] * 4,
+            "risk_governor_reasons": ["low_liquidity"] * 16,
+        }
+    )
+    compare = build_soft_vs_hard_reduce_compare(nav)
+    assert {"soft_reduce", "hard_reduce"}.issubset(set(compare["risk_decision"]))
 
 
 def test_adaptive_vs_governed_outputs_compare_tables():
@@ -164,3 +232,19 @@ def test_adaptive_vs_governed_outputs_compare_tables():
     assert not build_worst_period_compare(nav).empty
     efficiency = build_exposure_efficiency_compare(nav, trades, positions)
     assert set(efficiency["strategy"]) == {"production_governed_vol_position", "adaptive_market_style"}
+
+
+def test_strategy_champion_monthly_outputs_candidate_columns():
+    dates = pd.date_range("2026-01-01", periods=25, freq="D")
+    nav = pd.DataFrame(
+        {
+            "strategy": ["production_governed_vol_position"] * 25 + ["adaptive_market_style"] * 25,
+            "trade_date": list(dates) * 2,
+            "nav": [1.0 + i * 0.001 for i in range(25)] + [1.0 + i * 0.002 for i in range(25)],
+            "gross_exposure": [0.6] * 25 + [0.4] * 25,
+        }
+    )
+    trades = pd.DataFrame({"strategy": ["adaptive_market_style"], "trade_date": ["2026-01-10"]})
+    monthly = _monthly_rows(nav, trades)
+    assert "champion_score" in monthly.columns
+    assert "is_production_candidate" in monthly.columns

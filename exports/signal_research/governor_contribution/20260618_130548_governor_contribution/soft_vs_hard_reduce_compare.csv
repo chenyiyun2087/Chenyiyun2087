@@ -1,0 +1,4 @@
+strategy,risk_decision,days,avg_target_position_ratio,avg_daily_return,total_return,max_drawdown
+production_governed_vol_position,normal,247,0.7093117408906884,-0.0008621183731978617,-0.22766214998366996,-0.40645415306807664
+production_governed_vol_position,reduce_position,366,0.45560109289617495,0.0013124291604082333,0.5713913199964669,-0.14357127508631662
+production_governed_vol_position,,2,,-0.009743559656366807,-0.019395897265536255,-0.011670969208024018
