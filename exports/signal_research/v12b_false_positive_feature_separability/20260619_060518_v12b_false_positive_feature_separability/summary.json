@@ -1,0 +1,13 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+  "output_dir": "exports/signal_research/v12b_false_positive_feature_separability/20260619_060518_v12b_false_positive_feature_separability",
+  "rows": 7,
+  "separability_status": "SEPARABLE",
+  "best_feature": "champion_score_pctile_252",
+  "best_auc_best_direction": 0.7162471395881007,
+  "best_iqr_overlap_ratio": 0.24280499561313226,
+  "files": {
+    "v12b_false_positive_feature_separability": "exports/signal_research/v12b_false_positive_feature_separability/20260619_060518_v12b_false_positive_feature_separability/v12b_false_positive_feature_separability.csv",
+    "markdown": "exports/signal_research/v12b_false_positive_feature_separability/20260619_060518_v12b_false_positive_feature_separability/v12b_false_positive_feature_separability.md"
+  }
+}

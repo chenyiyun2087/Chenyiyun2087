@@ -28,11 +28,12 @@ from scripts.research.analyze_governor_contribution import (
 from scripts.research.analyze_pattern_veto_attribution import run_analysis as run_pattern_veto_attribution
 from scripts.research.analyze_pattern_veto_coverage import build_coverage as build_pattern_veto_coverage
 from scripts.research.analyze_pattern_veto_coverage import build_pattern_feature_coverage
+from scripts.research.analyze_pattern_feature_quality import build_quality_tables, quality_status
 from scripts.research.analyze_v12b_false_positive_feature_profile import build_feature_profile
-from scripts.research.analyze_v12b_false_positive_feature_separability import build_feature_separability
+from scripts.research.analyze_v12b_false_positive_feature_separability import build_feature_separability, classify_separability
 from scripts.research.analyze_v12b_false_positive_gap import classify_false_positive, run_analysis as run_false_positive_gap
 from scripts.research.analyze_v12b_gate_stability import build_monthly_gate_check, build_yearly_breakdown
-from scripts.ops.run_research_shadow_candidate_monitor import build_shadow_monitor
+from scripts.ops.run_research_shadow_candidate_monitor import build_shadow_monitor, evaluate_shadow_monitor, write_daily_report
 from scripts.research.run_production_governed_vol_position_backtest import DEFAULT_STRATEGIES as PRODUCTION_GOVERNED_DEFAULT_STRATEGIES
 from scripts.research.analyze_adaptive_vs_governed import (
     build_exposure_efficiency_compare,
@@ -397,6 +398,7 @@ def test_v12b_false_positive_feature_separability_reports_actual_direction():
     assert champion["suggested_direction"] == "lower_is_more_benign"
     assert champion["auc_best_direction"] == 1.0
     assert drawdown["suggested_direction"] == "higher_is_more_benign"
+    assert classify_separability(separability) == "SEPARABLE"
     with pytest.raises(RuntimeError, match="Insufficient"):
         build_feature_separability(gap.head(4))
 
@@ -524,6 +526,38 @@ def test_pattern_feature_coverage_tracks_missing_fields_by_date():
     assert coverage["pattern_score_missing_ratio"].iloc[0] == 0.5
 
 
+def test_pattern_feature_quality_stays_monitor_only_when_core_fields_missing():
+    candidates = pd.DataFrame(
+        [
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000001",
+                "candidate_rank": 1,
+                "pattern_score": None,
+                "pattern_risk_level": None,
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000002",
+                "candidate_rank": 20,
+                "pattern_score": 0.4,
+                "pattern_risk_level": "low",
+                "pattern_sentiment": "neutral",
+                "bullish_pattern_count": 1,
+                "bearish_pattern_count": 0,
+            },
+        ]
+    )
+
+    tables = build_quality_tables(candidates, strategy=PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME)
+
+    top5 = tables["coverage_by_top_bucket"][tables["coverage_by_top_bucket"]["top_n"].eq(5)].iloc[0]
+    assert top5["core_pattern_feature_coverage"] == 0
+    assert quality_status(tables["coverage_by_top_bucket"]) == "PATTERN_QUALITY_MONITOR_ONLY"
+
+
 def test_research_shadow_candidate_monitor_is_manual_and_aligned():
     nav = pd.DataFrame(
         [
@@ -595,6 +629,99 @@ def test_research_shadow_candidate_monitor_is_manual_and_aligned():
     assert row["buy_list_added_by_shadow"] == "000003"
     assert row["estimated_order_value_diff"] == 500
     assert row["fp_explanation_label"] == "unknown_pending_forward_return"
+
+
+def test_research_shadow_candidate_monitor_rolling_acceptance_and_daily_report(tmp_path: Path):
+    nav_rows = []
+    candidate_rows = []
+    trade_rows = []
+    for idx, day in enumerate(pd.date_range("2026-01-01", periods=22, freq="D"), start=1):
+        date = day.strftime("%Y-%m-%d")
+        nav_rows.extend(
+            [
+                {
+                    "strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                    "trade_date": date,
+                    "nav": 1 + idx * 0.001,
+                    "target_position_ratio": 0.50,
+                    "risk_decision": "normal",
+                },
+                {
+                    "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                    "trade_date": date,
+                    "nav": 1 + idx * 0.002,
+                    "target_position_ratio": 0.55,
+                    "risk_decision": "normal",
+                    "recovery_status": "not_applicable",
+                },
+            ]
+        )
+        for strategy in [PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME, PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME]:
+            for rank in range(1, 6):
+                candidate_rows.append({"strategy": strategy, "trade_date": date, "symbol": f"{rank:06d}", "candidate_rank": rank})
+        trade_rows.append(
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "trade_date": date,
+                "symbol": "000001",
+                "side": "BUY",
+                "gross_amount": 1000,
+            }
+        )
+        trade_rows.append(
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": date,
+                "symbol": "000001",
+                "side": "BUY",
+                "gross_amount": 1100,
+            }
+        )
+    monitor = build_shadow_monitor(
+        pd.DataFrame(nav_rows),
+        pd.DataFrame(candidate_rows),
+        pd.DataFrame(trade_rows),
+        PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+        rolling_days=20,
+    )
+    summary = evaluate_shadow_monitor(monitor)
+    files = write_daily_report(
+        monitor,
+        summary,
+        tmp_path,
+        PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+    )
+
+    assert len(monitor) == 20
+    assert summary["shadow_pass"] is True
+    assert summary["shadow_fail_reasons"] == []
+    assert Path(files["daily_json"]).exists()
+    assert Path(files["daily_markdown"]).exists()
+
+
+def test_research_shadow_candidate_monitor_fails_when_rows_are_insufficient():
+    monitor = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-01-01",
+                "top5_overlap": 1.0,
+                "position_diff": 0.0,
+                "risk_decision_diff": False,
+                "estimated_order_value_diff": 0.0,
+                "theory_gap": 0.01,
+                "execution_feasibility": "pass",
+                "large_slippage_proxy": 0.0,
+                "limit_up_buy_ratio": 0.0,
+            }
+        ]
+    )
+
+    summary = evaluate_shadow_monitor(monitor)
+
+    assert summary["shadow_pass"] is False
+    assert "insufficient_rows" in summary["shadow_fail_reasons"]
 
 
 def test_default_governed_backtest_matrix_archives_fp_classified():

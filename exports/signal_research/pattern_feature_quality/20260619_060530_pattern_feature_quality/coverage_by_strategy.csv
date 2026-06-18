@@ -1,0 +1,2 @@
+strategy,candidate_count,pattern_score_missing_ratio,pattern_risk_level_missing_ratio,pattern_sentiment_missing_ratio,top_pattern_ids_missing_ratio,bullish_pattern_count_missing_ratio,bearish_pattern_count_missing_ratio,bullish_bearish_count_missing_ratio,core_pattern_feature_coverage
+production_governed_vol_position_v1_2b_gate_tuned,3065,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.0

@@ -1,0 +1,40 @@
+{
+  "production_strategy": "production_governed_vol_position",
+  "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "shadow_config_enabled": false,
+  "mode": "manual_shadow_only",
+  "backtest_dir": "exports/signal_research/20260619_005237_692696_trusted_account_backtest",
+  "output_dir": "exports/research_shadow_candidate/20260619_060518_research_shadow_candidate_monitor",
+  "rolling_days": 20,
+  "rows": 20,
+  "avg_top5_overlap": 1.0,
+  "min_top5_overlap": 1.0,
+  "risk_decision_diff_days": 0,
+  "avg_abs_position_diff": 0.0,
+  "max_abs_position_diff": 0.0,
+  "avg_abs_order_value_diff": 25756.550000000003,
+  "max_abs_order_value_diff": 159558.00000000006,
+  "theory_gap_sum": 0.012266057747895132,
+  "theory_gap_mean": 0.0006133028873947566,
+  "execution_degraded_days": 0,
+  "large_slippage_proxy_days": 0,
+  "limit_up_buy_risk_days": 0,
+  "shadow_pass": true,
+  "shadow_fail_reasons": [],
+  "shadow_acceptance_thresholds": {
+    "min_rows": 20,
+    "min_avg_top5_overlap": 0.7,
+    "max_risk_decision_diff_days": 8,
+    "max_execution_degraded_days": 0,
+    "max_avg_abs_position_diff": 0.15,
+    "max_abs_position_diff": 0.35,
+    "max_large_slippage_proxy_days": 0,
+    "max_limit_up_buy_risk_days": 0,
+    "min_theory_gap_sum": 0.0
+  },
+  "files": {
+    "research_shadow_candidate_monitor": "exports/research_shadow_candidate/20260619_060518_research_shadow_candidate_monitor/research_shadow_candidate_monitor.csv",
+    "daily_json": "reports/production_monitor/research_shadow_candidate_daily.json",
+    "daily_markdown": "reports/production_monitor/research_shadow_candidate_daily.md"
+  }
+}

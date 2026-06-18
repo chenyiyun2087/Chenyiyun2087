@@ -154,8 +154,22 @@ def build_feature_separability(gap: pd.DataFrame, min_class_count: int = 10) -> 
     return pd.DataFrame(rows).sort_values(["auc_best_direction", "ks_statistic"], ascending=[False, False])
 
 
+def classify_separability(separability: pd.DataFrame) -> str:
+    if separability.empty:
+        return "NOT_SEPARABLE"
+    best = separability.sort_values(["auc_best_direction", "ks_statistic"], ascending=[False, False]).iloc[0]
+    best_auc = float(best["auc_best_direction"])
+    best_overlap = float(best["iqr_overlap_ratio"])
+    if best_auc >= 0.70 and best_overlap <= 0.40:
+        return "SEPARABLE"
+    if best_auc >= 0.60:
+        return "WEAKLY_SEPARABLE"
+    return "NOT_SEPARABLE"
+
+
 def _markdown(separability: pd.DataFrame) -> str:
-    lines = ["# v1.2b False-Positive Feature Separability", ""]
+    status = classify_separability(separability)
+    lines = ["# v1.2b False-Positive Feature Separability", "", f"Status: `{status}`", ""]
     cols = [
         "feature",
         "auc_best_direction",
@@ -178,6 +192,8 @@ def run_analysis(args: argparse.Namespace) -> dict[str, object]:
     output_root = Path(args.output_root)
     gap = _load_gap(args, output_root)
     separability = build_feature_separability(gap, min_class_count=args.min_class_count)
+    separability_status = classify_separability(separability)
+    best = separability.iloc[0].to_dict()
     out_dir = output_root / datetime.now().strftime("%Y%m%d_%H%M%S_v12b_false_positive_feature_separability")
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "v12b_false_positive_feature_separability.csv"
@@ -188,6 +204,10 @@ def run_analysis(args: argparse.Namespace) -> dict[str, object]:
         "strategy": args.strategy,
         "output_dir": str(out_dir),
         "rows": int(len(separability)),
+        "separability_status": separability_status,
+        "best_feature": str(best.get("feature")),
+        "best_auc_best_direction": float(best.get("auc_best_direction")),
+        "best_iqr_overlap_ratio": float(best.get("iqr_overlap_ratio")),
         "files": {
             "v12b_false_positive_feature_separability": str(csv_path),
             "markdown": str(md_path),

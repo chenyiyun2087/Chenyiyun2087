@@ -1,0 +1,13 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "backtest_dir": "exports/signal_research/20260619_005237_692696_trusted_account_backtest",
+  "output_dir": "exports/signal_research/pattern_feature_quality/20260619_060530_pattern_feature_quality",
+  "quality_status": "PATTERN_QUALITY_MONITOR_ONLY",
+  "top5_core_pattern_coverage": 0.0,
+  "top30_core_pattern_coverage": 0.0,
+  "files": {
+    "coverage_by_date": "exports/signal_research/pattern_feature_quality/20260619_060530_pattern_feature_quality/coverage_by_date.csv",
+    "coverage_by_strategy": "exports/signal_research/pattern_feature_quality/20260619_060530_pattern_feature_quality/coverage_by_strategy.csv",
+    "coverage_by_top_bucket": "exports/signal_research/pattern_feature_quality/20260619_060530_pattern_feature_quality/coverage_by_top_bucket.csv"
+  }
+}
