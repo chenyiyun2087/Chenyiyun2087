@@ -1,0 +1,10 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_fp_classified",
+  "backtest_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260619_011955_448345_trusted_account_backtest",
+  "output_dir": "exports/signal_research/pattern_veto_coverage/20260619_012022_pattern_veto_coverage",
+  "top5_high_risk_days": 0,
+  "top30_high_risk_days": 0,
+  "files": {
+    "pattern_veto_coverage": "exports/signal_research/pattern_veto_coverage/20260619_012022_pattern_veto_coverage/pattern_veto_coverage.csv"
+  }
+}

@@ -3,6 +3,7 @@ from scripts.ops.production_risk_governor import (
     build_risk_governor_decision,
     build_risk_governor_decision_v1_1_recovery,
     build_risk_governor_decision_v1_2b_dynamic_score,
+    build_risk_governor_decision_v1_2b_fp_classified,
     build_risk_governor_decision_v1_2b_gate_tuned,
     build_risk_governor_decision_v1_2_recovery,
     build_risk_governor_decision_v2,
@@ -429,3 +430,80 @@ def test_risk_governor_v1_2b_gate_tuned_tightens_drawdown_and_industry_gates():
     assert tuned_streak["risk_decision"] == "reduce_position"
     assert tuned_streak["recovery_status"] == "blocked_recovery_streak_exceeded"
     assert tuned_drawdown["risk_governor_version"] == "v1.2b_gate_tuned"
+
+
+def test_risk_governor_v1_2b_fp_classified_recovers_only_benign_like():
+    config = load_production_config()
+    decision = build_risk_governor_decision_v1_2b_fp_classified(
+        config,
+        adaptive_decision={
+            "active_role": "recent_champion",
+            "market_liquidity_bucket": "normal",
+            "industry_state": "normal",
+            "champion_score": -0.20,
+            "avg_vol_20": 0.03,
+        },
+        recent_shadow_summary={"fail_streak": 0, "worst_action": "none", "latest_status": "pass"},
+        account_state={"governed_nav_ret_10d": 0.01, "governed_nav_drawdown_20d": -0.02, "recovery_streak": 0},
+        pattern_state={"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 2, "pattern_top5_bearish_count": 1, "top_industry_weight": 0.35},
+        score_context={"champion_score_pctile": 0.80, "champion_score_z": -0.2, "champion_score_rank": 80, "champion_score_sample_count": 100},
+    )
+
+    assert decision["risk_decision"] == "recovery_reduce"
+    assert decision["fp_classified_label"] == "benign_like"
+    assert decision["fp_classified_gate_reason"] == "benign_like_recovered"
+
+
+def test_risk_governor_v1_2b_fp_classified_blocks_dangerous_and_borderline():
+    config = load_production_config()
+    base_kwargs = {
+        "adaptive_decision": {
+            "active_role": "recent_champion",
+            "market_liquidity_bucket": "normal",
+            "industry_state": "normal",
+            "champion_score": -0.20,
+            "avg_vol_20": 0.03,
+        },
+        "recent_shadow_summary": {"fail_streak": 0, "worst_action": "none", "latest_status": "pass"},
+        "score_context": {"champion_score_pctile": 0.80, "champion_score_z": -0.2, "champion_score_rank": 80, "champion_score_sample_count": 100},
+    }
+    dangerous = build_risk_governor_decision_v1_2b_fp_classified(
+        config,
+        **base_kwargs,
+        account_state={"governed_nav_ret_10d": 0.01, "governed_nav_drawdown_20d": -0.07, "recovery_streak": 0},
+        pattern_state={"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 2, "pattern_top5_bearish_count": 1, "top_industry_weight": 0.35},
+    )
+    borderline = build_risk_governor_decision_v1_2b_fp_classified(
+        config,
+        **base_kwargs,
+        account_state={"governed_nav_ret_10d": 0.01, "governed_nav_drawdown_20d": -0.045, "recovery_streak": 0},
+        pattern_state={"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 2, "pattern_top5_bearish_count": 1, "top_industry_weight": 0.35},
+    )
+
+    assert dangerous["risk_decision"] == "reduce_position"
+    assert dangerous["fp_classified_label"] == "dangerous_like"
+    assert "dangerous_nav_drawdown_20d" in dangerous["fp_classified_gate_reason"]
+    assert borderline["risk_decision"] == "reduce_position"
+    assert borderline["fp_classified_label"] == "borderline_like"
+
+
+def test_risk_governor_v1_2b_fp_classified_does_not_expand_when_dynamic_score_fails():
+    config = load_production_config()
+    decision = build_risk_governor_decision_v1_2b_fp_classified(
+        config,
+        adaptive_decision={
+            "active_role": "recent_champion",
+            "market_liquidity_bucket": "normal",
+            "industry_state": "normal",
+            "champion_score": -0.20,
+            "avg_vol_20": 0.03,
+        },
+        recent_shadow_summary={"fail_streak": 0, "worst_action": "none", "latest_status": "pass"},
+        account_state={"governed_nav_ret_10d": 0.01, "governed_nav_drawdown_20d": -0.02, "recovery_streak": 0},
+        pattern_state={"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 2, "pattern_top5_bearish_count": 1, "top_industry_weight": 0.35},
+        score_context={"champion_score_pctile": 0.50, "champion_score_z": -1.0, "champion_score_rank": 50, "champion_score_sample_count": 100},
+    )
+
+    assert decision["risk_decision"] == "reduce_position"
+    assert decision["fp_classified_label"] == "dynamic_not_recovered"
+    assert decision["recovery_status"] == "blocked_dynamic_score_floor"

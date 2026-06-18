@@ -20,6 +20,7 @@ WRAPPER = PROJECT_ROOT / "scripts/research/run_production_governed_vol_position_
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "exports/signal_research/governor_v12_grid"
 TARGET_STRATEGY = "production_governed_vol_position_v1_2b_dynamic_score"
 GATE_TUNED_TARGET_STRATEGY = "production_governed_vol_position_v1_2b_gate_tuned"
+FP_CLASSIFIED_TARGET_STRATEGY = "production_governed_vol_position_v1_2b_fp_classified"
 BASELINE_STRATEGY = "production_governed_vol_position"
 
 from scripts.research.analyze_governor_contribution import build_governor_version_compare
@@ -39,6 +40,14 @@ LOCAL_V12B_GATE_GRID = {
     "nav_dd_20d_kill": [-0.07, -0.075, -0.08],
     "max_recovery_streak": [4, 5],
 }
+FP_CLASSIFIED_ABLATION_GRID = [
+    {"ablation_name": "default"},
+    {"ablation_name": "top_industry_weight_limit_048", "top_industry_weight_limit": 0.48},
+    {"ablation_name": "nav_dd_20d_kill_0075", "nav_dd_20d_kill": -0.075},
+    {"ablation_name": "max_recovery_streak_4", "max_recovery_streak": 4},
+    {"ablation_name": "recovery_position_mid_053", "recovery_position_mid": 0.53},
+    {"ablation_name": "recovery_position_high_056", "recovery_position_high": 0.56},
+]
 
 
 def _extract_json(stdout: str) -> dict:
@@ -54,7 +63,9 @@ def _run(cmd: list[str]) -> dict:
     return _extract_json(result.stdout)
 
 
-def _grid_rows(local_gate_grid: bool = False) -> list[dict[str, object]]:
+def _grid_rows(local_gate_grid: bool = False, fp_classified_ablation: bool = False) -> list[dict[str, object]]:
+    if fp_classified_ablation:
+        return [dict(row) for row in FP_CLASSIFIED_ABLATION_GRID]
     grid = LOCAL_V12B_GATE_GRID if local_gate_grid else GRID
     keys = list(grid)
     return [dict(zip(keys, values)) for values in itertools.product(*(grid[key] for key in keys))]
@@ -101,6 +112,9 @@ def _evaluate_run(report: dict, params: dict[str, object], target_strategy: str)
         "sample_count_fail_days": int(target_row.get("sample_count_fail_days") or 0),
         "pattern_veto_days": int(target_row.get("pattern_veto_days") or 0),
         "top_industry_veto_days": int(target_row.get("top_industry_veto_days") or 0),
+        "benign_recovered_days": int(target_row.get("benign_recovered_days") or 0),
+        "dangerous_recovered_days": int(target_row.get("dangerous_recovered_days") or 0),
+        "borderline_recovered_days": int(target_row.get("borderline_recovered_days") or 0),
         "false_positive_reduce_days": int(target_row.get("false_positive_reduce_days") or 0),
         "baseline_false_positive_reduce_days": int(baseline_false_positive),
         "missed_risk_events": int(target_worst.get("missed_risk_events") or 0),
@@ -121,11 +135,23 @@ def _evaluate_run(report: dict, params: dict[str, object], target_strategy: str)
     except Exception:
         out["benign_false_positive_days"] = None
         out["dangerous_false_positive_days"] = None
+    if target_strategy == FP_CLASSIFIED_TARGET_STRATEGY:
+        false_positive_ok = int(out["false_positive_reduce_days"]) < 122
+        return_ok = out["annualized_return"] is not None and float(out["annualized_return"]) >= 0.18
+        total_return_ok = out["total_return"] is not None and float(out["total_return"]) >= 0.50
+        fp_mix_ok = int(out["benign_recovered_days"]) >= 10 and int(out["dangerous_recovered_days"]) == 0
+    else:
+        false_positive_ok = int(out["false_positive_reduce_days"]) <= min(false_positive_limit, 112)
+        return_ok = out["annualized_return"] is not None and float(out["annualized_return"]) >= 0.11
+        total_return_ok = True
+        fp_mix_ok = True
     out["passes_hard_gates"] = bool(
         int(out["missed_risk_events"]) == 0
         and (out["max_drawdown"] is not None and float(out["max_drawdown"]) >= -0.26)
-        and (out["annualized_return"] is not None and float(out["annualized_return"]) >= 0.11)
-        and int(out["false_positive_reduce_days"]) <= min(false_positive_limit, 112)
+        and return_ok
+        and total_return_ok
+        and false_positive_ok
+        and fp_mix_ok
         and (out["avg_gross_exposure"] is not None and float(out["avg_gross_exposure"]) <= 0.59)
         and (out["worst_20d_return"] is not None and float(out["worst_20d_return"]) >= -0.168)
         and 30 <= int(out["recovery_days"]) <= 100
@@ -135,10 +161,14 @@ def _evaluate_run(report: dict, params: dict[str, object], target_strategy: str)
         failures.append("missed_risk_events")
     if out["max_drawdown"] is None or float(out["max_drawdown"]) < -0.26:
         failures.append("max_drawdown")
-    if out["annualized_return"] is None or float(out["annualized_return"]) < 0.11:
+    if not return_ok:
         failures.append("annualized_return")
-    if int(out["false_positive_reduce_days"]) > min(false_positive_limit, 112):
+    if not total_return_ok:
+        failures.append("total_return")
+    if not false_positive_ok:
         failures.append("false_positive_reduce_days")
+    if not fp_mix_ok:
+        failures.append("fp_classified_mix")
     if out["avg_gross_exposure"] is None or float(out["avg_gross_exposure"]) > 0.59:
         failures.append("avg_gross_exposure")
     if out["worst_20d_return"] is None or float(out["worst_20d_return"]) < -0.168:
@@ -146,6 +176,7 @@ def _evaluate_run(report: dict, params: dict[str, object], target_strategy: str)
     if not 30 <= int(out["recovery_days"]) <= 100:
         failures.append("recovery_days")
     out["gate_failure_reason"] = "|".join(failures) if failures else "pass"
+    out["fp_classified_gate_reason"] = out["gate_failure_reason"]
     return out
 
 
@@ -153,7 +184,7 @@ def run_grid(args: argparse.Namespace) -> dict[str, object]:
     out_dir = Path(args.output_root) / datetime.now().strftime("%Y%m%d_%H%M%S_v12_grid")
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
-    combos = _grid_rows(local_gate_grid=bool(args.local_v12b_gate_grid))
+    combos = _grid_rows(local_gate_grid=bool(args.local_v12b_gate_grid), fp_classified_ablation=bool(args.fp_classified_ablation))
     if args.max_runs:
         combos = combos[: int(args.max_runs)]
     for idx, params in enumerate(combos, start=1):
@@ -175,7 +206,22 @@ def run_grid(args: argparse.Namespace) -> dict[str, object]:
             "--strategies",
             args.strategies,
         ]
-        if args.local_v12b_gate_grid:
+        if args.fp_classified_ablation:
+            cmd.extend(
+                [
+                    "--v12b-fp-classified-recovery-position-mid",
+                    str(params.get("recovery_position_mid", 0.55)),
+                    "--v12b-fp-classified-recovery-position-high",
+                    str(params.get("recovery_position_high", 0.58)),
+                    "--v12b-fp-classified-top-industry-weight-limit",
+                    str(params.get("top_industry_weight_limit", 0.50)),
+                    "--v12b-fp-classified-nav-dd-20d-kill",
+                    str(params.get("nav_dd_20d_kill", -0.08)),
+                    "--v12b-fp-classified-max-recovery-streak",
+                    str(params.get("max_recovery_streak", 5)),
+                ]
+            )
+        elif args.local_v12b_gate_grid:
             cmd.extend(
                 [
                     "--v12b-gate-tuned-recovery-position-mid",
@@ -253,12 +299,25 @@ def main() -> None:
         action="store_true",
         help="Run the bounded v1.2b gate-tuned grid instead of the full dynamic-score grid.",
     )
+    parser.add_argument(
+        "--fp-classified-ablation",
+        action="store_true",
+        help="Run one-factor-at-a-time ablations for production_governed_vol_position_v1_2b_fp_classified.",
+    )
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--skip-db-check", action="store_true")
     parser.add_argument("--max-runs", type=int, default=0, help="Limit runs for smoke testing. 0 runs the full grid.")
     args = parser.parse_args()
+    if args.fp_classified_ablation and args.strategies == parser.get_default("strategies"):
+        args.strategies = (
+            "production_governed_vol_position,"
+            "production_governed_vol_position_v1_2b_fp_classified,"
+            "baseline_full_liquidity_detail_vol_position"
+        )
     if args.local_v12b_gate_grid and args.target_strategy == TARGET_STRATEGY:
         args.target_strategy = GATE_TUNED_TARGET_STRATEGY
+    if args.fp_classified_ablation and args.target_strategy == TARGET_STRATEGY:
+        args.target_strategy = FP_CLASSIFIED_TARGET_STRATEGY
     print(json.dumps(run_grid(args), ensure_ascii=False, indent=2, default=str))
 
 

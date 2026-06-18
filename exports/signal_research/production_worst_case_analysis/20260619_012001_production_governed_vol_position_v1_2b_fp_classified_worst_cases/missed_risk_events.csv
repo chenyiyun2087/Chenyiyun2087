@@ -1,0 +1,4 @@
+trough_date,drawdown,risk_decision,miss_reason
+2025-04-15,-0.23145587360007758,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-04-16,-0.23100651860196608,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-04-14,-0.22932802576206723,hard_reduce,no_defensive_action_in_prior_10_calendar_days

@@ -9,6 +9,11 @@ production:
   execution_mode: t_plus_1_open
   shadow_risk_strategy: adaptive_market_style
   shadow_version: v2.2
+  research_shadow_candidate:
+    enabled: false
+    strategy: production_governed_vol_position_v1_2b_gate_tuned
+    compare_to: production_governed_vol_position
+    min_shadow_days: 20
   ashare_supplement_limit: 2
   allow_model_risk_fields: false
   defensive_fallback_strategy: baseline_full_liquidity_detail

@@ -30,6 +30,16 @@ V1_2B_GATE_TUNED_DEFAULTS = {
     "top_industry_weight_limit": 0.48,
 }
 
+V1_2B_FP_CLASSIFIED_DEFAULTS = {
+    **V1_2B_DYNAMIC_SCORE_DEFAULTS,
+    "benign_champion_score_percentile_floor": 0.70,
+    "benign_nav_dd_20d_floor": -0.04,
+    "benign_top_industry_weight_limit": 0.45,
+    "dangerous_nav_dd_20d_floor": -0.06,
+    "dangerous_top_industry_weight_limit": 0.50,
+    "dangerous_pattern_top5_high_risk_limit": 2,
+}
+
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
     try:
@@ -639,3 +649,83 @@ def build_risk_governor_decision_v1_2b_gate_tuned(
     out["gate_tuned_top_industry_weight_limit"] = float(params["top_industry_weight_limit"])
     out["gate_tuned_max_recovery_streak"] = int(params["max_recovery_streak"])
     return out
+
+
+def build_risk_governor_decision_v1_2b_fp_classified(
+    config: dict[str, Any],
+    adaptive_decision: dict[str, Any] | None = None,
+    recent_shadow_summary: dict[str, Any] | None = None,
+    account_state: dict[str, Any] | None = None,
+    pattern_state: dict[str, Any] | None = None,
+    score_context: dict[str, Any] | None = None,
+    recovery_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Research-only v1.2b: keep only benign-like dynamic-score recoveries."""
+
+    params = {**V1_2B_FP_CLASSIFIED_DEFAULTS, **dict(recovery_params or {})}
+    dynamic = build_risk_governor_decision_v1_2b_dynamic_score(
+        config,
+        adaptive_decision=adaptive_decision,
+        recent_shadow_summary=recent_shadow_summary,
+        account_state=account_state,
+        pattern_state=pattern_state,
+        score_context=score_context,
+        recovery_params=params,
+    )
+    dynamic["risk_governor_version"] = "v1.2b_fp_classified"
+    if str(dynamic.get("risk_decision") or "") != "recovery_reduce":
+        dynamic["fp_classified_label"] = "dynamic_not_recovered"
+        dynamic["fp_classified_gate_reason"] = str(dynamic.get("recovery_status") or "dynamic_not_recovered")
+        return dynamic
+
+    account = dict(account_state or {})
+    pattern = dict(pattern_state or {})
+    score = dict(score_context or {})
+    nav_drawdown_20d = _safe_float(account.get("governed_nav_drawdown_20d"))
+    top_industry_weight = _safe_float(pattern.get("top_industry_weight"))
+    champion_pctile = _safe_float(score.get("champion_score_pctile"))
+    pattern_top5_high_risk_count = int(pattern.get("pattern_top5_high_risk_count") or 0)
+    pattern_top5_bullish_count = int(pattern.get("pattern_top5_bullish_count") or 0)
+    pattern_top5_bearish_count = int(pattern.get("pattern_top5_bearish_count") or 0)
+
+    dangerous_reasons: list[str] = []
+    if nav_drawdown_20d is not None and nav_drawdown_20d < float(params["dangerous_nav_dd_20d_floor"]):
+        dangerous_reasons.append("dangerous_nav_drawdown_20d")
+    if top_industry_weight is not None and top_industry_weight >= float(params["dangerous_top_industry_weight_limit"]):
+        dangerous_reasons.append("dangerous_top_industry_weight")
+    if pattern_top5_high_risk_count >= int(params["dangerous_pattern_top5_high_risk_limit"]):
+        dangerous_reasons.append("dangerous_pattern_high_risk")
+    if pattern_top5_bearish_count > pattern_top5_bullish_count:
+        dangerous_reasons.append("dangerous_bearish_dominance")
+
+    benign_like = (
+        champion_pctile is not None
+        and champion_pctile >= float(params["benign_champion_score_percentile_floor"])
+        and nav_drawdown_20d is not None
+        and nav_drawdown_20d >= float(params["benign_nav_dd_20d_floor"])
+        and top_industry_weight is not None
+        and top_industry_weight < float(params["benign_top_industry_weight_limit"])
+        and pattern_top5_high_risk_count == 0
+        and pattern_top5_bearish_count <= pattern_top5_bullish_count
+    )
+    if dangerous_reasons or not benign_like:
+        base = build_risk_governor_decision(config, adaptive_decision, recent_shadow_summary)
+        base["risk_governor_version"] = "v1.2b_fp_classified"
+        base["fp_classified_label"] = "dangerous_like" if dangerous_reasons else "borderline_like"
+        base["fp_classified_gate_reason"] = "|".join(dangerous_reasons) if dangerous_reasons else "blocked_not_benign_like"
+        base["recovery_status"] = "blocked_fp_classified_dangerous" if dangerous_reasons else "blocked_fp_classified_borderline"
+        base["champion_score_pctile"] = champion_pctile
+        base["champion_score_z"] = dynamic.get("champion_score_z")
+        base["champion_score_sample_count"] = dynamic.get("champion_score_sample_count")
+        base["nav_dd_20d_kill"] = dynamic.get("nav_dd_20d_kill")
+        base["max_recovery_streak"] = dynamic.get("max_recovery_streak")
+        base["top_industry_weight"] = top_industry_weight
+        base["pattern_top5_high_risk_count"] = pattern_top5_high_risk_count
+        base["pattern_top5_bullish_count"] = pattern_top5_bullish_count
+        base["pattern_top5_bearish_count"] = pattern_top5_bearish_count
+        return base
+
+    dynamic["fp_classified_label"] = "benign_like"
+    dynamic["fp_classified_gate_reason"] = "benign_like_recovered"
+    dynamic["reasons"] = [str(item) for item in dynamic.get("reasons") or []] + ["fp_classified_benign_recovery"]
+    return dynamic

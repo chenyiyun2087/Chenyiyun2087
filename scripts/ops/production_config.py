@@ -29,6 +29,16 @@ def _normalize_shadow_validation(raw: dict | None) -> dict[str, float | int]:
     }
 
 
+def _normalize_research_shadow_candidate(raw: dict | None) -> dict[str, object]:
+    values = dict(raw or {})
+    return {
+        "enabled": bool(values.get("enabled", False)),
+        "strategy": str(values.get("strategy") or ""),
+        "compare_to": str(values.get("compare_to") or ""),
+        "min_shadow_days": int(values.get("min_shadow_days", 20)),
+    }
+
+
 @lru_cache(maxsize=1)
 def load_production_config() -> dict[str, object]:
     if not CONFIG_PATH.exists():
@@ -51,6 +61,7 @@ def load_production_config() -> dict[str, object]:
         "allow_model_risk_fields": bool(_require(production, "allow_model_risk_fields")),
         "defensive_fallback_strategy": str(production.get("defensive_fallback_strategy") or "baseline_full_liquidity_detail"),
         "shadow_validation": _normalize_shadow_validation(production.get("shadow_validation")),
+        "research_shadow_candidate": _normalize_research_shadow_candidate(production.get("research_shadow_candidate")),
         "config_path": str(CONFIG_PATH),
         "config_sha": hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16],
     }

@@ -26,6 +26,8 @@ from scripts.research.analyze_governor_contribution import (
     build_soft_vs_hard_reduce_compare,
 )
 from scripts.research.analyze_pattern_veto_attribution import run_analysis as run_pattern_veto_attribution
+from scripts.research.analyze_pattern_veto_coverage import build_coverage as build_pattern_veto_coverage
+from scripts.research.analyze_v12b_false_positive_feature_profile import build_feature_profile
 from scripts.research.analyze_v12b_false_positive_gap import classify_false_positive, run_analysis as run_false_positive_gap
 from scripts.research.analyze_v12b_gate_stability import build_monthly_gate_check, build_yearly_breakdown
 from scripts.research.analyze_adaptive_vs_governed import (
@@ -43,6 +45,8 @@ from scripts.research_trusted_strategy_account_backtest import (
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
@@ -238,6 +242,8 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
             PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
             PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
@@ -253,9 +259,11 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
     assert specs[6].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME
     assert specs[7].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME
     assert specs[8].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME
-    assert specs[9].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
-    assert specs[10].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
-    assert specs[11].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
+    assert specs[9].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME
+    assert specs[10].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME
+    assert specs[11].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
+    assert specs[12].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
+    assert specs[13].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
 
 
 def test_v12b_false_positive_gap_classifies_only_target_strategy(tmp_path: Path):
@@ -307,6 +315,52 @@ def test_v12b_false_positive_gap_classifies_only_target_strategy(tmp_path: Path)
     assert classify_false_positive(pd.Series({"next_10d_return": 0.04, "next_20d_return": 0.06, "max_dd_20d": -0.09})) == "dangerous_false_positive"
     with pytest.raises(RuntimeError, match="missing_strategy"):
         run_false_positive_gap(backtest_dir, tmp_path / "out2", "missing_strategy")
+
+
+def test_v12b_false_positive_feature_profile_summarizes_categories():
+    gap = pd.DataFrame(
+        [
+            {
+                "false_positive_type": "benign_false_positive",
+                "champion_score_pctile_252": 0.8,
+                "champion_score_z_252": -0.1,
+                "governed_nav_ret_10d": 0.02,
+                "governed_nav_drawdown_20d": -0.02,
+                "avg_vol_20": 0.03,
+                "top_industry_weight": 0.35,
+                "pattern_top5_high_risk_count": 0,
+                "pattern_top5_bearish_count": 1,
+                "pattern_top5_bullish_count": 2,
+                "recovery_streak": 1,
+                "active_role": "recent_champion",
+                "market_liquidity_bucket": "normal",
+            },
+            {
+                "false_positive_type": "dangerous_false_positive",
+                "champion_score_pctile_252": 0.7,
+                "champion_score_z_252": -0.2,
+                "governed_nav_ret_10d": -0.01,
+                "governed_nav_drawdown_20d": -0.09,
+                "avg_vol_20": 0.04,
+                "top_industry_weight": 0.55,
+                "pattern_top5_high_risk_count": 2,
+                "pattern_top5_bearish_count": 3,
+                "pattern_top5_bullish_count": 1,
+                "recovery_streak": 2,
+                "active_role": "recent_champion",
+                "market_liquidity_bucket": "normal",
+            },
+        ]
+    )
+
+    profile = build_feature_profile(gap)
+
+    assert set(profile["false_positive_type"]) == {"benign_false_positive", "dangerous_false_positive"}
+    benign = profile[profile["false_positive_type"].eq("benign_false_positive")].iloc[0]
+    assert int(benign["days"]) == 1
+    assert benign["bearish_minus_bullish_mean"] == -1
+    with pytest.raises(RuntimeError, match="false_positive_type"):
+        build_feature_profile(gap.drop(columns=["false_positive_type"]))
 
 
 def test_pattern_veto_attribution_counts_actual_removed_only_inside_top_n(tmp_path: Path):
@@ -364,6 +418,45 @@ def test_pattern_veto_attribution_counts_actual_removed_only_inside_top_n(tmp_pa
     assert int(attribution["pattern_veto_actual_removed_count"].iloc[0]) == 1
     assert int(attribution["candidate_only_count"].iloc[0]) == 1
     assert str(attribution["removed_symbols"].iloc[0]).zfill(6) == "000001"
+
+
+def test_pattern_veto_coverage_counts_rank_buckets_without_promoting_top30_to_top5():
+    candidates = pd.DataFrame(
+        [
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000001",
+                "candidate_rank": 1,
+                "pattern_risk_level": "low",
+                "bearish_pattern_count": 0,
+                "bullish_pattern_count": 1,
+                "next_10d_return": 0.02,
+                "next_20d_return": 0.03,
+                "max_dd_20d": -0.01,
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000020",
+                "candidate_rank": 20,
+                "pattern_risk_level": "high",
+                "bearish_pattern_count": 2,
+                "bullish_pattern_count": 0,
+                "next_10d_return": -0.04,
+                "next_20d_return": -0.08,
+                "max_dd_20d": -0.12,
+            },
+        ]
+    )
+
+    coverage = build_pattern_veto_coverage(candidates, PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME)
+    top5 = coverage[coverage["top_n"].eq(5)].iloc[0]
+    top30 = coverage[coverage["top_n"].eq(30)].iloc[0]
+
+    assert int(top5["high_risk_count"]) == 0
+    assert int(top30["high_risk_count"]) == 1
+    assert int(top30["high_risk_bearish_count"]) == 1
 
 
 def test_v12b_gate_stability_outputs_yearly_and_monthly_tables():

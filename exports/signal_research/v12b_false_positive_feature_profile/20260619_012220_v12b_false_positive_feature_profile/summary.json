@@ -1,0 +1,9 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_fp_classified",
+  "output_dir": "exports/signal_research/v12b_false_positive_feature_profile/20260619_012220_v12b_false_positive_feature_profile",
+  "rows": 3,
+  "files": {
+    "v12b_false_positive_feature_profile": "exports/signal_research/v12b_false_positive_feature_profile/20260619_012220_v12b_false_positive_feature_profile/v12b_false_positive_feature_profile.csv",
+    "markdown": "exports/signal_research/v12b_false_positive_feature_profile/20260619_012220_v12b_false_positive_feature_profile/v12b_false_positive_feature_profile.md"
+  }
+}

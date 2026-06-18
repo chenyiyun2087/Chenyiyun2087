@@ -23,6 +23,7 @@ from scripts.ops.production_risk_governor import (
     build_risk_governor_decision,
     build_risk_governor_decision_v1_1_recovery,
     build_risk_governor_decision_v1_2b_dynamic_score,
+    build_risk_governor_decision_v1_2b_fp_classified,
     build_risk_governor_decision_v1_2b_gate_tuned,
     build_risk_governor_decision_v1_2_recovery,
     build_risk_governor_decision_v2,
@@ -96,6 +97,8 @@ DEFAULT_STRATEGIES = [
     "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
     "production_governed_vol_position_v1_2b_gate_tuned",
     "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto",
+    "production_governed_vol_position_v1_2b_fp_classified",
+    "production_governed_vol_position_v1_2b_fp_classified_pattern_veto",
     "production_governed_vol_position_v2",
     "production_governed_adaptive",
     "dual_system_adaptive_route",
@@ -126,6 +129,8 @@ PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME = "production
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME = "production_governed_vol_position_v1_2b_gate_tuned"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto"
+PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME = "production_governed_vol_position_v1_2b_fp_classified"
+PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_fp_classified_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME = "production_governed_vol_position_v2"
 PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME = "production_governed_adaptive"
 VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_rerank"
@@ -179,6 +184,8 @@ PRODUCTION_GOVERNED_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
     PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
@@ -193,6 +200,7 @@ PATTERN_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME,
 }
 PSEUDO_STRATEGY_NAMES = ADAPTIVE_STRATEGY_NAMES | DUAL_SYSTEM_STRATEGY_NAMES | PRODUCTION_GOVERNED_STRATEGY_NAMES | {
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
@@ -2346,6 +2354,29 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             },
                         )
                     elif spec.name in {
+                        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
+                        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME,
+                    }:
+                        governor = build_risk_governor_decision_v1_2b_fp_classified(
+                            PRODUCTION_CONFIG,
+                            adaptive_decision=decision,
+                            recent_shadow_summary=shadow_summary,
+                            account_state=account_state,
+                            pattern_state=pattern_state,
+                            score_context=champion_score_context,
+                            recovery_params={
+                                "champion_score_percentile_floor": float(args.v12b_champion_score_percentile_floor),
+                                "champion_score_z_floor": float(args.v12b_champion_score_z_floor),
+                                "champion_score_min_sample_count": int(args.v12b_champion_score_min_sample_count),
+                                "recovery_position_mid": float(args.v12b_fp_classified_recovery_position_mid),
+                                "recovery_position_high": float(args.v12b_fp_classified_recovery_position_high),
+                                "nav_ret_10d_kill": float(args.v12b_nav_ret_10d_kill),
+                                "nav_dd_20d_kill": float(args.v12b_fp_classified_nav_dd_20d_kill),
+                                "max_recovery_streak": int(args.v12b_fp_classified_max_recovery_streak),
+                                "top_industry_weight_limit": float(args.v12b_fp_classified_top_industry_weight_limit),
+                            },
+                        )
+                    elif spec.name in {
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
                     }:
@@ -2424,6 +2455,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         target_override = _apply_pattern_veto_to_targets(target_override)
                     if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME:
                         target_override = _apply_pattern_veto_to_targets(target_override)
+                    if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME:
+                        target_override = _apply_pattern_veto_to_targets(target_override)
                     rebalance_position_ratio = float(governor.get("target_position_ratio") or 0.0)
                     if risk_decision == "freeze_buy" or not bool(governor.get("allow_new_buys", True)):
                         rebalance_position_ratio = 0.0
@@ -2461,6 +2494,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "pattern_top5_bullish_count": governor.get("pattern_top5_bullish_count"),
                             "pattern_top5_bearish_count": governor.get("pattern_top5_bearish_count"),
                             "top_industry_weight": governor.get("top_industry_weight", pattern_state.get("top_industry_weight")),
+                            "fp_classified_label": governor.get("fp_classified_label"),
+                            "fp_classified_gate_reason": governor.get("fp_classified_gate_reason"),
                         }
                     )
                     adaptive_decision_rows.append(decision)
@@ -2495,6 +2530,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "pattern_top5_bullish_count": decision.get("pattern_top5_bullish_count"),
                         "pattern_top5_bearish_count": decision.get("pattern_top5_bearish_count"),
                         "top_industry_weight": decision.get("top_industry_weight"),
+                        "fp_classified_label": decision.get("fp_classified_label"),
+                        "fp_classified_gate_reason": decision.get("fp_classified_gate_reason"),
                         "route_reason": "production_risk_governor_backtest",
                     }
                     if spec.name in {PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME}:
@@ -2772,6 +2809,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["pattern_top5_bullish_count"] = adaptive_meta.get("pattern_top5_bullish_count")
                         item["pattern_top5_bearish_count"] = adaptive_meta.get("pattern_top5_bearish_count")
                         item["top_industry_weight"] = adaptive_meta.get("top_industry_weight")
+                        item["fp_classified_label"] = adaptive_meta.get("fp_classified_label")
+                        item["fp_classified_gate_reason"] = adaptive_meta.get("fp_classified_gate_reason")
                         item["pattern_guard_enabled"] = adaptive_meta.get("pattern_guard_enabled")
                         item["pattern_strategy_mode"] = adaptive_meta.get("pattern_strategy_mode")
                 trade_rows.extend(trades)
@@ -3056,6 +3095,11 @@ def main() -> None:
     parser.add_argument("--v12b-gate-tuned-nav-dd-20d-kill", type=float, default=-0.075)
     parser.add_argument("--v12b-gate-tuned-max-recovery-streak", type=int, default=5)
     parser.add_argument("--v12b-gate-tuned-top-industry-weight-limit", type=float, default=0.48)
+    parser.add_argument("--v12b-fp-classified-recovery-position-mid", type=float, default=0.55)
+    parser.add_argument("--v12b-fp-classified-recovery-position-high", type=float, default=0.58)
+    parser.add_argument("--v12b-fp-classified-nav-dd-20d-kill", type=float, default=-0.08)
+    parser.add_argument("--v12b-fp-classified-max-recovery-streak", type=int, default=5)
+    parser.add_argument("--v12b-fp-classified-top-industry-weight-limit", type=float, default=0.50)
     raw_argv = sys.argv[1:]
     args = parser.parse_args()
     args = _apply_risk_profile_defaults(

@@ -27,6 +27,7 @@ def test_shared_production_defaults_are_consistent():
     assert web_app.TRUSTED_PRODUCTION_STRATEGY == config["primary_strategy"]
     assert config["primary_strategy"] == "production_governed_vol_position"
     assert config["primary_selection_strategy"] == "baseline_full_liquidity_detail_vol_position"
+    assert config["research_shadow_candidate"]["enabled"] is False
 
 
 def test_scheduler_uses_shared_production_defaults():
