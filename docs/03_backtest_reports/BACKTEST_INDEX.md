@@ -8,6 +8,8 @@
 
 > 2026-06-18 v1.2 missed-risk 清零研究更新：新增 `production_governed_vol_position_v1_2_recovery` 和 pattern veto 版本，首版参数为 `champion_score_floor=-0.03`、`recovery_position=0.58`、`nav_ret_10d_kill=-0.04`、`nav_dd_20d_kill=-0.08`、`max_recovery_streak=5`。三年结果与当前生产 v1 完全一致：收益 +19.94%、年化 +7.75%、最大回撤 -24.81%、`missed_risk_events=0`、`false_positive_reduce_days=132`、`recovery_days=0`。结论：v1.2 首版安全但过度保守，未达到收益提升和误降仓下降目标，不进入生产候选。
 
+> 2026-06-18 v1.2b dynamic score 研究更新：`production_governed_vol_position_v1_2b_dynamic_score` 使用 `negative_recent_champion` 历史分位数/z-score 做选择性恢复，三年收益 +57.23%、年化 +20.41%、最大回撤 -25.52%、平均仓位 56.64%、`missed_risk_events=0`、`recovery_days=59`。但 `false_positive_reduce_days=122` 未达 <=112，最差 20 日 -16.82% 略低于 -16.8% 门槛，因此暂列强观察候选，不替换当前生产默认。
+
 > 2026-06-04 更新：当前 `adaptive_market_style` 从单纯三年低回撤口径升级为“最近 3 个月收益优先 + 长期风险约束 + 日检周切”。近期冠军默认指向 `baseline_full_liquidity_detail_vol_position`，系统每天检测市场、行业和量能状态，最多每周切换一次底层基准，目标仓位约 50% / 70% / 80%。`tiered_liquidity_then_bs_v2` 只在强市场短期增强，不作为长期满仓默认。
 
 > 2026-06-04 双系统路由更新：新增 `dual_system_adaptive_route`、`ashare_auto_shadow`、`ashare_trend_breakout_shadow`、`ashare_hybrid_conservative_shadow`。最近 3 个月账户级对照中，AShare AUTO 影子收益约 +8.72%、最大回撤约 -17.28%，`adaptive_market_style` 收益约 +7.36%、最大回撤约 -10.97%，双系统路由收益约 +5.27%、最大回撤约 -12.06%。当前结论：AShare AUTO 有收益弹性但波动更大，dual route 风控较保守，需继续优化 AShare 周线门禁和候选缓存后再跑三年验收。
@@ -21,6 +23,7 @@
 | 策略名称 | 资金规模 | 回测周期 | 期末权益 | 年化收益 | 最大回撤 | 结论 | 文件夹 |
 |---|---:|---|---:|---:|---:|---|---|
 | `adaptive_market_style` / 挑战者对照 | 50 万 | 2023-01-04 至 2026-06-17 | 724,539 | +16.44% | -26.68% | 三年收益 +44.91%，平均仓位 37.80%，年化/仓位效率高于 governed；仍需专项归因验证，不直接替换生产默认 | `exports/signal_research/20260618_125140_642924_trusted_account_backtest/` |
+| `production_governed_vol_position_v1_2b_dynamic_score` / dynamic score 强观察 | 50 万 | 2023-01-04 至 2026-06-17 | 786,126 | +20.41% | -25.52% | 三年收益 +57.23%，`missed_risk_events=0`、`recovery_days=59`，但误降仓 122 未达 <=112，最差 20 日 -16.82% 略低于门槛，暂不进生产默认 | `exports/signal_research/20260618_213002_059138_trusted_account_backtest/` |
 | `production_governed_vol_position_v1_1_recovery` / selective recovery 强观察 | 50 万 | 2023-01-04 至 2026-06-17 | 709,468 | +15.44% | -25.65% | 三年收益 +41.89%，收益和回撤接近挑战者，但 `missed_risk_events=8`，暂不进入生产默认 | `exports/signal_research/20260618_193951_941705_trusted_account_backtest/` |
 | `production_governed_vol_position_v1_2_recovery` / missed-risk 清零过保守样本 | 50 万 | 2023-01-04 至 2026-06-17 | 599,703 | +7.75% | -24.81% | `missed_risk_events=0`，但 `recovery_days=0`、false positive reduce days 仍为 132，未带来收益或误降仓改善 | `exports/signal_research/20260618_204722_645522_trusted_account_backtest/` |
 | `production_governed_vol_position` / 当前生产默认底座 | 50 万 | 2023-01-04 至 2026-06-17 | 599,703 | +7.75% | -24.81% | 三年收益 +19.94%，相比裸 `vol_position` 收益提升且回撤下降；`missed_risk_events=0`，作为当前生产默认固化 | `exports/signal_research/20260618_125140_642924_trusted_account_backtest/` |

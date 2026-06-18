@@ -1,0 +1,11 @@
+{
+  "strategy": "production_governed_vol_position_v1_1_recovery",
+  "backtest_dir": "exports/signal_research/20260618_193951_941705_trusted_account_backtest",
+  "output_dir": "exports/signal_research/recovery_blocker_waterfall/20260618_213020_production_governed_vol_position_v1_1_recovery_waterfall",
+  "recovery_days": 144,
+  "missed_risk_labeled_days": 4,
+  "files": {
+    "v12_recovery_blocker_waterfall": "exports/signal_research/recovery_blocker_waterfall/20260618_213020_production_governed_vol_position_v1_1_recovery_waterfall/v12_recovery_blocker_waterfall.csv",
+    "recovery_days_with_missed_risk_labels": "exports/signal_research/recovery_blocker_waterfall/20260618_213020_production_governed_vol_position_v1_1_recovery_waterfall/recovery_days_with_missed_risk_labels.csv"
+  }
+}

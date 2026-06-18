@@ -1,0 +1,13 @@
+blocker,days,missed_risk_days
+v1_1_recovered_days,144,4
+blocked_by_champion_score_floor,144,4
+blocked_by_nav_ret_10d_kill,0,0
+blocked_by_nav_dd_20d_kill,0,0
+blocked_by_recovery_streak,0,0
+blocked_by_active_role,0,0
+blocked_by_liquidity,0,0
+blocked_by_avg_vol_20,0,0
+blocked_by_industry_state,0,0
+blocked_by_pattern_high_risk,0,0
+blocked_by_bearish_dominance,0,0
+survived_all_checks,0,0

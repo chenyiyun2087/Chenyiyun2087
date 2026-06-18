@@ -1,0 +1,15 @@
+trough_date,drawdown,risk_decision,miss_reason
+2025-12-16,-0.2995249278055475,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-11,-0.2926686916823589,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-15,-0.29243617084546025,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-19,-0.2916477365025003,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-18,-0.29045600284330675,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-17,-0.2861566595970966,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-12,-0.2855431586692887,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-04,-0.28435651818632623,"hard_reduce,normal",no_defensive_action_in_prior_10_calendar_days
+2025-12-09,-0.28372520090195075,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-10,-0.28087037341533594,hard_reduce,no_defensive_action_in_prior_10_calendar_days
+2025-12-05,-0.279982028277469,"hard_reduce,normal",no_defensive_action_in_prior_10_calendar_days
+2025-12-03,-0.2773132514379141,"hard_reduce,normal",no_defensive_action_in_prior_10_calendar_days
+2025-12-08,-0.2760251092406607,"hard_reduce,normal",no_defensive_action_in_prior_10_calendar_days
+2025-12-22,-0.2743599589197737,hard_reduce,no_defensive_action_in_prior_10_calendar_days
