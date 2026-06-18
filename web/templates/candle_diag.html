@@ -1,0 +1,299 @@
+{% extends "layout.html" %}
+
+{% block title %}蜡烛图诊断{% endblock %}
+{% block page_title %}📊 全市场蜡烛图诊断{% endblock %}
+
+{% block content %}
+
+<style>
+.candle-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.candle-card {
+    padding: 16px;
+    border-radius: 8px;
+    text-align: center;
+}
+.candle-card.bullish { background: #ecfdf5; border: 1px solid #a7f3d0; }
+.candle-card.bearish { background: #fef2f2; border: 1px solid #fecaca; }
+.candle-card.neutral { background: #f8fafc; border: 1px solid #e2e8f0; }
+.candle-card .count { font-size: 28px; font-weight: 700; }
+.candle-card .label { font-size: 12px; color: #64748b; margin-top: 4px; }
+.candle-card .sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+
+.candle-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.candle-table th {
+    background: #f1f5f9; padding: 8px 10px; text-align: left;
+    white-space: nowrap; cursor: pointer; user-select: none;
+    border-bottom: 2px solid #e2e8f0;
+}
+.candle-table td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+.candle-table tr:hover { background: #fafafa; }
+
+.score-bar {
+    display: inline-block; height: 6px; border-radius: 3px;
+    min-width: 2px;
+}
+.score-bar.bullish { background: #22c55e; }
+.score-bar.bearish { background: #ef4444; }
+.score-bar.neutral { background: #94a3b8; }
+
+.risk-tag {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600;
+}
+.risk-tag.high { background: #fef2f2; color: #dc2626; }
+.risk-tag.medium { background: #fffbeb; color: #d97706; }
+.risk-tag.low { background: #f0fdf4; color: #16a34a; }
+
+.sent-icon { font-size: 16px; }
+
+.filter-bar {
+    display: flex; gap: 10px; align-items: center;
+    padding: 12px 16px; background: #f8fafc; border-radius: 8px;
+    margin-bottom: 16px; flex-wrap: wrap;
+}
+.filter-bar select, .filter-bar input, .filter-bar button {
+    padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;
+}
+.filter-bar button { background: #3b82f6; color: white; border: none; cursor: pointer; }
+.filter-bar button:hover { background: #2563eb; }
+
+.detail-modal {
+    display: none; position: fixed; z-index: 100;
+    left: 0; top: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.4);
+}
+.detail-modal.show { display: flex; align-items: center; justify-content: center; }
+.detail-content {
+    background: white; border-radius: 12px; padding: 24px;
+    max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+.detail-content h3 { margin: 0 0 16px 0; font-size: 18px; }
+.detail-content .row { display: flex; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
+.detail-content .label { width: 100px; color: #64748b; flex-shrink: 0; }
+.detail-content .value { flex: 1; }
+.detail-close {
+    float: right; cursor: pointer; font-size: 20px; color: #94a3b8;
+}
+.detail-close:hover { color: #475569; }
+
+.pattern-badge {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 11px; margin: 1px;
+    background: #e0f2fe; color: #0369a1;
+}
+.ashare-badge {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 11px; margin: 1px;
+    background: #fef3c7; color: #92400e;
+}
+</style>
+
+<div class="panel">
+    <div class="panel-title">📈 诊断概览</div>
+    <div class="muted" style="margin-bottom: 12px; font-size: 12px;">
+        扫描日期：<strong>{{ scan_date or '-' }}</strong>
+        ｜ 已扫描：<strong>{{ summary.total }}</strong> 只
+        ｜ 更新时间：<strong>{{ summary.updated_at or '-' }}</strong>
+    </div>
+
+    <div class="candle-grid">
+        <div class="candle-card bullish">
+            <div class="count">{{ summary.bullish }}</div>
+            <div class="label">📈 看涨 (score ≥ 25)</div>
+        </div>
+        <div class="candle-card neutral">
+            <div class="count">{{ summary.neutral }}</div>
+            <div class="label">➡️ 震荡 (−25 < score < 25)</div>
+        </div>
+        <div class="candle-card bearish">
+            <div class="count">{{ summary.bearish }}</div>
+            <div class="label">📉 看跌 (score ≤ −25)</div>
+        </div>
+        <div class="candle-card">
+            <div class="count">{{ summary.high_risk }}</div>
+            <div class="label">⚠️ 高风险 (|score| ≥ 50)</div>
+            <div class="sub">中等风险 {{ summary.medium_risk }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-title">🔍 诊断明细</div>
+
+    <div class="filter-bar">
+        <span style="font-weight:600;">过滤：</span>
+        <select id="riskFilter" onchange="applyFilter()">
+            <option value="">全部风险</option>
+            <option value="high">高风险</option>
+            <option value="medium">中等风险</option>
+            <option value="low">低风险</option>
+        </select>
+        <select id="sentFilter" onchange="applyFilter()">
+            <option value="">全部情绪</option>
+            <option value="bullish">看涨 📈</option>
+            <option value="bearish">看跌 📉</option>
+            <option value="neutral">震荡 ➡️</option>
+        </select>
+        <input type="number" id="minScore" placeholder="最低评分" style="width:100px;" onchange="applyFilter()">
+        <input type="text" id="searchSymbol" placeholder="搜索代码/名称" style="width:150px;" onkeyup="applyFilter()">
+        <span style="flex:1;"></span>
+        <span id="filterCount" style="color:#64748b; font-size:13px;"></span>
+    </div>
+
+    <div style="overflow-x:auto;">
+        <table class="candle-table" id="diagTable">
+            <thead>
+                <tr>
+                    <th onclick="sortTable(0)">代码</th>
+                    <th onclick="sortTable(1)">名称</th>
+                    <th onclick="sortTable(2)">评分</th>
+                    <th onclick="sortTable(3)">风险</th>
+                    <th onclick="sortTable(4)">方向</th>
+                    <th>形态层</th>
+                    <th>A股信号层</th>
+                    <th>上下文层</th>
+                    <th>收盘</th>
+                    <th>涨跌幅</th>
+                    <th>诊断摘要</th>
+                </tr>
+            </thead>
+            <tbody id="diagBody">
+                {% for row in rows %}
+                <tr class="diag-row"
+                    data-score="{{ row.score }}"
+                    data-risk="{{ row.risk_level }}"
+                    data-sent="{{ row.sentiment }}"
+                    data-symbol="{{ row.symbol }}"
+                    data-name="{{ row.stock_name or '' }}">
+                    <td><a href="#" onclick="showDetail('{{ row.symbol }}'); return false;">{{ row.symbol }}</a></td>
+                    <td>{{ row.stock_name or '' }}</td>
+                    <td>
+                        <span style="font-weight:600; color:{% if row.score >= 25 %}#16a34a{% elif row.score <= -25 %}#dc2626{% endif %};">
+                            {{ '%+d'|format(row.score) }}
+                        </span>
+                        <div class="score-bar {{ row.sentiment }}" style="width:{{ (abs(row.score)|float / 100 * 80)|int + 2 }}px;"></div>
+                    </td>
+                    <td><span class="risk-tag {{ row.risk_level }}">{{ {'high':'高风险','medium':'中等','low':'低风险'}.get(row.risk_level, row.risk_level) }}</span></td>
+                    <td><span class="sent-icon">{{ {'bullish':'📈','bearish':'📉','neutral':'➡️'}.get(row.sentiment,'•') }}</span></td>
+                    <td style="text-align:right;">{{ '%+d'|format(row.pattern_score) }}</td>
+                    <td style="text-align:right;">{{ '%+d'|format(row.ashare_score) }}</td>
+                    <td style="text-align:right;">{{ '%+d'|format(row.context_score) }}</td>
+                    <td>{{ '%.2f'|format(row.close_price) if row.close_price else '-' }}</td>
+                    <td style="color:{% if row.pct_chg and row.pct_chg > 0 %}#dc2626{% elif row.pct_chg and row.pct_chg < 0 %}#16a34a{% endif %};">
+                        {{ '%+.2f%%'|format(row.pct_chg) if row.pct_chg is not none else '-' }}
+                    </td>
+                    <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                        {{ row.diagnosis[:60] if row.diagnosis else '' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="detail-modal" id="detailModal">
+    <div class="detail-content">
+        <span class="detail-close" onclick="closeDetail()">&times;</span>
+        <h3 id="detailTitle">—</h3>
+        <div id="detailBody"></div>
+    </div>
+</div>
+
+<script>
+const allRows = Array.from(document.querySelectorAll('.diag-row'));
+
+function applyFilter() {
+    const risk = document.getElementById('riskFilter').value;
+    const sent = document.getElementById('sentFilter').value;
+    const minScore = parseFloat(document.getElementById('minScore').value) || -999;
+    const search = document.getElementById('searchSymbol').value.toLowerCase().trim();
+
+    let visible = 0;
+    allRows.forEach(row => {
+        const score = parseFloat(row.dataset.score);
+        const r = row.dataset.risk;
+        const s = row.dataset.sent;
+        const sym = (row.dataset.symbol + row.dataset.name).toLowerCase();
+
+        const match = (!risk || r === risk)
+                   && (!sent || s === sent)
+                   && (score >= minScore)
+                   && (!search || sym.includes(search));
+
+        row.style.display = match ? '' : 'none';
+        if (match) visible++;
+    });
+
+    document.getElementById('filterCount').textContent = `显示 ${visible}/${allRows.length} 只`;
+}
+
+function sortTable(col) {
+    const tbody = document.getElementById('diagBody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const dir = tbody.dataset.sortDir || 'asc';
+
+    rows.sort((a, b) => {
+        let va = a.cells[col].textContent.trim();
+        let vb = b.cells[col].textContent.trim();
+        const na = parseFloat(va);
+        const nb = parseFloat(vb);
+        if (!isNaN(na) && !isNaN(nb)) { va = na; vb = nb; }
+        if (va < vb) return dir === 'asc' ? -1 : 1;
+        if (va > vb) return dir === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    tbody.dataset.sortDir = dir === 'asc' ? 'desc' : 'asc';
+    rows.forEach(r => tbody.appendChild(r));
+}
+
+function showDetail(symbol) {
+    const modal = document.getElementById('detailModal');
+    modal.classList.add('show');
+    document.getElementById('detailTitle').textContent = `📊 ${symbol} 诊断详情`;
+
+    // Find row data
+    const row = allRows.find(r => r.dataset.symbol === symbol);
+    if (!row) return;
+
+    const cells = row.cells;
+    const diag = row.querySelector('.diag-detail-data');
+    const data = diag ? JSON.parse(diag.textContent) : {};
+
+    document.getElementById('detailBody').innerHTML = `
+        <div class="row"><div class="label">名称</div><div class="value">${cells[1].textContent}</div></div>
+        <div class="row"><div class="label">评分</div><div class="value"><strong>${cells[2].textContent.trim()}</strong></div></div>
+        <div class="row"><div class="label">风险等级</div><div class="value">${cells[3].innerHTML}</div></div>
+        <div class="row"><div class="label">方向</div><div class="value">${cells[4].innerHTML}</div></div>
+        <div class="row"><div class="label">收盘价</div><div class="value">${cells[8].textContent}</div></div>
+        <div class="row"><div class="label">涨跌幅</div><div class="value">${cells[9].textContent}</div></div>
+        <div class="row"><div class="label">形态</div><div class="value">${data.patterns || '-'}</div></div>
+        <div class="row"><div class="label">A股信号</div><div class="value">${data.ashare || '-'}</div></div>
+        <div class="row"><div class="label">趋势</div><div class="value">${data.trend || '-'}</div></div>
+        <div class="row"><div class="label">量能</div><div class="value">${data.volume || '-'}</div></div>
+        <div class="row"><div class="label">支撑/压力</div><div class="value">${data.support || '-'} / ${data.resistance || '-'}</div></div>
+        <div class="row" style="border-bottom:none;"><div class="label">诊断</div><div class="value" style="white-space:pre-wrap;">${data.diagnosis || cells[10].textContent || '-'}</div></div>
+    `;
+}
+
+function closeDetail() {
+    document.getElementById('detailModal').classList.remove('show');
+}
+
+// Close modal on outside click
+document.getElementById('detailModal').addEventListener('click', function(e) {
+    if (e.target === this) closeDetail();
+});
+
+// Initial filter count
+applyFilter();
+</script>
+{% endblock %}

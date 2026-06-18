@@ -1,0 +1,6 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,note
+2026-06-17,002080,中材科技,BUY,82.41,0,1300,1300,1300,0.0,0.21833130216865806,0.21833130216865806,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-17,300285,国瓷材料,BUY,78.5,0,1000,1000,1000,0.0,0.1660621027750441,0.1660621027750441,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-17,301217,铜冠铜箔,BUY,181.69,0,500,500,500,0.0,0.20334999326636832,0.20334999326636832,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-17,301526,国际复材,BUY,40.23,0,2000,2000,2000,0.0,0.16785386284801604,0.16785386284801604,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5
+2026-06-17,600378,昊华科技,BUY,63.8,0,1900,1900,1900,0.0,0.24440273894191342,0.24440273894191342,trusted_strategy:baseline_full_liquidity_detail_vol_position; hold_gate=10d; max_positions=5

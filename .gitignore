@@ -1,3 +1,8 @@
+# ===== 大文件 / 归档包：禁止提交（超过 GitHub 100MB 限制会阻断推送）=====
+归档.zip
+**/归档.zip
+exports/归档.zip
+
 /sina/sina_bs_capture.log
 /sina/bs_detection/SinaAppBS/
 /dist/
