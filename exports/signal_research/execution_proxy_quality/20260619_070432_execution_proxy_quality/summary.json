@@ -1,0 +1,14 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "backtest_dir": "exports/signal_research/20260619_070339_967843_trusted_account_backtest",
+  "output_dir": "exports/signal_research/execution_proxy_quality/20260619_070432_execution_proxy_quality",
+  "execution_proxy_quality_status": "EXECUTION_PROXY_READY",
+  "top5_execution_proxy_available_ratio": 0.9993485342019545,
+  "top30_execution_proxy_available_ratio": 0.9993485342019545,
+  "estimated_turnover_impact_missing_ratio": 0.0006514657980456027,
+  "files": {
+    "execution_proxy_quality_by_date": "exports/signal_research/execution_proxy_quality/20260619_070432_execution_proxy_quality/execution_proxy_quality_by_date.csv",
+    "execution_proxy_quality_by_strategy": "exports/signal_research/execution_proxy_quality/20260619_070432_execution_proxy_quality/execution_proxy_quality_by_strategy.csv",
+    "execution_proxy_quality_by_top_bucket": "exports/signal_research/execution_proxy_quality/20260619_070432_execution_proxy_quality/execution_proxy_quality_by_top_bucket.csv"
+  }
+}

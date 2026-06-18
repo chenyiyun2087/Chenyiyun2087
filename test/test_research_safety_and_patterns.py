@@ -43,6 +43,7 @@ from scripts.ops.run_research_shadow_candidate_monitor import (
 )
 from scripts.ops.append_research_shadow_event_log import append_event_log
 from scripts.ops.report_research_shadow_promotion_status import build_promotion_status
+from scripts.research.analyze_execution_proxy_quality import build_execution_proxy_quality_tables, quality_status as execution_proxy_quality_status
 from scripts.research.audit_pattern_feature_lineage import audit_pattern_lineage
 from scripts.research.run_production_governed_vol_position_backtest import DEFAULT_STRATEGIES as PRODUCTION_GOVERNED_DEFAULT_STRATEGIES
 from scripts.research.analyze_adaptive_vs_governed import (
@@ -865,6 +866,63 @@ def test_shadow_event_accumulator_is_idempotent_and_summarizes(tmp_path: Path):
     assert second["execution_degraded_event_days"] == 1
 
 
+def test_shadow_event_accumulator_reads_glob_and_monitor_csv(tmp_path: Path):
+    first_report = tmp_path / "events1.json"
+    second_report = tmp_path / "events2.json"
+    monitor_csv = tmp_path / "monitor.csv"
+    base_report = {
+        "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+        "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+        "generated_at": "2026-01-10T00:00:00",
+        "event_summary": {"source_window": "rolling_20"},
+    }
+    first_report.write_text(
+        json.dumps({**base_report, "events": [{"trade_date": "2026-01-01", "position_diff": 0.10, "theory_gap": 0.01, "execution_feasibility": "pass"}]}),
+        encoding="utf-8",
+    )
+    second_report.write_text(
+        json.dumps({**base_report, "events": [{"trade_date": "2026-01-02", "position_diff": 0.12, "theory_gap": 0.02, "execution_feasibility": "pass"}]}),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-01-03",
+                "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "position_diff": 0.0,
+                "risk_decision_diff": False,
+                "shadow_risk_decision": "normal",
+                "shadow_recovery_status": "not_applicable",
+            },
+            {
+                "trade_date": "2026-01-04",
+                "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "position_diff": 0.13,
+                "risk_decision_diff": True,
+                "shadow_risk_decision": "recovery_reduce",
+                "shadow_recovery_status": "recovered",
+                "theory_gap": 0.03,
+                "execution_feasibility": "pass",
+            },
+        ]
+    ).to_csv(monitor_csv, index=False)
+
+    summary = append_event_log(
+        None,
+        tmp_path / "log.csv",
+        tmp_path / "summary.json",
+        input_glob=str(tmp_path / "events*.json"),
+        monitor_csv=monitor_csv,
+    )
+    log = pd.read_csv(tmp_path / "log.csv")
+
+    assert summary["total_recovery_events"] == 3
+    assert set(log["trade_date"]) == {"2026-01-01", "2026-01-02", "2026-01-04"}
+    assert "event_source_window" in log.columns
+
+
 def test_shadow_event_accumulator_handles_empty_report(tmp_path: Path):
     report_path = tmp_path / "recovery_events.json"
     log_path = tmp_path / "research_shadow_event_log.csv"
@@ -887,7 +945,7 @@ def test_shadow_event_accumulator_handles_empty_report(tmp_path: Path):
     assert pd.read_csv(log_path).empty
 
 
-def test_research_shadow_promotion_status_stays_not_ready_when_events_execution_and_pattern_missing():
+def test_research_shadow_promotion_status_uses_pattern_warning_not_blocker():
     status = build_promotion_status(
         daily_report={
             "shadow_summary": {
@@ -915,10 +973,44 @@ def test_research_shadow_promotion_status_stays_not_ready_when_events_execution_
     )
 
     assert status["promotion_ready"] is False
+    assert "NOT_READY_PATTERN_LINEAGE" not in status["blocking_statuses"]
     assert "NOT_READY_NO_EVENTS" in status["promotion_statuses"]
     assert "NOT_READY_EXECUTION_PROXY" in status["promotion_statuses"]
-    assert "NOT_READY_PATTERN_LINEAGE" in status["promotion_statuses"]
+    assert "PATTERN_LINEAGE_WARNING" in status["warning_statuses"]
     assert status["production_change_allowed"] is False
+    assert status["pattern_blocks_enabled_shadow"] is False
+
+
+def test_research_shadow_promotion_ready_when_only_pattern_is_missing():
+    status = build_promotion_status(
+        daily_report={
+            "shadow_summary": {
+                "calendar_window_pass": True,
+                "event_window_pass": True,
+                "execution_proxy_pass": True,
+                "theory_gap_sum": 0.02,
+                "recovery_event_days": 5,
+            }
+        },
+        event_summary={"total_recovery_events": 5, "cumulative_recovery_theory_gap": 0.03},
+        pattern_lineage_summary={"lineage_status": "PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING"},
+        fp_separability_summary={"separability_status": "SEPARABLE"},
+        config={
+            "primary_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+            "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",
+            "research_shadow_candidate": {
+                "enabled": False,
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "compare_to": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "min_recovery_events": 5,
+            },
+        },
+    )
+
+    assert status["promotion_ready"] is True
+    assert status["blocking_statuses"] == []
+    assert status["promotion_status"] == "READY_FOR_ENABLED_SHADOW_REVIEW"
+    assert "PATTERN_LINEAGE_WARNING" in status["warning_statuses"]
 
 
 def test_research_shadow_candidate_monitor_fails_when_rows_are_insufficient():
@@ -942,6 +1034,61 @@ def test_research_shadow_candidate_monitor_fails_when_rows_are_insufficient():
 
     assert summary["shadow_pass"] is False
     assert "insufficient_rows" in summary["shadow_fail_reasons"]
+
+
+def test_execution_proxy_quality_tracks_top_buckets_and_missing_columns():
+    rows = []
+    for rank in range(1, 31):
+        rows.append(
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": f"{rank:06d}",
+                "candidate_rank": rank,
+                "large_slippage_proxy": 0.0 if rank <= 5 else None,
+                "limit_up_buy_ratio": 0.0 if rank <= 5 else None,
+                "unfilled_ratio_proxy": 0.0 if rank <= 5 else None,
+                "limit_down_sell_ratio": 0.0 if rank <= 5 else None,
+                "open_gap_proxy": 0.0 if rank <= 5 else None,
+                "estimated_turnover_impact": 0.01 if rank <= 5 else None,
+            }
+        )
+    tables = build_execution_proxy_quality_tables(
+        pd.DataFrame(rows),
+        strategy=PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+    )
+    buckets = tables["execution_proxy_quality_by_top_bucket"]
+    top5 = buckets[buckets["top_n"].eq(5)].iloc[0]
+    top30 = buckets[buckets["top_n"].eq(30)].iloc[0]
+
+    assert top5["execution_proxy_available_ratio"] == 1.0
+    assert top30["execution_proxy_available_ratio"] == pytest.approx(5 / 30)
+    assert execution_proxy_quality_status(buckets) == "EXECUTION_PROXY_NOT_READY"
+
+
+def test_execution_proxy_quality_marks_degraded_proxy():
+    candidates = pd.DataFrame(
+        [
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000001",
+                "candidate_rank": 1,
+                "large_slippage_proxy": 0.04,
+                "limit_up_buy_ratio": 0.0,
+                "unfilled_ratio_proxy": 0.0,
+                "limit_down_sell_ratio": 0.0,
+                "open_gap_proxy": 0.04,
+                "estimated_turnover_impact": 0.01,
+            }
+        ]
+    )
+
+    tables = build_execution_proxy_quality_tables(candidates)
+    strategy_row = tables["execution_proxy_quality_by_strategy"].iloc[0]
+
+    assert strategy_row["execution_proxy_available_ratio"] == 1.0
+    assert strategy_row["execution_degraded_ratio"] == 1.0
 
 
 def test_pattern_lineage_audit_marks_target_strategy_not_inheriting(tmp_path: Path):

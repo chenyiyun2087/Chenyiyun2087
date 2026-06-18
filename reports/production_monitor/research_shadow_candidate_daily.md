@@ -1,12 +1,12 @@
 # Research Shadow Candidate Daily
 
-- trade_date: `2026-06-17`
+- trade_date: `2026-06-18`
 - production_strategy: `production_governed_vol_position`
 - shadow_strategy: `production_governed_vol_position_v1_2b_gate_tuned`
-- shadow_pass: `True`
-- shadow_fail_reasons: ``
+- shadow_pass: `False`
+- shadow_fail_reasons: `execution_degraded_days_above_threshold, large_slippage_proxy_days_above_threshold`
 - event_shadow_fail_reasons: `insufficient_recovery_events, shadow_recovery_theory_gap_not_positive`
-- execution_proxy_fail_reasons: `missing_execution_proxy`
+- execution_proxy_fail_reasons: `degraded_execution_proxy`
 
 | metric | value |
 |---|---:|
@@ -14,11 +14,11 @@
 | position_diff | 0.0 |
 | risk_decision_diff | False |
 | recovery_status | not_applicable |
-| theory_gap | 0.0012001176031690708 |
-| execution_feasibility | unknown_missing_execution_proxy |
+| theory_gap | 0.0018004573073069352 |
+| execution_feasibility | pass |
 | 20d_rows | 20 |
-| 20d_theory_gap_sum | 0.012266057747895132 |
-| calendar_window_pass | True |
+| 20d_theory_gap_sum | 0.011305779306127861 |
+| calendar_window_pass | False |
 | event_window_pass | False |
 | execution_proxy_pass | False |
 

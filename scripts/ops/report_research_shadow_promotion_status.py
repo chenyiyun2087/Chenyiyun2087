@@ -56,20 +56,28 @@ def build_promotion_status(
     event_pass = bool(shadow_summary.get("event_window_pass")) and total_recovery_events >= int(shadow_config.get("min_recovery_events") or 5)
     execution_pass = bool(shadow_summary.get("execution_proxy_pass"))
     pattern_status = str(pattern_lineage_summary.get("lineage_status") or "PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING")
-    pattern_ready = pattern_status == "PATTERN_LINEAGE_TARGET_READY"
-    statuses: list[str] = []
+    fp_status = str(fp_separability_summary.get("separability_status") or "")
+    blocking_statuses: list[str] = []
+    warning_statuses: list[str] = []
+    if not calendar_pass:
+        blocking_statuses.append("NOT_READY_CALENDAR_WINDOW")
     if not event_pass:
-        statuses.append("NOT_READY_NO_EVENTS")
+        blocking_statuses.append("NOT_READY_NO_EVENTS")
     if not execution_pass:
-        statuses.append("NOT_READY_EXECUTION_PROXY")
-    if not pattern_ready:
-        statuses.append("NOT_READY_PATTERN_LINEAGE")
-    if not statuses and not bool(shadow_config.get("enabled", False)):
-        statuses.append("READY_FOR_ENABLED_SHADOW_REVIEW")
-    elif not statuses:
-        statuses.append("READY_FOR_CANARY_REVIEW")
-    promotion_ready = statuses == ["READY_FOR_ENABLED_SHADOW_REVIEW"]
-    canary_ready = statuses == ["READY_FOR_CANARY_REVIEW"]
+        blocking_statuses.append("NOT_READY_EXECUTION_PROXY")
+    if pattern_status != "PATTERN_LINEAGE_TARGET_READY":
+        warning_statuses.append("PATTERN_LINEAGE_WARNING")
+    if fp_status:
+        warning_statuses.append("FP_SEPARABILITY_EXPLANATION_ONLY")
+    enabled = bool(shadow_config.get("enabled", False))
+    promotion_ready = not blocking_statuses and not enabled
+    canary_ready = not blocking_statuses and enabled
+    if promotion_ready:
+        status = "READY_FOR_ENABLED_SHADOW_REVIEW"
+    elif canary_ready:
+        status = "READY_FOR_CANARY_REVIEW"
+    else:
+        status = "MANUAL_SHADOW_OBSERVATION"
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "production_default": config.get("primary_strategy"),
@@ -82,10 +90,13 @@ def build_promotion_status(
         "execution_proxy_pass": execution_pass,
         "promotion_ready": promotion_ready,
         "canary_ready": canary_ready,
-        "promotion_statuses": statuses,
+        "promotion_status": status,
+        "promotion_statuses": [*blocking_statuses, *warning_statuses] or [status],
+        "blocking_statuses": blocking_statuses,
+        "warning_statuses": warning_statuses,
         "pattern_lineage_status": pattern_status,
         "pattern_lineage_summary_path": pattern_lineage_summary.get("_summary_path"),
-        "fp_separability_status": fp_separability_summary.get("separability_status"),
+        "fp_separability_status": fp_status or None,
         "fp_separability_summary_path": fp_separability_summary.get("_summary_path"),
         "latest_theory_gap_sum": shadow_summary.get("theory_gap_sum"),
         "latest_recovery_event_days": shadow_summary.get("recovery_event_days"),
@@ -97,6 +108,8 @@ def build_promotion_status(
         "latest_execution_proxy_fail_reasons": shadow_summary.get("execution_proxy_fail_reasons") or [],
         "manual_approval_required": True,
         "production_change_allowed": False,
+        "pattern_blocks_enabled_shadow": False,
+        "pattern_blocks_pattern_risk_features": pattern_status != "PATTERN_LINEAGE_TARGET_READY",
     }
 
 
@@ -108,6 +121,8 @@ def _markdown(status: dict[str, object]) -> str:
         f"- shadow_strategy: `{status.get('shadow_strategy')}`",
         f"- research_shadow_candidate_enabled: `{status.get('research_shadow_candidate_enabled')}`",
         f"- promotion_statuses: `{', '.join(status.get('promotion_statuses') or [])}`",
+        f"- blocking_statuses: `{', '.join(status.get('blocking_statuses') or [])}`",
+        f"- warning_statuses: `{', '.join(status.get('warning_statuses') or [])}`",
         f"- promotion_ready: `{status.get('promotion_ready')}`",
         f"- canary_ready: `{status.get('canary_ready')}`",
         "",
@@ -122,6 +137,7 @@ def _markdown(status: dict[str, object]) -> str:
         f"| execution_proxy_available_ratio | {status.get('execution_proxy_available_ratio')} |",
         "",
         f"- pattern_lineage_status: `{status.get('pattern_lineage_status')}`",
+        f"- pattern_blocks_enabled_shadow: `{status.get('pattern_blocks_enabled_shadow')}`",
         f"- fp_separability_status: `{status.get('fp_separability_status')}`",
         "",
         "This dashboard is read-only. It does not enable shadow, canary, orders, or production strategy changes.",

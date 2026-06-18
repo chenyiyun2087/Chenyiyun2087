@@ -17,7 +17,7 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 - Event accumulator pass: `reports/production_monitor/research_shadow_event_log.csv` has durable recovery-event samples, deduplicated by `trade_date + shadow_strategy + production_strategy`.
 - Execution proxy pass: execution feasibility is not `unknown_missing_execution_proxy`, and there are no degraded execution days.
 - No large slippage proxy days, limit-up buy risk days, unfilled proxy days, or limit-down sell risk days.
-- Pattern is not required for enabled shadow, but current pattern quality status must be disclosed.
+- Pattern is not required for enabled shadow; pattern lineage and quality must be disclosed as warning-only fields.
 - Production default unchanged and manual approval recorded.
 
 ## Required Read-Only Reports
@@ -27,6 +27,13 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 - `reports/production_monitor/research_shadow_event_log.csv`: cumulative recovery-event ledger.
 - `reports/production_monitor/research_shadow_event_summary.json`: cumulative event metrics.
 - `reports/production_monitor/research_shadow_promotion_status.json/md`: promotion readiness dashboard.
+- `exports/signal_research/execution_proxy_quality/*/summary.json`: execution proxy coverage and degraded-ratio audit.
+
+## Blocking vs Warning Status
+
+- Enabled-shadow blockers: `NOT_READY_CALENDAR_WINDOW`, `NOT_READY_NO_EVENTS`, `NOT_READY_EXECUTION_PROXY`.
+- Warning-only disclosures: `PATTERN_LINEAGE_WARNING`, `FP_SEPARABILITY_EXPLANATION_ONLY`.
+- Pattern warnings block only pattern-based veto, risk guard, rerank, or pattern-based canary review; they do not block enabled shadow by themselves.
 
 ## Canary Requirements
 
