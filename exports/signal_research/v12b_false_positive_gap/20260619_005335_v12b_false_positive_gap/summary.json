@@ -1,0 +1,12 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "backtest_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260619_005237_692696_trusted_account_backtest",
+  "output_dir": "exports/signal_research/v12b_false_positive_gap/20260619_005335_v12b_false_positive_gap",
+  "false_positive_days": 122,
+  "benign_false_positive_days": 56,
+  "dangerous_false_positive_days": 34,
+  "borderline_false_positive_days": 32,
+  "files": {
+    "v12b_false_positive_gap": "exports/signal_research/v12b_false_positive_gap/20260619_005335_v12b_false_positive_gap/v12b_false_positive_gap.csv"
+  }
+}

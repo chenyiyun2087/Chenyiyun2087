@@ -20,6 +20,8 @@ GOVERNED_V1_2 = "production_governed_vol_position_v1_2_recovery"
 GOVERNED_V1_2_PATTERN_VETO = "production_governed_vol_position_v1_2_recovery_pattern_veto"
 GOVERNED_V1_2B = "production_governed_vol_position_v1_2b_dynamic_score"
 GOVERNED_V1_2B_PATTERN_VETO = "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto"
+GOVERNED_V1_2B_GATE_TUNED = "production_governed_vol_position_v1_2b_gate_tuned"
+GOVERNED_V1_2B_GATE_TUNED_PATTERN_VETO = "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto"
 BASELINE = "baseline_full_liquidity_detail_vol_position"
 HORIZONS = (5, 10, 20)
 REDUCE_DECISIONS = {"reduce_position", "soft_reduce", "hard_reduce", "recovery_reduce"}
@@ -143,6 +145,8 @@ def build_soft_vs_hard_reduce_compare(nav: pd.DataFrame) -> pd.DataFrame:
                 GOVERNED_V1_2_PATTERN_VETO,
                 GOVERNED_V1_2B,
                 GOVERNED_V1_2B_PATTERN_VETO,
+                GOVERNED_V1_2B_GATE_TUNED,
+                GOVERNED_V1_2B_GATE_TUNED_PATTERN_VETO,
             ]
         )
     ].copy()
@@ -178,6 +182,8 @@ def build_governor_version_compare(nav: pd.DataFrame) -> pd.DataFrame:
         GOVERNED_V1_2_PATTERN_VETO,
         GOVERNED_V1_2B,
         GOVERNED_V1_2B_PATTERN_VETO,
+        GOVERNED_V1_2B_GATE_TUNED,
+        GOVERNED_V1_2B_GATE_TUNED_PATTERN_VETO,
         GOVERNED_V2,
     ]
     frame = nav[nav["strategy"].isin(strategies)].copy()

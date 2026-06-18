@@ -1,0 +1,24 @@
+【核心精选策略收益评估】
+日期：2026-06-18，策略：production_governed_vol_position
+结论：风险总闸触发：reduce_position，目标仓位 50.00%
+
+收益/回撤：
+- 主策略三年：累计19.94%，年化7.75%，最大回撤-24.81%，期末权益599,703
+- 风控影子v2.2：累计42.09%，年化11.36%，最大回撤-37.33%
+
+当前运行：
+- 候选 5 只，目标仓位合计50.00%；行业：陶瓷1只、元器件1只、小金属1只、IT设备1只、化工原料1只
+- 订单 5 笔（BUY 5 / SELL 0），计划金额 231,343
+- 影子盘：可成交 5 / 不可成交 0，均值滑点 54.9 bps；验收 fail / reduce_position
+- 最近影子盘：fail_streak 1，worst_action reduce_position
+- 实盘快照：总权益 500,000，现金 500,000，持仓市值 0，日收益 0.00%
+- 数据提醒：live_positions is empty; live realized strategy trend cannot be judged
+
+Top5：
+- 1. 300285 国瓷材料 陶瓷 权重6.48%
+- 2. 301217 铜冠铜箔 元器件 权重8.47%
+- 3. 600392 盛和资源 小金属 权重13.27%
+- 4. 300857 协创数据 IT设备 权重11.74%
+- 5. 600378 昊华科技 化工原料 权重10.04%
+
+报告：/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260618_224801_20260618/strategy_performance_review.md

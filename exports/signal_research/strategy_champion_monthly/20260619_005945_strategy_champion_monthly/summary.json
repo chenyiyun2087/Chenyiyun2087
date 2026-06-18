@@ -1,0 +1,8 @@
+{
+  "backtest_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260619_005237_692696_trusted_account_backtest",
+  "output_dir": "exports/signal_research/strategy_champion_monthly/20260619_005945_strategy_champion_monthly",
+  "rows": 224,
+  "files": {
+    "strategy_champion_monthly": "exports/signal_research/strategy_champion_monthly/20260619_005945_strategy_champion_monthly/strategy_champion_monthly.csv"
+  }
+}

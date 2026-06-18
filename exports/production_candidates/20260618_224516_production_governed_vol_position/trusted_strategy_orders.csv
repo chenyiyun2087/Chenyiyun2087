@@ -1,0 +1,6 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,order_status,submitted_at,filled_shares,filled_price,status_reason,note
+2026-06-18,300285,国瓷材料,BUY,89.53,0,300,300,300,0.0,0.06484409198116522,0.06484409198116522,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-06-18,300857,协创数据,BUY,277.76,0,200,200,200,0.0,0.11737442558531394,0.11737442558531394,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-06-18,301217,铜冠铜箔,BUY,200.0,0,200,200,200,0.0,0.08465317627178116,0.08465317627178116,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-06-18,600378,昊华科技,BUY,65.16,0,700,700,700,0.0,0.10044196768920789,0.10044196768920789,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-06-18,600392,盛和资源,BUY,31.66,0,2000,2000,2000,0.0,0.1326863384725318,0.1326863384725318,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5

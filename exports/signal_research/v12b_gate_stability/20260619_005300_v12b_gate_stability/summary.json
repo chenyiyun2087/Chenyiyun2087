@@ -1,0 +1,13 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "data_start": "2023-01-04",
+  "signal_start": "2023-01-04",
+  "nav_start": "2023-11-30",
+  "effective_backtest_start": "2023-11-30",
+  "output_dir": "exports/signal_research/v12b_gate_stability/20260619_005300_v12b_gate_stability",
+  "has_3_month_candidate_streak": true,
+  "files": {
+    "yearly_breakdown": "exports/signal_research/v12b_gate_stability/20260619_005300_v12b_gate_stability/v12b_gate_tuned_yearly_breakdown.csv",
+    "monthly_gate_check": "exports/signal_research/v12b_gate_stability/20260619_005300_v12b_gate_stability/v12b_gate_tuned_monthly_gate_check.csv"
+  }
+}

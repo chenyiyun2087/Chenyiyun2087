@@ -3,6 +3,7 @@ from scripts.ops.production_risk_governor import (
     build_risk_governor_decision,
     build_risk_governor_decision_v1_1_recovery,
     build_risk_governor_decision_v1_2b_dynamic_score,
+    build_risk_governor_decision_v1_2b_gate_tuned,
     build_risk_governor_decision_v1_2_recovery,
     build_risk_governor_decision_v2,
 )
@@ -379,3 +380,52 @@ def test_risk_governor_v1_2b_blocks_secondary_risks():
     )
     assert decision["risk_decision"] == "reduce_position"
     assert decision["recovery_status"] == "blocked_bearish_dominance"
+
+
+def test_risk_governor_v1_2b_gate_tuned_tightens_drawdown_and_industry_gates():
+    config = load_production_config()
+    base_kwargs = {
+        "adaptive_decision": {
+            "active_role": "recent_champion",
+            "market_liquidity_bucket": "normal",
+            "industry_state": "normal",
+            "champion_score": -0.20,
+            "avg_vol_20": 0.03,
+        },
+        "recent_shadow_summary": {"fail_streak": 0, "worst_action": "none", "latest_status": "pass"},
+        "score_context": {"champion_score_pctile": 0.80, "champion_score_z": -0.2, "champion_score_rank": 80, "champion_score_sample_count": 100},
+    }
+    dynamic = build_risk_governor_decision_v1_2b_dynamic_score(
+        config,
+        **base_kwargs,
+        account_state={"governed_nav_ret_10d": 0.01, "governed_nav_drawdown_20d": -0.077, "recovery_streak": 0},
+        pattern_state={"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 2, "pattern_top5_bearish_count": 1, "top_industry_weight": 0.47},
+    )
+    tuned_drawdown = build_risk_governor_decision_v1_2b_gate_tuned(
+        config,
+        **base_kwargs,
+        account_state={"governed_nav_ret_10d": 0.01, "governed_nav_drawdown_20d": -0.077, "recovery_streak": 0},
+        pattern_state={"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 2, "pattern_top5_bearish_count": 1, "top_industry_weight": 0.47},
+    )
+    tuned_industry = build_risk_governor_decision_v1_2b_gate_tuned(
+        config,
+        **base_kwargs,
+        account_state={"governed_nav_ret_10d": 0.01, "governed_nav_drawdown_20d": -0.02, "recovery_streak": 0},
+        pattern_state={"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 2, "pattern_top5_bearish_count": 1, "top_industry_weight": 0.49},
+    )
+    tuned_streak = build_risk_governor_decision_v1_2b_gate_tuned(
+        config,
+        **base_kwargs,
+        account_state={"governed_nav_ret_10d": 0.01, "governed_nav_drawdown_20d": -0.02, "recovery_streak": 4},
+        pattern_state={"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 2, "pattern_top5_bearish_count": 1, "top_industry_weight": 0.47},
+        recovery_params={"max_recovery_streak": 4},
+    )
+
+    assert dynamic["risk_decision"] == "recovery_reduce"
+    assert tuned_drawdown["risk_decision"] == "hard_reduce"
+    assert tuned_drawdown["recovery_status"] == "blocked_kill_switch"
+    assert tuned_industry["risk_decision"] == "reduce_position"
+    assert tuned_industry["recovery_status"] == "blocked_top_industry_weight"
+    assert tuned_streak["risk_decision"] == "reduce_position"
+    assert tuned_streak["recovery_status"] == "blocked_recovery_streak_exceeded"
+    assert tuned_drawdown["risk_governor_version"] == "v1.2b_gate_tuned"

@@ -1,0 +1,8 @@
+trough_date,drawdown,risk_decision,miss_reason
+2026-03-05,-0.23598211261482205,normal,no_defensive_action_in_prior_10_calendar_days
+2026-02-24,-0.23458271215279736,normal,no_defensive_action_in_prior_10_calendar_days
+2026-03-04,-0.23451166820962488,normal,no_defensive_action_in_prior_10_calendar_days
+2026-03-03,-0.23429192764120776,normal,no_defensive_action_in_prior_10_calendar_days
+2026-02-25,-0.23033329304025008,normal,no_defensive_action_in_prior_10_calendar_days
+2026-03-23,-0.22510112876183508,normal,no_defensive_action_in_prior_10_calendar_days
+2026-04-28,-0.22503666765130603,"hard_reduce,normal,recovery_reduce",no_defensive_action_in_prior_10_calendar_days

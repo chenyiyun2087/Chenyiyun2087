@@ -19,9 +19,11 @@ if str(PROJECT_ROOT) not in sys.path:
 WRAPPER = PROJECT_ROOT / "scripts/research/run_production_governed_vol_position_backtest.py"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "exports/signal_research/governor_v12_grid"
 TARGET_STRATEGY = "production_governed_vol_position_v1_2b_dynamic_score"
+GATE_TUNED_TARGET_STRATEGY = "production_governed_vol_position_v1_2b_gate_tuned"
 BASELINE_STRATEGY = "production_governed_vol_position"
 
 from scripts.research.analyze_governor_contribution import build_governor_version_compare
+from scripts.research.analyze_v12b_false_positive_gap import classify_false_positive
 GRID = {
     "champion_score_percentile_floor": [0.50, 0.60, 0.70, 0.80],
     "champion_score_z_floor": [-1.0, -0.75, -0.50, -0.25],
@@ -29,6 +31,13 @@ GRID = {
     "nav_ret_10d_kill": [-0.03, -0.04, -0.05, -0.06],
     "nav_dd_20d_kill": [-0.06, -0.08, -0.10],
     "max_recovery_streak": [3, 5, 10],
+}
+LOCAL_V12B_GATE_GRID = {
+    "recovery_position_mid": [0.53, 0.55],
+    "recovery_position_high": [0.56, 0.58],
+    "top_industry_weight_limit": [0.45, 0.48, 0.50],
+    "nav_dd_20d_kill": [-0.07, -0.075, -0.08],
+    "max_recovery_streak": [4, 5],
 }
 
 
@@ -45,9 +54,10 @@ def _run(cmd: list[str]) -> dict:
     return _extract_json(result.stdout)
 
 
-def _grid_rows() -> list[dict[str, object]]:
-    keys = list(GRID)
-    return [dict(zip(keys, values)) for values in itertools.product(*(GRID[key] for key in keys))]
+def _grid_rows(local_gate_grid: bool = False) -> list[dict[str, object]]:
+    grid = LOCAL_V12B_GATE_GRID if local_gate_grid else GRID
+    keys = list(grid)
+    return [dict(zip(keys, values)) for values in itertools.product(*(grid[key] for key in keys))]
 
 
 def _summary_metric(summary: pd.DataFrame, strategy: str, column: str) -> float | None:
@@ -95,6 +105,22 @@ def _evaluate_run(report: dict, params: dict[str, object], target_strategy: str)
         "baseline_false_positive_reduce_days": int(baseline_false_positive),
         "missed_risk_events": int(target_worst.get("missed_risk_events") or 0),
     }
+    try:
+        forward = __import__(
+            "scripts.research.analyze_governor_contribution",
+            fromlist=["build_false_positive_reduce_days", "build_risk_decision_forward_returns"],
+        )
+        false_positive = forward.build_false_positive_reduce_days(forward.build_risk_decision_forward_returns(nav, strategy=target_strategy))
+        if not false_positive.empty:
+            false_positive["false_positive_type"] = false_positive.apply(classify_false_positive, axis=1)
+            out["benign_false_positive_days"] = int(false_positive["false_positive_type"].eq("benign_false_positive").sum())
+            out["dangerous_false_positive_days"] = int(false_positive["false_positive_type"].eq("dangerous_false_positive").sum())
+        else:
+            out["benign_false_positive_days"] = 0
+            out["dangerous_false_positive_days"] = 0
+    except Exception:
+        out["benign_false_positive_days"] = None
+        out["dangerous_false_positive_days"] = None
     out["passes_hard_gates"] = bool(
         int(out["missed_risk_events"]) == 0
         and (out["max_drawdown"] is not None and float(out["max_drawdown"]) >= -0.26)
@@ -104,6 +130,22 @@ def _evaluate_run(report: dict, params: dict[str, object], target_strategy: str)
         and (out["worst_20d_return"] is not None and float(out["worst_20d_return"]) >= -0.168)
         and 30 <= int(out["recovery_days"]) <= 100
     )
+    failures = []
+    if int(out["missed_risk_events"]) != 0:
+        failures.append("missed_risk_events")
+    if out["max_drawdown"] is None or float(out["max_drawdown"]) < -0.26:
+        failures.append("max_drawdown")
+    if out["annualized_return"] is None or float(out["annualized_return"]) < 0.11:
+        failures.append("annualized_return")
+    if int(out["false_positive_reduce_days"]) > min(false_positive_limit, 112):
+        failures.append("false_positive_reduce_days")
+    if out["avg_gross_exposure"] is None or float(out["avg_gross_exposure"]) > 0.59:
+        failures.append("avg_gross_exposure")
+    if out["worst_20d_return"] is None or float(out["worst_20d_return"]) < -0.168:
+        failures.append("worst_20d_return")
+    if not 30 <= int(out["recovery_days"]) <= 100:
+        failures.append("recovery_days")
+    out["gate_failure_reason"] = "|".join(failures) if failures else "pass"
     return out
 
 
@@ -111,7 +153,7 @@ def run_grid(args: argparse.Namespace) -> dict[str, object]:
     out_dir = Path(args.output_root) / datetime.now().strftime("%Y%m%d_%H%M%S_v12_grid")
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
-    combos = _grid_rows()
+    combos = _grid_rows(local_gate_grid=bool(args.local_v12b_gate_grid))
     if args.max_runs:
         combos = combos[: int(args.max_runs)]
     for idx, params in enumerate(combos, start=1):
@@ -132,19 +174,39 @@ def run_grid(args: argparse.Namespace) -> dict[str, object]:
             str(args.max_total_positions),
             "--strategies",
             args.strategies,
-            "--v12b-champion-score-percentile-floor",
-            str(params["champion_score_percentile_floor"]),
-            "--v12b-champion-score-z-floor",
-            str(params["champion_score_z_floor"]),
-            "--v12b-champion-score-lookback-days",
-            str(params["lookback_days"]),
-            "--v12b-nav-ret-10d-kill",
-            str(params["nav_ret_10d_kill"]),
-            "--v12b-nav-dd-20d-kill",
-            str(params["nav_dd_20d_kill"]),
-            "--v12b-max-recovery-streak",
-            str(params["max_recovery_streak"]),
         ]
+        if args.local_v12b_gate_grid:
+            cmd.extend(
+                [
+                    "--v12b-gate-tuned-recovery-position-mid",
+                    str(params["recovery_position_mid"]),
+                    "--v12b-gate-tuned-recovery-position-high",
+                    str(params["recovery_position_high"]),
+                    "--v12b-gate-tuned-top-industry-weight-limit",
+                    str(params["top_industry_weight_limit"]),
+                    "--v12b-gate-tuned-nav-dd-20d-kill",
+                    str(params["nav_dd_20d_kill"]),
+                    "--v12b-gate-tuned-max-recovery-streak",
+                    str(params["max_recovery_streak"]),
+                ]
+            )
+        else:
+            cmd.extend(
+                [
+                    "--v12b-champion-score-percentile-floor",
+                    str(params["champion_score_percentile_floor"]),
+                    "--v12b-champion-score-z-floor",
+                    str(params["champion_score_z_floor"]),
+                    "--v12b-champion-score-lookback-days",
+                    str(params["lookback_days"]),
+                    "--v12b-nav-ret-10d-kill",
+                    str(params["nav_ret_10d_kill"]),
+                    "--v12b-nav-dd-20d-kill",
+                    str(params["nav_dd_20d_kill"]),
+                    "--v12b-max-recovery-streak",
+                    str(params["max_recovery_streak"]),
+                ]
+            )
         if args.end_date:
             cmd.extend(["--end-date", args.end_date])
         if args.skip_db_check:
@@ -183,13 +245,20 @@ def main() -> None:
     parser.add_argument("--max-total-positions", type=int, default=5)
     parser.add_argument(
         "--strategies",
-        default="production_governed_vol_position,production_governed_vol_position_v1_2b_dynamic_score,baseline_full_liquidity_detail_vol_position",
+        default="production_governed_vol_position,production_governed_vol_position_v1_2b_dynamic_score,production_governed_vol_position_v1_2b_gate_tuned,baseline_full_liquidity_detail_vol_position",
     )
     parser.add_argument("--target-strategy", default=TARGET_STRATEGY)
+    parser.add_argument(
+        "--local-v12b-gate-grid",
+        action="store_true",
+        help="Run the bounded v1.2b gate-tuned grid instead of the full dynamic-score grid.",
+    )
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--skip-db-check", action="store_true")
     parser.add_argument("--max-runs", type=int, default=0, help="Limit runs for smoke testing. 0 runs the full grid.")
     args = parser.parse_args()
+    if args.local_v12b_gate_grid and args.target_strategy == TARGET_STRATEGY:
+        args.target_strategy = GATE_TUNED_TARGET_STRATEGY
     print(json.dumps(run_grid(args), ensure_ascii=False, indent=2, default=str))
 
 

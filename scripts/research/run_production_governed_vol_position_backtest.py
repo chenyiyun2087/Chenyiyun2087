@@ -20,6 +20,8 @@ WORST_CASE_SCRIPT = PROJECT_ROOT / "scripts/research/analyze_production_worst_ca
 DEFAULT_STRATEGIES = ",".join(
     [
         "production_governed_vol_position",
+        "production_governed_vol_position_v1_2b_gate_tuned",
+        "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto",
         "production_governed_vol_position_v1_2b_dynamic_score",
         "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
         "adaptive_market_style",
@@ -65,6 +67,11 @@ def main() -> None:
     parser.add_argument("--v12b-nav-dd-20d-kill", type=float, default=-0.08)
     parser.add_argument("--v12b-max-recovery-streak", type=int, default=5)
     parser.add_argument("--v12b-top-industry-weight-limit", type=float, default=0.50)
+    parser.add_argument("--v12b-gate-tuned-recovery-position-mid", type=float, default=0.55)
+    parser.add_argument("--v12b-gate-tuned-recovery-position-high", type=float, default=0.58)
+    parser.add_argument("--v12b-gate-tuned-nav-dd-20d-kill", type=float, default=-0.075)
+    parser.add_argument("--v12b-gate-tuned-max-recovery-streak", type=int, default=5)
+    parser.add_argument("--v12b-gate-tuned-top-industry-weight-limit", type=float, default=0.48)
     args = parser.parse_args()
 
     if not args.skip_db_check:
@@ -115,6 +122,16 @@ def main() -> None:
         str(args.v12b_max_recovery_streak),
         "--v12b-top-industry-weight-limit",
         str(args.v12b_top_industry_weight_limit),
+        "--v12b-gate-tuned-recovery-position-mid",
+        str(args.v12b_gate_tuned_recovery_position_mid),
+        "--v12b-gate-tuned-recovery-position-high",
+        str(args.v12b_gate_tuned_recovery_position_high),
+        "--v12b-gate-tuned-nav-dd-20d-kill",
+        str(args.v12b_gate_tuned_nav_dd_20d_kill),
+        "--v12b-gate-tuned-max-recovery-streak",
+        str(args.v12b_gate_tuned_max_recovery_streak),
+        "--v12b-gate-tuned-top-industry-weight-limit",
+        str(args.v12b_gate_tuned_top_industry_weight_limit),
     ]
     if args.end_date:
         cmd.extend(["--end-date", args.end_date])
@@ -125,6 +142,8 @@ def main() -> None:
     if output_dir:
         for strategy in [
             "production_governed_vol_position",
+            "production_governed_vol_position_v1_2b_gate_tuned",
+            "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto",
             "production_governed_vol_position_v1_2b_dynamic_score",
             "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
             "production_governed_vol_position_v1_2_recovery",

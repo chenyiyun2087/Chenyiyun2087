@@ -23,6 +23,13 @@ V1_2B_DYNAMIC_SCORE_DEFAULTS = {
     "top_industry_weight_limit": 0.50,
 }
 
+V1_2B_GATE_TUNED_DEFAULTS = {
+    **V1_2B_DYNAMIC_SCORE_DEFAULTS,
+    "nav_dd_20d_kill": -0.075,
+    "max_recovery_streak": 5,
+    "top_industry_weight_limit": 0.48,
+}
+
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
     try:
@@ -603,4 +610,32 @@ def build_risk_governor_decision_v1_2b_dynamic_score(
     out["pattern_top5_high_risk_count"] = pattern_top5_high_risk_count
     out["pattern_top5_bullish_count"] = pattern_top5_bullish_count
     out["pattern_top5_bearish_count"] = pattern_top5_bearish_count
+    return out
+
+
+def build_risk_governor_decision_v1_2b_gate_tuned(
+    config: dict[str, Any],
+    adaptive_decision: dict[str, Any] | None = None,
+    recent_shadow_summary: dict[str, Any] | None = None,
+    account_state: dict[str, Any] | None = None,
+    pattern_state: dict[str, Any] | None = None,
+    score_context: dict[str, Any] | None = None,
+    recovery_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Research-only v1.2b boundary tuning with tighter recovery gates."""
+
+    params = {**V1_2B_GATE_TUNED_DEFAULTS, **dict(recovery_params or {})}
+    out = build_risk_governor_decision_v1_2b_dynamic_score(
+        config,
+        adaptive_decision=adaptive_decision,
+        recent_shadow_summary=recent_shadow_summary,
+        account_state=account_state,
+        pattern_state=pattern_state,
+        score_context=score_context,
+        recovery_params=params,
+    )
+    out["risk_governor_version"] = "v1.2b_gate_tuned"
+    out["gate_tuned_nav_dd_20d_kill"] = float(params["nav_dd_20d_kill"])
+    out["gate_tuned_top_industry_weight_limit"] = float(params["top_industry_weight_limit"])
+    out["gate_tuned_max_recovery_streak"] = int(params["max_recovery_streak"])
     return out

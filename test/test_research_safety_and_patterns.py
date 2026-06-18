@@ -25,6 +25,9 @@ from scripts.research.analyze_governor_contribution import (
     build_risk_reason_forward_returns,
     build_soft_vs_hard_reduce_compare,
 )
+from scripts.research.analyze_pattern_veto_attribution import run_analysis as run_pattern_veto_attribution
+from scripts.research.analyze_v12b_false_positive_gap import classify_false_positive, run_analysis as run_false_positive_gap
+from scripts.research.analyze_v12b_gate_stability import build_monthly_gate_check, build_yearly_breakdown
 from scripts.research.analyze_adaptive_vs_governed import (
     build_exposure_efficiency_compare,
     build_monthly_return_compare,
@@ -40,6 +43,8 @@ from scripts.research_trusted_strategy_account_backtest import (
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
     _champion_score_context_from_decisions,
@@ -231,6 +236,8 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
             PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
             PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
@@ -244,9 +251,154 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
     assert specs[4].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME
     assert specs[5].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME
     assert specs[6].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME
-    assert specs[7].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
-    assert specs[8].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
-    assert specs[9].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
+    assert specs[7].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME
+    assert specs[8].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME
+    assert specs[9].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
+    assert specs[10].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
+    assert specs[11].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
+
+
+def test_v12b_false_positive_gap_classifies_only_target_strategy(tmp_path: Path):
+    backtest_dir = tmp_path / "backtest"
+    backtest_dir.mkdir()
+    dates = pd.date_range("2026-01-01", periods=25, freq="D")
+    rows = []
+    nav = 1.0
+    for idx, day in enumerate(dates):
+        if idx:
+            nav *= 1.005
+        rows.append(
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
+                "trade_date": day.strftime("%Y-%m-%d"),
+                "nav": nav,
+                "gross_exposure": 0.5,
+                "risk_decision": "reduce_position" if idx == 0 else "normal",
+                "position_ratio": 0.45,
+                "target_position_ratio": 0.45,
+                "risk_governor_reasons": "negative_recent_champion",
+                "recovery_status": "blocked_dynamic_score_floor",
+                "champion_score_pctile_252": 0.55,
+                "champion_score_z_252": -0.6,
+                "governed_nav_ret_10d": 0.01,
+                "governed_nav_drawdown_20d": -0.01,
+            }
+        )
+        rows.append(
+            {
+                "strategy": "other_strategy",
+                "trade_date": day.strftime("%Y-%m-%d"),
+                "nav": nav,
+                "gross_exposure": 0.5,
+                "risk_decision": "normal",
+                "position_ratio": 0.7,
+                "target_position_ratio": 0.7,
+                "risk_governor_reasons": "",
+            }
+        )
+    pd.DataFrame(rows).to_csv(backtest_dir / "trusted_account_backtest_nav.csv", index=False)
+
+    summary = run_false_positive_gap(backtest_dir, tmp_path / "out", PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME)
+    gap = pd.read_csv(summary["files"]["v12b_false_positive_gap"])
+
+    assert len(gap) == 1
+    assert gap["strategy"].unique().tolist() == [PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME]
+    assert gap["false_positive_type"].iloc[0] == "benign_false_positive"
+    assert classify_false_positive(pd.Series({"next_10d_return": 0.04, "next_20d_return": 0.06, "max_dd_20d": -0.09})) == "dangerous_false_positive"
+    with pytest.raises(RuntimeError, match="missing_strategy"):
+        run_false_positive_gap(backtest_dir, tmp_path / "out2", "missing_strategy")
+
+
+def test_pattern_veto_attribution_counts_actual_removed_only_inside_top_n(tmp_path: Path):
+    backtest_dir = tmp_path / "backtest"
+    backtest_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000001",
+                "candidate_rank": 1,
+                "effective_weight": 0.2,
+                "pattern_risk_level": "high",
+                "bearish_pattern_count": 3,
+                "bullish_pattern_count": 1,
+                "next_10d_return": -0.05,
+                "max_dd_20d": -0.12,
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000099",
+                "candidate_rank": 8,
+                "effective_weight": 0.05,
+                "pattern_risk_level": "high",
+                "bearish_pattern_count": 2,
+                "bullish_pattern_count": 0,
+                "next_10d_return": -0.01,
+                "max_dd_20d": -0.02,
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000002",
+                "candidate_rank": 1,
+                "effective_weight": 0.2,
+                "pattern_risk_level": "low",
+                "bearish_pattern_count": 0,
+                "bullish_pattern_count": 1,
+            },
+        ]
+    ).to_csv(backtest_dir / "trusted_account_backtest_candidates.csv", index=False)
+
+    summary = run_pattern_veto_attribution(
+        backtest_dir,
+        tmp_path / "out",
+        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
+        top_n=5,
+    )
+    attribution = pd.read_csv(summary["files"]["pattern_veto_attribution"])
+
+    assert int(attribution["pattern_veto_candidate_count"].iloc[0]) == 2
+    assert int(attribution["pattern_veto_actual_removed_count"].iloc[0]) == 1
+    assert int(attribution["candidate_only_count"].iloc[0]) == 1
+    assert str(attribution["removed_symbols"].iloc[0]).zfill(6) == "000001"
+
+
+def test_v12b_gate_stability_outputs_yearly_and_monthly_tables():
+    nav = pd.DataFrame(
+        [
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2025-12-30",
+                "nav": 1.0,
+                "gross_exposure": 0.55,
+                "risk_decision": "normal",
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2025-12-31",
+                "nav": 1.1,
+                "gross_exposure": 0.55,
+                "risk_decision": "recovery_reduce",
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-02",
+                "nav": 1.2,
+                "gross_exposure": 0.56,
+                "risk_decision": "normal",
+            },
+        ]
+    )
+
+    yearly = build_yearly_breakdown(nav, PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME)
+    monthly = build_monthly_gate_check(nav, PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME)
+
+    assert yearly["year"].tolist() == [2025, 2026]
+    assert int(yearly.loc[yearly["year"].eq(2025), "recovery_days"].iloc[0]) == 1
+    assert "production_candidate_streak" in monthly.columns
 
 
 def test_pattern_rerank_does_not_expand_candidate_pool_and_penalty_downweights_high_risk():
