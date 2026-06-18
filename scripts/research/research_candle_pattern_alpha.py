@@ -33,6 +33,8 @@ PATTERN_FIELDS = [
     "bullish_pattern_count",
     "bearish_pattern_count",
     "pattern_pass_count",
+    "top_pattern_ids",
+    "ashare_signal_keys",
 ]
 
 
@@ -98,11 +100,18 @@ def build_forward_pattern_panel(scores: pd.DataFrame, prices: pd.DataFrame, hori
                 out[f"fwd_{horizon}d_return"] = np.nan
                 out[f"max_up_{horizon}d"] = np.nan
                 out[f"max_dd_{horizon}d"] = np.nan
+                out[f"limit_up_rate_{horizon}d"] = np.nan
+                out[f"limit_down_rate_{horizon}d"] = np.nan
+                out[f"large_drop_7pct_rate_{horizon}d"] = np.nan
                 continue
             close = float(window.iloc[-1]["adj_close"])
             out[f"fwd_{horizon}d_return"] = close / base_close - 1.0 if close > 0 else np.nan
             out[f"max_up_{horizon}d"] = float(pd.to_numeric(window["adj_high"], errors="coerce").max() / base_close - 1.0)
             out[f"max_dd_{horizon}d"] = float(pd.to_numeric(window["adj_low"], errors="coerce").min() / base_close - 1.0)
+            daily_ret = pd.to_numeric(window["adj_close"], errors="coerce").pct_change().dropna()
+            out[f"limit_up_rate_{horizon}d"] = float(daily_ret.ge(0.095).mean()) if not daily_ret.empty else np.nan
+            out[f"limit_down_rate_{horizon}d"] = float(daily_ret.le(-0.095).mean()) if not daily_ret.empty else np.nan
+            out[f"large_drop_7pct_rate_{horizon}d"] = float(daily_ret.le(-0.07).mean()) if not daily_ret.empty else np.nan
         out["pattern_alpha_bucket"] = _score_bucket(out.get("pattern_score"))
         out["pattern_signal_group"] = str(out.get("pattern_sentiment") or "missing")
         out["pattern_risk_bucket"] = str(out.get("pattern_risk_level") or "missing")
@@ -126,6 +135,9 @@ def summarize_buckets(panel: pd.DataFrame, horizons: tuple[int, ...] = HORIZONS)
                 row[f"win_rate_{horizon}d"] = float((pd.to_numeric(part[ret_col], errors="coerce") > 0).mean())
                 row[f"avg_max_up_{horizon}d"] = float(pd.to_numeric(part[up_col], errors="coerce").mean())
                 row[f"avg_max_dd_{horizon}d"] = float(pd.to_numeric(part[dd_col], errors="coerce").mean())
+                row[f"limit_up_rate_{horizon}d"] = float(pd.to_numeric(part[f"limit_up_rate_{horizon}d"], errors="coerce").mean())
+                row[f"limit_down_rate_{horizon}d"] = float(pd.to_numeric(part[f"limit_down_rate_{horizon}d"], errors="coerce").mean())
+                row[f"large_drop_7pct_rate_{horizon}d"] = float(pd.to_numeric(part[f"large_drop_7pct_rate_{horizon}d"], errors="coerce").mean())
             rows.append(row)
     return pd.DataFrame(rows)
 

@@ -22,9 +22,14 @@ DEFAULT_STRATEGIES = ",".join(
         "production_governed_vol_position",
         "baseline_full_liquidity_detail_vol_position",
         "adaptive_market_style",
+        "production_governed_adaptive",
         "baseline_full_liquidity_detail",
         "baseline_full_liquidity",
         "tiered_liquidity_then_bs_v2",
+        "baseline_full_liquidity_detail_vol_position_pattern_rerank",
+        "baseline_full_liquidity_detail_vol_position_pattern_risk_penalty",
+        "production_governed_vol_position_pattern_guard",
+        "production_governed_adaptive_pattern_guard",
     ]
 )
 

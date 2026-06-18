@@ -72,7 +72,7 @@ CHENYIYUN_DB_PASSWORD=你的密码 python3 scripts/backfill_score_rank_daily_ind
 
 # 账户级可信策略回测
 CHENYIYUN_DB_PASSWORD=你的密码 \
-python3 scripts/research_trusted_strategy_account_backtest.py \
+python3 scripts/research/run_production_governed_vol_position_backtest.py \
   --start-date 2025-06-03 \
   --end-date 2026-05-29 \
   --initial-cash 500000 \

@@ -1,5 +1,6 @@
 production:
-  primary_strategy: baseline_full_liquidity_detail_vol_position
+  primary_strategy: production_governed_vol_position
+  primary_selection_strategy: baseline_full_liquidity_detail_vol_position
   risk_profile: adaptive
   position_ratio: 0.70
   top_n: 5

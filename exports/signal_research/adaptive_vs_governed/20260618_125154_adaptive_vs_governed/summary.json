@@ -1,0 +1,10 @@
+{
+  "backtest_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_125140_642924_trusted_account_backtest",
+  "output_dir": "exports/signal_research/adaptive_vs_governed/20260618_125154_adaptive_vs_governed",
+  "files": {
+    "adaptive_vs_governed_summary": "exports/signal_research/adaptive_vs_governed/20260618_125154_adaptive_vs_governed/adaptive_vs_governed_summary.csv",
+    "monthly_return_compare": "exports/signal_research/adaptive_vs_governed/20260618_125154_adaptive_vs_governed/monthly_return_compare.csv",
+    "worst_period_compare": "exports/signal_research/adaptive_vs_governed/20260618_125154_adaptive_vs_governed/worst_period_compare.csv",
+    "exposure_efficiency_compare": "exports/signal_research/adaptive_vs_governed/20260618_125154_adaptive_vs_governed/exposure_efficiency_compare.csv"
+  }
+}

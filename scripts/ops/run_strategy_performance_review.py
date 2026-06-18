@@ -33,7 +33,7 @@ DEFAULT_MAX_TOTAL_POSITIONS = int(PRODUCTION_CONFIG["max_total_positions"])
 DEFAULT_POSITION_RATIO = float(PRODUCTION_CONFIG["position_ratio"])
 DEFAULT_HOLD_DAYS = int(PRODUCTION_CONFIG["hold_days"])
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "exports" / "production_strategy_reviews"
-DEFAULT_VOL_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260604_152142_206060_trusted_account_backtest"
+DEFAULT_VOL_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260618_123340_650630_trusted_account_backtest"
 DEFAULT_ADAPTIVE_V22_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260605_004258_229723_trusted_account_backtest"
 DEFAULT_DUAL_3M_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260604_163941_308980_trusted_account_backtest"
 
@@ -197,7 +197,7 @@ def _load_backtests(args: argparse.Namespace) -> dict:
     dual_dir = Path(args.dual_3m_backtest_dir)
     return {
         "source_dirs": {
-            "primary_vol_position": str(primary_dir),
+            "primary_governed": str(primary_dir),
             "adaptive_market_style_v22": str(adaptive_dir),
             "dual_system_3m": str(dual_dir),
         },

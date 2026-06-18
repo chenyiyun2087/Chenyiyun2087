@@ -1,0 +1,15 @@
+{
+  "backtest_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_125140_642924_trusted_account_backtest",
+  "output_dir": "exports/signal_research/governor_contribution/20260618_125154_governor_contribution",
+  "reduce_days": 366,
+  "normal_days": 247,
+  "false_positive_reduce_days": 132,
+  "prevented_loss_days": 314,
+  "files": {
+    "risk_decision_forward_returns": "exports/signal_research/governor_contribution/20260618_125154_governor_contribution/risk_decision_forward_returns.csv",
+    "selected_strategy_contribution": "exports/signal_research/governor_contribution/20260618_125154_governor_contribution/selected_strategy_contribution.csv",
+    "governor_opportunity_cost": "exports/signal_research/governor_contribution/20260618_125154_governor_contribution/governor_opportunity_cost.csv",
+    "governor_prevented_loss": "exports/signal_research/governor_contribution/20260618_125154_governor_contribution/governor_prevented_loss.csv",
+    "false_positive_reduce_days": "exports/signal_research/governor_contribution/20260618_125154_governor_contribution/false_positive_reduce_days.csv"
+  }
+}

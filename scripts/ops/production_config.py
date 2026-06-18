@@ -38,6 +38,7 @@ def load_production_config() -> dict[str, object]:
     production = dict(payload.get("production") or {})
     config = {
         "primary_strategy": str(_require(production, "primary_strategy")),
+        "primary_selection_strategy": str(production.get("primary_selection_strategy") or _require(production, "primary_strategy")),
         "risk_profile": str(_require(production, "risk_profile")),
         "position_ratio": float(_require(production, "position_ratio")),
         "top_n": int(_require(production, "top_n")),

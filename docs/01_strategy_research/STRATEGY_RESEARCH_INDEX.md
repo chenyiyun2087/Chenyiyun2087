@@ -2,7 +2,7 @@
 
 | 主题 | 目录/文件 | 当前状态 | 最新结论 |
 |---|---|---|---|
-| 可信全量池流动性策略 | `docs/tasks/20260512-full-pool-liquidity-strategy.md` | 持续迭代 | 当前飞书主推送切为 `baseline_full_liquidity_detail_vol_position`，`adaptive_market_style` 保留为市场/行业状态风控影子对照。 |
+| 可信全量池流动性策略 | `docs/tasks/20260512-full-pool-liquidity-strategy.md` | 持续迭代 | 当前生产默认底座为 `production_governed_vol_position`，底层选股引擎为 `baseline_full_liquidity_detail_vol_position`，`adaptive_market_style` 保留为高效率挑战者。 |
 | 生产操作手册 | `docs/production_trusted_strategy_usage.md` | 可用 | 日终候选导出、订单草案、飞书通知和影子盘监控已接入。 |
 | 行业研究 | `docs/01_strategy_research/industry/` | 待迁入 | 半导体、机器人、农业、互联网基金等主题待整理。 |
 | 资产配置 | `docs/01_strategy_research/portfolio/` | 待迁入 | 个人资产配置、基金风险收益等主题待整理。 |
@@ -12,8 +12,11 @@
 
 | 策略 | 类型 | 用途 | 备注 |
 |---|---|---|---|
-| `baseline_full_liquidity_detail_vol_position` | 生产主推送 | 收益优先近期冠军策略 | 当前飞书主推送策略，默认仓位 70%；最近 3 个月收益约 +36.71%、最大回撤约 -12.87%，但完整三年裸跑最大回撤约 -66.41%，必须保留风控对照。 |
-| `adaptive_market_style` | 风控影子 | 市场风格自适应生产策略 | v2.2 继续用于每日市场/行业/量能状态检查和降仓参考：三年 T+1 账户级回测收益约 +42.09%，年化约 +11.36%，最大回撤约 -37.33%；AShare 增强默认最多补位 2 只。 |
+| `production_governed_vol_position` | 生产默认底座 | vol_position 进攻引擎 + 生产风险总闸 | 2023-01-04 至 2026-06-17 三年收益 +19.94%、年化 +7.75%、最大回撤 -24.81%，`missed_risk_events=0`，已固化为当前生产默认。 |
+| `baseline_full_liquidity_detail_vol_position` | 底层选股引擎 | 收益优先近期冠军策略 | 继续作为 production governed 的主选股引擎；裸跑不再作为生产默认。 |
+| `adaptive_market_style` | 挑战者/风控影子 | 市场风格自适应生产策略 | 最新三年矩阵回测收益 +44.91%、年化 +16.44%、最大回撤 -26.68%，平均仓位 37.80%，资本效率明显高于 governed；先保留为每日对照和归因对象，不直接替换生产默认。 |
+| `production_governed_adaptive` | 研究失败候选 | adaptive 路由 + 生产风险总闸 | 三年收益 -11.79%、最大回撤 -52.06%，说明把 adaptive 路由直接包进当前 governor 规则会破坏原 adaptive 的低仓位优势，不进入生产候选。 |
+| `production_governed_adaptive_pattern_guard` | 研究失败候选 | adaptive 路由 + governor + 图形 high-risk guard | 三年收益 -11.79%、最大回撤 -52.06%、`missed_risk_events=6`，未达下一代候选门槛；图形识别继续只做研究和影子风控验证。 |
 | `tiered_liquidity_then_bs_v2` | 进攻 | 最近一年账户级回测第一 | 适合作为重点研究和生产候选对照。 |
 | `baseline_full_liquidity_detail_market_gate` | 均衡 | adaptive 的 balanced 底层策略 | 普通市场环境默认使用，目标仓位约 80%。 |
 | `baseline_full_liquidity` | 防守 | adaptive 的 defensive / fallback 底层策略 | 弱市场、缩量或数据不足时使用，目标仓位约 50%。 |

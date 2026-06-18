@@ -81,6 +81,7 @@ RISK_PROFILE_DEFAULTS = {
 }
 DEFAULT_STRATEGIES = [
     "production_governed_vol_position",
+    "production_governed_adaptive",
     "dual_system_adaptive_route",
     "adaptive_market_style",
     "ashare_auto_shadow",
@@ -96,13 +97,16 @@ DEFAULT_STRATEGIES = [
     "baseline_full_liquidity_detail_vol_position_pattern_rerank",
     "baseline_full_liquidity_detail_vol_position_pattern_risk_penalty",
     "production_governed_vol_position_pattern_guard",
+    "production_governed_adaptive_pattern_guard",
     "baseline_full_liquidity_detail_hist_mdd_position",
     "baseline_full_score",
 ]
 PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME = "production_governed_vol_position"
+PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME = "production_governed_adaptive"
 VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_rerank"
 VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_risk_penalty"
 PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME = "production_governed_vol_position_pattern_guard"
+PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME = "production_governed_adaptive_pattern_guard"
 ADAPTIVE_MARKET_STYLE_STRATEGY_NAME = "adaptive_market_style"
 DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME = "dual_system_adaptive_route"
 ASHARE_AUTO_SHADOW_STRATEGY_NAME = "ashare_auto_shadow"
@@ -142,12 +146,15 @@ DUAL_SYSTEM_STRATEGY_NAMES = {
 }
 PRODUCTION_GOVERNED_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
     PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
 }
 PATTERN_STRATEGY_NAMES = {
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
     VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME,
     PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
 }
 PSEUDO_STRATEGY_NAMES = ADAPTIVE_STRATEGY_NAMES | DUAL_SYSTEM_STRATEGY_NAMES | PRODUCTION_GOVERNED_STRATEGY_NAMES | {
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
@@ -2152,7 +2159,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         current_adaptive_role_days = 1
                     decision["current_role_days_after"] = int(current_adaptive_role_days)
 
-                    primary_strategy = str(PRODUCTION_CONFIG.get("primary_strategy") or "baseline_full_liquidity_detail_vol_position")
+                    primary_strategy = str(PRODUCTION_CONFIG.get("primary_selection_strategy") or "baseline_full_liquidity_detail_vol_position")
                     primary_spec = trusted_by_name[primary_strategy]
                     primary_targets = targets_cache.get((signal_date, primary_spec.name), pd.DataFrame())
                     governor = build_risk_governor_decision(
@@ -2160,11 +2167,13 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         adaptive_decision=decision,
                         recent_shadow_summary={"fail_streak": 0, "worst_action": "none", "latest_status": "backtest_proxy"},
                     )
-                    if spec.name == PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME:
+                    if spec.name in {PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME}:
                         governor = _apply_pattern_guard_to_governor(governor, primary_targets)
 
                     risk_decision = str(governor.get("risk_decision") or "normal")
                     selected_strategy_name = primary_strategy
+                    if spec.name in {PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME}:
+                        selected_strategy_name = str(decision.get("selected_strategy") or primary_strategy)
                     if risk_decision == "defensive_only":
                         selected_strategy_name = str(
                             governor.get("fallback_strategy")
@@ -2208,7 +2217,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "risk_governor_reasons": decision["risk_governor_reasons"],
                         "route_reason": "production_risk_governor_backtest",
                     }
-                    if spec.name == PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME:
+                    if spec.name in {PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME}:
                         adaptive_meta["pattern_guard_enabled"] = 1
                 elif spec.name in {VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME, VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME}:
                     base_spec = trusted_by_name["baseline_full_liquidity_detail_vol_position"]

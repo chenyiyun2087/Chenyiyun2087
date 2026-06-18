@@ -1,5 +1,7 @@
 # 回测报告索引
 
+> 2026-06-18 governed 矩阵验收更新：`production_governed_vol_position` 已作为当前生产默认底座，主选股引擎仍为 `baseline_full_liquidity_detail_vol_position`，风险总闸使用 `production_risk_governor`。2023-01-04 至 2026-06-17 三年 T+1 账户级回测收益 +19.94%、年化 +7.75%、最大回撤 -24.81%、`missed_risk_events=0`；`adaptive_market_style` 同期收益 +44.91%、年化 +16.44%、最大回撤 -26.68%，资本效率更强但先保留为挑战者和风险锚。`production_governed_adaptive_pattern_guard` 三年收益 -11.79%、最大回撤 -52.06%、`missed_risk_events=6`，不得进入生产候选。
+
 > 2026-06-04 更新：当前 `adaptive_market_style` 从单纯三年低回撤口径升级为“最近 3 个月收益优先 + 长期风险约束 + 日检周切”。近期冠军默认指向 `baseline_full_liquidity_detail_vol_position`，系统每天检测市场、行业和量能状态，最多每周切换一次底层基准，目标仓位约 50% / 70% / 80%。`tiered_liquidity_then_bs_v2` 只在强市场短期增强，不作为长期满仓默认。
 
 > 2026-06-04 双系统路由更新：新增 `dual_system_adaptive_route`、`ashare_auto_shadow`、`ashare_trend_breakout_shadow`、`ashare_hybrid_conservative_shadow`。最近 3 个月账户级对照中，AShare AUTO 影子收益约 +8.72%、最大回撤约 -17.28%，`adaptive_market_style` 收益约 +7.36%、最大回撤约 -10.97%，双系统路由收益约 +5.27%、最大回撤约 -12.06%。当前结论：AShare AUTO 有收益弹性但波动更大，dual route 风控较保守，需继续优化 AShare 周线门禁和候选缓存后再跑三年验收。
@@ -12,6 +14,9 @@
 
 | 策略名称 | 资金规模 | 回测周期 | 期末权益 | 年化收益 | 最大回撤 | 结论 | 文件夹 |
 |---|---:|---|---:|---:|---:|---|---|
+| `adaptive_market_style` / 挑战者对照 | 50 万 | 2023-01-04 至 2026-06-17 | 724,539 | +16.44% | -26.68% | 三年收益 +44.91%，平均仓位 37.80%，年化/仓位效率高于 governed；仍需专项归因验证，不直接替换生产默认 | `exports/signal_research/20260618_125140_642924_trusted_account_backtest/` |
+| `production_governed_vol_position` / 当前生产默认底座 | 50 万 | 2023-01-04 至 2026-06-17 | 599,703 | +7.75% | -24.81% | 三年收益 +19.94%，相比裸 `vol_position` 收益提升且回撤下降；`missed_risk_events=0`，作为当前生产默认固化 | `exports/signal_research/20260618_125140_642924_trusted_account_backtest/` |
+| `production_governed_adaptive_pattern_guard` / 下一代候选失败样本 | 50 万 | 2023-01-04 至 2026-06-17 | 441,040 | -5.02% | -52.06% | 三年收益 -11.79%，最坏归因 `missed_risk_events=6`，未达“回撤不劣于当前 governed”门槛，不进入生产候选 | `exports/signal_research/20260618_125140_642924_trusted_account_backtest/` |
 | `baseline_full_liquidity_detail_vol_position` / 飞书主推送 | 50 万 | 2023-01-04 至 2026-06-02 | 592,007 | +5.32% | -66.41% | 最近 3 个月 +36.71%、半年 +84.99%、一年 +177.92%；近期收益弹性最强，但三年回撤深，默认生产仓位降为 70%，并保留 adaptive 防守影子对照 | `exports/signal_research/20260604_152142_206060_trusted_account_backtest/` |
 | `adaptive_market_style` / AShare 加权增强 v2.2 | 50 万 | 2023-01-04 至 2026-06-04 | 710,445 | +11.36% | -37.33% | 三年收益约 +42.09%，默认 AShare 补位上限 2 只；防守态近期冠军转负时降至 45% 仓位，已通过 `-45%` 回撤硬底线 | `exports/signal_research/20260605_004258_229723_trusted_account_backtest/` |
 | `adaptive_market_style` / AShare 加权增强 v2.1 | 50 万 | 2025-12-04 至 2026-06-04 | 675,724 | +91.30% | -11.09% | 半年收益约 +35.14%，周线未确认走降权，AShare 补位最多 2 只；三年硬底线待缓存优化后复跑 | `exports/signal_research/20260604_231724_811158_trusted_account_backtest/` |

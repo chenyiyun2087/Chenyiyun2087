@@ -73,6 +73,7 @@ from scripts.research_full_pool_liquidity_strategies import (
 
 OUT_ROOT = PROJECT_ROOT / "exports" / "production_candidates"
 PRODUCTION_CONFIG = load_production_config()
+PRODUCTION_GOVERNED_STRATEGY_NAME = "production_governed_vol_position"
 DEFAULT_RISK_PROFILE = str(PRODUCTION_CONFIG["risk_profile"])
 RISK_PROFILE_DEFAULTS = {
     "offensive": {
@@ -263,6 +264,8 @@ def _load_prices_asof(engine, start_date: object, asof_date: object) -> pd.DataF
 def _pick_strategy(name: str):
     if name == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME or name in DUAL_SYSTEM_STRATEGY_NAMES:
         return None
+    if name == PRODUCTION_GOVERNED_STRATEGY_NAME:
+        name = str(PRODUCTION_CONFIG.get("primary_selection_strategy") or "baseline_full_liquidity_detail_vol_position")
     specs = filter_strategy_specs(build_strategy_specs(), trusted_only=True)
     by_name = {spec.name: spec for spec in specs}
     if name not in by_name:
@@ -2050,6 +2053,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
     adaptive_decision: dict[str, object] | None = None
     risk_governor: dict[str, object] | None = None
     target_position_ratio = float(args.position_ratio)
+    export_strategy_name = str(args.strategy)
+    selection_strategy_name = str(PRODUCTION_CONFIG.get("primary_selection_strategy") or "baseline_full_liquidity_detail_vol_position")
     if args.strategy == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
         candidates, adaptive_decision = _build_adaptive_dynamic_position_detail(
             scores=scores,
@@ -2133,9 +2138,13 @@ def export_candidates(args: argparse.Namespace) -> dict:
         spec = trusted_specs[selected_strategy]
         target_position_ratio = float(args.position_ratio)
         selected = pd.DataFrame()
+    elif args.strategy == PRODUCTION_GOVERNED_STRATEGY_NAME:
+        spec = trusted_specs[selection_strategy_name]
+        selected = _select_candidates(day_scores, spec, top_n=args.top_n)
+        adaptive_decision = _latest_adaptive_decision(scores, trusted_specs, signal_date, top_n=args.top_n)
     else:
         selected = _select_candidates(day_scores, spec, top_n=args.top_n)
-    pseudo_strategy_names = {ADAPTIVE_MARKET_STYLE_STRATEGY_NAME, *DUAL_SYSTEM_STRATEGY_NAMES}
+    pseudo_strategy_names = {ADAPTIVE_MARKET_STYLE_STRATEGY_NAME, PRODUCTION_GOVERNED_STRATEGY_NAME, *DUAL_SYSTEM_STRATEGY_NAMES}
     if selected.empty:
         if args.strategy not in pseudo_strategy_names or candidates.empty:
             raise RuntimeError(f"No candidates selected for {asof_date} with strategy `{args.strategy}`.")
@@ -2162,8 +2171,11 @@ def export_candidates(args: argparse.Namespace) -> dict:
             spec = fallback_spec
             selected = fallback_selected
 
-    if args.strategy not in pseudo_strategy_names:
+    if args.strategy not in pseudo_strategy_names or args.strategy == PRODUCTION_GOVERNED_STRATEGY_NAME:
         candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
+    if args.strategy == PRODUCTION_GOVERNED_STRATEGY_NAME and not candidates.empty:
+        candidates["strategy"] = export_strategy_name
+        candidates["selected_strategy"] = spec.name
     target_position_ratio = float(risk_governor.get("target_position_ratio") or target_position_ratio)
     candidates = _scale_candidate_weights_for_export(candidates, target_position_ratio)
     candidates.attrs["risk_governor"] = risk_governor
@@ -2192,9 +2204,10 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "asof_date": asof_date,
         "start_date": start_date,
         "history_days": int(args.history_days),
-        "strategy": spec.name,
+        "strategy": export_strategy_name,
         "selected_strategy": spec.name,
         "selected_strategy_display_name": strategy_display_name(spec.name),
+        "primary_selection_strategy": selection_strategy_name,
         "sort_col": spec.sort_col,
         "top_n": int(args.top_n),
         "hold_days": int(args.hold_days),

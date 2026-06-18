@@ -61,12 +61,12 @@ def test_symbol_from_ts_code_normalizes_exchange_suffix():
     assert _symbol_from_ts_code("000001.SZ") == "000001"
 
 
-def test_adaptive_risk_profile_defaults_to_vol_position_main_push():
+def test_adaptive_risk_profile_defaults_to_governed_main_push():
     args = argparse.Namespace(risk_profile="adaptive", strategy=None, hold_days=None, position_ratio=None)
 
     resolved = _apply_risk_profile_defaults(args)
 
-    assert resolved.strategy == "baseline_full_liquidity_detail_vol_position"
+    assert resolved.strategy == "production_governed_vol_position"
     assert resolved.hold_days == 10
     assert resolved.position_ratio == 0.7
 
@@ -134,7 +134,7 @@ def test_rebalance_orders_freeze_buy_keeps_sells_only():
 def test_production_default_strategy_is_not_model_risk():
     config = load_production_config()
     specs = {spec.name: spec for spec in build_strategy_specs()}
-    spec = specs[config["primary_strategy"]]
+    spec = specs[config["primary_selection_strategy"]]
 
     assert config["allow_model_risk_fields"] is False
     assert spec.pit_status == "trusted"

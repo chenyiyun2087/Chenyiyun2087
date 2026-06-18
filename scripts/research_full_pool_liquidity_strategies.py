@@ -235,6 +235,8 @@ def load_scores(
             {score_expr("pattern_pass_count")},
             {score_expr("bullish_pattern_count")},
             {score_expr("bearish_pattern_count")},
+            {score_expr("top_pattern_ids")},
+            {score_expr("ashare_signal_keys")},
             s.market_hs300_pct_chg,
             s.market_hs300_ret_20,
             s.market_bs_ratio,

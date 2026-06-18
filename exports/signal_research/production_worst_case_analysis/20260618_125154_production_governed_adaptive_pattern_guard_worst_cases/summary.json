@@ -1,0 +1,18 @@
+{
+  "strategy": "production_governed_adaptive_pattern_guard",
+  "backtest_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_125140_642924_trusted_account_backtest",
+  "output_dir": "exports/signal_research/production_worst_case_analysis/20260618_125154_production_governed_adaptive_pattern_guard_worst_cases",
+  "analyzed_strategies": [
+    "production_governed_adaptive_pattern_guard"
+  ],
+  "worst_drawdown": -0.5205835017291383,
+  "worst_trade_pnl": null,
+  "missed_risk_events": 6,
+  "files": {
+    "worst_drawdown_periods": "exports/signal_research/production_worst_case_analysis/20260618_125154_production_governed_adaptive_pattern_guard_worst_cases/worst_drawdown_periods.csv",
+    "worst_trades": "exports/signal_research/production_worst_case_analysis/20260618_125154_production_governed_adaptive_pattern_guard_worst_cases/worst_trades.csv",
+    "worst_industry_exposure": "exports/signal_research/production_worst_case_analysis/20260618_125154_production_governed_adaptive_pattern_guard_worst_cases/worst_industry_exposure.csv",
+    "risk_governor_actions": "exports/signal_research/production_worst_case_analysis/20260618_125154_production_governed_adaptive_pattern_guard_worst_cases/risk_governor_actions.csv",
+    "missed_risk_events": "exports/signal_research/production_worst_case_analysis/20260618_125154_production_governed_adaptive_pattern_guard_worst_cases/missed_risk_events.csv"
+  }
+}
