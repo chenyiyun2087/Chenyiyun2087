@@ -5733,3 +5733,7 @@
 2026-06-16 23:54:41,079 - INFO - Waiting for TuShare data readiness...
 2026-06-16 23:54:41,079 - INFO - Data is ready! Starting pipeline tasks...
 2026-06-16 23:54:41,079 - INFO - Daily Pipeline completed successfully.
+2026-06-18 21:21:50,295 - INFO - Scheduler started.
+2026-06-18 21:21:50,342 - INFO - Skipping stale task: sina_bs scheduled at 15:20 (grace 90s)
+2026-06-18 21:21:50,342 - INFO - Skipping stale task: eastmoney_data scheduled at 16:30 (grace 90s)
+2026-06-18 21:21:50,342 - INFO - Skipping stale task: daily_pipeline scheduled at 21:00 (grace 90s)

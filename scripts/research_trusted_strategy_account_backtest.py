@@ -22,6 +22,7 @@ from scripts.ops.production_config import load_production_config
 from scripts.ops.production_risk_governor import (
     build_risk_governor_decision,
     build_risk_governor_decision_v1_1_recovery,
+    build_risk_governor_decision_v1_2b_dynamic_score,
     build_risk_governor_decision_v1_2_recovery,
     build_risk_governor_decision_v2,
 )
@@ -90,6 +91,8 @@ DEFAULT_STRATEGIES = [
     "production_governed_vol_position_v1_1_recovery_pattern_veto",
     "production_governed_vol_position_v1_2_recovery",
     "production_governed_vol_position_v1_2_recovery_pattern_veto",
+    "production_governed_vol_position_v1_2b_dynamic_score",
+    "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
     "production_governed_vol_position_v2",
     "production_governed_adaptive",
     "dual_system_adaptive_route",
@@ -116,6 +119,8 @@ PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_STRATEGY_NAME = "production_gover
 PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_1_recovery_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME = "production_governed_vol_position_v1_2_recovery"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2_recovery_pattern_veto"
+PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME = "production_governed_vol_position_v1_2b_dynamic_score"
+PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME = "production_governed_vol_position_v2"
 PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME = "production_governed_adaptive"
 VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_rerank"
@@ -165,6 +170,8 @@ PRODUCTION_GOVERNED_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME,
     PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
@@ -177,6 +184,7 @@ PATTERN_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_1_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
 }
 PSEUDO_STRATEGY_NAMES = ADAPTIVE_STRATEGY_NAMES | DUAL_SYSTEM_STRATEGY_NAMES | PRODUCTION_GOVERNED_STRATEGY_NAMES | {
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
@@ -676,15 +684,22 @@ def _apply_pattern_guard_to_governor(governor: dict[str, object], targets: pd.Da
 
 def _pattern_state_from_targets(targets: pd.DataFrame) -> dict[str, object]:
     if targets.empty:
-        return {"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 0, "pattern_top5_bearish_count": 0}
+        return {"pattern_top5_high_risk_count": 0, "pattern_top5_bullish_count": 0, "pattern_top5_bearish_count": 0, "top_industry_weight": None}
     top = targets.sort_values("rank").head(5).copy() if "rank" in targets.columns else targets.head(5).copy()
     risk = top.get("pattern_risk_level", pd.Series("", index=top.index)).fillna("").astype(str).str.lower()
     bullish = pd.to_numeric(top.get("bullish_pattern_count", pd.Series(0, index=top.index)), errors="coerce").fillna(0).sum()
     bearish = pd.to_numeric(top.get("bearish_pattern_count", pd.Series(0, index=top.index)), errors="coerce").fillna(0).sum()
+    top_industry_weight = None
+    if "industry" in top.columns and "effective_weight" in top.columns:
+        weights = pd.to_numeric(top["effective_weight"], errors="coerce").fillna(0.0)
+        grouped = weights.groupby(top["industry"].fillna("unknown")).sum()
+        if not grouped.empty:
+            top_industry_weight = float(grouped.max())
     return {
         "pattern_top5_high_risk_count": int(risk.eq("high").sum()),
         "pattern_top5_bullish_count": int(bullish),
         "pattern_top5_bearish_count": int(bearish),
+        "top_industry_weight": top_industry_weight,
     }
 
 
@@ -730,6 +745,48 @@ def _recovery_streak_from_decisions(adaptive_decision_rows: list[dict]) -> int:
         else:
             break
     return int(streak)
+
+
+def _champion_score_context_from_decisions(
+    adaptive_decision_rows: list[dict],
+    champion_score: object,
+    lookback: int,
+) -> dict[str, object]:
+    current = _safe_float(champion_score, np.nan)
+    if not np.isfinite(current):
+        return {
+            "champion_score_pctile": None,
+            "champion_score_z": None,
+            "champion_score_rank": None,
+            "champion_score_sample_count": 0,
+        }
+    samples: list[float] = []
+    for row in reversed(adaptive_decision_rows):
+        reasons = str(row.get("risk_governor_reasons") or "")
+        value = _safe_float(row.get("champion_score"), np.nan)
+        if "negative_recent_champion" in reasons and np.isfinite(value):
+            samples.append(float(value))
+        if len(samples) >= int(lookback):
+            break
+    if not samples:
+        return {
+            "champion_score_pctile": None,
+            "champion_score_z": None,
+            "champion_score_rank": None,
+            "champion_score_sample_count": 0,
+        }
+    series = pd.Series(list(reversed(samples)), dtype=float)
+    count = int(series.count())
+    rank = int(series.le(current).sum())
+    pctile = float(rank / count) if count else None
+    std = float(series.std(ddof=0))
+    z = float((current - float(series.mean())) / std) if std > 0 else 0.0
+    return {
+        "champion_score_pctile": pctile,
+        "champion_score_z": z,
+        "champion_score_rank": rank,
+        "champion_score_sample_count": count,
+    }
 
 
 def _symbol_from_ts_code(value: object) -> str:
@@ -2246,11 +2303,37 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     pattern_state = _pattern_state_from_targets(primary_targets)
                     account_state = _account_state_from_nav_rows(nav_rows)
                     account_state["recovery_streak"] = _recovery_streak_from_decisions(adaptive_decision_rows)
+                    champion_score_context = _champion_score_context_from_decisions(
+                        adaptive_decision_rows,
+                        decision.get("champion_score"),
+                        int(args.v12b_champion_score_lookback_days),
+                    )
                     if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME:
                         governor = build_risk_governor_decision_v2(
                             PRODUCTION_CONFIG,
                             adaptive_decision=decision,
                             recent_shadow_summary=shadow_summary,
+                        )
+                    elif spec.name in {
+                        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
+                        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
+                    }:
+                        governor = build_risk_governor_decision_v1_2b_dynamic_score(
+                            PRODUCTION_CONFIG,
+                            adaptive_decision=decision,
+                            recent_shadow_summary=shadow_summary,
+                            account_state=account_state,
+                            pattern_state=pattern_state,
+                            score_context=champion_score_context,
+                            recovery_params={
+                                "champion_score_percentile_floor": float(args.v12b_champion_score_percentile_floor),
+                                "champion_score_z_floor": float(args.v12b_champion_score_z_floor),
+                                "champion_score_min_sample_count": int(args.v12b_champion_score_min_sample_count),
+                                "nav_ret_10d_kill": float(args.v12b_nav_ret_10d_kill),
+                                "nav_dd_20d_kill": float(args.v12b_nav_dd_20d_kill),
+                                "max_recovery_streak": int(args.v12b_max_recovery_streak),
+                                "top_industry_weight_limit": float(args.v12b_top_industry_weight_limit),
+                            },
                         )
                     elif spec.name in {
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_STRATEGY_NAME,
@@ -2306,6 +2389,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         target_override = _apply_pattern_veto_to_targets(target_override)
                     if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME:
                         target_override = _apply_pattern_veto_to_targets(target_override)
+                    if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME:
+                        target_override = _apply_pattern_veto_to_targets(target_override)
                     rebalance_position_ratio = float(governor.get("target_position_ratio") or 0.0)
                     if risk_decision == "freeze_buy" or not bool(governor.get("allow_new_buys", True)):
                         rebalance_position_ratio = 0.0
@@ -2333,9 +2418,16 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "nav_ret_10d_kill": governor.get("nav_ret_10d_kill"),
                             "nav_dd_20d_kill": governor.get("nav_dd_20d_kill"),
                             "max_recovery_streak": governor.get("max_recovery_streak"),
+                            "champion_score_pctile_252": governor.get("champion_score_pctile"),
+                            "champion_score_z_252": governor.get("champion_score_z"),
+                            "champion_score_rank_252": governor.get("champion_score_rank"),
+                            "champion_score_sample_count_252": governor.get("champion_score_sample_count"),
+                            "champion_score_percentile_floor": governor.get("champion_score_percentile_floor"),
+                            "champion_score_z_floor": governor.get("champion_score_z_floor"),
                             "pattern_top5_high_risk_count": governor.get("pattern_top5_high_risk_count"),
                             "pattern_top5_bullish_count": governor.get("pattern_top5_bullish_count"),
                             "pattern_top5_bearish_count": governor.get("pattern_top5_bearish_count"),
+                            "top_industry_weight": governor.get("top_industry_weight", pattern_state.get("top_industry_weight")),
                         }
                     )
                     adaptive_decision_rows.append(decision)
@@ -2359,10 +2451,17 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "nav_ret_10d_kill": decision.get("nav_ret_10d_kill"),
                         "nav_dd_20d_kill": decision.get("nav_dd_20d_kill"),
                         "max_recovery_streak": decision.get("max_recovery_streak"),
+                        "champion_score_pctile_252": decision.get("champion_score_pctile_252"),
+                        "champion_score_z_252": decision.get("champion_score_z_252"),
+                        "champion_score_rank_252": decision.get("champion_score_rank_252"),
+                        "champion_score_sample_count_252": decision.get("champion_score_sample_count_252"),
+                        "champion_score_percentile_floor": decision.get("champion_score_percentile_floor"),
+                        "champion_score_z_floor": decision.get("champion_score_z_floor"),
                         "governed_nav_drawdown_20d": decision.get("governed_nav_drawdown_20d"),
                         "pattern_top5_high_risk_count": decision.get("pattern_top5_high_risk_count"),
                         "pattern_top5_bullish_count": decision.get("pattern_top5_bullish_count"),
                         "pattern_top5_bearish_count": decision.get("pattern_top5_bearish_count"),
+                        "top_industry_weight": decision.get("top_industry_weight"),
                         "route_reason": "production_risk_governor_backtest",
                     }
                     if spec.name in {PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME}:
@@ -2630,9 +2729,16 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["nav_ret_10d_kill"] = adaptive_meta.get("nav_ret_10d_kill")
                         item["nav_dd_20d_kill"] = adaptive_meta.get("nav_dd_20d_kill")
                         item["max_recovery_streak"] = adaptive_meta.get("max_recovery_streak")
+                        item["champion_score_pctile_252"] = adaptive_meta.get("champion_score_pctile_252")
+                        item["champion_score_z_252"] = adaptive_meta.get("champion_score_z_252")
+                        item["champion_score_rank_252"] = adaptive_meta.get("champion_score_rank_252")
+                        item["champion_score_sample_count_252"] = adaptive_meta.get("champion_score_sample_count_252")
+                        item["champion_score_percentile_floor"] = adaptive_meta.get("champion_score_percentile_floor")
+                        item["champion_score_z_floor"] = adaptive_meta.get("champion_score_z_floor")
                         item["pattern_top5_high_risk_count"] = adaptive_meta.get("pattern_top5_high_risk_count")
                         item["pattern_top5_bullish_count"] = adaptive_meta.get("pattern_top5_bullish_count")
                         item["pattern_top5_bearish_count"] = adaptive_meta.get("pattern_top5_bearish_count")
+                        item["top_industry_weight"] = adaptive_meta.get("top_industry_weight")
                         item["pattern_guard_enabled"] = adaptive_meta.get("pattern_guard_enabled")
                         item["pattern_strategy_mode"] = adaptive_meta.get("pattern_strategy_mode")
                 trade_rows.extend(trades)
@@ -2904,6 +3010,14 @@ def main() -> None:
     parser.add_argument("--v12-nav-ret-10d-kill", type=float, default=-0.04)
     parser.add_argument("--v12-nav-dd-20d-kill", type=float, default=-0.08)
     parser.add_argument("--v12-max-recovery-streak", type=int, default=5)
+    parser.add_argument("--v12b-champion-score-percentile-floor", type=float, default=0.60)
+    parser.add_argument("--v12b-champion-score-z-floor", type=float, default=-0.50)
+    parser.add_argument("--v12b-champion-score-lookback-days", type=int, default=252)
+    parser.add_argument("--v12b-champion-score-min-sample-count", type=int, default=60)
+    parser.add_argument("--v12b-nav-ret-10d-kill", type=float, default=-0.04)
+    parser.add_argument("--v12b-nav-dd-20d-kill", type=float, default=-0.08)
+    parser.add_argument("--v12b-max-recovery-streak", type=int, default=5)
+    parser.add_argument("--v12b-top-industry-weight-limit", type=float, default=0.50)
     raw_argv = sys.argv[1:]
     args = parser.parse_args()
     args = _apply_risk_profile_defaults(

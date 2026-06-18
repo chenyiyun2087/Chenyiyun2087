@@ -20,8 +20,8 @@ WORST_CASE_SCRIPT = PROJECT_ROOT / "scripts/research/analyze_production_worst_ca
 DEFAULT_STRATEGIES = ",".join(
     [
         "production_governed_vol_position",
-        "production_governed_vol_position_v1_2_recovery",
-        "production_governed_vol_position_v1_2_recovery_pattern_veto",
+        "production_governed_vol_position_v1_2b_dynamic_score",
+        "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
         "adaptive_market_style",
         "baseline_full_liquidity_detail_vol_position",
     ]
@@ -57,6 +57,14 @@ def main() -> None:
     parser.add_argument("--v12-nav-ret-10d-kill", type=float, default=-0.04)
     parser.add_argument("--v12-nav-dd-20d-kill", type=float, default=-0.08)
     parser.add_argument("--v12-max-recovery-streak", type=int, default=5)
+    parser.add_argument("--v12b-champion-score-percentile-floor", type=float, default=0.60)
+    parser.add_argument("--v12b-champion-score-z-floor", type=float, default=-0.50)
+    parser.add_argument("--v12b-champion-score-lookback-days", type=int, default=252)
+    parser.add_argument("--v12b-champion-score-min-sample-count", type=int, default=60)
+    parser.add_argument("--v12b-nav-ret-10d-kill", type=float, default=-0.04)
+    parser.add_argument("--v12b-nav-dd-20d-kill", type=float, default=-0.08)
+    parser.add_argument("--v12b-max-recovery-streak", type=int, default=5)
+    parser.add_argument("--v12b-top-industry-weight-limit", type=float, default=0.50)
     args = parser.parse_args()
 
     if not args.skip_db_check:
@@ -91,6 +99,22 @@ def main() -> None:
         str(args.v12_nav_dd_20d_kill),
         "--v12-max-recovery-streak",
         str(args.v12_max_recovery_streak),
+        "--v12b-champion-score-percentile-floor",
+        str(args.v12b_champion_score_percentile_floor),
+        "--v12b-champion-score-z-floor",
+        str(args.v12b_champion_score_z_floor),
+        "--v12b-champion-score-lookback-days",
+        str(args.v12b_champion_score_lookback_days),
+        "--v12b-champion-score-min-sample-count",
+        str(args.v12b_champion_score_min_sample_count),
+        "--v12b-nav-ret-10d-kill",
+        str(args.v12b_nav_ret_10d_kill),
+        "--v12b-nav-dd-20d-kill",
+        str(args.v12b_nav_dd_20d_kill),
+        "--v12b-max-recovery-streak",
+        str(args.v12b_max_recovery_streak),
+        "--v12b-top-industry-weight-limit",
+        str(args.v12b_top_industry_weight_limit),
     ]
     if args.end_date:
         cmd.extend(["--end-date", args.end_date])
@@ -101,6 +125,8 @@ def main() -> None:
     if output_dir:
         for strategy in [
             "production_governed_vol_position",
+            "production_governed_vol_position_v1_2b_dynamic_score",
+            "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
             "production_governed_vol_position_v1_2_recovery",
             "production_governed_vol_position_v1_2_recovery_pattern_veto",
             "production_governed_vol_position_v2",

@@ -18,6 +18,8 @@ GOVERNED_V1_1 = "production_governed_vol_position_v1_1_recovery"
 GOVERNED_V1_1_PATTERN_VETO = "production_governed_vol_position_v1_1_recovery_pattern_veto"
 GOVERNED_V1_2 = "production_governed_vol_position_v1_2_recovery"
 GOVERNED_V1_2_PATTERN_VETO = "production_governed_vol_position_v1_2_recovery_pattern_veto"
+GOVERNED_V1_2B = "production_governed_vol_position_v1_2b_dynamic_score"
+GOVERNED_V1_2B_PATTERN_VETO = "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto"
 BASELINE = "baseline_full_liquidity_detail_vol_position"
 HORIZONS = (5, 10, 20)
 REDUCE_DECISIONS = {"reduce_position", "soft_reduce", "hard_reduce", "recovery_reduce"}
@@ -131,7 +133,18 @@ def build_risk_reason_effectiveness(reason_forward: pd.DataFrame) -> pd.DataFram
 def build_soft_vs_hard_reduce_compare(nav: pd.DataFrame) -> pd.DataFrame:
     frame = _daily_nav_returns(nav)
     frame = frame[
-        frame["strategy"].isin([GOVERNED, GOVERNED_V2, GOVERNED_V1_1, GOVERNED_V1_1_PATTERN_VETO, GOVERNED_V1_2, GOVERNED_V1_2_PATTERN_VETO])
+        frame["strategy"].isin(
+            [
+                GOVERNED,
+                GOVERNED_V2,
+                GOVERNED_V1_1,
+                GOVERNED_V1_1_PATTERN_VETO,
+                GOVERNED_V1_2,
+                GOVERNED_V1_2_PATTERN_VETO,
+                GOVERNED_V1_2B,
+                GOVERNED_V1_2B_PATTERN_VETO,
+            ]
+        )
     ].copy()
     if frame.empty:
         return pd.DataFrame()
@@ -157,7 +170,16 @@ def build_soft_vs_hard_reduce_compare(nav: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_governor_version_compare(nav: pd.DataFrame) -> pd.DataFrame:
-    strategies = [GOVERNED, GOVERNED_V1_1, GOVERNED_V1_1_PATTERN_VETO, GOVERNED_V1_2, GOVERNED_V1_2_PATTERN_VETO, GOVERNED_V2]
+    strategies = [
+        GOVERNED,
+        GOVERNED_V1_1,
+        GOVERNED_V1_1_PATTERN_VETO,
+        GOVERNED_V1_2,
+        GOVERNED_V1_2_PATTERN_VETO,
+        GOVERNED_V1_2B,
+        GOVERNED_V1_2B_PATTERN_VETO,
+        GOVERNED_V2,
+    ]
     frame = nav[nav["strategy"].isin(strategies)].copy()
     if frame.empty:
         return pd.DataFrame()
@@ -185,6 +207,18 @@ def build_governor_version_compare(nav: pd.DataFrame) -> pd.DataFrame:
                 "soft_reduce_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).eq("soft_reduce").sum()),
                 "hard_reduce_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).eq("hard_reduce").sum()),
                 "recovery_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).eq("recovery_reduce").sum()),
+                "sample_count_fail_days": int(
+                    part.get("recovery_status", pd.Series(index=part.index, dtype=object)).astype(str).eq("blocked_dynamic_score_sample_count").sum()
+                ),
+                "pattern_veto_days": int(
+                    part.get("recovery_status", pd.Series(index=part.index, dtype=object))
+                    .astype(str)
+                    .isin(["blocked_pattern_high_risk", "blocked_bearish_dominance"])
+                    .sum()
+                ),
+                "top_industry_veto_days": int(
+                    part.get("recovery_status", pd.Series(index=part.index, dtype=object)).astype(str).eq("blocked_top_industry_weight").sum()
+                ),
                 "reduce_days": int(part.get("risk_decision", pd.Series(index=part.index, dtype=object)).astype(str).isin(REDUCE_DECISIONS).sum()),
                 "false_positive_reduce_days": int(false_positive_count),
             }

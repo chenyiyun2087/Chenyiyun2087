@@ -2610,6 +2610,17 @@ def _ensure_score_rank_daily_score_columns(cursor):
         "market_avg_research_score": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_research_score DECIMAL(10,4) NULL COMMENT '当日市场平均研究分' AFTER market_avg_v2",
         "market_avg_price_change": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_price_change DECIMAL(10,4) NULL COMMENT '当日买点后平均涨幅' AFTER market_avg_research_score",
         "market_regime": "ALTER TABLE score_rank_daily ADD COLUMN market_regime VARCHAR(16) NULL COMMENT '市场状态' AFTER market_avg_price_change",
+        "pattern_score": "ALTER TABLE score_rank_daily ADD COLUMN pattern_score DECIMAL(10,2) NULL COMMENT 'K线图形诊断分' AFTER market_regime",
+        "pattern_sentiment": "ALTER TABLE score_rank_daily ADD COLUMN pattern_sentiment VARCHAR(16) NULL COMMENT 'K线图形情绪' AFTER pattern_score",
+        "pattern_risk_level": "ALTER TABLE score_rank_daily ADD COLUMN pattern_risk_level VARCHAR(16) NULL COMMENT 'K线图形风险等级' AFTER pattern_sentiment",
+        "pattern_pass_count": "ALTER TABLE score_rank_daily ADD COLUMN pattern_pass_count INT NULL COMMENT '通过的组合图形数量' AFTER pattern_risk_level",
+        "pattern_candidate_count": "ALTER TABLE score_rank_daily ADD COLUMN pattern_candidate_count INT NULL COMMENT '候选组合图形数量' AFTER pattern_pass_count",
+        "bullish_pattern_count": "ALTER TABLE score_rank_daily ADD COLUMN bullish_pattern_count INT NULL COMMENT '偏多图形数量' AFTER pattern_candidate_count",
+        "bearish_pattern_count": "ALTER TABLE score_rank_daily ADD COLUMN bearish_pattern_count INT NULL COMMENT '偏空图形数量' AFTER bullish_pattern_count",
+        "top_pattern_ids": "ALTER TABLE score_rank_daily ADD COLUMN top_pattern_ids VARCHAR(255) NULL COMMENT '主要组合图形ID' AFTER bearish_pattern_count",
+        "top_pattern_names": "ALTER TABLE score_rank_daily ADD COLUMN top_pattern_names VARCHAR(255) NULL COMMENT '主要K线图形名称' AFTER top_pattern_ids",
+        "ashare_signal_keys": "ALTER TABLE score_rank_daily ADD COLUMN ashare_signal_keys VARCHAR(255) NULL COMMENT 'A股特殊K线信号' AFTER top_pattern_names",
+        "pattern_diagnosis": "ALTER TABLE score_rank_daily ADD COLUMN pattern_diagnosis VARCHAR(512) NULL COMMENT 'K线图形诊断摘要' AFTER ashare_signal_keys",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -3378,7 +3389,7 @@ def sina_scores():
             all_scores = _enrich_bs_score_rows(cursor.fetchall())
 
             reverse = order == 'DESC'
-            if sort_by in {'bs_consensus_score', 'bs_model_rank_score', 'bs_model_prob', 'bs_model_risk_score', 'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score', 's_liquidity'}:
+            if sort_by in {'bs_consensus_score', 'bs_model_rank_score', 'bs_model_prob', 'bs_model_risk_score', 'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score', 's_liquidity', 'pattern_score'}:
                 all_scores.sort(key=lambda row: _safe_sort_float(row, sort_by), reverse=reverse)
             else:
                 all_scores.sort(
@@ -3520,6 +3531,8 @@ def sina_all_scores():
                 order_stmt = f"ORDER BY srd.bs_model_prob {order}"
             elif sort_by == 'bs_model_risk_score':
                 order_stmt = f"ORDER BY srd.bs_model_risk_score {order}"
+            elif sort_by == 'pattern_score':
+                order_stmt = f"ORDER BY srd.pattern_score {order}"
             else:
                 order_stmt = "ORDER BY srd.bs_research_score DESC, srd.bs_score_v2 DESC, srd.score DESC"
 
@@ -3638,6 +3651,8 @@ def sina_self_selected():
                 order_stmt = f"ORDER BY bs_model_prob {order}"
             elif sort_by == 'bs_model_risk_score':
                 order_stmt = f"ORDER BY bs_model_risk_score {order}"
+            elif sort_by == 'pattern_score':
+                order_stmt = f"ORDER BY pattern_score {order}"
             else:
                 order_stmt = "ORDER BY bs_research_score DESC, bs_score_v2 DESC, score DESC"
 

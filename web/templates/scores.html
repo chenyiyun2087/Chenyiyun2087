@@ -96,6 +96,16 @@
                     <th>研究原因</th>
                     <th>市场</th>
                     <th>
+                        <a href="{{ url_for(request.endpoint, sort='pattern_score', order='asc' if sort_by=='pattern_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
+                            style="text-decoration: none; color: inherit;">
+                            图形分 {{ '▲' if sort_by=='pattern_score' and order=='ASC' else ('▼' if sort_by=='pattern_score'
+                            and
+                            order=='DESC' else '⇅') }}
+                        </a>
+                    </th>
+                    <th>图形状态</th>
+                    <th>主要图形</th>
+                    <th>
                         <a href="{{ url_for(request.endpoint, sort='bs_model_rank_score', order='asc' if sort_by=='bs_model_rank_score' and order=='DESC' else 'desc', min_s=min_s, min_o=min_o, symbol=symbol, per_page=per_page, pool_id=pool_id) }}"
                             style="text-decoration: none; color: inherit;">
                             模型分 {{ '▲' if sort_by=='bs_model_rank_score' and order=='ASC' else ('▼' if sort_by=='bs_model_rank_score'
@@ -200,6 +210,22 @@
                             row.bs_research_label or '-' }}</span></td>
                     <td>{{ row.bs_research_reason or '-' }}</td>
                     <td><span class="tag">{{ row.market_regime or '-' }}</span></td>
+                    <td class="{{ 'text-up' if row.pattern_score is not none and row.pattern_score > 0 else ('text-down' if row.pattern_score is not none and row.pattern_score < 0 else '') }}">
+                        {{ "%+.0f"|format(row.pattern_score) if row.pattern_score is not none else '-' }}
+                    </td>
+                    <td>
+                        {% if row.pattern_sentiment or row.pattern_risk_level %}
+                        <span class="tag {{ 'trade' if row.pattern_sentiment == 'bullish' else '' }}">{{ row.pattern_sentiment or '-' }}</span>
+                        <span class="tag">{{ row.pattern_risk_level or '-' }}</span>
+                        <span title="通过/候选">{{ row.pattern_pass_count or 0 }}/{{ row.pattern_candidate_count or 0 }}</span>
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td title="{{ row.pattern_diagnosis or '' }}">
+                        {% set pattern_names = row.top_pattern_names or row.top_pattern_ids or row.ashare_signal_keys %}
+                        {{ pattern_names[:42] if pattern_names else '-' }}{% if pattern_names and pattern_names|length > 42 %}...{% endif %}
+                    </td>
                     <td class="text-up">{{ "%.2f"|format(row.bs_model_rank_score) if row.bs_model_rank_score is not none else '-' }}</td>
                     <td class="text-up">{{ "%.1f"|format(row.bs_model_prob * 100) if row.bs_model_prob is not none else '-' }}{% if row.bs_model_prob is not none %}%{% endif %}</td>
                     <td class="text-up">{{ "%.1f"|format(row.bs_model_risk_score) if row.bs_model_risk_score is not none else '-' }}</td>
@@ -233,7 +259,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="28" class="empty">暂无评分数据</td>
+                    <td colspan="31" class="empty">暂无评分数据</td>
                 </tr>
                 {% endfor %}
             </tbody>
