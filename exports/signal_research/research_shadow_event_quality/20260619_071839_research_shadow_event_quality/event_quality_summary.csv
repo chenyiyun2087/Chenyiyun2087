@@ -1,0 +1,2 @@
+event_count,positive_rate,cumulative_theory_gap,avg_theory_gap,median_theory_gap,max_drawdown_after_event,degraded_count
+98,0.5612244897959183,0.049445384100849865,0.0005045447357229578,0.0009781855518634,,4

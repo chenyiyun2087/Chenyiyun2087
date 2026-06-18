@@ -1,0 +1,2 @@
+calendar_execution_degraded_days,event_execution_degraded_days,incremental_execution_degraded_days,common_execution_degraded_days,degraded_candidate_rows,candidate_proxy_degraded_rows,avg_degraded_day_theory_gap
+3,3,3,0,15,10,0.005084956708103133

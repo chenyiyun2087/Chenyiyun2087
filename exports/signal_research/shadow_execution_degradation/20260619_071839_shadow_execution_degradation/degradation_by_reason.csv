@@ -1,0 +1,4 @@
+candidate_degraded_reasons,rows,event_rows,incremental_rows,avg_theory_gap
+large_slippage_proxy,8,8,8,0.009749918338620326
+large_slippage_proxy|open_gap_proxy,2,2,2,-0.0042449665529312505
+none,5,5,5,0.0013529874036893805

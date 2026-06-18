@@ -1,0 +1,18 @@
+{
+  "output_dir": "exports/signal_research/shadow_execution_degradation/20260619_071839_shadow_execution_degradation",
+  "monitor_csv": "exports/research_shadow_candidate/20260619_070409_research_shadow_candidate_monitor/research_shadow_candidate_monitor.csv",
+  "event_log_csv": "reports/production_monitor/research_shadow_event_log.csv",
+  "candidates_csv": "exports/signal_research/20260619_070339_967843_trusted_account_backtest/trusted_account_backtest_candidates.csv",
+  "calendar_execution_degraded_days": 3.0,
+  "event_execution_degraded_days": 3.0,
+  "incremental_execution_degraded_days": 3.0,
+  "common_execution_degraded_days": 0.0,
+  "degraded_candidate_rows": 15.0,
+  "candidate_proxy_degraded_rows": 10.0,
+  "avg_degraded_day_theory_gap": 0.005084956708103133,
+  "files": {
+    "degradation_detail": "exports/signal_research/shadow_execution_degradation/20260619_071839_shadow_execution_degradation/degradation_detail.csv",
+    "degradation_summary": "exports/signal_research/shadow_execution_degradation/20260619_071839_shadow_execution_degradation/degradation_summary.csv",
+    "degradation_by_reason": "exports/signal_research/shadow_execution_degradation/20260619_071839_shadow_execution_degradation/degradation_by_reason.csv"
+  }
+}
