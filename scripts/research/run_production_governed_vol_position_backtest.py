@@ -19,6 +19,7 @@ BACKTEST_SCRIPT = PROJECT_ROOT / "scripts/research_trusted_strategy_account_back
 WORST_CASE_SCRIPT = PROJECT_ROOT / "scripts/research/analyze_production_worst_cases.py"
 DEFAULT_STRATEGIES = ",".join(
     [
+        "production_governed_vol_position",
         "baseline_full_liquidity_detail_vol_position",
         "adaptive_market_style",
         "baseline_full_liquidity_detail",
@@ -51,7 +52,11 @@ def main() -> None:
     parser.add_argument("--hold-days", type=int, default=10)
     parser.add_argument("--max-total-positions", type=int, default=5)
     parser.add_argument("--strategies", default=DEFAULT_STRATEGIES)
+    parser.add_argument("--skip-db-check", action="store_true")
     args = parser.parse_args()
+
+    if not args.skip_db_check:
+        _run([sys.executable, str(PROJECT_ROOT / "scripts/ops/check_db_connection.py")])
 
     cmd = [
         sys.executable,

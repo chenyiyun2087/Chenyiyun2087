@@ -18,6 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scoreRank.core.db_config import build_sqlalchemy_url
+from scripts.ops.production_config import load_production_config
+from scripts.ops.production_risk_governor import build_risk_governor_decision
 from scripts.research_full_pool_liquidity_strategies import (
     StrategySpec,
     _market_exposure_scale,
@@ -78,6 +80,7 @@ RISK_PROFILE_DEFAULTS = {
     },
 }
 DEFAULT_STRATEGIES = [
+    "production_governed_vol_position",
     "dual_system_adaptive_route",
     "adaptive_market_style",
     "ashare_auto_shadow",
@@ -90,9 +93,16 @@ DEFAULT_STRATEGIES = [
     "baseline_full_liquidity_detail",
     "baseline_full_liquidity",
     "baseline_full_liquidity_detail_vol_position",
+    "baseline_full_liquidity_detail_vol_position_pattern_rerank",
+    "baseline_full_liquidity_detail_vol_position_pattern_risk_penalty",
+    "production_governed_vol_position_pattern_guard",
     "baseline_full_liquidity_detail_hist_mdd_position",
     "baseline_full_score",
 ]
+PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME = "production_governed_vol_position"
+VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_rerank"
+VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME = "baseline_full_liquidity_detail_vol_position_pattern_risk_penalty"
+PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME = "production_governed_vol_position_pattern_guard"
 ADAPTIVE_MARKET_STYLE_STRATEGY_NAME = "adaptive_market_style"
 DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME = "dual_system_adaptive_route"
 ASHARE_AUTO_SHADOW_STRATEGY_NAME = "ashare_auto_shadow"
@@ -130,7 +140,19 @@ DUAL_SYSTEM_STRATEGY_NAMES = {
     DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME,
     *ASHARE_STRATEGY_VERSION_BY_NAME,
 }
-PSEUDO_STRATEGY_NAMES = ADAPTIVE_STRATEGY_NAMES | DUAL_SYSTEM_STRATEGY_NAMES
+PRODUCTION_GOVERNED_STRATEGY_NAMES = {
+    PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
+}
+PATTERN_STRATEGY_NAMES = {
+    VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
+    VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME,
+}
+PSEUDO_STRATEGY_NAMES = ADAPTIVE_STRATEGY_NAMES | DUAL_SYSTEM_STRATEGY_NAMES | PRODUCTION_GOVERNED_STRATEGY_NAMES | {
+    VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
+    VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME,
+}
 ADAPTIVE_UNDERLYING = {
     "attack": "tiered_liquidity_then_bs_v2",
     "recent_champion": "baseline_full_liquidity_detail_vol_position",
@@ -160,6 +182,7 @@ ASHARE_SUPPLEMENT_SOURCE_SCORE_WEIGHT = 0.45
 ASHARE_INDUSTRY_CONCENTRATION_THRESHOLD = 0.60
 ASHARE_DEFAULT_WEIGHT_PROFILE = "prod_stage1"
 ASHARE_DEFAULT_RELEASE_TIER = "production_stage1"
+PRODUCTION_CONFIG = load_production_config()
 
 
 @dataclass(frozen=True)
@@ -542,6 +565,84 @@ def _build_targets(
         out["rank_score"] = _safe_float(row.get("_rank_score"))
         rows.append(out)
     return pd.DataFrame(rows)
+
+
+def _pattern_adjustment_pct(row: pd.Series) -> float:
+    pattern_score = _safe_float(row.get("pattern_score"), np.nan)
+    risk_level = str(row.get("pattern_risk_level") or "").lower()
+    sentiment = str(row.get("pattern_sentiment") or "").lower()
+    bullish = _safe_float(row.get("bullish_pattern_count"), 0.0)
+    bearish = _safe_float(row.get("bearish_pattern_count"), 0.0)
+    pass_count = _safe_float(row.get("pattern_pass_count"), 0.0)
+    if not np.isfinite(pattern_score):
+        return 0.0
+    adjustment = 0.0
+    if pattern_score >= 70 and risk_level != "high" and bullish > bearish:
+        adjustment += 3.0
+    if sentiment == "bullish" and pass_count >= 2:
+        adjustment += 2.0
+    if bearish > bullish:
+        adjustment -= 3.0
+    if risk_level == "high":
+        adjustment -= 5.0
+    return float(adjustment)
+
+
+def _build_pattern_adjusted_targets(
+    day_scores: pd.DataFrame,
+    base_spec,
+    top_n: int,
+    *,
+    strategy_name: str,
+    mode: str,
+) -> pd.DataFrame:
+    pool_size = max(int(top_n), 30)
+    base = _build_targets(day_scores, base_spec, top_n=pool_size)
+    if base.empty:
+        return base
+    out = base.copy()
+    out["base_rank_score"] = pd.to_numeric(out.get("rank_score"), errors="coerce")
+    out["pattern_adjustment_pct"] = out.apply(_pattern_adjustment_pct, axis=1)
+    out["pattern_adjusted_rank_score"] = out["base_rank_score"].fillna(0.0) * (1.0 + out["pattern_adjustment_pct"] / 100.0)
+    out = out.sort_values(["pattern_adjusted_rank_score", "base_rank_score", "s_liquidity"], ascending=[False, False, False]).head(int(top_n)).copy()
+    out["rank"] = range(1, len(out) + 1)
+    out["rank_score"] = out["pattern_adjusted_rank_score"]
+    out["strategy"] = strategy_name
+    out["pattern_strategy_mode"] = mode
+    if mode == "risk_penalty":
+        high_risk = out.get("pattern_risk_level", pd.Series("", index=out.index)).fillna("").astype(str).str.lower().eq("high")
+        out["pattern_weight_multiplier"] = np.where(high_risk, 0.50, 1.0)
+        out["effective_weight"] = pd.to_numeric(out["effective_weight"], errors="coerce").fillna(0.0) * out["pattern_weight_multiplier"]
+    else:
+        out["pattern_weight_multiplier"] = 1.0
+    return out.reset_index(drop=True)
+
+
+def _apply_pattern_guard_to_governor(governor: dict[str, object], targets: pd.DataFrame) -> dict[str, object]:
+    if targets.empty:
+        return governor
+    out = dict(governor)
+    top = targets.sort_values("rank").head(5).copy() if "rank" in targets.columns else targets.head(5).copy()
+    risk = top.get("pattern_risk_level", pd.Series("", index=top.index)).fillna("").astype(str).str.lower()
+    high_risk_count = int(risk.eq("high").sum())
+    bullish = pd.to_numeric(top.get("bullish_pattern_count", pd.Series(0, index=top.index)), errors="coerce").fillna(0).sum()
+    bearish = pd.to_numeric(top.get("bearish_pattern_count", pd.Series(0, index=top.index)), errors="coerce").fillna(0).sum()
+    reasons = list(out.get("reasons") or [])
+    target_ratio = _safe_float(out.get("target_position_ratio"), 0.0) or 0.0
+    if high_risk_count >= 3:
+        out["risk_decision"] = "reduce_position" if out.get("risk_decision") == "normal" else out.get("risk_decision")
+        target_ratio = min(target_ratio, 0.50)
+        reasons.append("pattern_guard_top5_high_risk")
+    if bearish > bullish and bearish >= 3:
+        out["risk_decision"] = "reduce_position" if out.get("risk_decision") == "normal" else out.get("risk_decision")
+        target_ratio = min(target_ratio, 0.55)
+        reasons.append("pattern_guard_bearish_pressure")
+    out["target_position_ratio"] = float(max(0.0, min(1.0, target_ratio)))
+    out["reasons"] = reasons or ["normal_production_risk_budget"]
+    out["pattern_top5_high_risk_count"] = high_risk_count
+    out["pattern_top5_bullish_count"] = int(bullish)
+    out["pattern_top5_bearish_count"] = int(bearish)
+    return out
 
 
 def _symbol_from_ts_code(value: object) -> str:
@@ -1653,6 +1754,17 @@ def _rebalance(
                 "adjusted_target_weight": float(adjusted_weights.get(symbol, 0.0)),
                 "locked": int(symbol in locked_symbols),
                 "skipped_by_position_cap": int(symbol in skipped_by_position_cap),
+                "pattern_score": _safe_float(row.get("pattern_score")),
+                "pattern_sentiment": row.get("pattern_sentiment"),
+                "pattern_risk_level": row.get("pattern_risk_level"),
+                "pattern_pass_count": _safe_float(row.get("pattern_pass_count")),
+                "bullish_pattern_count": _safe_float(row.get("bullish_pattern_count")),
+                "bearish_pattern_count": _safe_float(row.get("bearish_pattern_count")),
+                "base_rank_score": _safe_float(row.get("base_rank_score")),
+                "pattern_adjustment_pct": _safe_float(row.get("pattern_adjustment_pct")),
+                "pattern_adjusted_rank_score": _safe_float(row.get("pattern_adjusted_rank_score")),
+                "pattern_strategy_mode": row.get("pattern_strategy_mode"),
+                "pattern_weight_multiplier": _safe_float(row.get("pattern_weight_multiplier")),
             }
         )
 
@@ -2024,7 +2136,99 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 adaptive_meta: dict[str, object] = {}
                 rebalance_position_ratio = float(args.position_ratio)
                 target_override = None
-                if spec.name in ASHARE_STRATEGY_VERSION_BY_NAME:
+                if spec.name in PRODUCTION_GOVERNED_STRATEGY_NAMES:
+                    decision = _choose_adaptive_role(
+                        signal_date=signal_date,
+                        day_scores=day_scores,
+                        perf=adaptive_perf,
+                        current_role=current_adaptive_role,
+                        current_role_days=current_adaptive_role_days,
+                    )
+                    active_role = str(decision["active_role"])
+                    if active_role == current_adaptive_role:
+                        current_adaptive_role_days += 1
+                    else:
+                        current_adaptive_role = active_role
+                        current_adaptive_role_days = 1
+                    decision["current_role_days_after"] = int(current_adaptive_role_days)
+
+                    primary_strategy = str(PRODUCTION_CONFIG.get("primary_strategy") or "baseline_full_liquidity_detail_vol_position")
+                    primary_spec = trusted_by_name[primary_strategy]
+                    primary_targets = targets_cache.get((signal_date, primary_spec.name), pd.DataFrame())
+                    governor = build_risk_governor_decision(
+                        PRODUCTION_CONFIG,
+                        adaptive_decision=decision,
+                        recent_shadow_summary={"fail_streak": 0, "worst_action": "none", "latest_status": "backtest_proxy"},
+                    )
+                    if spec.name == PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME:
+                        governor = _apply_pattern_guard_to_governor(governor, primary_targets)
+
+                    risk_decision = str(governor.get("risk_decision") or "normal")
+                    selected_strategy_name = primary_strategy
+                    if risk_decision == "defensive_only":
+                        selected_strategy_name = str(
+                            governor.get("fallback_strategy")
+                            or PRODUCTION_CONFIG.get("defensive_fallback_strategy")
+                            or "baseline_full_liquidity"
+                        )
+                    rebalance_spec = trusted_by_name.get(selected_strategy_name, trusted_by_name["baseline_full_liquidity"])
+                    target_override = primary_targets if rebalance_spec.name == primary_spec.name else targets_cache.get((signal_date, rebalance_spec.name), pd.DataFrame())
+                    rebalance_position_ratio = float(governor.get("target_position_ratio") or 0.0)
+                    if risk_decision == "freeze_buy" or not bool(governor.get("allow_new_buys", True)):
+                        rebalance_position_ratio = 0.0
+
+                    decision.update(
+                        {
+                            "active_role": active_role,
+                            "market_style_state": active_role,
+                            "selected_strategy": rebalance_spec.name,
+                            "risk_governor_primary_strategy": primary_strategy,
+                            "risk_decision": risk_decision,
+                            "target_position_ratio": float(rebalance_position_ratio),
+                            "adaptive_target_position_ratio": float(rebalance_position_ratio),
+                            "fallback_strategy": governor.get("fallback_strategy"),
+                            "allow_new_buys": int(bool(governor.get("allow_new_buys", True))),
+                            "risk_governor_reasons": "|".join(str(item) for item in governor.get("reasons") or []),
+                            "pattern_top5_high_risk_count": governor.get("pattern_top5_high_risk_count"),
+                            "pattern_top5_bullish_count": governor.get("pattern_top5_bullish_count"),
+                            "pattern_top5_bearish_count": governor.get("pattern_top5_bearish_count"),
+                        }
+                    )
+                    adaptive_decision_rows.append(decision)
+                    adaptive_meta = {
+                        "adaptive_role": active_role,
+                        "adaptive_underlying_strategy": primary_strategy,
+                        "market_style_state": active_role,
+                        "selected_strategy": rebalance_spec.name,
+                        "target_position_ratio": float(rebalance_position_ratio),
+                        "adaptive_target_position_ratio": float(rebalance_position_ratio),
+                        "risk_decision": risk_decision,
+                        "fallback_strategy": governor.get("fallback_strategy"),
+                        "allow_new_buys": bool(governor.get("allow_new_buys", True)),
+                        "risk_governor_reasons": decision["risk_governor_reasons"],
+                        "route_reason": "production_risk_governor_backtest",
+                    }
+                    if spec.name == PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME:
+                        adaptive_meta["pattern_guard_enabled"] = 1
+                elif spec.name in {VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME, VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME}:
+                    base_spec = trusted_by_name["baseline_full_liquidity_detail_vol_position"]
+                    mode = "risk_penalty" if spec.name == VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME else "rerank"
+                    rebalance_spec = base_spec
+                    target_override = _build_pattern_adjusted_targets(
+                        day_scores,
+                        base_spec,
+                        args.top_n,
+                        strategy_name=spec.name,
+                        mode=mode,
+                    )
+                    rebalance_position_ratio = float(args.position_ratio)
+                    adaptive_meta = {
+                        "selected_strategy": base_spec.name,
+                        "strategy_source": "pattern_shadow_research",
+                        "pattern_strategy_mode": mode,
+                        "target_position_ratio": float(rebalance_position_ratio),
+                    }
+                elif spec.name in ASHARE_STRATEGY_VERSION_BY_NAME:
                     ashare_day = _ashare_candidates_for_day_cached(
                         ashare_by_date,
                         signal_date,
@@ -2255,6 +2459,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["ashare_supplement_count"] = adaptive_meta.get("ashare_supplement_count")
                         item["ashare_weekly_penalty_count"] = adaptive_meta.get("ashare_weekly_penalty_count")
                         item["ashare_risk_veto_filtered_count"] = adaptive_meta.get("ashare_risk_veto_filtered_count")
+                        item["risk_decision"] = adaptive_meta.get("risk_decision")
+                        item["fallback_strategy"] = adaptive_meta.get("fallback_strategy")
+                        item["allow_new_buys"] = adaptive_meta.get("allow_new_buys")
+                        item["risk_governor_reasons"] = adaptive_meta.get("risk_governor_reasons")
+                        item["pattern_guard_enabled"] = adaptive_meta.get("pattern_guard_enabled")
+                        item["pattern_strategy_mode"] = adaptive_meta.get("pattern_strategy_mode")
                 trade_rows.extend(trades)
                 candidate_rows.extend(candidates)
                 meta = dict(rebalance_meta or {})
@@ -2286,7 +2496,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             else:
                 frame.insert(0, "strategy", spec.name)
         summary = _summarize_strategy(nav, trades, float(args.initial_cash))
-        if spec.name in (ADAPTIVE_STRATEGY_NAMES | {DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME}) and not adaptive_decisions.empty:
+        if spec.name in (ADAPTIVE_STRATEGY_NAMES | {DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME} | PRODUCTION_GOVERNED_STRATEGY_NAMES) and not adaptive_decisions.empty:
             summary["adaptive_switch_count"] = int(
                 adaptive_decisions["active_role"].ne(adaptive_decisions["active_role"].shift()).sum() - 1
             )

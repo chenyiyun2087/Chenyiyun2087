@@ -180,15 +180,16 @@ def run_analysis(backtest_dir: Path, output_root: Path, strategy: str) -> dict:
     analyzed_strategies: list[str] = []
     if "strategy" in nav.columns:
         analyzed_strategies = sorted(nav["strategy"].dropna().astype(str).unique().tolist())
-        if strategy in analyzed_strategies:
-            nav = nav[nav["strategy"].astype(str).eq(strategy)]
-            if "strategy" in trades.columns:
-                trades = trades[trades["strategy"].astype(str).eq(strategy)]
-            if "strategy" in positions.columns:
-                positions = positions[positions["strategy"].astype(str).eq(strategy)]
-            if "strategy" in adaptive.columns:
-                adaptive = adaptive[adaptive["strategy"].astype(str).eq(strategy)]
-            analyzed_strategies = [strategy]
+        if strategy not in analyzed_strategies:
+            raise RuntimeError(f"Strategy {strategy} not found in nav. Available: {analyzed_strategies}")
+        nav = nav[nav["strategy"].astype(str).eq(strategy)]
+        if "strategy" in trades.columns:
+            trades = trades[trades["strategy"].astype(str).eq(strategy)]
+        if "strategy" in positions.columns:
+            positions = positions[positions["strategy"].astype(str).eq(strategy)]
+        if "strategy" in adaptive.columns:
+            adaptive = adaptive[adaptive["strategy"].astype(str).eq(strategy)]
+        analyzed_strategies = [strategy]
 
     drawdowns = build_worst_drawdown_periods(nav)
     worst_trades = build_worst_trades(trades)

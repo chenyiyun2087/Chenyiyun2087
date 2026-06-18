@@ -40,6 +40,7 @@ SCORE_COLUMNS = [
     "bs_score_v2",
     "bs_consensus_score",
     "bs_model_rank_score",
+    "pattern_score",
 ]
 
 FACTOR_COLUMNS = [
@@ -192,6 +193,17 @@ def load_scores(
     end_date: str | None = None,
     min_pool_size: int = 5000,
 ) -> pd.DataFrame:
+    try:
+        with engine.connect() as conn:
+            score_columns = {str(row["Field"]) for row in conn.execute(text("SHOW COLUMNS FROM score_rank_daily")).mappings()}
+    except Exception:
+        score_columns = set()
+
+    def score_expr(column: str, default: str = "NULL") -> str:
+        if not score_columns or column in score_columns:
+            return f"s.{column}"
+        return f"{default} AS {column}"
+
     where = []
     params: dict[str, object] = {}
     if start_date:
@@ -214,9 +226,15 @@ def load_scores(
             s.s_rs,
             s.bs_score_v2,
             s.bs_consensus_score,
-            s.bs_model_rank_score,
-            s.bs_model_prob,
-            s.bs_model_expected_mdd,
+            {score_expr("bs_model_rank_score")},
+            {score_expr("bs_model_prob")},
+            {score_expr("bs_model_expected_mdd")},
+            {score_expr("pattern_score")},
+            {score_expr("pattern_sentiment")},
+            {score_expr("pattern_risk_level")},
+            {score_expr("pattern_pass_count")},
+            {score_expr("bullish_pattern_count")},
+            {score_expr("bearish_pattern_count")},
             s.market_hs300_pct_chg,
             s.market_hs300_ret_20,
             s.market_bs_ratio,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 import pymysql
 
@@ -17,13 +17,19 @@ def build_sqlalchemy_url(prefix: str = "CHENYIYUN_DB") -> str:
     port = os.getenv(f"{prefix}_PORT", "3306")
     database = os.getenv(f"{prefix}_NAME", "chenyiyun")
     charset = os.getenv(f"{prefix}_CHARSET", "utf8mb4")
+    unix_socket = os.getenv(f"{prefix}_UNIX_SOCKET", "").strip()
     auth = quote_plus(user)
     if password:
         auth = f"{auth}:{quote_plus(password)}"
-    return f"mysql+pymysql://{auth}@{host}:{port}/{database}?charset={charset}"
+    query = {"charset": charset}
+    if unix_socket:
+        query["unix_socket"] = unix_socket
+        return f"mysql+pymysql://{auth}@{host}/{database}?{urlencode(query)}"
+    return f"mysql+pymysql://{auth}@{host}:{port}/{database}?{urlencode(query)}"
 
 
 def build_pymysql_config(prefix: str = "CHENYIYUN_DB", dict_cursor: bool = True) -> dict:
+    unix_socket = os.getenv(f"{prefix}_UNIX_SOCKET", "").strip()
     config = {
         "host": os.getenv(f"{prefix}_HOST", "localhost"),
         "port": int(os.getenv(f"{prefix}_PORT", "3306")),
@@ -32,6 +38,8 @@ def build_pymysql_config(prefix: str = "CHENYIYUN_DB", dict_cursor: bool = True)
         "database": os.getenv(f"{prefix}_NAME", "chenyiyun"),
         "charset": os.getenv(f"{prefix}_CHARSET", "utf8mb4"),
     }
+    if unix_socket:
+        config["unix_socket"] = unix_socket
     if dict_cursor:
         config["cursorclass"] = pymysql.cursors.DictCursor
     return config
