@@ -19,6 +19,7 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 |---|---|
 | `docs/00_project_overview/PROJECT_DIRECTORY.md` | 项目目录说明和文件归档规则。 |
 | `docs/00_project_overview/RUNBOOK.md` | 主流程、常用命令和未来函数红线。 |
+| `docs/00_project_overview/2026-06-18_external_expert_project_profile.md` | 面向量化/投研外部专家的项目画像与尽调评估材料。 |
 | `docs/01_strategy_research/STRATEGY_RESEARCH_INDEX.md` | 策略研究统一入口。 |
 | `docs/02_stock_research/STOCK_RESEARCH_INDEX.md` | 个股研究统一入口。 |
 | `docs/03_backtest_reports/BACKTEST_INDEX.md` | 回测报告索引。 |
