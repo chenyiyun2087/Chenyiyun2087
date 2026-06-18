@@ -273,7 +273,8 @@ def _classify_order(row: dict, price_row: dict | None, prev_close: float | None)
         tradable = 0
     elif planned_price > 0:
         adverse = (open_price / planned_price - 1.0) if side == "BUY" else (planned_price / open_price - 1.0)
-        if adverse > 0.05:
+        threshold = float(SHADOW_VALIDATION["max_large_slippage_bps"]) / 10000.0
+        if adverse > threshold:
             status = "EXECUTABLE_WITH_WARNING"
             reason = f"可成交但不利滑点较大：{adverse:.2%}"
 
@@ -338,7 +339,9 @@ def summarize_fills(fills: pd.DataFrame, signal_date: str, execution_date: str) 
     buy = d[d["side"].astype(str).str.upper().eq("BUY")]
     sell = d[d["side"].astype(str).str.upper().eq("SELL")]
     blocked = d[d["tradable_flag"].fillna(0).astype(int).eq(0)]
-    warning = d[d["tradable_status"].astype(str).eq("EXECUTABLE_WITH_WARNING")]
+    threshold_bps = float(SHADOW_VALIDATION["max_large_slippage_bps"])
+    executable_slippage = pd.to_numeric(executable.get("slippage_bps"), errors="coerce").dropna()
+    warning = executable[executable_slippage.reindex(executable.index).fillna(0.0).gt(threshold_bps)]
     limit_up_buy = d[
         d["side"].astype(str).str.upper().eq("BUY")
         & d["tradable_status"].astype(str).eq("BUY_LIMIT_UP_OPEN")
@@ -360,11 +363,8 @@ def summarize_fills(fills: pd.DataFrame, signal_date: str, execution_date: str) 
     validation_status = "pass"
     validation_actions = "none"
     fail_reasons: list[str] = []
-    if large_slippage_ratio == large_slippage_ratio and large_slippage_ratio > 0:
-        max_slippage = float(executable["slippage_bps"].dropna().max()) if not executable.empty else np.nan
-    else:
-        max_slippage = np.nan
-    if max_slippage == max_slippage and max_slippage > float(SHADOW_VALIDATION["max_large_slippage_bps"]):
+    max_slippage = float(executable_slippage.max()) if not executable_slippage.empty else np.nan
+    if max_slippage == max_slippage and max_slippage > threshold_bps:
         validation_status = "fail"
         validation_actions = "reduce_position"
         fail_reasons.append("large_slippage")

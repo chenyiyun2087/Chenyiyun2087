@@ -21,6 +21,7 @@ from scoreRank.core.db_io import (
 from scoreRank.core.bs_enhanced_score import add_bs_enhanced_scores
 from scoreRank.core.db_config import symbols_to_ts_codes
 from scoreRank.core.ashare_data_center_features import attach_adc_features
+from scoreRank.core.candle_pattern_features import PATTERN_FEATURE_COLUMNS, build_candle_pattern_features
 from scoreRank.core.bs_model_infer import add_model_engineered_features, apply_bs_model_scores, load_latest_bs_model
 from scoreRank.core.bs_threshold_policy import assign_shadow_pool, attach_threshold_columns, resolve_bs_thresholds
 from scoreRank.core.external_features import EXTERNAL_FEATURE_COLUMNS, attach_external_features
@@ -177,6 +178,17 @@ def _ensure_score_rank_daily_schema(cursor):
         "market_avg_research_score": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_research_score DECIMAL(10,4) NULL COMMENT '当日市场平均研究分' AFTER market_avg_v2",
         "market_avg_price_change": "ALTER TABLE score_rank_daily ADD COLUMN market_avg_price_change DECIMAL(10,4) NULL COMMENT '当日买点后平均涨幅' AFTER market_avg_research_score",
         "market_regime": "ALTER TABLE score_rank_daily ADD COLUMN market_regime VARCHAR(16) NULL COMMENT '市场状态' AFTER market_avg_price_change",
+        "pattern_score": "ALTER TABLE score_rank_daily ADD COLUMN pattern_score DECIMAL(10,2) NULL COMMENT 'K线图形诊断分' AFTER market_regime",
+        "pattern_sentiment": "ALTER TABLE score_rank_daily ADD COLUMN pattern_sentiment VARCHAR(16) NULL COMMENT 'K线图形情绪' AFTER pattern_score",
+        "pattern_risk_level": "ALTER TABLE score_rank_daily ADD COLUMN pattern_risk_level VARCHAR(16) NULL COMMENT 'K线图形风险等级' AFTER pattern_sentiment",
+        "pattern_pass_count": "ALTER TABLE score_rank_daily ADD COLUMN pattern_pass_count INT NULL COMMENT '通过的组合图形数量' AFTER pattern_risk_level",
+        "pattern_candidate_count": "ALTER TABLE score_rank_daily ADD COLUMN pattern_candidate_count INT NULL COMMENT '候选组合图形数量' AFTER pattern_pass_count",
+        "bullish_pattern_count": "ALTER TABLE score_rank_daily ADD COLUMN bullish_pattern_count INT NULL COMMENT '偏多图形数量' AFTER pattern_candidate_count",
+        "bearish_pattern_count": "ALTER TABLE score_rank_daily ADD COLUMN bearish_pattern_count INT NULL COMMENT '偏空图形数量' AFTER bullish_pattern_count",
+        "top_pattern_ids": "ALTER TABLE score_rank_daily ADD COLUMN top_pattern_ids VARCHAR(255) NULL COMMENT '主要组合图形ID' AFTER bearish_pattern_count",
+        "top_pattern_names": "ALTER TABLE score_rank_daily ADD COLUMN top_pattern_names VARCHAR(255) NULL COMMENT '主要K线图形名称' AFTER top_pattern_ids",
+        "ashare_signal_keys": "ALTER TABLE score_rank_daily ADD COLUMN ashare_signal_keys VARCHAR(255) NULL COMMENT 'A股特殊K线信号' AFTER top_pattern_names",
+        "pattern_diagnosis": "ALTER TABLE score_rank_daily ADD COLUMN pattern_diagnosis VARCHAR(512) NULL COMMENT 'K线图形诊断摘要' AFTER ashare_signal_keys",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -362,6 +374,7 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'bs_threshold_version': 'bs_threshold_version',
         'bs_threshold_reason': 'bs_threshold_reason',
         **{col: col for col in MARKET_CONTEXT_COLUMNS},
+        **{col: col for col in PATTERN_FEATURE_COLUMNS},
         'is_self_selected': 'is_self_selected',
         'is_bs_candidate': 'is_bs_candidate'
     }
@@ -670,6 +683,19 @@ def main():
         from scoreRank.core.scorer import build_features_from_qfq
         if not raw_data.empty:
             features = build_features_from_qfq(raw_data, breakout_n=CONFIG["breakout_n"])
+            try:
+                _announce("Calculating candle pattern features...")
+                pattern_names = get_symbol_names_if_exist(engine, all_symbols)
+                pattern_features = build_candle_pattern_features(raw_data, names=pattern_names)
+                if not pattern_features.empty:
+                    scored["symbol"] = scored["symbol"].map(_normalize_symbol)
+                    scored = scored.merge(pattern_features, on="symbol", how="left")
+                    _announce("Candle pattern features covered: %s / %s", pattern_features["symbol"].nunique(), len(scored))
+                else:
+                    _announce("No candle pattern features generated.")
+            except Exception as e:
+                logger.exception("Error calculating candle pattern features")
+                print(f"Error calculating candle pattern features: {e}")
         else:
             features = pd.DataFrame()
         bs_signals = fetch_bs_signals_by_symbol(engine, asof_date, all_symbols)

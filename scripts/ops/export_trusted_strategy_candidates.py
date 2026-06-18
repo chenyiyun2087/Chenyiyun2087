@@ -8,6 +8,7 @@ date only, then writes the next-cycle candidate list to CSV/JSON/Markdown.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -1377,9 +1378,10 @@ def _build_rebalance_orders(
     adjustable_budget_weight = max(0.0, min(1.0, (total_equity - locked_value) / total_equity))
     adjusted_weights: dict[str, float] = {}
     if unlocked_weight_sum > 0 and adjustable_budget_weight > 0:
+        budget_scale = min(1.0, adjustable_budget_weight / unlocked_weight_sum)
         for symbol in unlocked_candidates:
             raw_weight = float(candidate_by_symbol[symbol].get("effective_weight") or 0.0)
-            adjusted_weights[symbol] = raw_weight / unlocked_weight_sum * adjustable_budget_weight
+            adjusted_weights[symbol] = raw_weight * budget_scale
 
     symbols = sorted(set(adjusted_weights) | position_symbols)
     rows: list[dict] = []
@@ -1780,11 +1782,11 @@ def _write_orders_and_signal_snapshot(
                     current_weight=VALUES(current_weight),
                     target_weight=VALUES(target_weight),
                     delta_weight=VALUES(delta_weight),
-                    order_status=VALUES(order_status),
-                    submitted_at=VALUES(submitted_at),
-                    filled_shares=VALUES(filled_shares),
-                    filled_price=VALUES(filled_price),
-                    status_reason=VALUES(status_reason),
+                    submitted_at=IF(order_status IN ('submitted_manually','submitted','partial','filled','cancelled','rejected'), submitted_at, VALUES(submitted_at)),
+                    filled_shares=IF(order_status IN ('partial','filled'), filled_shares, VALUES(filled_shares)),
+                    filled_price=IF(order_status IN ('partial','filled'), filled_price, VALUES(filled_price)),
+                    status_reason=IF(order_status IN ('submitted_manually','submitted','partial','filled','cancelled','rejected'), status_reason, VALUES(status_reason)),
+                    order_status=IF(order_status IN ('submitted_manually','submitted','partial','filled','cancelled','rejected'), order_status, VALUES(order_status)),
                     note=VALUES(note)
                 """
             ),
@@ -1811,6 +1813,86 @@ def _write_orders_and_signal_snapshot(
             signal_rows,
         )
     return {"orders": int(order_result.rowcount or 0), "signals": int(signal_result.rowcount or 0)}
+
+
+def _write_production_risk_decision(
+    engine,
+    params: dict,
+    risk_governor: dict[str, object] | None,
+    shadow_state: dict[str, object] | None,
+    output_json_path: str,
+    table: str = "chenyiyun.ads_production_risk_decisions",
+) -> int:
+    table = _safe_table_name(table)
+    governor = dict(risk_governor or {})
+    shadow = dict(shadow_state or {})
+    create_sql = text(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            trade_date DATE NOT NULL PRIMARY KEY,
+            risk_profile VARCHAR(32) NOT NULL,
+            primary_strategy VARCHAR(96) NOT NULL,
+            risk_decision VARCHAR(32) NOT NULL,
+            target_position_ratio DOUBLE NULL,
+            fallback_strategy VARCHAR(96) NULL,
+            allow_new_buys TINYINT(1) NOT NULL DEFAULT 1,
+            reasons_json TEXT NULL,
+            shadow_status VARCHAR(32) NULL,
+            shadow_fail_streak INT NULL,
+            shadow_worst_action VARCHAR(32) NULL,
+            config_sha VARCHAR(32) NULL,
+            output_json_path VARCHAR(512) NULL,
+            create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='生产风险总闸日级审计表'
+        """
+    )
+    row = {
+        "trade_date": params.get("asof_date"),
+        "risk_profile": params.get("risk_profile"),
+        "primary_strategy": PRODUCTION_CONFIG["primary_strategy"],
+        "risk_decision": governor.get("risk_decision") or "normal",
+        "target_position_ratio": float(governor.get("target_position_ratio") or params.get("target_position_ratio") or 0.0),
+        "fallback_strategy": governor.get("fallback_strategy"),
+        "allow_new_buys": int(bool(governor.get("allow_new_buys", True))),
+        "reasons_json": json.dumps(governor.get("reasons") or [], ensure_ascii=False),
+        "shadow_status": shadow.get("latest_status"),
+        "shadow_fail_streak": int(shadow.get("fail_streak") or 0),
+        "shadow_worst_action": shadow.get("worst_action"),
+        "config_sha": PRODUCTION_CONFIG.get("config_sha") or hashlib.sha256(str(PRODUCTION_CONFIG).encode("utf-8")).hexdigest()[:16],
+        "output_json_path": output_json_path,
+    }
+    with engine.begin() as conn:
+        conn.execute(create_sql)
+        result = conn.execute(
+            text(
+                f"""
+                INSERT INTO {table}
+                    (trade_date, risk_profile, primary_strategy, risk_decision, target_position_ratio,
+                     fallback_strategy, allow_new_buys, reasons_json, shadow_status, shadow_fail_streak,
+                     shadow_worst_action, config_sha, output_json_path)
+                VALUES
+                    (:trade_date, :risk_profile, :primary_strategy, :risk_decision, :target_position_ratio,
+                     :fallback_strategy, :allow_new_buys, :reasons_json, :shadow_status, :shadow_fail_streak,
+                     :shadow_worst_action, :config_sha, :output_json_path)
+                ON DUPLICATE KEY UPDATE
+                    risk_profile=VALUES(risk_profile),
+                    primary_strategy=VALUES(primary_strategy),
+                    risk_decision=VALUES(risk_decision),
+                    target_position_ratio=VALUES(target_position_ratio),
+                    fallback_strategy=VALUES(fallback_strategy),
+                    allow_new_buys=VALUES(allow_new_buys),
+                    reasons_json=VALUES(reasons_json),
+                    shadow_status=VALUES(shadow_status),
+                    shadow_fail_streak=VALUES(shadow_fail_streak),
+                    shadow_worst_action=VALUES(shadow_worst_action),
+                    config_sha=VALUES(config_sha),
+                    output_json_path=VALUES(output_json_path)
+                """
+            ),
+            row,
+        )
+    return int(result.rowcount or 0)
 
 
 def _write_outputs(
@@ -2083,8 +2165,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
     if args.strategy not in pseudo_strategy_names:
         candidates = _build_candidate_rows(selected, spec, asof_date, latest_prices, args.top_n)
     target_position_ratio = float(risk_governor.get("target_position_ratio") or target_position_ratio)
-    if spec.name == "baseline_full_liquidity_detail_vol_position" or governor_fallback:
-        candidates = _scale_candidate_weights_for_export(candidates, target_position_ratio)
+    candidates = _scale_candidate_weights_for_export(candidates, target_position_ratio)
     candidates.attrs["risk_governor"] = risk_governor
 
     warnings: list[str] = []
@@ -2221,9 +2302,16 @@ def export_candidates(args: argparse.Namespace) -> dict:
             pool_key=args.pool_key,
             pool_name=args.pool_name,
         )
+        db_write["risk_decision_rows"] = _write_production_risk_decision(
+            engine,
+            params=params,
+            risk_governor=risk_governor,
+            shadow_state=recent_shadow_summary,
+            output_json_path=files["json"],
+        )
     if args.emit_orders:
         account_total_equity = float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine)
-        total_equity = account_total_equity * float(args.position_ratio)
+        total_equity = account_total_equity
         positions = _load_current_positions(engine, args.position_table, asof_date=asof_date)
         latest_price_lookup = {str(k).zfill(6): float(v) for k, v in latest_prices.items()}
         orders = _build_rebalance_orders(
@@ -2266,7 +2354,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
             base_strategy = str(detail_config.get("base_strategy") or detail_name)
             detail_hold_days = int(detail_config.get("hold_days") or args.hold_days)
             detail_position_ratio = float(detail_config.get("position_ratio", args.position_ratio))
-            detail_total_equity = account_total_equity * detail_position_ratio
+            detail_total_equity = account_total_equity
             detail_meta: dict[str, object] = {
                 "base_strategy": base_strategy,
                 "hold_days": detail_hold_days,
@@ -2300,6 +2388,10 @@ def export_candidates(args: argparse.Namespace) -> dict:
                         "meta": detail_meta,
                     }
                     continue
+                detail_candidates = _scale_candidate_weights_for_export(
+                    detail_candidates,
+                    float(detail_meta.get("target_position_ratio") or detail_position_ratio),
+                )
                 detail_orders = _build_rebalance_orders(
                     detail_candidates,
                     positions=positions,
@@ -2342,6 +2434,10 @@ def export_candidates(args: argparse.Namespace) -> dict:
                         "meta": detail_meta,
                     }
                     continue
+                detail_candidates = _scale_candidate_weights_for_export(
+                    detail_candidates,
+                    float(detail_meta.get("target_position_ratio") or detail_position_ratio),
+                )
                 detail_orders = _build_rebalance_orders(
                     detail_candidates,
                     positions=positions,
@@ -2393,6 +2489,10 @@ def export_candidates(args: argparse.Namespace) -> dict:
                         "meta": detail_meta,
                     }
                     continue
+                detail_candidates = _scale_candidate_weights_for_export(
+                    detail_candidates,
+                    float(detail_meta.get("target_position_ratio") or detail_position_ratio),
+                )
                 detail_orders = _build_rebalance_orders(
                     detail_candidates,
                     positions=positions,
@@ -2431,6 +2531,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
             if detail_name != base_strategy:
                 detail_candidates["strategy"] = detail_name
                 detail_candidates["sort_col"] = f"{base_strategy}:{detail_spec.sort_col}"
+            detail_candidates = _scale_candidate_weights_for_export(detail_candidates, detail_position_ratio)
             detail_orders = _build_rebalance_orders(
                 detail_candidates,
                 positions=positions,

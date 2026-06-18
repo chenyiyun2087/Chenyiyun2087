@@ -2443,6 +2443,37 @@ def _load_trusted_candidate_params(output_json_path):
         return {}
 
 
+def _load_production_risk_decision_for_date(cursor, trade_date):
+    if not trade_date:
+        return {}
+    try:
+        cursor.execute("SHOW TABLES LIKE 'ads_production_risk_decisions'")
+        if cursor.fetchone() is None:
+            return {}
+        cursor.execute(
+            """
+            SELECT risk_decision, target_position_ratio, fallback_strategy, allow_new_buys,
+                   reasons_json, shadow_status, shadow_fail_streak, shadow_worst_action,
+                   config_sha, output_json_path
+            FROM ads_production_risk_decisions
+            WHERE trade_date = %s
+            LIMIT 1
+            """,
+            (trade_date,),
+        )
+        row = cursor.fetchone() or {}
+        reasons = row.get("reasons_json")
+        if isinstance(reasons, str):
+            try:
+                row["risk_decision_reasons"] = json.loads(reasons)
+            except Exception:
+                row["risk_decision_reasons"] = [reasons]
+        return row
+    except Exception as e:
+        print(f"Failed to load production risk decision: {e}")
+        return {}
+
+
 def _save_chenyiyun_selected_settings(conn, stock_count, position_ratio, holding_days):
     settings = _normalize_chenyiyun_selected_settings(
         {
@@ -3078,6 +3109,22 @@ def chenyiyun_selected_dashboard():
                 latest_trusted_strategy = latest_candidate_meta.get("strategy")
                 latest_trusted_strategy_display = strategy_display_name(latest_trusted_strategy)
                 latest_trusted_params = _load_trusted_candidate_params(latest_candidate_meta.get("output_json_path"))
+                risk_decision_params = _load_production_risk_decision_for_date(cursor, latest_trusted_candidate_date)
+                if risk_decision_params:
+                    latest_trusted_params.update(
+                        {
+                            "risk_decision": risk_decision_params.get("risk_decision"),
+                            "target_position_ratio": risk_decision_params.get("target_position_ratio"),
+                            "fallback_strategy": risk_decision_params.get("fallback_strategy"),
+                            "allow_new_buys": bool(risk_decision_params.get("allow_new_buys", 1)),
+                            "risk_decision_reasons": risk_decision_params.get("risk_decision_reasons") or [],
+                            "shadow_status": risk_decision_params.get("shadow_status"),
+                            "shadow_fail_streak": risk_decision_params.get("shadow_fail_streak"),
+                            "shadow_worst_action": risk_decision_params.get("shadow_worst_action"),
+                            "production_config_sha": risk_decision_params.get("config_sha"),
+                            "production_risk_decision_source": "ads_production_risk_decisions",
+                        }
+                    )
                 strategy_order_detail_summary, strategy_order_detail_summary_path = _load_strategy_order_detail_summary(
                     latest_candidate_meta.get("output_json_path")
                 )

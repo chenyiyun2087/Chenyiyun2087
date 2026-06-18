@@ -9,6 +9,8 @@ import web.app as web_app
 from scripts.ops import export_trusted_strategy_candidates as export_candidates
 from scripts.ops import run_strategy_performance_review as review
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_shared_production_defaults_are_consistent():
     config = load_production_config()
@@ -33,6 +35,6 @@ def test_scheduler_uses_shared_production_defaults():
 
 
 def test_runbook_no_longer_declares_adaptive_as_primary_strategy():
-    path = Path("/Users/chenyiyun/PycharmProjects/Chenyiyun2087/docs/00_project_overview/RUNBOOK.md")
+    path = PROJECT_ROOT / "docs/00_project_overview/RUNBOOK.md"
     content = path.read_text(encoding="utf-8")
     assert "主策略为 `adaptive_market_style`" not in content

@@ -1,0 +1,18 @@
+{
+  "strategy": "adaptive_market_style",
+  "backtest_dir": "exports/signal_research/20260604_152142_206060_trusted_account_backtest",
+  "output_dir": "exports/signal_research/production_worst_case_analysis/20260618_114146_adaptive_market_style_worst_cases",
+  "analyzed_strategies": [
+    "adaptive_market_style"
+  ],
+  "worst_drawdown": -0.43014706083322185,
+  "worst_trade_pnl": null,
+  "missed_risk_events": 4,
+  "files": {
+    "worst_drawdown_periods": "exports/signal_research/production_worst_case_analysis/20260618_114146_adaptive_market_style_worst_cases/worst_drawdown_periods.csv",
+    "worst_trades": "exports/signal_research/production_worst_case_analysis/20260618_114146_adaptive_market_style_worst_cases/worst_trades.csv",
+    "worst_industry_exposure": "exports/signal_research/production_worst_case_analysis/20260618_114146_adaptive_market_style_worst_cases/worst_industry_exposure.csv",
+    "risk_governor_actions": "exports/signal_research/production_worst_case_analysis/20260618_114146_adaptive_market_style_worst_cases/risk_governor_actions.csv",
+    "missed_risk_events": "exports/signal_research/production_worst_case_analysis/20260618_114146_adaptive_market_style_worst_cases/missed_risk_events.csv"
+  }
+}

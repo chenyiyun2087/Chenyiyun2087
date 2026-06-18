@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 
@@ -32,7 +33,8 @@ def _normalize_shadow_validation(raw: dict | None) -> dict[str, float | int]:
 def load_production_config() -> dict[str, object]:
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Missing production config: {CONFIG_PATH}")
-    payload = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    raw_text = CONFIG_PATH.read_text(encoding="utf-8")
+    payload = yaml.safe_load(raw_text) or {}
     production = dict(payload.get("production") or {})
     config = {
         "primary_strategy": str(_require(production, "primary_strategy")),
@@ -49,6 +51,7 @@ def load_production_config() -> dict[str, object]:
         "defensive_fallback_strategy": str(production.get("defensive_fallback_strategy") or "baseline_full_liquidity_detail"),
         "shadow_validation": _normalize_shadow_validation(production.get("shadow_validation")),
         "config_path": str(CONFIG_PATH),
+        "config_sha": hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16],
     }
     return config
 

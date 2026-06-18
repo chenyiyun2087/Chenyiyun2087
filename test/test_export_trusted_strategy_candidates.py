@@ -71,6 +71,66 @@ def test_adaptive_risk_profile_defaults_to_vol_position_main_push():
     assert resolved.position_ratio == 0.7
 
 
+def test_rebalance_orders_effective_weight_uses_total_account_equity():
+    candidates = pd.DataFrame(
+        [
+            {
+                "signal_date": "2026-06-18",
+                "symbol": "000001",
+                "name": "A",
+                "effective_weight": 0.7,
+                "latest_close": 10.0,
+                "strategy": "demo",
+            }
+        ]
+    )
+
+    orders = _build_rebalance_orders(
+        candidates=candidates,
+        positions={},
+        latest_price_lookup={},
+        total_equity=1_000_000.0,
+        lot_size=100,
+        min_trade_value=100.0,
+        include_sells=True,
+    )
+
+    assert len(orders) == 1
+    assert orders.iloc[0]["side"] == "BUY"
+    assert orders.iloc[0]["allocated_shares"] == 70000
+    assert orders.iloc[0]["allocated_shares"] * orders.iloc[0]["price"] == 700000.0
+
+
+def test_rebalance_orders_freeze_buy_keeps_sells_only():
+    candidates = pd.DataFrame(
+        [
+            {
+                "signal_date": "2026-06-18",
+                "symbol": "000001",
+                "name": "A",
+                "effective_weight": 0.5,
+                "latest_close": 10.0,
+                "strategy": "demo",
+            }
+        ]
+    )
+
+    orders = _build_rebalance_orders(
+        candidates=candidates,
+        positions={"000002": {"shares": 1000, "holding_trade_days": 30}},
+        latest_price_lookup={"000002": 10.0},
+        total_equity=100_000.0,
+        lot_size=100,
+        min_trade_value=100.0,
+        include_sells=True,
+        allow_new_buys=False,
+    )
+
+    assert not orders.empty
+    assert set(orders["side"]) == {"SELL"}
+    assert orders.iloc[0]["ts_code"] == "000002"
+
+
 def test_production_default_strategy_is_not_model_risk():
     config = load_production_config()
     specs = {spec.name: spec for spec in build_strategy_specs()}

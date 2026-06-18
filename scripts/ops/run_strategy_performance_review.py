@@ -302,6 +302,31 @@ def _load_candidate_output_params(candidates: pd.DataFrame) -> dict:
     return dict(payload.get("params") or {})
 
 
+def _load_production_risk_decision(engine, review_date: str) -> dict:
+    if not _table_exists(engine, "chenyiyun.ads_production_risk_decisions"):
+        return {}
+    frame = _read_sql(
+        engine,
+        """
+        SELECT *
+        FROM chenyiyun.ads_production_risk_decisions
+        WHERE trade_date = :review_date
+        LIMIT 1
+        """,
+        {"review_date": review_date},
+    )
+    if frame.empty:
+        return {}
+    row = _records(frame)[0]
+    reasons = row.get("reasons_json")
+    if isinstance(reasons, str):
+        try:
+            row["reasons"] = json.loads(reasons)
+        except Exception:
+            row["reasons"] = [reasons]
+    return row
+
+
 def _load_shadow(engine, review_date: str) -> tuple[pd.DataFrame, dict, dict]:
     if not _table_exists(engine, "chenyiyun.ads_trusted_strategy_shadow_daily"):
         return pd.DataFrame(), {}, {"warning": "missing table ads_trusted_strategy_shadow_daily"}
@@ -457,7 +482,7 @@ def _summarize_orders(orders: pd.DataFrame) -> dict:
     }
 
 
-def _build_decision(backtests: dict, shadow_summary: dict, shadow_history: dict, live: dict, candidate_params: dict) -> dict:
+def _build_decision(backtests: dict, shadow_summary: dict, shadow_history: dict, live: dict, candidate_params: dict, risk_decision_row: dict | None = None) -> dict:
     primary = backtests["primary"]["summary"]
     adaptive = backtests["adaptive_market_style_v22"]["summary"]
     primary_mdd = float(primary.get("max_drawdown") or 0)
@@ -473,7 +498,17 @@ def _build_decision(backtests: dict, shadow_summary: dict, shadow_history: dict,
         "market_state": candidate_params.get("market_state"),
         "index_bucket": candidate_params.get("index_bucket"),
     }
-    governor = build_risk_governor_decision(PRODUCTION_CONFIG, adaptive_state, shadow_history)
+    risk_decision_row = dict(risk_decision_row or {})
+    if risk_decision_row:
+        governor = {
+            "risk_decision": risk_decision_row.get("risk_decision"),
+            "target_position_ratio": risk_decision_row.get("target_position_ratio"),
+            "fallback_strategy": risk_decision_row.get("fallback_strategy"),
+            "allow_new_buys": bool(risk_decision_row.get("allow_new_buys", True)),
+            "reasons": risk_decision_row.get("reasons") or [],
+        }
+    else:
+        governor = build_risk_governor_decision(PRODUCTION_CONFIG, adaptive_state, shadow_history)
     decision = "继续运行70%主推送，但不升仓；保留 adaptive_market_style v2.2 作为风控锚"
     reasons = [
         f"主策略三年累计{_pct(primary.get('total_return'))}，近1年弹性强，但最大回撤{_pct(primary_mdd)}偏深。",
@@ -706,6 +741,7 @@ def run_review(args: argparse.Namespace) -> dict:
     backtests = _load_backtests(args)
     candidates, candidate_meta = _load_candidates(engine, review_date)
     candidate_params = _load_candidate_output_params(candidates)
+    risk_decision_row = _load_production_risk_decision(engine, review_date)
     orders, order_meta = _load_orders(engine, review_date)
     shadow_fills, shadow_summary, shadow_meta = _load_shadow(engine, review_date)
     shadow_history = _load_recent_shadow_history(engine, review_date)
@@ -713,6 +749,7 @@ def run_review(args: argparse.Namespace) -> dict:
     current = {
         "candidate_meta": candidate_meta,
         "candidate_params": candidate_params,
+        "risk_decision": risk_decision_row,
         "order_meta": order_meta,
         "shadow_meta": shadow_meta,
         "candidates": _records(candidates),
@@ -745,7 +782,7 @@ def run_review(args: argparse.Namespace) -> dict:
         "outputs": {},
         "notify_result": None,
     }
-    payload["judgement"] = _build_decision(backtests, shadow_summary, shadow_history, live, candidate_params)
+    payload["judgement"] = _build_decision(backtests, shadow_summary, shadow_history, live, candidate_params, risk_decision_row)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.output_root) / f"{timestamp}_{_date_compact(review_date)}"
