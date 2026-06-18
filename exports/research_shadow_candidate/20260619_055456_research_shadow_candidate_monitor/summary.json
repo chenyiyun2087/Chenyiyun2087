@@ -1,0 +1,14 @@
+{
+  "production_strategy": "production_governed_vol_position",
+  "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "shadow_config_enabled": false,
+  "mode": "manual_shadow_only",
+  "backtest_dir": "exports/signal_research/20260619_005237_692696_trusted_account_backtest",
+  "output_dir": "exports/research_shadow_candidate/20260619_055456_research_shadow_candidate_monitor",
+  "rows": 13,
+  "avg_top5_overlap": 1.0,
+  "risk_decision_diff_days": 0,
+  "files": {
+    "research_shadow_candidate_monitor": "exports/research_shadow_candidate/20260619_055456_research_shadow_candidate_monitor/research_shadow_candidate_monitor.csv"
+  }
+}

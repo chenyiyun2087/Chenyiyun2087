@@ -1,0 +1,9 @@
+{
+  "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+  "output_dir": "exports/signal_research/v12b_false_positive_feature_separability/20260619_055424_v12b_false_positive_feature_separability",
+  "rows": 7,
+  "files": {
+    "v12b_false_positive_feature_separability": "exports/signal_research/v12b_false_positive_feature_separability/20260619_055424_v12b_false_positive_feature_separability/v12b_false_positive_feature_separability.csv",
+    "markdown": "exports/signal_research/v12b_false_positive_feature_separability/20260619_055424_v12b_false_positive_feature_separability/v12b_false_positive_feature_separability.md"
+  }
+}

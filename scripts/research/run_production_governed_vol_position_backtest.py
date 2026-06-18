@@ -20,12 +20,8 @@ WORST_CASE_SCRIPT = PROJECT_ROOT / "scripts/research/analyze_production_worst_ca
 DEFAULT_STRATEGIES = ",".join(
     [
         "production_governed_vol_position",
-        "production_governed_vol_position_v1_2b_gate_tuned",
-        "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto",
-        "production_governed_vol_position_v1_2b_fp_classified",
-        "production_governed_vol_position_v1_2b_fp_classified_pattern_veto",
         "production_governed_vol_position_v1_2b_dynamic_score",
-        "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
+        "production_governed_vol_position_v1_2b_gate_tuned",
         "adaptive_market_style",
         "baseline_full_liquidity_detail_vol_position",
     ]
@@ -159,12 +155,8 @@ def main() -> None:
     if output_dir:
         for strategy in [
             "production_governed_vol_position",
-            "production_governed_vol_position_v1_2b_gate_tuned",
-            "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto",
-            "production_governed_vol_position_v1_2b_fp_classified",
-            "production_governed_vol_position_v1_2b_fp_classified_pattern_veto",
             "production_governed_vol_position_v1_2b_dynamic_score",
-            "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
+            "production_governed_vol_position_v1_2b_gate_tuned",
             "production_governed_vol_position_v1_2_recovery",
             "production_governed_vol_position_v1_2_recovery_pattern_veto",
             "production_governed_vol_position_v2",

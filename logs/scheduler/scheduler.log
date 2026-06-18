@@ -5737,3 +5737,10 @@
 2026-06-18 21:21:50,342 - INFO - Skipping stale task: sina_bs scheduled at 15:20 (grace 90s)
 2026-06-18 21:21:50,342 - INFO - Skipping stale task: eastmoney_data scheduled at 16:30 (grace 90s)
 2026-06-18 21:21:50,342 - INFO - Skipping stale task: daily_pipeline scheduled at 21:00 (grace 90s)
+2026-06-18 22:05:21,051 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-19 00:00:22,362 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 01:00:23,149 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 02:00:24,037 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 03:00:24,844 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 04:00:25,803 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 05:00:26,643 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.

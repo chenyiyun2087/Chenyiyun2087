@@ -13,6 +13,13 @@ import pandas as pd
 DEFAULT_STRATEGY = "production_governed_vol_position_v1_2b_fp_classified"
 DEFAULT_OUTPUT_ROOT = Path("exports/signal_research/pattern_veto_coverage")
 TOP_BUCKETS = (5, 10, 30)
+PATTERN_FEATURE_COLUMNS = (
+    "pattern_score",
+    "pattern_sentiment",
+    "pattern_risk_level",
+    "bullish_pattern_count",
+    "bearish_pattern_count",
+)
 
 
 def _read_candidates(backtest_dir: Path) -> pd.DataFrame:
@@ -61,10 +68,13 @@ def build_coverage(candidates: pd.DataFrame, strategy: str = DEFAULT_STRATEGY) -
         for top_n in TOP_BUCKETS:
             part = day[pd.to_numeric(day["candidate_rank"], errors="coerce").le(top_n)].copy()
             risky = part[part["is_high_risk"] | part["is_bearish_dominance"] | part["is_high_risk_bearish"]]
+            pattern_features = part.reindex(columns=PATTERN_FEATURE_COLUMNS)
             row = {
                 "trade_date": trade_date,
                 "top_n": int(top_n),
                 "candidate_count": int(len(part)),
+                "pattern_feature_missing_count": int(pattern_features.isna().any(axis=1).sum()) if len(part) else 0,
+                "pattern_feature_missing_ratio": float(pattern_features.isna().any(axis=1).mean()) if len(part) else 0.0,
                 "high_risk_count": int(part["is_high_risk"].sum()),
                 "bearish_dominance_count": int(part["is_bearish_dominance"].sum()),
                 "high_risk_bearish_count": int(part["is_high_risk_bearish"].sum()),
@@ -78,20 +88,50 @@ def build_coverage(candidates: pd.DataFrame, strategy: str = DEFAULT_STRATEGY) -
     return pd.DataFrame(rows)
 
 
+def build_pattern_feature_coverage(candidates: pd.DataFrame, strategy: str = DEFAULT_STRATEGY) -> pd.DataFrame:
+    if strategy not in set(candidates["strategy"].astype(str)):
+        raise RuntimeError(f"Target strategy missing from candidates: {strategy}")
+    frame = candidates[candidates["strategy"].astype(str).eq(strategy)].copy()
+    frame["trade_date"] = pd.to_datetime(frame["trade_date"]).dt.strftime("%Y-%m-%d")
+    rows: list[dict[str, object]] = []
+    for trade_date, day in frame.groupby("trade_date", dropna=False):
+        row: dict[str, object] = {
+            "trade_date": trade_date,
+            "candidate_count": int(len(day)),
+        }
+        for col in PATTERN_FEATURE_COLUMNS:
+            if col in day.columns:
+                present = day[col].notna()
+                row[f"{col}_present_count"] = int(present.sum())
+                row[f"{col}_missing_ratio"] = float(1 - present.mean()) if len(day) else 0.0
+            else:
+                row[f"{col}_present_count"] = 0
+                row[f"{col}_missing_ratio"] = 1.0 if len(day) else 0.0
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def run_analysis(backtest_dir: Path, output_root: Path, strategy: str = DEFAULT_STRATEGY) -> dict[str, object]:
     candidates = _read_candidates(backtest_dir)
     coverage = build_coverage(candidates, strategy)
+    feature_coverage = build_pattern_feature_coverage(candidates, strategy)
     out_dir = output_root / datetime.now().strftime("%Y%m%d_%H%M%S_pattern_veto_coverage")
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "pattern_veto_coverage.csv"
+    feature_csv_path = out_dir / "pattern_feature_coverage_by_date.csv"
     coverage.to_csv(csv_path, index=False)
+    feature_coverage.to_csv(feature_csv_path, index=False)
     summary = {
         "strategy": strategy,
         "backtest_dir": str(backtest_dir),
         "output_dir": str(out_dir),
         "top5_high_risk_days": int((coverage["top_n"].eq(5) & coverage["high_risk_count"].gt(0)).sum()) if not coverage.empty else 0,
         "top30_high_risk_days": int((coverage["top_n"].eq(30) & coverage["high_risk_count"].gt(0)).sum()) if not coverage.empty else 0,
-        "files": {"pattern_veto_coverage": str(csv_path)},
+        "avg_pattern_score_missing_ratio": float(feature_coverage["pattern_score_missing_ratio"].mean()) if not feature_coverage.empty else 0.0,
+        "files": {
+            "pattern_veto_coverage": str(csv_path),
+            "pattern_feature_coverage_by_date": str(feature_csv_path),
+        },
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary

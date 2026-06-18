@@ -27,9 +27,13 @@ from scripts.research.analyze_governor_contribution import (
 )
 from scripts.research.analyze_pattern_veto_attribution import run_analysis as run_pattern_veto_attribution
 from scripts.research.analyze_pattern_veto_coverage import build_coverage as build_pattern_veto_coverage
+from scripts.research.analyze_pattern_veto_coverage import build_pattern_feature_coverage
 from scripts.research.analyze_v12b_false_positive_feature_profile import build_feature_profile
+from scripts.research.analyze_v12b_false_positive_feature_separability import build_feature_separability
 from scripts.research.analyze_v12b_false_positive_gap import classify_false_positive, run_analysis as run_false_positive_gap
 from scripts.research.analyze_v12b_gate_stability import build_monthly_gate_check, build_yearly_breakdown
+from scripts.ops.run_research_shadow_candidate_monitor import build_shadow_monitor
+from scripts.research.run_production_governed_vol_position_backtest import DEFAULT_STRATEGIES as PRODUCTION_GOVERNED_DEFAULT_STRATEGIES
 from scripts.research.analyze_adaptive_vs_governed import (
     build_exposure_efficiency_compare,
     build_monthly_return_compare,
@@ -363,6 +367,40 @@ def test_v12b_false_positive_feature_profile_summarizes_categories():
         build_feature_profile(gap.drop(columns=["false_positive_type"]))
 
 
+def test_v12b_false_positive_feature_separability_reports_actual_direction():
+    rows = []
+    for idx in range(10):
+        rows.append(
+            {
+                "false_positive_type": "benign_false_positive",
+                "champion_score_pctile_252": 0.2 + idx * 0.01,
+                "governed_nav_drawdown_20d": -0.02,
+                "pattern_top5_bearish_count": 0,
+                "pattern_top5_bullish_count": 1,
+            }
+        )
+        rows.append(
+            {
+                "false_positive_type": "dangerous_false_positive",
+                "champion_score_pctile_252": 0.8 + idx * 0.01,
+                "governed_nav_drawdown_20d": -0.08,
+                "pattern_top5_bearish_count": 2,
+                "pattern_top5_bullish_count": 0,
+            }
+        )
+    gap = pd.DataFrame(rows)
+
+    separability = build_feature_separability(gap)
+    champion = separability[separability["feature"].eq("champion_score_pctile_252")].iloc[0]
+    drawdown = separability[separability["feature"].eq("governed_nav_drawdown_20d")].iloc[0]
+
+    assert champion["suggested_direction"] == "lower_is_more_benign"
+    assert champion["auc_best_direction"] == 1.0
+    assert drawdown["suggested_direction"] == "higher_is_more_benign"
+    with pytest.raises(RuntimeError, match="Insufficient"):
+        build_feature_separability(gap.head(4))
+
+
 def test_pattern_veto_attribution_counts_actual_removed_only_inside_top_n(tmp_path: Path):
     backtest_dir = tmp_path / "backtest"
     backtest_dir.mkdir()
@@ -457,6 +495,115 @@ def test_pattern_veto_coverage_counts_rank_buckets_without_promoting_top30_to_to
     assert int(top5["high_risk_count"]) == 0
     assert int(top30["high_risk_count"]) == 1
     assert int(top30["high_risk_bearish_count"]) == 1
+    assert float(top5["pattern_feature_missing_ratio"]) > 0
+
+
+def test_pattern_feature_coverage_tracks_missing_fields_by_date():
+    candidates = pd.DataFrame(
+        [
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000001",
+                "pattern_score": 0.5,
+                "pattern_risk_level": "low",
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "symbol": "000002",
+                "pattern_score": None,
+                "pattern_risk_level": None,
+            },
+        ]
+    )
+
+    coverage = build_pattern_feature_coverage(candidates, PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME)
+
+    assert int(coverage["pattern_score_present_count"].iloc[0]) == 1
+    assert coverage["pattern_score_missing_ratio"].iloc[0] == 0.5
+
+
+def test_research_shadow_candidate_monitor_is_manual_and_aligned():
+    nav = pd.DataFrame(
+        [
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "nav": 1.0,
+                "target_position_ratio": 0.45,
+                "risk_decision": "reduce_position",
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "trade_date": "2026-01-02",
+                "nav": 1.02,
+                "target_position_ratio": 0.45,
+                "risk_decision": "reduce_position",
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-01",
+                "nav": 1.0,
+                "target_position_ratio": 0.58,
+                "risk_decision": "recovery_reduce",
+                "recovery_status": "recovered",
+            },
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-02",
+                "nav": 1.03,
+                "target_position_ratio": 0.58,
+                "risk_decision": "recovery_reduce",
+                "recovery_status": "recovered",
+            },
+        ]
+    )
+    candidates = pd.DataFrame(
+        [
+            {"strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME, "trade_date": "2026-01-02", "symbol": "000001", "candidate_rank": 1},
+            {"strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME, "trade_date": "2026-01-02", "symbol": "000002", "candidate_rank": 2},
+            {"strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME, "trade_date": "2026-01-02", "symbol": "000001", "candidate_rank": 1},
+            {"strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME, "trade_date": "2026-01-02", "symbol": "000003", "candidate_rank": 2},
+        ]
+    )
+    trades = pd.DataFrame(
+        [
+            {"strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME, "trade_date": "2026-01-02", "symbol": "000002", "side": "BUY", "gross_amount": 1000},
+            {
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "trade_date": "2026-01-02",
+                "symbol": "000003",
+                "side": "BUY",
+                "gross_amount": 1500,
+            },
+        ]
+    )
+
+    monitor = build_shadow_monitor(
+        nav,
+        candidates,
+        trades,
+        PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+        trade_date="2026-01-02",
+    )
+
+    row = monitor.iloc[0]
+    assert bool(row["risk_decision_diff"]) is True
+    assert row["top5_overlap"] == pytest.approx(1 / 3)
+    assert row["buy_list_added_by_shadow"] == "000003"
+    assert row["estimated_order_value_diff"] == 500
+    assert row["fp_explanation_label"] == "unknown_pending_forward_return"
+
+
+def test_default_governed_backtest_matrix_archives_fp_classified():
+    strategies = set(PRODUCTION_GOVERNED_DEFAULT_STRATEGIES.split(","))
+
+    assert PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME in strategies
+    assert PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME in strategies
+    assert PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME not in strategies
+    assert PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME in strategies
 
 
 def test_v12b_gate_stability_outputs_yearly_and_monthly_tables():
