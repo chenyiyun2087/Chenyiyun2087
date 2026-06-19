@@ -1,5 +1,7 @@
 # 回测报告索引
 
+> 2026-06-20 strict 独立执行 replay：commit `b4e2655e` 的 clean-worktree 证据包完成 15 笔逐订单价格、费用、T+1 gate、时间顺序与守恒审计，均为 0 差异。真实执行失败残差为 0，但价格缓冲残差约 63,041、P95 权重偏离约 298.95bps，且公司行为仍 `PARTIAL_UNVERIFIED`；状态继续为 `CAUSAL_BUT_LEDGER_UNVERIFIED`。详见 `2026-06-20_strict_执行重放与偏离证据清单.md`。
+
 > 2026-06-20 strict ledger 独立重放：提交 `a71f1c23` 的 clean worktree 烟测完成 15 个订单事件重放，订单守恒、事件重放与 ledger-vs-NAV 误差均为 0bp；但公司行为覆盖仍为 `PARTIAL_UNVERIFIED`，风险漏判为 2，现金与权重偏离超阈值，验收固定为 `CAUSAL_BUT_LEDGER_UNVERIFIED`、`promotion_enabled=false`。详见 `2026-06-20_strict_ledger_replay_证据清单.md`。
 
 > 2026-06-20 strict 唯一账本烟测：strict 预提交订单、T+1 成交/拒单/取消和公司行为事件已收敛至 `ExecutionLedger`，T+1 错成交数为 0。但烟测工作区为 dirty、公司行为覆盖仍为 `PARTIAL_UNVERIFIED`，验收状态固定为 `CAUSAL_BUT_LEDGER_UNVERIFIED`，`promotion_enabled=false`；不产生全历史绩效或晋级结论。详见 `2026-06-20_strict_ledger_唯一账本烟测摘要.md`。
