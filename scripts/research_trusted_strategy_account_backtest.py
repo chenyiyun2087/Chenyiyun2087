@@ -29,6 +29,7 @@ from scripts.ops.production_risk_governor import (
     build_risk_governor_decision_v2,
 )
 from scripts.research.execution_risk_severity import execution_hard_block_reasons
+from scripts.research.execution_safe_uplift_execution_modes import AUCTION_MODE, MODES as EXECUTION_MODES, POST_OPEN_MODE, STRICT_MODE, execution_mode_audit
 from scripts.research_full_pool_liquidity_strategies import (
     StrategySpec,
     _market_exposure_scale,
@@ -2617,17 +2618,26 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         baseline_position_ratio = float(baseline_governor.get("target_position_ratio") or 0.0)
                         if baseline_risk_decision == "freeze_buy" or not bool(baseline_governor.get("allow_new_buys", True)):
                             baseline_position_ratio = 0.0
-                        if args.execution_mode == "strict_t1_open_precommit":
+                        mode_audit = execution_mode_audit(args.execution_mode, bool(args.allow_daily_proxy_approximation))
+                        if args.execution_mode == STRICT_MODE:
                             preflight = {
                                 "status": "strict_precommit_no_intraday_guard",
                                 "fallback_applied": False,
                                 "hard_block_reasons": "",
                                 "incremental_symbols": "",
                             }
-                        elif args.execution_mode in {"auction_0925_preflight", "post_open_1m_fallback"}:
-                            raise RuntimeError(f"{args.execution_mode} requires timestamped auction/minute market data; daily bars fail closed.")
                         else:
-                            raise RuntimeError(f"Unknown execution mode: {args.execution_mode}")
+                            # Daily-bar proxy approximation is research-only. It may reuse the
+                            # old counterfactual helper but is never promotion eligible.
+                            preflight = _execution_safe_uplift_preflight(
+                                shadow_targets=target_override,
+                                baseline_targets=baseline_targets,
+                                shadow_position_ratio=rebalance_position_ratio,
+                                baseline_position_ratio=baseline_position_ratio,
+                                price_lookup=price_lookup,
+                                equity_before=_equity(account, price_lookup, "adj_open"),
+                                is_recovery=str(governor.get("recovery_status") or "") == "recovered" or risk_decision == "recovery_reduce",
+                            )
                         execution_safe_meta = {
                             "execution_safe_uplift_preflight_status": preflight["status"],
                             "execution_safe_uplift_fallback_applied": int(bool(preflight["fallback_applied"])),
@@ -2640,7 +2650,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "order_submit_timestamp": f"{pd.Timestamp(signal_date).date()}T15:00:00+08:00",
                             "fill_timestamp": f"{pd.Timestamp(trade_date).date()}T09:30:00+08:00",
                             "execution_mode": args.execution_mode,
-                            "causality_pass": int(args.execution_mode == "strict_t1_open_precommit"),
+                            "causality_pass": int(mode_audit.causality_pass),
+                            "daily_proxy_approximation": int(mode_audit.daily_proxy_approximation),
+                            "execution_mode_status": mode_audit.status,
+                            "execution_promotion_eligible": int(mode_audit.promotion_eligible),
                         }
                         if bool(preflight["fallback_applied"]):
                             governor = baseline_governor
@@ -3011,10 +3024,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["execution_safe_uplift_planned_position_ratio"] = adaptive_meta.get("execution_safe_uplift_planned_position_ratio")
                         item["execution_safe_uplift_final_strategy"] = adaptive_meta.get("execution_safe_uplift_final_strategy")
                         item["execution_safe_uplift_final_position_ratio"] = adaptive_meta.get("execution_safe_uplift_final_position_ratio")
-                        for field in ("decision_timestamp", "proxy_asof_timestamp", "order_submit_timestamp", "fill_timestamp", "execution_mode", "causality_pass"):
+                        for field in ("decision_timestamp", "proxy_asof_timestamp", "order_submit_timestamp", "fill_timestamp", "execution_mode", "causality_pass", "daily_proxy_approximation", "execution_mode_status", "execution_promotion_eligible"):
                             item[field] = adaptive_meta.get(field)
                     for item in trades:
-                        for field in ("decision_timestamp", "proxy_asof_timestamp", "order_submit_timestamp", "fill_timestamp", "execution_mode", "causality_pass"):
+                        for field in ("decision_timestamp", "proxy_asof_timestamp", "order_submit_timestamp", "fill_timestamp", "execution_mode", "causality_pass", "daily_proxy_approximation", "execution_mode_status", "execution_promotion_eligible"):
                             item[field] = adaptive_meta.get(field)
                         item["execution_safe_uplift_preflight_status"] = adaptive_meta.get("execution_safe_uplift_preflight_status")
                         item["execution_safe_uplift_fallback_applied"] = adaptive_meta.get("execution_safe_uplift_fallback_applied")
@@ -3241,7 +3254,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Account-level backtest for trusted full-pool production strategies.")
     parser.add_argument("--start-date", default="2026-01-05")
     parser.add_argument("--end-date", default=None)
-    parser.add_argument("--execution-mode", default="strict_t1_open_precommit", choices=["strict_t1_open_precommit", "auction_0925_preflight", "post_open_1m_fallback"])
+    parser.add_argument("--execution-mode", default=STRICT_MODE, choices=EXECUTION_MODES)
+    parser.add_argument("--allow-daily-proxy-approximation", action="store_true")
     parser.add_argument(
         "--risk-profile",
         default=DEFAULT_RISK_PROFILE,
