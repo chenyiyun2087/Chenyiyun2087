@@ -262,6 +262,10 @@ def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: p
         PROJECT_ROOT / "scripts/research_full_pool_liquidity_strategies.py",
         PROJECT_ROOT / "scripts/research/strict_execution_ledger.py",
         PROJECT_ROOT / "scripts/research/replay_strict_execution_ledger.py",
+        PROJECT_ROOT / "scripts/research/replay_strict_execution_ledger_v2.py",
+        PROJECT_ROOT / "scripts/research/analyze_strict_execution_deviation.py",
+        PROJECT_ROOT / "scripts/research/analyze_strict_missed_risk_events.py",
+        PROJECT_ROOT / "scripts/research/package_strict_ledger_evidence.py",
     ]
     try:
         sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True).strip()
