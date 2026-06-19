@@ -207,6 +207,15 @@ def build_promotion_status(
         if hard_block_fallback_research_ready
         else "EXECUTION_SAFE_UPLIFT_RESEARCH_PENDING"
     )
+    fallback_research_status = {
+        "status": uplift_research_status,
+        "fallback_gate": hard_block_fallback_event_gate,
+        "excluded_hard_block_event_count": _first_present(
+            uplift_summary.get("excluded_hard_block_event_count"), uplift_summary.get("promotion_valid_hard_block_count"), default=0
+        ),
+        "promotion_ready_simulated": bool(hard_block_fallback_research_ready),
+        "research_only": True,
+    }
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "production_default": config.get("primary_strategy"),
@@ -234,6 +243,8 @@ def build_promotion_status(
         "canary_ready": canary_ready,
         "promotion_status": status,
         "execution_safe_uplift_research_status": uplift_research_status,
+        "raw_shadow_status": {"promotion_status": status, "blocking_statuses": list(blocking_statuses)},
+        "fallback_research_status": fallback_research_status,
         "promotion_statuses": [*blocking_statuses, *warning_statuses] or [status],
         "blocking_statuses": blocking_statuses,
         "warning_statuses": warning_statuses,

@@ -69,10 +69,12 @@ from scripts.research_trusted_strategy_account_backtest import (
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
     _champion_score_context_from_decisions,
     _execution_proxy_fields,
+    _execution_safe_uplift_preflight,
     _apply_pattern_veto_to_targets,
     VOL_POSITION_PATTERN_RISK_PENALTY_STRATEGY_NAME,
     VOL_POSITION_PATTERN_RERANK_STRATEGY_NAME,
@@ -262,6 +264,7 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+            PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
             PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME,
@@ -279,12 +282,44 @@ def test_strategy_specs_include_production_governed_pseudo_strategy():
     assert specs[5].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME
     assert specs[6].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME
     assert specs[7].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME
-    assert specs[8].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME
-    assert specs[9].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME
-    assert specs[10].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME
-    assert specs[11].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
-    assert specs[12].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
-    assert specs[13].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
+    assert specs[8].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME
+    assert specs[9].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME
+    assert specs[10].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME
+    assert specs[11].name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME
+    assert specs[12].name == PRODUCTION_GOVERNED_VOL_POSITION_V2_STRATEGY_NAME
+    assert specs[13].name == PRODUCTION_GOVERNED_ADAPTIVE_STRATEGY_NAME
+    assert specs[14].name == PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME
+
+
+def test_execution_safe_uplift_preflight_falls_back_only_for_hard_incremental_risk():
+    targets = pd.DataFrame(
+        [
+            {"symbol": "000001", "effective_weight": 1.0},
+        ]
+    )
+    hard = _execution_safe_uplift_preflight(
+        shadow_targets=targets,
+        baseline_targets=targets,
+        shadow_position_ratio=0.60,
+        baseline_position_ratio=0.45,
+        price_lookup={"000001": {"adj_open": 10.6, "prev_adj_close": 10.0, "amount": 1_000_000}},
+        equity_before=1_000_000,
+        is_recovery=True,
+    )
+    warning = _execution_safe_uplift_preflight(
+        shadow_targets=targets,
+        baseline_targets=targets,
+        shadow_position_ratio=0.60,
+        baseline_position_ratio=0.45,
+        price_lookup={"000001": {"adj_open": 10.4, "prev_adj_close": 10.0, "amount": 1_000_000}},
+        equity_before=1_000_000,
+        is_recovery=True,
+    )
+
+    assert hard["fallback_applied"] is True
+    assert hard["status"] == "hard_block_fallback_to_v1"
+    assert warning["fallback_applied"] is False
+    assert warning["status"] == "execution_safe_uplift"
 
 
 def test_v12b_false_positive_gap_classifies_only_target_strategy(tmp_path: Path):

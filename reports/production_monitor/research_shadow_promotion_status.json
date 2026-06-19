@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-19T12:46:42",
+  "generated_at": "2026-06-19T13:01:27",
   "production_default": "production_governed_vol_position",
   "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",
   "research_shadow_candidate_enabled": false,
@@ -25,6 +25,20 @@
   "canary_ready": false,
   "promotion_status": "MANUAL_SHADOW_OBSERVATION",
   "execution_safe_uplift_research_status": "READY_FOR_EXECUTION_SAFE_UPLIFT_RESEARCH",
+  "raw_shadow_status": {
+    "promotion_status": "MANUAL_SHADOW_OBSERVATION",
+    "blocking_statuses": [
+      "NOT_READY_EVENT_WINDOW",
+      "NOT_READY_INCREMENTAL_EXECUTION"
+    ]
+  },
+  "fallback_research_status": {
+    "status": "READY_FOR_EXECUTION_SAFE_UPLIFT_RESEARCH",
+    "fallback_gate": "pass_execution_safe_uplift_research",
+    "excluded_hard_block_event_count": 6,
+    "promotion_ready_simulated": true,
+    "research_only": true
+  },
   "promotion_statuses": [
     "NOT_READY_EVENT_WINDOW",
     "NOT_READY_INCREMENTAL_EXECUTION",

@@ -1,0 +1,16 @@
+strategy,trade_date,symbol,name,industry,side,price,shares,gross_amount,cost,cash_after,reason
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-06,002465,海格通信,通信设备,BUY,18.32,5200,95264.0,71.44800000000001,404664.552,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-06,300058,蓝色光标,广告包装,BUY,13.6,3500,47600.0,35.7,357028.852,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-06,300136,信维通信,元器件,BUY,63.5,800,50800.0,38.1,306190.75200000004,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-06,600118,中国卫星,航空,BUY,96.89,600,58134.0,43.600500000000004,248013.15150000004,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-06,600362,江西铜业,铜,BUY,56.0,1500,84000.0,63.0,163950.15150000004,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,002465,海格通信,通信设备,SELL,18.6,5200,96720.00000000001,72.54,260597.61150000006,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,300058,蓝色光标,广告包装,SELL,17.6,3500,61600.00000000001,46.20000000000001,322151.41150000005,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,300136,信维通信,元器件,SELL,81.0,800,64800.0,48.6,386902.81150000007,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,600118,中国卫星,航空,SELL,105.99,600,63594.0,47.6955,450449.11600000004,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,600362,江西铜业,铜,SELL,61.64,1500,92460.0,69.345,542839.7710000001,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,000338,潍柴动力,汽车配件,BUY,22.1,4000,88400.0,66.3,454373.4710000001,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,000938,紫光股份,IT设备,BUY,27.79,4400,122276.0,91.70700000000001,332005.7640000001,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,002156,通富微电,半导体,BUY,47.7,1400,66780.0,50.085,265175.67900000006,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,600089,特变电工,电气设备,BUY,30.9,1800,55620.0,41.715,209513.96400000007,rebalance_unlocked
+production_governed_vol_position_v1_2b_execution_safe_uplift,2026-01-20,688525,佰维存储,半导体,BUY,177.0,200,35400.0,26.55,174087.41400000005,rebalance_unlocked

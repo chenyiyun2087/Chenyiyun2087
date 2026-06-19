@@ -70,3 +70,4 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 - Do not use pattern veto until Top5 coverage >= 90%, Top30 coverage >= 80%, and core missing < 20%.
 - Do not let false-positive explanation labels, pattern coverage, or event ledgers alter sorting, sizing, buying, selling, scheduler, or production candidate export.
 - Do not treat the fallback counterfactual as an enabled-shadow strategy until it has a separate account-level T+1 validation.
+- The account-level research candidate is `production_governed_vol_position_v1_2b_execution_safe_uplift`. It may route to the v1 target at T+1 open when an incremental recovery buy hits a hard execution block; it remains research-only until its own 20/60/120/full-history gates pass.
