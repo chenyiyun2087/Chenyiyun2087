@@ -50,6 +50,8 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 - Large-slippage risk is reported as common, shadow incremental, event, and non-event; `large_slippage_proxy > 3%` alone is warning-only.
 - Promotion requires incremental hard-block days to be 0, even when cumulative event return is positive.
 - Execution-safe uplift simulation compares original v1.2b, hard-block fallback, open-gap downweight, and large-slippage downweight without changing strategy routing.
+- `hard_block_fallback_event_gate` is a research-only counterfactual: hard-block recovery events use the production path, while execution-safe recovery events retain the v1.2b uplift. It may produce `READY_FOR_EXECUTION_SAFE_UPLIFT_RESEARCH`, but cannot clear the raw shadow event-window or incremental-execution blockers.
+- Fallback research requires at least 5 original recovery events, zero remaining incremental hard-block days, positive fallback gap, at least 55% positive retained events, drawdown no worse than original shadow, and total return above production.
 
 ## Canary Requirements
 
@@ -67,3 +69,4 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 - Do not promote `v1_2b_fp_classified`.
 - Do not use pattern veto until Top5 coverage >= 90%, Top30 coverage >= 80%, and core missing < 20%.
 - Do not let false-positive explanation labels, pattern coverage, or event ledgers alter sorting, sizing, buying, selling, scheduler, or production candidate export.
+- Do not treat the fallback counterfactual as an enabled-shadow strategy until it has a separate account-level T+1 validation.

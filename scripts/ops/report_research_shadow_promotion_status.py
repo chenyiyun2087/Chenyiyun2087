@@ -109,6 +109,8 @@ def build_promotion_status(
     else:
         promotion_valid_event_gate = str(event_quality_summary.get("promotion_valid_event_gate") or event_window_summary.get("promotion_valid_event_gate") or "pending_promotion_valid_event_quality")
     promotion_valid_event_pass = promotion_valid_event_gate == "pass_promotion_valid_events"
+    hard_block_fallback_event_gate = str(uplift_summary.get("hard_block_fallback_event_gate") or "pending_execution_safe_uplift")
+    hard_block_fallback_research_ready = hard_block_fallback_event_gate == "pass_execution_safe_uplift_research"
     incremental_degraded_days = degradation_summary.get("incremental_execution_degraded_days")
     incremental_hard_block_days = degradation_summary.get("incremental_hard_block_days")
     incremental_gate_known = incremental_degraded_days is not None
@@ -200,6 +202,11 @@ def build_promotion_status(
         status = "READY_FOR_CANARY_REVIEW"
     else:
         status = "MANUAL_SHADOW_OBSERVATION"
+    uplift_research_status = (
+        "READY_FOR_EXECUTION_SAFE_UPLIFT_RESEARCH"
+        if hard_block_fallback_research_ready
+        else "EXECUTION_SAFE_UPLIFT_RESEARCH_PENDING"
+    )
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "production_default": config.get("primary_strategy"),
@@ -213,17 +220,20 @@ def build_promotion_status(
         "cumulative_event_pass": cumulative_event_pass,
         "execution_safe_event_pass": execution_safe_event_pass,
         "promotion_valid_event_pass": promotion_valid_event_pass,
+        "hard_block_fallback_research_ready": hard_block_fallback_research_ready,
         "incremental_execution_pass": incremental_execution_pass,
         "calendar_gate": calendar_gate,
         "event_window_gate": event_window_gate,
         "cumulative_event_gate": cumulative_event_gate,
         "execution_safe_event_gate": execution_safe_event_gate,
         "promotion_valid_event_gate": promotion_valid_event_gate,
+        "hard_block_fallback_event_gate": hard_block_fallback_event_gate,
         "incremental_execution_gate": incremental_execution_gate,
         "execution_proxy_pass": execution_pass,
         "promotion_ready": promotion_ready,
         "canary_ready": canary_ready,
         "promotion_status": status,
+        "execution_safe_uplift_research_status": uplift_research_status,
         "promotion_statuses": [*blocking_statuses, *warning_statuses] or [status],
         "blocking_statuses": blocking_statuses,
         "warning_statuses": warning_statuses,
@@ -247,8 +257,19 @@ def build_promotion_status(
         "promotion_valid_positive_rate": uplift_summary.get("promotion_valid_positive_rate") or event_quality_summary.get("promotion_valid_positive_rate") or event_window_summary.get("promotion_valid_positive_rate"),
         "promotion_valid_cumulative_gap": uplift_summary.get("promotion_valid_cumulative_gap") or event_quality_summary.get("promotion_valid_cumulative_gap") or event_window_summary.get("promotion_valid_cumulative_gap"),
         "promotion_valid_event_window_gap": uplift_summary.get("promotion_valid_event_window_gap") or event_window_summary.get("promotion_valid_event_window_gap") or event_quality_summary.get("promotion_valid_event_window_gap"),
-        "promotion_valid_hard_block_count": uplift_summary.get("promotion_valid_hard_block_count") or event_quality_summary.get("promotion_valid_hard_block_count"),
+        "excluded_hard_block_event_count": _first_present(
+            uplift_summary.get("excluded_hard_block_event_count"),
+            uplift_summary.get("promotion_valid_hard_block_count"),
+            event_quality_summary.get("promotion_valid_hard_block_count"),
+            default=0,
+        ),
+        "promotion_valid_hard_block_count_deprecated": uplift_summary.get("promotion_valid_hard_block_count_deprecated", False),
         "promotion_valid_slippage_warning_count": uplift_summary.get("promotion_valid_slippage_warning_count") or event_quality_summary.get("promotion_valid_slippage_warning_count"),
+        "hard_block_fallback_event_count": uplift_summary.get("hard_block_fallback_event_count"),
+        "hard_block_fallback_positive_rate": uplift_summary.get("hard_block_fallback_positive_rate"),
+        "hard_block_fallback_cumulative_gap": uplift_summary.get("hard_block_fallback_cumulative_gap"),
+        "hard_block_fallback_max_drawdown": uplift_summary.get("hard_block_fallback_max_drawdown"),
+        "hard_block_fallback_incremental_hard_block_days": uplift_summary.get("hard_block_fallback_incremental_hard_block_days"),
         "incremental_execution_degraded_days": incremental_degraded_days,
         "incremental_hard_block_days": incremental_hard_block_days,
         "execution_hard_block_days": execution_hard_block_days,
@@ -282,6 +303,7 @@ def _markdown(status: dict[str, object]) -> str:
         f"- warning_statuses: `{', '.join(status.get('warning_statuses') or [])}`",
         f"- promotion_ready: `{status.get('promotion_ready')}`",
         f"- canary_ready: `{status.get('canary_ready')}`",
+        f"- execution_safe_uplift_research_status: `{status.get('execution_safe_uplift_research_status')}`",
         "",
         "| gate | value |",
         "|---|---:|",
@@ -291,6 +313,7 @@ def _markdown(status: dict[str, object]) -> str:
         f"| cumulative_event_pass | {status.get('cumulative_event_pass')} |",
         f"| execution_safe_event_pass | {status.get('execution_safe_event_pass')} |",
         f"| promotion_valid_event_pass | {status.get('promotion_valid_event_pass')} |",
+        f"| hard_block_fallback_research_ready | {status.get('hard_block_fallback_research_ready')} |",
         f"| incremental_execution_pass | {status.get('incremental_execution_pass')} |",
         f"| execution_proxy_pass | {status.get('execution_proxy_pass')} |",
         f"| total_recovery_events | {status.get('total_recovery_events')} |",
@@ -305,6 +328,12 @@ def _markdown(status: dict[str, object]) -> str:
         f"| promotion_valid_positive_rate | {status.get('promotion_valid_positive_rate')} |",
         f"| promotion_valid_cumulative_gap | {status.get('promotion_valid_cumulative_gap')} |",
         f"| promotion_valid_event_window_gap | {status.get('promotion_valid_event_window_gap')} |",
+        f"| excluded_hard_block_event_count | {status.get('excluded_hard_block_event_count')} |",
+        f"| hard_block_fallback_event_count | {status.get('hard_block_fallback_event_count')} |",
+        f"| hard_block_fallback_positive_rate | {status.get('hard_block_fallback_positive_rate')} |",
+        f"| hard_block_fallback_cumulative_gap | {status.get('hard_block_fallback_cumulative_gap')} |",
+        f"| hard_block_fallback_max_drawdown | {status.get('hard_block_fallback_max_drawdown')} |",
+        f"| hard_block_fallback_incremental_hard_block_days | {status.get('hard_block_fallback_incremental_hard_block_days')} |",
         f"| incremental_execution_degraded_days | {status.get('incremental_execution_degraded_days')} |",
         f"| incremental_hard_block_days | {status.get('incremental_hard_block_days')} |",
         f"| execution_hard_block_days | {status.get('execution_hard_block_days')} |",
@@ -319,6 +348,7 @@ def _markdown(status: dict[str, object]) -> str:
         f"- cumulative_event_gate: `{status.get('cumulative_event_gate')}`",
         f"- execution_safe_event_gate: `{status.get('execution_safe_event_gate')}`",
         f"- promotion_valid_event_gate: `{status.get('promotion_valid_event_gate')}`",
+        f"- hard_block_fallback_event_gate: `{status.get('hard_block_fallback_event_gate')}`",
         f"- incremental_execution_gate: `{status.get('incremental_execution_gate')}`",
         "",
         f"- pattern_lineage_status: `{status.get('pattern_lineage_status')}`",
@@ -347,6 +377,10 @@ def run_report(
     event_quality = _read_json(event_quality_summary) if event_quality_summary else _latest_summary(DEFAULT_EVENT_QUALITY_ROOT)
     degradation = _read_json(degradation_summary) if degradation_summary else _latest_summary(DEFAULT_DEGRADATION_ROOT)
     uplift = _read_json(uplift_summary) if uplift_summary else _latest_summary(DEFAULT_UPLIFT_ROOT)
+    if degradation_summary:
+        degradation["_summary_path"] = str(degradation_summary)
+    if uplift_summary:
+        uplift["_summary_path"] = str(uplift_summary)
     status = build_promotion_status(
         _read_json(daily_json),
         _read_json(event_summary_json),

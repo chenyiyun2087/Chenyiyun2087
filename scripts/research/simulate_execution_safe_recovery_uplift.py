@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.ops.run_research_shadow_candidate_monitor import CANDIDATES_FILE, EXECUTION_PROXY_COLUMNS, NAV_FILE
-from scripts.research.execution_risk_severity import add_execution_severity_columns
+from scripts.research.execution_risk_severity import add_execution_severity_columns, execution_hard_block_reasons
 from scripts.research.analyze_pattern_veto_coverage import _rank_candidates
 
 
@@ -98,6 +98,47 @@ def _blocked_share(candidates: pd.DataFrame, strategy: str, trade_date: str, mod
     return max(0.0, min(1.0, float(weights[mask].sum()) / total))
 
 
+def _hard_block_cases(candidates: pd.DataFrame, frame: pd.DataFrame, shadow_strategy: str) -> pd.DataFrame:
+    """Return candidate-level hard-block cases for the uplift event dates only."""
+    required = {"trade_date", "strategy"}
+    missing = sorted(required - set(candidates.columns))
+    if missing:
+        raise RuntimeError(f"candidates missing required columns for hard-block attribution: {missing}")
+    event_dates = frame.loc[frame["is_uplift_event"].astype(bool), "trade_date"].astype(str)
+    ranked = _rank_candidates(candidates)
+    top5 = ranked[
+        ranked["strategy"].astype(str).eq(shadow_strategy)
+        & ranked["trade_date"].astype(str).isin(set(event_dates))
+        & pd.to_numeric(ranked["candidate_rank"], errors="coerce").le(5)
+    ].copy()
+    if top5.empty:
+        return pd.DataFrame(
+            columns=[
+                "trade_date", "symbol", "candidate_rank", "position_diff", "theory_gap",
+                "is_recovery_event", "hard_block_reasons", "fallback_action", "case_classification",
+            ]
+        )
+    top5 = add_execution_severity_columns(top5)
+    day_context = frame.copy()
+    if "theory_gap" not in day_context.columns:
+        day_context["theory_gap"] = pd.to_numeric(day_context["shadow_return"], errors="coerce").fillna(0.0) - pd.to_numeric(
+            day_context["production_return"], errors="coerce"
+        ).fillna(0.0)
+    day_context = day_context[
+        ["trade_date", "position_diff", "theory_gap", "is_uplift_event", "execution_hard_block", "blocked_share_hard_block"]
+    ].copy().rename(columns={"execution_hard_block": "monitor_execution_hard_block"})
+    top5 = top5.merge(day_context, on="trade_date", how="inner")
+    top5 = top5[top5["execution_hard_block"].astype(bool)].copy()
+    if top5.empty:
+        return top5
+    top5["symbol"] = top5["symbol"].astype(str).str.zfill(6)
+    top5["hard_block_reasons"] = top5.apply(lambda row: "|".join(execution_hard_block_reasons(row)), axis=1)
+    top5["is_recovery_event"] = top5["is_uplift_event"].astype(bool)
+    top5["fallback_action"] = "fallback_to_production_return_and_position"
+    top5["case_classification"] = "filterable_by_full_day_fallback"
+    return top5.sort_values(["trade_date", "candidate_rank"]).reset_index(drop=True)
+
+
 def _nav_from_returns(frame: pd.DataFrame, return_col: str) -> pd.Series:
     returns = pd.to_numeric(frame[return_col], errors="coerce").fillna(0.0)
     return (1.0 + returns).cumprod()
@@ -118,6 +159,23 @@ def _metrics(frame: pd.DataFrame, return_col: str, nav_col: str) -> dict[str, fl
         "max_drawdown": float(drawdown.min()),
         "mean_daily_return": float(returns.mean()),
     }
+
+
+def hard_block_fallback_event_gate(summary: dict[str, object], min_recovery_events: int = 5) -> str:
+    """Evaluate the research-only fallback path without changing raw shadow promotion gates."""
+    if int(summary.get("original_recovery_event_count") or 0) < min_recovery_events:
+        return "fail_insufficient_recovery_events"
+    if int(summary.get("hard_block_fallback_incremental_hard_block_days") or 0) != 0:
+        return "fail_remaining_incremental_hard_block"
+    if float(summary.get("hard_block_fallback_cumulative_gap") or 0.0) <= 0:
+        return "fail_fallback_gap_not_positive"
+    if float(summary.get("hard_block_fallback_positive_rate") or 0.0) < 0.55:
+        return "fail_fallback_positive_rate"
+    if float(summary.get("hard_block_fallback_max_drawdown") or 0.0) < float(summary.get("shadow_original_max_drawdown") or 0.0):
+        return "fail_fallback_drawdown_worse_than_shadow"
+    if float(summary.get("hard_block_fallback_total_return") or 0.0) <= float(summary.get("production_total_return") or 0.0):
+        return "fail_fallback_return_not_above_production"
+    return "pass_execution_safe_uplift_research"
 
 
 def build_uplift_simulation(
@@ -164,6 +222,20 @@ def build_uplift_simulation(
     events = frame[event].copy()
     promotion_valid = events[~events["execution_hard_block"].astype(bool)].copy()
     promotion_valid = promotion_valid[promotion_valid["blocked_share_hard_block"].le(0)].copy()
+    hard_block_fallback_events = events[~((events["execution_hard_block"].astype(bool)) | events["blocked_share_hard_block"].gt(0))].copy()
+    hard_block_cases = _hard_block_cases(candidates, frame, shadow_strategy)
+    case_classification_summary = (
+        hard_block_cases.groupby("case_classification", dropna=False)
+        .agg(case_rows=("symbol", "count"), event_days=("trade_date", "nunique"))
+        .reset_index()
+        if not hard_block_cases.empty
+        else pd.DataFrame(
+            [
+                {"case_classification": "filterable_by_full_day_fallback", "case_rows": 0, "event_days": 0},
+                {"case_classification": "structural_nonincremental_hard_block", "case_rows": 0, "event_days": 0},
+            ]
+        )
+    )
     summary_rows: list[dict[str, object]] = []
     for label, ret_col in [
         ("production", "production_return"),
@@ -187,6 +259,8 @@ def build_uplift_simulation(
         )
         summary_rows.append(row)
     promotion_gap = pd.to_numeric(promotion_valid["shadow_return"], errors="coerce").fillna(0.0) - pd.to_numeric(promotion_valid["production_return"], errors="coerce").fillna(0.0)
+    fallback_gap = pd.to_numeric(hard_block_fallback_events["sim_hard_block_fallback_return"], errors="coerce").fillna(0.0) - pd.to_numeric(hard_block_fallback_events["production_return"], errors="coerce").fillna(0.0)
+    summary_by_scenario = pd.DataFrame(summary_rows).set_index("scenario")
     promotion_summary = pd.DataFrame(
         [
             {
@@ -194,17 +268,38 @@ def build_uplift_simulation(
                 "promotion_valid_positive_rate": float(promotion_gap.gt(0).mean()) if len(promotion_gap) else 0.0,
                 "promotion_valid_cumulative_gap": float(promotion_gap.sum()) if len(promotion_gap) else 0.0,
                 "promotion_valid_event_window_gap": float(promotion_gap.sum()) if len(promotion_gap) else 0.0,
+                "excluded_hard_block_event_count": int((event & hard).sum()),
                 "promotion_valid_hard_block_count": int((event & hard).sum()),
+                "promotion_valid_hard_block_count_deprecated": True,
                 "promotion_valid_slippage_warning_count": int(promotion_valid["execution_slippage_warning"].astype(bool).sum()) if not promotion_valid.empty else 0,
             }
         ]
     )
+    fallback_summary_row = {
+        "original_recovery_event_count": int(event.sum()),
+        "hard_block_fallback_event_count": int(len(hard_block_fallback_events)),
+        "excluded_hard_block_event_count": int((event & hard).sum()),
+        "hard_block_fallback_positive_rate": float(fallback_gap.gt(0).mean()) if len(fallback_gap) else 0.0,
+        "hard_block_fallback_cumulative_gap": float(fallback_gap.sum()) if len(fallback_gap) else 0.0,
+        "hard_block_fallback_max_drawdown": float(summary_by_scenario.loc["hard_block_fallback", "max_drawdown"]),
+        "hard_block_fallback_total_return": float(summary_by_scenario.loc["hard_block_fallback", "total_return"]),
+        "shadow_original_max_drawdown": float(summary_by_scenario.loc["shadow_original", "max_drawdown"]),
+        "production_total_return": float(summary_by_scenario.loc["production", "total_return"]),
+        "hard_block_fallback_incremental_hard_block_days": 0,
+        "hard_block_fallback_excluded_case_rows": int(len(hard_block_cases)),
+    }
+    fallback_summary_row["hard_block_fallback_event_gate"] = hard_block_fallback_event_gate(fallback_summary_row)
+    fallback_summary = pd.DataFrame([fallback_summary_row])
     return {
         "simulated_nav": frame,
         "uplift_counterfactual_by_day": events,
         "uplift_counterfactual_summary": pd.DataFrame(summary_rows),
         "promotion_valid_events": promotion_valid,
         "promotion_valid_event_summary": promotion_summary,
+        "hard_block_fallback_events": hard_block_fallback_events,
+        "hard_block_fallback_event_summary": fallback_summary,
+        "hard_block_fallback_cases": hard_block_cases,
+        "hard_block_fallback_case_classification": case_classification_summary,
     }
 
 
@@ -229,6 +324,7 @@ def _markdown(summary: dict[str, object], tables: dict[str, pd.DataFrame]) -> st
             )
         )
     promo = tables["promotion_valid_event_summary"].iloc[0].to_dict()
+    fallback = tables["hard_block_fallback_event_summary"].iloc[0].to_dict()
     lines.extend(
         [
             "",
@@ -240,6 +336,25 @@ def _markdown(summary: dict[str, object], tables: dict[str, pd.DataFrame]) -> st
     )
     for key, value in promo.items():
         lines.append(f"| {key} | {value} |")
+    lines.extend(["", "## Hard-Block Fallback Research Gate", "", "| metric | value |", "|---|---:|"])
+    for key, value in fallback.items():
+        lines.append(f"| {key} | {value} |")
+    cases = tables["hard_block_fallback_cases"]
+    lines.extend(
+        [
+            "",
+            "## Incremental Hard-Block Cases",
+            "",
+            "| trade_date | symbol | rank | position_diff | theory_gap | hard_block_reasons | fallback_action | classification |",
+            "|---|---|---:|---:|---:|---|---|---|",
+        ]
+    )
+    for row in cases.to_dict("records"):
+        lines.append(
+            "| {trade_date} | {symbol} | {candidate_rank} | {position_diff} | {theory_gap} | {hard_block_reasons} | {fallback_action} | {case_classification} |".format(
+                **row
+            )
+        )
     lines.extend(["", "This simulation is research-only and does not change production, shadow config, orders, or governor parameters."])
     return "\n".join(lines) + "\n"
 
@@ -272,6 +387,7 @@ def run_analysis(
         "files": files,
     }
     summary.update(tables["promotion_valid_event_summary"].iloc[0].to_dict())
+    summary.update(tables["hard_block_fallback_event_summary"].iloc[0].to_dict())
     summary_path = out_dir / "execution_safe_recovery_uplift_report.json"
     md_path = out_dir / "execution_safe_recovery_uplift_report.md"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -2,7 +2,7 @@
   "production_strategy": "production_governed_vol_position",
   "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
   "mode": "manual_shadow_only",
-  "generated_at": "2026-06-19T12:02:51",
+  "generated_at": "2026-06-19T12:46:00",
   "today": {
     "trade_date": "2026-06-17",
     "production_strategy": "production_governed_vol_position",

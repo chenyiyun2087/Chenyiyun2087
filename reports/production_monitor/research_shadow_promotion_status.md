@@ -8,6 +8,7 @@
 - warning_statuses: `EXECUTION_SLIPPAGE_WARNING, PATTERN_LINEAGE_WARNING, FP_SEPARABILITY_EXPLANATION_ONLY`
 - promotion_ready: `False`
 - canary_ready: `False`
+- execution_safe_uplift_research_status: `READY_FOR_EXECUTION_SAFE_UPLIFT_RESEARCH`
 
 | gate | value |
 |---|---:|
@@ -17,6 +18,7 @@
 | cumulative_event_pass | True |
 | execution_safe_event_pass | True |
 | promotion_valid_event_pass | True |
+| hard_block_fallback_research_ready | True |
 | incremental_execution_pass | False |
 | execution_proxy_pass | False |
 | total_recovery_events | 98 |
@@ -27,10 +29,16 @@
 | execution_safe_event_count | 94 |
 | execution_safe_positive_rate | 0.5531914893617021 |
 | execution_safe_cumulative_theory_gap | 0.03304731519408674 |
-| promotion_valid_event_count | 17.0 |
+| promotion_valid_event_count | 17 |
 | promotion_valid_positive_rate | 0.6470588235294118 |
 | promotion_valid_cumulative_gap | 0.05547043391918083 |
 | promotion_valid_event_window_gap | 0.05547043391918083 |
+| excluded_hard_block_event_count | 6 |
+| hard_block_fallback_event_count | 17 |
+| hard_block_fallback_positive_rate | 0.6470588235294118 |
+| hard_block_fallback_cumulative_gap | 0.05547043391918083 |
+| hard_block_fallback_max_drawdown | -0.1953866263702192 |
+| hard_block_fallback_incremental_hard_block_days | 0 |
 | incremental_execution_degraded_days | 3.0 |
 | incremental_hard_block_days | 2.0 |
 | execution_hard_block_days | 0 |
@@ -45,6 +53,7 @@
 - cumulative_event_gate: `pass_positive_cumulative_gap`
 - execution_safe_event_gate: `pass_execution_safe_events`
 - promotion_valid_event_gate: `pass_promotion_valid_events`
+- hard_block_fallback_event_gate: `pass_execution_safe_uplift_research`
 - incremental_execution_gate: `fail_incremental_execution_hard_block`
 
 - pattern_lineage_status: `PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING`

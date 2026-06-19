@@ -46,7 +46,7 @@ from scripts.ops.report_research_shadow_promotion_status import build_promotion_
 from scripts.research.analyze_execution_proxy_quality import build_execution_proxy_quality_tables, quality_status as execution_proxy_quality_status
 from scripts.research.analyze_research_shadow_event_quality import build_event_quality_tables, event_quality_status, execution_safe_event_gate, promotion_valid_event_gate
 from scripts.research.analyze_shadow_execution_degradation import build_degradation_analysis
-from scripts.research.simulate_execution_safe_recovery_uplift import build_uplift_simulation
+from scripts.research.simulate_execution_safe_recovery_uplift import build_uplift_simulation, hard_block_fallback_event_gate
 from scripts.research.execution_risk_severity import execution_severity
 from scripts.research.audit_pattern_feature_lineage import audit_pattern_lineage
 from scripts.research.run_production_governed_vol_position_backtest import DEFAULT_STRATEGIES as PRODUCTION_GOVERNED_DEFAULT_STRATEGIES
@@ -1422,6 +1422,85 @@ def test_execution_safe_recovery_uplift_counterfactuals_scale_incremental_gap():
     assert by_day.loc["2026-01-02", "blocked_share_open_gap"] == pytest.approx(0.2)
     assert by_day.loc["2026-01-02", "blocked_share_large_slippage"] == pytest.approx(0.4)
     assert by_day.loc["2026-01-03", "execution_v22_severity"] == "warning"
+    fallback = tables["hard_block_fallback_event_summary"].iloc[0]
+    cases = tables["hard_block_fallback_cases"]
+    assert int(fallback["excluded_hard_block_event_count"]) == 2
+    assert int(fallback["hard_block_fallback_incremental_hard_block_days"]) == 0
+    assert int(len(cases)) == 2
+    assert cases.iloc[0]["case_classification"] == "filterable_by_full_day_fallback"
+
+
+def test_hard_block_fallback_gate_requires_safe_positive_research_path():
+    passed = hard_block_fallback_event_gate(
+        {
+            "original_recovery_event_count": 5,
+            "hard_block_fallback_incremental_hard_block_days": 0,
+            "hard_block_fallback_cumulative_gap": 0.02,
+            "hard_block_fallback_positive_rate": 0.60,
+            "hard_block_fallback_max_drawdown": -0.20,
+            "shadow_original_max_drawdown": -0.20,
+            "hard_block_fallback_total_return": 0.30,
+            "production_total_return": 0.20,
+        }
+    )
+    failed = hard_block_fallback_event_gate(
+        {
+            "original_recovery_event_count": 5,
+            "hard_block_fallback_incremental_hard_block_days": 1,
+            "hard_block_fallback_cumulative_gap": 0.02,
+            "hard_block_fallback_positive_rate": 0.60,
+            "hard_block_fallback_max_drawdown": -0.20,
+            "shadow_original_max_drawdown": -0.20,
+            "hard_block_fallback_total_return": 0.30,
+            "production_total_return": 0.20,
+        }
+    )
+
+    assert passed == "pass_execution_safe_uplift_research"
+    assert failed == "fail_remaining_incremental_hard_block"
+
+
+def test_fallback_research_ready_does_not_clear_raw_shadow_blockers():
+    status = build_promotion_status(
+        daily_report={
+            "shadow_summary": {
+                "calendar_window_pass": True,
+                "event_window_pass": False,
+                "execution_proxy_pass": True,
+                "execution_hard_block_days": 0,
+                "execution_slippage_warning_days": 0,
+            }
+        },
+        event_summary={"total_recovery_events": 30, "cumulative_recovery_theory_gap": 0.04},
+        pattern_lineage_summary={"lineage_status": "PATTERN_LINEAGE_TARGET_READY"},
+        fp_separability_summary={},
+        event_window_report={"shadow_summary": {"event_window_pass": False, "recovery_event_days": 5, "shadow_recovery_theory_gap_sum": 0.02}},
+        event_quality_summary={
+            "total_recovery_events": 30,
+            "positive_event_rate": 0.60,
+            "cumulative_recovery_theory_gap": 0.04,
+            "event_execution_degraded_ratio": 0.0,
+            "execution_safe_event_gate": "pass_execution_safe_events",
+            "promotion_valid_event_gate": "pass_promotion_valid_events",
+        },
+        degradation_summary={"incremental_execution_degraded_days": 2, "incremental_hard_block_days": 2, "event_hard_block_days": 2},
+        uplift_summary={
+            "promotion_valid_event_count": 10,
+            "promotion_valid_cumulative_gap": 0.04,
+            "hard_block_fallback_event_gate": "pass_execution_safe_uplift_research",
+        },
+        config={
+            "primary_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+            "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",
+            "research_shadow_candidate": {"enabled": False, "min_recovery_events": 5},
+        },
+    )
+
+    assert status["hard_block_fallback_research_ready"] is True
+    assert status["execution_safe_uplift_research_status"] == "READY_FOR_EXECUTION_SAFE_UPLIFT_RESEARCH"
+    assert status["promotion_ready"] is False
+    assert "NOT_READY_EVENT_WINDOW" in status["blocking_statuses"]
+    assert "NOT_READY_INCREMENTAL_EXECUTION" in status["blocking_statuses"]
 
 
 def test_research_shadow_candidate_monitor_fails_when_rows_are_insufficient():

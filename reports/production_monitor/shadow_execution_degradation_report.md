@@ -1,7 +1,7 @@
 # Shadow Execution Degradation Report
 
-- generated_at: `2026-06-19T12:03:10`
-- monitor_csv: `exports/research_shadow_candidate/20260619_120237_research_shadow_candidate_monitor/research_shadow_candidate_monitor.csv`
+- generated_at: `2026-06-19T12:46:07`
+- monitor_csv: `exports/research_shadow_candidate/20260619_124547_research_shadow_candidate_monitor/research_shadow_candidate_monitor.csv`
 - event_log_csv: `reports/production_monitor/research_shadow_event_log.csv`
 - candidates_csv: `exports/signal_research/20260619_070339_967843_trusted_account_backtest/trusted_account_backtest_candidates.csv`
 
