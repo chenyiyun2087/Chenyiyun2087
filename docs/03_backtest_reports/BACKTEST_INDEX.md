@@ -1,5 +1,7 @@
 # 回测报告索引
 
+> 2026-06-20 strict ledger 独立重放：提交 `a71f1c23` 的 clean worktree 烟测完成 15 个订单事件重放，订单守恒、事件重放与 ledger-vs-NAV 误差均为 0bp；但公司行为覆盖仍为 `PARTIAL_UNVERIFIED`，风险漏判为 2，现金与权重偏离超阈值，验收固定为 `CAUSAL_BUT_LEDGER_UNVERIFIED`、`promotion_enabled=false`。详见 `2026-06-20_strict_ledger_replay_证据清单.md`。
+
 > 2026-06-20 strict 唯一账本烟测：strict 预提交订单、T+1 成交/拒单/取消和公司行为事件已收敛至 `ExecutionLedger`，T+1 错成交数为 0。但烟测工作区为 dirty、公司行为覆盖仍为 `PARTIAL_UNVERIFIED`，验收状态固定为 `CAUSAL_BUT_LEDGER_UNVERIFIED`，`promotion_enabled=false`；不产生全历史绩效或晋级结论。详见 `2026-06-20_strict_ledger_唯一账本烟测摘要.md`。
 
 > 2026-06-19 strict precommit uplift 首轮账户级回测：`production_governed_vol_position_v1_2b_strict_precommit_uplift` 完成 2023-11-30 至 2026-06-18 的 616 日 T 日预提交/T+1 原始开盘固定股数路径。cap 输入覆盖率 100%、缺失回退 0 天，normal/high/extreme 为 91/205/318 日；表面结果为收益 +62.12%、年化 +21.89%、最大回撤 -26.40%。但当前执行账本缺少复权因子和公司行为调整，且平均现金残差 47.63%、最大开盘权重偏离 2,330.93bps，收益不可与 v1 严谨比较。结论：研究路径通过特征/因果审计，**不通过 production、shadow 或 canary 晋级**；先补齐执行基础数据后重跑。详见 `2026-06-19_strict_precommit_uplift_回测摘要.md`。
