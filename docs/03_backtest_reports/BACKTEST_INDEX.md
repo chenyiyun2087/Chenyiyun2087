@@ -36,6 +36,8 @@
 
 > 2026-06-19 execution-safe uplift 账户级研究接入：新增 `production_governed_vol_position_v1_2b_execution_safe_uplift`。同一 T 日准备 v1 与 v1.2b gate-tuned 目标，T+1 开盘仅对相对 v1 的 recovery 增量买入检查跳空、涨跌停和冲击代理；hard block 或代理缺失时执行 v1 路线，large-slippage-only 保持 warning。该策略不进入生产配置或 enabled shadow；完整三年验收待数据库运行环境提供凭据后执行。
 
+> 2026-06-19 execution-safe uplift 因果性修正：账户级回测新增 `--execution-mode`，默认且唯一可验收口径为 `strict_t1_open_precommit`。strict 模式在 T 日预提交目标、T+1 开盘成交，不得用 T+1 `adj_open` 或日线执行代理改变路线；开盘 fallback 仅保留为 counterfactual 解释。竞价与 post-open 模式在没有带时间戳分钟数据时 fail closed。决策、候选与交易写入 execution timestamp、mode 与 `causality_pass` 审计字段，当前不具备 enabled-shadow 晋级资格。
+
 > 2026-06-04 更新：当前 `adaptive_market_style` 从单纯三年低回撤口径升级为“最近 3 个月收益优先 + 长期风险约束 + 日检周切”。近期冠军默认指向 `baseline_full_liquidity_detail_vol_position`，系统每天检测市场、行业和量能状态，最多每周切换一次底层基准，目标仓位约 50% / 70% / 80%。`tiered_liquidity_then_bs_v2` 只在强市场短期增强，不作为长期满仓默认。
 
 > 2026-06-04 双系统路由更新：新增 `dual_system_adaptive_route`、`ashare_auto_shadow`、`ashare_trend_breakout_shadow`、`ashare_hybrid_conservative_shadow`。最近 3 个月账户级对照中，AShare AUTO 影子收益约 +8.72%、最大回撤约 -17.28%，`adaptive_market_style` 收益约 +7.36%、最大回撤约 -10.97%，双系统路由收益约 +5.27%、最大回撤约 -12.06%。当前结论：AShare AUTO 有收益弹性但波动更大，dual route 风控较保守，需继续优化 AShare 周线门禁和候选缓存后再跑三年验收。

@@ -71,3 +71,4 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 - Do not let false-positive explanation labels, pattern coverage, or event ledgers alter sorting, sizing, buying, selling, scheduler, or production candidate export.
 - Do not treat the fallback counterfactual as an enabled-shadow strategy until it has a separate account-level T+1 validation.
 - The account-level research candidate is `production_governed_vol_position_v1_2b_execution_safe_uplift`. It may route to the v1 target at T+1 open when an incremental recovery buy hits a hard execution block; it remains research-only until its own 20/60/120/full-history gates pass.
+- Causality baseline is `strict_t1_open_precommit`: targets submit from T-day information and fill at T+1 open. Daily-bar `adj_open` proxies are post-open audit-only, never a strict-mode routing input. Auction and post-open fallback modes fail closed until timestamped intraday data exists.

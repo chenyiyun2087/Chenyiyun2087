@@ -2,3 +2,7 @@
 2026-06-19 10:00:27,610 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-19 11:00:28,554 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-19 12:00:29,609 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 13:00:00,469 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 14:00:01,366 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 15:00:02,212 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 15:20:02,514 - INFO - Triggering task: sina_bs -> success-skip (non-trading day from chenyiyun.dim_trade_cal)

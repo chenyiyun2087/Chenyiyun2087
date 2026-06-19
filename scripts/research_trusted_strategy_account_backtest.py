@@ -2617,15 +2617,17 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         baseline_position_ratio = float(baseline_governor.get("target_position_ratio") or 0.0)
                         if baseline_risk_decision == "freeze_buy" or not bool(baseline_governor.get("allow_new_buys", True)):
                             baseline_position_ratio = 0.0
-                        preflight = _execution_safe_uplift_preflight(
-                            shadow_targets=target_override,
-                            baseline_targets=baseline_targets,
-                            shadow_position_ratio=rebalance_position_ratio,
-                            baseline_position_ratio=baseline_position_ratio,
-                            price_lookup=price_lookup,
-                            equity_before=_equity(account, price_lookup, "adj_open"),
-                            is_recovery=str(governor.get("recovery_status") or "") == "recovered" or risk_decision == "recovery_reduce",
-                        )
+                        if args.execution_mode == "strict_t1_open_precommit":
+                            preflight = {
+                                "status": "strict_precommit_no_intraday_guard",
+                                "fallback_applied": False,
+                                "hard_block_reasons": "",
+                                "incremental_symbols": "",
+                            }
+                        elif args.execution_mode in {"auction_0925_preflight", "post_open_1m_fallback"}:
+                            raise RuntimeError(f"{args.execution_mode} requires timestamped auction/minute market data; daily bars fail closed.")
+                        else:
+                            raise RuntimeError(f"Unknown execution mode: {args.execution_mode}")
                         execution_safe_meta = {
                             "execution_safe_uplift_preflight_status": preflight["status"],
                             "execution_safe_uplift_fallback_applied": int(bool(preflight["fallback_applied"])),
@@ -2633,6 +2635,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "execution_safe_uplift_incremental_symbols": preflight["incremental_symbols"],
                             "execution_safe_uplift_planned_strategy": rebalance_spec.name,
                             "execution_safe_uplift_planned_position_ratio": float(rebalance_position_ratio),
+                            "decision_timestamp": f"{pd.Timestamp(signal_date).date()}T15:00:00+08:00",
+                            "proxy_asof_timestamp": f"{pd.Timestamp(signal_date).date()}T15:00:00+08:00",
+                            "order_submit_timestamp": f"{pd.Timestamp(signal_date).date()}T15:00:00+08:00",
+                            "fill_timestamp": f"{pd.Timestamp(trade_date).date()}T09:30:00+08:00",
+                            "execution_mode": args.execution_mode,
+                            "causality_pass": int(args.execution_mode == "strict_t1_open_precommit"),
                         }
                         if bool(preflight["fallback_applied"]):
                             governor = baseline_governor
@@ -3003,6 +3011,13 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["execution_safe_uplift_planned_position_ratio"] = adaptive_meta.get("execution_safe_uplift_planned_position_ratio")
                         item["execution_safe_uplift_final_strategy"] = adaptive_meta.get("execution_safe_uplift_final_strategy")
                         item["execution_safe_uplift_final_position_ratio"] = adaptive_meta.get("execution_safe_uplift_final_position_ratio")
+                        for field in ("decision_timestamp", "proxy_asof_timestamp", "order_submit_timestamp", "fill_timestamp", "execution_mode", "causality_pass"):
+                            item[field] = adaptive_meta.get(field)
+                    for item in trades:
+                        for field in ("decision_timestamp", "proxy_asof_timestamp", "order_submit_timestamp", "fill_timestamp", "execution_mode", "causality_pass"):
+                            item[field] = adaptive_meta.get(field)
+                        item["execution_safe_uplift_preflight_status"] = adaptive_meta.get("execution_safe_uplift_preflight_status")
+                        item["execution_safe_uplift_fallback_applied"] = adaptive_meta.get("execution_safe_uplift_fallback_applied")
                         item["pattern_guard_enabled"] = adaptive_meta.get("pattern_guard_enabled")
                         item["pattern_strategy_mode"] = adaptive_meta.get("pattern_strategy_mode")
                 trade_rows.extend(trades)
@@ -3226,6 +3241,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Account-level backtest for trusted full-pool production strategies.")
     parser.add_argument("--start-date", default="2026-01-05")
     parser.add_argument("--end-date", default=None)
+    parser.add_argument("--execution-mode", default="strict_t1_open_precommit", choices=["strict_t1_open_precommit", "auction_0925_preflight", "post_open_1m_fallback"])
     parser.add_argument(
         "--risk-profile",
         default=DEFAULT_RISK_PROFILE,
