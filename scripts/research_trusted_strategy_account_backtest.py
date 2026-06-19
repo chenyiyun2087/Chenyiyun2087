@@ -28,6 +28,7 @@ from scripts.ops.production_risk_governor import (
     build_risk_governor_decision_v1_2_recovery,
     build_risk_governor_decision_v2,
 )
+from scripts.research.execution_risk_severity import execution_hard_block_reasons
 from scripts.research_full_pool_liquidity_strategies import (
     StrategySpec,
     _market_exposure_scale,
@@ -96,6 +97,7 @@ DEFAULT_STRATEGIES = [
     "production_governed_vol_position_v1_2b_dynamic_score",
     "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
     "production_governed_vol_position_v1_2b_gate_tuned",
+    "production_governed_vol_position_v1_2b_execution_safe_uplift",
     "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto",
     "production_governed_vol_position_v1_2b_fp_classified",
     "production_governed_vol_position_v1_2b_fp_classified_pattern_veto",
@@ -128,6 +130,7 @@ PRODUCTION_GOVERNED_VOL_POSITION_V1_2_RECOVERY_PATTERN_VETO_STRATEGY_NAME = "pro
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME = "production_governed_vol_position_v1_2b_dynamic_score"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME = "production_governed_vol_position_v1_2b_gate_tuned"
+PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME = "production_governed_vol_position_v1_2b_execution_safe_uplift"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME = "production_governed_vol_position_v1_2b_fp_classified"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_fp_classified_pattern_veto"
@@ -183,6 +186,7 @@ PRODUCTION_GOVERNED_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME,
@@ -1868,6 +1872,71 @@ def _execution_proxy_fields(
     }
 
 
+def _plan_target_weights(targets: pd.DataFrame, position_ratio: float) -> dict[str, float]:
+    """Pure target planner used by the execution-safe T+1 preflight."""
+    if targets.empty:
+        return {}
+    weights = pd.to_numeric(targets.get("effective_weight"), errors="coerce").fillna(0.0).clip(lower=0.0)
+    total = float(weights.sum())
+    if total <= 0:
+        return {}
+    scale = max(0.0, min(1.0, float(position_ratio)))
+    return {
+        str(row.symbol).zfill(6): float(weight / total * scale)
+        for row, weight in zip(targets.itertuples(index=False), weights)
+    }
+
+
+def _execution_safe_uplift_preflight(
+    *,
+    shadow_targets: pd.DataFrame,
+    baseline_targets: pd.DataFrame,
+    shadow_position_ratio: float,
+    baseline_position_ratio: float,
+    price_lookup: dict[str, dict[str, float]],
+    equity_before: float,
+    is_recovery: bool,
+) -> dict[str, object]:
+    """Use only T+1 open-visible proxy fields to accept or reject recovery uplift."""
+    if not is_recovery:
+        return {"status": "not_recovery", "fallback_applied": False, "hard_block_reasons": "", "incremental_symbols": ""}
+    shadow_weights = _plan_target_weights(shadow_targets, shadow_position_ratio)
+    baseline_weights = _plan_target_weights(baseline_targets, baseline_position_ratio)
+    incremental = {symbol: weight - baseline_weights.get(symbol, 0.0) for symbol, weight in shadow_weights.items() if weight > baseline_weights.get(symbol, 0.0) + 1e-12}
+    if not incremental:
+        return {"status": "no_incremental_exposure", "fallback_applied": False, "hard_block_reasons": "", "incremental_symbols": ""}
+    hard_reasons: list[str] = []
+    unknown = False
+    for symbol, weight in incremental.items():
+        proxy = _execution_proxy_fields(symbol, price_lookup.get(symbol, {}), weight, equity_before)
+        required = ("open_gap_proxy", "limit_up_buy_ratio", "limit_down_sell_ratio", "estimated_turnover_impact")
+        if any(not np.isfinite(_safe_float(proxy.get(field), np.nan)) for field in required):
+            unknown = True
+            continue
+        reasons = execution_hard_block_reasons(pd.Series(proxy))
+        hard_reasons.extend(f"{symbol}:{reason}" for reason in reasons)
+    if unknown:
+        return {
+            "status": "preflight_unknown_fallback_to_v1",
+            "fallback_applied": True,
+            "hard_block_reasons": "missing_execution_proxy",
+            "incremental_symbols": "|".join(sorted(incremental)),
+        }
+    if hard_reasons:
+        return {
+            "status": "hard_block_fallback_to_v1",
+            "fallback_applied": True,
+            "hard_block_reasons": "|".join(sorted(set(hard_reasons))),
+            "incremental_symbols": "|".join(sorted(incremental)),
+        }
+    return {
+        "status": "execution_safe_uplift",
+        "fallback_applied": False,
+        "hard_block_reasons": "",
+        "incremental_symbols": "|".join(sorted(incremental)),
+    }
+
+
 def _rebalance(
     account: AccountState,
     signal_date: object,
@@ -2396,6 +2465,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         )
                     elif spec.name in {
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME,
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
                     }:
                         governor = build_risk_governor_decision_v1_2b_gate_tuned(
@@ -2525,6 +2595,54 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     if risk_decision == "freeze_buy" or not bool(governor.get("allow_new_buys", True)):
                         rebalance_position_ratio = 0.0
 
+                    execution_safe_meta: dict[str, object] = {}
+                    if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME:
+                        # Prepare the v1 route using the same T-day decision context, then select the
+                        # final route only from T+1 open-visible execution proxy fields.
+                        baseline_governor = build_risk_governor_decision(
+                            PRODUCTION_CONFIG,
+                            adaptive_decision=decision,
+                            recent_shadow_summary=shadow_summary,
+                        )
+                        baseline_risk_decision = str(baseline_governor.get("risk_decision") or "normal")
+                        baseline_strategy_name = primary_strategy
+                        if baseline_risk_decision == "defensive_only":
+                            baseline_strategy_name = str(
+                                baseline_governor.get("fallback_strategy")
+                                or PRODUCTION_CONFIG.get("defensive_fallback_strategy")
+                                or "baseline_full_liquidity"
+                            )
+                        baseline_spec = trusted_by_name.get(baseline_strategy_name, trusted_by_name["baseline_full_liquidity"])
+                        baseline_targets = primary_targets if baseline_spec.name == primary_spec.name else targets_cache.get((signal_date, baseline_spec.name), pd.DataFrame())
+                        baseline_position_ratio = float(baseline_governor.get("target_position_ratio") or 0.0)
+                        if baseline_risk_decision == "freeze_buy" or not bool(baseline_governor.get("allow_new_buys", True)):
+                            baseline_position_ratio = 0.0
+                        preflight = _execution_safe_uplift_preflight(
+                            shadow_targets=target_override,
+                            baseline_targets=baseline_targets,
+                            shadow_position_ratio=rebalance_position_ratio,
+                            baseline_position_ratio=baseline_position_ratio,
+                            price_lookup=price_lookup,
+                            equity_before=_equity(account, price_lookup, "adj_open"),
+                            is_recovery=str(governor.get("recovery_status") or "") == "recovered" or risk_decision == "recovery_reduce",
+                        )
+                        execution_safe_meta = {
+                            "execution_safe_uplift_preflight_status": preflight["status"],
+                            "execution_safe_uplift_fallback_applied": int(bool(preflight["fallback_applied"])),
+                            "execution_safe_uplift_hard_block_reasons": preflight["hard_block_reasons"],
+                            "execution_safe_uplift_incremental_symbols": preflight["incremental_symbols"],
+                            "execution_safe_uplift_planned_strategy": rebalance_spec.name,
+                            "execution_safe_uplift_planned_position_ratio": float(rebalance_position_ratio),
+                        }
+                        if bool(preflight["fallback_applied"]):
+                            governor = baseline_governor
+                            risk_decision = baseline_risk_decision
+                            rebalance_spec = baseline_spec
+                            target_override = baseline_targets
+                            rebalance_position_ratio = baseline_position_ratio
+                        execution_safe_meta["execution_safe_uplift_final_strategy"] = rebalance_spec.name
+                        execution_safe_meta["execution_safe_uplift_final_position_ratio"] = float(rebalance_position_ratio)
+
                     decision.update(
                         {
                             "active_role": active_role,
@@ -2560,6 +2678,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "top_industry_weight": governor.get("top_industry_weight", pattern_state.get("top_industry_weight")),
                             "fp_classified_label": governor.get("fp_classified_label"),
                             "fp_classified_gate_reason": governor.get("fp_classified_gate_reason"),
+                            **execution_safe_meta,
                         }
                     )
                     adaptive_decision_rows.append(decision)
@@ -2596,6 +2715,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         "top_industry_weight": decision.get("top_industry_weight"),
                         "fp_classified_label": decision.get("fp_classified_label"),
                         "fp_classified_gate_reason": decision.get("fp_classified_gate_reason"),
+                        **execution_safe_meta,
                         "route_reason": "production_risk_governor_backtest",
                     }
                     if spec.name in {PRODUCTION_GOVERNED_PATTERN_GUARD_STRATEGY_NAME, PRODUCTION_GOVERNED_ADAPTIVE_PATTERN_GUARD_STRATEGY_NAME}:
@@ -2875,6 +2995,14 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["top_industry_weight"] = adaptive_meta.get("top_industry_weight")
                         item["fp_classified_label"] = adaptive_meta.get("fp_classified_label")
                         item["fp_classified_gate_reason"] = adaptive_meta.get("fp_classified_gate_reason")
+                        item["execution_safe_uplift_preflight_status"] = adaptive_meta.get("execution_safe_uplift_preflight_status")
+                        item["execution_safe_uplift_fallback_applied"] = adaptive_meta.get("execution_safe_uplift_fallback_applied")
+                        item["execution_safe_uplift_hard_block_reasons"] = adaptive_meta.get("execution_safe_uplift_hard_block_reasons")
+                        item["execution_safe_uplift_incremental_symbols"] = adaptive_meta.get("execution_safe_uplift_incremental_symbols")
+                        item["execution_safe_uplift_planned_strategy"] = adaptive_meta.get("execution_safe_uplift_planned_strategy")
+                        item["execution_safe_uplift_planned_position_ratio"] = adaptive_meta.get("execution_safe_uplift_planned_position_ratio")
+                        item["execution_safe_uplift_final_strategy"] = adaptive_meta.get("execution_safe_uplift_final_strategy")
+                        item["execution_safe_uplift_final_position_ratio"] = adaptive_meta.get("execution_safe_uplift_final_position_ratio")
                         item["pattern_guard_enabled"] = adaptive_meta.get("pattern_guard_enabled")
                         item["pattern_strategy_mode"] = adaptive_meta.get("pattern_strategy_mode")
                 trade_rows.extend(trades)
@@ -2928,6 +3056,14 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     summary["adaptive_avg_target_position_ratio"] = float(ratios.mean())
                     summary["adaptive_min_target_position_ratio"] = float(ratios.min())
                     summary["adaptive_max_target_position_ratio"] = float(ratios.max())
+            if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME:
+                preflight = adaptive_decisions.get("execution_safe_uplift_preflight_status", pd.Series(dtype=object)).astype(str)
+                fallback = pd.to_numeric(adaptive_decisions.get("execution_safe_uplift_fallback_applied"), errors="coerce").fillna(0)
+                summary["execution_safe_uplift_recovery_days"] = int(preflight.ne("not_recovery").sum() - preflight.eq("no_incremental_exposure").sum())
+                summary["execution_safe_uplift_fallback_days"] = int(fallback.gt(0).sum())
+                summary["execution_safe_uplift_incremental_hard_block_days"] = int(preflight.eq("hard_block_fallback_to_v1").sum())
+                summary["execution_safe_uplift_preflight_unknown_days"] = int(preflight.eq("preflight_unknown_fallback_to_v1").sum())
+                summary["execution_safe_uplift_warning_only_days"] = 0
         summary.update(
             {
                 "strategy": spec.name,
