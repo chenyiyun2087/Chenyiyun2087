@@ -262,6 +262,12 @@ def load_scores(
             frame[col] = pd.to_numeric(frame[col], errors="coerce")
     counts = frame.groupby("trade_date")["symbol"].transform("count")
     frame = frame[counts >= int(min_pool_size)].copy()
+    # These repeat across every trading date.  Categoricals materially reduce
+    # the resident set for multi-year account-level research without changing
+    # their downstream scalar values.
+    for column in ("symbol", "name", "industry", "pool_type"):
+        if column in frame.columns:
+            frame[column] = frame[column].astype("category")
     frame["liquidity_rank_pct"] = frame.groupby("trade_date")["s_liquidity"].rank(pct=True, ascending=False)
     breakout_weight = float(CONFIG.get("weights", {}).get("breakout", 0.22))
     for suffix, liquidity_pct, discount in (
@@ -282,18 +288,32 @@ def load_prices(engine, min_date: object, max_date: object, extra_days: int) -> 
     end_key = (pd.Timestamp(max_date) + pd.Timedelta(days=max(45, extra_days * 3))).strftime("%Y%m%d")
     table = CONFIG["table"]
     sql = f"""
-        SELECT trade_date, ts_code, adj_open, adj_high, adj_low, adj_close, amount
-        FROM {table}
-        WHERE trade_date BETWEEN :start_key AND :end_key
+        SELECT
+            p.trade_date, p.ts_code, p.adj_open, p.adj_high, p.adj_low, p.adj_close, p.amount,
+            r.open AS raw_open, r.high AS raw_high, r.low AS raw_low, r.close AS raw_close,
+            r.pre_close AS raw_pre_close, r.vol AS raw_volume, r.amount AS raw_amount,
+            COALESCE(l.is_st, 0) AS is_st, b.circ_mv, ds.list_date,
+            CASE WHEN l.ts_code IS NOT NULL AND ds.ts_code IS NOT NULL THEN 1 ELSE 0 END AS security_status_available,
+            CASE WHEN r.ts_code IS NOT NULL AND r.vol > 0 THEN 1 ELSE 0 END AS execution_tradable
+        FROM {table} p
+        LEFT JOIN tushare_stock.dwd_daily r
+          ON r.ts_code = p.ts_code AND r.trade_date = p.trade_date
+        LEFT JOIN tushare_stock.dwd_stock_label_daily l
+          ON l.ts_code = p.ts_code AND l.trade_date = p.trade_date
+        LEFT JOIN tushare_stock.dwd_daily_basic b
+          ON b.ts_code = p.ts_code AND b.trade_date = p.trade_date
+        LEFT JOIN tushare_stock.dim_stock ds
+          ON ds.ts_code = p.ts_code
+        WHERE p.trade_date BETWEEN :start_key AND :end_key
     """
     frame = pd.read_sql(text(sql), engine, params={"start_key": int(start_key), "end_key": int(end_key)})
     if frame.empty:
         return frame
     frame["trade_date"] = pd.to_datetime(frame["trade_date"].astype(str), format="%Y%m%d").dt.date
     frame["symbol"] = frame["ts_code"].map(_symbol_from_ts_code)
-    for col in ("adj_open", "adj_high", "adj_low", "adj_close", "amount"):
+    for col in ("adj_open", "adj_high", "adj_low", "adj_close", "amount", "raw_open", "raw_high", "raw_low", "raw_close", "raw_pre_close", "raw_volume", "raw_amount", "circ_mv"):
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
-    return frame.dropna(subset=["trade_date", "symbol", "adj_open", "adj_close"])
+    return frame.drop(columns=["ts_code"], errors="ignore").dropna(subset=["trade_date", "symbol", "adj_open", "adj_close"])
 
 
 def add_liquidity_derived_features(scores: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
@@ -320,6 +340,10 @@ def add_liquidity_derived_features(scores: pd.DataFrame, prices: pd.DataFrame) -
         "amount_ratio_5_20",
         "impact_cost_raw",
         "amount_stability_raw",
+        # Keep the raw one-day return available to downstream risk controls.
+        # It is deliberately not imputed: a missing history must remain visible
+        # to fail-closed consumers such as the strict precommit cap.
+        "ret_1",
         "vol_20",
         "hist_mdd_20",
     ]

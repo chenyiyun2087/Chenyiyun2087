@@ -422,6 +422,59 @@ def _round_lot(shares: float, lot_size: int) -> int:
     return max(0, int(math.floor(float(shares) / float(lot_size)) * int(lot_size)))
 
 
+def _daily_limit_ratio(symbol: str, is_st: object) -> float:
+    """Return the applicable A-share daily limit using only T-day metadata."""
+    code = str(symbol).zfill(6)
+    if bool(_safe_float(is_st, 0.0)):
+        return 0.05
+    if code.startswith(("300", "301", "688", "689")):
+        return 0.20
+    if code.startswith(("4", "8", "9")):
+        return 0.30
+    return 0.10
+
+
+def _precommit_budget_price(price_info: dict[str, object], symbol: str, buffer_rate: float = 0.10) -> float:
+    """T-day raw-close budget price, bounded by the next-session price limit."""
+    close = _safe_float(price_info.get("raw_close"), np.nan)
+    pre_close = _safe_float(price_info.get("raw_close"), np.nan)
+    if not np.isfinite(close) or close <= 0 or not np.isfinite(pre_close) or pre_close <= 0:
+        return np.nan
+    limit_price = round(pre_close * (1.0 + _daily_limit_ratio(symbol, price_info.get("is_st"))), 2)
+    return float(min(close * (1.0 + float(buffer_rate)), limit_price))
+
+
+def _raw_execution_price_view(prices: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+    """Present raw execution prices through the simulator's legacy price keys."""
+    out: dict[str, dict[str, object]] = {}
+    for symbol, info in prices.items():
+        item = dict(info)
+        for adjusted, raw in (("adj_open", "raw_open"), ("adj_high", "raw_high"), ("adj_low", "raw_low"), ("adj_close", "raw_close")):
+            value = _safe_float(info.get(raw), np.nan)
+            if np.isfinite(value) and value > 0:
+                item[adjusted] = value
+        raw_prev_close = _safe_float(info.get("prev_raw_close"), np.nan)
+        if np.isfinite(raw_prev_close) and raw_prev_close > 0:
+            item["prev_adj_close"] = raw_prev_close
+        out[symbol] = item
+    return out
+
+
+def _price_lookup_for_day(
+    prices: pd.DataFrame,
+    day_indices: dict[object, object],
+    trade_date: object,
+    columns: list[str],
+) -> dict[str, dict[str, object]]:
+    """Build a single-day price lookup on demand instead of retaining millions of dicts."""
+    indices = day_indices.get(trade_date)
+    if indices is None:
+        return {}
+    day = prices.iloc[indices]
+    available = [column for column in columns if column in day.columns]
+    return day.drop_duplicates("symbol").set_index("symbol")[available].to_dict("index")
+
+
 def _parse_strategies(raw: str | None) -> list[str]:
     if raw is None or not str(raw).strip():
         return DEFAULT_STRATEGIES
@@ -522,12 +575,15 @@ def _execute_buy(
     cost_rate: float,
     rows: list[dict],
     reason: str,
+    lot_size: int = 0,
 ) -> int:
     if shares <= 0:
         return 0
     total_cost_per_share = float(price) * (1.0 + float(cost_rate))
     affordable = int(math.floor(account.cash / total_cost_per_share))
     buy_shares = min(int(shares), affordable)
+    if lot_size > 0:
+        buy_shares = _round_lot(buy_shares, lot_size)
     if buy_shares <= 0:
         return 0
     gross = buy_shares * float(price)
@@ -1437,13 +1493,23 @@ def _day_style_features(day_scores: pd.DataFrame, selected: pd.DataFrame | None 
     }
 
 
+def _score_day_frame(scores: pd.DataFrame, day_indices: dict[object, object], signal_date: object) -> pd.DataFrame:
+    """Materialize one signal day only; avoids retaining a second full score cube."""
+    indices = day_indices.get(signal_date)
+    if indices is None:
+        return pd.DataFrame(columns=scores.columns)
+    return scores.iloc[indices].copy()
+
+
 def _build_targets_cache(
-    scores_by_date: dict[object, pd.DataFrame],
+    scores: pd.DataFrame,
+    day_indices: dict[object, object],
     specs_by_name: dict[str, object],
     top_n: int,
 ) -> dict[tuple[object, str], pd.DataFrame]:
     cache: dict[tuple[object, str], pd.DataFrame] = {}
-    for signal_date, day_scores in scores_by_date.items():
+    for signal_date in day_indices:
+        day_scores = _score_day_frame(scores, day_indices, signal_date)
         for strategy_name, spec in specs_by_name.items():
             cache[(signal_date, strategy_name)] = _build_targets(day_scores, spec, top_n=top_n)
     return cache
@@ -1473,14 +1539,16 @@ def _strategy_cycle_return(
 
 
 def _build_adaptive_perf_table(
-    scores_by_date: dict[object, pd.DataFrame],
+    scores: pd.DataFrame,
+    day_indices: dict[object, object],
     underlying_specs: dict[str, object],
     top_n: int,
     targets_cache: dict[tuple[object, str], pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
     computed: dict[tuple[object, str], tuple[float, int, object | None, dict[str, object]]] = {}
-    for signal_date, day_scores in scores_by_date.items():
+    for signal_date in day_indices:
+        day_scores = _score_day_frame(scores, day_indices, signal_date)
         for role, spec in underlying_specs.items():
             key = (signal_date, spec.name)
             if key not in computed:
@@ -1941,20 +2009,56 @@ def _execution_safe_uplift_preflight(
     }
 
 
+STRICT_CAP_REQUIRED_FIELDS = (
+    "strict_cap_candidate_vol_20",
+    "strict_cap_candidate_ret_1",
+    "market_amount_ratio_20",
+    "top_industry_weight",
+)
+
+
 def _strict_precommit_uplift_cap(decision: dict[str, object], targets: pd.DataFrame, v1_ratio: float, planned_ratio: float) -> dict[str, object]:
-    """T-day-only cap for the strict uplift research candidate."""
+    """Apply the T-day-only strict uplift cap, failing closed on incomplete inputs."""
     top = targets.head(5) if not targets.empty else targets
-    vol = float(pd.to_numeric(top.get("avg_vol_20"), errors="coerce").max()) if "avg_vol_20" in top else 0.0
-    ret = float(pd.to_numeric(top.get("ret_1"), errors="coerce").max()) if "ret_1" in top else 0.0
-    amount_ratio = _safe_float(decision.get("market_amount_ratio_20"), 1.0)
-    industry = _safe_float(decision.get("top_industry_weight"), 0.0)
+    vol = float(pd.to_numeric(top["vol_20"], errors="coerce").max()) if "vol_20" in top else np.nan
+    ret = float(pd.to_numeric(top["ret_1"], errors="coerce").max()) if "ret_1" in top else np.nan
+    amount_ratio = _safe_float(decision.get("market_amount_ratio_20"), np.nan)
+    industry = _safe_float(decision.get("top_industry_weight"), np.nan)
+    inputs = {
+        "strict_cap_candidate_vol_20": vol,
+        "strict_cap_candidate_ret_1": ret,
+        "market_amount_ratio_20": amount_ratio,
+        "top_industry_weight": industry,
+    }
+    missing = [field for field in STRICT_CAP_REQUIRED_FIELDS if not np.isfinite(_safe_float(inputs[field], np.nan))]
+    if targets.empty:
+        missing.append("candidate_targets")
+    missing = sorted(set(missing))
+    coverage = float((len(STRICT_CAP_REQUIRED_FIELDS) - len([f for f in missing if f in STRICT_CAP_REQUIRED_FIELDS])) / len(STRICT_CAP_REQUIRED_FIELDS))
+    base = {
+        **inputs,
+        "cap_input_coverage": coverage,
+        "cap_missing_fields": "|".join(missing),
+        "cap_trigger_count": 0,
+    }
+    if missing:
+        return {
+            **base,
+            "risk_level": "missing_fail_closed",
+            "reason": "precommit_cap_input_missing_fallback_to_v1",
+            "capped_ratio": v1_ratio,
+            "cap_applied": True,
+            "fallback_to_v1": True,
+        }
     high = [vol > 0.045, ret >= 0.08, amount_ratio < 0.80, industry >= 0.45]
-    extreme = ret >= 0.095 or amount_ratio < 0.60 or sum(high) >= 2
+    trigger_count = int(sum(high))
+    base["cap_trigger_count"] = trigger_count
+    extreme = ret >= 0.095 or amount_ratio < 0.60 or trigger_count >= 2
     if extreme:
-        return {"risk_level": "extreme", "reason": "precommit_extreme_risk", "capped_ratio": v1_ratio, "cap_applied": True}
+        return {**base, "risk_level": "extreme", "reason": "precommit_extreme_risk", "capped_ratio": v1_ratio, "cap_applied": True, "fallback_to_v1": True}
     if any(high):
-        return {"risk_level": "high", "reason": "precommit_high_risk", "capped_ratio": min(planned_ratio, v1_ratio + 0.05), "cap_applied": True}
-    return {"risk_level": "normal", "reason": "precommit_normal", "capped_ratio": planned_ratio, "cap_applied": False}
+        return {**base, "risk_level": "high", "reason": "precommit_high_risk", "capped_ratio": min(planned_ratio, v1_ratio + 0.05), "cap_applied": True, "fallback_to_v1": False}
+    return {**base, "risk_level": "normal", "reason": "precommit_normal", "capped_ratio": planned_ratio, "cap_applied": False, "fallback_to_v1": False}
 
 
 def _rebalance(
@@ -1974,6 +2078,8 @@ def _rebalance(
     calendar: list[object],
     open_prices: dict[str, dict[str, float]],
     targets: pd.DataFrame | None = None,
+    precommit_prices: dict[str, dict[str, object]] | None = None,
+    strict_precommit: bool = False,
 ) -> tuple[list[dict], list[dict], dict[str, object]]:
     trade_rows: list[dict] = []
     candidate_rows: list[dict] = []
@@ -1982,14 +2088,16 @@ def _rebalance(
         return trade_rows, candidate_rows, {"locked_count": 0, "candidate_count": 0, "executed": 0}
 
     by_symbol = {str(row["symbol"]).zfill(6): row for _, row in targets.iterrows()}
-    equity_before = _equity(account, open_prices, "adj_open")
+    planning_prices = precommit_prices if strict_precommit and precommit_prices is not None else open_prices
+    planning_field = "raw_close" if strict_precommit else "adj_open"
+    equity_before = _equity(account, planning_prices, planning_field)
     locked_symbols: set[str] = set()
     locked_value = 0.0
     for symbol, position in account.positions.items():
         holding_days = _trade_day_count(calendar, position.entry_date, signal_date)
         if holding_days < int(hold_days):
             locked_symbols.add(symbol)
-            locked_value += _position_value(position, open_prices, "adj_open")
+            locked_value += _position_value(position, planning_prices, planning_field)
 
     rank_order = (
         targets.assign(_symbol=targets["symbol"].astype(str).str.zfill(6))
@@ -2025,12 +2133,26 @@ def _rebalance(
             adjusted_weights[symbol] = raw_weight / unlocked_weight_sum * adjustable_budget_weight
 
     target_shares: dict[str, int] = {}
+    planned_prices: dict[str, float] = {}
+    plan_reject_reasons: dict[str, str] = {}
     for symbol, weight in adjusted_weights.items():
-        price = _safe_float(open_prices.get(symbol, {}).get("adj_open"), np.nan)
+        price = (
+            _precommit_budget_price(planning_prices.get(symbol, {}), symbol)
+            if strict_precommit
+            else _safe_float(open_prices.get(symbol, {}).get("adj_open"), np.nan)
+        )
         if not np.isfinite(price) or price <= 0:
+            plan_reject_reasons[symbol] = "missing_precommit_execution_input" if strict_precommit else "missing_open_price"
+            continue
+        if strict_precommit and not bool(_safe_float(planning_prices.get(symbol, {}).get("security_status_available"), 0.0)):
+            plan_reject_reasons[symbol] = "missing_security_status"
+            continue
+        if strict_precommit and not bool(_safe_float(planning_prices.get(symbol, {}).get("execution_tradable"), 0.0)):
+            plan_reject_reasons[symbol] = "not_tradable_on_signal_day"
             continue
         target_value = equity_before * float(weight)
         target_shares[symbol] = _round_lot(target_value / price, lot_size)
+        planned_prices[symbol] = float(price)
 
     for symbol, row in by_symbol.items():
         execution_proxy = _execution_proxy_fields(
@@ -2051,6 +2173,10 @@ def _rebalance(
                 "rank_score": _safe_float(row.get("rank_score")),
                 "raw_effective_weight": _safe_float(row.get("effective_weight"), 0.0),
                 "adjusted_target_weight": float(adjusted_weights.get(symbol, 0.0)),
+                "planned_shares": int(target_shares.get(symbol, 0)),
+                "planned_price": _safe_float(planned_prices.get(symbol), np.nan),
+                "plan_reject_reason": plan_reject_reasons.get(symbol, ""),
+                "execution_tradable": int(bool(_safe_float(planning_prices.get(symbol, {}).get("execution_tradable"), 0.0))) if strict_precommit else np.nan,
                 "locked": int(symbol in locked_symbols),
                 "skipped_by_position_cap": int(symbol in skipped_by_position_cap),
                 "pattern_score": _safe_float(row.get("pattern_score")),
@@ -2119,7 +2245,21 @@ def _rebalance(
             cost_rate=trade_cost_rate,
             rows=trade_rows,
             reason="rebalance_unlocked",
+            lot_size=lot_size,
         )
+        if bought > 0:
+            trade_rows[-1].update(
+                {
+                    "planned_shares": int(lot_delta),
+                    "planned_price": _safe_float(planned_prices.get(symbol), np.nan),
+                    "filled_shares": int(bought),
+                    "filled_price": float(buy_price) if bought else np.nan,
+                    "reject_reason": "" if bought == lot_delta else "insufficient_cash_or_unfilled",
+                    "open_weight_drift_bps": float(
+                        ((bought * buy_price / equity_before) - float(adjusted_weights.get(symbol, 0.0))) * 10_000.0
+                    ) if equity_before > 0 else np.nan,
+                }
+            )
         if bought < lot_delta and bought > 0 and lot_size > 0:
             account.positions[symbol].shares = _round_lot(account.positions[symbol].shares, lot_size)
 
@@ -2135,6 +2275,7 @@ def _rebalance(
             "max_total_positions": int(max_positions),
             "position_ratio": float(position_ratio),
             "position_cap_skipped": int(len(skipped_by_position_cap)),
+            "cash_residual_ratio": float(account.cash / _equity(account, open_prices, "adj_open")) if _equity(account, open_prices, "adj_open") > 0 else np.nan,
         },
     )
 
@@ -2329,6 +2470,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         raise RuntimeError("No price rows remain after end-date cutoff.")
     prices = prices.sort_values(["symbol", "trade_date"]).copy()
     prices["prev_adj_close"] = prices.groupby("symbol")["adj_close"].shift(1)
+    if "raw_close" in prices.columns:
+        prices["prev_raw_close"] = prices.groupby("symbol")["raw_close"].shift(1)
     if "amount" in prices.columns:
         prices["amount_ma20"] = prices.groupby("symbol")["amount"].transform(lambda s: s.rolling(20, min_periods=5).mean())
     else:
@@ -2367,21 +2510,20 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     calendar = sorted(prices["trade_date"].dropna().unique().tolist())
     price_lookup_columns = [
         col
-        for col in ["adj_open", "adj_high", "adj_low", "adj_close", "prev_adj_close", "amount", "amount_ma20"]
+        for col in ["adj_open", "adj_high", "adj_low", "adj_close", "prev_adj_close", "prev_raw_close", "amount", "amount_ma20", "raw_open", "raw_high", "raw_low", "raw_close", "raw_pre_close", "raw_volume", "raw_amount", "is_st", "circ_mv", "list_date", "security_status_available", "execution_tradable"]
         if col in prices.columns
     ]
-    price_by_date = {
-        day: group.drop_duplicates("symbol").set_index("symbol")[price_lookup_columns].to_dict("index")
-        for day, group in prices.groupby("trade_date", sort=True)
-    }
-    scores_by_date = {day: group.copy() for day, group in scores.groupby("trade_date", sort=True)}
+    # Keep only compact positional indexes.  The old per-date DataFrame/dict
+    # caches duplicated the full multi-million-row research universe in RAM.
+    price_day_indices = prices.groupby("trade_date", sort=True).indices
+    score_day_indices = scores.groupby("trade_date", sort=True).indices
     cache_specs: dict[str, object] = {}
     for spec in specs:
         if spec.name not in PSEUDO_STRATEGY_NAMES:
             cache_specs[spec.name] = spec
     for spec in adaptive_underlying_specs.values():
         cache_specs[spec.name] = spec
-    targets_cache = _build_targets_cache(scores_by_date, cache_specs, top_n=args.top_n)
+    targets_cache = _build_targets_cache(scores, score_day_indices, cache_specs, top_n=args.top_n)
     ashare_candidates = (
         _load_ashare_strategy_candidates(engine, scores["trade_date"].min(), scores["trade_date"].max())
         if any(spec.name in (DUAL_SYSTEM_STRATEGY_NAMES | {ADAPTIVE_MARKET_STYLE_STRATEGY_NAME}) for spec in specs)
@@ -2405,7 +2547,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     all_adaptive_decisions: list[pd.DataFrame] = []
     summary_rows: list[dict] = []
     adaptive_perf = _build_adaptive_perf_table(
-        scores_by_date,
+        scores,
+        score_day_indices,
         adaptive_underlying_specs,
         top_n=args.top_n,
         targets_cache=targets_cache,
@@ -2428,7 +2571,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             sim_calendar = [day for day in sim_calendar if day >= first_exec]
 
         for trade_date in sim_calendar:
-            price_lookup = price_by_date.get(trade_date, {})
+            raw_price_lookup = _price_lookup_for_day(prices, price_day_indices, trade_date, price_lookup_columns)
+            strict_raw_execution = (
+                spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME
+                and args.execution_mode == STRICT_MODE
+            )
+            price_lookup = _raw_execution_price_view(raw_price_lookup) if strict_raw_execution else raw_price_lookup
             meta = None
             stop_count = _apply_hard_stop_loss(
                 account=account,
@@ -2444,7 +2592,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             signal_date = exec_to_signal.get(trade_date)
             if signal_date is not None:
                 last_signal_date = signal_date
-                day_scores = scores_by_date.get(signal_date, pd.DataFrame())
+                day_scores = _score_day_frame(scores, score_day_indices, signal_date)
                 rebalance_spec = spec
                 adaptive_meta: dict[str, object] = {}
                 rebalance_position_ratio = float(args.position_ratio)
@@ -2676,18 +2824,29 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "execution_promotion_eligible": int(mode_audit.promotion_eligible),
                         }
                         if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME:
-                            cap = _strict_precommit_uplift_cap(decision, target_override, baseline_position_ratio, rebalance_position_ratio)
+                            # The cap must use the actual uplift candidates, not the
+                            # primary-route governor state (which is populated later).
+                            cap_decision = {
+                                **decision,
+                                "top_industry_weight": _industry_concentration(target_override).get("top_industry_weight"),
+                            }
+                            cap = _strict_precommit_uplift_cap(cap_decision, target_override, baseline_position_ratio, rebalance_position_ratio)
                             execution_safe_meta.update(
                                 {
                                     "precommit_uplift_risk_level": cap["risk_level"],
                                     "precommit_uplift_cap_reason": cap["reason"],
+                                    "cap_input_coverage": cap["cap_input_coverage"],
+                                    "cap_missing_fields": cap["cap_missing_fields"],
+                                    "cap_trigger_count": cap["cap_trigger_count"],
+                                    "strict_cap_candidate_vol_20": cap["strict_cap_candidate_vol_20"],
+                                    "strict_cap_candidate_ret_1": cap["strict_cap_candidate_ret_1"],
                                     "planned_uplift_ratio": float(rebalance_position_ratio - baseline_position_ratio),
                                     "capped_uplift_ratio": float(cap["capped_ratio"] - baseline_position_ratio),
                                     "precommit_cap_applied": int(bool(cap["cap_applied"])),
                                 }
                             )
                             rebalance_position_ratio = float(cap["capped_ratio"])
-                            if cap["risk_level"] == "extreme":
+                            if bool(cap["fallback_to_v1"]):
                                 governor = baseline_governor
                                 risk_decision = baseline_risk_decision
                                 rebalance_spec = baseline_spec
@@ -2994,7 +3153,11 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     calendar=calendar,
                     open_prices=price_lookup,
                     targets=target_override,
+                    precommit_prices=_price_lookup_for_day(prices, price_day_indices, signal_date, price_lookup_columns),
+                    strict_precommit=strict_raw_execution,
                 )
+                for item in [*candidates, *trades]:
+                    item["cash_residual_ratio"] = rebalance_meta.get("cash_residual_ratio")
                 if spec.name in PSEUDO_STRATEGY_NAMES:
                     for item in candidates:
                         item["adaptive_role"] = adaptive_meta.get("adaptive_role")
@@ -3061,6 +3224,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         item["execution_safe_uplift_planned_position_ratio"] = adaptive_meta.get("execution_safe_uplift_planned_position_ratio")
                         item["execution_safe_uplift_final_strategy"] = adaptive_meta.get("execution_safe_uplift_final_strategy")
                         item["execution_safe_uplift_final_position_ratio"] = adaptive_meta.get("execution_safe_uplift_final_position_ratio")
+                        for field in ("precommit_uplift_risk_level", "precommit_uplift_cap_reason", "cap_input_coverage", "cap_missing_fields", "cap_trigger_count", "strict_cap_candidate_vol_20", "strict_cap_candidate_ret_1", "precommit_cap_applied"):
+                            item[field] = adaptive_meta.get(field)
                         for field in ("decision_timestamp", "proxy_asof_timestamp", "order_submit_timestamp", "fill_timestamp", "execution_mode", "causality_pass", "daily_proxy_approximation", "execution_mode_status", "execution_promotion_eligible"):
                             item[field] = adaptive_meta.get(field)
                     for item in trades:
@@ -3068,6 +3233,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             item[field] = adaptive_meta.get(field)
                         item["execution_safe_uplift_preflight_status"] = adaptive_meta.get("execution_safe_uplift_preflight_status")
                         item["execution_safe_uplift_fallback_applied"] = adaptive_meta.get("execution_safe_uplift_fallback_applied")
+                        for field in ("precommit_uplift_risk_level", "precommit_uplift_cap_reason", "cap_input_coverage", "cap_missing_fields", "cap_trigger_count", "strict_cap_candidate_vol_20", "strict_cap_candidate_ret_1", "precommit_cap_applied"):
+                            item[field] = adaptive_meta.get(field)
                         item["pattern_guard_enabled"] = adaptive_meta.get("pattern_guard_enabled")
                         item["pattern_strategy_mode"] = adaptive_meta.get("pattern_strategy_mode")
                 trade_rows.extend(trades)
@@ -3129,6 +3296,16 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 summary["execution_safe_uplift_incremental_hard_block_days"] = int(preflight.eq("hard_block_fallback_to_v1").sum())
                 summary["execution_safe_uplift_preflight_unknown_days"] = int(preflight.eq("preflight_unknown_fallback_to_v1").sum())
                 summary["execution_safe_uplift_warning_only_days"] = 0
+            if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME:
+                levels = adaptive_decisions.get("precommit_uplift_risk_level", pd.Series(dtype=object)).astype(str)
+                summary["normal_risk_days"] = int(levels.eq("normal").sum())
+                summary["high_risk_days"] = int(levels.eq("high").sum())
+                summary["extreme_risk_days"] = int(levels.eq("extreme").sum())
+                summary["cap_missing_fallback_days"] = int(levels.eq("missing_fail_closed").sum())
+                coverage = pd.to_numeric(adaptive_decisions.get("cap_input_coverage"), errors="coerce").dropna()
+                summary["cap_input_coverage"] = float(coverage.mean()) if not coverage.empty else np.nan
+                triggers = pd.to_numeric(adaptive_decisions.get("cap_trigger_count"), errors="coerce").fillna(0)
+                summary["cap_trigger_count"] = int(triggers.sum())
         summary.update(
             {
                 "strategy": spec.name,
