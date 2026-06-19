@@ -20,6 +20,7 @@ from scripts.research.analyze_pattern_veto_coverage import _rank_candidates
 
 DEFAULT_OUTPUT_ROOT = Path("exports/signal_research/shadow_execution_degradation")
 DEFAULT_EVENT_LOG = Path("reports/production_monitor/research_shadow_event_log.csv")
+DEFAULT_REPORT_MD = Path("reports/production_monitor/shadow_execution_degradation_report.md")
 DEGRADED_PREFIX = "degraded"
 
 
@@ -62,6 +63,51 @@ def _proxy_reason(row: pd.Series) -> str:
     if pd.to_numeric(pd.Series([row.get("estimated_turnover_impact")]), errors="coerce").iloc[0] > 0.03:
         reasons.append("estimated_turnover_impact")
     return "|".join(reasons)
+
+
+def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(frame[column], errors="coerce")
+
+
+def _slippage_quadrants(detail: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "slippage_scope",
+        "days",
+        "rows",
+        "avg_theory_gap",
+        "max_event_open_gap_abs",
+        "max_event_turnover_impact",
+    ]
+    if detail.empty:
+        return pd.DataFrame(columns=columns)
+    frame = detail.copy()
+    frame["large_slippage_hit"] = _numeric(frame, "large_slippage_proxy").gt(0.03)
+    frame = frame[frame["large_slippage_hit"]].copy()
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    scopes = {
+        "common_large_slippage": frame["is_common_execution_risk"].astype(bool),
+        "shadow_incremental_large_slippage": frame["is_shadow_incremental_day"].astype(bool) | frame["is_shadow_incremental_symbol"].astype(bool),
+        "event_large_slippage": frame["is_recovery_event"].astype(bool),
+        "non_event_large_slippage": ~frame["is_recovery_event"].astype(bool),
+    }
+    rows: list[dict[str, object]] = []
+    for scope, mask in scopes.items():
+        part = frame[mask].copy()
+        event_part = part[part["is_recovery_event"].astype(bool)]
+        rows.append(
+            {
+                "slippage_scope": scope,
+                "days": int(part["degraded_trade_date"].nunique()) if not part.empty else 0,
+                "rows": int(len(part)),
+                "avg_theory_gap": float(_numeric(part, "theory_gap").mean()) if not part.empty else 0.0,
+                "max_event_open_gap_abs": float(_numeric(event_part, "open_gap_proxy").abs().max()) if not event_part.empty else 0.0,
+                "max_event_turnover_impact": float(_numeric(event_part, "estimated_turnover_impact").max()) if not event_part.empty else 0.0,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
 
 
 def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, candidates: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -125,11 +171,21 @@ def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, c
                     "incremental_execution_degraded_days": 0,
                     "common_execution_degraded_days": 0,
                     "degraded_candidate_rows": 0,
+                    "calendar_large_slippage_days": 0,
+                    "event_large_slippage_days": 0,
+                    "incremental_large_slippage_days": 0,
+                    "max_event_open_gap_abs": 0.0,
+                    "max_event_turnover_impact": 0.0,
                 }
             ]
         )
     else:
         day_level = detail.drop_duplicates("degraded_trade_date")
+        large_slip = detail[_numeric(detail, "large_slippage_proxy").gt(0.03)].copy()
+        event_large_slip = large_slip[large_slip["is_recovery_event"].astype(bool)]
+        incremental_large_slip = large_slip[
+            large_slip["is_shadow_incremental_day"].astype(bool) | large_slip["is_shadow_incremental_symbol"].astype(bool)
+        ]
         summary = pd.DataFrame(
             [
                 {
@@ -140,6 +196,11 @@ def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, c
                     "degraded_candidate_rows": int(len(detail)),
                     "candidate_proxy_degraded_rows": int(detail["candidate_degraded_reasons"].astype(str).ne("").sum()),
                     "avg_degraded_day_theory_gap": float(pd.to_numeric(day_level["theory_gap"], errors="coerce").mean()),
+                    "calendar_large_slippage_days": int(large_slip["degraded_trade_date"].nunique()),
+                    "event_large_slippage_days": int(event_large_slip["degraded_trade_date"].nunique()),
+                    "incremental_large_slippage_days": int(incremental_large_slip["degraded_trade_date"].nunique()),
+                    "max_event_open_gap_abs": float(_numeric(event_large_slip, "open_gap_proxy").abs().max()) if not event_large_slip.empty else 0.0,
+                    "max_event_turnover_impact": float(_numeric(event_large_slip, "estimated_turnover_impact").max()) if not event_large_slip.empty else 0.0,
                 }
             ]
         )
@@ -151,10 +212,87 @@ def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, c
         if not detail.empty
         else pd.DataFrame(columns=["candidate_degraded_reasons", "rows", "event_rows", "incremental_rows", "avg_theory_gap"])
     )
-    return {"degradation_detail": detail, "degradation_summary": summary, "degradation_by_reason": by_reason}
+    large_slippage_quadrants = _slippage_quadrants(detail)
+    return {
+        "degradation_detail": detail,
+        "degradation_summary": summary,
+        "degradation_by_reason": by_reason,
+        "large_slippage_quadrants": large_slippage_quadrants,
+    }
 
 
-def run_analysis(monitor_csv: Path, event_log_csv: Path, candidates_csv: Path, output_root: Path) -> dict[str, object]:
+def _markdown_report(summary: dict[str, object], tables: dict[str, pd.DataFrame]) -> str:
+    summary_row = tables["degradation_summary"].iloc[0].to_dict()
+    detail = tables["degradation_detail"].copy()
+    quadrants = tables["large_slippage_quadrants"].copy()
+    lines = [
+        "# Shadow Execution Degradation Report",
+        "",
+        f"- generated_at: `{datetime.now().isoformat(timespec='seconds')}`",
+        f"- monitor_csv: `{summary.get('monitor_csv')}`",
+        f"- event_log_csv: `{summary.get('event_log_csv')}`",
+        f"- candidates_csv: `{summary.get('candidates_csv')}`",
+        "",
+        "## Summary",
+        "",
+        "| metric | value |",
+        "|---|---:|",
+    ]
+    for key in [
+        "calendar_execution_degraded_days",
+        "event_execution_degraded_days",
+        "incremental_execution_degraded_days",
+        "common_execution_degraded_days",
+        "calendar_large_slippage_days",
+        "event_large_slippage_days",
+        "incremental_large_slippage_days",
+        "max_event_open_gap_abs",
+        "max_event_turnover_impact",
+    ]:
+        lines.append(f"| {key} | {summary_row.get(key)} |")
+    lines.extend(["", "## Large Slippage Quadrants", "", "| scope | days | rows | avg_theory_gap | max_event_open_gap_abs | max_event_turnover_impact |", "|---|---:|---:|---:|---:|---:|"])
+    for row in quadrants.to_dict("records"):
+        lines.append(
+            "| {slippage_scope} | {days} | {rows} | {avg_theory_gap} | {max_event_open_gap_abs} | {max_event_turnover_impact} |".format(
+                **row
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Degraded Candidate Detail",
+            "",
+            "| date | symbol | rank | incremental_symbol | position_diff | theory_gap | large_slippage | open_gap | limit_up_buy | unfilled | limit_down_sell | turnover_impact | reasons |",
+            "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        ]
+    )
+    columns = [
+        "degraded_trade_date",
+        "symbol",
+        "candidate_rank",
+        "is_shadow_incremental_symbol",
+        "position_diff",
+        "theory_gap",
+        "large_slippage_proxy",
+        "open_gap_proxy",
+        "limit_up_buy_ratio",
+        "unfilled_ratio_proxy",
+        "limit_down_sell_ratio",
+        "estimated_turnover_impact",
+        "candidate_degraded_reasons",
+    ]
+    for row in detail.sort_values(["degraded_trade_date", "candidate_rank"]).to_dict("records"):
+        values = {col: row.get(col, "") for col in columns}
+        lines.append(
+            "| {degraded_trade_date} | {symbol} | {candidate_rank} | {is_shadow_incremental_symbol} | {position_diff} | {theory_gap} | {large_slippage_proxy} | {open_gap_proxy} | {limit_up_buy_ratio} | {unfilled_ratio_proxy} | {limit_down_sell_ratio} | {estimated_turnover_impact} | {candidate_degraded_reasons} |".format(
+                **values
+            )
+        )
+    lines.extend(["", "This report is read-only and does not change production, shadow config, orders, or strategy routing."])
+    return "\n".join(lines) + "\n"
+
+
+def run_analysis(monitor_csv: Path, event_log_csv: Path, candidates_csv: Path, output_root: Path, report_md: Path = DEFAULT_REPORT_MD) -> dict[str, object]:
     monitor = _read_csv(monitor_csv, "shadow monitor")
     event_log = pd.read_csv(event_log_csv, low_memory=False) if event_log_csv.exists() else pd.DataFrame(columns=["trade_date"])
     if not event_log.empty and "trade_date" in event_log.columns:
@@ -170,6 +308,9 @@ def run_analysis(monitor_csv: Path, event_log_csv: Path, candidates_csv: Path, o
         files[name] = str(path)
     summary_row = tables["degradation_summary"].iloc[0].to_dict()
     summary = {"output_dir": str(out_dir), "monitor_csv": str(monitor_csv), "event_log_csv": str(event_log_csv), "candidates_csv": str(candidates_csv), **summary_row, "files": files}
+    report_md.parent.mkdir(parents=True, exist_ok=True)
+    report_md.write_text(_markdown_report(summary, tables), encoding="utf-8")
+    summary["files"]["shadow_execution_degradation_report"] = str(report_md)
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
 
@@ -180,10 +321,11 @@ def main() -> None:
     parser.add_argument("--event-log-csv", default=str(DEFAULT_EVENT_LOG))
     parser.add_argument("--candidates-csv", required=True)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
+    parser.add_argument("--report-md", default=str(DEFAULT_REPORT_MD))
     args = parser.parse_args()
     print(
         json.dumps(
-            run_analysis(Path(args.monitor_csv), Path(args.event_log_csv), Path(args.candidates_csv), Path(args.output_root)),
+            run_analysis(Path(args.monitor_csv), Path(args.event_log_csv), Path(args.candidates_csv), Path(args.output_root), Path(args.report_md)),
             ensure_ascii=False,
             indent=2,
         )

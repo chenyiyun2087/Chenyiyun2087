@@ -44,6 +44,8 @@ from scripts.ops.run_research_shadow_candidate_monitor import (
 from scripts.ops.append_research_shadow_event_log import append_event_log
 from scripts.ops.report_research_shadow_promotion_status import build_promotion_status
 from scripts.research.analyze_execution_proxy_quality import build_execution_proxy_quality_tables, quality_status as execution_proxy_quality_status
+from scripts.research.analyze_research_shadow_event_quality import build_event_quality_tables, event_quality_status, execution_safe_event_gate
+from scripts.research.analyze_shadow_execution_degradation import build_degradation_analysis
 from scripts.research.audit_pattern_feature_lineage import audit_pattern_lineage
 from scripts.research.run_production_governed_vol_position_backtest import DEFAULT_STRATEGIES as PRODUCTION_GOVERNED_DEFAULT_STRATEGIES
 from scripts.research.analyze_adaptive_vs_governed import (
@@ -945,6 +947,139 @@ def test_shadow_event_accumulator_handles_empty_report(tmp_path: Path):
     assert pd.read_csv(log_path).empty
 
 
+def test_shadow_execution_degradation_splits_common_and_incremental_risk():
+    monitor = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-01-01",
+                "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "execution_feasibility": "degraded_large_slippage_proxy",
+                "position_diff": 0.0,
+                "risk_decision_diff": False,
+                "top5_overlap": 1.0,
+                "production_top5": "000001|000002|000003|000004|000005",
+                "shadow_top5": "000001|000002|000003|000004|000005",
+                "shadow_risk_decision": "normal",
+                "theory_gap": 0.001,
+            },
+            {
+                "trade_date": "2026-01-02",
+                "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "execution_feasibility": "degraded_large_slippage_proxy",
+                "position_diff": 0.10,
+                "risk_decision_diff": True,
+                "top5_overlap": 0.8,
+                "production_top5": "000001|000002|000003|000004|000005",
+                "shadow_top5": "000001|000002|000003|000004|000099",
+                "shadow_risk_decision": "recovery_reduce",
+                "theory_gap": 0.01,
+            },
+        ]
+    )
+    event_log = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-01-02",
+                "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+            }
+        ]
+    )
+    candidate_rows = []
+    for date, symbols in [
+        ("2026-01-01", ["000001", "000002", "000003", "000004", "000005"]),
+        ("2026-01-02", ["000001", "000002", "000003", "000004", "000099"]),
+    ]:
+        for rank, symbol in enumerate(symbols, start=1):
+            candidate_rows.append(
+                {
+                    "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                    "trade_date": date,
+                    "symbol": symbol,
+                    "candidate_rank": rank,
+                    "large_slippage_proxy": 0.04 if rank == 1 else 0.0,
+                    "limit_up_buy_ratio": 0.0,
+                    "unfilled_ratio_proxy": 0.0,
+                    "limit_down_sell_ratio": 0.0,
+                    "open_gap_proxy": 0.0,
+                    "estimated_turnover_impact": 0.0,
+                }
+            )
+
+    tables = build_degradation_analysis(monitor, event_log, pd.DataFrame(candidate_rows))
+    summary = tables["degradation_summary"].iloc[0]
+    detail = tables["degradation_detail"]
+
+    assert int(summary["calendar_execution_degraded_days"]) == 2
+    assert int(summary["event_execution_degraded_days"]) == 1
+    assert int(summary["incremental_execution_degraded_days"]) == 1
+    assert int(summary["common_execution_degraded_days"]) == 1
+    incremental_symbol = detail[detail["symbol"].eq("000099")].iloc[0]
+    assert bool(incremental_symbol["is_shadow_incremental_symbol"]) is True
+
+
+def test_research_shadow_event_quality_accepts_positive_low_degraded_cumulative_events():
+    rows = []
+    for idx in range(30):
+        rows.append(
+            {
+                "trade_date": f"2026-01-{idx + 1:02d}",
+                "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "position_diff": 0.10,
+                "top5_overlap": 0.8,
+                "theory_gap": 0.01 if idx < 17 else -0.005,
+                "execution_feasibility": "degraded_large_slippage_proxy" if idx == 0 else "pass",
+                "shadow_risk_decision": "recovery_reduce",
+                "shadow_recovery_status": "recovered",
+                "large_slippage_proxy": 0.04 if idx == 0 else 0.0,
+                "open_gap_proxy": 0.0,
+                "estimated_turnover_impact": 0.01,
+            }
+        )
+
+    tables = build_event_quality_tables(pd.DataFrame(rows))
+    summary = tables["event_quality_summary"]
+
+    assert int(summary["event_count"].iloc[0]) == 30
+    assert summary["positive_rate"].iloc[0] == pytest.approx(17 / 30)
+    assert int(summary["degraded_count"].iloc[0]) == 1
+    assert event_quality_status(summary) == "CUMULATIVE_EVENT_READY"
+
+
+def test_research_shadow_event_quality_splits_execution_safe_subset():
+    rows = []
+    for idx, day in enumerate(pd.date_range("2026-02-01", periods=34, freq="D")):
+        rows.append(
+            {
+                "trade_date": day.strftime("%Y-%m-%d"),
+                "production_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "shadow_strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "position_diff": 0.10,
+                "top5_overlap": 0.8,
+                "theory_gap": 0.01 if idx < 20 else -0.002,
+                "execution_feasibility": "pass" if idx < 30 else "degraded_large_slippage_proxy",
+                "shadow_risk_decision": "recovery_reduce",
+                "shadow_recovery_status": "recovered",
+                "large_slippage_proxy": 0.0 if idx < 30 else 0.04,
+                "open_gap_proxy": 0.0,
+                "estimated_turnover_impact": 0.01,
+            }
+        )
+
+    tables = build_event_quality_tables(pd.DataFrame(rows))
+    safe = tables["execution_safe_event_quality"]
+    safe_row = safe[safe["execution_safety"].eq("execution_safe_event")].iloc[0]
+    degraded_row = safe[safe["execution_safety"].eq("degraded_event")].iloc[0]
+
+    assert int(safe_row["event_count"]) == 30
+    assert int(degraded_row["event_count"]) == 4
+    assert execution_safe_event_gate(safe) == "pass_execution_safe_events"
+    assert "max_negative_gap" in safe.columns
+
+
 def test_research_shadow_promotion_status_uses_pattern_warning_not_blocker():
     status = build_promotion_status(
         daily_report={
@@ -960,6 +1095,8 @@ def test_research_shadow_promotion_status_uses_pattern_warning_not_blocker():
         event_summary={"total_recovery_events": 0, "cumulative_recovery_theory_gap": 0.0},
         pattern_lineage_summary={"lineage_status": "PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING"},
         fp_separability_summary={"separability_status": "NOT_SEPARABLE"},
+        event_quality_summary={"total_recovery_events": 0, "positive_event_rate": 0.0, "cumulative_recovery_theory_gap": 0.0, "event_execution_degraded_ratio": 0.0},
+        degradation_summary={"incremental_execution_degraded_days": 0},
         config={
             "primary_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
             "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",
@@ -974,11 +1111,59 @@ def test_research_shadow_promotion_status_uses_pattern_warning_not_blocker():
 
     assert status["promotion_ready"] is False
     assert "NOT_READY_PATTERN_LINEAGE" not in status["blocking_statuses"]
-    assert "NOT_READY_NO_EVENTS" in status["promotion_statuses"]
-    assert "NOT_READY_EXECUTION_PROXY" in status["promotion_statuses"]
+    assert "NOT_READY_EVENT_WINDOW" in status["promotion_statuses"]
+    assert "NOT_READY_EXECUTION_PROXY_MISSING" in status["promotion_statuses"]
+    assert "NOT_READY_CUMULATIVE_EVENT_QUALITY" in status["promotion_statuses"]
+    assert "NOT_READY_EXECUTION_SAFE_EVENT_GATE" in status["promotion_statuses"]
+    assert status["incremental_execution_gate"] == "pass_no_incremental_degradation"
     assert "PATTERN_LINEAGE_WARNING" in status["warning_statuses"]
     assert status["production_change_allowed"] is False
     assert status["pattern_blocks_enabled_shadow"] is False
+
+
+def test_research_shadow_promotion_status_splits_degraded_proxy_from_missing_proxy():
+    status = build_promotion_status(
+        daily_report={
+            "shadow_summary": {
+                "calendar_window_pass": False,
+                "event_window_pass": True,
+                "execution_proxy_pass": False,
+                "execution_degraded_days": 2,
+                "execution_unknown_days": 0,
+                "shadow_fail_reasons": ["execution_degraded_days_above_threshold"],
+                "execution_proxy_fail_reasons": ["degraded_execution_proxy"],
+            }
+        },
+        event_summary={"total_recovery_events": 30, "cumulative_recovery_theory_gap": 0.04},
+        pattern_lineage_summary={"lineage_status": "PATTERN_LINEAGE_TARGET_READY"},
+        fp_separability_summary={},
+        event_window_report={"shadow_summary": {"event_window_pass": True, "recovery_event_days": 5, "shadow_recovery_theory_gap_sum": 0.02}},
+        event_quality_summary={
+            "total_recovery_events": 30,
+            "positive_event_rate": 0.60,
+            "cumulative_recovery_theory_gap": 0.04,
+            "event_execution_degraded_ratio": 0.0,
+            "execution_safe_event_gate": "pass_execution_safe_events",
+            "execution_safe_event_count": 30,
+            "execution_safe_positive_rate": 0.60,
+            "execution_safe_cumulative_theory_gap": 0.04,
+        },
+        degradation_summary={"incremental_execution_degraded_days": 0},
+        config={
+            "primary_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+            "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",
+            "research_shadow_candidate": {
+                "enabled": False,
+                "strategy": PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
+                "compare_to": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
+                "min_recovery_events": 5,
+            },
+        },
+    )
+
+    assert "NOT_READY_EXECUTION_DEGRADED" in status["blocking_statuses"]
+    assert "NOT_READY_EXECUTION_PROXY_MISSING" not in status["blocking_statuses"]
+    assert "NOT_READY_EXECUTION_PROXY" not in status["blocking_statuses"]
 
 
 def test_research_shadow_promotion_ready_when_only_pattern_is_missing():
@@ -995,6 +1180,18 @@ def test_research_shadow_promotion_ready_when_only_pattern_is_missing():
         event_summary={"total_recovery_events": 5, "cumulative_recovery_theory_gap": 0.03},
         pattern_lineage_summary={"lineage_status": "PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING"},
         fp_separability_summary={"separability_status": "SEPARABLE"},
+        event_window_report={"shadow_summary": {"event_window_pass": True, "recovery_event_days": 5, "shadow_recovery_theory_gap_sum": 0.03}},
+        event_quality_summary={
+            "total_recovery_events": 30,
+            "positive_event_rate": 0.60,
+            "cumulative_recovery_theory_gap": 0.05,
+            "event_execution_degraded_ratio": 0.0,
+            "execution_safe_event_gate": "pass_execution_safe_events",
+            "execution_safe_event_count": 30,
+            "execution_safe_positive_rate": 0.60,
+            "execution_safe_cumulative_theory_gap": 0.05,
+        },
+        degradation_summary={"incremental_execution_degraded_days": 0},
         config={
             "primary_strategy": PRODUCTION_GOVERNED_VOL_POSITION_STRATEGY_NAME,
             "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",

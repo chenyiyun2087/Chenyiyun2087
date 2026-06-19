@@ -5746,3 +5746,16 @@
 2026-06-19 05:00:26,643 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-19 06:00:27,484 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-19 07:00:28,227 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 08:00:28,889 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 09:00:29,718 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 09:56:30,341 - ERROR - Error checking trade day: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+[SQL: SELECT is_open FROM chenyiyun.dim_trade_cal WHERE cal_date = %(date)s AND exchange = 'SSE' LIMIT 1]
+[parameters: {'date': '20260619'}]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-06-19 09:57:00,403 - ERROR - Error checking trade day: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on 'localhost' ([Errno 61] Connection refused)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-06-19 09:57:30,414 - ERROR - Error checking trade day: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on 'localhost' ([Errno 61] Connection refused)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-06-19 09:58:27,663 - INFO - Scheduler started.
+2026-06-19 10:00:27,610 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 11:00:28,554 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.

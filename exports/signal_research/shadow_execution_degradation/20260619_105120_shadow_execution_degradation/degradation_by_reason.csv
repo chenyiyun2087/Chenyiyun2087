@@ -1,0 +1,6 @@
+candidate_degraded_reasons,rows,event_rows,incremental_rows,avg_theory_gap
+large_slippage_proxy,45,8,8,-0.0003643987048576243
+large_slippage_proxy|limit_down_sell_ratio|open_gap_proxy,7,0,0,0.00967997107431107
+large_slippage_proxy|limit_up_buy_ratio|unfilled_ratio_proxy|open_gap_proxy,1,0,0,0.0035640557457496
+large_slippage_proxy|open_gap_proxy,24,2,2,0.0006556984999247416
+none,43,5,5,-0.00456379442856581

@@ -1,17 +1,17 @@
 {
-  "generated_at": "2026-06-19T07:04:28",
+  "generated_at": "2026-06-19T10:51:19",
   "source_report_path": null,
   "input_glob": "reports/production_monitor/research_shadow_windows/*/research_shadow_candidate_recovery_events.json",
   "monitor_csv": null,
   "log_path": "reports/production_monitor/research_shadow_event_log.csv",
   "incoming_recovery_events": 127,
-  "new_recovery_events": 98,
+  "new_recovery_events": 0,
   "total_recovery_events": 98,
   "positive_theory_gap_events": 55,
   "negative_theory_gap_events": 43,
-  "cumulative_recovery_theory_gap": 0.0494453841008502,
-  "avg_position_diff": 0.063265306122449,
-  "max_position_diff": 0.14999999999999997,
+  "cumulative_recovery_theory_gap": 0.049445384100849865,
+  "avg_position_diff": 0.06326530612244897,
+  "max_position_diff": 0.1499999999999999,
   "execution_proxy_available_ratio": 1.0,
   "execution_degraded_event_days": 4
 }

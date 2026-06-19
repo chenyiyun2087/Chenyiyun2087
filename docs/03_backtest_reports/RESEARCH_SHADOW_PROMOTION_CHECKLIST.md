@@ -16,6 +16,7 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 - Calendar gate pass: latest 20 common trading days have no severe unexplained degraded execution proxy.
 - Event window gate pass: latest 120-day recovery window has at least 5 recovery event days, positive recovery-event theory gap, and no event-level degraded execution that would block promotion.
 - Cumulative event gate pass: `total_recovery_events >= 30`, cumulative recovery theory gap is positive, positive event rate is at least 55%, and event degraded ratio is at most 5%.
+- Execution-safe event gate pass: execution-safe recovery events alone have at least 30 samples, positive cumulative theory gap, and positive event rate of at least 55%.
 - Incremental execution gate pass: degraded execution events attributable to the shadow incremental exposure are 0.
 - Event accumulator pass: `reports/production_monitor/research_shadow_event_log.csv` has durable recovery-event samples, deduplicated by `trade_date + shadow_strategy + production_strategy`.
 - Execution proxy pass: execution feasibility is not `unknown_missing_execution_proxy`, and degraded execution days are explained as either shared production/shadow risk or explicitly blocked as shadow incremental risk.
@@ -32,11 +33,12 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 - `reports/production_monitor/research_shadow_promotion_status.json/md`: promotion readiness dashboard.
 - `exports/signal_research/execution_proxy_quality/*/summary.json`: execution proxy coverage and degraded-ratio audit.
 - `exports/signal_research/shadow_execution_degradation/*/summary.json`: shared versus incremental execution degradation attribution.
+- `reports/production_monitor/shadow_execution_degradation_report.md`: daily and symbol-level degraded execution explanation.
 - `exports/signal_research/research_shadow_event_quality/*/summary.json`: cumulative recovery-event quality and low-risk positive-contribution subset analysis.
 
 ## Blocking vs Warning Status
 
-- Enabled-shadow blockers: `NOT_READY_CALENDAR_WINDOW`, `NOT_READY_NO_EVENTS`, `NOT_READY_EXECUTION_PROXY`, `NOT_READY_CUMULATIVE_EVENT_QUALITY`, `NOT_READY_INCREMENTAL_EXECUTION`.
+- Enabled-shadow blockers: `NOT_READY_CALENDAR_WINDOW`, `NOT_READY_EVENT_WINDOW`, `NOT_READY_EXECUTION_PROXY_MISSING`, `NOT_READY_EXECUTION_DEGRADED`, `NOT_READY_CUMULATIVE_EVENT_QUALITY`, `NOT_READY_EXECUTION_SAFE_EVENT_GATE`, `NOT_READY_INCREMENTAL_EXECUTION`.
 - Warning-only disclosures: `PATTERN_LINEAGE_WARNING`, `FP_SEPARABILITY_EXPLANATION_ONLY`.
 - Pattern warnings block only pattern-based veto, risk guard, rerank, or pattern-based canary review; they do not block enabled shadow by themselves.
 
@@ -44,7 +46,8 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 
 - Shared execution risk: production and shadow hold the same Top5 path, have no meaningful position/risk-decision difference, and both would face the same execution proxy degradation.
 - Shadow incremental execution risk: the degraded day overlaps a recovery event, risk-decision difference, position difference, or shadow-only symbol exposure.
-- Promotion requires the incremental execution risk count to be 0, even when cumulative event return is positive.
+- Large-slippage risk is reported as common, shadow incremental, event, and non-event; only common large slippage is disclosure-only.
+- Promotion requires incremental large-slippage days and incremental execution degraded days to be 0, even when cumulative event return is positive.
 
 ## Canary Requirements
 

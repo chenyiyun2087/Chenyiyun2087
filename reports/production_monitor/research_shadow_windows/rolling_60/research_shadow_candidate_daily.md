@@ -1,6 +1,6 @@
 # Research Shadow Candidate Daily
 
-- trade_date: `2026-05-06`
+- trade_date: `2026-06-18`
 - production_strategy: `production_governed_vol_position`
 - shadow_strategy: `production_governed_vol_position_v1_2b_gate_tuned`
 - shadow_pass: `False`
@@ -13,8 +13,8 @@
 | top5_overlap | 1.0 |
 | position_diff | 0.0 |
 | risk_decision_diff | False |
-| recovery_status | blocked_recovery_streak_exceeded |
-| theory_gap | 0.008239818365284757 |
+| recovery_status | not_applicable |
+| theory_gap | 0.0018004573073069352 |
 | execution_feasibility | pass |
 | 20d_rows | 60 |
 | 20d_theory_gap_sum | 0.049513151834993274 |

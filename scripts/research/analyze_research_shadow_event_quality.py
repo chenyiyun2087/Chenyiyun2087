@@ -17,6 +17,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 DEFAULT_EVENT_LOG = Path("reports/production_monitor/research_shadow_event_log.csv")
 DEFAULT_OUTPUT_ROOT = Path("exports/signal_research/research_shadow_event_quality")
+DEFAULT_MIN_SAFE_EVENTS = 30
+DEFAULT_MIN_POSITIVE_RATE = 0.55
 GROUP_COLUMNS = (
     "event_source_window",
     "position_diff_bucket",
@@ -136,9 +138,58 @@ def _aggregate(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return out[columns + ["event_count", "positive_rate", "cumulative_theory_gap", "avg_theory_gap", "median_theory_gap", "max_drawdown_after_event", "degraded_count"]]
 
 
+def _quantile(series: pd.Series, q: float) -> float:
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+    return float(numeric.quantile(q)) if not numeric.empty else 0.0
+
+
+def _safe_event_quality(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "execution_safety",
+        "event_count",
+        "positive_rate",
+        "cumulative_theory_gap",
+        "avg_theory_gap",
+        "median_theory_gap",
+        "max_negative_gap",
+        "position_diff_median",
+        "position_diff_p90",
+        "large_slippage_proxy_p95",
+        "open_gap_abs_p95",
+        "estimated_turnover_impact_p95",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    work = frame.copy()
+    work["execution_safety"] = work["execution_feasibility"].astype(str).map(
+        lambda value: "degraded_event" if value.startswith("degraded") else ("unknown_event" if value == "unknown_missing_execution_proxy" else "execution_safe_event")
+    )
+    rows: list[dict[str, object]] = []
+    for safety, part in work.groupby("execution_safety", dropna=False):
+        theory_gap = pd.to_numeric(part["theory_gap"], errors="coerce").fillna(0.0)
+        rows.append(
+            {
+                "execution_safety": safety,
+                "event_count": int(len(part)),
+                "positive_rate": float(theory_gap.gt(0).mean()) if len(part) else 0.0,
+                "cumulative_theory_gap": float(theory_gap.sum()),
+                "avg_theory_gap": float(theory_gap.mean()) if len(part) else 0.0,
+                "median_theory_gap": float(theory_gap.median()) if len(part) else 0.0,
+                "max_negative_gap": float(theory_gap.min()) if len(part) else 0.0,
+                "position_diff_median": _quantile(part.get("position_diff", pd.Series(dtype=float)).abs(), 0.50),
+                "position_diff_p90": _quantile(part.get("position_diff", pd.Series(dtype=float)).abs(), 0.90),
+                "large_slippage_proxy_p95": _quantile(part.get("large_slippage_proxy", pd.Series(dtype=float)).abs(), 0.95),
+                "open_gap_abs_p95": _quantile(part.get("open_gap_proxy", pd.Series(dtype=float)).abs(), 0.95),
+                "estimated_turnover_impact_p95": _quantile(part.get("estimated_turnover_impact", pd.Series(dtype=float)).abs(), 0.95),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def build_event_quality_tables(event_log: pd.DataFrame) -> dict[str, pd.DataFrame]:
     frame = prepare_event_log(event_log)
     total = _aggregate(frame, [])
+    execution_safe = _safe_event_quality(frame)
     by_dimension_rows = []
     for col in GROUP_COLUMNS:
         part = _aggregate(frame, [col])
@@ -151,6 +202,7 @@ def build_event_quality_tables(event_log: pd.DataFrame) -> dict[str, pd.DataFram
         "event_quality_summary": total,
         "event_quality_by_dimension": by_dimension,
         "event_quality_by_combo": multi,
+        "execution_safe_event_quality": execution_safe,
         "event_log_prepared": frame,
     }
 
@@ -163,6 +215,22 @@ def event_quality_status(summary: pd.DataFrame) -> str:
     if float(row["cumulative_theory_gap"]) > 0 and float(row["positive_rate"]) >= 0.55 and degraded_ratio <= 0.05:
         return "CUMULATIVE_EVENT_READY"
     return "CUMULATIVE_EVENT_NOT_READY"
+
+
+def execution_safe_event_gate(execution_safe_quality: pd.DataFrame, min_safe_events: int = DEFAULT_MIN_SAFE_EVENTS, min_positive_rate: float = DEFAULT_MIN_POSITIVE_RATE) -> str:
+    if execution_safe_quality.empty:
+        return "fail_no_execution_safe_events"
+    safe = execution_safe_quality[execution_safe_quality["execution_safety"].eq("execution_safe_event")]
+    if safe.empty:
+        return "fail_no_execution_safe_events"
+    row = safe.iloc[0]
+    if int(row["event_count"]) < min_safe_events:
+        return "fail_insufficient_execution_safe_events"
+    if float(row["cumulative_theory_gap"]) <= 0:
+        return "fail_execution_safe_gap_not_positive"
+    if float(row["positive_rate"]) < min_positive_rate:
+        return "fail_execution_safe_positive_rate"
+    return "pass_execution_safe_events"
 
 
 def run_analysis(event_log_csv: Path, output_root: Path) -> dict[str, object]:
@@ -185,11 +253,19 @@ def run_analysis(event_log_csv: Path, output_root: Path) -> dict[str, object]:
             "positive_event_rate": 0.0,
             "cumulative_recovery_theory_gap": 0.0,
             "event_execution_degraded_ratio": 0.0,
+            "execution_safe_event_gate": "fail_no_execution_safe_events",
+            "execution_safe_event_count": 0,
+            "execution_safe_positive_rate": 0.0,
+            "execution_safe_cumulative_theory_gap": 0.0,
+            "execution_safe_max_negative_gap": 0.0,
         }
     else:
         row = summary_table.iloc[0]
         event_count = int(row["event_count"])
         degraded_ratio = float(row["degraded_count"]) / event_count if event_count else 0.0
+        safe_quality = tables["execution_safe_event_quality"]
+        safe = safe_quality[safe_quality["execution_safety"].eq("execution_safe_event")]
+        safe_row = safe.iloc[0].to_dict() if not safe.empty else {}
         summary = {
             "event_quality_status": event_quality_status(summary_table),
             "total_recovery_events": event_count,
@@ -197,6 +273,11 @@ def run_analysis(event_log_csv: Path, output_root: Path) -> dict[str, object]:
             "cumulative_recovery_theory_gap": float(row["cumulative_theory_gap"]),
             "event_execution_degraded_ratio": degraded_ratio,
             "event_execution_degraded_days": int(row["degraded_count"]),
+            "execution_safe_event_gate": execution_safe_event_gate(safe_quality),
+            "execution_safe_event_count": int(safe_row.get("event_count") or 0),
+            "execution_safe_positive_rate": float(safe_row.get("positive_rate") or 0.0),
+            "execution_safe_cumulative_theory_gap": float(safe_row.get("cumulative_theory_gap") or 0.0),
+            "execution_safe_max_negative_gap": float(safe_row.get("max_negative_gap") or 0.0),
         }
     summary.update({"event_log_csv": str(event_log_csv), "output_dir": str(out_dir), "files": files})
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
