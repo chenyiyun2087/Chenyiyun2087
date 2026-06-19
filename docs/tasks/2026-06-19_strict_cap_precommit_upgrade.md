@@ -2,6 +2,8 @@
 
 状态：代码、单元测试与三年连续账户回测完成；严格候选因执行账本基础数据未补齐，保持研究禁用。
 
+2026-06-19 账本闭环升级进行中：已加入报告 provenance、日线复权/可交易状态字段、strict ledger primitives、明确 cap 状态和新的非晋级验收器。公司行为事件尚未接入账户主循环，因此报告会明确标记 `PARTIAL_UNVERIFIED`，验收器固定返回 `LEDGER_INCOMPLETE_NON_PROMOTABLE` 或更低研究状态。
+
 ## 已完成
 
 - strict cap 改为读取候选 `vol_20`、`ret_1`，并对四项关键输入做 fail-closed 审计。

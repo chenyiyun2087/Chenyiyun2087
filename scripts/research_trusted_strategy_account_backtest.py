@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -30,6 +32,7 @@ from scripts.ops.production_risk_governor import (
 )
 from scripts.research.execution_risk_severity import execution_hard_block_reasons
 from scripts.research.execution_safe_uplift_execution_modes import AUCTION_MODE, MODES as EXECUTION_MODES, POST_OPEN_MODE, STRICT_MODE, execution_mode_audit
+from scripts.research.strict_execution_ledger import LEDGER_SCHEMA_VERSION, STRICT_SIZING_VERSION
 from scripts.research_full_pool_liquidity_strategies import (
     StrategySpec,
     _market_exposure_scale,
@@ -246,6 +249,43 @@ ASHARE_DEFAULT_RELEASE_TIER = "production_stage1"
 PRODUCTION_CONFIG = load_production_config()
 
 
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: pd.DataFrame) -> dict[str, object]:
+    source_files = [
+        PROJECT_ROOT / "scripts/research_trusted_strategy_account_backtest.py",
+        PROJECT_ROOT / "scripts/research_full_pool_liquidity_strategies.py",
+        PROJECT_ROOT / "scripts/research/strict_execution_ledger.py",
+    ]
+    try:
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True).strip()
+        dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=PROJECT_ROOT, text=True).strip())
+    except (OSError, subprocess.CalledProcessError):
+        sha, dirty = "UNKNOWN", True
+    data_payload = {
+        "score_rows": len(scores), "score_dates": int(scores["trade_date"].nunique()),
+        "score_min": str(scores["trade_date"].min()), "score_max": str(scores["trade_date"].max()),
+        "price_rows": len(prices), "price_dates": int(prices["trade_date"].nunique()),
+        "price_min": str(prices["trade_date"].min()), "price_max": str(prices["trade_date"].max()),
+    }
+    config = {key: value for key, value in vars(args).items() if key != "ashare_target_cache_dir"}
+    return {
+        "report_git_sha": sha,
+        "report_worktree_clean": not dirty,
+        "reproducibility_status": "REPRODUCIBLE" if not dirty else "NON_REPRODUCIBLE",
+        "source_file_hashes": {str(path.relative_to(PROJECT_ROOT)): _sha256_file(path) for path in source_files},
+        "data_snapshot_fingerprint": hashlib.sha256(json.dumps(data_payload, sort_keys=True).encode()).hexdigest(),
+        "config_fingerprint": hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest(),
+        "ledger_schema_version": LEDGER_SCHEMA_VERSION,
+        "strict_sizing_version": STRICT_SIZING_VERSION,
+        # Corporate-action application is deliberately not claimed until the
+        # account loop consumes normalized PIT action events.
+        "ledger_implementation_status": "PARTIAL_UNVERIFIED",
+    }
+
+
 @dataclass(frozen=True)
 class AShareWeightConfig:
     profile: str
@@ -319,6 +359,13 @@ def _resolve_ashare_weight_config(
 
 def _ashare_weight_cache_key(config: AShareWeightConfig, signal_date: object, selected_strategy: str, top_n: int) -> str:
     date_key = pd.Timestamp(signal_date).strftime("%Y%m%d")
+    equity_after = _equity(account, open_prices, "adj_open")
+    intentional_cash_ratio = max(0.0, 1.0 - float(position_ratio))
+    cash_ratio = float(account.cash / equity_after) if equity_after > 0 else np.nan
+    planned_notional = sum(int(shares) * float(planned_prices.get(symbol, 0.0)) for symbol, shares in target_shares.items())
+    filled_notional = sum(float(row.get("gross_amount") or 0.0) for row in trade_rows if row.get("side") == "BUY")
+    planned_shares_total = sum(target_shares.values())
+    filled_shares_total = sum(int(row.get("filled_shares") or row.get("shares") or 0) for row in trade_rows if row.get("side") == "BUY")
     return (
         f"{ASHARE_ADAPTIVE_VERSION}|{config.profile}|{config.release_tier}|"
         f"limit{config.supplement_limit}|top{int(top_n)}|{selected_strategy}|{date_key}"
@@ -2032,7 +2079,9 @@ def _strict_precommit_uplift_cap(decision: dict[str, object], targets: pd.DataFr
     }
     missing = [field for field in STRICT_CAP_REQUIRED_FIELDS if not np.isfinite(_safe_float(inputs[field], np.nan))]
     if targets.empty:
-        missing.append("candidate_targets")
+        return {**inputs, "cap_input_coverage": 0.0, "cap_missing_fields": "candidate_targets", "cap_trigger_count": 0, "risk_level": "no_signal", "reason": "precommit_no_signal", "capped_ratio": v1_ratio, "cap_applied": False, "fallback_to_v1": True}
+    if planned_ratio <= v1_ratio + 1e-12:
+        return {**inputs, "cap_input_coverage": float((len(STRICT_CAP_REQUIRED_FIELDS) - len(missing)) / len(STRICT_CAP_REQUIRED_FIELDS)), "cap_missing_fields": "|".join(sorted(missing)), "cap_trigger_count": 0, "risk_level": "no_incremental_uplift", "reason": "precommit_no_incremental_uplift", "capped_ratio": v1_ratio, "cap_applied": False, "fallback_to_v1": False}
     missing = sorted(set(missing))
     coverage = float((len(STRICT_CAP_REQUIRED_FIELDS) - len([f for f in missing if f in STRICT_CAP_REQUIRED_FIELDS])) / len(STRICT_CAP_REQUIRED_FIELDS))
     base = {
@@ -2044,7 +2093,7 @@ def _strict_precommit_uplift_cap(decision: dict[str, object], targets: pd.DataFr
     if missing:
         return {
             **base,
-            "risk_level": "missing_fail_closed",
+            "risk_level": "data_missing_fallback_to_v1",
             "reason": "precommit_cap_input_missing_fallback_to_v1",
             "capped_ratio": v1_ratio,
             "cap_applied": True,
@@ -2263,6 +2312,14 @@ def _rebalance(
         if bought < lot_delta and bought > 0 and lot_size > 0:
             account.positions[symbol].shares = _round_lot(account.positions[symbol].shares, lot_size)
 
+    equity_after = _equity(account, open_prices, "adj_open")
+    cash_ratio = float(account.cash / equity_after) if equity_after > 0 else np.nan
+    intentional_cash_ratio = max(0.0, 1.0 - float(position_ratio))
+    planned_notional = sum(int(shares) * float(planned_prices.get(symbol, 0.0)) for symbol, shares in target_shares.items())
+    filled_notional = sum(float(row.get("gross_amount") or 0.0) for row in trade_rows if row.get("side") == "BUY")
+    planned_shares_total = sum(target_shares.values())
+    filled_shares_total = sum(int(row.get("filled_shares") or row.get("shares") or 0) for row in trade_rows if row.get("side") == "BUY")
+
     return (
         trade_rows,
         candidate_rows,
@@ -2275,7 +2332,13 @@ def _rebalance(
             "max_total_positions": int(max_positions),
             "position_ratio": float(position_ratio),
             "position_cap_skipped": int(len(skipped_by_position_cap)),
-            "cash_residual_ratio": float(account.cash / _equity(account, open_prices, "adj_open")) if _equity(account, open_prices, "adj_open") > 0 else np.nan,
+            "cash_residual_ratio": cash_ratio,
+            "intentional_cash_ratio": intentional_cash_ratio,
+            "planned_cash_buffer_ratio": intentional_cash_ratio,
+            "unexpected_cash_residual_ratio": max(0.0, cash_ratio - intentional_cash_ratio) if np.isfinite(cash_ratio) else np.nan,
+            "planned_vs_filled_notional_gap": float(planned_notional - filled_notional),
+            "planned_vs_filled_share_gap": int(planned_shares_total - filled_shares_total),
+            "buy_order_shortfall_ratio": float(max(0, planned_notional - filled_notional) / planned_notional) if planned_notional > 0 else 0.0,
         },
     )
 
@@ -2480,6 +2543,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
 
     scores = add_liquidity_derived_features(scores, prices)
     scores = add_forward_returns(scores, prices, args.hold_days)
+    provenance = _report_provenance(args, scores, prices)
     specs = _strategy_specs(_parse_strategies(args.strategies))
     trusted_by_name = {spec.name: spec for spec in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
     adaptive_underlying_specs = {role: trusted_by_name[name] for role, name in ADAPTIVE_UNDERLYING.items()}
@@ -3157,7 +3221,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     strict_precommit=strict_raw_execution,
                 )
                 for item in [*candidates, *trades]:
-                    item["cash_residual_ratio"] = rebalance_meta.get("cash_residual_ratio")
+                    for field in ("cash_residual_ratio", "intentional_cash_ratio", "planned_cash_buffer_ratio", "unexpected_cash_residual_ratio", "planned_vs_filled_notional_gap", "planned_vs_filled_share_gap", "buy_order_shortfall_ratio"):
+                        item[field] = rebalance_meta.get(field)
                 if spec.name in PSEUDO_STRATEGY_NAMES:
                     for item in candidates:
                         item["adaptive_role"] = adaptive_meta.get("adaptive_role")
@@ -3301,7 +3366,9 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 summary["normal_risk_days"] = int(levels.eq("normal").sum())
                 summary["high_risk_days"] = int(levels.eq("high").sum())
                 summary["extreme_risk_days"] = int(levels.eq("extreme").sum())
-                summary["cap_missing_fallback_days"] = int(levels.eq("missing_fail_closed").sum())
+                summary["cap_no_signal_days"] = int(levels.eq("no_signal").sum())
+                summary["cap_no_incremental_uplift_days"] = int(levels.eq("no_incremental_uplift").sum())
+                summary["cap_missing_fallback_days"] = int(levels.eq("data_missing_fallback_to_v1").sum())
                 coverage = pd.to_numeric(adaptive_decisions.get("cap_input_coverage"), errors="coerce").dropna()
                 summary["cap_input_coverage"] = float(coverage.mean()) if not coverage.empty else np.nan
                 triggers = pd.to_numeric(adaptive_decisions.get("cap_trigger_count"), errors="coerce").fillna(0)
@@ -3400,6 +3467,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "score_dates": int(scores["trade_date"].nunique()),
         "score_rows": int(len(scores)),
         "price_dates": int(prices["trade_date"].nunique()),
+        **provenance,
     }
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -3415,6 +3483,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             "Adaptive dynamic position scaling only uses the same point-in-time decision row; it does not inspect future NAV or future trades.",
             "Only trusted strategy specs are accepted by this script.",
         ],
+        "provenance": provenance,
     }
     paths["json"].write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 

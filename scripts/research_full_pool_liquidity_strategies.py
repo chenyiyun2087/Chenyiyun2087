@@ -292,9 +292,10 @@ def load_prices(engine, min_date: object, max_date: object, extra_days: int) -> 
             p.trade_date, p.ts_code, p.adj_open, p.adj_high, p.adj_low, p.adj_close, p.amount,
             r.open AS raw_open, r.high AS raw_high, r.low AS raw_low, r.close AS raw_close,
             r.pre_close AS raw_pre_close, r.vol AS raw_volume, r.amount AS raw_amount,
-            COALESCE(l.is_st, 0) AS is_st, b.circ_mv, ds.list_date,
+            COALESCE(l.is_st, 0) AS is_st, b.circ_mv, ds.list_date, ds.delist_date,
+            af.adj_factor, u.is_tradable AS universe_is_tradable, u.is_suspended, u.is_listed,
             CASE WHEN l.ts_code IS NOT NULL AND ds.ts_code IS NOT NULL THEN 1 ELSE 0 END AS security_status_available,
-            CASE WHEN r.ts_code IS NOT NULL AND r.vol > 0 THEN 1 ELSE 0 END AS execution_tradable
+            CASE WHEN r.ts_code IS NOT NULL AND r.vol > 0 AND u.is_tradable = 1 AND u.is_suspended = 0 AND u.is_listed = 1 THEN 1 ELSE 0 END AS execution_tradable
         FROM {table} p
         LEFT JOIN tushare_stock.dwd_daily r
           ON r.ts_code = p.ts_code AND r.trade_date = p.trade_date
@@ -304,6 +305,10 @@ def load_prices(engine, min_date: object, max_date: object, extra_days: int) -> 
           ON b.ts_code = p.ts_code AND b.trade_date = p.trade_date
         LEFT JOIN tushare_stock.dim_stock ds
           ON ds.ts_code = p.ts_code
+        LEFT JOIN tushare_stock.dwd_adj_factor af
+          ON af.ts_code = p.ts_code AND af.trade_date = p.trade_date
+        LEFT JOIN tushare_stock.ads_universe_daily u
+          ON u.ts_code = p.ts_code AND u.trade_date = p.trade_date
         WHERE p.trade_date BETWEEN :start_key AND :end_key
     """
     frame = pd.read_sql(text(sql), engine, params={"start_key": int(start_key), "end_key": int(end_key)})
@@ -311,7 +316,7 @@ def load_prices(engine, min_date: object, max_date: object, extra_days: int) -> 
         return frame
     frame["trade_date"] = pd.to_datetime(frame["trade_date"].astype(str), format="%Y%m%d").dt.date
     frame["symbol"] = frame["ts_code"].map(_symbol_from_ts_code)
-    for col in ("adj_open", "adj_high", "adj_low", "adj_close", "amount", "raw_open", "raw_high", "raw_low", "raw_close", "raw_pre_close", "raw_volume", "raw_amount", "circ_mv"):
+    for col in ("adj_open", "adj_high", "adj_low", "adj_close", "amount", "raw_open", "raw_high", "raw_low", "raw_close", "raw_pre_close", "raw_volume", "raw_amount", "circ_mv", "adj_factor", "universe_is_tradable", "is_suspended", "is_listed"):
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
     return frame.drop(columns=["ts_code"], errors="ignore").dropna(subset=["trade_date", "symbol", "adj_open", "adj_close"])
 
