@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from scripts.research.replay_strict_execution_ledger import replay
+from scripts.research.replay_strict_execution_ledger_v2 import audit
 from scripts.research_trusted_strategy_account_backtest import (
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME,
     _annotate_strict_risk_events,
@@ -74,3 +75,15 @@ def test_cap_missed_risk_event_uses_frozen_execution_and_tail_loss_rules():
     assert out.iloc[0]["risk_event_triggered"] == 1
     assert out.iloc[0]["missed_risk_event"] == 1
     assert "abs_open_gap_ge_5pct" in out.iloc[0]["risk_event_types"]
+
+
+def test_execution_replay_detects_price_fee_and_time_violations(tmp_path):
+    events, snapshot = tmp_path / "events.csv", tmp_path / "snapshot.csv"
+    _write_csv(events, [
+        {"strategy": "strict_precommit", "event_type": "order", "order_id": "o", "order_status": "PLANNED", "event_timestamp": "2026-01-01T15:00:00+08:00", "planned_shares": 100, "filled_shares": 0, "filled_notional": 0, "fee": 0, "mark_price_basis": "raw"},
+        {"strategy": "strict_precommit", "event_type": "order", "order_id": "o", "order_status": "FILLED", "event_timestamp": "2026-01-02T09:30:00+08:00", "planned_shares": 100, "filled_shares": 100, "filled_notional": 1000, "fee": 1, "mark_price_basis": "raw"},
+    ])
+    _write_csv(snapshot, [{"strategy": "strict_precommit", "order_id": "o", "raw_open": 10, "independent_gate_pass": 1, "independent_gate_reason": "", "cost_rate": .001}])
+    assert audit(events, snapshot, tmp_path / "ok")["execution_replay_pass"] is True
+    _write_csv(snapshot, [{"strategy": "strict_precommit", "order_id": "o", "raw_open": 11, "independent_gate_pass": 1, "independent_gate_reason": "", "cost_rate": .001}])
+    assert audit(events, snapshot, tmp_path / "bad")["price_mismatch_count"] == 1

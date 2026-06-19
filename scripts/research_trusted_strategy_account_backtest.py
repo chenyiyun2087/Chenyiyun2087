@@ -615,6 +615,7 @@ def _strict_t1_execution_gate(symbol: str, side: str, price_info: dict[str, obje
 def _ledger_trade_row(order: PrecommitOrder, result: dict[str, object], trade_date: object, reason: str) -> dict[str, object]:
     return {
         "trade_date": trade_date, "order_id": order.order_id, "symbol": order.symbol, "side": order.side,
+        "signal_date": order.signal_date, "execution_date": order.execution_date,
         "planned_shares": int(order.planned_shares), "planned_price": float(order.planned_price),
         "planned_notional": float(order.planned_notional), "planned_fee": float(order.planned_fee),
         "filled_shares": int(result.get("filled_shares") or 0), "filled_price": result.get("filled_price"),
@@ -2371,11 +2372,12 @@ def _rebalance(
             planned = abs(delta)
             budget = _safe_float(planned_prices.get(symbol), price)
             order = PrecommitOrder(symbol, "SELL", planned, budget, planned * budget, planned * budget * trade_cost_rate,
-                                   signal_date, execution_date, f"{signal_date}:{symbol}:SELL")
+                                   signal_date, execution_date, f"{signal_date}:{symbol}:SELL", cost_rate=float(trade_cost_rate), lot_size=int(lot_size))
             ledger.plan(order)  # type: ignore[union-attr]
             tradable, reject_reason = _strict_t1_execution_gate(symbol, "SELL", open_prices.get(symbol, {}))
             result = ledger.execute(order, sell_price if tradable else None, tradable, trade_cost_rate, reject_reason=reject_reason, lot_size=lot_size)  # type: ignore[union-attr]
             trade = _ledger_trade_row(order, result, execution_date, "strict_t1_execution")
+            trade["cost_rate"] = float(trade_cost_rate); trade["lot_size"] = int(lot_size)
             trade["cash_after"] = float(ledger.cash)  # type: ignore[union-attr]
             trade_rows.append(trade)
             _sync_account_view_from_ledger(account, ledger, execution_date, by_symbol)  # type: ignore[arg-type]
@@ -2408,11 +2410,12 @@ def _rebalance(
         if strict_precommit:
             budget = _safe_float(planned_prices.get(symbol), buy_price)
             order = PrecommitOrder(symbol, "BUY", lot_delta, budget, lot_delta * budget, lot_delta * budget * trade_cost_rate,
-                                   signal_date, execution_date, f"{signal_date}:{symbol}:BUY")
+                                   signal_date, execution_date, f"{signal_date}:{symbol}:BUY", cost_rate=float(trade_cost_rate), lot_size=int(lot_size))
             ledger.plan(order)  # type: ignore[union-attr]
             tradable, reject_reason = _strict_t1_execution_gate(symbol, "BUY", open_prices.get(symbol, {}))
             result = ledger.execute(order, buy_price if tradable else None, tradable, trade_cost_rate, reject_reason=reject_reason, lot_size=lot_size)  # type: ignore[union-attr]
             trade = _ledger_trade_row(order, result, execution_date, "strict_t1_execution")
+            trade["cost_rate"] = float(trade_cost_rate); trade["lot_size"] = int(lot_size)
             trade["cash_after"] = float(ledger.cash)  # type: ignore[union-attr]
             trade["open_weight_drift_bps"] = (
                 ((int(result.get("filled_shares") or 0) * buy_price / equity_before) - float(adjusted_weights.get(symbol, 0.0))) * 10_000.0
@@ -2682,6 +2685,38 @@ def _annotate_strict_risk_events(trades: pd.DataFrame, prices: pd.DataFrame) -> 
         out.at[index, "missing_cap_risk_label"] = missing_label
         out.at[index, "missed_risk_event"] = int(bool(types) and not covered)
     return out
+
+
+def _build_strict_execution_snapshot(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
+    """Export immutable T+1 inputs required by the independent execution replay."""
+    if trades.empty:
+        return pd.DataFrame()
+    strict = trades[trades["strategy"].eq(PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME)].copy()
+    if strict.empty:
+        return pd.DataFrame()
+    lookup = prices.copy()
+    lookup["trade_date"] = pd.to_datetime(lookup["trade_date"], errors="coerce").dt.date
+    lookup["symbol"] = lookup["symbol"].astype(str).str.zfill(6)
+    rows = []
+    for _, order in strict.iterrows():
+        date = pd.to_datetime(order.get("trade_date"), errors="coerce").date()
+        symbol = str(order.get("symbol")).zfill(6)
+        matches = lookup[(lookup["trade_date"] == date) & (lookup["symbol"] == symbol)]
+        info = matches.iloc[0].to_dict() if not matches.empty else {}
+        raw_info = _raw_execution_price_view({symbol: info}).get(symbol, {})
+        tradable, gate_reason = _strict_t1_execution_gate(symbol, str(order.get("side")), raw_info)
+        rows.append({
+            "strategy": order.get("strategy"), "order_id": order.get("order_id"), "signal_date": order.get("signal_date"),
+            "execution_date": date, "symbol": symbol, "side": order.get("side"),
+            "raw_open": _safe_float(info.get("raw_open"), np.nan), "prev_raw_close": _safe_float(info.get("prev_raw_close"), np.nan),
+            "raw_close": _safe_float(info.get("raw_close"), np.nan), "is_st": _safe_float(info.get("is_st"), np.nan),
+            "execution_tradable": _safe_float(info.get("execution_tradable"), np.nan),
+            "is_suspended": _safe_float(info.get("is_suspended"), np.nan), "is_listed": _safe_float(info.get("is_listed"), np.nan),
+            "daily_limit_ratio": _daily_limit_ratio(symbol, info.get("is_st")), "independent_gate_pass": int(tradable),
+            "independent_gate_reason": gate_reason, "cost_rate": _safe_float(order.get("cost_rate"), np.nan),
+            "lot_size": _safe_float(order.get("lot_size"), np.nan),
+        })
+    return pd.DataFrame(rows)
 
 
 def _validate_strict_execution_arguments(args: argparse.Namespace) -> None:
@@ -3669,6 +3704,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     ledger_events = pd.concat(all_ledger_events, ignore_index=True) if all_ledger_events else pd.DataFrame()
     ledger_prices = pd.concat(all_ledger_prices, ignore_index=True) if all_ledger_prices else pd.DataFrame()
     trades = _annotate_strict_risk_events(trades, prices)
+    execution_snapshot = _build_strict_execution_snapshot(trades, prices)
     summary = pd.DataFrame(summary_rows).sort_values("total_return", ascending=False)
     window_summary = _build_window_summary(nav, float(args.initial_cash))
 
@@ -3687,6 +3723,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "adaptive_perf_csv": out_dir / "trusted_account_backtest_adaptive_perf.csv",
         "ledger_events_csv": out_dir / "trusted_account_backtest_ledger_events.csv",
         "ledger_prices_csv": out_dir / "trusted_account_backtest_ledger_prices.csv",
+        "execution_snapshot_csv": out_dir / "trusted_account_backtest_ledger_execution_snapshot.csv",
         "json": out_dir / "trusted_account_backtest_report.json",
         "markdown": out_dir / "trusted_account_backtest_report.md",
     }
@@ -3702,6 +3739,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     adaptive_perf.to_csv(paths["adaptive_perf_csv"], index=False)
     ledger_events.to_csv(paths["ledger_events_csv"], index=False)
     ledger_prices.to_csv(paths["ledger_prices_csv"], index=False)
+    execution_snapshot.to_csv(paths["execution_snapshot_csv"], index=False)
 
     params = {
         "start_date": args.start_date,
