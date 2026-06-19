@@ -1,0 +1,5 @@
+slippage_scope,days,rows,avg_theory_gap,max_event_open_gap_abs,max_event_turnover_impact
+common_large_slippage,21,67,1.7212864812353573e-05,0.0,0.0
+shadow_incremental_large_slippage,3,10,0.0069509413603100105,0.0571263704558571,0.0
+event_large_slippage,3,10,0.0069509413603100105,0.0571263704558571,0.0
+non_event_large_slippage,21,67,1.7212864812353573e-05,0.0,0.0

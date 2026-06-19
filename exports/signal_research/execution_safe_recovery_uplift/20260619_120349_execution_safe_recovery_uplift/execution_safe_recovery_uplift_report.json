@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-06-19T12:03:49",
+  "backtest_dir": "exports/signal_research/20260619_070339_967843_trusted_account_backtest",
+  "monitor_csv": "exports/research_shadow_candidate/20260619_120237_research_shadow_candidate_monitor/research_shadow_candidate_monitor.csv",
+  "production_strategy": "production_governed_vol_position",
+  "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
+  "output_dir": "exports/signal_research/execution_safe_recovery_uplift/20260619_120349_execution_safe_recovery_uplift",
+  "files": {
+    "simulated_nav": "exports/signal_research/execution_safe_recovery_uplift/20260619_120349_execution_safe_recovery_uplift/simulated_nav.csv",
+    "uplift_counterfactual_by_day": "exports/signal_research/execution_safe_recovery_uplift/20260619_120349_execution_safe_recovery_uplift/uplift_counterfactual_by_day.csv",
+    "uplift_counterfactual_summary": "exports/signal_research/execution_safe_recovery_uplift/20260619_120349_execution_safe_recovery_uplift/uplift_counterfactual_summary.csv",
+    "promotion_valid_events": "exports/signal_research/execution_safe_recovery_uplift/20260619_120349_execution_safe_recovery_uplift/promotion_valid_events.csv",
+    "promotion_valid_event_summary": "exports/signal_research/execution_safe_recovery_uplift/20260619_120349_execution_safe_recovery_uplift/promotion_valid_event_summary.csv"
+  },
+  "promotion_valid_event_count": 23.0,
+  "promotion_valid_positive_rate": 0.5652173913043478,
+  "promotion_valid_cumulative_gap": 0.03772784053618572,
+  "promotion_valid_event_window_gap": 0.03772784053618572,
+  "promotion_valid_hard_block_count": 0.0,
+  "promotion_valid_slippage_warning_count": 3.0
+}

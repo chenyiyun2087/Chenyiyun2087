@@ -1,0 +1,29 @@
+{
+  "output_dir": "exports/signal_research/shadow_execution_degradation/20260619_120310_shadow_execution_degradation",
+  "monitor_csv": "exports/research_shadow_candidate/20260619_120237_research_shadow_candidate_monitor/research_shadow_candidate_monitor.csv",
+  "event_log_csv": "reports/production_monitor/research_shadow_event_log.csv",
+  "candidates_csv": "exports/signal_research/20260619_070339_967843_trusted_account_backtest/trusted_account_backtest_candidates.csv",
+  "calendar_execution_degraded_days": 24.0,
+  "event_execution_degraded_days": 3.0,
+  "incremental_execution_degraded_days": 3.0,
+  "common_execution_degraded_days": 21.0,
+  "degraded_candidate_rows": 120.0,
+  "candidate_proxy_degraded_rows": 77.0,
+  "avg_degraded_day_theory_gap": -0.0010465040406900166,
+  "calendar_large_slippage_days": 24.0,
+  "event_large_slippage_days": 3.0,
+  "incremental_large_slippage_days": 3.0,
+  "execution_hard_block_days": 17.0,
+  "execution_slippage_warning_days": 19.0,
+  "event_hard_block_days": 2.0,
+  "incremental_hard_block_days": 2.0,
+  "max_event_open_gap_abs": 0.0571263704558571,
+  "max_event_turnover_impact": 0.0,
+  "files": {
+    "degradation_detail": "exports/signal_research/shadow_execution_degradation/20260619_120310_shadow_execution_degradation/degradation_detail.csv",
+    "degradation_summary": "exports/signal_research/shadow_execution_degradation/20260619_120310_shadow_execution_degradation/degradation_summary.csv",
+    "degradation_by_reason": "exports/signal_research/shadow_execution_degradation/20260619_120310_shadow_execution_degradation/degradation_by_reason.csv",
+    "large_slippage_quadrants": "exports/signal_research/shadow_execution_degradation/20260619_120310_shadow_execution_degradation/large_slippage_quadrants.csv",
+    "shadow_execution_degradation_report": "reports/production_monitor/shadow_execution_degradation_report.md"
+  }
+}

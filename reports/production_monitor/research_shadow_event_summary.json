@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-19T10:51:19",
+  "generated_at": "2026-06-19T12:02:58",
   "source_report_path": null,
   "input_glob": "reports/production_monitor/research_shadow_windows/*/research_shadow_candidate_recovery_events.json",
   "monitor_csv": null,

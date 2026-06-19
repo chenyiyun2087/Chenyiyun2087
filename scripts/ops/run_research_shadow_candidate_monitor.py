@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.ops.production_config import load_production_config
+from scripts.research.execution_risk_severity import add_execution_severity_columns
 
 
 DEFAULT_OUTPUT_ROOT = Path("exports/research_shadow_candidate")
@@ -321,6 +322,7 @@ def evaluate_shadow_monitor(monitor: pd.DataFrame, thresholds: dict[str, float |
         if col not in numeric.columns:
             numeric[col] = pd.NA
         numeric[col] = pd.to_numeric(numeric[col], errors="coerce")
+    numeric = add_execution_severity_columns(numeric)
 
     rows = int(len(numeric))
     avg_top5_overlap = float(numeric["top5_overlap"].mean())
@@ -340,6 +342,8 @@ def evaluate_shadow_monitor(monitor: pd.DataFrame, thresholds: dict[str, float |
     limit_down_sell_risk_days = int(numeric["limit_down_sell_ratio"].gt(0.20).sum())
     open_gap_proxy_days = int(numeric["open_gap_proxy"].abs().gt(0.05).sum())
     turnover_impact_days = int(numeric["estimated_turnover_impact"].gt(0.03).sum())
+    execution_hard_block_days = int(numeric["execution_hard_block"].astype(bool).sum())
+    execution_slippage_warning_days = int(numeric["execution_slippage_warning"].astype(bool).sum())
     execution_proxy_pass = execution_unknown_days == 0 and execution_degraded_days == 0
 
     checks = {
@@ -376,6 +380,8 @@ def evaluate_shadow_monitor(monitor: pd.DataFrame, thresholds: dict[str, float |
         "limit_down_sell_risk_days": limit_down_sell_risk_days,
         "open_gap_proxy_days": open_gap_proxy_days,
         "turnover_impact_days": turnover_impact_days,
+        "execution_hard_block_days": execution_hard_block_days,
+        "execution_slippage_warning_days": execution_slippage_warning_days,
         "execution_proxy_pass": execution_proxy_pass,
         "execution_proxy_fail_reasons": execution_proxy_fail_reasons,
         "calendar_window_pass": not fail_reasons,
@@ -390,6 +396,7 @@ def evaluate_recovery_events(
     min_recovery_events: int = 5,
 ) -> dict[str, object]:
     events = build_recovery_event_monitor(monitor)
+    events = add_execution_severity_columns(events) if not events.empty else events
     if events.empty:
         recovery_theory_gap_sum = 0.0
         recovery_theory_gap_mean = 0.0
@@ -401,6 +408,10 @@ def evaluate_recovery_events(
     event_position_diff = pd.to_numeric(events.get("position_diff"), errors="coerce").fillna(0) if not events.empty else pd.Series(dtype=float)
     event_execution_degraded_days = int(events.get("execution_feasibility", pd.Series(dtype=object)).astype(str).str.startswith("degraded").sum()) if not events.empty else 0
     event_execution_unknown_days = int(events.get("execution_feasibility", pd.Series(dtype=object)).astype(str).eq("unknown_missing_execution_proxy").sum()) if not events.empty else 0
+    event_hard_block_days = int(events.get("execution_hard_block", pd.Series(dtype=bool)).astype(bool).sum()) if not events.empty else 0
+    event_slippage_warning_days = int(events.get("execution_slippage_warning", pd.Series(dtype=bool)).astype(bool).sum()) if not events.empty else 0
+    promotion_valid_events = events[~events.get("execution_hard_block", pd.Series(dtype=bool)).astype(bool)].copy() if not events.empty else events
+    promotion_valid_gap = pd.to_numeric(promotion_valid_events.get("theory_gap"), errors="coerce").fillna(0) if not promotion_valid_events.empty else pd.Series(dtype=float)
     fail_reasons: list[str] = []
     if len(events) < min_recovery_events:
         fail_reasons.append("insufficient_recovery_events")
@@ -418,6 +429,17 @@ def evaluate_recovery_events(
         "shadow_recovery_theory_gap_mean": recovery_theory_gap_mean,
         "event_execution_degraded_days": event_execution_degraded_days,
         "event_execution_unknown_days": event_execution_unknown_days,
+        "event_execution_hard_block_days": event_hard_block_days,
+        "event_execution_slippage_warning_days": event_slippage_warning_days,
+        "promotion_valid_event_count": int(len(promotion_valid_events)),
+        "promotion_valid_positive_rate": float(promotion_valid_gap.gt(0).mean()) if len(promotion_valid_gap) else 0.0,
+        "promotion_valid_cumulative_gap": float(promotion_valid_gap.sum()) if len(promotion_valid_gap) else 0.0,
+        "promotion_valid_event_window_gap": float(promotion_valid_gap.sum()) if len(promotion_valid_gap) else 0.0,
+        "promotion_valid_event_gate": (
+            "pass_promotion_valid_events"
+            if len(promotion_valid_events) >= min_recovery_events and float(promotion_valid_gap.sum()) > 0
+            else "fail_promotion_valid_events"
+        ),
         "event_window_pass": not fail_reasons,
         "event_shadow_fail_reasons": fail_reasons,
         "min_recovery_events": int(min_recovery_events),

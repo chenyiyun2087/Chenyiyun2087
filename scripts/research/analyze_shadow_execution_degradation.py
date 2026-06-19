@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.ops.run_research_shadow_candidate_monitor import EXECUTION_PROXY_COLUMNS
+from scripts.research.execution_risk_severity import add_execution_severity_columns, execution_hard_block_reasons, execution_warning_reasons
 from scripts.research.analyze_pattern_veto_coverage import _rank_candidates
 
 
@@ -63,6 +64,14 @@ def _proxy_reason(row: pd.Series) -> str:
     if pd.to_numeric(pd.Series([row.get("estimated_turnover_impact")]), errors="coerce").iloc[0] > 0.03:
         reasons.append("estimated_turnover_impact")
     return "|".join(reasons)
+
+
+def _severity_reason(row: pd.Series, kind: str) -> str:
+    if kind == "hard":
+        return "|".join(execution_hard_block_reasons(row))
+    if kind == "warning":
+        return "|".join(execution_warning_reasons(row))
+    return ""
 
 
 def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -142,6 +151,7 @@ def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, c
             ].copy()
             for _, cand in part.iterrows():
                 symbol = str(cand.get("symbol")).zfill(6)
+                severity = add_execution_severity_columns(pd.DataFrame([cand.to_dict()])).iloc[0].to_dict()
                 row = {
                     "degraded_trade_date": day["trade_date"],
                     "symbol": symbol,
@@ -156,6 +166,11 @@ def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, c
                     "theory_gap": day.get("theory_gap"),
                     "monitor_execution_feasibility": day.get("execution_feasibility"),
                     "candidate_degraded_reasons": _proxy_reason(cand),
+                    "candidate_hard_block_reasons": _severity_reason(cand, "hard"),
+                    "candidate_warning_reasons": _severity_reason(cand, "warning"),
+                    "execution_hard_block": bool(severity.get("execution_hard_block")),
+                    "execution_slippage_warning": bool(severity.get("execution_slippage_warning")),
+                    "execution_v22_severity": severity.get("execution_v22_severity"),
                 }
                 for col in EXECUTION_PROXY_COLUMNS:
                     row[col] = cand.get(col)
@@ -174,6 +189,10 @@ def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, c
                     "calendar_large_slippage_days": 0,
                     "event_large_slippage_days": 0,
                     "incremental_large_slippage_days": 0,
+                    "execution_hard_block_days": 0,
+                    "execution_slippage_warning_days": 0,
+                    "event_hard_block_days": 0,
+                    "incremental_hard_block_days": 0,
                     "max_event_open_gap_abs": 0.0,
                     "max_event_turnover_impact": 0.0,
                 }
@@ -182,9 +201,15 @@ def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, c
     else:
         day_level = detail.drop_duplicates("degraded_trade_date")
         large_slip = detail[_numeric(detail, "large_slippage_proxy").gt(0.03)].copy()
+        hard_block = detail[detail["execution_hard_block"].astype(bool)].copy()
+        warning = detail[detail["execution_slippage_warning"].astype(bool)].copy()
         event_large_slip = large_slip[large_slip["is_recovery_event"].astype(bool)]
         incremental_large_slip = large_slip[
             large_slip["is_shadow_incremental_day"].astype(bool) | large_slip["is_shadow_incremental_symbol"].astype(bool)
+        ]
+        event_hard_block = hard_block[hard_block["is_recovery_event"].astype(bool)]
+        incremental_hard_block = hard_block[
+            hard_block["is_shadow_incremental_day"].astype(bool) | hard_block["is_shadow_incremental_symbol"].astype(bool)
         ]
         summary = pd.DataFrame(
             [
@@ -199,6 +224,10 @@ def build_degradation_analysis(monitor: pd.DataFrame, event_log: pd.DataFrame, c
                     "calendar_large_slippage_days": int(large_slip["degraded_trade_date"].nunique()),
                     "event_large_slippage_days": int(event_large_slip["degraded_trade_date"].nunique()),
                     "incremental_large_slippage_days": int(incremental_large_slip["degraded_trade_date"].nunique()),
+                    "execution_hard_block_days": int(hard_block["degraded_trade_date"].nunique()),
+                    "execution_slippage_warning_days": int(warning["degraded_trade_date"].nunique()),
+                    "event_hard_block_days": int(event_hard_block["degraded_trade_date"].nunique()),
+                    "incremental_hard_block_days": int(incremental_hard_block["degraded_trade_date"].nunique()),
                     "max_event_open_gap_abs": float(_numeric(event_large_slip, "open_gap_proxy").abs().max()) if not event_large_slip.empty else 0.0,
                     "max_event_turnover_impact": float(_numeric(event_large_slip, "estimated_turnover_impact").max()) if not event_large_slip.empty else 0.0,
                 }
@@ -246,6 +275,10 @@ def _markdown_report(summary: dict[str, object], tables: dict[str, pd.DataFrame]
         "calendar_large_slippage_days",
         "event_large_slippage_days",
         "incremental_large_slippage_days",
+        "execution_hard_block_days",
+        "execution_slippage_warning_days",
+        "event_hard_block_days",
+        "incremental_hard_block_days",
         "max_event_open_gap_abs",
         "max_event_turnover_impact",
     ]:
@@ -262,8 +295,8 @@ def _markdown_report(summary: dict[str, object], tables: dict[str, pd.DataFrame]
             "",
             "## Degraded Candidate Detail",
             "",
-            "| date | symbol | rank | incremental_symbol | position_diff | theory_gap | large_slippage | open_gap | limit_up_buy | unfilled | limit_down_sell | turnover_impact | reasons |",
-            "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| date | symbol | rank | incremental_symbol | position_diff | theory_gap | large_slippage | open_gap | limit_up_buy | unfilled | limit_down_sell | turnover_impact | severity | hard_reasons | warning_reasons | reasons |",
+            "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|",
         ]
     )
     columns = [
@@ -279,12 +312,15 @@ def _markdown_report(summary: dict[str, object], tables: dict[str, pd.DataFrame]
         "unfilled_ratio_proxy",
         "limit_down_sell_ratio",
         "estimated_turnover_impact",
+        "execution_v22_severity",
+        "candidate_hard_block_reasons",
+        "candidate_warning_reasons",
         "candidate_degraded_reasons",
     ]
     for row in detail.sort_values(["degraded_trade_date", "candidate_rank"]).to_dict("records"):
         values = {col: row.get(col, "") for col in columns}
         lines.append(
-            "| {degraded_trade_date} | {symbol} | {candidate_rank} | {is_shadow_incremental_symbol} | {position_diff} | {theory_gap} | {large_slippage_proxy} | {open_gap_proxy} | {limit_up_buy_ratio} | {unfilled_ratio_proxy} | {limit_down_sell_ratio} | {estimated_turnover_impact} | {candidate_degraded_reasons} |".format(
+            "| {degraded_trade_date} | {symbol} | {candidate_rank} | {is_shadow_incremental_symbol} | {position_diff} | {theory_gap} | {large_slippage_proxy} | {open_gap_proxy} | {limit_up_buy_ratio} | {unfilled_ratio_proxy} | {limit_down_sell_ratio} | {estimated_turnover_impact} | {execution_v22_severity} | {candidate_hard_block_reasons} | {candidate_warning_reasons} | {candidate_degraded_reasons} |".format(
                 **values
             )
         )

@@ -2,7 +2,7 @@
   "production_strategy": "production_governed_vol_position",
   "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
   "mode": "manual_shadow_only",
-  "generated_at": "2026-06-19T10:50:54",
+  "generated_at": "2026-06-19T12:02:37",
   "event_summary": {
     "recovery_event_days": 23,
     "risk_decision_diff_days": 20,
@@ -13,6 +13,13 @@
     "shadow_recovery_theory_gap_mean": 0.00164034089287764,
     "event_execution_degraded_days": 3,
     "event_execution_unknown_days": 0,
+    "event_execution_hard_block_days": 0,
+    "event_execution_slippage_warning_days": 3,
+    "promotion_valid_event_count": 23,
+    "promotion_valid_positive_rate": 0.5652173913043478,
+    "promotion_valid_cumulative_gap": 0.03772784053618572,
+    "promotion_valid_event_window_gap": 0.03772784053618572,
+    "promotion_valid_event_gate": "pass_promotion_valid_events",
     "event_window_pass": false,
     "event_shadow_fail_reasons": [
       "degraded_execution_proxy"
@@ -52,7 +59,12 @@
       "open_gap_proxy": -0.00874173201881098,
       "estimated_turnover_impact": 3.2578260403562006e-06,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2025-12-18",
@@ -86,7 +98,12 @@
       "open_gap_proxy": -0.002877751872205981,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2025-12-22",
@@ -120,7 +137,12 @@
       "open_gap_proxy": 0.02112219514289056,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2025-12-23",
@@ -154,7 +176,12 @@
       "open_gap_proxy": -0.00214431913064788,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2025-12-24",
@@ -188,7 +215,12 @@
       "open_gap_proxy": 0.0001309294733887599,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2025-12-25",
@@ -222,7 +254,12 @@
       "open_gap_proxy": -0.00424004010619142,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2025-12-26",
@@ -256,7 +293,12 @@
       "open_gap_proxy": 0.0170039374034587,
       "estimated_turnover_impact": 1.3270434372853964e-06,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2025-12-29",
@@ -290,7 +332,12 @@
       "open_gap_proxy": -0.00041426085282925997,
       "estimated_turnover_impact": 4.785082712524602e-07,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2025-12-30",
@@ -324,7 +371,12 @@
       "open_gap_proxy": -0.037407945636205996,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "degraded_large_slippage_proxy",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": true,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "large_slippage_proxy",
+      "execution_v22_severity": "warning"
     },
     {
       "trade_date": "2025-12-31",
@@ -358,7 +410,12 @@
       "open_gap_proxy": 0.006674979528600239,
       "estimated_turnover_impact": 4.476379885847332e-06,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-01-05",
@@ -392,7 +449,12 @@
       "open_gap_proxy": 0.00786517556950814,
       "estimated_turnover_impact": 1.5172622121461276e-06,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-01-06",
@@ -426,7 +488,12 @@
       "open_gap_proxy": 0.00292273052752446,
       "estimated_turnover_impact": 7.549159219210626e-07,
       "execution_feasibility": "degraded_large_slippage_proxy",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": true,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "large_slippage_proxy",
+      "execution_v22_severity": "warning"
     },
     {
       "trade_date": "2026-01-07",
@@ -460,7 +527,12 @@
       "open_gap_proxy": -0.0014036728776122393,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-01-08",
@@ -494,7 +566,12 @@
       "open_gap_proxy": -0.00445167413161902,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-01-09",
@@ -528,7 +605,12 @@
       "open_gap_proxy": 0.014311194582924902,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-01-12",
@@ -562,7 +644,12 @@
       "open_gap_proxy": 0.03762241852125662,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "degraded_large_slippage_proxy",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": true,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "large_slippage_proxy",
+      "execution_v22_severity": "warning"
     },
     {
       "trade_date": "2026-01-13",
@@ -596,7 +683,12 @@
       "open_gap_proxy": 0.025484587241039358,
       "estimated_turnover_impact": 2.8483456080251532e-06,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-04-24",
@@ -630,7 +722,12 @@
       "open_gap_proxy": -0.00919651418727686,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-04-27",
@@ -664,7 +761,12 @@
       "open_gap_proxy": 0.02443235374102134,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-04-28",
@@ -698,7 +800,12 @@
       "open_gap_proxy": 0.015747207245730737,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-04-29",
@@ -732,7 +839,12 @@
       "open_gap_proxy": -0.02458041362757764,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-04-30",
@@ -766,7 +878,12 @@
       "open_gap_proxy": -0.00353682984354042,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     },
     {
       "trade_date": "2026-05-06",
@@ -800,7 +917,12 @@
       "open_gap_proxy": 0.02570838242162854,
       "estimated_turnover_impact": 0.0,
       "execution_feasibility": "pass",
-      "fp_explanation_label": "unknown_pending_forward_return"
+      "fp_explanation_label": "unknown_pending_forward_return",
+      "execution_hard_block": false,
+      "execution_slippage_warning": false,
+      "execution_hard_block_reasons": "",
+      "execution_warning_reasons": "",
+      "execution_v22_severity": "pass"
     }
   ]
 }

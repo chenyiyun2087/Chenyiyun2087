@@ -2,7 +2,7 @@
   "production_strategy": "production_governed_vol_position",
   "shadow_strategy": "production_governed_vol_position_v1_2b_gate_tuned",
   "mode": "manual_shadow_only",
-  "generated_at": "2026-06-19T10:50:54",
+  "generated_at": "2026-06-19T12:02:37",
   "today": {
     "trade_date": "2026-06-18",
     "production_strategy": "production_governed_vol_position",
@@ -56,6 +56,8 @@
     "limit_down_sell_risk_days": 1,
     "open_gap_proxy_days": 3,
     "turnover_impact_days": 0,
+    "execution_hard_block_days": 3,
+    "execution_slippage_warning_days": 21,
     "execution_proxy_pass": false,
     "execution_proxy_fail_reasons": [
       "degraded_execution_proxy"
@@ -87,6 +89,13 @@
     "shadow_recovery_theory_gap_mean": 0.00164034089287764,
     "event_execution_degraded_days": 3,
     "event_execution_unknown_days": 0,
+    "event_execution_hard_block_days": 0,
+    "event_execution_slippage_warning_days": 3,
+    "promotion_valid_event_count": 23,
+    "promotion_valid_positive_rate": 0.5652173913043478,
+    "promotion_valid_cumulative_gap": 0.03772784053618572,
+    "promotion_valid_event_window_gap": 0.03772784053618572,
+    "promotion_valid_event_gate": "pass_promotion_valid_events",
     "event_window_pass": false,
     "event_shadow_fail_reasons": [
       "degraded_execution_proxy"

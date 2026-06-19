@@ -1,0 +1,30 @@
+{
+  "event_quality_status": "CUMULATIVE_EVENT_READY",
+  "total_recovery_events": 98,
+  "positive_event_rate": 0.5612244897959183,
+  "cumulative_recovery_theory_gap": 0.049445384100849865,
+  "event_execution_degraded_ratio": 0.04081632653061224,
+  "event_execution_degraded_days": 4,
+  "execution_safe_event_gate": "pass_execution_safe_events",
+  "execution_safe_event_count": 94,
+  "execution_safe_positive_rate": 0.5531914893617021,
+  "execution_safe_cumulative_theory_gap": 0.03304731519408674,
+  "execution_safe_max_negative_gap": -0.0271598575536606,
+  "promotion_valid_event_gate": "pass_promotion_valid_events",
+  "promotion_valid_event_count": 98,
+  "promotion_valid_positive_rate": 0.5612244897959183,
+  "promotion_valid_cumulative_gap": 0.049445384100849865,
+  "promotion_valid_max_negative_gap": -0.0271598575536606,
+  "promotion_valid_slippage_warning_count": 4,
+  "promotion_valid_hard_block_count": 0,
+  "event_log_csv": "reports/production_monitor/research_shadow_event_log.csv",
+  "output_dir": "exports/signal_research/research_shadow_event_quality/20260619_120302_research_shadow_event_quality",
+  "files": {
+    "event_quality_summary": "exports/signal_research/research_shadow_event_quality/20260619_120302_research_shadow_event_quality/event_quality_summary.csv",
+    "event_quality_by_dimension": "exports/signal_research/research_shadow_event_quality/20260619_120302_research_shadow_event_quality/event_quality_by_dimension.csv",
+    "event_quality_by_combo": "exports/signal_research/research_shadow_event_quality/20260619_120302_research_shadow_event_quality/event_quality_by_combo.csv",
+    "execution_safe_event_quality": "exports/signal_research/research_shadow_event_quality/20260619_120302_research_shadow_event_quality/execution_safe_event_quality.csv",
+    "promotion_valid_event_quality": "exports/signal_research/research_shadow_event_quality/20260619_120302_research_shadow_event_quality/promotion_valid_event_quality.csv",
+    "event_log_prepared": "exports/signal_research/research_shadow_event_quality/20260619_120302_research_shadow_event_quality/event_log_prepared.csv"
+  }
+}

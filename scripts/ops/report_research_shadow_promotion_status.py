@@ -25,6 +25,7 @@ DEFAULT_PATTERN_LINEAGE_ROOT = Path("exports/signal_research/pattern_feature_lin
 DEFAULT_FP_SEPARABILITY_ROOT = Path("exports/signal_research/v12b_false_positive_feature_separability")
 DEFAULT_EVENT_QUALITY_ROOT = Path("exports/signal_research/research_shadow_event_quality")
 DEFAULT_DEGRADATION_ROOT = Path("exports/signal_research/shadow_execution_degradation")
+DEFAULT_UPLIFT_ROOT = Path("exports/signal_research/execution_safe_recovery_uplift")
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -44,6 +45,13 @@ def _latest_summary(root: Path) -> dict[str, object]:
     return data
 
 
+def _first_present(*values: object, default: object = None) -> object:
+    for value in values:
+        if value is not None:
+            return value
+    return default
+
+
 def build_promotion_status(
     daily_report: dict[str, object],
     event_summary: dict[str, object],
@@ -52,6 +60,7 @@ def build_promotion_status(
     event_window_report: dict[str, object] | None = None,
     event_quality_summary: dict[str, object] | None = None,
     degradation_summary: dict[str, object] | None = None,
+    uplift_summary: dict[str, object] | None = None,
     config: dict[str, object] | None = None,
 ) -> dict[str, object]:
     config = config or load_production_config()
@@ -60,6 +69,7 @@ def build_promotion_status(
     event_window_summary = dict((event_window_report or {}).get("shadow_summary") or shadow_summary)
     event_quality_summary = dict(event_quality_summary or {})
     degradation_summary = dict(degradation_summary or {})
+    uplift_summary = dict(uplift_summary or {})
     total_recovery_events = int(event_quality_summary.get("total_recovery_events") or event_summary.get("total_recovery_events") or 0)
     calendar_pass = bool(shadow_summary.get("calendar_window_pass"))
     event_pass = bool(event_window_summary.get("event_window_pass"))
@@ -88,49 +98,93 @@ def build_promotion_status(
     cumulative_event_pass = total_recovery_events >= 30 and cumulative_gap > 0 and cumulative_positive_rate >= 0.55 and cumulative_degraded_ratio <= 0.05
     execution_safe_event_gate = str(event_quality_summary.get("execution_safe_event_gate") or "pending_execution_safe_event_quality")
     execution_safe_event_pass = execution_safe_event_gate == "pass_execution_safe_events"
+    uplift_valid_count = int(float(uplift_summary.get("promotion_valid_event_count") or 0))
+    uplift_valid_gap = float(uplift_summary.get("promotion_valid_cumulative_gap") or 0.0)
+    if uplift_summary:
+        promotion_valid_event_gate = (
+            "pass_promotion_valid_events"
+            if uplift_valid_count >= int(shadow_config.get("min_recovery_events") or 5) and uplift_valid_gap > 0
+            else "fail_promotion_valid_events"
+        )
+    else:
+        promotion_valid_event_gate = str(event_quality_summary.get("promotion_valid_event_gate") or event_window_summary.get("promotion_valid_event_gate") or "pending_promotion_valid_event_quality")
+    promotion_valid_event_pass = promotion_valid_event_gate == "pass_promotion_valid_events"
     incremental_degraded_days = degradation_summary.get("incremental_execution_degraded_days")
+    incremental_hard_block_days = degradation_summary.get("incremental_hard_block_days")
     incremental_gate_known = incremental_degraded_days is not None
-    incremental_execution_pass = bool(incremental_gate_known and int(incremental_degraded_days or 0) == 0)
+    incremental_hard_block_known = incremental_hard_block_days is not None
+    incremental_execution_pass = bool(
+        (incremental_hard_block_known and int(incremental_hard_block_days or 0) == 0)
+        or (not incremental_hard_block_known and incremental_gate_known and int(incremental_degraded_days or 0) == 0)
+    )
     execution_unknown_days = int(shadow_summary.get("execution_unknown_days") or 0)
     execution_degraded_days = int(shadow_summary.get("execution_degraded_days") or 0)
+    execution_hard_block_days = int(_first_present(shadow_summary.get("execution_hard_block_days"), default=0) or 0)
+    execution_slippage_warning_days = int(_first_present(shadow_summary.get("execution_slippage_warning_days"), default=0) or 0)
+    event_hard_block_days = int(_first_present(degradation_summary.get("event_hard_block_days"), event_window_summary.get("event_execution_hard_block_days"), default=0) or 0)
     execution_fail_reasons = set(shadow_summary.get("execution_proxy_fail_reasons") or [])
     execution_proxy_missing = execution_unknown_days > 0 or "missing_execution_proxy" in execution_fail_reasons
     execution_proxy_degraded = execution_degraded_days > 0 or "degraded_execution_proxy" in execution_fail_reasons
-    calendar_gate = "pass" if calendar_pass else (
-        "fail_large_slippage"
-        if "large_slippage_proxy_days_above_threshold" in (shadow_summary.get("shadow_fail_reasons") or [])
-        else "fail_calendar_window"
-    )
-    if event_pass:
+    legacy_calendar_fail_reasons = set(shadow_summary.get("shadow_fail_reasons") or [])
+    non_execution_calendar_failures = legacy_calendar_fail_reasons - {
+        "execution_degraded_days_above_threshold",
+        "large_slippage_proxy_days_above_threshold",
+    }
+    if execution_proxy_missing:
+        calendar_gate = "fail_missing_execution_proxy"
+    elif execution_hard_block_days > 0:
+        calendar_gate = "fail_execution_hard_block"
+    elif non_execution_calendar_failures:
+        calendar_gate = "fail_calendar_window"
+    elif execution_slippage_warning_days > 0:
+        calendar_gate = "pass_with_slippage_warning"
+    else:
+        calendar_gate = "pass"
+    calendar_v22_pass = calendar_gate.startswith("pass")
+    if event_pass or (
+        event_window_recovery_events >= int(shadow_config.get("min_recovery_events") or 5)
+        and event_window_gap > 0
+        and event_hard_block_days == 0
+    ):
         event_window_gate = "pass"
     elif event_window_recovery_events < int(shadow_config.get("min_recovery_events") or 5):
         event_window_gate = "observe_no_recent_events"
     elif event_window_gap <= 0:
         event_window_gate = "fail_non_positive_window_gap"
+    elif event_hard_block_days > 0:
+        event_window_gate = "fail_event_execution_hard_block"
     else:
-        event_window_gate = "fail_event_execution_degradation"
+        event_window_gate = "pass_with_slippage_warning"
     cumulative_event_gate = "pass_positive_cumulative_gap" if cumulative_event_pass else "fail_cumulative_event_quality"
     incremental_execution_gate = (
-        "pass_no_incremental_degradation"
+        "pass_no_incremental_hard_block"
         if incremental_execution_pass
-        else ("pending_degradation_attribution" if not incremental_gate_known else "fail_incremental_execution_degradation")
+        else (
+            "pending_degradation_attribution"
+            if not incremental_gate_known and not incremental_hard_block_known
+            else "fail_incremental_execution_hard_block"
+        )
     )
     pattern_status = str(pattern_lineage_summary.get("lineage_status") or "PATTERN_LINEAGE_UPSTREAM_OR_BACKTEST_MISSING")
     fp_status = str(fp_separability_summary.get("separability_status") or "")
     blocking_statuses: list[str] = []
     warning_statuses: list[str] = []
-    if not calendar_pass:
+    if not calendar_v22_pass:
         blocking_statuses.append("NOT_READY_CALENDAR_WINDOW")
-    if not event_pass:
+    if not event_window_gate.startswith("pass"):
         blocking_statuses.append("NOT_READY_EVENT_WINDOW")
     if not execution_pass and execution_proxy_missing:
         blocking_statuses.append("NOT_READY_EXECUTION_PROXY_MISSING")
-    if not execution_pass and execution_proxy_degraded:
-        blocking_statuses.append("NOT_READY_EXECUTION_DEGRADED")
+    if execution_hard_block_days > 0:
+        blocking_statuses.append("NOT_READY_EXECUTION_HARD_BLOCK")
+    elif execution_proxy_degraded or execution_slippage_warning_days > 0:
+        warning_statuses.append("EXECUTION_SLIPPAGE_WARNING")
     if not cumulative_event_pass:
         blocking_statuses.append("NOT_READY_CUMULATIVE_EVENT_QUALITY")
     if not execution_safe_event_pass:
         blocking_statuses.append("NOT_READY_EXECUTION_SAFE_EVENT_GATE")
+    if not promotion_valid_event_pass:
+        blocking_statuses.append("NOT_READY_PROMOTION_VALID_EVENT_GATE")
     if not incremental_execution_pass:
         blocking_statuses.append("NOT_READY_INCREMENTAL_EXECUTION")
     if pattern_status != "PATTERN_LINEAGE_TARGET_READY":
@@ -154,14 +208,17 @@ def build_promotion_status(
         "shadow_strategy": shadow_config.get("strategy"),
         "compare_to": shadow_config.get("compare_to"),
         "calendar_window_pass": calendar_pass,
+        "calendar_v22_pass": calendar_v22_pass,
         "event_window_pass": event_pass,
         "cumulative_event_pass": cumulative_event_pass,
         "execution_safe_event_pass": execution_safe_event_pass,
+        "promotion_valid_event_pass": promotion_valid_event_pass,
         "incremental_execution_pass": incremental_execution_pass,
         "calendar_gate": calendar_gate,
         "event_window_gate": event_window_gate,
         "cumulative_event_gate": cumulative_event_gate,
         "execution_safe_event_gate": execution_safe_event_gate,
+        "promotion_valid_event_gate": promotion_valid_event_gate,
         "incremental_execution_gate": incremental_execution_gate,
         "execution_proxy_pass": execution_pass,
         "promotion_ready": promotion_ready,
@@ -186,7 +243,17 @@ def build_promotion_status(
         "execution_safe_positive_rate": event_quality_summary.get("execution_safe_positive_rate"),
         "execution_safe_cumulative_theory_gap": event_quality_summary.get("execution_safe_cumulative_theory_gap"),
         "execution_safe_max_negative_gap": event_quality_summary.get("execution_safe_max_negative_gap"),
+        "promotion_valid_event_count": uplift_summary.get("promotion_valid_event_count") or event_quality_summary.get("promotion_valid_event_count") or event_window_summary.get("promotion_valid_event_count"),
+        "promotion_valid_positive_rate": uplift_summary.get("promotion_valid_positive_rate") or event_quality_summary.get("promotion_valid_positive_rate") or event_window_summary.get("promotion_valid_positive_rate"),
+        "promotion_valid_cumulative_gap": uplift_summary.get("promotion_valid_cumulative_gap") or event_quality_summary.get("promotion_valid_cumulative_gap") or event_window_summary.get("promotion_valid_cumulative_gap"),
+        "promotion_valid_event_window_gap": uplift_summary.get("promotion_valid_event_window_gap") or event_window_summary.get("promotion_valid_event_window_gap") or event_quality_summary.get("promotion_valid_event_window_gap"),
+        "promotion_valid_hard_block_count": uplift_summary.get("promotion_valid_hard_block_count") or event_quality_summary.get("promotion_valid_hard_block_count"),
+        "promotion_valid_slippage_warning_count": uplift_summary.get("promotion_valid_slippage_warning_count") or event_quality_summary.get("promotion_valid_slippage_warning_count"),
         "incremental_execution_degraded_days": incremental_degraded_days,
+        "incremental_hard_block_days": incremental_hard_block_days,
+        "execution_hard_block_days": execution_hard_block_days,
+        "execution_slippage_warning_days": execution_slippage_warning_days,
+        "event_hard_block_days": event_hard_block_days,
         "execution_unknown_days": execution_unknown_days,
         "execution_degraded_days": execution_degraded_days,
         "execution_proxy_available_ratio": event_summary.get("execution_proxy_available_ratio", 0.0),
@@ -199,6 +266,7 @@ def build_promotion_status(
         "pattern_blocks_pattern_risk_features": pattern_status != "PATTERN_LINEAGE_TARGET_READY",
         "event_quality_summary_path": event_quality_summary.get("_summary_path"),
         "degradation_summary_path": degradation_summary.get("_summary_path"),
+        "uplift_summary_path": uplift_summary.get("_summary_path"),
     }
 
 
@@ -218,9 +286,11 @@ def _markdown(status: dict[str, object]) -> str:
         "| gate | value |",
         "|---|---:|",
         f"| calendar_window_pass | {status.get('calendar_window_pass')} |",
+        f"| calendar_v22_pass | {status.get('calendar_v22_pass')} |",
         f"| event_window_pass | {status.get('event_window_pass')} |",
         f"| cumulative_event_pass | {status.get('cumulative_event_pass')} |",
         f"| execution_safe_event_pass | {status.get('execution_safe_event_pass')} |",
+        f"| promotion_valid_event_pass | {status.get('promotion_valid_event_pass')} |",
         f"| incremental_execution_pass | {status.get('incremental_execution_pass')} |",
         f"| execution_proxy_pass | {status.get('execution_proxy_pass')} |",
         f"| total_recovery_events | {status.get('total_recovery_events')} |",
@@ -231,7 +301,15 @@ def _markdown(status: dict[str, object]) -> str:
         f"| execution_safe_event_count | {status.get('execution_safe_event_count')} |",
         f"| execution_safe_positive_rate | {status.get('execution_safe_positive_rate')} |",
         f"| execution_safe_cumulative_theory_gap | {status.get('execution_safe_cumulative_theory_gap')} |",
+        f"| promotion_valid_event_count | {status.get('promotion_valid_event_count')} |",
+        f"| promotion_valid_positive_rate | {status.get('promotion_valid_positive_rate')} |",
+        f"| promotion_valid_cumulative_gap | {status.get('promotion_valid_cumulative_gap')} |",
+        f"| promotion_valid_event_window_gap | {status.get('promotion_valid_event_window_gap')} |",
         f"| incremental_execution_degraded_days | {status.get('incremental_execution_degraded_days')} |",
+        f"| incremental_hard_block_days | {status.get('incremental_hard_block_days')} |",
+        f"| execution_hard_block_days | {status.get('execution_hard_block_days')} |",
+        f"| execution_slippage_warning_days | {status.get('execution_slippage_warning_days')} |",
+        f"| event_hard_block_days | {status.get('event_hard_block_days')} |",
         f"| execution_unknown_days | {status.get('execution_unknown_days')} |",
         f"| execution_degraded_days | {status.get('execution_degraded_days')} |",
         f"| execution_proxy_available_ratio | {status.get('execution_proxy_available_ratio')} |",
@@ -240,6 +318,7 @@ def _markdown(status: dict[str, object]) -> str:
         f"- event_window_gate: `{status.get('event_window_gate')}`",
         f"- cumulative_event_gate: `{status.get('cumulative_event_gate')}`",
         f"- execution_safe_event_gate: `{status.get('execution_safe_event_gate')}`",
+        f"- promotion_valid_event_gate: `{status.get('promotion_valid_event_gate')}`",
         f"- incremental_execution_gate: `{status.get('incremental_execution_gate')}`",
         "",
         f"- pattern_lineage_status: `{status.get('pattern_lineage_status')}`",
@@ -259,6 +338,7 @@ def run_report(
     fp_separability_summary: Path | None = None,
     event_quality_summary: Path | None = None,
     degradation_summary: Path | None = None,
+    uplift_summary: Path | None = None,
     output_json: Path = DEFAULT_OUTPUT_JSON,
     output_md: Path = DEFAULT_OUTPUT_MD,
 ) -> dict[str, object]:
@@ -266,6 +346,7 @@ def run_report(
     fp_summary = _read_json(fp_separability_summary) if fp_separability_summary else _latest_summary(DEFAULT_FP_SEPARABILITY_ROOT)
     event_quality = _read_json(event_quality_summary) if event_quality_summary else _latest_summary(DEFAULT_EVENT_QUALITY_ROOT)
     degradation = _read_json(degradation_summary) if degradation_summary else _latest_summary(DEFAULT_DEGRADATION_ROOT)
+    uplift = _read_json(uplift_summary) if uplift_summary else _latest_summary(DEFAULT_UPLIFT_ROOT)
     status = build_promotion_status(
         _read_json(daily_json),
         _read_json(event_summary_json),
@@ -274,6 +355,7 @@ def run_report(
         event_window_report=_read_json(event_window_json),
         event_quality_summary=event_quality,
         degradation_summary=degradation,
+        uplift_summary=uplift,
     )
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -290,6 +372,7 @@ def main() -> None:
     parser.add_argument("--fp-separability-summary", default=None)
     parser.add_argument("--event-quality-summary", default=None)
     parser.add_argument("--degradation-summary", default=None)
+    parser.add_argument("--uplift-summary", default=None)
     parser.add_argument("--output-json", default=str(DEFAULT_OUTPUT_JSON))
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
@@ -303,6 +386,7 @@ def main() -> None:
                 fp_separability_summary=Path(args.fp_separability_summary) if args.fp_separability_summary else None,
                 event_quality_summary=Path(args.event_quality_summary) if args.event_quality_summary else None,
                 degradation_summary=Path(args.degradation_summary) if args.degradation_summary else None,
+                uplift_summary=Path(args.uplift_summary) if args.uplift_summary else None,
                 output_json=Path(args.output_json),
                 output_md=Path(args.output_md),
             ),

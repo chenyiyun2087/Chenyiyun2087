@@ -19,6 +19,7 @@ DEFAULT_EVENT_LOG = Path("reports/production_monitor/research_shadow_event_log.c
 DEFAULT_OUTPUT_ROOT = Path("exports/signal_research/research_shadow_event_quality")
 DEFAULT_MIN_SAFE_EVENTS = 30
 DEFAULT_MIN_POSITIVE_RATE = 0.55
+from scripts.research.execution_risk_severity import add_execution_severity_columns
 GROUP_COLUMNS = (
     "event_source_window",
     "position_diff_bucket",
@@ -87,6 +88,7 @@ def prepare_event_log(event_log: pd.DataFrame) -> pd.DataFrame:
     frame["large_slippage_proxy"] = pd.to_numeric(frame.get("large_slippage_proxy"), errors="coerce")
     frame["open_gap_proxy"] = pd.to_numeric(frame.get("open_gap_proxy"), errors="coerce")
     frame["estimated_turnover_impact"] = pd.to_numeric(frame.get("estimated_turnover_impact"), errors="coerce")
+    frame = add_execution_severity_columns(frame)
     frame["position_diff_bucket"] = frame["position_diff"].map(_position_bucket)
     frame["top5_overlap_bucket"] = frame.get("top5_overlap", pd.Series(pd.NA, index=frame.index)).map(_top5_bucket)
     frame["large_slippage_proxy_bucket"] = frame["large_slippage_proxy"].map(
@@ -186,10 +188,48 @@ def _safe_event_quality(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
+def _promotion_valid_event_quality(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "promotion_event_safety",
+        "event_count",
+        "positive_rate",
+        "cumulative_theory_gap",
+        "avg_theory_gap",
+        "median_theory_gap",
+        "max_negative_gap",
+        "slippage_warning_count",
+        "hard_block_count",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    work = frame.copy()
+    work["promotion_event_safety"] = work["execution_hard_block"].astype(bool).map(
+        lambda blocked: "hard_block_event" if blocked else "promotion_valid_event"
+    )
+    rows: list[dict[str, object]] = []
+    for safety, part in work.groupby("promotion_event_safety", dropna=False):
+        theory_gap = pd.to_numeric(part["theory_gap"], errors="coerce").fillna(0.0)
+        rows.append(
+            {
+                "promotion_event_safety": safety,
+                "event_count": int(len(part)),
+                "positive_rate": float(theory_gap.gt(0).mean()) if len(part) else 0.0,
+                "cumulative_theory_gap": float(theory_gap.sum()),
+                "avg_theory_gap": float(theory_gap.mean()) if len(part) else 0.0,
+                "median_theory_gap": float(theory_gap.median()) if len(part) else 0.0,
+                "max_negative_gap": float(theory_gap.min()) if len(part) else 0.0,
+                "slippage_warning_count": int(part["execution_slippage_warning"].astype(bool).sum()),
+                "hard_block_count": int(part["execution_hard_block"].astype(bool).sum()),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def build_event_quality_tables(event_log: pd.DataFrame) -> dict[str, pd.DataFrame]:
     frame = prepare_event_log(event_log)
     total = _aggregate(frame, [])
     execution_safe = _safe_event_quality(frame)
+    promotion_valid = _promotion_valid_event_quality(frame)
     by_dimension_rows = []
     for col in GROUP_COLUMNS:
         part = _aggregate(frame, [col])
@@ -203,6 +243,7 @@ def build_event_quality_tables(event_log: pd.DataFrame) -> dict[str, pd.DataFram
         "event_quality_by_dimension": by_dimension,
         "event_quality_by_combo": multi,
         "execution_safe_event_quality": execution_safe,
+        "promotion_valid_event_quality": promotion_valid,
         "event_log_prepared": frame,
     }
 
@@ -233,6 +274,22 @@ def execution_safe_event_gate(execution_safe_quality: pd.DataFrame, min_safe_eve
     return "pass_execution_safe_events"
 
 
+def promotion_valid_event_gate(promotion_valid_quality: pd.DataFrame, min_valid_events: int = DEFAULT_MIN_SAFE_EVENTS, min_positive_rate: float = DEFAULT_MIN_POSITIVE_RATE) -> str:
+    if promotion_valid_quality.empty:
+        return "fail_no_promotion_valid_events"
+    valid = promotion_valid_quality[promotion_valid_quality["promotion_event_safety"].eq("promotion_valid_event")]
+    if valid.empty:
+        return "fail_no_promotion_valid_events"
+    row = valid.iloc[0]
+    if int(row["event_count"]) < min_valid_events:
+        return "fail_insufficient_promotion_valid_events"
+    if float(row["cumulative_theory_gap"]) <= 0:
+        return "fail_promotion_valid_gap_not_positive"
+    if float(row["positive_rate"]) < min_positive_rate:
+        return "fail_promotion_valid_positive_rate"
+    return "pass_promotion_valid_events"
+
+
 def run_analysis(event_log_csv: Path, output_root: Path) -> dict[str, object]:
     if not event_log_csv.exists():
         raise RuntimeError(f"Missing event log CSV: {event_log_csv}")
@@ -258,6 +315,13 @@ def run_analysis(event_log_csv: Path, output_root: Path) -> dict[str, object]:
             "execution_safe_positive_rate": 0.0,
             "execution_safe_cumulative_theory_gap": 0.0,
             "execution_safe_max_negative_gap": 0.0,
+            "promotion_valid_event_gate": "fail_no_promotion_valid_events",
+            "promotion_valid_event_count": 0,
+            "promotion_valid_positive_rate": 0.0,
+            "promotion_valid_cumulative_gap": 0.0,
+            "promotion_valid_max_negative_gap": 0.0,
+            "promotion_valid_slippage_warning_count": 0,
+            "promotion_valid_hard_block_count": 0,
         }
     else:
         row = summary_table.iloc[0]
@@ -266,6 +330,11 @@ def run_analysis(event_log_csv: Path, output_root: Path) -> dict[str, object]:
         safe_quality = tables["execution_safe_event_quality"]
         safe = safe_quality[safe_quality["execution_safety"].eq("execution_safe_event")]
         safe_row = safe.iloc[0].to_dict() if not safe.empty else {}
+        promotion_quality = tables["promotion_valid_event_quality"]
+        valid = promotion_quality[promotion_quality["promotion_event_safety"].eq("promotion_valid_event")]
+        valid_row = valid.iloc[0].to_dict() if not valid.empty else {}
+        hard = promotion_quality[promotion_quality["promotion_event_safety"].eq("hard_block_event")]
+        hard_row = hard.iloc[0].to_dict() if not hard.empty else {}
         summary = {
             "event_quality_status": event_quality_status(summary_table),
             "total_recovery_events": event_count,
@@ -278,6 +347,13 @@ def run_analysis(event_log_csv: Path, output_root: Path) -> dict[str, object]:
             "execution_safe_positive_rate": float(safe_row.get("positive_rate") or 0.0),
             "execution_safe_cumulative_theory_gap": float(safe_row.get("cumulative_theory_gap") or 0.0),
             "execution_safe_max_negative_gap": float(safe_row.get("max_negative_gap") or 0.0),
+            "promotion_valid_event_gate": promotion_valid_event_gate(promotion_quality),
+            "promotion_valid_event_count": int(valid_row.get("event_count") or 0),
+            "promotion_valid_positive_rate": float(valid_row.get("positive_rate") or 0.0),
+            "promotion_valid_cumulative_gap": float(valid_row.get("cumulative_theory_gap") or 0.0),
+            "promotion_valid_max_negative_gap": float(valid_row.get("max_negative_gap") or 0.0),
+            "promotion_valid_slippage_warning_count": int(valid_row.get("slippage_warning_count") or 0),
+            "promotion_valid_hard_block_count": int(hard_row.get("event_count") or 0),
         }
     summary.update({"event_log_csv": str(event_log_csv), "output_dir": str(out_dir), "files": files})
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -1,6 +1,6 @@
 # Research Shadow Candidate Daily
 
-- trade_date: `2026-06-18`
+- trade_date: `2026-06-17`
 - production_strategy: `production_governed_vol_position`
 - shadow_strategy: `production_governed_vol_position_v1_2b_gate_tuned`
 - shadow_pass: `False`
@@ -14,10 +14,10 @@
 | position_diff | 0.0 |
 | risk_decision_diff | False |
 | recovery_status | not_applicable |
-| theory_gap | 0.0018004573073069352 |
+| theory_gap | 0.0012001176031690708 |
 | execution_feasibility | pass |
-| 20d_rows | 616 |
-| 20d_theory_gap_sum | 0.28524791994827325 |
+| 20d_rows | 615 |
+| 20d_theory_gap_sum | 0.2834474626409663 |
 | calendar_window_pass | False |
 | event_window_pass | False |
 | execution_proxy_pass | False |

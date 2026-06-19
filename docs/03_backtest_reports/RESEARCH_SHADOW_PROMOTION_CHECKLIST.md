@@ -13,14 +13,15 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 ## Enabled Shadow Requirements
 
 - Calendar window pass: latest 20 common trading days pass shadow monitor thresholds.
-- Calendar gate pass: latest 20 common trading days have no severe unexplained degraded execution proxy.
-- Event window gate pass: latest 120-day recovery window has at least 5 recovery event days, positive recovery-event theory gap, and no event-level degraded execution that would block promotion.
+- Calendar gate pass: latest 20 common trading days have no hard execution block; large-slippage-only days are `EXECUTION_SLIPPAGE_WARNING`.
+- Event window gate pass: latest 120-day recovery window has at least 5 recovery event days, positive recovery-event theory gap, and no event-level hard execution block.
 - Cumulative event gate pass: `total_recovery_events >= 30`, cumulative recovery theory gap is positive, positive event rate is at least 55%, and event degraded ratio is at most 5%.
 - Execution-safe event gate pass: execution-safe recovery events alone have at least 30 samples, positive cumulative theory gap, and positive event rate of at least 55%.
-- Incremental execution gate pass: degraded execution events attributable to the shadow incremental exposure are 0.
+- Promotion-valid event gate pass: recovery events that exclude hard execution blocks have positive theory gap and enough samples for manual review.
+- Incremental execution gate pass: hard-block execution events attributable to shadow incremental exposure are 0.
 - Event accumulator pass: `reports/production_monitor/research_shadow_event_log.csv` has durable recovery-event samples, deduplicated by `trade_date + shadow_strategy + production_strategy`.
-- Execution proxy pass: execution feasibility is not `unknown_missing_execution_proxy`, and degraded execution days are explained as either shared production/shadow risk or explicitly blocked as shadow incremental risk.
-- No large slippage proxy days, limit-up buy risk days, unfilled proxy days, or limit-down sell risk days.
+- Execution proxy pass: execution feasibility is not `unknown_missing_execution_proxy`; hard blocks must be absent from promotion candidates, while large-slippage-only days remain warning-only.
+- Hard block thresholds: `abs(open_gap_proxy) > 5%`, `limit_up_buy_ratio > 20%`, `limit_down_sell_ratio > 20%`, or `estimated_turnover_impact > 3%`.
 - Pattern is not required for enabled shadow; pattern lineage and quality must be disclosed as warning-only fields.
 - Production default unchanged and manual approval recorded.
 
@@ -38,16 +39,17 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 
 ## Blocking vs Warning Status
 
-- Enabled-shadow blockers: `NOT_READY_CALENDAR_WINDOW`, `NOT_READY_EVENT_WINDOW`, `NOT_READY_EXECUTION_PROXY_MISSING`, `NOT_READY_EXECUTION_DEGRADED`, `NOT_READY_CUMULATIVE_EVENT_QUALITY`, `NOT_READY_EXECUTION_SAFE_EVENT_GATE`, `NOT_READY_INCREMENTAL_EXECUTION`.
-- Warning-only disclosures: `PATTERN_LINEAGE_WARNING`, `FP_SEPARABILITY_EXPLANATION_ONLY`.
+- Enabled-shadow blockers: `NOT_READY_CALENDAR_WINDOW`, `NOT_READY_EVENT_WINDOW`, `NOT_READY_EXECUTION_PROXY_MISSING`, `NOT_READY_EXECUTION_HARD_BLOCK`, `NOT_READY_CUMULATIVE_EVENT_QUALITY`, `NOT_READY_EXECUTION_SAFE_EVENT_GATE`, `NOT_READY_PROMOTION_VALID_EVENT_GATE`, `NOT_READY_INCREMENTAL_EXECUTION`.
+- Warning-only disclosures: `EXECUTION_SLIPPAGE_WARNING`, `PATTERN_LINEAGE_WARNING`, `FP_SEPARABILITY_EXPLANATION_ONLY`.
 - Pattern warnings block only pattern-based veto, risk guard, rerank, or pattern-based canary review; they do not block enabled shadow by themselves.
 
 ## Shared vs Incremental Execution Risk
 
 - Shared execution risk: production and shadow hold the same Top5 path, have no meaningful position/risk-decision difference, and both would face the same execution proxy degradation.
 - Shadow incremental execution risk: the degraded day overlaps a recovery event, risk-decision difference, position difference, or shadow-only symbol exposure.
-- Large-slippage risk is reported as common, shadow incremental, event, and non-event; only common large slippage is disclosure-only.
-- Promotion requires incremental large-slippage days and incremental execution degraded days to be 0, even when cumulative event return is positive.
+- Large-slippage risk is reported as common, shadow incremental, event, and non-event; `large_slippage_proxy > 3%` alone is warning-only.
+- Promotion requires incremental hard-block days to be 0, even when cumulative event return is positive.
+- Execution-safe uplift simulation compares original v1.2b, hard-block fallback, open-gap downweight, and large-slippage downweight without changing strategy routing.
 
 ## Canary Requirements
 

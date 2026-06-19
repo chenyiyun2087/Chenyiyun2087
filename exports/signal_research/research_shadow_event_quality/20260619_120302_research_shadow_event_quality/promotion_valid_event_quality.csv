@@ -1,0 +1,2 @@
+promotion_event_safety,event_count,positive_rate,cumulative_theory_gap,avg_theory_gap,median_theory_gap,max_negative_gap,slippage_warning_count,hard_block_count
+promotion_valid_event,98,0.5612244897959183,0.049445384100849865,0.0005045447357229578,0.0009781855518634,-0.0271598575536606,4,0
