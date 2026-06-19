@@ -28,6 +28,8 @@ def run(backtest_dir: Path, output_dir: Path) -> dict[str, object]:
         raise RuntimeError(f"backtest artifacts missing: {missing}")
     summary, decisions, trades, nav = (pd.read_csv(files[name]) for name in ("trusted_account_backtest_summary.csv", "trusted_account_backtest_adaptive_decisions.csv", "trusted_account_backtest_trades.csv", "trusted_account_backtest_nav.csv"))
     report = json.loads(files["trusted_account_backtest_report.json"].read_text(encoding="utf-8"))
+    replay_path = backtest_dir / "replay" / "strict_ledger_replay_report.json"
+    replay = json.loads(replay_path.read_text(encoding="utf-8")) if replay_path.exists() else {}
     selected = summary[summary["strategy"].isin(STRATEGIES)].copy()
     if set(selected["strategy"]) != set(STRATEGIES):
         raise RuntimeError("backtest missing v1, gate-tuned, or strict-precommit strategy")
@@ -39,7 +41,7 @@ def run(backtest_dir: Path, output_dir: Path) -> dict[str, object]:
     provenance = report.get("provenance") or {}
     v1, strict = (selected[selected["strategy"].eq(name)].iloc[0] for name in (STRATEGIES[0], STRICT))
     causal = bool((strict_decisions["execution_mode"].eq("strict_t1_open_precommit") & strict_decisions["causality_pass"].eq(1)).all())
-    ledger_fields = {"unexpected_cash_residual_ratio", "open_weight_drift_bps", "order_status", "planned_shares", "filled_shares"}
+    ledger_fields = {"unexpected_cash_residual_ratio", "open_weight_drift_bps", "order_status", "planned_shares", "filled_shares", "risk_event_triggered", "missed_risk_event"}
     ledger_complete = (
         ledger_fields <= set(strict_trades.columns)
         and provenance.get("ledger_schema_version") == "strict_daily_ledger_v2"
@@ -54,9 +56,13 @@ def run(backtest_dir: Path, output_dir: Path) -> dict[str, object]:
         strict_trades.get("reject_reason", pd.Series(index=strict_trades.index, dtype=str)).eq("t1_not_tradable")
         & pd.to_numeric(strict_trades.get("filled_shares"), errors="coerce").fillna(0).gt(0)
     ]
-    missed_risk_events = int((strict_decisions.get("precommit_uplift_risk_level", pd.Series(dtype=str)) == "").sum())
+    missing_cap_risk_label_count = int(pd.to_numeric(strict_trades.get("missing_cap_risk_label"), errors="coerce").fillna(0).sum())
+    missed_risk_events = int(pd.to_numeric(strict_trades.get("missed_risk_event"), errors="coerce").fillna(0).sum())
+    replay_event_error = replay.get("max_event_replay_error_bps")
+    replay_nav_error = replay.get("max_ledger_vs_nav_error_bps")
+    replay_ok = bool(replay.get("replay_pass")) and (replay_event_error is not None and float(replay_event_error) <= GATES["reconciliation_bps"]) and (replay_nav_error is not None and float(replay_nav_error) <= GATES["reconciliation_bps"])
     drawdown_ok = float(strict["max_drawdown"]) >= float(v1["max_drawdown"]) - GATES["max_drawdown_delta"]
-    ledger_ok = ledger_complete and (reconciliation.empty or float(reconciliation.max()) <= GATES["reconciliation_bps"]) and (unexpected_cash.empty or float(unexpected_cash.max()) <= GATES["unexpected_cash_ratio"]) and (drift.empty or float(drift.quantile(0.95)) <= GATES["p95_weight_drift_bps"]) and (drift.empty or float(drift.max()) <= GATES["max_weight_drift_bps"]) and wrong_t1_fills.empty and missed_risk_events == 0
+    ledger_ok = ledger_complete and replay_ok and (reconciliation.empty or float(reconciliation.max()) <= GATES["reconciliation_bps"]) and (unexpected_cash.empty or float(unexpected_cash.max()) <= GATES["unexpected_cash_ratio"]) and (drift.empty or float(drift.quantile(0.95)) <= GATES["p95_weight_drift_bps"]) and (drift.empty or float(drift.max()) <= GATES["max_weight_drift_bps"]) and wrong_t1_fills.empty and missed_risk_events == 0
     reproducible = provenance.get("reproducibility_status") == "REPRODUCIBLE"
     annualized_ok = float(strict["annualized_return"]) > float(v1["annualized_return"])
     if not causal:
@@ -75,7 +81,10 @@ def run(backtest_dir: Path, output_dir: Path) -> dict[str, object]:
         "corporate_action_coverage_status": provenance.get("corporate_action_coverage_status", "UNKNOWN"),
         "ledger_complete": ledger_complete, "ledger_gate_pass": ledger_ok, "drawdown_gate_pass": drawdown_ok,
         "ledger_reconciliation_error_bps": float(reconciliation.max()) if not reconciliation.empty else None,
-        "t1_wrong_fill_count": int(len(wrong_t1_fills)), "missed_risk_events": missed_risk_events,
+        "replay_available": bool(replay), "replay_gate_pass": replay_ok,
+        "event_replay_error_bps": replay_event_error, "ledger_vs_nav_error_bps": replay_nav_error,
+        "t1_wrong_fill_count": int(len(wrong_t1_fills)), "missing_cap_risk_label_count": missing_cap_risk_label_count,
+        "missed_risk_events": missed_risk_events,
         "max_unexpected_cash_residual_ratio": float(unexpected_cash.max()) if not unexpected_cash.empty else None,
         "p95_weight_drift_bps": float(drift.quantile(0.95)) if not drift.empty else None,
         "max_weight_drift_bps": float(drift.max()) if not drift.empty else None,

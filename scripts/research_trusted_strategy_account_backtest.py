@@ -261,6 +261,7 @@ def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: p
         PROJECT_ROOT / "scripts/research_trusted_strategy_account_backtest.py",
         PROJECT_ROOT / "scripts/research_full_pool_liquidity_strategies.py",
         PROJECT_ROOT / "scripts/research/strict_execution_ledger.py",
+        PROJECT_ROOT / "scripts/research/replay_strict_execution_ledger.py",
     ]
     try:
         sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True).strip()
@@ -2642,8 +2643,60 @@ def _build_window_summary(nav: pd.DataFrame, initial_cash: float) -> pd.DataFram
     return pd.DataFrame(rows, columns=columns)
 
 
+def _annotate_strict_risk_events(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
+    """Attach fixed post-event labels for audit only; never feed them into T-day decisions."""
+    if trades.empty:
+        return trades
+    out = trades.copy()
+    for field, default in (("risk_event_triggered", 0), ("risk_event_types", ""), ("missing_cap_risk_label", 0), ("missed_risk_event", 0)):
+        if field not in out:
+            out[field] = default
+    strict = out["strategy"].eq(PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME)
+    raw = prices[[column for column in ("trade_date", "symbol", "raw_open", "raw_close", "prev_raw_close") if column in prices]].copy()
+    raw["trade_date"] = pd.to_datetime(raw["trade_date"], errors="coerce").dt.date
+    raw["symbol"] = raw["symbol"].astype(str).str.zfill(6)
+    for index, row in out.loc[strict & out["side"].eq("BUY") & pd.to_numeric(out["planned_shares"], errors="coerce").fillna(0).gt(0)].iterrows():
+        symbol = str(row["symbol"]).zfill(6)
+        execution_date = pd.to_datetime(row.get("trade_date"), errors="coerce").date()
+        day = raw[(raw["symbol"] == symbol) & (raw["trade_date"] == execution_date)]
+        types: list[str] = []
+        reason = str(row.get("reject_reason") or "")
+        if reason in {"t1_not_tradable", "limit_block", "missing_t1_execution_price"}:
+            types.append(reason)
+        if not day.empty:
+            open_price = _safe_float(day.iloc[0].get("raw_open"), np.nan)
+            prev_close = _safe_float(day.iloc[0].get("prev_raw_close"), np.nan)
+            if np.isfinite(open_price) and np.isfinite(prev_close) and prev_close > 0 and abs(open_price / prev_close - 1.0) >= 0.05:
+                types.append("abs_open_gap_ge_5pct")
+            reference = _safe_float(row.get("filled_price"), open_price)
+            future = raw[(raw["symbol"] == symbol) & (raw["trade_date"] >= execution_date)].sort_values("trade_date").head(5)
+            if np.isfinite(reference) and reference > 0 and not future.empty:
+                worst = pd.to_numeric(future["raw_close"], errors="coerce").min()
+                if pd.notna(worst) and float(worst) / reference - 1.0 <= -0.10:
+                    types.append("raw_close_drawdown_5d_ge_10pct")
+        level = str(row.get("precommit_uplift_risk_level") or "")
+        missing_label = int(not level or level.lower() == "nan")
+        covered = level in {"high", "extreme", "data_missing_fallback_to_v1"}
+        out.at[index, "risk_event_triggered"] = int(bool(types))
+        out.at[index, "risk_event_types"] = ";".join(types)
+        out.at[index, "missing_cap_risk_label"] = missing_label
+        out.at[index, "missed_risk_event"] = int(bool(types) and not covered)
+    return out
+
+
+def _validate_strict_execution_arguments(args: argparse.Namespace) -> None:
+    requested_strategies = _parse_strategies(args.strategies)
+    if (
+        args.execution_mode == STRICT_MODE
+        and PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME in requested_strategies
+        and float(args.hard_stop_loss_pct or 0.0) > 0
+    ):
+        raise ValueError("strict_precommit rejects non-zero hard_stop_loss_pct until stop orders are ledger-native")
+
+
 def run_account_backtest(args: argparse.Namespace) -> dict:
     args = _apply_risk_profile_defaults(args)
+    _validate_strict_execution_arguments(args)
     ashare_weight_config = _resolve_ashare_weight_config(
         profile=getattr(args, "ashare_weight_profile", None),
         release_tier=getattr(args, "ashare_release_tier", None),
@@ -2759,6 +2812,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     all_candidates: list[pd.DataFrame] = []
     all_adaptive_decisions: list[pd.DataFrame] = []
     all_ledger_events: list[pd.DataFrame] = []
+    all_ledger_prices: list[pd.DataFrame] = []
     summary_rows: list[dict] = []
     adaptive_perf = _build_adaptive_perf_table(
         scores,
@@ -2775,6 +2829,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             and args.execution_mode == STRICT_MODE
         ) else None
         strict_previous_factors: dict[str, float] = {}
+        strict_ledger_price_rows: list[dict] = []
         nav_rows: list[dict] = []
         trade_rows: list[dict] = []
         position_rows: list[dict] = []
@@ -2817,9 +2872,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 _sync_account_view_from_ledger(account, strict_ledger, trade_date)
                 meta = {"corporate_action_status": corporate_action_status}
                 if corporate_action_status in {"CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED", "SOURCE_UNAVAILABLE_FAIL_CLOSED"}:
+                    strict_ledger.freeze(trade_date, corporate_action_status)
                     meta["strict_ledger_frozen"] = 1
             stop_count = 0
-            if corporate_action_status not in {"CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED", "SOURCE_UNAVAILABLE_FAIL_CLOSED"}:
+            if not strict_raw_execution and corporate_action_status not in {"CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED", "SOURCE_UNAVAILABLE_FAIL_CLOSED"}:
                 stop_count = _apply_hard_stop_loss(
                     account=account,
                     trade_date=trade_date,
@@ -3504,6 +3560,14 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 nav_row["ledger_eod_equity"] = strict_ledger.equity(raw_closes)
                 nav_row["ledger_reconciliation_error_bps"] = strict_ledger.reconciliation_error_bps(raw_closes)
                 nav_row["ledger_event_count"] = int(len(strict_ledger.event_rows))
+                for symbol, quantity in strict_ledger.shares.items():
+                    info = raw_price_lookup.get(symbol, {})
+                    strict_ledger_price_rows.append({
+                        "trade_date": trade_date, "symbol": symbol, "shares": int(quantity),
+                        "raw_open": _safe_float(info.get("raw_open"), np.nan),
+                        "raw_close": _safe_float(info.get("raw_close"), np.nan),
+                        "prev_raw_close": _safe_float(info.get("prev_raw_close"), np.nan),
+                    })
             nav_rows.append(nav_row)
             position_rows.extend(_record_positions(account, trade_date, price_lookup, calendar))
 
@@ -3589,6 +3653,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             if not events.empty:
                 events.insert(0, "strategy", spec.name)
                 all_ledger_events.append(events)
+            if strict_ledger_price_rows:
+                prices_frame = pd.DataFrame(strict_ledger_price_rows)
+                prices_frame.insert(0, "strategy", spec.name)
+                all_ledger_prices.append(prices_frame)
         if not adaptive_decisions.empty:
             adaptive_decisions.insert(0, "strategy", spec.name)
             all_adaptive_decisions.append(adaptive_decisions)
@@ -3599,6 +3667,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     candidates = pd.concat(all_candidates, ignore_index=True) if all_candidates else pd.DataFrame()
     adaptive_decisions = pd.concat(all_adaptive_decisions, ignore_index=True) if all_adaptive_decisions else pd.DataFrame()
     ledger_events = pd.concat(all_ledger_events, ignore_index=True) if all_ledger_events else pd.DataFrame()
+    ledger_prices = pd.concat(all_ledger_prices, ignore_index=True) if all_ledger_prices else pd.DataFrame()
+    trades = _annotate_strict_risk_events(trades, prices)
     summary = pd.DataFrame(summary_rows).sort_values("total_return", ascending=False)
     window_summary = _build_window_summary(nav, float(args.initial_cash))
 
@@ -3616,6 +3686,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "adaptive_decisions_csv": out_dir / "trusted_account_backtest_adaptive_decisions.csv",
         "adaptive_perf_csv": out_dir / "trusted_account_backtest_adaptive_perf.csv",
         "ledger_events_csv": out_dir / "trusted_account_backtest_ledger_events.csv",
+        "ledger_prices_csv": out_dir / "trusted_account_backtest_ledger_prices.csv",
         "json": out_dir / "trusted_account_backtest_report.json",
         "markdown": out_dir / "trusted_account_backtest_report.md",
     }
@@ -3630,6 +3701,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     adaptive_decisions.to_csv(paths["adaptive_decisions_csv"], index=False)
     adaptive_perf.to_csv(paths["adaptive_perf_csv"], index=False)
     ledger_events.to_csv(paths["ledger_events_csv"], index=False)
+    ledger_prices.to_csv(paths["ledger_prices_csv"], index=False)
 
     params = {
         "start_date": args.start_date,

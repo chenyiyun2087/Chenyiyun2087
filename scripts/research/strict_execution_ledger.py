@@ -18,7 +18,10 @@ REJECTED_T1_NOT_TRADABLE = "REJECTED_T1_NOT_TRADABLE"
 REJECTED_LIMIT_BLOCK = "REJECTED_LIMIT_BLOCK"
 PARTIAL_FILL = "PARTIAL_FILL"
 FILLED = "FILLED"
-CANCELLED = "CANCELLED"
+CANCELLED_T1_CLOSE = "CANCELLED_T1_CLOSE"
+# Compatibility alias for callers importing the old public constant.
+CANCELLED = CANCELLED_T1_CLOSE
+CORPORATE_ACTION_FREEZE = "CORPORATE_ACTION_FREEZE"
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,7 @@ class ExecutionLedger:
     event_rows: list[dict] = field(default_factory=list)
 
     def _append(self, event_type: str, **payload: object) -> None:
-        self.event_rows.append({"event_type": event_type, **payload})
+        self.event_rows.append({"event_type": event_type, "mark_price_basis": "raw", **payload})
 
     def plan(self, order: PrecommitOrder) -> None:
         self._append("order", order_status=PLANNED, **asdict(order))
@@ -88,6 +91,11 @@ class ExecutionLedger:
             self._append("corporate_action", order_status="APPLIED", symbol=action.symbol, ex_date=action.ex_date,
                          cash_delta=cash_delta, share_delta=stock_delta + split_delta, source_reason=action.source_reason)
 
+    def freeze(self, event_date: object, reason: str) -> None:
+        """Record a fail-closed corporate-action halt without mutating balances."""
+        self._append("corporate_action", order_status=CORPORATE_ACTION_FREEZE, event_date=event_date,
+                     source_reason=reason, cash_delta=0.0, share_delta=0)
+
     def execute(
         self,
         order: PrecommitOrder,
@@ -103,7 +111,8 @@ class ExecutionLedger:
             reason = reject_reason or "t1_not_tradable"
             result = {"order_status": status, "filled_shares": 0, "filled_price": None, "filled_notional": 0.0,
                       "fee": 0.0, "reject_reason": reason, "remaining_shares": planned}
-            self._append("order", order_id=order.order_id, symbol=order.symbol, side=order.side, **result)
+            self._append("order", order_id=order.order_id, symbol=order.symbol, side=order.side,
+                         signal_date=order.signal_date, execution_date=order.execution_date, planned_shares=planned, **result)
             self.cancel(order, planned, reason)
             return result
 
@@ -128,7 +137,8 @@ class ExecutionLedger:
         result = {"order_status": status, "filled_shares": filled, "filled_price": price if filled else None,
                   "filled_notional": gross, "fee": fee, "reject_reason": "" if filled else "insufficient_cash_or_shares",
                   "remaining_shares": remaining}
-        self._append("order", order_id=order.order_id, symbol=order.symbol, side=order.side, planned_shares=planned, **result)
+        self._append("order", order_id=order.order_id, symbol=order.symbol, side=order.side,
+                     signal_date=order.signal_date, execution_date=order.execution_date, planned_shares=planned, **result)
         if remaining:
             self.cancel(order, remaining, "unfilled_at_t1_close")
         return result
@@ -136,7 +146,9 @@ class ExecutionLedger:
     def cancel(self, order: PrecommitOrder, shares: int, reason: str) -> None:
         if shares > 0:
             self._append("order", order_id=order.order_id, symbol=order.symbol, side=order.side,
-                         order_status=CANCELLED, cancelled_shares=int(shares), cancel_reason=reason)
+                         signal_date=order.signal_date, execution_date=order.execution_date,
+                         order_status=CANCELLED_T1_CLOSE, cancelled_shares=int(shares), cancel_reason=reason,
+                         remaining_shares=0)
 
     def equity(self, raw_prices: dict[str, float]) -> float:
         return float(self.cash) + sum(int(self.shares.get(symbol, 0)) * float(raw_prices.get(symbol, 0.0) or 0.0) for symbol in self.shares)
