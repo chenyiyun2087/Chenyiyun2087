@@ -39,7 +39,7 @@ def test_every_missing_cap_input_fails_closed():
     ]
     for targets, decision in cases:
         cap = _strict_precommit_uplift_cap(decision, targets, 0.50, 0.70)
-        assert cap["risk_level"] == "missing_fail_closed"
+        assert cap["risk_level"] == "data_missing_fallback_to_v1"
         assert cap["fallback_to_v1"] is True
         assert cap["capped_ratio"] == 0.50
 

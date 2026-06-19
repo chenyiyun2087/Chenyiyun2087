@@ -33,6 +33,7 @@ class CorporateAction:
     stock_ratio: float = 0.0
     rights_ratio: float = 0.0
     rights_price: float | None = None
+    split_ratio: float = 0.0
     source_complete: bool = True
 
 
@@ -48,7 +49,7 @@ class CorporateActionProcessor:
 class ExecutionLedger:
     cash: float
     shares: dict[str, int] = field(default_factory=dict)
-    expected_cash: float | None = None
+    expected_equity: float | None = None
     event_rows: list[dict] = field(default_factory=list)
 
     def apply_corporate_actions(self, actions: Iterable[CorporateAction]) -> None:
@@ -60,9 +61,14 @@ class ExecutionLedger:
                 continue
             cash_delta = held * float(action.cash_per_share)
             stock_delta = int(round(held * float(action.stock_ratio)))
+            split_delta = int(round(held * float(action.split_ratio)))
+            if action.rights_ratio:
+                # The project policy is fail-closed unless a separate rights
+                # subscription cash source has been explicitly reconciled.
+                raise RuntimeError(f"rights_issue_requires_reconciliation:{action.symbol}:{action.ex_date}")
             self.cash += cash_delta
-            self.shares[action.symbol] = held + stock_delta
-            self.event_rows.append({"event_type": "corporate_action", "symbol": action.symbol, "cash_delta": cash_delta, "share_delta": stock_delta})
+            self.shares[action.symbol] = held + stock_delta + split_delta
+            self.event_rows.append({"event_type": "corporate_action", "symbol": action.symbol, "cash_delta": cash_delta, "share_delta": stock_delta + split_delta})
 
     def execute(self, order: PrecommitOrder, fill_price: float | None, tradable: bool, fee_rate: float) -> dict:
         if not tradable or fill_price is None or fill_price <= 0:
@@ -85,6 +91,6 @@ class ExecutionLedger:
 
     def reconciliation_error_bps(self, raw_prices: dict[str, float]) -> float:
         equity = self.cash + sum(int(self.shares.get(symbol, 0)) * float(price) for symbol, price in raw_prices.items())
-        if self.expected_cash is None or equity <= 0:
+        if self.expected_equity is None or equity <= 0:
             return 0.0
-        return abs(equity - self.expected_cash) / equity * 10_000.0
+        return abs(equity - self.expected_equity) / equity * 10_000.0

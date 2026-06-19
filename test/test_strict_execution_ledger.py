@@ -29,3 +29,14 @@ def test_incomplete_corporate_action_fails_closed():
     ledger = ExecutionLedger(cash=1_000.0, shares={"000001": 100})
     with pytest.raises(RuntimeError, match="incomplete_corporate_action"):
         ledger.apply_corporate_actions([CorporateAction("000001", "2026-01-02", source_complete=False)])
+
+
+def test_rights_issue_requires_explicit_reconciliation():
+    ledger = ExecutionLedger(cash=1_000.0, shares={"000001": 100})
+    with pytest.raises(RuntimeError, match="rights_issue_requires_reconciliation"):
+        ledger.apply_corporate_actions([CorporateAction("000001", "2026-01-02", rights_ratio=0.2, rights_price=5.0)])
+
+
+def test_reconciliation_compares_equity_not_cash():
+    ledger = ExecutionLedger(cash=500.0, shares={"000001": 100}, expected_equity=1_500.0)
+    assert ledger.reconciliation_error_bps({"000001": 10.0}) == 0.0

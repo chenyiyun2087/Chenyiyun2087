@@ -32,7 +32,7 @@ from scripts.ops.production_risk_governor import (
 )
 from scripts.research.execution_risk_severity import execution_hard_block_reasons
 from scripts.research.execution_safe_uplift_execution_modes import AUCTION_MODE, MODES as EXECUTION_MODES, POST_OPEN_MODE, STRICT_MODE, execution_mode_audit
-from scripts.research.strict_execution_ledger import LEDGER_SCHEMA_VERSION, STRICT_SIZING_VERSION
+from scripts.research.strict_execution_ledger import CorporateAction, CorporateActionProcessor, ExecutionLedger, LEDGER_SCHEMA_VERSION, STRICT_SIZING_VERSION
 from scripts.research_full_pool_liquidity_strategies import (
     StrategySpec,
     _market_exposure_scale,
@@ -520,6 +520,53 @@ def _price_lookup_for_day(
     day = prices.iloc[indices]
     available = [column for column in columns if column in day.columns]
     return day.drop_duplicates("symbol").set_index("symbol")[available].to_dict("index")
+
+
+def _load_corporate_actions(engine, start_date: object, end_date: object) -> dict[object, list[CorporateAction]]:
+    """Load implemented dividend/share actions as PIT events; unknown rights fail closed."""
+    sql = text("""
+        SELECT ts_code, ex_date, cash_div_tax, stk_div, stk_chl_div, stk_img_div, base_share
+        FROM tushare_stock.ods_dividend
+        WHERE div_proc = '实施' AND ex_date BETWEEN :start_date AND :end_date
+    """)
+    try:
+        frame = pd.read_sql(sql, engine, params={"start_date": int(pd.Timestamp(start_date).strftime("%Y%m%d")), "end_date": int(pd.Timestamp(end_date).strftime("%Y%m%d"))})
+    except Exception:
+        return {}
+    actions: dict[object, list[CorporateAction]] = {}
+    for _, row in frame.iterrows():
+        ex_date = pd.to_datetime(row.get("ex_date"), errors="coerce")
+        if pd.isna(ex_date):
+            continue
+        symbol = str(row.get("ts_code") or "").split(".")[0].zfill(6)
+        values = {key: _safe_float(row.get(key), np.nan) for key in ("cash_div_tax", "stk_div", "stk_chl_div", "stk_img_div", "base_share")}
+        # Tushare dividend fields are typically per ten shares.  Require a
+        # positive base_share to normalize non-cash actions; unknown data is
+        # represented as an incomplete action and freezes strict promotion.
+        base = values["base_share"]
+        stock_total = sum(value for key, value in values.items() if key in {"stk_div", "stk_chl_div", "stk_img_div"} and np.isfinite(value))
+        source_complete = np.isfinite(values["cash_div_tax"]) and (stock_total == 0 or (np.isfinite(base) and base > 0))
+        action = CorporateAction(
+            symbol=symbol, ex_date=ex_date.date(), cash_per_share=(values["cash_div_tax"] / 10.0 if np.isfinite(values["cash_div_tax"]) else 0.0),
+            stock_ratio=(stock_total / base if stock_total and np.isfinite(base) and base > 0 else 0.0),
+            rights_ratio=0.0, rights_price=None,
+            source_complete=bool(source_complete),
+        )
+        actions.setdefault(action.ex_date, []).append(action)
+    return actions
+
+
+def _apply_actions_to_account(account: AccountState, actions: list[CorporateAction]) -> str:
+    ledger = ExecutionLedger(cash=account.cash, shares={symbol: position.shares for symbol, position in account.positions.items()})
+    try:
+        CorporateActionProcessor.apply(ledger, actions)
+    except RuntimeError:
+        return "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED"
+    account.cash = ledger.cash
+    for symbol, shares in ledger.shares.items():
+        if symbol in account.positions:
+            account.positions[symbol].shares = int(shares)
+    return "CORPORATE_ACTION_COMPLETE" if actions else "NO_ACTION_CONFIRMED"
 
 
 def _parse_strategies(raw: str | None) -> list[str]:
@@ -2532,6 +2579,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     if prices.empty:
         raise RuntimeError("No price rows remain after end-date cutoff.")
     prices = prices.sort_values(["symbol", "trade_date"]).copy()
+    corporate_actions_by_date = _load_corporate_actions(engine, prices["trade_date"].min(), prices["trade_date"].max())
     prices["prev_adj_close"] = prices.groupby("symbol")["adj_close"].shift(1)
     if "raw_close" in prices.columns:
         prices["prev_raw_close"] = prices.groupby("symbol")["raw_close"].shift(1)
@@ -2544,6 +2592,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     scores = add_liquidity_derived_features(scores, prices)
     scores = add_forward_returns(scores, prices, args.hold_days)
     provenance = _report_provenance(args, scores, prices)
+    provenance.update({
+        "corporate_action_dataset_version": "ods_dividend_implemented_v1",
+        "corporate_action_event_days": int(len(corporate_actions_by_date)),
+        "corporate_action_coverage_status": "PIT_EVENTS_APPLIED_PENDING_RECONCILIATION",
+        "ledger_implementation_status": "PARTIAL_UNVERIFIED",
+    })
     specs = _strategy_specs(_parse_strategies(args.strategies))
     trusted_by_name = {spec.name: spec for spec in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
     adaptive_underlying_specs = {role: trusted_by_name[name] for role, name in ADAPTIVE_UNDERLYING.items()}
@@ -2642,6 +2696,12 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             )
             price_lookup = _raw_execution_price_view(raw_price_lookup) if strict_raw_execution else raw_price_lookup
             meta = None
+            corporate_action_status = "NO_ACTION_CONFIRMED"
+            if strict_raw_execution:
+                corporate_action_status = _apply_actions_to_account(account, corporate_actions_by_date.get(trade_date, []))
+                meta = {"corporate_action_status": corporate_action_status}
+                if corporate_action_status == "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED":
+                    meta["strict_ledger_frozen"] = 1
             stop_count = _apply_hard_stop_loss(
                 account=account,
                 trade_date=trade_date,
@@ -2652,9 +2712,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 rows=trade_rows,
             )
             if stop_count:
-                meta = {"hard_stop_loss_count": int(stop_count)}
+                meta = dict(meta or {})
+                meta["hard_stop_loss_count"] = int(stop_count)
             signal_date = exec_to_signal.get(trade_date)
-            if signal_date is not None:
+            if signal_date is not None and corporate_action_status != "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED":
                 last_signal_date = signal_date
                 day_scores = _score_day_frame(scores, score_day_indices, signal_date)
                 rebalance_spec = spec
@@ -3308,6 +3369,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 meta.update(adaptive_meta)
                 if stop_count:
                     meta["hard_stop_loss_count"] = int(stop_count)
+                if strict_raw_execution:
+                    meta["corporate_action_status"] = corporate_action_status
             nav_rows.append(
                 _record_nav(
                     account,

@@ -49,20 +49,22 @@ def run(backtest_dir: Path, output_dir: Path) -> dict[str, object]:
     drift = pd.to_numeric(strict_trades.get("open_weight_drift_bps"), errors="coerce").abs().dropna()
     drawdown_ok = float(strict["max_drawdown"]) >= float(v1["max_drawdown"]) - GATES["max_drawdown_delta"]
     ledger_ok = ledger_complete and (unexpected_cash.empty or float(unexpected_cash.max()) <= GATES["unexpected_cash_ratio"]) and (drift.empty or float(drift.quantile(0.95)) <= GATES["p95_weight_drift_bps"]) and (drift.empty or float(drift.max()) <= GATES["max_weight_drift_bps"])
+    reproducible = provenance.get("reproducibility_status") == "REPRODUCIBLE"
+    annualized_ok = float(strict["annualized_return"]) > float(v1["annualized_return"])
     if not causal:
         status = "LEDGER_INCOMPLETE_NON_PROMOTABLE"
     elif not ledger_complete:
         status = "CAUSAL_BUT_LEDGER_UNVERIFIED"
-    elif not ledger_ok:
-        status = "LEDGER_RECONCILED_RESEARCH_ONLY"
-    elif not drawdown_ok:
-        status = "ACCOUNT_LEVEL_RISK_VALIDATED"
+    elif not ledger_ok or not drawdown_ok or not annualized_ok or not reproducible:
+        status = "LEDGER_RECONCILED_RISK_REJECTED"
     else:
-        status = "READY_FOR_DISABLED_SHADOW_REVIEW"
+        status = "ACCOUNT_LEVEL_RISK_VALIDATED"
     # This is an eligibility review state, never an enablement command.
     result = {
         "backtest_dir": str(backtest_dir), "validation_status": status, "promotion_enabled": False,
         "causality_pass": causal, "report_reproducibility_status": provenance.get("reproducibility_status", "NON_REPRODUCIBLE"),
+        "reproducibility_gate_pass": reproducible, "annualized_return_gate_pass": annualized_ok,
+        "corporate_action_coverage_status": provenance.get("corporate_action_coverage_status", "UNKNOWN"),
         "ledger_complete": ledger_complete, "ledger_gate_pass": ledger_ok, "drawdown_gate_pass": drawdown_ok,
         "max_unexpected_cash_residual_ratio": float(unexpected_cash.max()) if not unexpected_cash.empty else None,
         "p95_weight_drift_bps": float(drift.quantile(0.95)) if not drift.empty else None,
