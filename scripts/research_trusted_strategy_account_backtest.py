@@ -2302,6 +2302,9 @@ def _rebalance(
         target = int(target_shares.get(symbol, 0))
         delta = target - current
         price = _safe_float(open_prices.get(symbol, {}).get("adj_open"), np.nan)
+        if strict_precommit and not bool(_safe_float(open_prices.get(symbol, {}).get("execution_tradable"), 0.0)):
+            trade_rows.append({"trade_date": execution_date, "symbol": symbol, "side": "SELL", "planned_shares": abs(delta), "filled_shares": 0, "filled_price": np.nan, "reject_reason": "t1_not_tradable", "reason": "strict_t1_execution_gate"})
+            continue
         if delta >= 0 or not np.isfinite(price) or price <= 0:
             continue
         sell_price = price * (1.0 - float(slippage_rate))
@@ -2326,6 +2329,9 @@ def _rebalance(
         target = int(target_shares.get(symbol, 0))
         delta = target - current
         price = _safe_float(open_prices.get(symbol, {}).get("adj_open"), np.nan)
+        if strict_precommit and not bool(_safe_float(open_prices.get(symbol, {}).get("execution_tradable"), 0.0)):
+            trade_rows.append({"trade_date": execution_date, "symbol": symbol, "side": "BUY", "planned_shares": max(0, delta), "filled_shares": 0, "filled_price": np.nan, "reject_reason": "t1_not_tradable", "reason": "strict_t1_execution_gate"})
+            continue
         if delta <= 0 or not np.isfinite(price) or price <= 0:
             continue
         buy_price = price * (1.0 + float(slippage_rate))
@@ -2702,15 +2708,17 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 meta = {"corporate_action_status": corporate_action_status}
                 if corporate_action_status == "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED":
                     meta["strict_ledger_frozen"] = 1
-            stop_count = _apply_hard_stop_loss(
-                account=account,
-                trade_date=trade_date,
-                price_lookup=price_lookup,
-                stop_loss_pct=args.hard_stop_loss_pct,
-                trade_cost_rate=args.trade_cost_rate,
-                slippage_rate=args.slippage_rate,
-                rows=trade_rows,
-            )
+            stop_count = 0
+            if corporate_action_status != "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED":
+                stop_count = _apply_hard_stop_loss(
+                    account=account,
+                    trade_date=trade_date,
+                    price_lookup=price_lookup,
+                    stop_loss_pct=args.hard_stop_loss_pct,
+                    trade_cost_rate=args.trade_cost_rate,
+                    slippage_rate=args.slippage_rate,
+                    rows=trade_rows,
+                )
             if stop_count:
                 meta = dict(meta or {})
                 meta["hard_stop_loss_count"] = int(stop_count)

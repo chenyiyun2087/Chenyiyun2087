@@ -72,7 +72,9 @@ class ExecutionLedger:
 
     def execute(self, order: PrecommitOrder, fill_price: float | None, tradable: bool, fee_rate: float) -> dict:
         if not tradable or fill_price is None or fill_price <= 0:
-            return {"filled_shares": 0, "filled_price": None, "reject_reason": "not_tradable"}
+            result = {"filled_shares": 0, "filled_price": None, "reject_reason": "not_tradable"}
+            self.event_rows.append({"event_type": "reject", "symbol": order.symbol, "side": order.side, **result})
+            return result
         planned = int(order.planned_shares)
         if order.side == "BUY":
             affordable = int(self.cash // (float(fill_price) * (1.0 + float(fee_rate))))
@@ -87,7 +89,9 @@ class ExecutionLedger:
             fee = gross * float(fee_rate)
             self.cash += gross - fee
             self.shares[order.symbol] = int(self.shares.get(order.symbol, 0)) - filled
-        return {"filled_shares": filled, "filled_price": float(fill_price), "filled_notional": gross, "fee": fee, "reject_reason": "" if filled == planned else "partial_fill"}
+        result = {"filled_shares": filled, "filled_price": float(fill_price), "filled_notional": gross, "fee": fee, "reject_reason": "" if filled == planned else "partial_fill"}
+        self.event_rows.append({"event_type": "fill", "symbol": order.symbol, "side": order.side, "planned_shares": planned, **result})
+        return result
 
     def reconciliation_error_bps(self, raw_prices: dict[str, float]) -> float:
         equity = self.cash + sum(int(self.shares.get(symbol, 0)) * float(price) for symbol, price in raw_prices.items())
