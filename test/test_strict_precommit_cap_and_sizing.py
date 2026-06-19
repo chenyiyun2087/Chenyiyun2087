@@ -72,7 +72,7 @@ def test_precommit_keeps_planned_share_count_when_open_differs():
         max_total_positions=1,
         position_ratio=1.0,
         calendar=[],
-        open_prices={"000001": {"adj_open": 11.3, "adj_close": 11.3}},
+        open_prices={"000001": {"adj_open": 11.3, "adj_close": 11.3, "execution_tradable": 1}},
         targets=targets,
         precommit_prices={"000001": {"raw_close": 10.0, "is_st": 0, "security_status_available": 1, "execution_tradable": 1}},
         strict_precommit=True,
@@ -98,4 +98,19 @@ def test_precommit_missing_security_status_does_not_create_a_fill():
     )
     assert trades == []
     assert candidates[0]["plan_reject_reason"] == "missing_security_status"
+    assert account.cash == 10_000.0
+
+
+def test_t1_untradable_order_is_rejected_without_resizing_plan():
+    account = AccountState(cash=10_000.0)
+    trades, candidates, _ = _rebalance(
+        account=account, signal_date=pd.Timestamp("2025-01-02").date(), execution_date=pd.Timestamp("2025-01-03").date(),
+        day_scores=pd.DataFrame(), spec=SimpleNamespace(name="strict-test"), top_n=1, hold_days=1, lot_size=100,
+        min_trade_value=0, trade_cost_rate=0.0, slippage_rate=0.0, max_total_positions=1, position_ratio=1.0,
+        calendar=[], open_prices={"000001": {"adj_open": 10.0, "adj_close": 10.0, "execution_tradable": 0}}, targets=_targets(),
+        precommit_prices={"000001": {"raw_close": 10.0, "is_st": 0, "security_status_available": 1, "execution_tradable": 1}},
+        strict_precommit=True,
+    )
+    assert candidates[0]["planned_shares"] == 900
+    assert trades[0]["reject_reason"] == "t1_not_tradable"
     assert account.cash == 10_000.0
