@@ -99,6 +99,7 @@ DEFAULT_STRATEGIES = [
     "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto",
     "production_governed_vol_position_v1_2b_gate_tuned",
     "production_governed_vol_position_v1_2b_execution_safe_uplift",
+    "production_governed_vol_position_v1_2b_strict_precommit_uplift",
     "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto",
     "production_governed_vol_position_v1_2b_fp_classified",
     "production_governed_vol_position_v1_2b_fp_classified_pattern_veto",
@@ -132,6 +133,7 @@ PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_STRATEGY_NAME = "production
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_dynamic_score_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME = "production_governed_vol_position_v1_2b_gate_tuned"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME = "production_governed_vol_position_v1_2b_execution_safe_uplift"
+PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME = "production_governed_vol_position_v1_2b_strict_precommit_uplift"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_gate_tuned_pattern_veto"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME = "production_governed_vol_position_v1_2b_fp_classified"
 PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME = "production_governed_vol_position_v1_2b_fp_classified_pattern_veto"
@@ -188,6 +190,7 @@ PRODUCTION_GOVERNED_STRATEGY_NAMES = {
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_DYNAMIC_SCORE_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME,
+    PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_STRATEGY_NAME,
     PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_FP_CLASSIFIED_PATTERN_VETO_STRATEGY_NAME,
@@ -1938,6 +1941,22 @@ def _execution_safe_uplift_preflight(
     }
 
 
+def _strict_precommit_uplift_cap(decision: dict[str, object], targets: pd.DataFrame, v1_ratio: float, planned_ratio: float) -> dict[str, object]:
+    """T-day-only cap for the strict uplift research candidate."""
+    top = targets.head(5) if not targets.empty else targets
+    vol = float(pd.to_numeric(top.get("avg_vol_20"), errors="coerce").max()) if "avg_vol_20" in top else 0.0
+    ret = float(pd.to_numeric(top.get("ret_1"), errors="coerce").max()) if "ret_1" in top else 0.0
+    amount_ratio = _safe_float(decision.get("market_amount_ratio_20"), 1.0)
+    industry = _safe_float(decision.get("top_industry_weight"), 0.0)
+    high = [vol > 0.045, ret >= 0.08, amount_ratio < 0.80, industry >= 0.45]
+    extreme = ret >= 0.095 or amount_ratio < 0.60 or sum(high) >= 2
+    if extreme:
+        return {"risk_level": "extreme", "reason": "precommit_extreme_risk", "capped_ratio": v1_ratio, "cap_applied": True}
+    if any(high):
+        return {"risk_level": "high", "reason": "precommit_high_risk", "capped_ratio": min(planned_ratio, v1_ratio + 0.05), "cap_applied": True}
+    return {"risk_level": "normal", "reason": "precommit_normal", "capped_ratio": planned_ratio, "cap_applied": False}
+
+
 def _rebalance(
     account: AccountState,
     signal_date: object,
@@ -2467,6 +2486,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     elif spec.name in {
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_STRATEGY_NAME,
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME,
+                        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME,
                         PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_GATE_TUNED_PATTERN_VETO_STRATEGY_NAME,
                     }:
                         governor = build_risk_governor_decision_v1_2b_gate_tuned(
@@ -2597,7 +2617,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                         rebalance_position_ratio = 0.0
 
                     execution_safe_meta: dict[str, object] = {}
-                    if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME:
+                    if spec.name in {PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_EXECUTION_SAFE_UPLIFT_STRATEGY_NAME, PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME}:
                         # Prepare the v1 route using the same T-day decision context, then select the
                         # final route only from T+1 open-visible execution proxy fields.
                         baseline_governor = build_risk_governor_decision(
@@ -2655,6 +2675,23 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             "execution_mode_status": mode_audit.status,
                             "execution_promotion_eligible": int(mode_audit.promotion_eligible),
                         }
+                        if spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME:
+                            cap = _strict_precommit_uplift_cap(decision, target_override, baseline_position_ratio, rebalance_position_ratio)
+                            execution_safe_meta.update(
+                                {
+                                    "precommit_uplift_risk_level": cap["risk_level"],
+                                    "precommit_uplift_cap_reason": cap["reason"],
+                                    "planned_uplift_ratio": float(rebalance_position_ratio - baseline_position_ratio),
+                                    "capped_uplift_ratio": float(cap["capped_ratio"] - baseline_position_ratio),
+                                    "precommit_cap_applied": int(bool(cap["cap_applied"])),
+                                }
+                            )
+                            rebalance_position_ratio = float(cap["capped_ratio"])
+                            if cap["risk_level"] == "extreme":
+                                governor = baseline_governor
+                                risk_decision = baseline_risk_decision
+                                rebalance_spec = baseline_spec
+                                target_override = baseline_targets
                         if bool(preflight["fallback_applied"]):
                             governor = baseline_governor
                             risk_decision = baseline_risk_decision

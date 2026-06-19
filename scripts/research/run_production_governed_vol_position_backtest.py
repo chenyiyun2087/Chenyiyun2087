@@ -23,6 +23,7 @@ DEFAULT_STRATEGIES = ",".join(
         "production_governed_vol_position_v1_2b_dynamic_score",
         "production_governed_vol_position_v1_2b_gate_tuned",
         "production_governed_vol_position_v1_2b_execution_safe_uplift",
+        "production_governed_vol_position_v1_2b_strict_precommit_uplift",
         "adaptive_market_style",
         "baseline_full_liquidity_detail_vol_position",
     ]
@@ -159,6 +160,7 @@ def main() -> None:
             "production_governed_vol_position_v1_2b_dynamic_score",
             "production_governed_vol_position_v1_2b_gate_tuned",
             "production_governed_vol_position_v1_2b_execution_safe_uplift",
+            "production_governed_vol_position_v1_2b_strict_precommit_uplift",
             "production_governed_vol_position_v1_2_recovery",
             "production_governed_vol_position_v1_2_recovery_pattern_veto",
             "production_governed_vol_position_v2",

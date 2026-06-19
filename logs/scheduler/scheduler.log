@@ -5764,3 +5764,6 @@
 2026-06-19 14:00:01,366 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-19 15:00:02,212 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-19 15:20:02,514 - INFO - Triggering task: sina_bs -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-19 16:00:02,908 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 16:30:03,258 - INFO - Triggering task: eastmoney_data -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-19 17:00:03,662 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
