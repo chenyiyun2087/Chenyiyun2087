@@ -15,7 +15,7 @@ STRATEGIES = [
     "production_governed_vol_position_v1_2b_strict_precommit_uplift",
 ]
 STRICT = STRATEGIES[-1]
-GATES = {"reconciliation_bps": 1.0, "unexpected_cash_ratio": 0.02, "p95_weight_drift_bps": 100.0, "max_weight_drift_bps": 300.0, "max_drawdown_delta": 0.03}
+GATES = {"reconciliation_bps": 1.0, "unexpected_cash_ratio": 0.02, "p95_weight_drift_bps": 100.0, "max_weight_drift_bps": 300.0, "max_drawdown_delta": 0.03, "missed_risk_events": 0}
 
 
 def _n(series: pd.Series) -> float:
@@ -23,10 +23,10 @@ def _n(series: pd.Series) -> float:
 
 
 def run(backtest_dir: Path, output_dir: Path) -> dict[str, object]:
-    files = {name: backtest_dir / name for name in ("trusted_account_backtest_summary.csv", "trusted_account_backtest_adaptive_decisions.csv", "trusted_account_backtest_trades.csv", "trusted_account_backtest_report.json")}
+    files = {name: backtest_dir / name for name in ("trusted_account_backtest_summary.csv", "trusted_account_backtest_adaptive_decisions.csv", "trusted_account_backtest_trades.csv", "trusted_account_backtest_nav.csv", "trusted_account_backtest_report.json")}
     if missing := [name for name, path in files.items() if not path.exists()]:
         raise RuntimeError(f"backtest artifacts missing: {missing}")
-    summary, decisions, trades = (pd.read_csv(files[name]) for name in ("trusted_account_backtest_summary.csv", "trusted_account_backtest_adaptive_decisions.csv", "trusted_account_backtest_trades.csv"))
+    summary, decisions, trades, nav = (pd.read_csv(files[name]) for name in ("trusted_account_backtest_summary.csv", "trusted_account_backtest_adaptive_decisions.csv", "trusted_account_backtest_trades.csv", "trusted_account_backtest_nav.csv"))
     report = json.loads(files["trusted_account_backtest_report.json"].read_text(encoding="utf-8"))
     selected = summary[summary["strategy"].isin(STRATEGIES)].copy()
     if set(selected["strategy"]) != set(STRATEGIES):
@@ -39,16 +39,24 @@ def run(backtest_dir: Path, output_dir: Path) -> dict[str, object]:
     provenance = report.get("provenance") or {}
     v1, strict = (selected[selected["strategy"].eq(name)].iloc[0] for name in (STRATEGIES[0], STRICT))
     causal = bool((strict_decisions["execution_mode"].eq("strict_t1_open_precommit") & strict_decisions["causality_pass"].eq(1)).all())
-    ledger_fields = {"unexpected_cash_residual_ratio", "open_weight_drift_bps"}
+    ledger_fields = {"unexpected_cash_residual_ratio", "open_weight_drift_bps", "order_status", "planned_shares", "filled_shares"}
     ledger_complete = (
         ledger_fields <= set(strict_trades.columns)
-        and provenance.get("ledger_schema_version") == "strict_daily_ledger_v1"
+        and provenance.get("ledger_schema_version") == "strict_daily_ledger_v2"
         and provenance.get("ledger_implementation_status") == "RECONCILED"
+        and provenance.get("corporate_action_coverage_status") == "RECONCILED"
     )
     unexpected_cash = pd.to_numeric(strict_trades.get("unexpected_cash_residual_ratio"), errors="coerce").dropna()
     drift = pd.to_numeric(strict_trades.get("open_weight_drift_bps"), errors="coerce").abs().dropna()
+    strict_nav = nav[nav["strategy"].eq(STRICT)].copy()
+    reconciliation = pd.to_numeric(strict_nav.get("ledger_reconciliation_error_bps"), errors="coerce").dropna()
+    wrong_t1_fills = strict_trades[
+        strict_trades.get("reject_reason", pd.Series(index=strict_trades.index, dtype=str)).eq("t1_not_tradable")
+        & pd.to_numeric(strict_trades.get("filled_shares"), errors="coerce").fillna(0).gt(0)
+    ]
+    missed_risk_events = int((strict_decisions.get("precommit_uplift_risk_level", pd.Series(dtype=str)) == "").sum())
     drawdown_ok = float(strict["max_drawdown"]) >= float(v1["max_drawdown"]) - GATES["max_drawdown_delta"]
-    ledger_ok = ledger_complete and (unexpected_cash.empty or float(unexpected_cash.max()) <= GATES["unexpected_cash_ratio"]) and (drift.empty or float(drift.quantile(0.95)) <= GATES["p95_weight_drift_bps"]) and (drift.empty or float(drift.max()) <= GATES["max_weight_drift_bps"])
+    ledger_ok = ledger_complete and (reconciliation.empty or float(reconciliation.max()) <= GATES["reconciliation_bps"]) and (unexpected_cash.empty or float(unexpected_cash.max()) <= GATES["unexpected_cash_ratio"]) and (drift.empty or float(drift.quantile(0.95)) <= GATES["p95_weight_drift_bps"]) and (drift.empty or float(drift.max()) <= GATES["max_weight_drift_bps"]) and wrong_t1_fills.empty and missed_risk_events == 0
     reproducible = provenance.get("reproducibility_status") == "REPRODUCIBLE"
     annualized_ok = float(strict["annualized_return"]) > float(v1["annualized_return"])
     if not causal:
@@ -66,6 +74,8 @@ def run(backtest_dir: Path, output_dir: Path) -> dict[str, object]:
         "reproducibility_gate_pass": reproducible, "annualized_return_gate_pass": annualized_ok,
         "corporate_action_coverage_status": provenance.get("corporate_action_coverage_status", "UNKNOWN"),
         "ledger_complete": ledger_complete, "ledger_gate_pass": ledger_ok, "drawdown_gate_pass": drawdown_ok,
+        "ledger_reconciliation_error_bps": float(reconciliation.max()) if not reconciliation.empty else None,
+        "t1_wrong_fill_count": int(len(wrong_t1_fills)), "missed_risk_events": missed_risk_events,
         "max_unexpected_cash_residual_ratio": float(unexpected_cash.max()) if not unexpected_cash.empty else None,
         "p95_weight_drift_bps": float(drift.quantile(0.95)) if not drift.empty else None,
         "max_weight_drift_bps": float(drift.max()) if not drift.empty else None,

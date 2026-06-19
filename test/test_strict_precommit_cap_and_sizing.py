@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
+from scripts.research.strict_execution_ledger import ExecutionLedger
+
 from scripts.research_trusted_strategy_account_backtest import (
     AccountState,
     _daily_limit_ratio,
@@ -72,18 +74,20 @@ def test_precommit_keeps_planned_share_count_when_open_differs():
         max_total_positions=1,
         position_ratio=1.0,
         calendar=[],
-        open_prices={"000001": {"adj_open": 11.3, "adj_close": 11.3, "execution_tradable": 1}},
+        open_prices={"000001": {"adj_open": 11.3, "adj_close": 11.3, "prev_adj_close": 10.0, "execution_tradable": 1}},
         targets=targets,
         precommit_prices={"000001": {"raw_close": 10.0, "is_st": 0, "security_status_available": 1, "execution_tradable": 1}},
         strict_precommit=True,
+        ledger=ExecutionLedger(cash=100_000.0),
     )
     assert candidates[0]["planned_price"] == 11.0
     assert candidates[0]["planned_shares"] == 9000
     assert trades[0]["planned_shares"] == 9000
-    assert trades[0]["filled_price"] == 11.3
-    assert trades[0]["filled_shares"] == 8800
-    assert trades[0]["reject_reason"] == "insufficient_cash_or_unfilled"
-    assert np.isclose(account.cash, 560.0)
+    assert trades[0]["filled_price"] is None
+    assert trades[0]["filled_shares"] == 0
+    assert trades[0]["order_status"] == "REJECTED_LIMIT_BLOCK"
+    assert trades[0]["reject_reason"] == "limit_block"
+    assert np.isclose(account.cash, 100_000.0)
 
 
 def test_precommit_missing_security_status_does_not_create_a_fill():
@@ -92,9 +96,10 @@ def test_precommit_missing_security_status_does_not_create_a_fill():
         account=account, signal_date=pd.Timestamp("2025-01-02").date(), execution_date=pd.Timestamp("2025-01-03").date(),
         day_scores=pd.DataFrame(), spec=SimpleNamespace(name="strict-test"), top_n=1, hold_days=1, lot_size=100,
         min_trade_value=0, trade_cost_rate=0.0, slippage_rate=0.0, max_total_positions=1, position_ratio=1.0,
-        calendar=[], open_prices={"000001": {"adj_open": 10.0, "adj_close": 10.0}}, targets=_targets(),
+        calendar=[], open_prices={"000001": {"adj_open": 10.0, "adj_close": 10.0, "prev_adj_close": 9.5}}, targets=_targets(),
         precommit_prices={"000001": {"raw_close": 10.0, "is_st": 0, "security_status_available": 0, "execution_tradable": 1}},
         strict_precommit=True,
+        ledger=ExecutionLedger(cash=10_000.0),
     )
     assert trades == []
     assert candidates[0]["plan_reject_reason"] == "missing_security_status"
@@ -107,9 +112,10 @@ def test_t1_untradable_order_is_rejected_without_resizing_plan():
         account=account, signal_date=pd.Timestamp("2025-01-02").date(), execution_date=pd.Timestamp("2025-01-03").date(),
         day_scores=pd.DataFrame(), spec=SimpleNamespace(name="strict-test"), top_n=1, hold_days=1, lot_size=100,
         min_trade_value=0, trade_cost_rate=0.0, slippage_rate=0.0, max_total_positions=1, position_ratio=1.0,
-        calendar=[], open_prices={"000001": {"adj_open": 10.0, "adj_close": 10.0, "execution_tradable": 0}}, targets=_targets(),
+        calendar=[], open_prices={"000001": {"adj_open": 10.0, "adj_close": 10.0, "prev_adj_close": 9.5, "execution_tradable": 0}}, targets=_targets(),
         precommit_prices={"000001": {"raw_close": 10.0, "is_st": 0, "security_status_available": 1, "execution_tradable": 1}},
         strict_precommit=True,
+        ledger=ExecutionLedger(cash=10_000.0),
     )
     assert candidates[0]["planned_shares"] == 900
     assert trades[0]["reject_reason"] == "t1_not_tradable"

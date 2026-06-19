@@ -32,7 +32,10 @@ from scripts.ops.production_risk_governor import (
 )
 from scripts.research.execution_risk_severity import execution_hard_block_reasons
 from scripts.research.execution_safe_uplift_execution_modes import AUCTION_MODE, MODES as EXECUTION_MODES, POST_OPEN_MODE, STRICT_MODE, execution_mode_audit
-from scripts.research.strict_execution_ledger import CorporateAction, CorporateActionProcessor, ExecutionLedger, LEDGER_SCHEMA_VERSION, STRICT_SIZING_VERSION
+from scripts.research.strict_execution_ledger import (
+    CorporateAction, CorporateActionProcessor, ExecutionLedger, LEDGER_SCHEMA_VERSION,
+    STRICT_SIZING_VERSION, PrecommitOrder,
+)
 from scripts.research_full_pool_liquidity_strategies import (
     StrategySpec,
     _market_exposure_scale,
@@ -280,8 +283,8 @@ def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: p
         "config_fingerprint": hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest(),
         "ledger_schema_version": LEDGER_SCHEMA_VERSION,
         "strict_sizing_version": STRICT_SIZING_VERSION,
-        # Corporate-action application is deliberately not claimed until the
-        # account loop consumes normalized PIT action events.
+        # The runner may use the ledger, but this remains PARTIAL until the
+        # corporate-action coverage data set is independently reconciled.
         "ledger_implementation_status": "PARTIAL_UNVERIFIED",
     }
 
@@ -522,7 +525,7 @@ def _price_lookup_for_day(
     return day.drop_duplicates("symbol").set_index("symbol")[available].to_dict("index")
 
 
-def _load_corporate_actions(engine, start_date: object, end_date: object) -> dict[object, list[CorporateAction]]:
+def _load_corporate_actions(engine, start_date: object, end_date: object) -> tuple[dict[object, list[CorporateAction]], str]:
     """Load implemented dividend/share actions as PIT events; unknown rights fail closed."""
     sql = text("""
         SELECT ts_code, ex_date, cash_div_tax, stk_div, stk_chl_div, stk_img_div, base_share
@@ -532,7 +535,9 @@ def _load_corporate_actions(engine, start_date: object, end_date: object) -> dic
     try:
         frame = pd.read_sql(sql, engine, params={"start_date": int(pd.Timestamp(start_date).strftime("%Y%m%d")), "end_date": int(pd.Timestamp(end_date).strftime("%Y%m%d"))})
     except Exception:
-        return {}
+        # A database error is not evidence of no corporate actions.  The caller
+        # freezes every strict session instead of silently running through it.
+        return {}, "SOURCE_UNAVAILABLE_FAIL_CLOSED"
     actions: dict[object, list[CorporateAction]] = {}
     for _, row in frame.iterrows():
         ex_date = pd.to_datetime(row.get("ex_date"), errors="coerce")
@@ -553,20 +558,69 @@ def _load_corporate_actions(engine, start_date: object, end_date: object) -> dic
             source_complete=bool(source_complete),
         )
         actions.setdefault(action.ex_date, []).append(action)
-    return actions
+    return actions, "PARTIAL_UNVERIFIED"
 
 
-def _apply_actions_to_account(account: AccountState, actions: list[CorporateAction]) -> str:
-    ledger = ExecutionLedger(cash=account.cash, shares={symbol: position.shares for symbol, position in account.positions.items()})
+def _sync_account_view_from_ledger(account: AccountState, ledger: ExecutionLedger, trade_date: object, metadata: dict[str, pd.Series] | None = None) -> None:
+    """Maintain AccountState solely as a strategy-facing view of the ledger."""
+    metadata = metadata or {}
+    account.cash = float(ledger.cash)
+    for symbol in list(account.positions):
+        if int(ledger.shares.get(symbol, 0)) <= 0:
+            account.positions.pop(symbol, None)
+    for symbol, shares in ledger.shares.items():
+        if shares <= 0:
+            continue
+        if symbol not in account.positions:
+            row = metadata.get(symbol)
+            account.positions[symbol] = Position(
+                symbol=symbol,
+                name=str(row.get("name") or "") if row is not None else "",
+                industry=str(row.get("industry") or "") if row is not None else "",
+                shares=int(shares), entry_date=trade_date, entry_price=0.0,
+            )
+        else:
+            account.positions[symbol].shares = int(shares)
+
+
+def _apply_actions_to_ledger(ledger: ExecutionLedger, actions: list[CorporateAction], source_status: str) -> str:
+    if source_status == "SOURCE_UNAVAILABLE_FAIL_CLOSED":
+        return source_status
     try:
         CorporateActionProcessor.apply(ledger, actions)
     except RuntimeError:
         return "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED"
-    account.cash = ledger.cash
-    for symbol, shares in ledger.shares.items():
-        if symbol in account.positions:
-            account.positions[symbol].shares = int(shares)
     return "CORPORATE_ACTION_COMPLETE" if actions else "NO_ACTION_CONFIRMED"
+
+
+def _strict_t1_execution_gate(symbol: str, side: str, price_info: dict[str, object]) -> tuple[bool, str]:
+    """Validate actual T+1 tradability; signal-day eligibility is insufficient."""
+    if not bool(_safe_float(price_info.get("execution_tradable"), 0.0)):
+        return False, "t1_not_tradable"
+    open_price = _safe_float(price_info.get("adj_open"), np.nan)
+    prev_close = _safe_float(price_info.get("prev_adj_close"), np.nan)
+    if not np.isfinite(open_price) or open_price <= 0 or not np.isfinite(prev_close) or prev_close <= 0:
+        return False, "missing_t1_execution_price"
+    ratio = _daily_limit_ratio(symbol, price_info.get("is_st"))
+    upper = round(prev_close * (1.0 + ratio), 2)
+    lower = round(prev_close * (1.0 - ratio), 2)
+    if side == "BUY" and open_price >= upper:
+        return False, "limit_block"
+    if side == "SELL" and open_price <= lower:
+        return False, "limit_block"
+    return True, ""
+
+
+def _ledger_trade_row(order: PrecommitOrder, result: dict[str, object], trade_date: object, reason: str) -> dict[str, object]:
+    return {
+        "trade_date": trade_date, "order_id": order.order_id, "symbol": order.symbol, "side": order.side,
+        "planned_shares": int(order.planned_shares), "planned_price": float(order.planned_price),
+        "planned_notional": float(order.planned_notional), "planned_fee": float(order.planned_fee),
+        "filled_shares": int(result.get("filled_shares") or 0), "filled_price": result.get("filled_price"),
+        "gross_amount": float(result.get("filled_notional") or 0.0), "cost": float(result.get("fee") or 0.0),
+        "order_status": result.get("order_status"), "reject_reason": result.get("reject_reason") or "",
+        "remaining_shares": int(result.get("remaining_shares") or 0), "reason": reason,
+    }
 
 
 def _parse_strategies(raw: str | None) -> list[str]:
@@ -2176,10 +2230,15 @@ def _rebalance(
     targets: pd.DataFrame | None = None,
     precommit_prices: dict[str, dict[str, object]] | None = None,
     strict_precommit: bool = False,
+    ledger: ExecutionLedger | None = None,
 ) -> tuple[list[dict], list[dict], dict[str, object]]:
     trade_rows: list[dict] = []
     candidate_rows: list[dict] = []
     targets = targets if targets is not None else _build_targets(day_scores, spec, top_n=top_n)
+    if strict_precommit and ledger is None:
+        raise ValueError("strict_precommit requires ExecutionLedger")
+    if strict_precommit:
+        _sync_account_view_from_ledger(account, ledger, execution_date)  # type: ignore[arg-type]
     if targets.empty:
         return trade_rows, candidate_rows, {"locked_count": 0, "candidate_count": 0, "executed": 0}
 
@@ -2302,13 +2361,23 @@ def _rebalance(
         target = int(target_shares.get(symbol, 0))
         delta = target - current
         price = _safe_float(open_prices.get(symbol, {}).get("adj_open"), np.nan)
-        if strict_precommit and not bool(_safe_float(open_prices.get(symbol, {}).get("execution_tradable"), 0.0)):
-            trade_rows.append({"trade_date": execution_date, "symbol": symbol, "side": "SELL", "planned_shares": abs(delta), "filled_shares": 0, "filled_price": np.nan, "reject_reason": "t1_not_tradable", "reason": "strict_t1_execution_gate"})
-            continue
         if delta >= 0 or not np.isfinite(price) or price <= 0:
             continue
         sell_price = price * (1.0 - float(slippage_rate))
         if abs(delta) * sell_price < float(min_trade_value):
+            continue
+        if strict_precommit:
+            planned = abs(delta)
+            budget = _safe_float(planned_prices.get(symbol), price)
+            order = PrecommitOrder(symbol, "SELL", planned, budget, planned * budget, planned * budget * trade_cost_rate,
+                                   signal_date, execution_date, f"{signal_date}:{symbol}:SELL")
+            ledger.plan(order)  # type: ignore[union-attr]
+            tradable, reject_reason = _strict_t1_execution_gate(symbol, "SELL", open_prices.get(symbol, {}))
+            result = ledger.execute(order, sell_price if tradable else None, tradable, trade_cost_rate, reject_reason=reject_reason, lot_size=lot_size)  # type: ignore[union-attr]
+            trade = _ledger_trade_row(order, result, execution_date, "strict_t1_execution")
+            trade["cash_after"] = float(ledger.cash)  # type: ignore[union-attr]
+            trade_rows.append(trade)
+            _sync_account_view_from_ledger(account, ledger, execution_date, by_symbol)  # type: ignore[arg-type]
             continue
         _execute_sell(
             account,
@@ -2329,15 +2398,28 @@ def _rebalance(
         target = int(target_shares.get(symbol, 0))
         delta = target - current
         price = _safe_float(open_prices.get(symbol, {}).get("adj_open"), np.nan)
-        if strict_precommit and not bool(_safe_float(open_prices.get(symbol, {}).get("execution_tradable"), 0.0)):
-            trade_rows.append({"trade_date": execution_date, "symbol": symbol, "side": "BUY", "planned_shares": max(0, delta), "filled_shares": 0, "filled_price": np.nan, "reject_reason": "t1_not_tradable", "reason": "strict_t1_execution_gate"})
-            continue
         if delta <= 0 or not np.isfinite(price) or price <= 0:
             continue
         buy_price = price * (1.0 + float(slippage_rate))
         if delta * buy_price < float(min_trade_value):
             continue
         lot_delta = _round_lot(delta, lot_size)
+        if strict_precommit:
+            budget = _safe_float(planned_prices.get(symbol), buy_price)
+            order = PrecommitOrder(symbol, "BUY", lot_delta, budget, lot_delta * budget, lot_delta * budget * trade_cost_rate,
+                                   signal_date, execution_date, f"{signal_date}:{symbol}:BUY")
+            ledger.plan(order)  # type: ignore[union-attr]
+            tradable, reject_reason = _strict_t1_execution_gate(symbol, "BUY", open_prices.get(symbol, {}))
+            result = ledger.execute(order, buy_price if tradable else None, tradable, trade_cost_rate, reject_reason=reject_reason, lot_size=lot_size)  # type: ignore[union-attr]
+            trade = _ledger_trade_row(order, result, execution_date, "strict_t1_execution")
+            trade["cash_after"] = float(ledger.cash)  # type: ignore[union-attr]
+            trade["open_weight_drift_bps"] = (
+                ((int(result.get("filled_shares") or 0) * buy_price / equity_before) - float(adjusted_weights.get(symbol, 0.0))) * 10_000.0
+                if equity_before > 0 else np.nan
+            )
+            trade_rows.append(trade)
+            _sync_account_view_from_ledger(account, ledger, execution_date, by_symbol)  # type: ignore[arg-type]
+            continue
         bought = _execute_buy(
             account,
             row=pd.Series(row),
@@ -2365,7 +2447,10 @@ def _rebalance(
         if bought < lot_delta and bought > 0 and lot_size > 0:
             account.positions[symbol].shares = _round_lot(account.positions[symbol].shares, lot_size)
 
-    equity_after = _equity(account, open_prices, "adj_open")
+    equity_after = (
+        ledger.equity({symbol: _safe_float(info.get("adj_open"), 0.0) for symbol, info in open_prices.items()})
+        if strict_precommit else _equity(account, open_prices, "adj_open")
+    )
     cash_ratio = float(account.cash / equity_after) if equity_after > 0 else np.nan
     intentional_cash_ratio = max(0.0, 1.0 - float(position_ratio))
     planned_notional = sum(int(shares) * float(planned_prices.get(symbol, 0.0)) for symbol, shares in target_shares.items())
@@ -2392,6 +2477,8 @@ def _rebalance(
             "planned_vs_filled_notional_gap": float(planned_notional - filled_notional),
             "planned_vs_filled_share_gap": int(planned_shares_total - filled_shares_total),
             "buy_order_shortfall_ratio": float(max(0, planned_notional - filled_notional) / planned_notional) if planned_notional > 0 else 0.0,
+            "t1_not_tradable_reject_count": int(sum(row.get("order_status") == "REJECTED_T1_NOT_TRADABLE" for row in trade_rows)),
+            "limit_block_reject_count": int(sum(row.get("order_status") == "REJECTED_LIMIT_BLOCK" for row in trade_rows)),
         },
     )
 
@@ -2585,7 +2672,9 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     if prices.empty:
         raise RuntimeError("No price rows remain after end-date cutoff.")
     prices = prices.sort_values(["symbol", "trade_date"]).copy()
-    corporate_actions_by_date = _load_corporate_actions(engine, prices["trade_date"].min(), prices["trade_date"].max())
+    corporate_actions_by_date, corporate_action_source_status = _load_corporate_actions(
+        engine, prices["trade_date"].min(), prices["trade_date"].max()
+    )
     prices["prev_adj_close"] = prices.groupby("symbol")["adj_close"].shift(1)
     if "raw_close" in prices.columns:
         prices["prev_raw_close"] = prices.groupby("symbol")["raw_close"].shift(1)
@@ -2599,9 +2688,9 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     scores = add_forward_returns(scores, prices, args.hold_days)
     provenance = _report_provenance(args, scores, prices)
     provenance.update({
-        "corporate_action_dataset_version": "ods_dividend_implemented_v1",
+        "corporate_action_dataset_version": "ods_dividend_implemented_v2",
         "corporate_action_event_days": int(len(corporate_actions_by_date)),
-        "corporate_action_coverage_status": "PIT_EVENTS_APPLIED_PENDING_RECONCILIATION",
+        "corporate_action_coverage_status": corporate_action_source_status,
         "ledger_implementation_status": "PARTIAL_UNVERIFIED",
     })
     specs = _strategy_specs(_parse_strategies(args.strategies))
@@ -2669,6 +2758,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     all_positions: list[pd.DataFrame] = []
     all_candidates: list[pd.DataFrame] = []
     all_adaptive_decisions: list[pd.DataFrame] = []
+    all_ledger_events: list[pd.DataFrame] = []
     summary_rows: list[dict] = []
     adaptive_perf = _build_adaptive_perf_table(
         scores,
@@ -2680,6 +2770,11 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
 
     for spec in specs:
         account = AccountState(cash=float(args.initial_cash))
+        strict_ledger = ExecutionLedger(cash=float(args.initial_cash)) if (
+            spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME
+            and args.execution_mode == STRICT_MODE
+        ) else None
+        strict_previous_factors: dict[str, float] = {}
         nav_rows: list[dict] = []
         trade_rows: list[dict] = []
         position_rows: list[dict] = []
@@ -2704,12 +2799,27 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             meta = None
             corporate_action_status = "NO_ACTION_CONFIRMED"
             if strict_raw_execution:
-                corporate_action_status = _apply_actions_to_account(account, corporate_actions_by_date.get(trade_date, []))
+                corporate_action_status = _apply_actions_to_ledger(
+                    strict_ledger, corporate_actions_by_date.get(trade_date, []), corporate_action_source_status
+                )
+                known_action_symbols = {action.symbol for action in corporate_actions_by_date.get(trade_date, [])}
+                if corporate_action_status != "SOURCE_UNAVAILABLE_FAIL_CLOSED":
+                    for symbol, shares in strict_ledger.shares.items():
+                        factor = _safe_float(raw_price_lookup.get(symbol, {}).get("adj_factor"), np.nan)
+                        previous = strict_previous_factors.get(symbol)
+                        if shares > 0 and previous is not None and np.isfinite(factor) and factor > 0 and not np.isclose(factor, previous) and symbol not in known_action_symbols:
+                            corporate_action_status = "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED"
+                            break
+                for symbol, info in raw_price_lookup.items():
+                    factor = _safe_float(info.get("adj_factor"), np.nan)
+                    if np.isfinite(factor) and factor > 0:
+                        strict_previous_factors[symbol] = factor
+                _sync_account_view_from_ledger(account, strict_ledger, trade_date)
                 meta = {"corporate_action_status": corporate_action_status}
-                if corporate_action_status == "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED":
+                if corporate_action_status in {"CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED", "SOURCE_UNAVAILABLE_FAIL_CLOSED"}:
                     meta["strict_ledger_frozen"] = 1
             stop_count = 0
-            if corporate_action_status != "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED":
+            if corporate_action_status not in {"CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED", "SOURCE_UNAVAILABLE_FAIL_CLOSED"}:
                 stop_count = _apply_hard_stop_loss(
                     account=account,
                     trade_date=trade_date,
@@ -2723,7 +2833,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 meta = dict(meta or {})
                 meta["hard_stop_loss_count"] = int(stop_count)
             signal_date = exec_to_signal.get(trade_date)
-            if signal_date is not None and corporate_action_status != "CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED":
+            if signal_date is not None and corporate_action_status not in {"CORPORATE_ACTION_UNKNOWN_FAIL_CLOSED", "SOURCE_UNAVAILABLE_FAIL_CLOSED"}:
                 last_signal_date = signal_date
                 day_scores = _score_day_frame(scores, score_day_indices, signal_date)
                 rebalance_spec = spec
@@ -3288,9 +3398,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     targets=target_override,
                     precommit_prices=_price_lookup_for_day(prices, price_day_indices, signal_date, price_lookup_columns),
                     strict_precommit=strict_raw_execution,
+                    ledger=strict_ledger,
                 )
                 for item in [*candidates, *trades]:
-                    for field in ("cash_residual_ratio", "intentional_cash_ratio", "planned_cash_buffer_ratio", "unexpected_cash_residual_ratio", "planned_vs_filled_notional_gap", "planned_vs_filled_share_gap", "buy_order_shortfall_ratio"):
+                    for field in ("cash_residual_ratio", "intentional_cash_ratio", "planned_cash_buffer_ratio", "unexpected_cash_residual_ratio", "planned_vs_filled_notional_gap", "planned_vs_filled_share_gap", "buy_order_shortfall_ratio", "t1_not_tradable_reject_count", "limit_block_reject_count"):
                         item[field] = rebalance_meta.get(field)
                 if spec.name in PSEUDO_STRATEGY_NAMES:
                     for item in candidates:
@@ -3379,16 +3490,21 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     meta["hard_stop_loss_count"] = int(stop_count)
                 if strict_raw_execution:
                     meta["corporate_action_status"] = corporate_action_status
-            nav_rows.append(
-                _record_nav(
-                    account,
-                    trade_date=trade_date,
-                    price_lookup=price_lookup,
-                    initial_cash=float(args.initial_cash),
-                    last_signal_date=last_signal_date,
-                    rebalance_meta=meta,
-                )
+            nav_row = _record_nav(
+                account,
+                trade_date=trade_date,
+                price_lookup=price_lookup,
+                initial_cash=float(args.initial_cash),
+                last_signal_date=last_signal_date,
+                rebalance_meta=meta,
             )
+            if strict_raw_execution:
+                raw_closes = {symbol: _safe_float(info.get("adj_close"), 0.0) for symbol, info in price_lookup.items()}
+                strict_ledger.expected_equity = float(nav_row["total_equity"])
+                nav_row["ledger_eod_equity"] = strict_ledger.equity(raw_closes)
+                nav_row["ledger_reconciliation_error_bps"] = strict_ledger.reconciliation_error_bps(raw_closes)
+                nav_row["ledger_event_count"] = int(len(strict_ledger.event_rows))
+            nav_rows.append(nav_row)
             position_rows.extend(_record_positions(account, trade_date, price_lookup, calendar))
 
         nav = pd.DataFrame(nav_rows)
@@ -3468,6 +3584,11 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         all_trades.append(trades)
         all_positions.append(positions)
         all_candidates.append(candidates)
+        if strict_ledger is not None:
+            events = pd.DataFrame(strict_ledger.event_rows)
+            if not events.empty:
+                events.insert(0, "strategy", spec.name)
+                all_ledger_events.append(events)
         if not adaptive_decisions.empty:
             adaptive_decisions.insert(0, "strategy", spec.name)
             all_adaptive_decisions.append(adaptive_decisions)
@@ -3477,6 +3598,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     positions = pd.concat(all_positions, ignore_index=True) if all_positions else pd.DataFrame()
     candidates = pd.concat(all_candidates, ignore_index=True) if all_candidates else pd.DataFrame()
     adaptive_decisions = pd.concat(all_adaptive_decisions, ignore_index=True) if all_adaptive_decisions else pd.DataFrame()
+    ledger_events = pd.concat(all_ledger_events, ignore_index=True) if all_ledger_events else pd.DataFrame()
     summary = pd.DataFrame(summary_rows).sort_values("total_return", ascending=False)
     window_summary = _build_window_summary(nav, float(args.initial_cash))
 
@@ -3493,6 +3615,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "window_summary_csv": out_dir / "trusted_account_backtest_window_summary.csv",
         "adaptive_decisions_csv": out_dir / "trusted_account_backtest_adaptive_decisions.csv",
         "adaptive_perf_csv": out_dir / "trusted_account_backtest_adaptive_perf.csv",
+        "ledger_events_csv": out_dir / "trusted_account_backtest_ledger_events.csv",
         "json": out_dir / "trusted_account_backtest_report.json",
         "markdown": out_dir / "trusted_account_backtest_report.md",
     }
@@ -3506,6 +3629,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     window_summary.to_csv(paths["window_summary_csv"], index=False)
     adaptive_decisions.to_csv(paths["adaptive_decisions_csv"], index=False)
     adaptive_perf.to_csv(paths["adaptive_perf_csv"], index=False)
+    ledger_events.to_csv(paths["ledger_events_csv"], index=False)
 
     params = {
         "start_date": args.start_date,

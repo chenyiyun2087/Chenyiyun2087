@@ -1,5 +1,7 @@
 # 回测报告索引
 
+> 2026-06-20 strict 唯一账本烟测：strict 预提交订单、T+1 成交/拒单/取消和公司行为事件已收敛至 `ExecutionLedger`，T+1 错成交数为 0。但烟测工作区为 dirty、公司行为覆盖仍为 `PARTIAL_UNVERIFIED`，验收状态固定为 `CAUSAL_BUT_LEDGER_UNVERIFIED`，`promotion_enabled=false`；不产生全历史绩效或晋级结论。详见 `2026-06-20_strict_ledger_唯一账本烟测摘要.md`。
+
 > 2026-06-19 strict precommit uplift 首轮账户级回测：`production_governed_vol_position_v1_2b_strict_precommit_uplift` 完成 2023-11-30 至 2026-06-18 的 616 日 T 日预提交/T+1 原始开盘固定股数路径。cap 输入覆盖率 100%、缺失回退 0 天，normal/high/extreme 为 91/205/318 日；表面结果为收益 +62.12%、年化 +21.89%、最大回撤 -26.40%。但当前执行账本缺少复权因子和公司行为调整，且平均现金残差 47.63%、最大开盘权重偏离 2,330.93bps，收益不可与 v1 严谨比较。结论：研究路径通过特征/因果审计，**不通过 production、shadow 或 canary 晋级**；先补齐执行基础数据后重跑。详见 `2026-06-19_strict_precommit_uplift_回测摘要.md`。
 
 > 2026-06-18 governed 矩阵验收更新：`production_governed_vol_position` 已作为当前生产默认底座，主选股引擎仍为 `baseline_full_liquidity_detail_vol_position`，风险总闸使用 `production_risk_governor`。2023-01-04 至 2026-06-17 三年 T+1 账户级回测收益 +19.94%、年化 +7.75%、最大回撤 -24.81%、`missed_risk_events=0`；`adaptive_market_style` 同期收益 +44.91%、年化 +16.44%、最大回撤 -26.68%，资本效率更强但先保留为挑战者和风险锚。`production_governed_adaptive_pattern_guard` 三年收益 -11.79%、最大回撤 -52.06%、`missed_risk_events=6`，不得进入生产候选。
