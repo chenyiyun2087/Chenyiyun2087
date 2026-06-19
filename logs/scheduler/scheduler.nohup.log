@@ -9,3 +9,13 @@
 2026-06-19 16:00:02,908 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-19 16:30:03,258 - INFO - Triggering task: eastmoney_data -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
 2026-06-19 17:00:03,662 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 18:00:04,459 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 19:00:05,723 - INFO - 2026-06-19 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-19 19:03:35,803 - ERROR - Error checking trade day: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+[SQL: SELECT is_open FROM chenyiyun.dim_trade_cal WHERE cal_date = %(date)s AND exchange = 'SSE' LIMIT 1]
+[parameters: {'date': '20260619'}]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-06-19 19:04:05,867 - ERROR - Error checking trade day: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on 'localhost' ([Errno 61] Connection refused)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-06-19 19:04:35,877 - ERROR - Error checking trade day: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on 'localhost' ([Errno 61] Connection refused)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
