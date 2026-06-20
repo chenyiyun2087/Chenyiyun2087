@@ -44,3 +44,12 @@ def test_snapshot_optionally_captures_security_lifecycle(tmp_path):
     manifest = build(source, tmp_path / "snapshot", "v1", lifecycle)
     assert manifest["lifecycle_row_count"] == 1
     assert (tmp_path / "snapshot/strict_security_lifecycle.csv").exists()
+
+
+def test_snapshot_atomizes_combined_source_event(tmp_path):
+    source = tmp_path / "actions.csv"
+    pd.DataFrame([{"symbol": "000001", "action_type": "dividend_stock", "effective_date": "2026-01-02", "source_event_id": "1", "as_of_timestamp": "2026-01-01T10:00:00+08:00", "source_complete": True, "cash_per_share": .1, "stock_ratio": .2}]).to_csv(source, index=False)
+    build(source, tmp_path / "snapshot", "v1")
+    saved = pd.read_csv(tmp_path / "snapshot/strict_corporate_actions.csv")
+    assert set(saved["action_type"]) == {"dividend_cash", "stock_bonus"}
+    assert saved["parent_source_event_id"].nunique() == 1

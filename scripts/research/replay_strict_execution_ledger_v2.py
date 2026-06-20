@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+from scripts.research.execution_market_rules import limit_prices, limit_ratio
 
 
 def _n(value, default=0.0):
@@ -22,18 +23,13 @@ def _strict(frame: pd.DataFrame) -> pd.DataFrame:
     return frame[frame["strategy"].astype(str).str.contains("strict_precommit", na=False)].copy()
 
 def _limit_ratio(symbol, is_st):
-    code=str(symbol).zfill(6)
-    if bool(_n(is_st)): return .05
-    if code.startswith(("300","301","688","689")): return .20
-    if code.startswith(("4","8","9")): return .30
-    return .10
+    return limit_ratio(symbol, is_st)
 
 def _gate(snap):
     op, prev = _n(getattr(snap,"raw_open"), float("nan")), _n(getattr(snap,"prev_raw_close"), float("nan"))
     if not bool(_n(getattr(snap,"execution_tradable"))) or bool(_n(getattr(snap,"is_suspended"))) or not bool(_n(getattr(snap,"is_listed"))): return False, "t1_not_tradable"
     if not pd.notna(op) or op<=0 or not pd.notna(prev) or prev<=0: return False,"missing_t1_execution_price"
-    ratio=_limit_ratio(getattr(snap,"symbol"),getattr(snap,"is_st")); side=str(getattr(snap,"side")); tick=_n(getattr(snap,"price_tick",.01),.01)
-    upper=round(prev*(1+ratio)/tick)*tick; lower=round(prev*(1-ratio)/tick)*tick
+    side=str(getattr(snap,"side")); upper, lower = limit_prices(prev, getattr(snap,"symbol"), getattr(snap,"is_st"), _n(getattr(snap,"price_tick",.01),.01))
     if side=="BUY" and op>=upper: return False,"limit_block"
     if side=="SELL" and op<=lower: return False,"limit_block"
     return True,""

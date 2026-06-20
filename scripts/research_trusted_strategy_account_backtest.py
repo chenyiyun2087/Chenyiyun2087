@@ -36,6 +36,7 @@ from scripts.research.strict_execution_ledger import (
     CorporateAction, CorporateActionProcessor, ExecutionLedger, LEDGER_SCHEMA_VERSION,
     STRICT_SIZING_VERSION, PrecommitOrder,
 )
+from scripts.research.execution_market_rules import MARKET_RULES_VERSION, limit_prices, limit_ratio
 from scripts.research_full_pool_liquidity_strategies import (
     StrategySpec,
     _market_exposure_scale,
@@ -481,14 +482,7 @@ def _round_lot(shares: float, lot_size: int) -> int:
 
 def _daily_limit_ratio(symbol: str, is_st: object) -> float:
     """Return the applicable A-share daily limit using only T-day metadata."""
-    code = str(symbol).zfill(6)
-    if bool(_safe_float(is_st, 0.0)):
-        return 0.05
-    if code.startswith(("300", "301", "688", "689")):
-        return 0.20
-    if code.startswith(("4", "8", "9")):
-        return 0.30
-    return 0.10
+    return limit_ratio(symbol, _safe_float(is_st, 0.0))
 
 
 def _precommit_budget_price(price_info: dict[str, object], symbol: str, buffer_rate: float = 0.10) -> float:
@@ -497,7 +491,7 @@ def _precommit_budget_price(price_info: dict[str, object], symbol: str, buffer_r
     pre_close = _safe_float(price_info.get("raw_close"), np.nan)
     if not np.isfinite(close) or close <= 0 or not np.isfinite(pre_close) or pre_close <= 0:
         return np.nan
-    limit_price = round(pre_close * (1.0 + _daily_limit_ratio(symbol, price_info.get("is_st"))), 2)
+    limit_price, _ = limit_prices(pre_close, symbol, price_info.get("is_st"))
     return float(min(close * (1.0 + float(buffer_rate)), limit_price))
 
 
@@ -559,6 +553,53 @@ def _load_corporate_action_snapshot(path: str | Path) -> tuple[dict[object, list
             action = CorporateAction(**{**action.__dict__, "settlement_price": None})
         actions.setdefault(action.ex_date, []).append(action)
     return actions, "SNAPSHOT_COMPLETE_UNRECONCILED", hashlib.sha256(snapshot.read_bytes()).hexdigest()
+
+
+def _validate_corporate_action_pit(actions_by_date: dict[object, list[CorporateAction]], calendar: list[object]) -> None:
+    ordered = sorted(calendar)
+    index = {day: position for position, day in enumerate(ordered)}
+    for effective_date, actions in actions_by_date.items():
+        if effective_date not in index or index[effective_date] == 0:
+            raise RuntimeError(f"corporate action effective date outside trading calendar: {effective_date}")
+        cutoff = pd.Timestamp(ordered[index[effective_date] - 1]).tz_localize("Asia/Shanghai") + pd.Timedelta(hours=15)
+        for action in actions:
+            as_of = pd.Timestamp(action.as_of_timestamp)
+            if as_of.tzinfo is None:
+                as_of = as_of.tz_localize("Asia/Shanghai")
+            announcement = pd.to_datetime(action.announcement_date, errors="coerce")
+            if as_of > cutoff or (pd.notna(announcement) and pd.Timestamp(announcement).date() > cutoff.date()):
+                raise RuntimeError(f"corporate_action_pit_cutoff_violation:{action.source_event_id}")
+
+
+def _verified_snapshot(path: str | Path, manifest_path: str | Path, manifest_key: str) -> tuple[pd.DataFrame, dict, str]:
+    snapshot, manifest_file = Path(path), Path(manifest_path)
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    digest = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+    if manifest.get(manifest_key) != digest:
+        raise RuntimeError(f"snapshot manifest hash mismatch: {snapshot.name}")
+    return pd.read_csv(snapshot), manifest, digest
+
+
+def _load_lifecycle_snapshot(path: str | Path, manifest_path: str | Path) -> tuple[pd.DataFrame, str]:
+    frame, _, digest = _verified_snapshot(path, manifest_path, "lifecycle_snapshot_sha256")
+    required = {"symbol", "effective_date", "is_listed", "is_suspended"}
+    if missing := sorted(required - set(frame.columns)):
+        raise RuntimeError(f"lifecycle snapshot missing fields: {missing}")
+    frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
+    frame["effective_date"] = pd.to_datetime(frame["effective_date"], errors="coerce").dt.date
+    if frame[["symbol", "effective_date"]].isna().any().any() or frame.duplicated(["symbol", "effective_date"]).any():
+        raise RuntimeError("invalid lifecycle snapshot identity")
+    return frame, digest
+
+
+def _apply_lifecycle_snapshot(prices: pd.DataFrame, lifecycle: pd.DataFrame) -> pd.DataFrame:
+    out = prices.merge(lifecycle.rename(columns={"effective_date": "trade_date", "is_listed": "snapshot_is_listed", "is_suspended": "snapshot_is_suspended"}), on=["symbol", "trade_date"], how="left")
+    if out[["snapshot_is_listed", "snapshot_is_suspended"]].isna().any().any():
+        raise RuntimeError("lifecycle snapshot missing a price/session status")
+    out["is_listed"] = pd.to_numeric(out["snapshot_is_listed"], errors="coerce")
+    out["is_suspended"] = pd.to_numeric(out["snapshot_is_suspended"], errors="coerce")
+    out["execution_tradable"] = ((out["is_listed"] == 1) & (out["is_suspended"] == 0) & pd.to_numeric(out.get("raw_volume"), errors="coerce").fillna(0).gt(0)).astype(int)
+    return out.drop(columns=["snapshot_is_listed", "snapshot_is_suspended"])
 
 
 def _load_corporate_actions(engine, start_date: object, end_date: object) -> tuple[dict[object, list[CorporateAction]], str]:
@@ -638,8 +679,7 @@ def _strict_t1_execution_gate(symbol: str, side: str, price_info: dict[str, obje
     if not np.isfinite(open_price) or open_price <= 0 or not np.isfinite(prev_close) or prev_close <= 0:
         return False, "missing_t1_execution_price"
     ratio = _daily_limit_ratio(symbol, price_info.get("is_st"))
-    upper = round(prev_close * (1.0 + ratio), 2)
-    lower = round(prev_close * (1.0 - ratio), 2)
+    upper, lower = limit_prices(prev_close, symbol, price_info.get("is_st"))
     if side == "BUY" and open_price >= upper:
         return False, "limit_block"
     if side == "SELL" and open_price <= lower:
@@ -2202,7 +2242,7 @@ STRICT_CAP_REQUIRED_FIELDS = (
 )
 
 
-def _strict_precommit_uplift_cap(decision: dict[str, object], targets: pd.DataFrame, v1_ratio: float, planned_ratio: float) -> dict[str, object]:
+def _strict_precommit_uplift_cap(decision: dict[str, object], targets: pd.DataFrame, v1_ratio: float, planned_ratio: float, profile: str = "strict_cap") -> dict[str, object]:
     """Apply the T-day-only strict uplift cap, failing closed on incomplete inputs."""
     top = targets.head(5) if not targets.empty else targets
     vol = float(pd.to_numeric(top["vol_20"], errors="coerce").max()) if "vol_20" in top else np.nan
@@ -2241,10 +2281,16 @@ def _strict_precommit_uplift_cap(decision: dict[str, object], targets: pd.DataFr
     trigger_count = int(sum(high))
     base["cap_trigger_count"] = trigger_count
     extreme = ret >= 0.095 or amount_ratio < 0.60 or trigger_count >= 2
+    if profile == "no_cap":
+        return {**base, "risk_level": "normal", "reason": "cap_ablation_no_cap", "capped_ratio": planned_ratio, "cap_applied": False, "fallback_to_v1": False}
     if extreme:
-        return {**base, "risk_level": "extreme", "reason": "precommit_extreme_risk", "capped_ratio": v1_ratio, "cap_applied": True, "fallback_to_v1": True}
+        if profile in {"extreme_only", "strict_cap"}:
+            return {**base, "risk_level": "extreme", "reason": "precommit_extreme_risk", "capped_ratio": v1_ratio, "cap_applied": True, "fallback_to_v1": True}
+        return {**base, "risk_level": "extreme", "reason": "cap_ablation_extreme_uncapped", "capped_ratio": planned_ratio, "cap_applied": False, "fallback_to_v1": False}
     if any(high):
-        return {**base, "risk_level": "high", "reason": "precommit_high_risk", "capped_ratio": min(planned_ratio, v1_ratio + 0.05), "cap_applied": True, "fallback_to_v1": False}
+        if profile in {"high_v1_plus_5pct", "strict_cap"}:
+            return {**base, "risk_level": "high", "reason": "precommit_high_risk", "capped_ratio": min(planned_ratio, v1_ratio + 0.05), "cap_applied": True, "fallback_to_v1": False}
+        return {**base, "risk_level": "high", "reason": "cap_ablation_high_uncapped", "capped_ratio": planned_ratio, "cap_applied": False, "fallback_to_v1": False}
     return {**base, "risk_level": "normal", "reason": "precommit_normal", "capped_ratio": planned_ratio, "cap_applied": False, "fallback_to_v1": False}
 
 
@@ -2750,8 +2796,8 @@ def _build_strict_execution_snapshot(trades: pd.DataFrame, prices: pd.DataFrame)
             "daily_limit_ratio": _daily_limit_ratio(symbol, info.get("is_st")), "independent_gate_pass": int(tradable),
             "independent_gate_reason": gate_reason, "cost_rate": _safe_float(order.get("cost_rate"), np.nan),
             "lot_size": _safe_float(order.get("lot_size"), np.nan), "slippage_rate": 0.0, "price_tick": 0.01,
-            "upper_limit_price": round(_safe_float(info.get("prev_raw_close"), 0.0) * (1 + _daily_limit_ratio(symbol, info.get("is_st"))), 2),
-            "lower_limit_price": round(_safe_float(info.get("prev_raw_close"), 0.0) * (1 - _daily_limit_ratio(symbol, info.get("is_st"))), 2),
+            "upper_limit_price": limit_prices(_safe_float(info.get("prev_raw_close"), 0.0), symbol, info.get("is_st"))[0],
+            "lower_limit_price": limit_prices(_safe_float(info.get("prev_raw_close"), 0.0), symbol, info.get("is_st"))[1],
         })
     return pd.DataFrame(rows)
 
@@ -2769,6 +2815,11 @@ def _validate_strict_execution_arguments(args: argparse.Namespace) -> None:
 def run_account_backtest(args: argparse.Namespace) -> dict:
     args = _apply_risk_profile_defaults(args)
     _validate_strict_execution_arguments(args)
+    requested_strategies = set(_parse_strategies(args.strategies))
+    raw_ledger_strategies = {"production_governed_vol_position", "production_governed_vol_position_v1_2b_gate_tuned", PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME}
+    requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies)
+    if requires_frozen_inputs and not all((args.corporate_action_snapshot, args.corporate_action_manifest, args.security_lifecycle_snapshot, args.security_lifecycle_manifest)):
+        raise ValueError("raw-ledger research requires verified corporate-action and lifecycle snapshots")
     ashare_weight_config = _resolve_ashare_weight_config(
         profile=getattr(args, "ashare_weight_profile", None),
         release_tier=getattr(args, "ashare_release_tier", None),
@@ -2797,13 +2848,17 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     if prices.empty:
         raise RuntimeError("No price rows remain after end-date cutoff.")
     prices = prices.sort_values(["symbol", "trade_date"]).copy()
-    if args.corporate_action_snapshot:
+    if requires_frozen_inputs:
+        _, corporate_manifest, corporate_action_snapshot_hash = _verified_snapshot(args.corporate_action_snapshot, args.corporate_action_manifest, "snapshot_sha256")
         corporate_actions_by_date, corporate_action_source_status, corporate_action_snapshot_hash = _load_corporate_action_snapshot(args.corporate_action_snapshot)
+        lifecycle, lifecycle_snapshot_hash = _load_lifecycle_snapshot(args.security_lifecycle_snapshot, args.security_lifecycle_manifest)
+        prices = _apply_lifecycle_snapshot(prices, lifecycle)
     else:
         corporate_actions_by_date, corporate_action_source_status = _load_corporate_actions(
             engine, prices["trade_date"].min(), prices["trade_date"].max()
         )
         corporate_action_snapshot_hash = None
+        lifecycle_snapshot_hash = None
     prices["prev_adj_close"] = prices.groupby("symbol")["adj_close"].shift(1)
     if "raw_close" in prices.columns:
         prices["prev_raw_close"] = prices.groupby("symbol")["raw_close"].shift(1)
@@ -2821,6 +2876,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "corporate_action_event_days": int(len(corporate_actions_by_date)),
         "corporate_action_coverage_status": corporate_action_source_status,
         "corporate_action_snapshot_sha256": corporate_action_snapshot_hash,
+        "security_lifecycle_snapshot_sha256": lifecycle_snapshot_hash,
+        "market_rules_version": MARKET_RULES_VERSION,
         "ledger_implementation_status": "PARTIAL_UNVERIFIED",
     })
     specs = _strategy_specs(_parse_strategies(args.strategies))
@@ -2851,6 +2908,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     market_env = build_market_environment(scores, prices)
     scores = attach_market_environment(scores, market_env)
     calendar = sorted(prices["trade_date"].dropna().unique().tolist())
+    if requires_frozen_inputs:
+        _validate_corporate_action_pit(corporate_actions_by_date, calendar)
     price_lookup_columns = [
         col
         for col in ["adj_open", "adj_high", "adj_low", "adj_close", "prev_adj_close", "prev_raw_close", "amount", "amount_ma20", "raw_open", "raw_high", "raw_low", "raw_close", "raw_pre_close", "raw_volume", "raw_amount", "is_st", "circ_mv", "list_date", "security_status_available", "execution_tradable"]
@@ -3206,7 +3265,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                                 **decision,
                                 "top_industry_weight": _industry_concentration(target_override).get("top_industry_weight"),
                             }
-                            cap = _strict_precommit_uplift_cap(cap_decision, target_override, baseline_position_ratio, rebalance_position_ratio)
+                            cap = _strict_precommit_uplift_cap(cap_decision, target_override, baseline_position_ratio, rebalance_position_ratio, args.strict_cap_profile)
                             execution_safe_meta.update(
                                 {
                                     "precommit_uplift_risk_level": cap["risk_level"],
@@ -3887,6 +3946,10 @@ def main() -> None:
     parser.add_argument("--execution-mode", default=STRICT_MODE, choices=EXECUTION_MODES)
     parser.add_argument("--allow-daily-proxy-approximation", action="store_true")
     parser.add_argument("--corporate-action-snapshot", default=None, help="Immutable strict corporate-action CSV generated by build_strict_corporate_action_snapshot.py")
+    parser.add_argument("--corporate-action-manifest", default=None)
+    parser.add_argument("--security-lifecycle-snapshot", default=None)
+    parser.add_argument("--security-lifecycle-manifest", default=None)
+    parser.add_argument("--strict-cap-profile", choices=["no_cap", "extreme_only", "high_v1_plus_5pct", "strict_cap"], default="strict_cap")
     parser.add_argument(
         "--risk-profile",
         default=DEFAULT_RISK_PROFILE,
