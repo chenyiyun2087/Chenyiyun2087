@@ -1,0 +1,61 @@
+{
+  "baseline_id": "strict-ledger-core.v1",
+  "expected": {
+    "artifacts": {
+      "events": {
+        "row_count": 4,
+        "sha256": "d5dfe5826d8812c30e75855ce1d061d586071bf51d9cd7808b688aeb990314ff"
+      },
+      "nav": {
+        "row_count": 2,
+        "sha256": "2a918c1d22047cc71190bcbc783c45daf4f85fd1774dba5f102032bac456bc15"
+      },
+      "prices": {
+        "row_count": 2,
+        "sha256": "5201a3c8933fa50864e1c0061ed239126657cc7058955581115c92b6e4ac5d52"
+      }
+    },
+    "invariants": {
+      "corporate_actions_pre_execution": true,
+      "execution_mode": "strict_t1_open_precommit",
+      "mark_price_basis": "raw",
+      "replay_pass": true
+    },
+    "metrics": {
+      "end_equity": 1010.0,
+      "max_event_replay_error_bps": 0.0,
+      "max_ledger_vs_nav_error_bps": 0.0,
+      "start_equity": 1000.0
+    },
+    "selection": {
+      "symbols": [
+        "000001"
+      ]
+    }
+  },
+  "metadata": {
+    "approval": "initial bootstrap baseline; changes require reviewed baseline update",
+    "component": "strict_execution_ledger",
+    "fixture_id": "strict-ledger-core-fixture.v1",
+    "owner": "research-runtime"
+  },
+  "schema_version": "1.0",
+  "tolerances": {
+    "metrics.end_equity": {
+      "absolute": 0.0
+    },
+    "metrics.max_event_replay_error_bps": {
+      "absolute": 0.0
+    },
+    "metrics.max_ledger_vs_nav_error_bps": {
+      "absolute": 0.0
+    },
+    "metrics.start_equity": {
+      "absolute": 0.0
+    },
+    "selection.symbols": {
+      "max_symbol_changes": 0,
+      "order_sensitive": true
+    }
+  }
+}
