@@ -60,7 +60,16 @@ TASKS = {
         "description": "Daily Data Pipeline",
         "type": "pipeline",
         "trading_day_only": True,
-    }
+    },
+    "dual_strategy_analysis": {
+        "time": "22:00",
+        "script": "scripts/ops/run_dual_strategy_analysis.py",
+        "args": ["--notify-feishu"],
+        "description": "Dual-strategy confrontation analysis + Feishu 4-card push",
+        "type": "script",
+        "trading_day_only": True,
+        "append_date": False,
+    },
 }
 
 # Setup Logging
@@ -484,7 +493,7 @@ def main():
                 args = list(config["args"])
                 if bool(config.get("append_date", True)):
                     args.append(date_str)
-                elif task_name == "sina_bs_image_weekly_cleanup":
+                elif task_name in ("sina_bs_image_weekly_cleanup", "dual_strategy_analysis"):
                     args.extend(["--date", date_str])
                 run_script(config["script"], args, task_name)
 
