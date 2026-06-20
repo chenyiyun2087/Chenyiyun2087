@@ -475,18 +475,6 @@ ORDER_PERMISSION_GRADE_RULES = {
         "manual_confirmation_required": False,
         "allow_sell_only": True,
     },
-    "STALE": {
-        "allow_new_buys": False,
-        "emit_orders": False,
-        "manual_confirmation_required": False,
-        "allow_sell_only": True,
-    },
-    "UNKNOWN": {
-        "allow_new_buys": True,
-        "emit_orders": True,
-        "manual_confirmation_required": True,
-        "allow_sell_only": False,
-    },
 }
 
 
@@ -538,19 +526,23 @@ def resolve_order_permission(
       allow_new_buys, emit_orders, manual_confirmation_required, allow_sell_only,
       health_grade, health_date, freeze_reason
     """
-    # No prior health record → fail-safe: YELLOW (require human confirmation)
+    # No prior health record → fail-safe: YELLOW (require human confirmation).
+    # UNKNOWN is a substatus of YELLOW, not a separate grade.
     if previous_health is None:
         return {
             "allow_new_buys": True,
             "emit_orders": True,
             "manual_confirmation_required": True,
             "allow_sell_only": False,
-            "health_grade": "UNKNOWN",
+            "health_grade": "YELLOW",
+            "health_substatus": "UNKNOWN",
             "health_date": None,
             "freeze_reason": "No prior health record — orders require manual confirmation (fail-safe).",
         }
 
-    # Staleness check: if the health record is too old, treat as RED
+    # Staleness check: if the health record is too old, treat as RED.
+    # STALE is a substatus of RED, not a separate 4th grade — downstream
+    # consumers (Feishu, dashboard, DB) only expect GREEN/YELLOW/RED.
     health_date_str = str(previous_health.get("as_of_date", ""))
     trading_days_behind = previous_health.get("_trading_days_behind")
     if trading_days_behind is not None and int(trading_days_behind) > max_stale_trading_days:
@@ -559,7 +551,8 @@ def resolve_order_permission(
             "emit_orders": False,
             "manual_confirmation_required": False,
             "allow_sell_only": True,
-            "health_grade": "STALE",
+            "health_grade": "RED",
+            "health_substatus": "STALE",
             "health_date": health_date_str,
             "freeze_reason": (
                 f"Health record is {trading_days_behind} trading days old "
@@ -592,6 +585,7 @@ def resolve_order_permission(
         "manual_confirmation_required": bool(rules["manual_confirmation_required"]),
         "allow_sell_only": bool(rules["allow_sell_only"]),
         "health_grade": grade,
+        "health_substatus": None,
         "health_date": health_date,
         "freeze_reason": freeze_reason,
     }

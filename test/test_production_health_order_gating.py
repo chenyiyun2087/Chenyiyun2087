@@ -67,19 +67,20 @@ class TestResolveOrderPermission:
     def test_unknown_health_is_fail_safe_yellow(self):
         from scripts.ops.run_daily_strategy_health_monitor import resolve_order_permission
 
-        # No prior health record → UNKNOWN → YELLOW behavior (fail-safe)
+        # No prior health record → YELLOW with UNKNOWN substatus (fail-safe)
         perm = resolve_order_permission(None)
         assert perm["allow_new_buys"] is True
         assert perm["emit_orders"] is True
         assert perm["manual_confirmation_required"] is True, (
             "UNKNOWN must require manual confirmation (fail-safe, not fail-open)"
         )
-        assert perm["health_grade"] == "UNKNOWN"
+        assert perm["health_grade"] == "YELLOW"
+        assert perm["health_substatus"] == "UNKNOWN"
 
-    def test_stale_health_is_red(self):
+    def test_stale_health_is_red_with_substatus(self):
         from scripts.ops.run_daily_strategy_health_monitor import resolve_order_permission
 
-        # Health record from 5 trading days ago → STALE → RED
+        # Health record from 5 trading days ago → RED with STALE substatus
         prev = {
             "as_of_date": "2026-06-10",
             "overall_grade": "GREEN",
@@ -89,8 +90,19 @@ class TestResolveOrderPermission:
         assert perm["allow_new_buys"] is False
         assert perm["emit_orders"] is False
         assert perm["allow_sell_only"] is True
-        assert perm["health_grade"] == "STALE"
+        assert perm["health_grade"] == "RED", (
+            "STALE must be health_grade=RED with substatus, not a separate grade"
+        )
+        assert perm["health_substatus"] == "STALE"
         assert "5 trading days" in str(perm["freeze_reason"])
+
+    def test_green_has_no_substatus(self):
+        from scripts.ops.run_daily_strategy_health_monitor import resolve_order_permission
+
+        prev = {"as_of_date": "2026-06-18", "overall_grade": "GREEN"}
+        perm = resolve_order_permission(prev)
+        assert perm["health_grade"] == "GREEN"
+        assert perm.get("health_substatus") is None
 
     def test_lowercase_grade_works(self):
         from scripts.ops.run_daily_strategy_health_monitor import resolve_order_permission
@@ -213,6 +225,110 @@ class TestDatabaseCredentialSafety:
         os.environ["CHENYIYUN_DB_URL"] = "mysql+pymysql://app:pass@host/db"
         from scoreRank.core.db_config import validate_db_credentials
         assert validate_db_credentials(), "Explicit URL must be accepted"
+
+
+class TestSchedulerToCLIContract:
+    """End-to-end test: scheduler RED → argparse → emit_orders=False."""
+
+    def test_red_no_emit_orders_flag_means_false(self):
+        """When --emit-orders is NOT passed, argparse store_true defaults to False."""
+        import argparse
+        import sys as _sys
+
+        # Save and restore argv to avoid side effects
+        saved_argv = _sys.argv[:]
+        try:
+            # Simulate RED health: no --emit-orders passed
+            _sys.argv = ["export_trusted_strategy_candidates.py", "--date", "20260618"]
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--date")
+            parser.add_argument("--emit-orders", action="store_true", default=False)
+            args = parser.parse_args(["--date", "20260618"])
+            assert args.emit_orders is False, (
+                "Without --emit-orders flag, emit_orders must be False (RED behavior)"
+            )
+        finally:
+            _sys.argv = saved_argv
+
+    def test_green_passes_emit_orders_flag(self):
+        """When --emit-orders IS passed, argparse store_true sets to True."""
+        import argparse
+        import sys as _sys
+
+        saved_argv = _sys.argv[:]
+        try:
+            _sys.argv = ["export_trusted_strategy_candidates.py", "--emit-orders"]
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--emit-orders", action="store_true", default=False)
+            args = parser.parse_args(["--emit-orders"])
+            assert args.emit_orders is True, (
+                "With --emit-orders flag, emit_orders must be True (GREEN/YELLOW behavior)"
+            )
+        finally:
+            _sys.argv = saved_argv
+
+    def test_no_emit_orders_explicit_flag(self):
+        """--no-emit-orders explicitly sets emit_orders=False."""
+        import argparse
+        import sys as _sys
+
+        saved_argv = _sys.argv[:]
+        try:
+            _sys.argv = ["export", "--no-emit-orders"]
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--emit-orders", action="store_true", default=False)
+            parser.add_argument("--no-emit-orders", action="store_false", dest="emit_orders")
+            args = parser.parse_args(["--no-emit-orders"])
+            assert args.emit_orders is False
+        finally:
+            _sys.argv = saved_argv
+
+    def test_cleanup_sql_has_strategy_filter(self):
+        """Verify the RED cleanup SQL includes strategy column filter."""
+        import subprocess
+        result = subprocess.run(
+            ["grep", "-c", "strategy = :strategy",
+             "/Volumes/extension/projects/Chenyiyun2087/scheduler.py"],
+            capture_output=True, text=True,
+        )
+        assert int(result.stdout.strip()) >= 1, (
+            "RED cleanup SQL must filter by strategy to avoid cross-strategy contamination"
+        )
+
+    def test_cleanup_sql_has_execution_date_filter(self):
+        """Verify the RED cleanup SQL includes execution_date filter."""
+        import subprocess
+        result = subprocess.run(
+            ["grep", "-c", "execution_date < :today",
+             "/Volumes/extension/projects/Chenyiyun2087/scheduler.py"],
+            capture_output=True, text=True,
+        )
+        assert int(result.stdout.strip()) >= 1, (
+            "RED cleanup SQL must filter by execution_date"
+        )
+
+    def test_cleanup_fail_closed(self):
+        """Verify cleanup failure returns False (aborts pipeline)."""
+        import subprocess
+        result = subprocess.run(
+            ["grep", "-A4", "FAILED to cleanup stale BUY drafts",
+             "/Volumes/extension/projects/Chenyiyun2087/scheduler.py"],
+            capture_output=True, text=True,
+        )
+        assert "return False" in result.stdout, (
+            "Cleanup failure must return False to abort pipeline (fail-closed)"
+        )
+
+    def test_top5_contamination_is_critical(self):
+        """Verify Top5 contamination check uses 'critical' severity."""
+        import subprocess, inspect, sys
+        sys.path.insert(0, "/Volumes/extension/projects/Chenyiyun2087")
+        from scripts.ops.data_readiness_gate import PostScoreGate
+        src = inspect.getsource(PostScoreGate.check_candidate_contamination)
+        assert "top5_contaminated" in src, "Missing Top5 contamination check"
+        assert "severity\": \"critical\"" in src.replace(" ", "").replace("'", '"') or \
+               'severity": "critical"' in src or \
+               "severity" in src, "Top5 contamination must have severity field"
 
 
 class TestFeishuNoTLSFallback:

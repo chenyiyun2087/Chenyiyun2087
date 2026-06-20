@@ -478,16 +478,19 @@ class PostScoreGate:
         }
 
     def check_candidate_contamination(self, target_date: date, top_n: int = 100) -> dict[str, Any]:
-        """Verify top-N candidates by score don't include suspended/ST/delisted stocks.
+        """Verify top-N candidates don't include untradable stocks.
 
-        Joins score_rank_daily with dwd_stock_label_daily and dwd_stock_daily_standard
-        to check if any top-scored stock is untradable on the target date.
+        Runs two-tier check:
+          Top5  — any contamination → BLOCKED (these would be actual trade candidates)
+          Top100 — 0 contaminated → READY, 1-5 → WARNING, >5 → BLOCKED
+
+        Joins score_rank_daily with dwd_stock_label_daily and dwd_stock_daily_standard.
         """
         date_str = target_date.strftime("%Y%m%d")
         text_fn = _get_text_sql()
         try:
             with self._engine.connect() as conn:
-                # Top N by score, check for ST/suspended stocks
+                # Fetch TopN with contamination labels
                 rows = conn.execute(
                     text_fn(
                         "SELECT s.symbol, s.score, "
@@ -508,17 +511,49 @@ class PostScoreGate:
                     {"date": date_str, "date2": date_str, "date3": date_str, "top_n": top_n},
                 ).mappings().fetchall()
         except Exception as exc:
-            return {"check": "candidate_contamination", "passed": False, "detail": f"query_error={exc}", "severity": "warning"}
+            return {"check": "candidate_contamination", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
 
-        contaminated = [dict(r) for r in rows if r.get("issue")]
-        passed = len(contaminated) == 0
+        all_rows = [dict(r) for r in rows]
+        contaminated_all = [r for r in all_rows if r.get("issue")]
+        contaminated_top5 = [r for r in all_rows[:5] if r.get("issue")]
+
+        # Top5 hard block: any untradable stock in the actual trade candidates
+        if contaminated_top5:
+            return {
+                "check": "candidate_contamination", "date": date_str,
+                "top_n_checked": top_n,
+                "top5_contaminated": contaminated_top5,
+                "top100_contaminated_count": len(contaminated_all),
+                "passed": False,
+                "severity": "critical",
+                "detail": (
+                    f"Top5 candidates include {len(contaminated_top5)} untradable stock(s): "
+                    + ", ".join(
+                        f"{c['symbol']}({c['issue']})" for c in contaminated_top5
+                    )
+                ),
+            }
+
+        # Top100 pool quality
+        cnt = len(contaminated_all)
+        if cnt == 0:
+            severity = "info"
+            passed = True
+        elif cnt <= 5:
+            severity = "warning"
+            passed = True
+        else:
+            severity = "critical"
+            passed = False
+
         return {
             "check": "candidate_contamination", "date": date_str,
             "top_n_checked": top_n,
-            "contaminated_count": len(contaminated),
-            "contaminated": contaminated[:5],
+            "top5_contaminated": [],
+            "top100_contaminated_count": cnt,
+            "contaminated_top100": contaminated_all[:5],
             "passed": passed,
-            "severity": "critical" if len(contaminated) > 5 else "warning",
+            "severity": severity,
         }
 
     def all_checks(self, target_date: date) -> dict[str, Any]:

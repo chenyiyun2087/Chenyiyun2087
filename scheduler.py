@@ -279,31 +279,46 @@ def run_pipeline(target_date) -> bool:
         "--health-date", str(perm["health_date"] or ""),
     ]
     if not perm["emit_orders"]:
-        # RED: do NOT pass --emit-orders at all (store_true default is False).
-        # Also supersede any unexecuted BUY drafts from previous days so they
-        # are not mistakenly displayed as current executable orders.
-        logger.warning("Health RED: candidate export runs but order generation is SKIPPED.")
+        # RED/STALE: do NOT pass --emit-orders (store_true default is False).
+        # Supersede unexecuted BUY drafts scoped to THIS strategy and execution_date.
+        logger.warning(
+            f"Health {perm['health_grade']}: candidate export runs but "
+            f"order generation is SKIPPED. freeze_reason={perm.get('freeze_reason', '')}"
+        )
         try:
             from sqlalchemy import text as _text2
+            _primary_strategy = str(PRODUCTION_CONFIG["primary_strategy"])
             with get_engine().begin() as _conn2:
                 _result = _conn2.execute(
                     _text2(
                         "UPDATE chenyiyun.ads_local_strategy_orders "
-                        "SET status = 'SUPERSEDED', memo = CONCAT(COALESCE(memo, ''), "
-                        "  ' | superseded by health RED freeze on ', :today) "
-                        "WHERE side = 'BUY' AND status IN ('PENDING', 'DRAFT') "
-                        "  AND created_at < :today"
+                        "SET status = 'SUPERSEDED', "
+                        "    memo = CONCAT(COALESCE(memo, ''), "
+                        "      ' | superseded by health RED freeze on ', :today) "
+                        "WHERE side = 'BUY' "
+                        "  AND strategy = :strategy "
+                        "  AND status IN ('PENDING', 'DRAFT') "
+                        "  AND execution_date < :today"
                     ),
-                    {"today": date_iso},
+                    {
+                        "today": date_iso,
+                        "strategy": _primary_strategy,
+                    },
                 )
                 _superseded = _result.rowcount
             if _superseded:
                 logger.warning(
                     f"Health RED: superseded {_superseded} stale BUY draft(s) "
-                    f"from previous days."
+                    f"for strategy={_primary_strategy} execution_date < {date_iso}."
                 )
         except Exception as _cleanup_exc:
-            logger.error(f"Health RED: failed to cleanup stale BUY drafts: {_cleanup_exc}")
+            # Fail-closed: if we can't cleanup old drafts, we must NOT proceed
+            # with candidate export — stale BUY drafts could be mistaken as valid.
+            logger.error(
+                f"Health RED: FAILED to cleanup stale BUY drafts — "
+                f"ABORTING pipeline to prevent stale orders. Error: {_cleanup_exc}"
+            )
+            return False
     else:
         _export_args.append("--emit-orders")
     if perm["manual_confirmation_required"]:
