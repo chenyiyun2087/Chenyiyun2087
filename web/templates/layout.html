@@ -14,7 +14,7 @@
             <div class="brand">量化交易控制台</div>
 
             <div class="sidebar-group-title">Sina B/S策略中心</div>
-            <nav>
+            <nav aria-label="Sina 策略中心">
                 <a href="{{ url_for('sina_monitor') }}"
                     class="{% if request.endpoint == 'sina_monitor' %}active{% endif %}">B/S 监控</a>
                 <a href="{{ url_for('sina_scores') }}"
@@ -26,7 +26,7 @@
             </nav>
 
             <div class="sidebar-group-title">陈依云精选</div>
-            <nav>
+            <nav aria-label="核心精选">
                 <a href="{{ url_for('chenyiyun_selected_dashboard') }}"
                     class="{% if request.endpoint == 'chenyiyun_selected_dashboard' %}active{% endif %}">核心精选</a>
                 <a href="{{ url_for('backtest_results') }}"
@@ -36,7 +36,7 @@
             </nav>
 
             <div class="sidebar-group-title">系统设置</div>
-            <nav>
+            <nav aria-label="系统设置">
                 <a href="{{ url_for('stock_pool') }}"
                     class="{% if request.endpoint in ['stock_pool', 'stock_pool_items', 'add_stock_pool','rename_stock_pool','add_stock_pool_item','delete_stock_pool_item'] %}active{% endif %}">股票池管理</a>
                 <a href="{{ url_for('sina_all_scores') }}"

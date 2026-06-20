@@ -306,6 +306,17 @@ TASKS = {
 TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
+TASK_RETRY_DELAY_SECONDS = 60
+TASK_QUEUE_SCAN_INTERVAL_SECONDS = 2
+# Dependencies are evaluated against the same business date.  Keep this small and
+# explicit: scripts which already perform their own freshness checks remain free to
+# do so, while the end-of-day write chain cannot silently consume yesterday's data.
+TASK_DEPENDENCIES = {
+    "sina_analyse": ("sina_picture",),
+    "sina_bs_consensus": ("sina_score",),
+    "trusted_strategy_candidates": ("sina_bs_consensus",),
+    "trusted_strategy_performance_review": ("trusted_strategy_candidates",),
+}
 SCHEDULED_TASK_WHITELIST = {
     "sina_picture",
     "sina_analyse",
@@ -614,18 +625,45 @@ def _ensure_task_management_schema(cursor):
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             task_name VARCHAR(64) NOT NULL,
             trigger_type VARCHAR(16) NOT NULL DEFAULT 'manual',
+            business_date VARCHAR(8) NOT NULL,
             scheduled_for DATETIME NULL,
             status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
             requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            available_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             started_at DATETIME NULL,
             finished_at DATETIME NULL,
             exit_code INT NULL,
+            attempt_count INT NOT NULL DEFAULT 0,
+            max_attempts INT NOT NULL DEFAULT 2,
+            run_options TEXT NULL,
+            active_dedupe_key VARCHAR(160) NULL,
+            error_kind VARCHAR(32) NULL,
             message TEXT NULL,
             KEY idx_queue_status_requested (status, requested_at),
+            KEY idx_queue_ready (status, available_at, requested_at),
+            UNIQUE KEY uniq_queue_active_dedupe (active_dedupe_key),
             KEY idx_queue_task_status (task_name, status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
+    # Upgrade installations created before the persistent queue was wired in.
+    cursor.execute("DESC app_task_queue")
+    queue_columns = {row['Field'] for row in cursor.fetchall()}
+    queue_additions = {
+        'business_date': "VARCHAR(8) NOT NULL DEFAULT '00000000' AFTER trigger_type",
+        'available_at': "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER requested_at",
+        'attempt_count': "INT NOT NULL DEFAULT 0 AFTER exit_code",
+        'max_attempts': "INT NOT NULL DEFAULT 2 AFTER attempt_count",
+        'run_options': "TEXT NULL AFTER max_attempts",
+        'active_dedupe_key': "VARCHAR(160) NULL AFTER run_options",
+        'error_kind': "VARCHAR(32) NULL AFTER active_dedupe_key",
+    }
+    for column, definition in queue_additions.items():
+        if column not in queue_columns:
+            cursor.execute(f"ALTER TABLE app_task_queue ADD COLUMN {column} {definition}")
+    cursor.execute("SHOW INDEX FROM app_task_queue WHERE Key_name = 'uniq_queue_active_dedupe'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE app_task_queue ADD UNIQUE KEY uniq_queue_active_dedupe (active_dedupe_key)")
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS app_task_lock (
@@ -912,6 +950,66 @@ def _get_task_lock_rows(limit=50):
     return rows
 
 
+def _get_queued_jobs(limit=100):
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """SELECT id, task_name, trigger_type, business_date, status, requested_at, available_at,
+                          started_at, finished_at, attempt_count, max_attempts, message, exit_code
+                   FROM app_task_queue ORDER BY requested_at DESC, id DESC LIMIT %s""",
+                (limit,),
+            )
+            return cursor.fetchall()
+    except Exception as e:
+        print(f"Failed to load queued jobs: {e}")
+        return []
+
+
+def _get_task_runner():
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute("SELECT * FROM app_task_runner WHERE id=1")
+            return cursor.fetchone() or {}
+    except Exception as e:
+        print(f"Failed to load task runner: {e}")
+        return {}
+
+
+def _set_task_runner(job=None, message="idle"):
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            if job:
+                cursor.execute(
+                    """INSERT INTO app_task_runner (id,status,running_task_name,trigger_type,queue_id,started_at,heartbeat_at,message)
+                       VALUES (1,'RUNNING',%s,%s,%s,NOW(),NOW(),%s)
+                       ON DUPLICATE KEY UPDATE status='RUNNING',running_task_name=VALUES(running_task_name),
+                         trigger_type=VALUES(trigger_type),queue_id=VALUES(queue_id),started_at=NOW(),heartbeat_at=NOW(),message=VALUES(message)""",
+                    (job['task_name'], job['trigger_type'], job['id'], message[:255]),
+                )
+            else:
+                cursor.execute(
+                    """INSERT INTO app_task_runner (id,status,finished_at,message) VALUES (1,'IDLE',NOW(),%s)
+                       ON DUPLICATE KEY UPDATE status='IDLE',running_task_name=NULL,trigger_type=NULL,queue_id=NULL,
+                         finished_at=NOW(),heartbeat_at=NOW(),message=VALUES(message)""",
+                    (message[:255],),
+                )
+        conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Failed to update task runner: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
 def _is_running_status_text(status_text):
     return str(status_text or "").strip().lower().startswith("running")
 
@@ -1004,24 +1102,36 @@ def _reconcile_stale_task_states():
 
                 cursor.execute(
                     """
-                    UPDATE app_task_queue
-                    SET status = 'FAILED',
-                        finished_at = NOW(),
-                        exit_code = COALESCE(exit_code, -2),
-                        message = COALESCE(message, 'stale queue row auto-closed')
-                    WHERE task_name = %s
-                      AND status = 'RUNNING'
+                    UPDATE app_task_queue q
+                    LEFT JOIN app_task_lock l ON l.task_name = q.task_name AND l.queue_id = q.id
+                    SET q.status = 'PENDING', q.available_at = NOW(),
+                        q.message = '服务恢复：重新领取过期运行作业'
+                    WHERE q.task_name = %s AND q.status = 'RUNNING'
+                      AND (l.status IS NULL OR l.status <> 'RUNNING'
+                           OR l.heartbeat_at < DATE_SUB(NOW(), INTERVAL %s SECOND))
                     """,
-                    (task_name,),
+                    (task_name, TASK_STALE_TIMEOUT_SECONDS),
                 )
 
+            # A process can die after claiming a queue row but before it updates the
+            # in-memory task status. Recover these rows independently of UI state.
+            cursor.execute(
+                """UPDATE app_task_queue q
+                   LEFT JOIN app_task_lock l ON l.task_name=q.task_name AND l.queue_id=q.id
+                   SET q.status='PENDING', q.available_at=NOW(),
+                       q.message='服务恢复：重新领取过期运行作业'
+                   WHERE q.status='RUNNING'
+                     AND (l.status IS NULL OR l.status <> 'RUNNING'
+                          OR l.heartbeat_at < DATE_SUB(NOW(), INTERVAL %s SECOND))""",
+                (TASK_STALE_TIMEOUT_SECONDS,),
+            )
             conn.commit()
     except Exception as e:
         print(f"Failed to reconcile stale task states: {e}")
     return fixed_rows
 
 
-def _try_acquire_task_lock(task_name, trigger_type="manual"):
+def _try_acquire_task_lock(task_name, trigger_type="manual", queue_id=None):
     if task_name not in TASKS:
         return False, "unknown task"
 
@@ -1073,14 +1183,14 @@ def _try_acquire_task_lock(task_name, trigger_type="manual"):
                 """
                 UPDATE app_task_lock
                 SET status = 'RUNNING',
-                    queue_id = NULL,
+                    queue_id = %s,
                     started_at = NOW(),
                     heartbeat_at = NOW(),
                     finished_at = NULL,
                     message = %s
                 WHERE task_name = %s
                 """,
-                (f"running:{trigger_type}", task_name),
+                (queue_id, f"running:{trigger_type}", task_name),
             )
             conn.commit()
             return True, None
@@ -1160,6 +1270,164 @@ def _format_task_message(stdout, stderr, verification_lines=None):
     if not blocks:
         return None
     return "\n\n".join(blocks)[-6000:]
+
+
+def _queue_business_date(run_options=None):
+    return _normalize_datestr((run_options or {}).get("datestr")) or datetime.now().strftime("%Y%m%d")
+
+
+def _queue_options_json(run_options):
+    return json.dumps(run_options or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _enqueue_task(task_name, trigger_type="manual", run_options=None, scheduled_for=None):
+    """Create one durable job, or return the active job for the same business day."""
+    if task_name not in TASKS:
+        return None, False, "unknown task"
+    business_date = _queue_business_date(run_options)
+    dedupe_key = f"{task_name}:{business_date}"
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                "SELECT * FROM app_task_queue WHERE active_dedupe_key = %s FOR UPDATE",
+                (dedupe_key,),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                conn.commit()
+                return existing, False, None
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO app_task_queue
+                      (task_name, trigger_type, business_date, scheduled_for, status,
+                       available_at, attempt_count, max_attempts, run_options, active_dedupe_key, message)
+                    VALUES (%s, %s, %s, %s, 'PENDING', NOW(), 0, 2, %s, %s, 'queued')
+                    """,
+                    (task_name, trigger_type, business_date, scheduled_for, _queue_options_json(run_options), dedupe_key),
+                )
+            except pymysql.err.IntegrityError:
+                # A second web process won the unique-key race. Return its job instead.
+                cursor.execute("SELECT * FROM app_task_queue WHERE active_dedupe_key = %s", (dedupe_key,))
+                existing = cursor.fetchone()
+                conn.commit()
+                return existing, False, None
+            job_id = cursor.lastrowid
+            cursor.execute("SELECT * FROM app_task_queue WHERE id = %s", (job_id,))
+            job = cursor.fetchone()
+        conn.commit()
+        return job, True, None
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Failed to enqueue task {task_name}: {e}")
+        return None, False, str(e)
+    finally:
+        if conn:
+            conn.close()
+
+
+def _dependency_state(cursor, task_name, business_date):
+    dependencies = TASK_DEPENDENCIES.get(task_name, ())
+    if not dependencies:
+        return "READY", ""
+    placeholders = ",".join(["%s"] * len(dependencies))
+    cursor.execute(
+        f"""SELECT task_name, status FROM app_task_queue
+            WHERE business_date = %s AND task_name IN ({placeholders})
+            ORDER BY id DESC""",
+        (business_date, *dependencies),
+    )
+    latest = {}
+    for row in cursor.fetchall():
+        latest.setdefault(row["task_name"], str(row["status"]).upper())
+    missing = [name for name in dependencies if name not in latest]
+    failed = [name for name in dependencies if latest.get(name) in {"FAILED", "CANCELLED", "BLOCKED"}]
+    if failed:
+        return "BLOCKED", f"前序任务失败：{', '.join(failed)}"
+    if missing or any(latest.get(name) != "SUCCESS" for name in dependencies):
+        waiting = missing or [name for name in dependencies if latest.get(name) != "SUCCESS"]
+        return "WAITING", f"等待前序任务：{', '.join(waiting)}"
+    return "READY", ""
+
+
+def _claim_next_queued_task():
+    """Atomically claim one ready job. Waiting jobs remain visible as PENDING."""
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """SELECT * FROM app_task_queue
+                   WHERE status = 'PENDING' AND available_at <= NOW()
+                   ORDER BY requested_at, id LIMIT 25 FOR UPDATE"""
+            )
+            for job in cursor.fetchall():
+                dep_state, dep_message = _dependency_state(cursor, job["task_name"], job["business_date"])
+                if dep_state == "WAITING":
+                    cursor.execute("UPDATE app_task_queue SET message = %s WHERE id = %s", (dep_message, job["id"]))
+                    continue
+                if dep_state == "BLOCKED":
+                    cursor.execute(
+                        """UPDATE app_task_queue SET status='BLOCKED', finished_at=NOW(), message=%s,
+                           active_dedupe_key=NULL WHERE id=%s""",
+                        (dep_message, job["id"]),
+                    )
+                    continue
+                cursor.execute(
+                    """UPDATE app_task_queue SET status='RUNNING', started_at=NOW(),
+                       attempt_count=attempt_count+1, message='running' WHERE id=%s""",
+                    (job["id"],),
+                )
+                cursor.execute("SELECT * FROM app_task_queue WHERE id=%s", (job["id"],))
+                claimed = cursor.fetchone()
+                conn.commit()
+                return claimed
+        conn.commit()
+        return None
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Failed to claim queued task: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+
+def _finish_queued_task(job, history_status, exit_code, message):
+    """Finish a claimed job, scheduling exactly one automatic retry when needed."""
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            retry = history_status != "Success" and int(job.get("attempt_count") or 0) < int(job.get("max_attempts") or 2)
+            if retry:
+                cursor.execute(
+                    """UPDATE app_task_queue SET status='PENDING', available_at=DATE_ADD(NOW(), INTERVAL %s SECOND),
+                       exit_code=%s, error_kind=%s, message=%s WHERE id=%s""",
+                    (TASK_RETRY_DELAY_SECONDS, exit_code, history_status.upper(), message, job["id"]),
+                )
+            else:
+                status = "SUCCESS" if history_status == "Success" else "FAILED"
+                cursor.execute(
+                    """UPDATE app_task_queue SET status=%s, finished_at=NOW(), exit_code=%s,
+                       error_kind=%s, message=%s, active_dedupe_key=NULL WHERE id=%s""",
+                    (status, exit_code, None if status == "SUCCESS" else history_status.upper(), message, job["id"]),
+                )
+        conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Failed to finish queued task {job.get('id')}: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def _read_text_tail(file_path, max_chars):
@@ -1996,7 +2264,7 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
         print(f"Task notification error ({task_name}): {e}")
 
 
-def _execute_locked_task(task_name, trigger_type, run_options=None):
+def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=None):
     started_at = datetime.now()
     project_root = Path(app.root_path).parent
 
@@ -2098,6 +2366,8 @@ def _execute_locked_task(task_name, trigger_type, run_options=None):
             duration_seconds=duration_seconds,
             message=message,
         )
+        if queue_job is not None:
+            _finish_queued_task(queue_job, history_status, exit_code, message or history_status)
         _send_task_completion_notification(
             task_name=task_name,
             history_status=history_status,
@@ -2114,19 +2384,45 @@ def _build_task_subprocess_env(task_name, project_root):
     return build_direct_network_env(os.environ, pythonpath_prefix=str(project_root))
 
 
-def _trigger_task_execution(task_name, trigger_type="manual", run_options=None):
-    acquired, reason = _try_acquire_task_lock(task_name, trigger_type=trigger_type)
-    if not acquired:
-        return False, reason
+def _trigger_task_execution(task_name, trigger_type="manual", run_options=None, scheduled_for=None):
+    """Compatibility entry point: triggering now means durable enqueueing."""
+    return _enqueue_task(task_name, trigger_type, run_options, scheduled_for)
 
-    try:
-        thread = threading.Thread(target=_execute_locked_task, args=(task_name, trigger_type, run_options))
-        thread.daemon = True
-        thread.start()
-        return True, None
-    except Exception as e:
-        _mark_task_lock_finished(task_name, "ERROR", str(e))
-        return False, str(e)
+
+def _run_queued_tasks_loop():
+    """Durable worker. A job stays in MySQL while its subprocess is running."""
+    while True:
+        try:
+            job = _claim_next_queued_task()
+            if not job:
+                time.sleep(TASK_QUEUE_SCAN_INTERVAL_SECONDS)
+                continue
+            try:
+                run_options = json.loads(job.get("run_options") or "{}")
+            except (TypeError, ValueError):
+                run_options = {}
+            acquired, reason = _try_acquire_task_lock(job["task_name"], job["trigger_type"], queue_id=job["id"])
+            if not acquired:
+                # Another process still owns the per-task lock. Leave this job safely queued.
+                conn = pymysql.connect(**DB_CONFIG)
+                try:
+                    with conn.cursor() as cursor:
+                        cursor.execute(
+                            "UPDATE app_task_queue SET status='PENDING', available_at=DATE_ADD(NOW(), INTERVAL 10 SECOND), message=%s WHERE id=%s",
+                            (f"等待任务锁：{reason}", job["id"]),
+                        )
+                    conn.commit()
+                finally:
+                    conn.close()
+                continue
+            _set_task_runner(job, message="running")
+            try:
+                _execute_locked_task(job["task_name"], job["trigger_type"], run_options, queue_job=job)
+            finally:
+                _set_task_runner(message="idle")
+        except Exception as e:
+            print(f"Task queue worker error: {e}")
+            time.sleep(TASK_QUEUE_SCAN_INTERVAL_SECONDS)
 
 
 def _is_trading_day(target_date=None):
@@ -5779,9 +6075,11 @@ def admin():
     now_date_iso = datetime.now().strftime('%Y-%m-%d')
     task_results = []
     task_locks = []
+    queued_jobs = []
+    task_runner = {}
     notification_channels = _default_notification_channels()
     active_tab = str(request.args.get("tab") or "center-tab")
-    if active_tab not in {"center-tab", "lock-tab", "result-tab"}:
+    if active_tab not in {"center-tab", "queue-tab", "lock-tab", "result-tab"}:
         active_tab = "center-tab"
     _reconcile_stale_task_states()
     try:
@@ -5789,10 +6087,13 @@ def admin():
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             notification_channels = _load_notification_channels_from_cursor(cursor)
-        if active_tab == "result-tab":
+        if active_tab == "queue-tab":
+            queued_jobs = _get_queued_jobs(limit=100)
+        elif active_tab == "result-tab":
             task_results = _get_task_history(limit=50)
         elif active_tab == "lock-tab":
             task_locks = _get_task_lock_rows(limit=50)
+            task_runner = _get_task_runner()
     except Exception as e:
         print(f"Failed to load stock pools in admin: {e}")
 
@@ -5804,6 +6105,8 @@ def admin():
                            now_date=now_date_iso,
                            task_results=task_results,
                            task_locks=task_locks,
+                           queued_jobs=queued_jobs,
+                           task_runner=task_runner,
                            notification_channels=notification_channels,
                            active_tab=active_tab)
 
@@ -5834,6 +6137,53 @@ def admin_task_result_detail(result_id):
         "exit_code": row.get("exit_code"),
         "message": row.get("message") or "",
     })
+
+
+@app.route('/admin/job/<int:job_id>/retry', methods=['POST'])
+def retry_task_job(job_id):
+    conn = get_db()
+    with conn.cursor() as cursor:
+        _ensure_task_management_schema(cursor)
+        cursor.execute("SELECT task_name, business_date, status FROM app_task_queue WHERE id=%s FOR UPDATE", (job_id,))
+        job = cursor.fetchone()
+        if not job:
+            flash("作业不存在。", "danger")
+        elif str(job["status"]).upper() == "RUNNING":
+            flash("运行中的作业不能重试。", "warning")
+        else:
+            dedupe_key = f"{job['task_name']}:{job['business_date']}"
+            cursor.execute("SELECT id FROM app_task_queue WHERE active_dedupe_key=%s AND id<>%s", (dedupe_key, job_id))
+            active_job = cursor.fetchone()
+            if active_job:
+                flash(f"已有活动作业 #{active_job['id']}，不能重复重试。", "warning")
+            else:
+                cursor.execute(
+                    """UPDATE app_task_queue SET status='PENDING', available_at=NOW(), finished_at=NULL,
+                       exit_code=NULL, error_kind=NULL, attempt_count=0, active_dedupe_key=%s,
+                       message='手动重试：等待领取' WHERE id=%s""",
+                    (dedupe_key, job_id),
+                )
+                conn.commit()
+                flash(f"作业 #{job_id} 已进入重试队列。", "success")
+    return redirect(url_for('admin', tab='queue-tab'))
+
+
+@app.route('/admin/job/<int:job_id>/cancel', methods=['POST'])
+def cancel_task_job(job_id):
+    conn = get_db()
+    with conn.cursor() as cursor:
+        _ensure_task_management_schema(cursor)
+        cursor.execute(
+            """UPDATE app_task_queue SET status='CANCELLED', finished_at=NOW(), message='已由操作者取消',
+               active_dedupe_key=NULL WHERE id=%s AND status='PENDING'""",
+            (job_id,),
+        )
+        conn.commit()
+        if cursor.rowcount:
+            flash(f"作业 #{job_id} 已取消。", "success")
+        else:
+            flash("仅等待中的作业可以取消。", "warning")
+    return redirect(url_for('admin', tab='queue-tab'))
 
 
 def update_task_db(task_name):
@@ -6007,25 +6357,27 @@ def run_task(task_name):
             task_status=TASKS[task_name].get('status'),
         )
 
-    started, reason = _trigger_task_execution(task_name, trigger_type='manual', run_options=run_options)
+    job, created, reason = _trigger_task_execution(task_name, trigger_type='manual', run_options=run_options)
     date_suffix = f"（datestr={requested_datestr}）" if requested_datestr else ""
-    if started:
+    if job and created:
         return _json_or_redirect(
             ok=True,
-            message=f"任务 {TASKS[task_name]['name']} 已启动{date_suffix}，使用数据库锁保证同任务唯一运行。",
+            message=f"任务 {TASKS[task_name]['name']} 已进入作业队列{date_suffix}（作业 #{job['id']}）。",
             category='success',
             started=True,
-            reason='STARTED',
-            task_status='Running...',
+            reason='QUEUED',
+            task_status='Queued',
+            job_id=job['id'],
         )
-    elif reason == 'RUNNING':
+    if job:
         return _json_or_redirect(
             ok=True,
-            message=f"任务 {TASKS[task_name]['name']} 未启动{date_suffix}：已有同名任务正在运行。",
+            message=f"任务 {TASKS[task_name]['name']} 已合并到现有作业 #{job['id']}（{job['status']}）。",
             category='warning',
             started=False,
-            reason='RUNNING',
-            task_status=TASKS[task_name].get('status'),
+            reason='DEDUPED',
+            task_status='Queued' if job['status'] == 'PENDING' else 'Running...',
+            job_id=job['id'],
         )
     return _json_or_redirect(
         ok=False,
@@ -6074,13 +6426,15 @@ def _run_scheduled_tasks_loop():
                 print(f"Scheduled task success-skip (non-trading day): {task_name}")
 
             for task_name in due_tasks:
-                started, reason = _trigger_task_execution(task_name, trigger_type='schedule')
-                if started:
-                    print(f"Scheduled task started: {task_name}")
-                elif reason == "RUNNING":
-                    print(f"Scheduled task skipped (already running): {task_name}")
+                job, created, reason = _trigger_task_execution(
+                    task_name, trigger_type='schedule', scheduled_for=now.replace(second=0, microsecond=0)
+                )
+                if job and created:
+                    print(f"Scheduled task queued: {task_name} (job={job['id']})")
+                elif job:
+                    print(f"Scheduled task deduped: {task_name} (job={job['id']})")
                 else:
-                    print(f"Scheduled task start failed: {task_name} ({reason})")
+                    print(f"Scheduled task enqueue failed: {task_name} ({reason})")
 
             time.sleep(20)
         except Exception as e:
@@ -6093,9 +6447,10 @@ def start_task_scheduler_loop():
     # also imports this module. Skip scheduler in parent to avoid duplicate loops.
     if __name__ == "__main__" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return
-    thread = threading.Thread(target=_run_scheduled_tasks_loop)
-    thread.daemon = True
-    thread.start()
+    scheduler_thread = threading.Thread(target=_run_scheduled_tasks_loop, name="task-scheduler", daemon=True)
+    worker_thread = threading.Thread(target=_run_queued_tasks_loop, name="task-queue-worker", daemon=True)
+    scheduler_thread.start()
+    worker_thread.start()
 
 @app.route('/admin/add_position', methods=['POST'])
 def add_position():

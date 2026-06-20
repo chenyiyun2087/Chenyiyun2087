@@ -16,6 +16,42 @@ CREATE TABLE IF NOT EXISTS em_strategy_results (
     UNIQUE KEY uniq_date_code (trade_date, stock_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 持久化批量作业队列：active_dedupe_key 仅在等待/运行时保留，保证同任务同业务日去重。
+CREATE TABLE IF NOT EXISTS app_task_queue (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_name VARCHAR(64) NOT NULL,
+    trigger_type VARCHAR(16) NOT NULL DEFAULT 'manual',
+    business_date VARCHAR(8) NOT NULL,
+    scheduled_for DATETIME NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+    requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    available_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME NULL,
+    finished_at DATETIME NULL,
+    exit_code INT NULL,
+    attempt_count INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 2,
+    run_options TEXT NULL,
+    active_dedupe_key VARCHAR(160) NULL,
+    error_kind VARCHAR(32) NULL,
+    message TEXT NULL,
+    KEY idx_queue_status_requested (status, requested_at),
+    KEY idx_queue_ready (status, available_at, requested_at),
+    KEY idx_queue_task_status (task_name, status),
+    UNIQUE KEY uniq_queue_active_dedupe (active_dedupe_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS app_task_lock (
+    task_name VARCHAR(64) PRIMARY KEY,
+    status VARCHAR(16) NOT NULL DEFAULT 'IDLE',
+    queue_id BIGINT NULL,
+    started_at DATETIME NULL,
+    heartbeat_at DATETIME NULL,
+    finished_at DATETIME NULL,
+    message VARCHAR(255) NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ScoreRank 每日评分结果表 (用于Web展示)
 CREATE TABLE IF NOT EXISTS score_rank_daily (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

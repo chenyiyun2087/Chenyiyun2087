@@ -24,3 +24,12 @@ production:
     max_shadow_theory_gap: 0.03
     consecutive_bad_days_to_reduce: 2
     consecutive_bad_days_to_defensive: 3
+  live_canary:
+    # Manual-only is deliberate: this system never submits broker API orders.
+    enabled: false
+    execution_mode: manual_confirmation
+    account_total_capital: 1000000
+    max_capital_ratio: 0.10
+    max_capital: 100000
+    candidate_strategy: production_governed_vol_position
+    require_release_approval: true

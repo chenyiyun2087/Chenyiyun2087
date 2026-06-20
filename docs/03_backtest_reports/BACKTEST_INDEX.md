@@ -1,5 +1,7 @@
 # 回测报告索引
 
+> 2026-06-21 策略治理与人工 Canary 门禁：新增 `scripts/ops/run_strategy_governance_audit.py`，统一输出生产、影子、防守、研究和历史策略台账，以及 T 日信号/T+1 执行、动态权重 `exit_date < signal_date`、model-risk 禁用和人工实盘边界。Canary 固定为 100 万账户中的 10 万元上限，默认关闭；严格账本、启用影子盘、GREEN 健康度和版本审批任一缺失均 fail-closed。运行手册见 `docs/04_live_trading/CANARY_RUNBOOK.md`。
+
 > 2026-06-20 strict 研发闭环升级：新增版本化公司行为快照、配股全额认购/资金不足冻结状态机、精确拒单原因独立 replay、偏离归因扩展及可靠性矩阵脚本。生产默认与 `research_shadow_candidate.enabled=false` 均未改变；在 clean 全历史证据与所有门槛通过前，strict 继续不可晋级。
 
 > 2026-06-20 strict ledger v2 版本修复：旧 integration 分支在冲突合并中回退了 strict 安全实现，后续 review 只以 `integration/strict-ledger-full-history-v2` 为准。v2 的 `preflight24` 使用两个 60 交易日窗口、两组耦合成本/滑点与两种 cap，产生 8 个三策略 run / 24 条策略结果；`full216` 固定为 72 个三策略 run / 216 条结果。所有结果仍固定 `promotion_enabled=false`，最多只能申请 disabled shadow。实施记录见 `docs/tasks/2026-06-20_strict_ledger_v2_version_remediation.md`。

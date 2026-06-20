@@ -39,6 +39,26 @@ def _normalize_research_shadow_candidate(raw: dict | None) -> dict[str, object]:
     }
 
 
+def _normalize_live_canary(raw: dict | None) -> dict[str, object]:
+    values = dict(raw or {})
+    account_total = float(values.get("account_total_capital", 1_000_000))
+    max_ratio = float(values.get("max_capital_ratio", 0.10))
+    max_capital = float(values.get("max_capital", account_total * max_ratio))
+    if account_total <= 0 or not 0 < max_ratio <= 0.10 or max_capital > account_total * max_ratio:
+        raise ValueError("live_canary must cap capital at no more than 10% of account_total_capital")
+    if str(values.get("execution_mode", "manual_confirmation")) != "manual_confirmation":
+        raise ValueError("live_canary only supports manual_confirmation; broker API execution is prohibited")
+    return {
+        "enabled": bool(values.get("enabled", False)),
+        "execution_mode": "manual_confirmation",
+        "account_total_capital": account_total,
+        "max_capital_ratio": max_ratio,
+        "max_capital": max_capital,
+        "candidate_strategy": str(values.get("candidate_strategy") or "production_governed_vol_position"),
+        "require_release_approval": bool(values.get("require_release_approval", True)),
+    }
+
+
 @lru_cache(maxsize=1)
 def load_production_config() -> dict[str, object]:
     if not CONFIG_PATH.exists():
@@ -62,9 +82,13 @@ def load_production_config() -> dict[str, object]:
         "defensive_fallback_strategy": str(production.get("defensive_fallback_strategy") or "baseline_full_liquidity_detail"),
         "shadow_validation": _normalize_shadow_validation(production.get("shadow_validation")),
         "research_shadow_candidate": _normalize_research_shadow_candidate(production.get("research_shadow_candidate")),
+        "live_canary": _normalize_live_canary(production.get("live_canary")),
         "config_path": str(CONFIG_PATH),
         "config_sha": hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16],
     }
+    canary = config["live_canary"]
+    if canary["candidate_strategy"] != config["primary_strategy"]:
+        raise ValueError("live_canary candidate_strategy must match the current primary_strategy")
     return config
 
 

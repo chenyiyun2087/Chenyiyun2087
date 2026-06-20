@@ -32,7 +32,7 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 
 | 层 | 目录/文件 | 说明 | 典型入口 |
 |---|---|---|---|
-| 调度层 | `web/app.py`、`scripts/ops/`（`scheduler.py` 历史保留） | 交易日判定、定时触发、任务状态记录 | `python web/app.py` |
+| 调度层 | `web/app.py`、`scripts/ops/`（`scheduler.py` 历史保留） | 交易日判定、持久化作业队列、去重重试、任务状态记录 | `python web/app.py` |
 | 数据采集层 | `sina/bs_detection/`、`eastmoney/` | B/S 信号图片抓取与检测、舆情扫描与落库 | `python sina/bs_detection/main.py config_1` |
 | 评分层 | `scoreRank/core/`、`scoreRank/strategies/` | 技术因子打分 + Claude 分 + 优化分（opt_score） | `python -m scoreRank.cli.run_daily` |
 | 策略评估层 | `scoreRank/cli/`、`web/strategy_playbook.py` | 事件/KPI 构建、M2~M8 参数回归与评估 | `python -m scoreRank.cli.run_m8_cycle` |
@@ -91,7 +91,7 @@ Chenyiyun2087 是一个面向 A 股量化研究与执行的多模块仓库，覆
 
 ### 2.2 调度器说明
 
-- **Web 内置调度 (`web/app.py`)**: 当前生产调度入口，支持定时触发、手动重跑、任务锁与历史记录。
+- **Web 内置调度 (`web/app.py`)**: 当前生产调度入口；定时与手动请求统一进入持久化作业队列，同任务同业务日期合并，失败自动重试一次，并保留锁、依赖等待和执行历史。
 - **独立调度器 (`scheduler.py`)**: 当前未启用，仅保留代码与日志结构供排查/回溯。
 
 ### 2.3 交易日门禁规则（2026-02-27 更新）

@@ -128,6 +128,7 @@ jobs:
           done
       - name: Setup test schema and trade calendar
         run: |
+          mysql -h 127.0.0.1 -u root -ptest_password -e "CREATE DATABASE IF NOT EXISTS chenyiyun"
           mysql -h 127.0.0.1 -u root -ptest_password order_test_db << 'SQL'
           CREATE TABLE IF NOT EXISTS chenyiyun.dim_trade_cal (
             cal_date DATE PRIMARY KEY,

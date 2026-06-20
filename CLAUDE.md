@@ -137,13 +137,13 @@ Tests live under `backtest/tests/` and use pytest with `pythonpath = ["src"]` (c
 
 The **production scheduler** is `web/app.py`'s built-in task system (not `scheduler.py`, which is historical). Tasks are defined in the `TASKS` dict inside `web/app.py`.
 
-The scheduler is a **thread-based polling loop** (not apscheduler/clock-driven): every 20 seconds it checks which whitelisted tasks are due and spawns them via `subprocess.Popen()`. Task execution uses MySQL row-level locks (`SELECT ... FOR UPDATE` on `app_task_lock`) for cross-process idempotency.
+The scheduler is a **thread-based polling loop** (not apscheduler/clock-driven): every 20 seconds it queues whitelisted due tasks in MySQL. A durable worker claims queued jobs, launches their subprocesses, and maintains task-lock heartbeats. Jobs use a `task_name + business_date` active-key for cross-process de-duplication, retry once after failure, and wait for configured upstream jobs before execution.
 
 Key task management tables: `app_task_queue`, `app_task_lock`, `app_task_history`, `app_task_status`, `app_notification_channel`.
 
 Only tasks in `SCHEDULED_TASK_WHITELIST` are eligible for auto-scheduling; others must be triggered manually. Notification channels support 飞书, 企业微信, 钉钉, and custom webhook.
 
-The admin panel at `/admin` provides task status, scheduling controls (enable/disable, set time), lock inspection, and execution history. Environment variable `DISABLE_APP_SCHEDULER_LOOP=1` disables the scheduler loop (for development).
+The admin panel at `/admin` provides task status, scheduling controls, persistent queue inspection/retry/cancel, lock inspection, and execution history. Environment variable `DISABLE_APP_SCHEDULER_LOOP=1` disables both scheduler and queue worker (for development).
 
 ### Intraday Pipeline
 

@@ -1,11 +1,13 @@
 {% extends 'layout.html' %}
-{% block title %}陈逸云{% endblock %}
-{% block page_title %}陈逸云{% endblock %}
+{% block title %}任务运营中心{% endblock %}
+{% block page_title %}任务运营中心{% endblock %}
 {% block content %}
 
 <div class="sub-tabs">
     <a id="tab-btn-center-tab" class="sub-tab {% if active_tab == 'center-tab' %}active{% endif %}"
         href="{{ url_for('admin', tab='center-tab') }}">后台任务中心</a>
+    <a id="tab-btn-queue-tab" class="sub-tab {% if active_tab == 'queue-tab' %}active{% endif %}"
+        href="{{ url_for('admin', tab='queue-tab') }}">作业队列</a>
     <a id="tab-btn-lock-tab" class="sub-tab {% if active_tab == 'lock-tab' %}active{% endif %}"
         href="{{ url_for('admin', tab='lock-tab') }}">任务锁状态</a>
     <a id="tab-btn-result-tab" class="sub-tab {% if active_tab == 'result-tab' %}active{% endif %}"
@@ -17,7 +19,7 @@
 {% if active_tab == 'center-tab' %}
 <div id="center-tab" class="admin-tab-content">
     <section class="panel">
-        <div class="panel-title">后台任务中心</div>
+        <div class="panel-title">任务配置</div>
         <table>
             <thead>
                 <tr>
@@ -76,7 +78,7 @@
                     <td>
                         <form method="post" action="{{ url_for('run_task', task_name=name) }}" class="js-run-task-form"
                             data-task-id="{{ name }}">
-                            <button class="btn btn-run-task" {% if task.legacy %}disabled title="Legacy任务已隔离，禁止从任务中心执行"{% endif %}>运行</button>
+                            <button class="btn btn-run-task" {% if task.legacy %}disabled title="Legacy任务已隔离，禁止从任务中心执行"{% endif %}>加入队列</button>
                         </form>
                     </td>
                 </tr>
@@ -89,7 +91,8 @@
         <div class="panel-title">调度说明</div>
         <div class="info-text">
             • 系统根据<strong>交易日历</strong>决定是否执行标有"交易日执行"的任务。<br>
-            • 任务触发后直接尝试获取数据库锁：<strong>同任务仅允许1个实例运行</strong>，不同任务可并发。<br>
+            • 任务请求会先写入<strong>持久化作业队列</strong>；相同任务与业务日期自动合并，服务重启后可恢复。<br>
+            • 前序任务未成功时，依赖任务会保持等待状态，避免读取旧数据。失败后自动重试一次。<br>
             • 任务结束时会执行结果校验（如 sina_score/sina_m8），避免"进程成功但数据未落库"的假成功。<br>
             • 在"任务结果查询"点击"详细"，可查看脚本输出尾部和校验结论。
         </div>
@@ -167,9 +170,46 @@
         </form>
     </section>
 </div>
+{% elif active_tab == 'queue-tab' %}
+<div id="queue-tab" class="admin-tab-content">
+    <section class="panel">
+        <div class="panel-title">作业队列 <span class="panel-subtitle">最近 100 条</span></div>
+        <div class="table-container">
+            <table class="admin-table">
+                <thead><tr><th>作业</th><th>业务日期</th><th>状态</th><th>触发</th><th>尝试</th><th>时间</th><th>等待/结果</th><th>操作</th></tr></thead>
+                <tbody>
+                    {% for job in queued_jobs %}
+                    <tr>
+                        <td><strong>#{{ job.id }}</strong><br><code class="task-id">{{ job.task_name }}</code></td>
+                        <td class="time-display">{{ job.business_date }}</td>
+                        <td><span class="status-badge {% if job.status == 'RUNNING' %}status-running{% elif job.status == 'SUCCESS' %}status-success{% elif job.status in ['FAILED','BLOCKED','CANCELLED'] %}status-failed{% else %}status-idle{% endif %}">{{ job.status }}</span></td>
+                        <td><span class="trigger-badge {% if job.trigger_type == 'schedule' %}trigger-schedule{% else %}trigger-manual{% endif %}">{{ '计划' if job.trigger_type == 'schedule' else '手动' }}</span></td>
+                        <td>{{ job.attempt_count }}/{{ job.max_attempts }}</td>
+                        <td class="time-display">请求 {{ job.requested_at }}<br>可执行 {{ job.available_at }}</td>
+                        <td class="job-message">{{ job.message or '-' }}</td>
+                        <td class="job-actions">
+                            {% if job.status != 'RUNNING' %}<form method="post" action="{{ url_for('retry_task_job', job_id=job.id) }}"><button class="btn btn-sm btn-outline">重试</button></form>{% endif %}
+                            {% if job.status == 'PENDING' %}<form method="post" action="{{ url_for('cancel_task_job', job_id=job.id) }}"><button class="btn btn-sm btn-danger">取消</button></form>{% endif %}
+                        </td>
+                    </tr>
+                    {% else %}<tr><td colspan="8" class="empty-state">暂无作业记录</td></tr>{% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
 {% elif active_tab == 'lock-tab' %}
 
 <div id="lock-tab" class="admin-tab-content">
+    <section class="panel runner-panel">
+        <div class="panel-title">Worker 状态</div>
+        <div class="runner-summary">
+            <span class="status-badge {% if task_runner.status == 'RUNNING' %}status-running{% else %}status-idle{% endif %}">{{ task_runner.status or 'IDLE' }}</span>
+            <span>当前作业：<code>{{ task_runner.running_task_name or '-' }}</code></span>
+            <span>队列号：{{ task_runner.queue_id or '-' }}</span>
+            <span class="time-display">心跳：{{ task_runner.heartbeat_at or '-' }}</span>
+        </div>
+    </section>
     <section class="panel">
         <div class="panel-title">任务锁状态（同任务单实例）</div>
         <div class="table-container" style="max-height: 550px; overflow-y: auto;">
