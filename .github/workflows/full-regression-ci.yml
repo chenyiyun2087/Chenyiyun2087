@@ -1,0 +1,124 @@
+name: full-regression-ci
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+jobs:
+  full-regression:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.label.name == 'run-full-regression' || github.event_name == 'workflow_dispatch' }}
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test_password
+          MYSQL_DATABASE: order_test_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -u root -ptest_password --silent; then
+              break; fi
+            sleep 2
+          done
+      - name: Setup test schema
+        run: |
+          mysql -h 127.0.0.1 -u root -ptest_password -e "CREATE DATABASE IF NOT EXISTS chenyiyun"
+          mysql -h 127.0.0.1 -u root -ptest_password order_test_db << 'SQL'
+          CREATE TABLE IF NOT EXISTS chenyiyun.dim_trade_cal (
+            cal_date DATE PRIMARY KEY, exchange VARCHAR(8), is_open TINYINT(1)
+          );
+          INSERT INTO chenyiyun.dim_trade_cal (cal_date, exchange, is_open) VALUES
+            ('2026-06-19','SSE',1),('2026-06-22','SSE',1),('2026-06-23','SSE',1),
+            ('2026-06-24','SSE',1),('2026-06-25','SSE',1),('2026-06-26','SSE',1),
+            ('2026-06-29','SSE',1),('2026-06-30','SSE',1)
+          ON DUPLICATE KEY UPDATE is_open=VALUES(is_open);
+          SQL
+      - name: Production core tests
+        run: python -m pytest test/test_production_config_consistency.py test/test_production_health_order_gating.py -v
+      - name: Strict ledger tests
+        run: python -m pytest test/test_strict_execution_ledger.py test/test_strict_corporate_action_snapshot.py test/test_strict_snapshot_integrity.py test/test_strict_reliability_matrix.py test/test_strict_precommit_cap_and_sizing.py test/test_strict_pit_market_rules.py test/test_replay_strict_execution_ledger.py -v
+      - name: Order v2 integration tests
+        env:
+          ORDER_TEST_DB_URL: mysql+pymysql://root:test_password@127.0.0.1:3306/order_test_db
+        run: python -m pytest test/test_order_v2_migration_integration.py -v
+      - name: Statistical robustness tests
+        run: python -c "
+          import sys; sys.path.insert(0, '.');
+          from scripts.research.statistical_robustness import analyze_strategy_robustness;
+          import random; rng = random.Random(42);
+          synth = [rng.gauss(0.001, 0.02) for _ in range(252)];
+          report = analyze_strategy_robustness(synth, strategy_name='ci_test', n_trials=5);
+          assert report.n_days == 252;
+          assert report.sharpe_ratio > 0;
+          print(f'OK: SR={report.sharpe_ratio:.2f} DSR_conf={report.deflated_sharpe_confidence:.2f} PBO={report.pbo:.2f}');
+        "
+      - name: Circuit breaker tests
+        run: python -c "
+          import sys; sys.path.insert(0, '.');
+          from runtime.circuit_breakers import evaluate_circuit_breakers, CircuitState;
+          r = evaluate_circuit_breakers([1.0]*10, [0.001]*10, consecutive_data_delays=3);
+          assert r.state == CircuitState.FREEZE_BUY;
+          r2 = evaluate_circuit_breakers([1.0]+[0.65**(i/100) for i in range(1,100)], [-0.004]*100);
+          assert r2.state == CircuitState.HARD_STOP;
+          print('OK: circuit breakers (data_delay + hard_stop)');
+        "
+      - name: Factor attribution tests
+        run: python -c "
+          import sys; sys.path.insert(0, '.');
+          from scripts.research.factor_attribution import analyze_factor_attribution, compute_beta;
+          import random; rng = random.Random(42);
+          strat = [rng.gauss(0.001, 0.02) for _ in range(252)];
+          mkt = [rng.gauss(0.0008, 0.015) for _ in range(252)];
+          report = analyze_factor_attribution(strat, {'market_beta': mkt}, strategy_name='ci');
+          assert 'market_beta' in report.factor_exposures;
+          print(f'OK: market_beta={report.factor_exposures[\"market_beta\"]:.3f} alpha={report.alpha_annualized:.4f}');
+        "
+      - name: Order state machine tests
+        run: python -c "
+          import sys; sys.path.insert(0, '.');
+          from runtime.order_state_machine import is_valid_transition, is_terminal, validate_transition;
+          assert is_valid_transition('planned', 'submitted');
+          assert not is_valid_transition('filled', 'planned');
+          assert is_terminal('filled');
+          try: validate_transition('filled', 'planned', 'test');
+          except ValueError: pass
+          else: raise AssertionError('Should have raised ValueError');
+          print('OK: state machine transitions correct');
+        "
+      - name: No plaintext passwords
+        run: '! grep -E "root:.*@" scheduler.py'
+      - name: No duplicated Feishu functions
+        run: '! grep -rn "def _load_feishu_webhook\|def _send_feishu_text" scripts/ops/'
+      - name: Runtime module integrity
+        run: python -c "
+          import sys; sys.path.insert(0, '.');
+          from runtime import ReleaseManifest, freeze_production_release, generate_targets;
+          from runtime.circuit_breakers import evaluate_circuit_breakers;
+          from runtime.ledger_runtime import LedgerState, compute_rounding_tolerance;
+          from runtime.order_state_machine import describe_state_machine;
+          from runtime.data_snapshot import DataSnapshot;
+          print('OK: all runtime modules load');
+        "
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2

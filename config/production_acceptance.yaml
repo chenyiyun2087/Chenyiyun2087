@@ -1,0 +1,184 @@
+# Production acceptance criteria — governs promotion through all deployment lanes.
+#
+# L0 Research → L1 Manual Production → L2 Enabled Shadow → L3 Canary
+# → L4 Controlled Scale → L5 Stable Production
+#
+# Every gate below must pass before advancing to the next lane.
+
+acceptance:
+  # -----------------------------------------------------------------------
+  # L0→L1: Research → Manual Production
+  # -----------------------------------------------------------------------
+  release:
+    require_git_commit_sha: true
+    require_config_sha: true
+    require_data_snapshot_hash: true
+    require_feature_schema_version: true
+    require_deterministic_replay: true
+    max_unrecorded_manual_override_count: 0
+
+  # -----------------------------------------------------------------------
+  # Strict ledger & corporate actions (highest priority)
+  # -----------------------------------------------------------------------
+  strict_ledger:
+    required_status: VERIFIED                          # currently: PARTIAL_UNVERIFIED
+    min_corporate_action_coverage: 1.00                # 100% of held stocks must have CA data
+    max_t_plus_1_fill_violations: 0
+    max_order_conservation_errors: 0
+    max_ledger_nav_error_bps: 1
+    max_unexplained_cash_residual_pct_nav: 0.0025      # ≤ 0.25% NAV
+    max_rounding_cash_residual_pct_target_gross: 0.02  # ≤ 2% of target gross
+    max_unexplained_position_mismatch_count: 0
+    # Rounding tolerance: max(25bp, 0.5 * lot_notional / NAV)
+    rounding_tolerance_formula: "max(0.0025, 0.5 * single_lot_notional / account_nav)"
+
+  # -----------------------------------------------------------------------
+  # Full history backtest (2013–present)
+  # -----------------------------------------------------------------------
+  full_history:
+    min_start_date: "2013-01-01"
+    min_trade_day_coverage: 0.98
+    max_future_data_violations: 0
+    max_drawdown: -0.35
+    min_annualized_return: 0.00
+    max_single_year_profit_contribution: 0.60
+    require_market_regime_reports: true
+    required_regimes:
+      - "2015 bull + deleveraging"
+      - "2016-2018 bear + style rotation"
+      - "2020 extreme volatility"
+      - "2021 sector concentration"
+      - "2022 growth compression"
+      - "2023-2024 micro-cap + quant crowding"
+      - "2025-2026 current regime"
+    unacceptable_coverage_gaps: []
+
+  # -----------------------------------------------------------------------
+  # Rolling OOS (walk-forward)
+  # -----------------------------------------------------------------------
+  rolling_oos:
+    train_months: 24
+    test_months: 3
+    step_months: 3
+    purge_trading_days: 15
+    embargo_trading_days: 5
+    min_oos_window_coverage: 1.00
+    min_positive_window_ratio: 0.55
+    min_oos_calmar: 0.25
+    max_oos_drawdown: -0.35
+    max_single_window_profit_contribution: 0.35
+    # Challenger must beat baseline by at least 10% on Calmar
+    challenger_min_calmar_improvement_pct: 10
+
+  # -----------------------------------------------------------------------
+  # Statistical robustness
+  # -----------------------------------------------------------------------
+  statistical_robustness:
+    min_deflated_sharpe_confidence: 0.90
+    max_probability_of_backtest_overfitting: 0.25
+    require_block_bootstrap: true
+    require_factor_attribution: true
+    max_single_stock_profit_contribution: 0.15
+    max_single_industry_profit_contribution: 0.35
+    max_single_month_profit_contribution: 0.20
+    bootstrap_annual_return_5th_percentile_min: 0.00   # must not be significantly negative
+    bootstrap_max_dd_95th_percentile_max: -0.40
+    required_attribution_factors:
+      - market_beta
+      - size
+      - volatility
+      - liquidity
+      - industry
+      - momentum
+      - value
+
+  # -----------------------------------------------------------------------
+  # Cost, slippage & capacity stress
+  # -----------------------------------------------------------------------
+  execution:
+    account_sizes: [500000, 1500000, 3000000, 5000000, 10000000]
+    base_cost_rate: 0.00075                              # 7.5 bps one-way
+    stress_cost_rates: [0.0015, 0.0030, 0.0050]          # 15, 30, 50 bps
+    base_slippage_bps: 10
+    stress_slippage_bps: [25, 50, 100]
+    max_single_order_adv_ratio_base: 0.01                # 1% of 20-day ADV
+    max_single_order_adv_ratio_stress: 0.03              # 3%
+    max_expected_impact_bps_p95: 50
+    max_unfilled_order_ratio_base: 0.03
+    max_unfilled_order_ratio_stress: 0.08
+    require_intraday_or_auction_data_for_post_open_logic: true
+    hard_blocks:
+      - "abs(open_gap_proxy) > 5%"
+      - "limit_up_or_down_ratio > 20%"
+      - "expected_impact > 3% ADV"
+    stress_max_dd_widening_base: 0.08                    # DD can widen 8 pct in stress
+    stress_max_dd_widening_extreme: 0.15                 # DD can widen 15 pct in extreme
+
+  # -----------------------------------------------------------------------
+  # L1→L2: Shadow
+  # -----------------------------------------------------------------------
+  enabled_shadow:
+    min_real_trading_days: 20
+    min_recovery_event_days: 5
+    min_cumulative_recovery_events: 30
+    min_positive_event_rate: 0.55
+    max_event_degraded_ratio: 0.05
+    max_incremental_hard_block_days: 0
+    max_execution_proxy_missing_days: 0
+    max_consecutive_negative_theory_gap_days: 2
+    max_bad_shadow_days_before_block: 3
+    require_manual_approval: true
+
+  # -----------------------------------------------------------------------
+  # L2→L3: Canary
+  # -----------------------------------------------------------------------
+  canary:
+    max_capital_ratio: 0.10                              # 5-10% of target capital
+    min_real_trading_days: 60
+    min_completed_round_trips: 30
+    max_reconciliation_errors: 0
+    max_unexplained_cash_difference: 0.01                # 0.01 CNY or explainable rounding
+    max_realized_slippage_outlier_ratio: 0.05            # ≤ 5% of fills above P95 model
+    max_realized_cost_2x_model_ratio: 0.05               # ≤ 5% of fills cost > 2x model
+    max_unfilled_order_errors: 0
+    max_risk_governor_false_negative: 0                  # should have frozen but didn't
+    canary_max_dd_vs_oos_band: "within 95% CI"
+    require_manual_approval: true
+
+  # -----------------------------------------------------------------------
+  # L3→L4: Scale-up
+  # -----------------------------------------------------------------------
+  scale_up:
+    stages: [0.10, 0.25, 0.50, 1.00]                    # capital ratio stages
+    min_days_per_stage: 60
+    min_round_trips_per_stage: 30
+    max_reconciliation_errors: 0
+    max_hard_execution_errors: 0
+    max_unexplained_deviation: 0
+    require_manual_approval: true
+
+  # -----------------------------------------------------------------------
+  # Production risk controls (portfolio-level)
+  # -----------------------------------------------------------------------
+  portfolio_risk_controls:
+    max_single_position_weight_pct_nav: 20
+    max_single_industry_weight_pct_nav: 40
+    max_correlated_theme_weight_pct_nav: 55
+    max_daily_new_position_pct_nav: 30
+    max_daily_turnover_pct_nav: 50
+    max_single_order_adv_ratio: 0.01
+    auto_hold_cash_on_unfilled_buy: true
+    ban_new_high_risk_on_consecutive_sell_failure: true
+    ban_full_position_in_single_market_regime: true
+    data_yellow_ban_new_high_risk: true
+    data_red_sell_and_maintain_only: true
+
+  # Account-level circuit breakers
+  account_circuit_breakers:
+    loss_5d_pct: -0.08                                   # → ban position increase + manual review
+    drawdown_20d_pct: -0.15                              # → reduce to defensive
+    drawdown_peak_pct: -0.25                             # → freeze new buys + incident review
+    drawdown_peak_pct_hard: -0.30                        # → stop strategy + full post-mortem
+    data_delay_consecutive_days: 3                       # → freeze new buys
+    execution_deviation_consecutive_days: 2               # → freeze new buys
+    corporate_action_anomaly: "freeze_affected_only"     # → ban orders for affected symbols
