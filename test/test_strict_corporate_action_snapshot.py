@@ -38,11 +38,12 @@ def test_snapshot_preserves_false_source_completeness(tmp_path):
 
 
 def test_snapshot_optionally_captures_security_lifecycle(tmp_path):
-    source, lifecycle = tmp_path / "actions.csv", tmp_path / "lifecycle.csv"
+    source, lifecycle, calendar = tmp_path / "actions.csv", tmp_path / "lifecycle.csv", tmp_path / "calendar.csv"
     pd.DataFrame([{"symbol": "000001", "action_type": "split", "effective_date": "2026-01-02", "source_event_id": "1", "as_of_timestamp": "2026-01-01T18:00:00+08:00", "source_complete": True}]).to_csv(source, index=False)
-    pd.DataFrame([{"symbol": "000001.SZ", "effective_date": "2026-01-02", "is_listed": 1, "is_suspended": 0}]).to_csv(lifecycle, index=False)
-    manifest = build(source, tmp_path / "snapshot", "v1", lifecycle)
-    assert manifest["lifecycle_row_count"] == 1
+    pd.DataFrame([{"symbol": "000001.SZ", "effective_date": "2026-01-01", "is_listed": 1, "is_suspended": 0}]).to_csv(lifecycle, index=False)
+    pd.DataFrame({"trade_date": ["2026-01-01", "2026-01-02"]}).to_csv(calendar, index=False)
+    manifest = build(source, tmp_path / "snapshot", "v1", lifecycle, calendar)
+    assert manifest["lifecycle_row_count"] == 2
     assert (tmp_path / "snapshot/strict_security_lifecycle.csv").exists()
 
 
@@ -53,3 +54,17 @@ def test_snapshot_atomizes_combined_source_event(tmp_path):
     saved = pd.read_csv(tmp_path / "snapshot/strict_corporate_actions.csv")
     assert set(saved["action_type"]) == {"dividend_cash", "stock_bonus"}
     assert saved["parent_source_event_id"].nunique() == 1
+    for _, row in saved.iterrows():
+        if row["action_type"] == "dividend_cash":
+            assert pd.isna(row["stock_ratio"]) and pd.isna(row["rights_ratio"]) and pd.isna(row["split_ratio"])
+        else:
+            assert pd.isna(row["cash_per_share"]) and pd.isna(row["rights_ratio"]) and pd.isna(row["split_ratio"])
+
+
+def test_lifecycle_panel_rejects_missing_initial_state(tmp_path):
+    source, lifecycle, calendar = tmp_path / "actions.csv", tmp_path / "lifecycle.csv", tmp_path / "calendar.csv"
+    pd.DataFrame([{"symbol": "000001", "action_type": "split", "effective_date": "2026-01-02", "source_event_id": "1", "as_of_timestamp": "2026-01-01T18:00:00+08:00", "source_complete": True}]).to_csv(source, index=False)
+    pd.DataFrame([{"symbol": "000001", "effective_date": "2026-01-02", "is_listed": 1, "is_suspended": 0}]).to_csv(lifecycle, index=False)
+    pd.DataFrame({"trade_date": ["2026-01-01", "2026-01-02"]}).to_csv(calendar, index=False)
+    with pytest.raises(RuntimeError, match="missing initial state"):
+        build(source, tmp_path / "snapshot", "v1", lifecycle, calendar)

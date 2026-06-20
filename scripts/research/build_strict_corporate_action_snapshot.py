@@ -16,7 +16,10 @@ import pandas as pd
 
 REQUIRED = {"symbol", "action_type", "effective_date", "source_event_id", "as_of_timestamp", "source_complete"}
 OPTIONAL = ["announcement_date", "ex_date", "cash_per_share", "stock_ratio", "rights_ratio", "rights_price", "split_ratio", "settlement_price", "source_reason"]
-ATOMIC_TYPES = {"dividend_cash": 40, "stock_bonus": 30, "split_merge": 20, "rights_subscription": 50, "delist_cash_settlement": 60}
+# Cash entitlement is based on pre-adjustment shares.  Rights then sees the
+# deterministic post split/bonus share count.
+ATOMIC_TYPES = {"dividend_cash": 20, "split_merge": 30, "stock_bonus": 40, "rights_subscription": 50, "delist_cash_settlement": 60}
+ECONOMIC_FIELDS = {"cash_per_share", "stock_ratio", "rights_ratio", "rights_price", "split_ratio", "settlement_price"}
 
 
 def _digest(payload: object) -> str:
@@ -31,7 +34,10 @@ def _atomic_rows(row: pd.Series) -> list[dict]:
     if raw_type not in set(ATOMIC_TYPES) | {"dividend_stock"}:
         raise RuntimeError(f"unknown corporate action type: {raw_type}")
     parent = str(row["source_event_id"])
-    shared = row.to_dict()
+    # Never carry a source row's other economic legs into an atomic event.
+    # The ledger dispatches strictly by action_type, but zeroing here makes the
+    # snapshot independently safe to inspect and consume.
+    shared = {**row.to_dict(), **{field: None for field in ECONOMIC_FIELDS}}
     rows: list[dict] = []
     def add(event_type: str, **values: object) -> None:
         event = {**shared, **values, "action_type": event_type, "parent_source_event_id": parent, "event_id": f"{parent}:{event_type}", "priority": ATOMIC_TYPES[event_type]}
@@ -41,20 +47,48 @@ def _atomic_rows(row: pd.Series) -> list[dict]:
     split = pd.to_numeric(row.get("split_ratio"), errors="coerce")
     rights = pd.to_numeric(row.get("rights_ratio"), errors="coerce")
     if raw_type == "delist_cash_settlement":
-        add(raw_type)
-    elif raw_type in {"rights_subscription", "split_merge", "stock_bonus", "dividend_cash"}:
-        add(raw_type)
+        add(raw_type, settlement_price=row.get("settlement_price"))
+    elif raw_type == "rights_subscription":
+        add(raw_type, rights_ratio=row.get("rights_ratio"), rights_price=row.get("rights_price"))
+    elif raw_type == "split_merge":
+        add(raw_type, split_ratio=row.get("split_ratio"))
+    elif raw_type == "stock_bonus":
+        add(raw_type, stock_ratio=row.get("stock_ratio"))
+    elif raw_type == "dividend_cash":
+        add(raw_type, cash_per_share=row.get("cash_per_share"))
     else:
-        if pd.notna(split) and split != 0: add("split_merge")
-        if pd.notna(stock) and stock != 0: add("stock_bonus")
-        if pd.notna(cash) and cash != 0: add("dividend_cash")
-        if pd.notna(rights) and rights != 0: add("rights_subscription")
+        if pd.notna(split) and split != 0: add("split_merge", split_ratio=row.get("split_ratio"))
+        if pd.notna(stock) and stock != 0: add("stock_bonus", stock_ratio=row.get("stock_ratio"))
+        if pd.notna(cash) and cash != 0: add("dividend_cash", cash_per_share=row.get("cash_per_share"))
+        if pd.notna(rights) and rights != 0: add("rights_subscription", rights_ratio=row.get("rights_ratio"), rights_price=row.get("rights_price"))
         if not rows:  # incomplete/no-economic-leg source must not become a benign no-op.
             raise RuntimeError(f"corporate action has no economic leg: {parent}")
     return rows
 
 
-def build(source: Path, output_dir: Path, dataset_version: str, lifecycle_source: Path | None = None) -> dict:
+def _build_lifecycle_panel(lifecycle: pd.DataFrame, calendar: pd.DataFrame) -> pd.DataFrame:
+    if "trade_date" not in calendar:
+        raise RuntimeError("lifecycle calendar missing trade_date")
+    sessions = pd.to_datetime(calendar["trade_date"], errors="coerce").dropna().drop_duplicates().sort_values()
+    if sessions.empty:
+        raise RuntimeError("lifecycle calendar has no valid sessions")
+    if lifecycle.duplicated(["symbol", "effective_date"]).any():
+        raise RuntimeError("lifecycle source has duplicate symbol/effective_date")
+    rows: list[pd.DataFrame] = []
+    for symbol, events in lifecycle.groupby("symbol", sort=False):
+        events = events.sort_values("effective_date")
+        if events["effective_date"].iloc[0] > sessions.iloc[0]:
+            raise RuntimeError(f"lifecycle source missing initial state: {symbol}")
+        base = pd.DataFrame({"trade_date": sessions})
+        panel = pd.merge_asof(base, events.sort_values("effective_date"), left_on="trade_date", right_on="effective_date", direction="backward")
+        if panel[["is_listed", "is_suspended"]].isna().any().any():
+            raise RuntimeError(f"lifecycle source cannot cover calendar: {symbol}")
+        panel["symbol"] = symbol
+        rows.append(panel[["symbol", "trade_date", "is_listed", "is_suspended"]])
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["symbol", "trade_date", "is_listed", "is_suspended"])
+
+
+def build(source: Path, output_dir: Path, dataset_version: str, lifecycle_source: Path | None = None, lifecycle_calendar: Path | None = None) -> dict:
     frame = pd.read_csv(source, dtype={"symbol": str, "source_event_id": str})
     missing = sorted(REQUIRED - set(frame.columns))
     if missing:
@@ -92,6 +126,8 @@ def build(source: Path, output_dir: Path, dataset_version: str, lifecycle_source
         "snapshot_sha256": hashlib.sha256(events_path.read_bytes()).hexdigest(),
     }
     if lifecycle_source:
+        if lifecycle_calendar is None:
+            raise RuntimeError("lifecycle calendar is required for a daily lifecycle snapshot")
         lifecycle = pd.read_csv(lifecycle_source, dtype={"symbol": str})
         lifecycle_required = {"symbol", "effective_date", "is_listed", "is_suspended"}
         if missing := sorted(lifecycle_required - set(lifecycle.columns)):
@@ -100,12 +136,22 @@ def build(source: Path, output_dir: Path, dataset_version: str, lifecycle_source
         lifecycle["effective_date"] = pd.to_datetime(lifecycle["effective_date"], errors="coerce")
         if lifecycle[["symbol", "effective_date"]].isna().any().any():
             raise RuntimeError("lifecycle source contains null identity/timing fields")
+        for column in ("is_listed", "is_suspended"):
+            lifecycle[column] = pd.to_numeric(lifecycle[column], errors="coerce")
+            if lifecycle[column].isna().any() or not lifecycle[column].isin([0, 1]).all():
+                raise RuntimeError(f"lifecycle source has invalid {column} values")
+        calendar = pd.read_csv(lifecycle_calendar)
+        lifecycle_panel = _build_lifecycle_panel(lifecycle, calendar)
         lifecycle_path = output_dir / "strict_security_lifecycle.csv"
-        lifecycle.sort_values(["effective_date", "symbol"]).to_csv(lifecycle_path, index=False)
+        lifecycle_panel.sort_values(["trade_date", "symbol"]).to_csv(lifecycle_path, index=False)
         manifest["lifecycle_source"] = str(lifecycle_source)
         manifest["lifecycle_source_sha256"] = hashlib.sha256(lifecycle_source.read_bytes()).hexdigest()
+        manifest["lifecycle_calendar"] = str(lifecycle_calendar)
+        manifest["lifecycle_calendar_sha256"] = hashlib.sha256(lifecycle_calendar.read_bytes()).hexdigest()
         manifest["lifecycle_snapshot_sha256"] = hashlib.sha256(lifecycle_path.read_bytes()).hexdigest()
-        manifest["lifecycle_row_count"] = int(len(lifecycle))
+        manifest["lifecycle_row_count"] = int(len(lifecycle_panel))
+        manifest["lifecycle_panel_start"] = str(lifecycle_panel["trade_date"].min())
+        manifest["lifecycle_panel_end"] = str(lifecycle_panel["trade_date"].max())
     (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
@@ -116,4 +162,5 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--dataset-version", required=True)
     parser.add_argument("--lifecycle-source", type=Path, default=None)
+    parser.add_argument("--lifecycle-calendar", type=Path, default=None)
     print(json.dumps(build(**vars(parser.parse_args())), ensure_ascii=False, indent=2))

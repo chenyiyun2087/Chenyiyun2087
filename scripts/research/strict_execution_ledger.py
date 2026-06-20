@@ -22,7 +22,7 @@ CANCELLED_T1_CLOSE = "CANCELLED_T1_CLOSE"
 # Compatibility alias for callers importing the old public constant.
 CANCELLED = CANCELLED_T1_CLOSE
 CORPORATE_ACTION_FREEZE = "CORPORATE_ACTION_FREEZE"
-ATOMIC_ACTION_TYPES = {"dividend_cash", "stock_bonus", "split_merge", "rights_subscription", "delist_cash_settlement", "dividend_stock"}
+ATOMIC_ACTION_TYPES = {"dividend_cash", "stock_bonus", "split_merge", "rights_subscription", "delist_cash_settlement"}
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,7 @@ class PrecommitOrder:
 class CorporateAction:
     symbol: str
     ex_date: object
-    action_type: str = "dividend_stock"
+    action_type: str = "dividend_cash"
     source_event_id: str = ""
     announcement_date: object | None = None
     effective_date: object | None = None
@@ -87,7 +87,7 @@ class ExecutionLedger:
         if incomplete_parents:
             self.freeze(actions[0].ex_date if actions else "", "incomplete_corporate_action_bundle")
             raise RuntimeError("incomplete_corporate_action_bundle")
-        for action in sorted(actions, key=lambda value: ({"split_merge": 20, "stock_bonus": 30, "dividend_cash": 40, "rights_subscription": 50, "delist_cash_settlement": 60}.get(value.action_type, 999), value.source_event_id)):
+        for action in sorted(actions, key=lambda value: ({"dividend_cash": 20, "split_merge": 30, "stock_bonus": 40, "rights_subscription": 50, "delist_cash_settlement": 60}.get(value.action_type, 999), value.source_event_id)):
             if action.action_type not in ATOMIC_ACTION_TYPES:
                 self.freeze(action.ex_date, "unknown_corporate_action_type")
                 raise RuntimeError(f"unknown_corporate_action_type:{action.action_type}")
@@ -101,7 +101,7 @@ class ExecutionLedger:
             # The research policy is deterministic: subscribe in full only
             # when cash covers the full entitlement.  A shortfall is not
             # silently partially subscribed because broker treatment differs.
-            if action.action_type == "rights_subscription" or action.rights_ratio:
+            if action.action_type == "rights_subscription":
                 if action.rights_price is None or action.rights_price < 0:
                     raise RuntimeError(f"rights_issue_requires_reconciliation:{action.symbol}:{action.ex_date}")
                 rights_shares = int(round(held * float(action.rights_ratio)))
@@ -127,13 +127,19 @@ class ExecutionLedger:
                              share_delta=-held, action_type=action.action_type, source_event_id=action.source_event_id,
                              source_reason=action.source_reason, event_hash=action.event_hash)
                 continue
-            cash_delta = held * float(action.cash_per_share)
-            stock_delta = int(round(held * float(action.stock_ratio)))
-            split_delta = int(round(held * float(action.split_ratio)))
+            if action.action_type == "dividend_cash":
+                cash_delta, share_delta = held * float(action.cash_per_share), 0
+            elif action.action_type == "stock_bonus":
+                cash_delta, share_delta = 0.0, int(round(held * float(action.stock_ratio)))
+            elif action.action_type == "split_merge":
+                cash_delta, share_delta = 0.0, int(round(held * float(action.split_ratio)))
+            else:  # Kept defensive even though the type set is checked above.
+                self.freeze(action.ex_date, "unknown_corporate_action_type")
+                raise RuntimeError(f"unknown_corporate_action_type:{action.action_type}")
             self.cash += cash_delta
-            self.shares[action.symbol] = held + stock_delta + split_delta
+            self.shares[action.symbol] = held + share_delta
             self._append("corporate_action", order_status="APPLIED", symbol=action.symbol, ex_date=action.ex_date, event_timestamp=f"{action.ex_date}T09:25:00+08:00",
-                         cash_delta=cash_delta, share_delta=stock_delta + split_delta, action_type=action.action_type,
+                         cash_delta=cash_delta, share_delta=share_delta, action_type=action.action_type,
                          source_event_id=action.source_event_id, source_reason=action.source_reason, event_hash=action.event_hash)
 
     def freeze(self, event_date: object, reason: str) -> None:

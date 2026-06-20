@@ -267,6 +267,7 @@ def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: p
         PROJECT_ROOT / "scripts/research/analyze_strict_execution_deviation.py",
         PROJECT_ROOT / "scripts/research/analyze_strict_missed_risk_events.py",
         PROJECT_ROOT / "scripts/research/package_strict_ledger_evidence.py",
+        PROJECT_ROOT / "scripts/research/verify_strict_ledger_evidence.py",
         PROJECT_ROOT / "scripts/research/build_strict_corporate_action_snapshot.py",
         PROJECT_ROOT / "scripts/research/run_strict_reliability_matrix.py",
     ]
@@ -370,13 +371,6 @@ def _resolve_ashare_weight_config(
 
 def _ashare_weight_cache_key(config: AShareWeightConfig, signal_date: object, selected_strategy: str, top_n: int) -> str:
     date_key = pd.Timestamp(signal_date).strftime("%Y%m%d")
-    equity_after = _equity(account, open_prices, "adj_open")
-    intentional_cash_ratio = max(0.0, 1.0 - float(position_ratio))
-    cash_ratio = float(account.cash / equity_after) if equity_after > 0 else np.nan
-    planned_notional = sum(int(shares) * float(planned_prices.get(symbol, 0.0)) for symbol, shares in target_shares.items())
-    filled_notional = sum(float(row.get("gross_amount") or 0.0) for row in trade_rows if row.get("side") == "BUY")
-    planned_shares_total = sum(target_shares.values())
-    filled_shares_total = sum(int(row.get("filled_shares") or row.get("shares") or 0) for row in trade_rows if row.get("side") == "BUY")
     return (
         f"{ASHARE_ADAPTIVE_VERSION}|{config.profile}|{config.release_tier}|"
         f"limit{config.supplement_limit}|top{int(top_n)}|{selected_strategy}|{date_key}"
@@ -526,10 +520,21 @@ def _price_lookup_for_day(
     return day.drop_duplicates("symbol").set_index("symbol")[available].to_dict("index")
 
 
-def _load_corporate_action_snapshot(path: str | Path) -> tuple[dict[object, list[CorporateAction]], str, str]:
+def _manifest_provenance(manifest: dict, *, snapshot_key: str, source_key: str) -> dict[str, object]:
+    required = {"dataset_version", "generated_at", snapshot_key, source_key}
+    if missing := sorted(key for key in required if not manifest.get(key)):
+        raise RuntimeError(f"snapshot manifest missing provenance fields: {missing}")
+    return {
+        "dataset_version": manifest["dataset_version"],
+        "generated_at": manifest["generated_at"],
+        "source_sha256": manifest[source_key],
+        "snapshot_sha256": manifest[snapshot_key],
+    }
+
+
+def _load_corporate_action_snapshot(path: str | Path, manifest_path: str | Path) -> tuple[dict[object, list[CorporateAction]], str, str, dict[str, object]]:
     """Load the immutable research snapshot produced by the Tushare adapter."""
-    snapshot = Path(path)
-    frame = pd.read_csv(snapshot)
+    frame, manifest, digest = _verified_snapshot(path, manifest_path, "snapshot_sha256")
     required = {"symbol", "action_type", "effective_date", "source_event_id", "as_of_timestamp", "source_complete", "event_hash"}
     if missing := sorted(required - set(frame.columns)):
         raise RuntimeError(f"corporate action snapshot missing fields: {missing}")
@@ -552,7 +557,7 @@ def _load_corporate_action_snapshot(path: str | Path) -> tuple[dict[object, list
         if not np.isfinite(action.settlement_price or np.nan):
             action = CorporateAction(**{**action.__dict__, "settlement_price": None})
         actions.setdefault(action.ex_date, []).append(action)
-    return actions, "SNAPSHOT_COMPLETE_UNRECONCILED", hashlib.sha256(snapshot.read_bytes()).hexdigest()
+    return actions, "SNAPSHOT_COMPLETE_UNRECONCILED", digest, _manifest_provenance(manifest, snapshot_key="snapshot_sha256", source_key="source_sha256")
 
 
 def _validate_corporate_action_pit(actions_by_date: dict[object, list[CorporateAction]], calendar: list[object]) -> None:
@@ -580,20 +585,20 @@ def _verified_snapshot(path: str | Path, manifest_path: str | Path, manifest_key
     return pd.read_csv(snapshot), manifest, digest
 
 
-def _load_lifecycle_snapshot(path: str | Path, manifest_path: str | Path) -> tuple[pd.DataFrame, str]:
-    frame, _, digest = _verified_snapshot(path, manifest_path, "lifecycle_snapshot_sha256")
-    required = {"symbol", "effective_date", "is_listed", "is_suspended"}
+def _load_lifecycle_snapshot(path: str | Path, manifest_path: str | Path) -> tuple[pd.DataFrame, str, dict[str, object]]:
+    frame, manifest, digest = _verified_snapshot(path, manifest_path, "lifecycle_snapshot_sha256")
+    required = {"symbol", "trade_date", "is_listed", "is_suspended"}
     if missing := sorted(required - set(frame.columns)):
         raise RuntimeError(f"lifecycle snapshot missing fields: {missing}")
     frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
-    frame["effective_date"] = pd.to_datetime(frame["effective_date"], errors="coerce").dt.date
-    if frame[["symbol", "effective_date"]].isna().any().any() or frame.duplicated(["symbol", "effective_date"]).any():
+    frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce").dt.date
+    if frame[["symbol", "trade_date"]].isna().any().any() or frame.duplicated(["symbol", "trade_date"]).any():
         raise RuntimeError("invalid lifecycle snapshot identity")
-    return frame, digest
+    return frame, digest, _manifest_provenance(manifest, snapshot_key="lifecycle_snapshot_sha256", source_key="lifecycle_source_sha256")
 
 
 def _apply_lifecycle_snapshot(prices: pd.DataFrame, lifecycle: pd.DataFrame) -> pd.DataFrame:
-    out = prices.merge(lifecycle.rename(columns={"effective_date": "trade_date", "is_listed": "snapshot_is_listed", "is_suspended": "snapshot_is_suspended"}), on=["symbol", "trade_date"], how="left")
+    out = prices.merge(lifecycle.rename(columns={"is_listed": "snapshot_is_listed", "is_suspended": "snapshot_is_suspended"}), on=["symbol", "trade_date"], how="left")
     if out[["snapshot_is_listed", "snapshot_is_suspended"]].isna().any().any():
         raise RuntimeError("lifecycle snapshot missing a price/session status")
     out["is_listed"] = pd.to_numeric(out["snapshot_is_listed"], errors="coerce")
@@ -2849,9 +2854,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         raise RuntimeError("No price rows remain after end-date cutoff.")
     prices = prices.sort_values(["symbol", "trade_date"]).copy()
     if requires_frozen_inputs:
-        _, corporate_manifest, corporate_action_snapshot_hash = _verified_snapshot(args.corporate_action_snapshot, args.corporate_action_manifest, "snapshot_sha256")
-        corporate_actions_by_date, corporate_action_source_status, corporate_action_snapshot_hash = _load_corporate_action_snapshot(args.corporate_action_snapshot)
-        lifecycle, lifecycle_snapshot_hash = _load_lifecycle_snapshot(args.security_lifecycle_snapshot, args.security_lifecycle_manifest)
+        corporate_actions_by_date, corporate_action_source_status, corporate_action_snapshot_hash, corporate_manifest_provenance = _load_corporate_action_snapshot(args.corporate_action_snapshot, args.corporate_action_manifest)
+        lifecycle, lifecycle_snapshot_hash, lifecycle_manifest_provenance = _load_lifecycle_snapshot(args.security_lifecycle_snapshot, args.security_lifecycle_manifest)
         prices = _apply_lifecycle_snapshot(prices, lifecycle)
     else:
         corporate_actions_by_date, corporate_action_source_status = _load_corporate_actions(
@@ -2859,6 +2863,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         )
         corporate_action_snapshot_hash = None
         lifecycle_snapshot_hash = None
+        corporate_manifest_provenance = None
+        lifecycle_manifest_provenance = None
     prices["prev_adj_close"] = prices.groupby("symbol")["adj_close"].shift(1)
     if "raw_close" in prices.columns:
         prices["prev_raw_close"] = prices.groupby("symbol")["raw_close"].shift(1)
@@ -2876,7 +2882,9 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "corporate_action_event_days": int(len(corporate_actions_by_date)),
         "corporate_action_coverage_status": corporate_action_source_status,
         "corporate_action_snapshot_sha256": corporate_action_snapshot_hash,
+        "corporate_action_manifest": corporate_manifest_provenance,
         "security_lifecycle_snapshot_sha256": lifecycle_snapshot_hash,
+        "security_lifecycle_manifest": lifecycle_manifest_provenance,
         "market_rules_version": MARKET_RULES_VERSION,
         "ledger_implementation_status": "PARTIAL_UNVERIFIED",
     })
