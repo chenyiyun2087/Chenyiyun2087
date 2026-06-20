@@ -94,6 +94,62 @@ jobs:
       - name: No research imports in replay_v2
         run: '! grep -E "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
 
+  integration-test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test_password
+          MYSQL_DATABASE: order_test_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -u root -ptest_password --silent; then
+              echo "MySQL ready"
+              break
+            fi
+            echo "Waiting for MySQL... ($i/30)"
+            sleep 2
+          done
+      - name: Setup test schema and trade calendar
+        run: |
+          mysql -h 127.0.0.1 -u root -ptest_password order_test_db << 'SQL'
+          CREATE TABLE IF NOT EXISTS chenyiyun.dim_trade_cal (
+            cal_date DATE PRIMARY KEY,
+            exchange VARCHAR(8),
+            is_open TINYINT(1)
+          );
+          INSERT INTO chenyiyun.dim_trade_cal (cal_date, exchange, is_open) VALUES
+            ('2026-06-19', 'SSE', 1),
+            ('2026-06-22', 'SSE', 1),
+            ('2026-06-23', 'SSE', 1),
+            ('2026-06-24', 'SSE', 1),
+            ('2026-06-25', 'SSE', 1),
+            ('2026-06-26', 'SSE', 1),
+            ('2026-06-29', 'SSE', 1),
+            ('2026-06-30', 'SSE', 1)
+          ON DUPLICATE KEY UPDATE is_open = VALUES(is_open);
+          SQL
+      - name: Run order v2 integration tests
+        env:
+          ORDER_TEST_DB_URL: mysql+pymysql://root:test_password@127.0.0.1:3306/order_test_db
+        run: python -m pytest test/test_order_v2_migration_integration.py -v
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:

@@ -317,9 +317,10 @@ def run_pipeline(target_date) -> bool:
             from scripts.ops.order_repository import supersede_pending_buys
             _superseded = supersede_pending_buys(
                 get_engine(),
-                strategy=str(PRODUCTION_CONFIG["primary_strategy"]),
-                as_of_date=date_iso,
                 account_id="default",
+                strategy=str(PRODUCTION_CONFIG["primary_strategy"]),
+                release_id=str(PRODUCTION_CONFIG.get("config_sha", "legacy-prod-v1")),
+                as_of_date=date_iso,
             )
             if _superseded:
                 logger.warning(
