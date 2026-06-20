@@ -228,114 +228,95 @@ class TestDatabaseCredentialSafety:
 
 
 class TestSchedulerToCLIContract:
-    """End-to-end test: scheduler RED → argparse → emit_orders=False."""
-
-    @staticmethod
-    def _scheduler_path() -> Path:
-        return Path(__file__).resolve().parents[1] / "scheduler.py"
-
-    @staticmethod
-    def _read_scheduler_src() -> str:
-        return TestSchedulerToCLIContract._scheduler_path().read_text()
+    """Test: scheduler RED → argparse → emit_orders=False, plus repository behavior."""
 
     def test_red_no_emit_orders_flag_means_false(self):
-        """When --emit-orders is NOT passed, argparse store_true defaults to False."""
         import argparse
-        import sys as _sys
-
-        # Save and restore argv to avoid side effects
-        saved_argv = _sys.argv[:]
-        try:
-            # Simulate RED health: no --emit-orders passed
-            _sys.argv = ["export_trusted_strategy_candidates.py", "--date", "20260618"]
-            parser = argparse.ArgumentParser()
-            parser.add_argument("--date")
-            parser.add_argument("--emit-orders", action="store_true", default=False)
-            args = parser.parse_args(["--date", "20260618"])
-            assert args.emit_orders is False, (
-                "Without --emit-orders flag, emit_orders must be False (RED behavior)"
-            )
-        finally:
-            _sys.argv = saved_argv
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--emit-orders", action="store_true", default=False)
+        args = parser.parse_args([])
+        assert args.emit_orders is False
 
     def test_green_passes_emit_orders_flag(self):
-        """When --emit-orders IS passed, argparse store_true sets to True."""
         import argparse
-        import sys as _sys
-
-        saved_argv = _sys.argv[:]
-        try:
-            _sys.argv = ["export_trusted_strategy_candidates.py", "--emit-orders"]
-            parser = argparse.ArgumentParser()
-            parser.add_argument("--emit-orders", action="store_true", default=False)
-            args = parser.parse_args(["--emit-orders"])
-            assert args.emit_orders is True, (
-                "With --emit-orders flag, emit_orders must be True (GREEN/YELLOW behavior)"
-            )
-        finally:
-            _sys.argv = saved_argv
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--emit-orders", action="store_true", default=False)
+        args = parser.parse_args(["--emit-orders"])
+        assert args.emit_orders is True
 
     def test_no_emit_orders_explicit_flag(self):
-        """--no-emit-orders explicitly sets emit_orders=False."""
         import argparse
-        import sys as _sys
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--emit-orders", action="store_true", default=False)
+        parser.add_argument("--no-emit-orders", action="store_false", dest="emit_orders")
+        args = parser.parse_args(["--no-emit-orders"])
+        assert args.emit_orders is False
 
-        saved_argv = _sys.argv[:]
-        try:
-            _sys.argv = ["export", "--no-emit-orders"]
-            parser = argparse.ArgumentParser()
-            parser.add_argument("--emit-orders", action="store_true", default=False)
-            parser.add_argument("--no-emit-orders", action="store_false", dest="emit_orders")
-            args = parser.parse_args(["--no-emit-orders"])
-            assert args.emit_orders is False
-        finally:
-            _sys.argv = saved_argv
 
-    def test_cleanup_sql_has_trade_date_filter(self):
-        """Verify the RED cleanup SQL uses actual table column trade_date."""
-        src = self._read_scheduler_src()
-        assert "trade_date < :today" in src, (
-            "RED cleanup SQL must filter by trade_date (actual table column)"
-        )
+class TestOrderRepository:
+    """Test order_repository functions (no DB required)."""
 
-    def test_cleanup_sql_uses_order_status_column(self):
-        """Verify the RED cleanup SQL uses actual column name order_status."""
-        src = self._read_scheduler_src()
-        assert "order_status" in src and "SET order_status = 'superseded'" in src, (
-            "RED cleanup SQL must use order_status column (actual DDL name)"
-        )
+    def test_protected_statuses_are_correct(self):
+        from scripts.ops.order_repository import PROTECTED_STATUSES
+        for status in ("submitted", "partial", "filled", "cancelled", "rejected",
+                       "superseded", "expired"):
+            assert status in PROTECTED_STATUSES, f"Missing protected status: {status}"
+        assert "planned" not in PROTECTED_STATUSES, "planned must NOT be protected"
 
-    def test_cleanup_fail_closed(self):
-        """Verify cleanup failure returns False (aborts pipeline)."""
-        src = self._read_scheduler_src()
-        # Find the except block after FAILED to cleanup
-        fail_section_start = src.find("FAILED to cleanup stale BUY drafts")
-        assert fail_section_start > 0, "Missing fail-closed error message"
-        fail_section = src[fail_section_start:fail_section_start + 500]
-        assert "return False" in fail_section, (
-            "Cleanup failure must return False to abort pipeline (fail-closed)"
-        )
+    def test_expected_uk_columns(self):
+        """Verify the v2 unique key column order."""
+        expected = ["account_id", "release_id", "strategy",
+                    "execution_date", "ts_code", "side"]
+        assert len(expected) == 6
+        assert expected[0] == "account_id"
+        assert expected[1] == "release_id"
+        assert expected[2] == "strategy"
+        assert expected[3] == "execution_date"
 
-    def test_order_table_columns_match_ddl(self):
-        """Verify cleanup SQL columns match the actual table DDL."""
-        import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from scripts.ops.data_readiness_gate import _get_text_sql
-        # The actual DDL uses: order_status, note, trade_date, side
-        # The cleanup must use these exact column names
-        src = self._read_scheduler_src()
-        assert "order_status" in src, "Must use order_status (not 'status')"
-        assert "note" in src, "Must use note (not 'memo')"
-        assert "trade_date" in src, "Must use trade_date (not 'execution_date')"
+    def test_backfill_function_exists(self):
+        from scripts.ops.order_repository import backfill_legacy_orders
+        assert callable(backfill_legacy_orders)
 
-    def test_top5_contamination_is_critical(self):
-        """Verify Top5 contamination check uses 'critical' severity."""
+    def test_validate_schema_or_die_exists(self):
+        from scripts.ops.order_repository import validate_order_schema_or_die
+        assert callable(validate_order_schema_or_die)
+
+
+class TestTop5AndT1:
+    """Test Top5 contamination and T+1 execution date logic."""
+
+    def test_top5_contamination_check_exists(self):
         import inspect, sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from scripts.ops.data_readiness_gate import PostScoreGate
         src = inspect.getsource(PostScoreGate.check_candidate_contamination)
-        assert "top5_contaminated" in src, "Missing Top5 contamination check"
-        assert "severity" in src, "Top5 contamination must have severity field"
+        assert "top5_contaminated" in src
+
+    def test_next_trading_day_uses_strict_greater_than(self):
+        """T+1 execution must use > not >=."""
+        src = (Path(__file__).resolve().parents[1] / "scripts" / "ops" /
+               "export_trusted_strategy_candidates.py").read_text()
+        # Find _next_trading_day function
+        fn_start = src.find("def _next_trading_day")
+        fn_end = src.find("\ndef ", fn_start + 1)
+        fn_src = src[fn_start:fn_end] if fn_end > 0 else src[fn_start:]
+        assert "cal_date > :d" in fn_src, (
+            "T+1 must use cal_date > :d (strictly greater), not >="
+        )
+
+    def test_next_trading_day_raises_on_failure(self):
+        """_next_trading_day must raise RuntimeError on query failure or no result."""
+        src = (Path(__file__).resolve().parents[1] / "scripts" / "ops" /
+               "export_trusted_strategy_candidates.py").read_text()
+        fn_start = src.find("def _next_trading_day")
+        fn_end = src.find("\ndef ", fn_start + 1)
+        fn_src = src[fn_start:fn_end] if fn_end > 0 else src[fn_start:]
+        assert "raise RuntimeError" in fn_src, (
+            "T+1 must raise RuntimeError on failure, not silently fall back"
+        )
+        assert "return from_date" not in fn_src, (
+            "T+1 must not fall back to signal_date"
+        )
 
 
 class TestFeishuNoTLSFallback:

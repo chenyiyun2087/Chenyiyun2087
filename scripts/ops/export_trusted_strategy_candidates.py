@@ -549,25 +549,38 @@ def _check_candidate_tradability(
 
 
 def _next_trading_day(engine, from_date: str) -> str:
-    """Find the next trading day >= from_date using dim_trade_cal (SSE)."""
+    """Find the NEXT trading day after from_date (strictly >, T+1).
+
+    Uses dim_trade_cal (SSE). Raises RuntimeError if no subsequent trading day
+    exists or the calendar query fails — order writing requires a valid T+1 date.
+    """
     from sqlalchemy import text as _txt
+    row = None
     try:
         with engine.connect() as conn:
             row = conn.execute(
                 _txt(
                     "SELECT MIN(cal_date) FROM chenyiyun.dim_trade_cal "
-                    "WHERE exchange = 'SSE' AND is_open = 1 AND cal_date >= :d"
+                    "WHERE exchange = 'SSE' AND is_open = 1 AND cal_date > :d"
                 ),
                 {"d": from_date},
             ).fetchone()
-        if row and row[0]:
-            raw = str(row[0])
-            if len(raw) == 8:
-                return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
-            return raw[:10]
-    except Exception:
-        pass
-    return from_date
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to query next trading day after {from_date} from "
+            f"dim_trade_cal: {exc}"
+        ) from exc
+
+    if not row or not row[0]:
+        raise RuntimeError(
+            f"No next trading day found after {from_date} in dim_trade_cal (SSE). "
+            f"Trade calendar may be incomplete or end-of-range."
+        )
+
+    raw = str(row[0])
+    if len(raw) == 8:
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+    return raw[:10]
 
 
 

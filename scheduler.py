@@ -174,7 +174,21 @@ def run_pipeline(target_date) -> bool:
         _backfilled = backfill_legacy_orders(get_engine())
         if _backfilled:
             logger.info(f"Order schema: backfilled {_backfilled} legacy order(s).")
-        logger.info("Order schema v2 validated + backfilled.")
+        # Post-backfill verification: no order identity fields may remain NULL
+        from sqlalchemy import text as _tv
+        with get_engine().connect() as _vc:
+            _nulls = _vc.execute(_tv(
+                "SELECT COUNT(*) FROM chenyiyun.ads_local_strategy_orders "
+                "WHERE strategy IS NULL OR account_id IS NULL "
+                "   OR release_id IS NULL OR execution_date IS NULL"
+            )).scalar()
+        if _nulls:
+            raise RuntimeError(
+                f"Order schema backfill incomplete: {_nulls} order(s) still have "
+                f"NULL strategy/account_id/release_id/execution_date. "
+                f"Cannot proceed — order provenance must be complete."
+            )
+        logger.info("Order schema v2 validated + backfilled + zero-NULL verified.")
     except RuntimeError as _schema_exc:
         logger.error(f"Order schema validation FAILED: {_schema_exc}")
         return False
