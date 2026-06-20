@@ -1,5 +1,7 @@
 # 回测报告索引
 
+> 2026-06-20 strict 研发闭环升级：新增版本化公司行为快照、配股全额认购/资金不足冻结状态机、精确拒单原因独立 replay、偏离归因扩展及可靠性矩阵脚本。生产默认与 `research_shadow_candidate.enabled=false` 均未改变；在 clean 全历史证据与所有门槛通过前，strict 继续不可晋级。
+
 > 2026-06-20 strict 独立执行 replay：commit `b4e2655e` 的 clean-worktree 证据包完成 15 笔逐订单价格、费用、T+1 gate、时间顺序与守恒审计，均为 0 差异。真实执行失败残差为 0，但价格缓冲残差约 63,041、P95 权重偏离约 298.95bps，且公司行为仍 `PARTIAL_UNVERIFIED`；状态继续为 `CAUSAL_BUT_LEDGER_UNVERIFIED`。详见 `2026-06-20_strict_执行重放与偏离证据清单.md`。
 
 > 2026-06-20 strict ledger 独立重放：提交 `a71f1c23` 的 clean worktree 烟测完成 15 个订单事件重放，订单守恒、事件重放与 ledger-vs-NAV 误差均为 0bp；但公司行为覆盖仍为 `PARTIAL_UNVERIFIED`，风险漏判为 2，现金与权重偏离超阈值，验收固定为 `CAUSAL_BUT_LEDGER_UNVERIFIED`、`promotion_enabled=false`。详见 `2026-06-20_strict_ledger_replay_证据清单.md`。

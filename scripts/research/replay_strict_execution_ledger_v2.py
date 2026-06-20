@@ -77,7 +77,8 @@ def audit(events_path: Path, snapshot_path: Path, output_dir: Path, tolerance: f
             if not gate_pass:
                 gate_mismatch += 1
         for _, reject in rejects.iterrows():
-            if _n(reject.get("filled_shares")) != 0 or gate_pass:
+            expected_reason = "limit_block" if str(reject.get("order_status")) == "REJECTED_LIMIT_BLOCK" else "t1_not_tradable"
+            if _n(reject.get("filled_shares")) != 0 or gate_pass or str(reject.get("reject_reason") or "") != expected_reason:
                 gate_mismatch += 1
         planned = int(_n(plan["planned_shares"].iloc[0])) if not plan.empty else 0
         filled = int(sum(_n(row.get("filled_shares")) for _, row in fills.iterrows()))

@@ -43,13 +43,20 @@ class PrecommitOrder:
 class CorporateAction:
     symbol: str
     ex_date: object
+    action_type: str = "dividend_stock"
+    source_event_id: str = ""
+    announcement_date: object | None = None
+    effective_date: object | None = None
+    as_of_timestamp: str = ""
     cash_per_share: float = 0.0
     stock_ratio: float = 0.0
     rights_ratio: float = 0.0
     rights_price: float | None = None
     split_ratio: float = 0.0
+    settlement_price: float | None = None
     source_complete: bool = True
     source_reason: str = ""
+    event_hash: str = ""
 
 
 class CorporateActionProcessor:
@@ -78,12 +85,38 @@ class ExecutionLedger:
             if not action.source_complete:
                 raise RuntimeError(f"incomplete_corporate_action:{action.symbol}:{action.ex_date}:{action.source_reason}")
             held = int(self.shares.get(action.symbol, 0))
-            # Unknown rights participation cannot be inferred from a daily bar.
-            if action.rights_ratio:
-                raise RuntimeError(f"rights_issue_requires_reconciliation:{action.symbol}:{action.ex_date}")
             if held <= 0:
                 self._append("corporate_action", order_status="NO_POSITION", symbol=action.symbol, ex_date=action.ex_date, event_timestamp=f"{action.ex_date}T09:25:00+08:00",
                              cash_delta=0.0, share_delta=0, source_reason=action.source_reason)
+                continue
+            # The research policy is deterministic: subscribe in full only
+            # when cash covers the full entitlement.  A shortfall is not
+            # silently partially subscribed because broker treatment differs.
+            if action.rights_ratio:
+                if action.rights_price is None or action.rights_price < 0:
+                    raise RuntimeError(f"rights_issue_requires_reconciliation:{action.symbol}:{action.ex_date}")
+                rights_shares = int(round(held * float(action.rights_ratio)))
+                required_cash = rights_shares * float(action.rights_price)
+                if self.cash + 1e-9 < required_cash:
+                    self.freeze(action.ex_date, "rights_cash_insufficient")
+                    raise RuntimeError(f"rights_cash_insufficient:{action.symbol}:{action.ex_date}")
+                self.cash -= required_cash
+                self.shares[action.symbol] = held + rights_shares
+                self._append("corporate_action", order_status="APPLIED", symbol=action.symbol, ex_date=action.ex_date,
+                             event_timestamp=f"{action.ex_date}T09:25:00+08:00", cash_delta=-required_cash,
+                             share_delta=rights_shares, action_type="rights_subscription", source_event_id=action.source_event_id,
+                             source_reason=action.source_reason, event_hash=action.event_hash)
+                continue
+            if action.action_type == "delist_cash_settlement":
+                if action.settlement_price is None or action.settlement_price < 0:
+                    raise RuntimeError(f"delist_settlement_requires_price:{action.symbol}:{action.ex_date}")
+                cash_delta = held * float(action.settlement_price)
+                self.cash += cash_delta
+                self.shares[action.symbol] = 0
+                self._append("corporate_action", order_status="APPLIED", symbol=action.symbol, ex_date=action.ex_date,
+                             event_timestamp=f"{action.ex_date}T09:25:00+08:00", cash_delta=cash_delta,
+                             share_delta=-held, action_type=action.action_type, source_event_id=action.source_event_id,
+                             source_reason=action.source_reason, event_hash=action.event_hash)
                 continue
             cash_delta = held * float(action.cash_per_share)
             stock_delta = int(round(held * float(action.stock_ratio)))
@@ -91,7 +124,8 @@ class ExecutionLedger:
             self.cash += cash_delta
             self.shares[action.symbol] = held + stock_delta + split_delta
             self._append("corporate_action", order_status="APPLIED", symbol=action.symbol, ex_date=action.ex_date, event_timestamp=f"{action.ex_date}T09:25:00+08:00",
-                         cash_delta=cash_delta, share_delta=stock_delta + split_delta, source_reason=action.source_reason)
+                         cash_delta=cash_delta, share_delta=stock_delta + split_delta, action_type=action.action_type,
+                         source_event_id=action.source_event_id, source_reason=action.source_reason, event_hash=action.event_hash)
 
     def freeze(self, event_date: object, reason: str) -> None:
         """Record a fail-closed corporate-action halt without mutating balances."""

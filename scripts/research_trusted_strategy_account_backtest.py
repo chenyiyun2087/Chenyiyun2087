@@ -266,6 +266,8 @@ def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: p
         PROJECT_ROOT / "scripts/research/analyze_strict_execution_deviation.py",
         PROJECT_ROOT / "scripts/research/analyze_strict_missed_risk_events.py",
         PROJECT_ROOT / "scripts/research/package_strict_ledger_evidence.py",
+        PROJECT_ROOT / "scripts/research/build_strict_corporate_action_snapshot.py",
+        PROJECT_ROOT / "scripts/research/run_strict_reliability_matrix.py",
     ]
     try:
         sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True).strip()
@@ -528,6 +530,35 @@ def _price_lookup_for_day(
     day = prices.iloc[indices]
     available = [column for column in columns if column in day.columns]
     return day.drop_duplicates("symbol").set_index("symbol")[available].to_dict("index")
+
+
+def _load_corporate_action_snapshot(path: str | Path) -> tuple[dict[object, list[CorporateAction]], str, str]:
+    """Load the immutable research snapshot produced by the Tushare adapter."""
+    snapshot = Path(path)
+    frame = pd.read_csv(snapshot)
+    required = {"symbol", "action_type", "effective_date", "source_event_id", "as_of_timestamp", "source_complete", "event_hash"}
+    if missing := sorted(required - set(frame.columns)):
+        raise RuntimeError(f"corporate action snapshot missing fields: {missing}")
+    actions: dict[object, list[CorporateAction]] = {}
+    for _, row in frame.iterrows():
+        date = pd.to_datetime(row.get("effective_date"), errors="coerce")
+        if pd.isna(date):
+            raise RuntimeError("corporate action snapshot has invalid effective_date")
+        action = CorporateAction(
+            symbol=str(row.get("symbol")).zfill(6), ex_date=date.date(), action_type=str(row.get("action_type")),
+            source_event_id=str(row.get("source_event_id")), announcement_date=row.get("announcement_date"), effective_date=date.date(),
+            as_of_timestamp=str(row.get("as_of_timestamp")), cash_per_share=_safe_float(row.get("cash_per_share"), 0.0),
+            stock_ratio=_safe_float(row.get("stock_ratio"), 0.0), rights_ratio=_safe_float(row.get("rights_ratio"), 0.0),
+            rights_price=_safe_float(row.get("rights_price"), np.nan), split_ratio=_safe_float(row.get("split_ratio"), 0.0),
+            settlement_price=_safe_float(row.get("settlement_price"), np.nan), source_complete=str(row.get("source_complete")).strip().lower() in {"1", "true", "t", "yes", "y"},
+            source_reason=str(row.get("source_reason") or ""), event_hash=str(row.get("event_hash")),
+        )
+        if not np.isfinite(action.rights_price or np.nan):
+            action = CorporateAction(**{**action.__dict__, "rights_price": None})
+        if not np.isfinite(action.settlement_price or np.nan):
+            action = CorporateAction(**{**action.__dict__, "settlement_price": None})
+        actions.setdefault(action.ex_date, []).append(action)
+    return actions, "SNAPSHOT_COMPLETE_UNRECONCILED", hashlib.sha256(snapshot.read_bytes()).hexdigest()
 
 
 def _load_corporate_actions(engine, start_date: object, end_date: object) -> tuple[dict[object, list[CorporateAction]], str]:
@@ -2766,9 +2797,13 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     if prices.empty:
         raise RuntimeError("No price rows remain after end-date cutoff.")
     prices = prices.sort_values(["symbol", "trade_date"]).copy()
-    corporate_actions_by_date, corporate_action_source_status = _load_corporate_actions(
-        engine, prices["trade_date"].min(), prices["trade_date"].max()
-    )
+    if args.corporate_action_snapshot:
+        corporate_actions_by_date, corporate_action_source_status, corporate_action_snapshot_hash = _load_corporate_action_snapshot(args.corporate_action_snapshot)
+    else:
+        corporate_actions_by_date, corporate_action_source_status = _load_corporate_actions(
+            engine, prices["trade_date"].min(), prices["trade_date"].max()
+        )
+        corporate_action_snapshot_hash = None
     prices["prev_adj_close"] = prices.groupby("symbol")["adj_close"].shift(1)
     if "raw_close" in prices.columns:
         prices["prev_raw_close"] = prices.groupby("symbol")["raw_close"].shift(1)
@@ -2785,6 +2820,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "corporate_action_dataset_version": "ods_dividend_implemented_v2",
         "corporate_action_event_days": int(len(corporate_actions_by_date)),
         "corporate_action_coverage_status": corporate_action_source_status,
+        "corporate_action_snapshot_sha256": corporate_action_snapshot_hash,
         "ledger_implementation_status": "PARTIAL_UNVERIFIED",
     })
     specs = _strategy_specs(_parse_strategies(args.strategies))
@@ -3850,6 +3886,7 @@ def main() -> None:
     parser.add_argument("--end-date", default=None)
     parser.add_argument("--execution-mode", default=STRICT_MODE, choices=EXECUTION_MODES)
     parser.add_argument("--allow-daily-proxy-approximation", action="store_true")
+    parser.add_argument("--corporate-action-snapshot", default=None, help="Immutable strict corporate-action CSV generated by build_strict_corporate_action_snapshot.py")
     parser.add_argument(
         "--risk-profile",
         default=DEFAULT_RISK_PROFILE,

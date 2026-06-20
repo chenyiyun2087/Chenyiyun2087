@@ -15,6 +15,8 @@ def package(run_dir: Path, destination_root: Path, commit: str) -> dict:
     report = json.loads((run_dir / "trusted_account_backtest_report.json").read_text(encoding="utf-8"))
     run_id = run_dir.name
     provenance=report.get("provenance",{}); destination = destination_root / commit / str(provenance.get("data_snapshot_fingerprint")) / str(provenance.get("config_fingerprint")) / run_id
+    if provenance.get("reproducibility_status") != "REPRODUCIBLE" or not provenance.get("report_worktree_clean"):
+        raise RuntimeError("refuse to package non-reproducible or dirty strict evidence")
     destination.mkdir(parents=True, exist_ok=False)
     missing=[name for name in REQUIRED if not (run_dir/name).exists()]
     if missing: raise RuntimeError(f"required evidence missing: {missing}")

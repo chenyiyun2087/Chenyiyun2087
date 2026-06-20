@@ -47,10 +47,25 @@ def test_incomplete_corporate_action_fails_closed():
         ledger.apply_corporate_actions([CorporateAction("000001", "2026-01-02", source_complete=False)])
 
 
-def test_rights_issue_requires_explicit_reconciliation():
+def test_rights_issue_subscribes_in_full_when_cash_is_sufficient():
     ledger = ExecutionLedger(cash=1_000.0, shares={"000001": 100})
-    with pytest.raises(RuntimeError, match="rights_issue_requires_reconciliation"):
+    ledger.apply_corporate_actions([CorporateAction("000001", "2026-01-02", rights_ratio=0.2, rights_price=5.0)])
+    assert ledger.cash == 900.0
+    assert ledger.shares["000001"] == 120
+
+
+def test_rights_issue_freezes_when_cash_is_insufficient():
+    ledger = ExecutionLedger(cash=99.0, shares={"000001": 100})
+    with pytest.raises(RuntimeError, match="rights_cash_insufficient"):
         ledger.apply_corporate_actions([CorporateAction("000001", "2026-01-02", rights_ratio=0.2, rights_price=5.0)])
+    assert ledger.event_rows[-1]["order_status"] == "CORPORATE_ACTION_FREEZE"
+
+
+def test_delisting_settlement_converts_position_to_cash():
+    ledger = ExecutionLedger(cash=0.0, shares={"000001": 100})
+    ledger.apply_corporate_actions([CorporateAction("000001", "2026-01-02", action_type="delist_cash_settlement", settlement_price=7.5)])
+    assert ledger.cash == 750.0
+    assert ledger.shares["000001"] == 0
 
 
 def test_reconciliation_compares_equity_not_cash():

@@ -88,3 +88,14 @@ def test_execution_replay_detects_price_fee_and_time_violations(tmp_path):
     assert audit(events, snapshot, tmp_path / "ok")["execution_replay_pass"] is True
     _write_csv(snapshot, [{**base,"raw_open":11}])
     assert audit(events, snapshot, tmp_path / "bad")["price_mismatch_count"] == 1
+
+
+def test_execution_replay_requires_exact_rejection_reason(tmp_path):
+    events, snapshot = tmp_path / "events.csv", tmp_path / "snapshot.csv"
+    _write_csv(events, [
+        {"strategy": "strict_precommit", "event_type": "order", "order_id": "o", "order_status": "PLANNED", "event_timestamp": "2026-01-01T15:00:00+08:00", "planned_shares": 100, "filled_shares": 0, "filled_notional": 0, "fee": 0, "mark_price_basis": "raw"},
+        {"strategy": "strict_precommit", "event_type": "order", "order_id": "o", "order_status": "REJECTED_LIMIT_BLOCK", "reject_reason": "t1_not_tradable", "event_timestamp": "2026-01-02T09:30:00+08:00", "planned_shares": 100, "filled_shares": 0, "filled_notional": 0, "fee": 0, "mark_price_basis": "raw"},
+        {"strategy": "strict_precommit", "event_type": "order", "order_id": "o", "order_status": "CANCELLED_T1_CLOSE", "event_timestamp": "2026-01-02T15:00:00+08:00", "cancelled_shares": 100, "remaining_shares": 0, "filled_shares": 0, "filled_notional": 0, "fee": 0, "mark_price_basis": "raw"},
+    ])
+    _write_csv(snapshot, [{"strategy": "strict_precommit", "order_id": "o", "symbol": "000001", "raw_open": 11, "prev_raw_close": 10, "execution_tradable": 1, "is_suspended": 0, "is_listed": 1, "is_st": 0, "side": "BUY", "cost_rate": .001}])
+    assert audit(events, snapshot, tmp_path / "out")["gate_mismatch_count"] == 1

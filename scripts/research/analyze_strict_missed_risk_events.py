@@ -12,11 +12,13 @@ def run(trades_path: Path, output_dir: Path) -> dict:
         reason, level = str(row.get("reject_reason") or ""), str(row.get("precommit_uplift_risk_level") or "")
         if reason in {"t1_not_tradable", "limit_block", "missing_t1_execution_price"}: return "D_execution_block"
         if level in {"no_incremental_uplift", "no_signal"}: return "B_no_incremental_uplift"
+        if float(row.get("incremental_weight") or 0.0) == 0 and str(row.get("v1_target_weight") or ""):
+            return "C_shared_base_strategy_exposure"
         if level in {"high", "extreme", "data_missing_fallback_to_v1"}: return "E_posthoc_tail_or_already_covered"
         return "A_preventable_by_cap"
     d["root_cause"] = d.apply(classify, axis=1)
     d["preventable_by_cap"] = d["root_cause"].eq("A_preventable_by_cap")
-    keep=[c for c in ("symbol","signal_date","execution_date","trade_date","risk_event_types","precommit_uplift_risk_level","planned_shares","filled_shares","filled_price","reject_reason","root_cause","preventable_by_cap") if c in d]
+    keep=[c for c in ("symbol","signal_date","execution_date","trade_date","risk_event_types","precommit_uplift_risk_level","strict_target_weight","v1_target_weight","strict_filled_weight","v1_filled_weight","incremental_weight","raw_open_gap","five_day_raw_drawdown","cap_level","planned_shares","filled_shares","filled_price","reject_reason","root_cause","preventable_by_cap") if c in d]
     d=d[keep]; output_dir.mkdir(parents=True, exist_ok=True); d.to_csv(output_dir / "strict_missed_risk_events.csv", index=False)
     result={"event_count":int(len(d)),"preventable_by_cap_count":int(d["preventable_by_cap"].sum()) if not d.empty else 0,"output":str(output_dir / "strict_missed_risk_events.csv")}
     (output_dir / "strict_missed_risk_events_report.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8"); return result
