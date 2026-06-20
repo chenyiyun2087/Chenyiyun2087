@@ -10,11 +10,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import ssl
 import sys
 from datetime import datetime
 from pathlib import Path
-from urllib import error, request
 
 import numpy as np
 import pandas as pd
@@ -27,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.ops.production_config import load_production_config
+from scripts.ops.feishu_notifier import load_feishu_webhook, send_feishu_text, strategy_identity_block
 
 
 DEFAULT_ORDER_TABLE = "chenyiyun.ads_local_strategy_orders"
@@ -559,62 +558,13 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
     return {"fills": int(fill_result.rowcount or 0), "summary": int(summary_result.rowcount or 0)}
 
 
-def _load_feishu_webhook(engine) -> str | None:
-    env_url = str(os.environ.get("FEISHU_WEBHOOK_URL") or "").strip()
-    if env_url.startswith(("http://", "https://")):
-        return env_url
-    sql = text(
-        """
-        SELECT webhook_url
-        FROM chenyiyun.app_notification_channel
-        WHERE channel_key = 'feishu'
-          AND enabled = 1
-          AND webhook_url IS NOT NULL
-          AND TRIM(webhook_url) <> ''
-        LIMIT 1
-        """
-    )
-    try:
-        with engine.connect() as conn:
-            value = conn.execute(sql).scalar()
-    except Exception:
-        return None
-    url = str(value or "").strip()
-    return url if url.startswith(("http://", "https://")) else None
-
-
-def _send_feishu_text(webhook_url: str, content: str) -> tuple[bool, str]:
-    payload = json.dumps({"msg_type": "text", "content": {"text": content}}, ensure_ascii=False).encode("utf-8")
-    req = request.Request(webhook_url, data=payload, headers={"Content-Type": "application/json; charset=utf-8"}, method="POST")
-    try:
-        with request.urlopen(req, timeout=12) as resp:
-            body = resp.read().decode("utf-8", errors="ignore")
-        parsed = json.loads(body) if body else {}
-        if isinstance(parsed, dict) and parsed.get("code") not in (None, 0, "0"):
-            return False, body[:200]
-        if isinstance(parsed, dict) and parsed.get("errcode") not in (None, 0, "0"):
-            return False, body[:200]
-        return True, "ok"
-    except error.URLError as exc:
-        reason = getattr(exc, "reason", None)
-        if isinstance(reason, ssl.SSLCertVerificationError):
-            try:
-                with request.urlopen(req, timeout=12, context=ssl._create_unverified_context()) as resp:
-                    resp.read()
-                return True, "ok_ssl_unverified"
-            except Exception as retry_exc:
-                return False, f"ssl_retry_exception={retry_exc}"
-        return False, f"url_error={exc}"
-    except Exception as exc:
-        return False, f"exception={exc}"
-
-
 def _format_notification(summary: dict, fills: pd.DataFrame) -> str:
     bad = fills[fills["tradable_flag"].fillna(0).astype(int).eq(0)].copy()
     warnings = fills[fills["tradable_status"].astype(str).eq("EXECUTABLE_WITH_WARNING")].copy()
     lines = [
         "【核心精选影子盘成交监控】",
         f"信号日：{summary['signal_date']}，执行日：{summary['execution_date']}",
+        strategy_identity_block(),
         f"订单：{summary['total_orders']}（BUY {summary['buy_orders']} / SELL {summary['sell_orders']}）",
         f"可成交：{summary['executable_orders']}，不可成交：{summary['blocked_orders']}，大滑点警告：{summary['warning_orders']}",
         f"平均不利滑点：{float(summary.get('avg_slippage_bps') or 0):.1f} bps",
@@ -658,10 +608,10 @@ def run_shadow_monitor(args: argparse.Namespace) -> dict:
     db_write = persist_shadow(engine, fills, summary, args.fill_table, args.summary_table) if args.write_db else {}
     notify_result = None
     if args.notify_feishu:
-        webhook = _load_feishu_webhook(engine)
+        webhook = load_feishu_webhook(engine)
         if not webhook:
             raise RuntimeError("Feishu notification requested but no enabled webhook was found.")
-        ok, reason = _send_feishu_text(webhook, _format_notification(summary, fills))
+        ok, reason = send_feishu_text(webhook, _format_notification(summary, fills))
         notify_result = reason
         if not ok:
             raise RuntimeError(f"Feishu notification failed: {reason}")

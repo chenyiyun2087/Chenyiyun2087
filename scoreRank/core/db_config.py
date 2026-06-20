@@ -45,6 +45,32 @@ def build_pymysql_config(prefix: str = "CHENYIYUN_DB", dict_cursor: bool = True)
     return config
 
 
+def validate_db_credentials(prefix: str = "CHENYIYUN_DB") -> bool:
+    """Check that database credentials are properly configured via env vars.
+
+    Returns False if using default empty password (unsafe for production),
+    True if properly configured with a non-empty password or explicit URL.
+    """
+    import warnings
+
+    explicit = os.getenv(f"{prefix}_URL")
+    if explicit:
+        # If an explicit URL is provided, trust it (caller's responsibility)
+        return True
+
+    user = os.getenv(f"{prefix}_USER", "root")
+    password = os.getenv(f"{prefix}_PASSWORD", "")
+    if user == "root" and not password:
+        warnings.warn(
+            "Using MySQL root with empty password. "
+            f"Set {prefix}_PASSWORD or {prefix}_URL for production use.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return False
+    return True
+
+
 def symbol_to_ts_code(symbol: str) -> str:
     s = str(symbol or "").strip()
     digits = "".join(ch for ch in s if ch.isdigit())[-6:].zfill(6)

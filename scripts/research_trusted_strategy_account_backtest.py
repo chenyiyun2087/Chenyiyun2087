@@ -290,6 +290,20 @@ def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: p
         "source_file_hashes": {str(path.relative_to(PROJECT_ROOT)): _sha256_file(path) for path in source_files},
         "data_snapshot_fingerprint": hashlib.sha256(json.dumps(data_payload, sort_keys=True).encode()).hexdigest(),
         "config_fingerprint": hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest(),
+        "data_hashes": {
+            "scores": hashlib.sha256(
+                json.dumps({
+                    "rows": len(scores), "dates": int(scores["trade_date"].nunique()),
+                    "min": str(scores["trade_date"].min()), "max": str(scores["trade_date"].max()),
+                }, sort_keys=True).encode()
+            ).hexdigest()[:16],
+            "prices": hashlib.sha256(
+                json.dumps({
+                    "rows": len(prices), "dates": int(prices["trade_date"].nunique()),
+                    "min": str(prices["trade_date"].min()), "max": str(prices["trade_date"].max()),
+                }, sort_keys=True).encode()
+            ).hexdigest()[:16],
+        },
         "ledger_schema_version": LEDGER_SCHEMA_VERSION,
         "strict_sizing_version": STRICT_SIZING_VERSION,
         # The runner may use the ledger, but this remains PARTIAL until the

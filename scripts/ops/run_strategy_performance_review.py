@@ -6,11 +6,9 @@ import argparse
 import json
 import math
 import os
-import ssl
 import sys
 from datetime import datetime
 from pathlib import Path
-from urllib import error, request
 
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -22,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.ops.production_config import load_production_config
 from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
+from scripts.ops.feishu_notifier import load_feishu_webhook, send_feishu_text, strategy_identity_block
 from scripts.strategy_display import strategy_display_name
 
 
@@ -33,9 +32,54 @@ DEFAULT_MAX_TOTAL_POSITIONS = int(PRODUCTION_CONFIG["max_total_positions"])
 DEFAULT_POSITION_RATIO = float(PRODUCTION_CONFIG["position_ratio"])
 DEFAULT_HOLD_DAYS = int(PRODUCTION_CONFIG["hold_days"])
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "exports" / "production_strategy_reviews"
-DEFAULT_VOL_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260618_123340_650630_trusted_account_backtest"
-DEFAULT_ADAPTIVE_V22_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260605_004258_229723_trusted_account_backtest"
-DEFAULT_DUAL_3M_BACKTEST_DIR = PROJECT_ROOT / "exports" / "signal_research" / "20260604_163941_308980_trusted_account_backtest"
+DEFAULT_SIGNAL_RESEARCH_DIR = PROJECT_ROOT / "exports" / "signal_research"
+
+
+def _discover_latest_backtest_dir(
+    base_dir: Path = DEFAULT_SIGNAL_RESEARCH_DIR,
+    prefix: str = "trusted_account_backtest",
+) -> Path:
+    """Auto-discover the latest backtest output directory under base_dir.
+
+    Looks for directories whose name contains *prefix* and returns the one with
+    the most recent timestamp (directories are sorted by name, which works when
+    names follow YYYYMMDD_HHMMSS_* convention).
+    """
+    candidates: list[Path] = []
+    for candidate in base_dir.iterdir():
+        if not candidate.is_dir():
+            continue
+        if prefix in candidate.name:
+            candidates.append(candidate)
+
+    if not candidates:
+        raise FileNotFoundError(
+            f"No backtest directories matching '{prefix}*' found under {base_dir}. "
+            f"Run research_trusted_strategy_account_backtest.py first, or pass "
+            f"--vol-backtest-dir / --adaptive-v22-backtest-dir / --dual-3m-backtest-dir explicitly."
+        )
+
+    # Sort by name (timestamps sort lexicographically when YYYYMMDD_HHMMSS_...)
+    candidates.sort(key=lambda p: p.name, reverse=True)
+    return candidates[0]
+
+
+# Auto-discover latest backtest directory. Falls back to the old hardcoded
+# defaults only when no directory is found (keeps --vol-backtest-dir override working).
+def _resolve_backtest_default(cache: list[Path]) -> Path:
+    if not cache:
+        try:
+            cache.append(_discover_latest_backtest_dir(DEFAULT_SIGNAL_RESEARCH_DIR))
+        except FileNotFoundError:
+            # Return a sentinel that will cause a clear error downstream
+            return DEFAULT_SIGNAL_RESEARCH_DIR / "NO_BACKTEST_DIR_FOUND"
+    return cache[0]
+
+
+_BACKTEST_DIR_CACHE: list[Path] = []
+DEFAULT_VOL_BACKTEST_DIR: Path = DEFAULT_SIGNAL_RESEARCH_DIR  # will be resolved lazily
+DEFAULT_ADAPTIVE_V22_BACKTEST_DIR: Path = DEFAULT_SIGNAL_RESEARCH_DIR
+DEFAULT_DUAL_3M_BACKTEST_DIR: Path = DEFAULT_SIGNAL_RESEARCH_DIR
 
 
 def _normalize_date(raw: str | None) -> str | None:
@@ -547,7 +591,8 @@ def _format_feishu(payload: dict) -> str:
     decision = payload["judgement"]
     lines = [
         "【核心精选策略收益评估】",
-        f"日期：{payload['params']['review_date']}，策略：{strategy_display_name(DEFAULT_STRATEGY)}",
+        f"日期：{payload['params']['review_date']}",
+        strategy_identity_block(),
         f"结论：{decision['decision']}",
         "",
         "收益/回撤：",
@@ -683,58 +728,6 @@ def _format_markdown(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _load_feishu_webhook(engine) -> str | None:
-    env_url = str(os.environ.get("FEISHU_WEBHOOK_URL") or "").strip()
-    if env_url.startswith(("http://", "https://")):
-        return env_url
-    if not _table_exists(engine, "chenyiyun.app_notification_channel"):
-        return None
-    sql = text(
-        """
-        SELECT webhook_url
-        FROM chenyiyun.app_notification_channel
-        WHERE channel_key = 'feishu'
-          AND enabled = 1
-          AND webhook_url IS NOT NULL
-          AND TRIM(webhook_url) <> ''
-        LIMIT 1
-        """
-    )
-    with engine.connect() as conn:
-        value = conn.execute(sql).scalar()
-    url = str(value or "").strip()
-    return url if url.startswith(("http://", "https://")) else None
-
-
-def _send_feishu_text(webhook_url: str, content: str) -> tuple[bool, str]:
-    payload = json.dumps({"msg_type": "text", "content": {"text": content}}, ensure_ascii=False).encode("utf-8")
-    req = request.Request(webhook_url, data=payload, headers={"Content-Type": "application/json; charset=utf-8"}, method="POST")
-    try:
-        with request.urlopen(req, timeout=12) as resp:
-            status = int(resp.getcode() or 0)
-            body = resp.read().decode("utf-8", errors="ignore")
-        if status < 200 or status >= 300:
-            return False, f"http_status={status}; body={body[:200]}"
-        parsed = json.loads(body) if body else {}
-        if isinstance(parsed, dict) and parsed.get("code") not in (None, 0, "0"):
-            return False, body[:200]
-        if isinstance(parsed, dict) and parsed.get("errcode") not in (None, 0, "0"):
-            return False, body[:200]
-        return True, "ok"
-    except error.URLError as exc:
-        reason = getattr(exc, "reason", None)
-        if isinstance(reason, ssl.SSLCertVerificationError):
-            try:
-                with request.urlopen(req, timeout=12, context=ssl._create_unverified_context()) as resp:
-                    resp.read()
-                return True, "ok_ssl_unverified"
-            except Exception as retry_exc:
-                return False, f"ssl_retry_exception={retry_exc}"
-        return False, f"url_error={exc}"
-    except Exception as exc:
-        return False, f"exception={exc}"
-
-
 def run_review(args: argparse.Namespace) -> dict:
     engine = create_engine(build_sqlalchemy_url())
     review_date = _normalize_date(args.date) or _latest_trade_date(engine)
@@ -804,10 +797,10 @@ def run_review(args: argparse.Namespace) -> dict:
     feishu_path.write_text(feishu_text, encoding="utf-8")
 
     if args.notify_feishu:
-        webhook = _load_feishu_webhook(engine)
+        webhook = load_feishu_webhook(engine)
         if not webhook:
             raise RuntimeError("Feishu notification requested but no enabled webhook was found.")
-        ok, reason = _send_feishu_text(webhook, feishu_text)
+        ok, reason = send_feishu_text(webhook, feishu_text)
         payload["notify_result"] = reason
         json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         if not ok:
@@ -821,9 +814,10 @@ def main() -> None:
     parser.add_argument("--date", default=None, help="Review date YYYY-MM-DD or YYYYMMDD. Defaults to latest production date.")
     parser.add_argument("--notify-feishu", action="store_true", help="Send a standalone Feishu strategy performance review.")
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
-    parser.add_argument("--vol-backtest-dir", default=str(DEFAULT_VOL_BACKTEST_DIR))
-    parser.add_argument("--adaptive-v22-backtest-dir", default=str(DEFAULT_ADAPTIVE_V22_BACKTEST_DIR))
-    parser.add_argument("--dual-3m-backtest-dir", default=str(DEFAULT_DUAL_3M_BACKTEST_DIR))
+    _resolved = str(_resolve_backtest_default(_BACKTEST_DIR_CACHE))
+    parser.add_argument("--vol-backtest-dir", default=_resolved)
+    parser.add_argument("--adaptive-v22-backtest-dir", default=_resolved)
+    parser.add_argument("--dual-3m-backtest-dir", default=_resolved)
     args = parser.parse_args()
     payload = run_review(args)
     print(json.dumps({"status": "SUCCESS", "params": payload["params"], "outputs": payload["outputs"], "notify_result": payload["notify_result"]}, ensure_ascii=False, indent=2))

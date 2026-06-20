@@ -41,17 +41,27 @@ python scripts/run_bs_signal_enhancement_cycle.py --target hit_20_10pct --model-
 # Monthly auto-cycle for B-signal model
 python scripts/ops/run_monthly_bs_signal_enhancement_cycle.py
 
-# Run tests
+# Run all tests
 pytest test/
+
+# Run specific test directories
+pytest test/ScoreRank/                        # unittest-style (M1-M8 chain tests)
+pytest test/Sina/                              # unittest-style (B/S logic, live tracker)
+pytest test/chenyiyunSelected/                 # pytest-style (daily runner, local adapter)
+pytest backtest/tests/                         # backtest engine tests
+pytest test/test_strict_execution_ledger.py    # specific pytest-style test
+
+# Install dependencies (use the lock file for reproducible environments)
+pip install -r requirements.lock.txt
 ```
 
 ## Architecture: Two Independent Strategy Systems
 
 This project contains **two separate strategy systems** that share infrastructure (MySQL, trade calendar, web console) but have independent signal generation, rebalancing rules, and evaluation:
 
-1. **`sina` strategy system** — directories: `sina/`, `scoreRank/`, `web/strategy_playbook.py`. Core capabilities: B/S detection from Sina Finance screenshots, M2–M8 evaluation chain, M7 rebalancing, live tracking.
+1. **`sina` strategy system** — directories: `sina/`, `scoreRank/`, `web/strategy_playbook.py`. Core capabilities: B/S detection from Sina Finance screenshots, M2–M8 evaluation chain, M7 rebalancing, live tracking. This is the primary, sophisticated system with multi-score evaluation, Claude AI integration, and ML model training.
 
-2. **`chenyiyun` strategy system** — directories: `chenyiyunSelected/`, `scripts/ops/run_chenyiyun_*.py`. Core capabilities: localized stock selection, daily/weekly rebalance signals, limit-up monitoring, position updates.
+2. **`chenyiyun` strategy system** — directories: `chenyiyunSelected/`, `scripts/ops/run_chenyiyun_*.py`. Core capabilities: migrated JoinQuant strategy, a simpler factor-based pipeline (dividend yield → turnover volatility → leverage → small market cap), equal-weight weekly rebalancing, limit-up monitoring, position updates. No AI or ML component.
 
 ## Core Data Pipeline (sina strategy)
 
@@ -72,6 +82,8 @@ Three parallel scores, not a single metric:
 
 Pool types: `TRADE` (is_bs_candidate=1 AND score≥75), `WATCH` (is_bs_candidate=1 AND 60≤score<75).
 
+Scoring thresholds, factor weights, and risk penalties are configured in `scoreRank/core/config.py`.
+
 ## M2–M8 Strategy Chain
 
 | Stage | Purpose | Entry Point |
@@ -84,9 +96,56 @@ Pool types: `TRADE` (is_bs_candidate=1 AND score≥75), `WATCH` (is_bs_candidate
 | M7 | Rebalance order generation (forced exits + rebalancing) | `evaluate_m7_rebalance` |
 | M8 | Scheduled cycle: runs M2+M3, persists results | `run_m8_cycle.py` |
 
+The computational core of M2–M8 lives in `web/strategy_playbook.py` (~73k lines). It contains all `evaluate_m*` functions, the M7 rule engine (forced exit reasons, trailing stops, time stops, score exits), and helper functions for pyramid/weighted/quadrant filtering.
+
+**Important**: The M6 NAV backtest in `strategy_playbook.py` is independent of the `backtest/` engine. M6 evaluates against `b_event_fact`/`b_event_kpi` tables (event-level), while the `backtest/` engine is bar-data-driven and used by the chenyiyun strategy system.
+
+## chenyiyun Strategy: Stock Selection Pipeline
+
+The local strategy (`chenyiyunSelected/strategy/local_strategy_adapter.py`) implements a multi-filter pipeline:
+
+1. Universe: `dwd_stock_label_daily` joined with `dim_stock` (exclude ST, STAR Market 科创板, BSE 北交所)
+2. Exclude stocks listed < 375 days
+3. Filter top 50% by dividend yield (`dividend_ratio`)
+4. Keep top 80% by turnover volatility (`turnover_vol_20`)
+5. Keep top 50% by lowest leverage (`mlev = (total_mv + total_liabilities) / total_mv`)
+6. Sort by smallest circulating market cap, take top 15
+7. Equal-weight the top 10 as BUY signals
+
+Two strategy versions exist: `chenyiyun1.py` (original) and `chenyiyun1_v2.py` (adds drawdown-based position sizing at 12%/18%/22% thresholds, style exposure filtering via CSI 1000/300 ratio, cooldown periods, liquidity filter). The local adapter implements the v1 pipeline.
+
+## Backtest Engine (`backtest/`)
+
+A lightweight, event-driven backtesting framework (separate package, `backtest/pyproject.toml`, Python ≥3.10):
+
+```
+backtest/src/backtest_engine/
+  core/       engine.py, broker.py, portfolio.py, strategy.py, clock.py, types.py
+  datafeed/   tushare_feed.py (MySQL-backed), mock_feed.py (synthetic data)
+  metrics/    performance.py (returns, Sharpe, max drawdown, turnover)
+  strategies/ high_dividend_local.py (production consumer)
+  reporting/  JSON export
+```
+
+The production entry point is `chenyiyunSelected/strategy/run_local_backtest.py`, which feeds the local strategy's rebalance plan into `HighDividendLocalStrategy` with `TushareDailyFeed` data.
+
+Single-frequency (daily bars only). Configurable costs via `BacktestConfig` (commission rate, slippage in bps).
+
+Tests live under `backtest/tests/` and use pytest with `pythonpath = ["src"]` (configured in `pyproject.toml`).
+
 ## Scheduling
 
-The **production scheduler** is `web/app.py`'s built-in task system (not `scheduler.py`, which is historical). Tasks are defined in the `TASKS` dict inside `web/app.py`. The daily schedule follows a three-phase intraday pipeline:
+The **production scheduler** is `web/app.py`'s built-in task system (not `scheduler.py`, which is historical). Tasks are defined in the `TASKS` dict inside `web/app.py`.
+
+The scheduler is a **thread-based polling loop** (not apscheduler/clock-driven): every 20 seconds it checks which whitelisted tasks are due and spawns them via `subprocess.Popen()`. Task execution uses MySQL row-level locks (`SELECT ... FOR UPDATE` on `app_task_lock`) for cross-process idempotency.
+
+Key task management tables: `app_task_queue`, `app_task_lock`, `app_task_history`, `app_task_status`, `app_notification_channel`.
+
+Only tasks in `SCHEDULED_TASK_WHITELIST` are eligible for auto-scheduling; others must be triggered manually. Notification channels support 飞书, 企业微信, 钉钉, and custom webhook.
+
+The admin panel at `/admin` provides task status, scheduling controls (enable/disable, set time), lock inspection, and execution history. Environment variable `DISABLE_APP_SCHEDULER_LOOP=1` disables the scheduler loop (for development).
+
+### Intraday Pipeline
 
 - **Morning** (08:00–09:30): Trade calendar sync, signal strength check, weekly rebalance (Mondays)
 - **Afternoon** (14:00–16:30): Limit-up check, Sina B/S capture + analysis, Eastmoney sentiment scan
@@ -97,13 +156,45 @@ All scheduled tasks check `dim_trade_cal` (exchange='SSE') before executing; non
 ## Database
 
 - MySQL via SQLAlchemy + PyMySQL: `mysql+pymysql://root:<password>@localhost:3306/chenyiyun`
-- Password from env var `CHENYIYUN_DB_PASSWORD` (default: `19871019`)
+- Configured via environment variables (see `scoreRank/core/db_config.py`):
+
+| Variable | Default |
+|----------|---------|
+| `CHENYIYUN_DB_URL` | (explicit URL, overrides others) |
+| `CHENYIYUN_DB_USER` | `root` |
+| `CHENYIYUN_DB_PASSWORD` | `""` |
+| `CHENYIYUN_DB_HOST` | `localhost` |
+| `CHENYIYUN_DB_PORT` | `3306` |
+| `CHENYIYUN_DB_NAME` | `chenyiyun` |
+| `CHENYIYUN_DB_CHARSET` | `utf8mb4` |
+| `CHENYIYUN_DB_UNIX_SOCKET` | `""` (optional) |
+
 - Key tables: `score_rank_daily`, `bs_detection_results`, `b_event_fact`, `b_event_kpi`, `strategy_m8_runs`, `strategy_m8_items`, `m7_sell_signals`, `live_positions`, `live_trades`, `live_daily_snapshots`, `dim_trade_cal`
 - Tushare data in separate schema `tushare_stock` (primarily `dwd_stock_daily_standard`, `dwd_daily`, `dim_stock`)
+- chenyiyun-specific tables: `ads_local_strategy_orders`, `ads_local_strategy_signals`, `ads_chenyiyun_selected_signals`, `ads_chenyiyun_limitup_checks`
 
 ## Networking
 
-All scripts must call `enforce_direct_network()` (from `project_network.py`) before making network requests. This strips proxy env vars and configures urllib for direct connections. Subprocess scripts should use `build_direct_network_env()`.
+All scripts must call `enforce_direct_network()` (from `project_network.py`) before making network requests. This strips proxy env vars and configures urllib for direct connections. Subprocess scripts should use `build_direct_network_env()` to construct a clean environment dict. For Selenium/Chrome, use `configure_chrome_direct_options()`.
+
+## Tests
+
+Tests use a **mix of pytest and unittest**:
+
+- **Root-level tests** (`test/test_*.py`): pytest-style, plain functions, direct imports from `scripts.research.*` or `scripts.ops.*`
+- **`test/ScoreRank/`**: unittest-style (`unittest.TestCase`), tests for M1–M8 chain, scorer, B/S pipeline, consensus builder. Named `test_m*_functional_no_db.py` — designed to run without a live database
+- **`test/Sina/`**: unittest-style, B/S logic and live tracker tests
+- **`test/chenyiyunSelected/`**: pytest-style, daily signal runner and local strategy adapter tests
+- **`test/Eastmoney/`**: debug/verification scripts, not formal tests
+- **`backtest/tests/`**: pytest-style, engine smoke test and metrics unit test
+
+There is **no project-level pytest configuration** (no `conftest.py`, `pytest.ini`, or `setup.cfg` at the root). Some subdirectory tests use `sys.path.append()` to resolve imports; the `backtest/` package uses its own `pyproject.toml` with `pythonpath = ["src"]`.
+
+## CI (GitHub Actions)
+
+Workflow `.github/workflows/strict-ledger-audit.yml` runs on push/PR:
+- **fixtures**: Runs 6 strict-execution/snapshot/reliability tests with `pytest -q`, plus a forbidden-import check on `replay_strict_execution_ledger_v2.py`
+- **secret-scan**: gitleaks scan of commit history
 
 ## Project Organization (from AGENTS.md)
 

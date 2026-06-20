@@ -10,12 +10,13 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from project_network import build_direct_network_env, enforce_direct_network
 from scripts.ops.production_config import load_production_config
+from scripts.ops.data_readiness_gate import DataReadinessGate
+from scoreRank.core.db_config import build_sqlalchemy_url
 
 enforce_direct_network()
 
 # Configuration
 # ------------------------------------------------------------------------------
-DB_URL = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
 LOG_DIR = Path("logs/scheduler")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -83,7 +84,13 @@ _ENGINE = None
 def get_engine():
     global _ENGINE
     if _ENGINE is None:
-        _ENGINE = create_engine(DB_URL, future=True, pool_size=5, max_overflow=10, pool_recycle=3600)
+        db_url = build_sqlalchemy_url()
+        if not os.getenv("CHENYIYUN_DB_PASSWORD") and not os.getenv("CHENYIYUN_DB_URL"):
+            logger.warning(
+                "CHENYIYUN_DB_PASSWORD not set and CHENYIYUN_DB_URL not set. "
+                "Using default empty password. Set env vars for production."
+            )
+        _ENGINE = create_engine(db_url, future=True, pool_size=5, max_overflow=10, pool_recycle=3600)
     return _ENGINE
 
 
@@ -108,21 +115,6 @@ def is_trade_day(target_date):
         return False
 
 
-def is_data_ready(target_date):
-    """Check if tushare_stock.dwd_stock_daily_standard has data for the date."""
-    date_str = target_date.strftime("%Y%m%d")
-    engine = get_engine()
-    try:
-        with engine.connect() as conn:
-            # Check for a small count
-            result = conn.execute(
-                text("SELECT count(*) FROM tushare_stock.dwd_stock_daily_standard WHERE trade_date = :date"),
-                {"date": date_str}
-            ).fetchone()
-            return result[0] > 1000  # Assuming >1000 records means success
-    except Exception as e:
-        logger.error(f"Error checking data readiness: {e}")
-        return False
 
 
 # Task Execution
@@ -168,20 +160,38 @@ def run_pipeline(target_date) -> bool:
     date_str = target_date.strftime("%Y%m%d")
     date_iso = target_date.strftime("%Y-%m-%d")
     
-    # 1. Wait for Data
-    logger.info("Waiting for TuShare data readiness...")
-    # Simple retry loop
+    # 1. Wait for Data — multi-dimensional readiness gate
+    logger.info("Waiting for data readiness (DataReadinessGate)...")
+    import json as _json
+    gate = DataReadinessGate(get_engine())
     max_retries = 24  # 2 hours (5 min * 24)
     retries = 0
-    while not is_data_ready(target_date):
+    while True:
+        result = gate.all_checks(target_date)
+        if result["status"] == "READY":
+            logger.info("DataReadinessGate: READY — all checks passed.")
+            break
+        if result["status"] == "READY_WITH_WARNING":
+            logger.warning(
+                f"DataReadinessGate: READY_WITH_WARNING — "
+                f"warnings={result.get('failed_warnings', [])}; proceeding."
+            )
+            break
         if retries >= max_retries:
-             logger.error("Timeout waiting for data readiness.")
-             return False
-        logger.info(f"Data for {date_str} not ready yet. Retrying in 5 minutes...")
+            logger.error(
+                f"DataReadinessGate: BLOCKED after {max_retries} retries. "
+                f"Failed critical checks: {result.get('failed_critical', [])}"
+            )
+            return False
+        logger.info(
+            f"DataReadinessGate: BLOCKED — "
+            f"failed={result.get('failed_critical', [])}; "
+            f"retrying in 5 minutes (attempt {retries + 1}/{max_retries})..."
+        )
         time.sleep(300)
         retries += 1
-    
-    logger.info("Data is ready! Starting pipeline tasks...")
+
+    logger.info("Data readiness confirmed. Starting pipeline tasks...")
 
     # 2. Run eastmoney Strategy
     # Note: eastmoney/run_strategy.py usually takes no args (uses current date/DB)
