@@ -10,8 +10,8 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from project_network import build_direct_network_env, enforce_direct_network
 from scripts.ops.production_config import load_production_config
-from scripts.ops.data_readiness_gate import DataReadinessGate
-from scoreRank.core.db_config import build_sqlalchemy_url
+from scripts.ops.data_readiness_gate import PreScoreGate, PostScoreGate
+from scoreRank.core.db_config import build_sqlalchemy_url, validate_db_credentials
 
 enforce_direct_network()
 
@@ -84,13 +84,18 @@ _ENGINE = None
 def get_engine():
     global _ENGINE
     if _ENGINE is None:
-        db_url = build_sqlalchemy_url()
-        if not os.getenv("CHENYIYUN_DB_PASSWORD") and not os.getenv("CHENYIYUN_DB_URL"):
-            logger.warning(
-                "CHENYIYUN_DB_PASSWORD not set and CHENYIYUN_DB_URL not set. "
-                "Using default empty password. Set env vars for production."
+        # Fail-closed: refuse to start with unsafe credentials in any environment.
+        # Require non-root user or non-empty password or explicit DB URL.
+        if not validate_db_credentials():
+            raise RuntimeError(
+                "Production DB credentials are not configured safely.\n"
+                "  Required: non-root MySQL user with password, OR explicit CHENYIYUN_DB_URL.\n"
+                "  Set CHENYIYUN_DB_USER / CHENYIYUN_DB_PASSWORD or CHENYIYUN_DB_URL.\n"
+                "  Refusing to start scheduler with empty root password."
             )
+        db_url = build_sqlalchemy_url()
         _ENGINE = create_engine(db_url, future=True, pool_size=5, max_overflow=10, pool_recycle=3600)
+        logger.info("Database engine initialized with env-var credentials.")
     return _ENGINE
 
 
@@ -160,38 +165,38 @@ def run_pipeline(target_date) -> bool:
     date_str = target_date.strftime("%Y%m%d")
     date_iso = target_date.strftime("%Y-%m-%d")
     
-    # 1. Wait for Data — multi-dimensional readiness gate
-    logger.info("Waiting for data readiness (DataReadinessGate)...")
+    # 1. Pre-Score Gate: validate market data before scoring
+    logger.info("Pre-Score Gate: validating market data readiness...")
     import json as _json
-    gate = DataReadinessGate(get_engine())
+    gate = PreScoreGate(get_engine())
     max_retries = 24  # 2 hours (5 min * 24)
     retries = 0
     while True:
         result = gate.all_checks(target_date)
         if result["status"] == "READY":
-            logger.info("DataReadinessGate: READY — all checks passed.")
+            logger.info("PreScoreGate: READY — all market data checks passed.")
             break
         if result["status"] == "READY_WITH_WARNING":
             logger.warning(
-                f"DataReadinessGate: READY_WITH_WARNING — "
+                f"PreScoreGate: READY_WITH_WARNING — "
                 f"warnings={result.get('failed_warnings', [])}; proceeding."
             )
             break
         if retries >= max_retries:
             logger.error(
-                f"DataReadinessGate: BLOCKED after {max_retries} retries. "
+                f"PreScoreGate: BLOCKED after {max_retries} retries. "
                 f"Failed critical checks: {result.get('failed_critical', [])}"
             )
             return False
         logger.info(
-            f"DataReadinessGate: BLOCKED — "
+            f"PreScoreGate: BLOCKED — "
             f"failed={result.get('failed_critical', [])}; "
             f"retrying in 5 minutes (attempt {retries + 1}/{max_retries})..."
         )
         time.sleep(300)
         retries += 1
 
-    logger.info("Data readiness confirmed. Starting pipeline tasks...")
+    logger.info("Pre-Score Gate passed. Starting scoring pipeline...")
 
     # 2. Run eastmoney Strategy
     # Note: eastmoney/run_strategy.py usually takes no args (uses current date/DB)
@@ -219,6 +224,26 @@ def run_pipeline(target_date) -> bool:
     if not run_script("scoreRank/cli/build_bs_consensus.py", ["--date", date_str], "bs_consensus"):
         logger.error("Pipeline aborted at B-signal consensus scoring.")
         return False
+
+    # 5b. Post-Score Gate: validate score data completeness before candidate export.
+    logger.info("Post-Score Gate: validating score_rank_daily completeness...")
+    post_gate = PostScoreGate(get_engine())
+    post_result = post_gate.all_checks(target_date)
+    if post_result["status"] == "BLOCKED":
+        logger.error(
+            f"PostScoreGate: BLOCKED — "
+            f"failed critical: {post_result.get('failed_critical', [])}. "
+            f"Aborting candidate export and downstream tasks."
+        )
+        return False
+    if post_result["status"] == "READY_WITH_WARNING":
+        logger.warning(
+            f"PostScoreGate: READY_WITH_WARNING — "
+            f"warnings={post_result.get('failed_warnings', [])}; "
+            f"proceeding but review recommended."
+        )
+    else:
+        logger.info("PostScoreGate: READY — score data validated.")
 
     # 6. Export trusted full-pool strategy candidates for production review.
     if not run_script(
@@ -256,6 +281,15 @@ def run_pipeline(target_date) -> bool:
         "trusted_strategy_shadow_monitor",
     ):
         logger.error("Pipeline aborted at trusted strategy shadow monitor.")
+        return False
+
+    # 7b. Run daily strategy health monitor (multi-window execution + risk check).
+    if not run_script(
+        "scripts/ops/run_daily_strategy_health_monitor.py",
+        ["--date", date_str, "--notify-feishu"],
+        "strategy_health_monitor",
+    ):
+        logger.error("Pipeline aborted at strategy health monitor.")
         return False
 
     # 8. Build and push daily trusted strategy performance review.

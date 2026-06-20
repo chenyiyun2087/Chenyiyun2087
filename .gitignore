@@ -4,6 +4,8 @@
 exports/归档.zip
 
 /sina/sina_bs_capture.log
+/sina_bs_capture.log
+/sina/bs_detection/**/*.png
 /sina/bs_detection/SinaAppBS/
 /dist/
 .DS_Store

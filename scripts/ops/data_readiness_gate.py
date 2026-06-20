@@ -1,285 +1,452 @@
 """Multi-dimensional data readiness gate for the production pipeline.
 
-Replaces the single 'count(*) > 1000' check in scheduler.py with a structured,
-multi-dimensional contract that validates data completeness before allowing the
-pipeline to proceed.
+Split into two phases to avoid circular dependencies:
 
-Output states:
-  READY               — All checks passed, pipeline can proceed.
-  READY_WITH_WARNING   — Core checks passed but some warnings (pipeline can proceed).
-  BLOCKED              — Critical checks failed, pipeline must wait or abort.
+  PreScoreGate  — runs BEFORE scoreRank/run_daily.py
+    - Market data row count (by exchange: SSE, SZSE, BSE)
+    - Market data date freshness (relative to target_date + trade calendar)
+    - Benchmark stock samples (Moutai, PingAn, CATL)
+    - Suspension / ST / adjustment factor checks
+
+  PostScoreGate — runs AFTER scoring pipeline completes
+    - score_rank_daily latest date MUST equal target_date
+    - Required columns present and non-null
+    - Industry null rate
+    - Score / liquidity / BS field null rates
+    - Minimum candidate pool size
+
+Output states: READY | READY_WITH_WARNING | BLOCKED
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Minimum expected row counts (A-share market has ~5000 listed stocks)
+# ---------------------------------------------------------------------------
+# Thresholds
+# ---------------------------------------------------------------------------
 EXPECTED_MIN_ROWS: int = 4000
-EXPECTED_SH_ROWS: int = 1500
-EXPECTED_SZ_ROWS: int = 2000
+EXPECTED_SSE_ROWS: int = 1500    # Shanghai
+EXPECTED_SZSE_ROWS: int = 2000   # Shenzhen
+EXPECTED_BSE_ROWS: int = 100     # Beijing (minimal)
 
-# Maximum allowed staleness in calendar days (tolerates T+1 data delay)
-MAX_STALE_DAYS: int = 2
+MAX_STALE_CALENDAR_DAYS: int = 2     # T+1 data delay tolerance
+MAX_STALE_TRADING_DAYS: int = 1      # Must not be more than 1 trading day behind
 
-# Key stocks sampled for data freshness verification
 FRESHNESS_CHECK_SYMBOLS: tuple[str, ...] = (
     "600519.SH",  # Kweichow Moutai
     "000001.SZ",  # Ping An Bank
     "300750.SZ",  # CATL
 )
 
-# Minimum pool size for candidate export
 MIN_CANDIDATE_POOL_SIZE: int = 5000
 
-# Required score_rank_daily columns
 REQUIRED_SCORE_COLUMNS: tuple[str, ...] = (
     "trade_date", "symbol", "name", "industry",
     "score", "s_liquidity", "bs_score_v2", "bs_consensus_score",
 )
 
-# Maximum allowed null ratio per column
 MAX_NULL_RATIO: float = 0.05
+MAX_INDUSTRY_NULL_RATIO: float = 0.02
 
 
-class DataReadinessGate:
-    """Multi-dimensional data readiness validator.
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    Usage:
-        engine = create_engine(build_sqlalchemy_url())
-        gate = DataReadinessGate(engine)
-        result = gate.all_checks(target_date)
-        if result["status"] == "BLOCKED":
-            logger.error(f"Pipeline blocked: {result['failed_checks']}")
-    """
+def _get_text_sql():
+    from sqlalchemy import text as _text
+    return _text
+
+
+def _latest_trade_date_before(engine, ref_date: date) -> date | None:
+    """Return the latest trading day <= ref_date from dim_trade_cal (SSE)."""
+    text_fn = _get_text_sql()
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text_fn(
+                    "SELECT MAX(cal_date) FROM chenyiyun.dim_trade_cal "
+                    "WHERE exchange = 'SSE' AND is_open = 1 AND cal_date <= :ref"
+                ),
+                {"ref": ref_date.strftime("%Y%m%d")},
+            ).fetchone()
+    except Exception:
+        return None
+    if row and row[0]:
+        raw = str(row[0])
+        if "-" in raw:
+            return datetime.strptime(raw[:10], "%Y-%m-%d").date()
+        return datetime.strptime(raw[:8], "%Y%m%d").date()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# PreScoreGate — runs before scoring pipeline
+# ---------------------------------------------------------------------------
+
+class PreScoreGate:
+    """Validates market data readiness BEFORE the scoring pipeline runs."""
 
     def __init__(self, engine) -> None:
         self._engine = engine
         self._checks: list[dict[str, Any]] = []
 
-    # ------------------------------------------------------------------
-    # Individual checks
-    # ------------------------------------------------------------------
-
     def check_row_count(self, target_date: date) -> dict[str, Any]:
-        """Check that the market data table has sufficient rows."""
+        """Total market rows >= EXPECTED_MIN_ROWS for the target date."""
         date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
         try:
-            from sqlalchemy import text
             with self._engine.connect() as conn:
-                result = conn.execute(
-                    text(
+                total = conn.execute(
+                    text_fn(
                         "SELECT COUNT(*) FROM tushare_stock.dwd_stock_daily_standard "
                         "WHERE trade_date = :date"
                     ),
                     {"date": date_str},
                 ).scalar()
-            count = int(result or 0)
+            count = int(total or 0)
         except Exception as exc:
-            return {
-                "check": "row_count",
-                "date": date_str,
-                "passed": False,
-                "detail": f"query_error={exc}",
-            }
+            return {"check": "row_count", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
 
         passed = count >= EXPECTED_MIN_ROWS
         return {
-            "check": "row_count",
-            "date": date_str,
-            "actual": count,
-            "threshold": EXPECTED_MIN_ROWS,
-            "passed": passed,
-            "severity": "critical",
+            "check": "row_count", "date": date_str,
+            "actual": count, "threshold": EXPECTED_MIN_ROWS,
+            "passed": passed, "severity": "critical",
+        }
+
+    def check_exchange_coverage(self, target_date: date) -> dict[str, Any]:
+        """Verify per-exchange row counts meet minimum thresholds."""
+        date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
+        results: dict[str, dict] = {}
+        try:
+            with self._engine.connect() as conn:
+                for label, pattern, expected in [
+                    ("SSE", "%.SH", EXPECTED_SSE_ROWS),
+                    ("SZSE", "%.SZ", EXPECTED_SZSE_ROWS),
+                    ("BSE", "%.BJ", EXPECTED_BSE_ROWS),
+                ]:
+                    cnt = conn.execute(
+                        text_fn(
+                            "SELECT COUNT(*) FROM tushare_stock.dwd_stock_daily_standard "
+                            "WHERE trade_date = :date AND ts_code LIKE :pat"
+                        ),
+                        {"date": date_str, "pat": pattern},
+                    ).scalar()
+                    cnt_int = int(cnt or 0)
+                    results[label] = {"actual": cnt_int, "threshold": expected, "passed": cnt_int >= expected}
+            all_ok = all(v["passed"] for v in results.values())
+        except Exception as exc:
+            return {"check": "exchange_coverage", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+
+        return {
+            "check": "exchange_coverage", "date": date_str, "exchanges": results,
+            "passed": all_ok, "severity": "critical",
         }
 
     def check_date_freshness(self, target_date: date) -> dict[str, Any]:
-        """Check that the latest data is not too stale."""
+        """Check market data date against target_date using trade calendar.
+
+        Uses target_date as the reference, not date.today(), so historical
+        backfills and weekend runs are handled correctly.
+        """
+        text_fn = _get_text_sql()
         try:
-            from sqlalchemy import text
             with self._engine.connect() as conn:
                 result = conn.execute(
-                    text("SELECT MAX(trade_date) FROM tushare_stock.dwd_stock_daily_standard")
+                    text_fn("SELECT MAX(trade_date) FROM tushare_stock.dwd_stock_daily_standard")
                 ).scalar()
             latest_str = str(result or "")[:10]
             if not latest_str:
-                return {
-                    "check": "date_freshness",
-                    "passed": False,
-                    "detail": "no_data_in_table",
-                    "severity": "critical",
-                }
+                return {"check": "date_freshness", "passed": False, "detail": "no_data", "severity": "critical"}
 
-            # Parse latest date
             if "-" in latest_str:
                 latest_date = datetime.strptime(latest_str[:10], "%Y-%m-%d").date()
             else:
                 latest_date = datetime.strptime(latest_str[:8], "%Y%m%d").date()
-
-            today = date.today()
-            days_behind = (today - latest_date).days
-            passed = days_behind <= MAX_STALE_DAYS
-
-            return {
-                "check": "date_freshness",
-                "target_date": target_date.isoformat(),
-                "latest_in_db": latest_date.isoformat(),
-                "days_behind": days_behind,
-                "threshold_days": MAX_STALE_DAYS,
-                "passed": passed,
-                "severity": "critical" if days_behind > 7 else "warning",
-            }
         except Exception as exc:
-            return {
-                "check": "date_freshness",
-                "passed": False,
-                "detail": f"query_error={exc}",
-                "severity": "critical",
-            }
+            return {"check": "date_freshness", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+
+        # Compare against target_date, not date.today()
+        calendar_days_behind = (target_date - latest_date).days
+
+        # Also check trading-day distance
+        latest_trade_day = _latest_trade_date_before(self._engine, target_date)
+        trading_days_behind: int | None = None
+        if latest_trade_day:
+            # Count trading days between latest_trade_day and target_date
+            text_fn2 = _get_text_sql()
+            try:
+                with self._engine.connect() as conn:
+                    cnt = conn.execute(
+                        text_fn2(
+                            "SELECT COUNT(*) FROM chenyiyun.dim_trade_cal "
+                            "WHERE exchange = 'SSE' AND is_open = 1 "
+                            "AND cal_date > :lo AND cal_date <= :hi"
+                        ),
+                        {"lo": latest_trade_day.strftime("%Y%m%d"), "hi": target_date.strftime("%Y%m%d")},
+                    ).scalar()
+                trading_days_behind = int(cnt or 0)
+            except Exception:
+                pass
+
+        passed = (
+            calendar_days_behind <= MAX_STALE_CALENDAR_DAYS
+            and (trading_days_behind is None or trading_days_behind <= MAX_STALE_TRADING_DAYS)
+        )
+
+        return {
+            "check": "date_freshness",
+            "target_date": target_date.isoformat(),
+            "latest_in_db": latest_date.isoformat(),
+            "calendar_days_behind": calendar_days_behind,
+            "trading_days_behind": trading_days_behind,
+            "passed": passed,
+            "severity": "critical" if calendar_days_behind > 5 else "warning",
+        }
 
     def check_freshness_samples(self, target_date: date) -> dict[str, Any]:
-        """Verify specific benchmark stocks have valid data for the target date."""
+        """Benchmark stocks must have valid close prices for target_date."""
         date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
         samples: list[dict[str, Any]] = []
         try:
-            from sqlalchemy import text
             with self._engine.connect() as conn:
                 for symbol in FRESHNESS_CHECK_SYMBOLS:
                     row = conn.execute(
-                        text(
-                            "SELECT ts_code, trade_date, close, amount "
-                            "FROM tushare_stock.dwd_stock_daily_standard "
+                        text_fn(
+                            "SELECT ts_code, close, amount FROM tushare_stock.dwd_stock_daily_standard "
                             "WHERE trade_date = :date AND ts_code = :symbol LIMIT 1"
                         ),
                         {"date": date_str, "symbol": symbol},
                     ).fetchone()
-                    has_valid_close = (
-                        row is not None
-                        and row[2] is not None
-                        and float(row[2] or 0) > 0
-                    )
-                    samples.append({
-                        "symbol": symbol,
-                        "has_close": has_valid_close,
-                        "close": float(row[2]) if row and row[2] else None,
-                    })
-
-            all_ok = all(s["has_close"] for s in samples)
-            return {
-                "check": "freshness_samples",
-                "date": date_str,
-                "samples": samples,
-                "passed": all_ok,
-                "severity": "warning" if not all_ok else "info",
-            }
+                    has_valid = row is not None and row[1] is not None and float(row[1] or 0) > 0
+                    samples.append({"symbol": symbol, "has_close": has_valid})
         except Exception as exc:
-            return {
-                "check": "freshness_samples",
-                "date": date_str,
-                "passed": False,
-                "detail": f"query_error={exc}",
-                "severity": "warning",
-            }
+            return {"check": "freshness_samples", "passed": False, "detail": f"query_error={exc}", "severity": "warning"}
 
-    def check_score_table_freshness(self, target_date: date) -> dict[str, Any]:
-        """Check score_rank_daily has data for or near the target date."""
-        date_str = target_date.strftime("%Y%m%d")
+        all_ok = all(s["has_close"] for s in samples)
+        return {
+            "check": "freshness_samples", "date": date_str, "samples": samples,
+            "passed": all_ok, "severity": "warning",
+        }
+
+    def check_suspension_st_basic(self, target_date: date) -> dict[str, Any]:
+        """Verify suspension/ST labeling tables are accessible (not empty)."""
+        text_fn = _get_text_sql()
         try:
-            from sqlalchemy import text
+            with self._engine.connect() as conn:
+                st_cnt = conn.execute(
+                    text_fn("SELECT COUNT(*) FROM tushare_stock.dwd_stock_label_daily WHERE trade_date = :date"),
+                    {"date": target_date.strftime("%Y%m%d")},
+                ).scalar()
+        except Exception:
+            st_cnt = None
+
+        passed = st_cnt is not None and int(st_cnt or 0) > 0
+        severity = "critical" if not passed else "info"
+        return {
+            "check": "suspension_st_basic", "date": target_date.isoformat(),
+            "label_rows": int(st_cnt or 0), "passed": passed, "severity": severity,
+        }
+
+    def all_checks(self, target_date: date) -> dict[str, Any]:
+        """Run all Pre-Score checks."""
+        self._checks = [
+            self.check_row_count(target_date),
+            self.check_exchange_coverage(target_date),
+            self.check_date_freshness(target_date),
+            self.check_freshness_samples(target_date),
+            self.check_suspension_st_basic(target_date),
+        ]
+        return _summarize(self._checks, target_date, gate_name="pre_score")
+
+
+# ---------------------------------------------------------------------------
+# PostScoreGate — runs AFTER scoring pipeline completes
+# ---------------------------------------------------------------------------
+
+class PostScoreGate:
+    """Validates score_rank_daily data AFTER the scoring pipeline has run."""
+
+    def __init__(self, engine) -> None:
+        self._engine = engine
+        self._checks: list[dict[str, Any]] = []
+
+    def check_score_date_matches(self, target_date: date) -> dict[str, Any]:
+        """score_rank_daily MAX(trade_date) MUST equal target_date after scoring."""
+        text_fn = _get_text_sql()
+        try:
             with self._engine.connect() as conn:
                 result = conn.execute(
-                    text(
-                        "SELECT MAX(trade_date) FROM chenyiyun.score_rank_daily"
-                    )
+                    text_fn("SELECT MAX(trade_date) FROM chenyiyun.score_rank_daily")
                 ).scalar()
             latest_str = str(result or "")[:10]
             if not latest_str:
-                return {
-                    "check": "score_table_freshness",
-                    "passed": False,
-                    "detail": "score_rank_daily_is_empty",
-                    "severity": "critical",
-                }
-
+                return {"check": "score_date_matches", "passed": False, "detail": "table_empty", "severity": "critical"}
             if "-" in latest_str:
                 latest_date = datetime.strptime(latest_str[:10], "%Y-%m-%d").date()
             else:
                 latest_date = datetime.strptime(latest_str[:8], "%Y%m%d").date()
-
-            # Score data should be within 1 day of target
-            days_gap = abs((target_date - latest_date).days)
-            passed = days_gap <= 1
-
-            return {
-                "check": "score_table_freshness",
-                "target_date": target_date.isoformat(),
-                "latest_score_date": latest_date.isoformat(),
-                "days_gap": days_gap,
-                "passed": passed,
-                "severity": "critical" if days_gap > 3 else "warning",
-            }
+            passed = latest_date == target_date
         except Exception as exc:
-            return {
-                "check": "score_table_freshness",
-                "passed": False,
-                "detail": f"query_error={exc}",
-                "severity": "warning",
-            }
-
-    # ------------------------------------------------------------------
-    # Aggregate
-    # ------------------------------------------------------------------
-
-    def all_checks(self, target_date: date) -> dict[str, Any]:
-        """Run all readiness checks and return a consolidated result.
-
-        Returns:
-            dict with keys:
-                status: "READY" | "READY_WITH_WARNING" | "BLOCKED"
-                passed: bool (True if not BLOCKED)
-                checks: list of per-check results
-                target_date: ISO date string
-                gate_version: str
-        """
-        self._checks = [
-            self.check_row_count(target_date),
-            self.check_date_freshness(target_date),
-            self.check_freshness_samples(target_date),
-            self.check_score_table_freshness(target_date),
-        ]
-
-        critical_failures = [
-            c for c in self._checks
-            if not c["passed"] and c.get("severity") == "critical"
-        ]
-        warning_failures = [
-            c for c in self._checks
-            if not c["passed"] and c.get("severity") != "critical"
-        ]
-
-        if critical_failures:
-            status = "BLOCKED"
-        elif warning_failures:
-            status = "READY_WITH_WARNING"
-        else:
-            status = "READY"
+            return {"check": "score_date_matches", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
 
         return {
-            "status": status,
-            "passed": status != "BLOCKED",
-            "checks": self._checks,
-            "failed_critical": [c["check"] for c in critical_failures],
-            "failed_warnings": [c["check"] for c in warning_failures],
-            "target_date": target_date.isoformat(),
-            "gate_version": "1.0",
+            "check": "score_date_matches",
+            "target_date": target_date.isoformat(), "latest_score_date": latest_date.isoformat(),
+            "passed": passed, "severity": "critical",
         }
 
+    def check_score_null_rates(self, target_date: date) -> dict[str, Any]:
+        """Check null rate for required columns in score_rank_daily."""
+        date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
+        field_results: dict[str, dict] = {}
+        try:
+            total = None
+            with self._engine.connect() as conn:
+                total_row = conn.execute(
+                    text_fn("SELECT COUNT(*) FROM chenyiyun.score_rank_daily WHERE trade_date = :date"),
+                    {"date": date_str},
+                ).fetchone()
+                total = int(total_row[0]) if total_row else 0
 
-def run_gate_check(engine, target_date: date) -> dict[str, Any]:
-    """Convenience function: run DataReadinessGate and return result."""
-    gate = DataReadinessGate(engine)
-    return gate.all_checks(target_date)
+                if total > 0:
+                    for col in REQUIRED_SCORE_COLUMNS:
+                        null_cnt = conn.execute(
+                            text_fn(
+                                f"SELECT COUNT(*) FROM chenyiyun.score_rank_daily "
+                                f"WHERE trade_date = :date AND `{col}` IS NULL"
+                            ),
+                            {"date": date_str},
+                        ).scalar()
+                        null_rate = int(null_cnt or 0) / total
+                        field_results[col] = {"null_count": int(null_cnt or 0), "null_rate": round(null_rate, 4),
+                                              "passed": null_rate <= MAX_NULL_RATIO}
+        except Exception as exc:
+            return {"check": "score_null_rates", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+
+        all_ok = all(v["passed"] for v in field_results.values())
+        return {
+            "check": "score_null_rates", "date": date_str, "total_rows": total,
+            "fields": field_results, "threshold": MAX_NULL_RATIO,
+            "passed": all_ok, "severity": "critical" if not all_ok else "info",
+        }
+
+    def check_industry_null_rate(self, target_date: date) -> dict[str, Any]:
+        """Industry field null rate must be <= MAX_INDUSTRY_NULL_RATIO."""
+        date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
+        try:
+            with self._engine.connect() as conn:
+                total = conn.execute(
+                    text_fn("SELECT COUNT(*) FROM chenyiyun.score_rank_daily WHERE trade_date = :date"),
+                    {"date": date_str},
+                ).scalar()
+                null_cnt = conn.execute(
+                    text_fn(
+                        "SELECT COUNT(*) FROM chenyiyun.score_rank_daily "
+                        "WHERE trade_date = :date AND (industry IS NULL OR TRIM(industry) = '')"
+                    ),
+                    {"date": date_str},
+                ).scalar()
+            total_int = int(total or 0)
+            null_int = int(null_cnt or 0)
+            null_rate = null_int / max(total_int, 1)
+            passed = null_rate <= MAX_INDUSTRY_NULL_RATIO
+        except Exception as exc:
+            return {"check": "industry_null_rate", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+
+        return {
+            "check": "industry_null_rate", "date": date_str,
+            "total_rows": total_int, "null_count": null_int, "null_rate": round(null_rate, 4),
+            "threshold": MAX_INDUSTRY_NULL_RATIO,
+            "passed": passed, "severity": "critical" if not passed else "warning",
+        }
+
+    def check_candidate_pool_size(self, target_date: date) -> dict[str, Any]:
+        """Minimum candidate pool size for downstream candidate export."""
+        date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
+        try:
+            with self._engine.connect() as conn:
+                cnt = conn.execute(
+                    text_fn("SELECT COUNT(*) FROM chenyiyun.score_rank_daily WHERE trade_date = :date"),
+                    {"date": date_str},
+                ).scalar()
+            count = int(cnt or 0)
+            passed = count >= MIN_CANDIDATE_POOL_SIZE
+        except Exception as exc:
+            return {"check": "candidate_pool_size", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+
+        return {
+            "check": "candidate_pool_size", "date": date_str,
+            "actual": count, "threshold": MIN_CANDIDATE_POOL_SIZE,
+            "passed": passed, "severity": "critical",
+        }
+
+    def all_checks(self, target_date: date) -> dict[str, Any]:
+        """Run all Post-Score checks."""
+        self._checks = [
+            self.check_score_date_matches(target_date),
+            self.check_score_null_rates(target_date),
+            self.check_industry_null_rate(target_date),
+            self.check_candidate_pool_size(target_date),
+        ]
+        return _summarize(self._checks, target_date, gate_name="post_score")
+
+
+# ---------------------------------------------------------------------------
+# Shared summarization
+# ---------------------------------------------------------------------------
+
+def _summarize(checks: list[dict[str, Any]], target_date: date, gate_name: str) -> dict[str, Any]:
+    critical_failures = [c for c in checks if not c["passed"] and c.get("severity") == "critical"]
+    warning_failures = [c for c in checks if not c["passed"] and c.get("severity") != "critical"]
+
+    if critical_failures:
+        status = "BLOCKED"
+    elif warning_failures:
+        status = "READY_WITH_WARNING"
+    else:
+        status = "READY"
+
+    return {
+        "status": status,
+        "passed": status != "BLOCKED",
+        "gate_name": gate_name,
+        "checks": checks,
+        "failed_critical": [c["check"] for c in critical_failures],
+        "failed_warnings": [c["check"] for c in warning_failures],
+        "target_date": target_date.isoformat(),
+        "gate_version": "2.0",
+    }
+
+
+# Backward-compatible thin wrapper
+class DataReadinessGate:
+    """Convenience wrapper that runs PreScoreGate (the safe default for scheduler).
+
+    For full pipeline, use PreScoreGate and PostScoreGate separately.
+    """
+
+    def __init__(self, engine) -> None:
+        self._gate = PreScoreGate(engine)
+
+    def all_checks(self, target_date: date) -> dict[str, Any]:
+        return self._gate.all_checks(target_date)
+
+
+def run_pre_gate(engine, target_date: date) -> dict[str, Any]:
+    return PreScoreGate(engine).all_checks(target_date)
+
+
+def run_post_gate(engine, target_date: date) -> dict[str, Any]:
+    return PostScoreGate(engine).all_checks(target_date)

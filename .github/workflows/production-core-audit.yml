@@ -55,8 +55,9 @@ jobs:
         run: |
           python -c "
           import sys; sys.path.insert(0, '.');
-          from scripts.ops.data_readiness_gate import DataReadinessGate;
-          print('OK: DataReadinessGate class loads, gate_version=1.0');
+          from scripts.ops.data_readiness_gate import PreScoreGate, PostScoreGate;
+          g = PreScoreGate.__name__;
+          print('OK: PreScoreGate/PostScoreGate classes load, gate_version=2.0');
           "
       - name: Strategy release registry module loads
         run: |

@@ -78,7 +78,8 @@ def load_feishu_webhook(engine: Engine) -> str | None:
 def send_feishu_text(webhook_url: str, content: str) -> tuple[bool, str]:
     """Send a Feishu text message. Returns (success, detail).
 
-    Handles SSL verification errors with a fallback to unverified context.
+    TLS certificate errors are treated as hard failures — no insecure fallback.
+    Callers must handle failures by logging, alerting, and retrying with backoff.
     """
     payload = json.dumps(
         {"msg_type": "text", "content": {"text": content}},
@@ -106,24 +107,11 @@ def send_feishu_text(webhook_url: str, content: str) -> tuple[bool, str]:
     except error.URLError as exc:
         reason = getattr(exc, "reason", None)
         if isinstance(reason, ssl.SSLCertVerificationError):
-            # Fallback: retry without SSL verification
-            try:
-                with request.urlopen(
-                    req, timeout=12, context=ssl._create_unverified_context()
-                ) as resp:
-                    status = int(resp.getcode() or 0)
-                    body = resp.read().decode("utf-8", errors="ignore")
-                if status < 200 or status >= 300:
-                    return False, f"ssl_fallback_http_status={status}"
-                parsed = json.loads(body) if body else {}
-                if isinstance(parsed, dict):
-                    if parsed.get("code") not in (None, 0, "0"):
-                        return False, f"ssl_fallback_code={parsed.get('code')}"
-                    if parsed.get("errcode") not in (None, 0, "0"):
-                        return False, f"ssl_fallback_errcode={parsed.get('errcode')}"
-                return True, "ok_ssl_unverified"
-            except Exception as retry_exc:
-                return False, f"ssl_retry_exception={retry_exc}"
+            return False, (
+                f"TLS_CERTIFICATE_ERROR: certificate verification failed for "
+                f"{webhook_url[:60]}... — refusing to send without verified TLS. "
+                f"Check Feishu webhook certificate validity."
+            )
         return False, f"url_error={exc}"
     except Exception as exc:
         return False, f"exception={exc}"
