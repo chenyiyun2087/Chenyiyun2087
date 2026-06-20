@@ -134,14 +134,47 @@ def ensure_order_schema(engine) -> dict[str, bool]:
             pk_cols = {r[0] for r in pk_row} if pk_row else set()
             steps["pk_is_id"] = pk_cols == {"id"}
 
-            # Verify v2 unique key exists
-            uk_row = conn.execute(text(
-                "SELECT INDEX_NAME FROM information_schema.STATISTICS "
+            # Verify v2 unique key exists with correct column order
+            uk_rows = conn.execute(text(
+                "SELECT COLUMN_NAME, SEQ_IN_INDEX FROM information_schema.STATISTICS "
                 "WHERE TABLE_SCHEMA = 'chenyiyun' "
                 "AND TABLE_NAME = 'ads_local_strategy_orders' "
-                "AND INDEX_NAME = 'uk_strategy_order' LIMIT 1"
-            )).fetchone()
-            steps["v2_uk_exists"] = uk_row is not None
+                "AND INDEX_NAME = 'uk_strategy_order' "
+                "ORDER BY SEQ_IN_INDEX"
+            )).fetchall()
+            uk_columns = [r[0] for r in uk_rows] if uk_rows else []
+            expected_uk_cols = [
+                "account_id", "release_id", "strategy",
+                "execution_date", "ts_code", "side",
+            ]
+            steps["v2_uk_cols_match"] = uk_columns == expected_uk_cols
+            if uk_columns and uk_columns != expected_uk_cols:
+                # Wrong column order — drop and recreate
+                logger.warning(
+                    f"uk_strategy_order has wrong columns: {uk_columns} vs "
+                    f"expected {expected_uk_cols}. Rebuilding..."
+                )
+                try:
+                    with engine.begin() as conn2:
+                        conn2.execute(text(
+                            "ALTER TABLE chenyiyun.ads_local_strategy_orders "
+                            "DROP INDEX uk_strategy_order"
+                        ))
+                        conn2.execute(text(DDL_V2_UNIQUE_KEY))
+                    steps["v2_uk_rebuilt"] = True
+                    # Re-verify
+                    uk_rows2 = conn.execute(text(
+                        "SELECT COLUMN_NAME FROM information_schema.STATISTICS "
+                        "WHERE TABLE_SCHEMA = 'chenyiyun' "
+                        "AND TABLE_NAME = 'ads_local_strategy_orders' "
+                        "AND INDEX_NAME = 'uk_strategy_order' "
+                        "ORDER BY SEQ_IN_INDEX"
+                    )).fetchall()
+                    uk_columns = [r[0] for r in uk_rows2] if uk_rows2 else []
+                    steps["v2_uk_cols_match"] = uk_columns == expected_uk_cols
+                except Exception as rebuild_exc:
+                    steps["v2_uk_rebuild_failed"] = str(rebuild_exc)
+            steps["v2_uk_exists"] = bool(uk_columns)
 
             # Verify required columns are non-nullable or have defaults
             for col in ("account_id", "strategy"):
@@ -173,6 +206,15 @@ def validate_order_schema_or_die(engine) -> None:
         critical_failures.append("PRIMARY KEY is not 'id' — old PK may still be in place")
     if not steps.get("v2_uk_exists"):
         critical_failures.append("v2 unique key 'uk_strategy_order' is missing")
+    if steps.get("v2_uk_exists") and not steps.get("v2_uk_cols_match"):
+        critical_failures.append(
+            "v2 unique key 'uk_strategy_order' has wrong column order — "
+            "must be (account_id, release_id, strategy, execution_date, ts_code, side)"
+        )
+    if steps.get("v2_uk_rebuild_failed"):
+        critical_failures.append(
+            f"Failed to rebuild uk_strategy_order: {steps['v2_uk_rebuild_failed']}"
+        )
     if not steps.get("account_id_exists"):
         critical_failures.append("account_id column missing")
     if not steps.get("strategy_exists"):

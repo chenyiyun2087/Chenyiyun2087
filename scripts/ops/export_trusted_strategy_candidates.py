@@ -548,6 +548,28 @@ def _check_candidate_tradability(
     return untradable
 
 
+def _next_trading_day(engine, from_date: str) -> str:
+    """Find the next trading day >= from_date using dim_trade_cal (SSE)."""
+    from sqlalchemy import text as _txt
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                _txt(
+                    "SELECT MIN(cal_date) FROM chenyiyun.dim_trade_cal "
+                    "WHERE exchange = 'SSE' AND is_open = 1 AND cal_date >= :d"
+                ),
+                {"d": from_date},
+            ).fetchone()
+        if row and row[0]:
+            raw = str(row[0])
+            if len(raw) == 8:
+                return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+            return raw[:10]
+    except Exception:
+        pass
+    return from_date
+
+
 
 
 def _ranked_head(frame: pd.DataFrame, n: int = 5) -> pd.DataFrame:
@@ -2359,15 +2381,27 @@ def export_candidates(args: argparse.Namespace) -> dict:
             from scripts.ops.order_repository import write_orders_with_metadata
             from scripts.ops.production_config import load_production_config
             _prod_cfg = load_production_config()
+            # Strategy: use the explicitly-passed CLI arg (v1, Gate tuned, shadow, etc.)
+            # Do NOT override with primary_strategy from config — that would mislabel
+            # Gate tuned orders as v1 and break unique key isolation.
+            _order_strategy = str(getattr(args, "strategy", None) or spec.name)
+            # T+1 execution_date: find next trading day after signal_date
+            _exec_date = _next_trading_day(engine, asof_date)
+            # release_id from registry or config SHA
+            _release_id = (
+                getattr(args, "release_id", None)
+                or str(_prod_cfg.get("config_sha", ""))
+            )
+            _health_substatus = getattr(args, "health_substatus", None) or None
             _order_count = write_orders_with_metadata(
                 engine,
                 orders,
-                strategy=str(_prod_cfg.get("primary_strategy", spec.name)),
-                execution_date=asof_date,  # T+1: execution is next trading day
+                strategy=_order_strategy,
+                execution_date=_exec_date,
                 account_id="default",
-                release_id=str(_prod_cfg.get("config_sha", "")),
+                release_id=_release_id,
                 health_grade=getattr(args, "health_grade", "UNKNOWN"),
-                health_substatus=None,
+                health_substatus=_health_substatus,
                 manual_confirmation_required=getattr(args, "manual_confirmation", False),
                 config_sha=str(_prod_cfg.get("config_sha", "")),
             )
@@ -2667,7 +2701,9 @@ def main() -> None:
     parser.add_argument("--emit-orders", action="store_true", default=False, help="Generate local rebalance orders from candidates. Omit for no orders.")
     parser.add_argument("--no-emit-orders", action="store_false", dest="emit_orders", help="Explicitly skip order generation (RED health).")
     parser.add_argument("--health-grade", default="UNKNOWN", help="Previous-day health grade (GREEN/YELLOW/RED/UNKNOWN).")
+    parser.add_argument("--health-substatus", default=None, help="Health substatus (UNKNOWN/STALE).")
     parser.add_argument("--health-date", default="", help="Date of the health grade used for order permission.")
+    parser.add_argument("--release-id", default=None, help="Strategy release ID for order provenance.")
     parser.add_argument("--manual-confirmation", action="store_true", help="Flag orders as requiring human confirmation (YELLOW health).")
     parser.add_argument("--candidate-table", default="chenyiyun.ads_trusted_strategy_candidates")
     parser.add_argument("--pool-key", default=DEFAULT_POOL_KEY)

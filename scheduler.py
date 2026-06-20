@@ -167,9 +167,14 @@ def run_pipeline(target_date) -> bool:
     
     # 0. Ensure order schema is at v2 before any order operations
     try:
-        from scripts.ops.order_repository import validate_order_schema_or_die
+        from scripts.ops.order_repository import (
+            validate_order_schema_or_die, backfill_legacy_orders,
+        )
         validate_order_schema_or_die(get_engine())
-        logger.info("Order schema v2 validated.")
+        _backfilled = backfill_legacy_orders(get_engine())
+        if _backfilled:
+            logger.info(f"Order schema: backfilled {_backfilled} legacy order(s).")
+        logger.info("Order schema v2 validated + backfilled.")
     except RuntimeError as _schema_exc:
         logger.error(f"Order schema validation FAILED: {_schema_exc}")
         return False
@@ -321,6 +326,9 @@ def run_pipeline(target_date) -> bool:
     if perm["manual_confirmation_required"]:
         _export_args.append("--manual-confirmation")
         logger.warning("Health YELLOW: orders require manual confirmation.")
+    if perm.get("health_substatus"):
+        _export_args.extend(["--health-substatus", str(perm["health_substatus"])])
+        logger.info(f"Health substatus: {perm['health_substatus']}")
     if not run_script(
         "scripts/ops/export_trusted_strategy_candidates.py",
         _export_args,
