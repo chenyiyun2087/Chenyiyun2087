@@ -5,7 +5,7 @@ from pathlib import Path
 
 REQUIRED = [
     "trusted_account_backtest_report.json", "trusted_account_backtest_ledger_events.csv",
-    "trusted_account_backtest_ledger_execution_snapshot.csv", "trusted_account_backtest_trades.csv",
+    "trusted_account_backtest_ledger_execution_snapshot.csv", "trusted_account_backtest_trades.csv", "trusted_account_backtest_nav.csv", "trusted_account_backtest_summary.csv", "trusted_account_backtest_adaptive_decisions.csv", "trusted_account_backtest_ledger_prices.csv",
 ]
 
 def _hash(path: Path) -> str:
@@ -14,9 +14,11 @@ def _hash(path: Path) -> str:
 def package(run_dir: Path, destination_root: Path, commit: str) -> dict:
     report = json.loads((run_dir / "trusted_account_backtest_report.json").read_text(encoding="utf-8"))
     run_id = run_dir.name
-    destination = destination_root / commit / run_id
+    provenance=report.get("provenance",{}); destination = destination_root / commit / str(provenance.get("data_snapshot_fingerprint")) / str(provenance.get("config_fingerprint")) / run_id
     destination.mkdir(parents=True, exist_ok=False)
-    names = [name for name in REQUIRED if (run_dir / name).exists()]
+    missing=[name for name in REQUIRED if not (run_dir/name).exists()]
+    if missing: raise RuntimeError(f"required evidence missing: {missing}")
+    names = list(REQUIRED)
     for relative in ("replay/strict_ledger_replay_report.json", "execution_replay/strict_execution_replay_report.json", "deviation/strict_execution_deviation_report.json", "risk_events/strict_missed_risk_events_report.json", "validation/strict_precommit_account_validation.json", "pytest_output.txt"):
         if (run_dir / relative).exists(): names.append(relative)
     for relative in names:

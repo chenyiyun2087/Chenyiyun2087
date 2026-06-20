@@ -83,7 +83,8 @@ def test_execution_replay_detects_price_fee_and_time_violations(tmp_path):
         {"strategy": "strict_precommit", "event_type": "order", "order_id": "o", "order_status": "PLANNED", "event_timestamp": "2026-01-01T15:00:00+08:00", "planned_shares": 100, "filled_shares": 0, "filled_notional": 0, "fee": 0, "mark_price_basis": "raw"},
         {"strategy": "strict_precommit", "event_type": "order", "order_id": "o", "order_status": "FILLED", "event_timestamp": "2026-01-02T09:30:00+08:00", "planned_shares": 100, "filled_shares": 100, "filled_notional": 1000, "fee": 1, "mark_price_basis": "raw"},
     ])
-    _write_csv(snapshot, [{"strategy": "strict_precommit", "order_id": "o", "raw_open": 10, "independent_gate_pass": 1, "independent_gate_reason": "", "cost_rate": .001}])
+    base={"strategy":"strict_precommit","order_id":"o","symbol":"000001","raw_open":10,"prev_raw_close":10,"execution_tradable":1,"is_suspended":0,"is_listed":1,"is_st":0,"side":"BUY","cost_rate":.001}
+    _write_csv(snapshot, [base])
     assert audit(events, snapshot, tmp_path / "ok")["execution_replay_pass"] is True
-    _write_csv(snapshot, [{"strategy": "strict_precommit", "order_id": "o", "raw_open": 11, "independent_gate_pass": 1, "independent_gate_reason": "", "cost_rate": .001}])
+    _write_csv(snapshot, [{**base,"raw_open":11}])
     assert audit(events, snapshot, tmp_path / "bad")["price_mismatch_count"] == 1

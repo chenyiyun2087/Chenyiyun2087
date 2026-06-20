@@ -2718,7 +2718,9 @@ def _build_strict_execution_snapshot(trades: pd.DataFrame, prices: pd.DataFrame)
             "is_suspended": _safe_float(info.get("is_suspended"), np.nan), "is_listed": _safe_float(info.get("is_listed"), np.nan),
             "daily_limit_ratio": _daily_limit_ratio(symbol, info.get("is_st")), "independent_gate_pass": int(tradable),
             "independent_gate_reason": gate_reason, "cost_rate": _safe_float(order.get("cost_rate"), np.nan),
-            "lot_size": _safe_float(order.get("lot_size"), np.nan),
+            "lot_size": _safe_float(order.get("lot_size"), np.nan), "slippage_rate": 0.0, "price_tick": 0.01,
+            "upper_limit_price": round(_safe_float(info.get("prev_raw_close"), 0.0) * (1 + _daily_limit_ratio(symbol, info.get("is_st"))), 2),
+            "lower_limit_price": round(_safe_float(info.get("prev_raw_close"), 0.0) * (1 - _daily_limit_ratio(symbol, info.get("is_st"))), 2),
         })
     return pd.DataFrame(rows)
 

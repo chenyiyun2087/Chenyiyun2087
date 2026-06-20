@@ -21,13 +21,30 @@ def _strict(frame: pd.DataFrame) -> pd.DataFrame:
         return frame
     return frame[frame["strategy"].astype(str).str.contains("strict_precommit", na=False)].copy()
 
+def _limit_ratio(symbol, is_st):
+    code=str(symbol).zfill(6)
+    if bool(_n(is_st)): return .05
+    if code.startswith(("300","301","688","689")): return .20
+    if code.startswith(("4","8","9")): return .30
+    return .10
+
+def _gate(snap):
+    op, prev = _n(getattr(snap,"raw_open"), float("nan")), _n(getattr(snap,"prev_raw_close"), float("nan"))
+    if not bool(_n(getattr(snap,"execution_tradable"))) or bool(_n(getattr(snap,"is_suspended"))) or not bool(_n(getattr(snap,"is_listed"))): return False, "t1_not_tradable"
+    if not pd.notna(op) or op<=0 or not pd.notna(prev) or prev<=0: return False,"missing_t1_execution_price"
+    ratio=_limit_ratio(getattr(snap,"symbol"),getattr(snap,"is_st")); side=str(getattr(snap,"side")); tick=_n(getattr(snap,"price_tick",.01),.01)
+    upper=round(prev*(1+ratio)/tick)*tick; lower=round(prev*(1-ratio)/tick)*tick
+    if side=="BUY" and op>=upper: return False,"limit_block"
+    if side=="SELL" and op<=lower: return False,"limit_block"
+    return True,""
+
 
 def audit(events_path: Path, snapshot_path: Path, output_dir: Path, tolerance: float = 0.01) -> dict:
     events, snapshots = _strict(pd.read_csv(events_path).fillna("")), _strict(pd.read_csv(snapshot_path).fillna(""))
     required = {"order_id", "event_timestamp", "order_status", "filled_shares", "filled_notional", "fee", "mark_price_basis"}
     if missing := sorted(required - set(events.columns)):
         raise RuntimeError(f"events missing: {missing}")
-    if missing := sorted({"order_id", "raw_open", "independent_gate_pass", "independent_gate_reason", "cost_rate"} - set(snapshots.columns)):
+    if missing := sorted({"order_id", "raw_open", "prev_raw_close", "execution_tradable", "is_suspended", "is_listed", "is_st", "side", "symbol", "cost_rate"} - set(snapshots.columns)):
         raise RuntimeError(f"execution snapshot missing: {missing}")
     snapshot_by_order = {str(row.order_id): row for row in snapshots.itertuples()}
     findings, violations = [], []
@@ -39,6 +56,7 @@ def audit(events_path: Path, snapshot_path: Path, output_dir: Path, tolerance: f
         snap = snapshot_by_order.get(order_id)
         if snap is None:
             violations.append(f"missing_snapshot:{order_id}"); continue
+        gate_pass, gate_reason = _gate(snap)
         ordered = rows.sort_values("event_timestamp")
         statuses = ordered["order_status"].astype(str).tolist()
         times = pd.to_datetime(ordered["event_timestamp"], errors="coerce")
@@ -56,10 +74,10 @@ def audit(events_path: Path, snapshot_path: Path, output_dir: Path, tolerance: f
             expected_fee = _n(fill.get("filled_notional")) * _n(getattr(snap, "cost_rate"))
             if abs(_n(fill.get("fee")) - expected_fee) > tolerance:
                 fee_mismatch += 1
-            if not bool(_n(getattr(snap, "independent_gate_pass"))):
+            if not gate_pass:
                 gate_mismatch += 1
         for _, reject in rejects.iterrows():
-            if _n(reject.get("filled_shares")) != 0 or bool(_n(getattr(snap, "independent_gate_pass"))):
+            if _n(reject.get("filled_shares")) != 0 or gate_pass:
                 gate_mismatch += 1
         planned = int(_n(plan["planned_shares"].iloc[0])) if not plan.empty else 0
         filled = int(sum(_n(row.get("filled_shares")) for _, row in fills.iterrows()))
@@ -74,7 +92,7 @@ def audit(events_path: Path, snapshot_path: Path, output_dir: Path, tolerance: f
         findings.append({"order_id": order_id, "planned_shares": planned, "filled_shares": filled, "cancelled_shares": cancelled,
                          "conservation_ok": conservation_ok, "price_mismatch_count": price_mismatch,
                          "fee_mismatch_count": fee_mismatch, "gate_mismatch_count": gate_mismatch,
-                         "statuses": ";".join(statuses), "independent_gate_reason": getattr(snap, "independent_gate_reason")})
+                         "statuses": ";".join(statuses), "independent_gate_reason": gate_reason})
     output_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(findings).to_csv(output_dir / "strict_execution_replay_orders.csv", index=False)
     report = {"execution_replay_pass": not violations, "order_count": len(findings), "violation_count": len(violations),
