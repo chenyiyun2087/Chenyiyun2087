@@ -15,6 +15,7 @@ def test_snapshot_is_versioned_and_hashes_each_event(tmp_path):
     }]).to_csv(source, index=False)
     manifest = build(source, tmp_path / "snapshot", "tushare_ca_v1")
     saved = pd.read_csv(tmp_path / "snapshot/strict_corporate_actions.csv")
+    assert manifest["snapshot_schema_version"] == "strict_corporate_lifecycle_snapshot_v2"
     assert manifest["dataset_version"] == "tushare_ca_v1"
     assert saved.loc[0, "event_hash"]
     assert json.loads((tmp_path / "snapshot/manifest.json").read_text())["event_count"] == 1

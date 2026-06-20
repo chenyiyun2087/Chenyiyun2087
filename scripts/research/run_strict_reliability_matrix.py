@@ -13,6 +13,8 @@ import sys
 from itertools import product
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -28,11 +30,40 @@ from scripts.research.verify_strict_ledger_evidence import verify
 STRATEGIES = "production_governed_vol_position,production_governed_vol_position_v1_2b_gate_tuned,production_governed_vol_position_v1_2b_strict_precommit_uplift"
 WINDOWS = {"development": ("2023-11-30", "2025-06-18"), "holdout": ("2025-06-19", "2026-06-18")}
 COSTS, SLIPPAGE_BPS, CAPS = (.00075, .001, .0015), (0, 10, 25), ("no_cap", "extreme_only", "high_v1_plus_5pct", "strict_cap")
+PREFLIGHT_EXECUTION_SCENARIOS = ((.00075, 0), (.0015, 25))
+PREFLIGHT_CAPS = ("no_cap", "strict_cap")
 
 
-def runs():
+def full_history_runs():
     for (window, dates), cost, slip, cap in product(WINDOWS.items(), COSTS, SLIPPAGE_BPS, CAPS):
         yield {"window": window, "start_date": dates[0], "end_date": dates[1], "trade_cost_rate": cost, "additional_open_slippage_bps": slip, "cap_profile": cap}
+
+
+def preflight_runs(lifecycle_snapshot: str | Path, sessions: int = 60):
+    """Return 8 grouped runs: two trailing 60-session windows, paired costs, caps."""
+    calendar = pd.read_csv(lifecycle_snapshot, usecols=["trade_date"])["trade_date"]
+    calendar = pd.to_datetime(calendar, errors="coerce").dropna().drop_duplicates().sort_values().tolist()
+    if sessions < 1:
+        raise ValueError("preflight sessions must be positive")
+    selected = {}
+    for name, (_, end) in WINDOWS.items():
+        eligible = [date for date in calendar if date <= pd.Timestamp(end)]
+        if len(eligible) < sessions:
+            raise RuntimeError(f"preflight lifecycle snapshot has fewer than {sessions} sessions for {name}")
+        selected[name] = (str(eligible[-sessions].date()), str(eligible[-1].date()))
+    for (window, dates), (cost, slip), cap in product(selected.items(), PREFLIGHT_EXECUTION_SCENARIOS, PREFLIGHT_CAPS):
+        yield {"window": window, "start_date": dates[0], "end_date": dates[1], "trade_cost_rate": cost, "additional_open_slippage_bps": slip, "cap_profile": cap}
+
+
+def runs(profile: str = "full216", lifecycle_snapshot: str | Path | None = None, preflight_sessions: int = 60):
+    if profile == "full216":
+        yield from full_history_runs()
+    elif profile == "preflight24":
+        if lifecycle_snapshot is None:
+            raise ValueError("preflight24 requires a lifecycle snapshot")
+        yield from preflight_runs(lifecycle_snapshot, preflight_sessions)
+    else:
+        raise ValueError(f"unknown matrix profile: {profile}")
 
 
 def cells():
@@ -48,7 +79,7 @@ def _cmd(run: dict, args: argparse.Namespace) -> list[str]:
             "--trade-cost-rate", str(run["trade_cost_rate"]), "--slippage-rate", str(run["additional_open_slippage_bps"] / 10_000),
             "--strict-cap-profile", run["cap_profile"], "--corporate-action-snapshot", args.corporate_action_snapshot,
             "--corporate-action-manifest", args.corporate_action_manifest, "--security-lifecycle-snapshot", args.security_lifecycle_snapshot,
-            "--security-lifecycle-manifest", args.security_lifecycle_manifest]
+            "--security-lifecycle-manifest", args.security_lifecycle_manifest, "--output-dir", str(Path(args.output_dir) / run["run_id"] / "run_artifacts")]
 
 
 def _audit_paths(run_dir: Path) -> dict[str, Path]:
@@ -88,10 +119,14 @@ def _evidence(run_dir: Path, cell_dir: Path) -> dict:
 
 def run(args: argparse.Namespace) -> dict:
     output = Path(args.output_dir); output.mkdir(parents=True, exist_ok=True)
-    selected_runs = list(runs())[:getattr(args, "max_runs", None)]
+    profile = getattr(args, "profile", "full216")
+    selected_runs = list(runs(profile, args.security_lifecycle_snapshot, getattr(args, "preflight_sessions", 60)))
+    if getattr(args, "max_runs", None) is not None:
+        selected_runs = selected_runs[:args.max_runs]
     results = []
     for number, run_config in enumerate(selected_runs, 1):
         cell_dir = output / f"{number:03d}_{run_config['window']}_{run_config['cap_profile']}_{int(run_config['trade_cost_rate'] * 1e6)}_{run_config['additional_open_slippage_bps']}bp"
+        run_config = {**run_config, "run_id": cell_dir.name}
         record = {**run_config, "cell_dir": str(cell_dir), "command": _cmd(run_config, args), "strategy_cells": _strategy_cells(run_config), "status": "NOT_RUN"}
         if args.dry_run:
             record["status"] = "DRY_RUN"
@@ -118,7 +153,7 @@ def run(args: argparse.Namespace) -> dict:
         cell_dir.mkdir(parents=True, exist_ok=True)
         (cell_dir / "cell_manifest.json").write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         results.append(record)
-    manifest = {"strategy_set": STRATEGIES.split(","), "run_count": len(results), "strategy_cell_count": len(results) * len(STRATEGIES.split(",")),
+    manifest = {"profile": profile, "strategy_set": STRATEGIES.split(","), "run_count": len(results), "strategy_cell_count": len(results) * len(STRATEGIES.split(",")),
                 "runs": results, "promotion_enabled": False, "reliability_pass": False,
                 "note": "Formal full-history execution remains disabled until a clean-worktree 24-strategy-cell preflight passes."}
     (output / "strict_reliability_matrix_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
@@ -129,5 +164,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True); parser.add_argument("--corporate-action-snapshot", required=True); parser.add_argument("--corporate-action-manifest", required=True)
     parser.add_argument("--security-lifecycle-snapshot", required=True); parser.add_argument("--security-lifecycle-manifest", required=True); parser.add_argument("--initial-cash", type=float, default=500000.0); parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--max-runs", type=int, default=None, help="Preflight only; 8 runs equals 24 strategy-level cells.")
+    parser.add_argument("--profile", choices=("preflight24", "full216"), default="full216")
+    parser.add_argument("--preflight-sessions", type=int, default=60)
+    parser.add_argument("--max-runs", type=int, default=None, help="Diagnostic run cap; applied only after grouped runs are generated.")
     print(json.dumps(run(parser.parse_args()), ensure_ascii=False, indent=2, default=str))

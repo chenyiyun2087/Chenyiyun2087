@@ -74,6 +74,7 @@ class ExecutionLedger:
     shares: dict[str, int] = field(default_factory=dict)
     expected_equity: float | None = None
     event_rows: list[dict] = field(default_factory=list)
+    applied_corporate_action_ids: set[str] = field(default_factory=set)
 
     def _append(self, event_type: str, **payload: object) -> None:
         self.event_rows.append({"event_type": event_type, "mark_price_basis": "raw", **payload})
@@ -87,6 +88,10 @@ class ExecutionLedger:
         if incomplete_parents:
             self.freeze(actions[0].ex_date if actions else "", "incomplete_corporate_action_bundle")
             raise RuntimeError("incomplete_corporate_action_bundle")
+        identities = [action.event_hash or f"{action.symbol}:{action.ex_date}:{action.source_event_id}:{action.action_type}" for action in actions]
+        if len(identities) != len(set(identities)) or any(identity in self.applied_corporate_action_ids for identity in identities):
+            self.freeze(actions[0].ex_date if actions else "", "duplicate_corporate_action_atomic_event")
+            raise RuntimeError("duplicate_corporate_action_atomic_event")
         for action in sorted(actions, key=lambda value: ({"dividend_cash": 20, "split_merge": 30, "stock_bonus": 40, "rights_subscription": 50, "delist_cash_settlement": 60}.get(value.action_type, 999), value.source_event_id)):
             if action.action_type not in ATOMIC_ACTION_TYPES:
                 self.freeze(action.ex_date, "unknown_corporate_action_type")
@@ -97,6 +102,7 @@ class ExecutionLedger:
             if held <= 0:
                 self._append("corporate_action", order_status="NO_POSITION", symbol=action.symbol, ex_date=action.ex_date, event_timestamp=f"{action.ex_date}T09:25:00+08:00",
                              cash_delta=0.0, share_delta=0, source_reason=action.source_reason)
+                self.applied_corporate_action_ids.add(action.event_hash or f"{action.symbol}:{action.ex_date}:{action.source_event_id}:{action.action_type}")
                 continue
             # The research policy is deterministic: subscribe in full only
             # when cash covers the full entitlement.  A shortfall is not
@@ -115,6 +121,7 @@ class ExecutionLedger:
                              event_timestamp=f"{action.ex_date}T09:25:00+08:00", cash_delta=-required_cash,
                              share_delta=rights_shares, action_type="rights_subscription", source_event_id=action.source_event_id,
                              source_reason=action.source_reason, event_hash=action.event_hash)
+                self.applied_corporate_action_ids.add(action.event_hash or f"{action.symbol}:{action.ex_date}:{action.source_event_id}:{action.action_type}")
                 continue
             if action.action_type == "delist_cash_settlement":
                 if action.settlement_price is None or action.settlement_price < 0:
@@ -126,6 +133,7 @@ class ExecutionLedger:
                              event_timestamp=f"{action.ex_date}T09:25:00+08:00", cash_delta=cash_delta,
                              share_delta=-held, action_type=action.action_type, source_event_id=action.source_event_id,
                              source_reason=action.source_reason, event_hash=action.event_hash)
+                self.applied_corporate_action_ids.add(action.event_hash or f"{action.symbol}:{action.ex_date}:{action.source_event_id}:{action.action_type}")
                 continue
             if action.action_type == "dividend_cash":
                 cash_delta, share_delta = held * float(action.cash_per_share), 0
@@ -141,6 +149,7 @@ class ExecutionLedger:
             self._append("corporate_action", order_status="APPLIED", symbol=action.symbol, ex_date=action.ex_date, event_timestamp=f"{action.ex_date}T09:25:00+08:00",
                          cash_delta=cash_delta, share_delta=share_delta, action_type=action.action_type,
                          source_event_id=action.source_event_id, source_reason=action.source_reason, event_hash=action.event_hash)
+            self.applied_corporate_action_ids.add(action.event_hash or f"{action.symbol}:{action.ex_date}:{action.source_event_id}:{action.action_type}")
 
     def freeze(self, event_date: object, reason: str) -> None:
         """Record a fail-closed corporate-action halt without mutating balances."""

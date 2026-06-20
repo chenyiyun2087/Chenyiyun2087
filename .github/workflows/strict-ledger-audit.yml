@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install pandas numpy pytest sqlalchemy pymysql
-      - run: python -m pytest test/test_strict_execution_ledger.py test/test_strict_corporate_action_snapshot.py test/test_strict_snapshot_integrity.py test/test_strict_reliability_matrix.py test/test_strict_precommit_cap_and_sizing.py test/test_replay_strict_execution_ledger.py -q
+      - run: python -m pytest -q
       - run: '! rg "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
   secret-scan:
     runs-on: ubuntu-latest

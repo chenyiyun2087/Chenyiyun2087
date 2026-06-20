@@ -33,8 +33,9 @@ def package(run_dir: Path, destination_root: Path, commit: str) -> dict:
     hashes = {relative: _hash(destination / relative) for relative in names}
     manifest = {"commit": commit, "run_id": run_id, "source_run_dir": str(run_dir), "report_provenance": report.get("provenance", {}), "files": hashes}
     (destination / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    (destination / "SHA256SUMS").write_text("\n".join(f"{digest}  {name}" for name, digest in sorted(hashes.items())) + "\n", encoding="utf-8")
-    return {"destination": str(destination), "manifest": str(destination / "manifest.json"), "file_count": len(names)}
+    sums_path = destination / "SHA256SUMS"
+    sums_path.write_text("\n".join(f"{digest}  {name}" for name, digest in sorted(hashes.items())) + "\n", encoding="utf-8")
+    return {"destination": str(destination), "manifest": str(destination / "manifest.json"), "sha256sums": str(sums_path), "file_count": len(names)}
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(); parser.add_argument("--run-dir",type=Path,required=True); parser.add_argument("--destination-root",type=Path,required=True); parser.add_argument("--commit",required=True)

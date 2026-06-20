@@ -115,3 +115,13 @@ def test_unknown_corporate_action_freezes():
     with pytest.raises(RuntimeError, match="unknown_corporate_action_type"):
         ledger.apply_corporate_actions([CorporateAction("000001", "2026-01-02", action_type="mystery")])
     assert ledger.event_rows[-1]["order_status"] == "CORPORATE_ACTION_FREEZE"
+
+
+def test_duplicate_atomic_event_freezes_before_any_second_application():
+    ledger = ExecutionLedger(cash=1_000.0, shares={"000001": 100})
+    action = CorporateAction("000001", "2026-01-02", action_type="dividend_cash", source_event_id="same", cash_per_share=1.0, event_hash="same")
+    ledger.apply_corporate_actions([action])
+    with pytest.raises(RuntimeError, match="duplicate_corporate_action_atomic_event"):
+        ledger.apply_corporate_actions([action])
+    assert ledger.cash == 1_100.0
+    assert ledger.event_rows[-1]["order_status"] == "CORPORATE_ACTION_FREEZE"
