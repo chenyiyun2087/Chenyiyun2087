@@ -287,29 +287,24 @@ def run_pipeline(target_date) -> bool:
         )
         try:
             from sqlalchemy import text as _text2
-            _primary_strategy = str(PRODUCTION_CONFIG["primary_strategy"])
             with get_engine().begin() as _conn2:
                 _result = _conn2.execute(
                     _text2(
                         "UPDATE chenyiyun.ads_local_strategy_orders "
-                        "SET status = 'SUPERSEDED', "
-                        "    memo = CONCAT(COALESCE(memo, ''), "
+                        "SET order_status = 'superseded', "
+                        "    note = CONCAT(COALESCE(note, ''), "
                         "      ' | superseded by health RED freeze on ', :today) "
                         "WHERE side = 'BUY' "
-                        "  AND strategy = :strategy "
-                        "  AND status IN ('PENDING', 'DRAFT') "
-                        "  AND execution_date < :today"
+                        "  AND order_status IN ('planned') "
+                        "  AND trade_date < :today"
                     ),
-                    {
-                        "today": date_iso,
-                        "strategy": _primary_strategy,
-                    },
+                    {"today": date_iso},
                 )
                 _superseded = _result.rowcount
             if _superseded:
                 logger.warning(
                     f"Health RED: superseded {_superseded} stale BUY draft(s) "
-                    f"for strategy={_primary_strategy} execution_date < {date_iso}."
+                    f"for trade_date < {date_iso}."
                 )
         except Exception as _cleanup_exc:
             # Fail-closed: if we can't cleanup old drafts, we must NOT proceed

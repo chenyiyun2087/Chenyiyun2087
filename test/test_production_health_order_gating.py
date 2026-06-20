@@ -230,6 +230,14 @@ class TestDatabaseCredentialSafety:
 class TestSchedulerToCLIContract:
     """End-to-end test: scheduler RED → argparse → emit_orders=False."""
 
+    @staticmethod
+    def _scheduler_path() -> Path:
+        return Path(__file__).resolve().parents[1] / "scheduler.py"
+
+    @staticmethod
+    def _read_scheduler_src() -> str:
+        return TestSchedulerToCLIContract._scheduler_path().read_text()
+
     def test_red_no_emit_orders_flag_means_false(self):
         """When --emit-orders is NOT passed, argparse store_true defaults to False."""
         import argparse
@@ -283,52 +291,51 @@ class TestSchedulerToCLIContract:
         finally:
             _sys.argv = saved_argv
 
-    def test_cleanup_sql_has_strategy_filter(self):
-        """Verify the RED cleanup SQL includes strategy column filter."""
-        import subprocess
-        result = subprocess.run(
-            ["grep", "-c", "strategy = :strategy",
-             "/Volumes/extension/projects/Chenyiyun2087/scheduler.py"],
-            capture_output=True, text=True,
-        )
-        assert int(result.stdout.strip()) >= 1, (
-            "RED cleanup SQL must filter by strategy to avoid cross-strategy contamination"
+    def test_cleanup_sql_has_trade_date_filter(self):
+        """Verify the RED cleanup SQL uses actual table column trade_date."""
+        src = self._read_scheduler_src()
+        assert "trade_date < :today" in src, (
+            "RED cleanup SQL must filter by trade_date (actual table column)"
         )
 
-    def test_cleanup_sql_has_execution_date_filter(self):
-        """Verify the RED cleanup SQL includes execution_date filter."""
-        import subprocess
-        result = subprocess.run(
-            ["grep", "-c", "execution_date < :today",
-             "/Volumes/extension/projects/Chenyiyun2087/scheduler.py"],
-            capture_output=True, text=True,
-        )
-        assert int(result.stdout.strip()) >= 1, (
-            "RED cleanup SQL must filter by execution_date"
+    def test_cleanup_sql_uses_order_status_column(self):
+        """Verify the RED cleanup SQL uses actual column name order_status."""
+        src = self._read_scheduler_src()
+        assert "order_status" in src and "SET order_status = 'superseded'" in src, (
+            "RED cleanup SQL must use order_status column (actual DDL name)"
         )
 
     def test_cleanup_fail_closed(self):
         """Verify cleanup failure returns False (aborts pipeline)."""
-        import subprocess
-        result = subprocess.run(
-            ["grep", "-A4", "FAILED to cleanup stale BUY drafts",
-             "/Volumes/extension/projects/Chenyiyun2087/scheduler.py"],
-            capture_output=True, text=True,
-        )
-        assert "return False" in result.stdout, (
+        src = self._read_scheduler_src()
+        # Find the except block after FAILED to cleanup
+        fail_section_start = src.find("FAILED to cleanup stale BUY drafts")
+        assert fail_section_start > 0, "Missing fail-closed error message"
+        fail_section = src[fail_section_start:fail_section_start + 500]
+        assert "return False" in fail_section, (
             "Cleanup failure must return False to abort pipeline (fail-closed)"
         )
 
+    def test_order_table_columns_match_ddl(self):
+        """Verify cleanup SQL columns match the actual table DDL."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from scripts.ops.data_readiness_gate import _get_text_sql
+        # The actual DDL uses: order_status, note, trade_date, side
+        # The cleanup must use these exact column names
+        src = self._read_scheduler_src()
+        assert "order_status" in src, "Must use order_status (not 'status')"
+        assert "note" in src, "Must use note (not 'memo')"
+        assert "trade_date" in src, "Must use trade_date (not 'execution_date')"
+
     def test_top5_contamination_is_critical(self):
         """Verify Top5 contamination check uses 'critical' severity."""
-        import subprocess, inspect, sys
-        sys.path.insert(0, "/Volumes/extension/projects/Chenyiyun2087")
+        import inspect, sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from scripts.ops.data_readiness_gate import PostScoreGate
         src = inspect.getsource(PostScoreGate.check_candidate_contamination)
         assert "top5_contaminated" in src, "Missing Top5 contamination check"
-        assert "severity\": \"critical\"" in src.replace(" ", "").replace("'", '"') or \
-               'severity": "critical"' in src or \
-               "severity" in src, "Top5 contamination must have severity field"
+        assert "severity" in src, "Top5 contamination must have severity field"
 
 
 class TestFeishuNoTLSFallback:

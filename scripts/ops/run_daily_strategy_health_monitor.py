@@ -561,20 +561,29 @@ def resolve_order_permission(
         }
 
     grade = str(previous_health.get("overall_grade", "UNKNOWN")).upper()
-    rules = ORDER_PERMISSION_GRADE_RULES.get(grade, ORDER_PERMISSION_GRADE_RULES["GREEN"])
+    # Default to YELLOW for unknown/corrupt grades — never silently allow orders
+    if grade not in ORDER_PERMISSION_GRADE_RULES:
+        grade = "YELLOW"
+    rules = ORDER_PERMISSION_GRADE_RULES[grade]
     health_date = str(previous_health.get("as_of_date", ""))
+    raw_warnings = previous_health.get("warnings")
 
     freeze_reason = None
-    if grade == "RED":
-        warnings = previous_health.get("warnings")
-        if isinstance(warnings, str):
+    if grade == "YELLOW" and previous_health.get("overall_grade", "").upper() not in ORDER_PERMISSION_GRADE_RULES:
+        freeze_reason = (
+            f"Health grade '{previous_health.get('overall_grade', '')}' is unrecognized "
+            f"— defaulting to YELLOW with manual confirmation (fail-safe)."
+        )
+    elif grade == "RED":
+        warnings_list = raw_warnings
+        if isinstance(warnings_list, str):
             import json as _json
             try:
-                warnings = _json.loads(warnings)
+                warnings_list = _json.loads(warnings_list)
             except Exception:
-                warnings = [warnings]
+                warnings_list = [warnings_list]
         freeze_reason = f"Health RED ({health_date}): " + (
-            "; ".join(warnings[:3]) if warnings else "no specific warnings"
+            "; ".join(warnings_list[:3]) if warnings_list else "no specific warnings"
         )
     elif grade == "YELLOW":
         freeze_reason = f"Health YELLOW ({health_date}): manual confirmation required"
