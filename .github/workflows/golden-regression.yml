@@ -1,0 +1,44 @@
+name: golden-regression
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  golden-regression:
+    name: strict-ledger-golden-baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install regression dependencies
+        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml
+
+      - name: Test comparator contract
+        run: python -m pytest -q regression/tests
+
+      - name: Build deterministic actual artifact
+        run: |
+          python -m scripts.quality.build_strict_ledger_regression_fixture \
+            --output artifacts/regression/strict-ledger-actual.json
+
+      - name: Enforce approved golden baseline
+        run: |
+          python -m scripts.quality.regression_baseline compare \
+            --baseline regression/baselines/strict_ledger_core.v1.json \
+            --actual artifacts/regression/strict-ledger-actual.json \
+            --report artifacts/regression/strict-ledger-report.json \
+            --junit artifacts/regression/strict-ledger-junit.xml
+
+      - name: Upload regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-regression-${{ github.sha }}
+          path: artifacts/regression/
+          if-no-files-found: warn
