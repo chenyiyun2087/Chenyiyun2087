@@ -1,7 +1,9 @@
 """Versioned, pure A-share execution-market rules shared by strict research."""
 from __future__ import annotations
 
-MARKET_RULES_VERSION = "ashare_daily_limit_tick_v1"
+# Included in strict evidence/config fingerprints.  Bump only with an audited
+# market-rule contract change so a replay cannot silently mix rule versions.
+MARKET_RULES_VERSION = "ashare_daily_limit_tick_v2_strict_snapshot"
 DEFAULT_PRICE_TICK = 0.01
 
 

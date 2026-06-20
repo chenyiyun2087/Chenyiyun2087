@@ -16,6 +16,7 @@ import pandas as pd
 
 REQUIRED = {"symbol", "action_type", "effective_date", "source_event_id", "as_of_timestamp", "source_complete"}
 OPTIONAL = ["announcement_date", "ex_date", "cash_per_share", "stock_ratio", "rights_ratio", "rights_price", "split_ratio", "settlement_price", "source_reason"]
+SNAPSHOT_SCHEMA_VERSION = "strict_corporate_lifecycle_snapshot_v2"
 # Cash entitlement is based on pre-adjustment shares.  Rights then sees the
 # deterministic post split/bonus share count.
 ATOMIC_TYPES = {"dividend_cash": 20, "split_merge": 30, "stock_bonus": 40, "rights_subscription": 50, "delist_cash_settlement": 60}
@@ -116,6 +117,7 @@ def build(source: Path, output_dir: Path, dataset_version: str, lifecycle_source
     events_path = output_dir / "strict_corporate_actions.csv"
     frame.to_csv(events_path, index=False)
     manifest = {
+        "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
         "dataset_version": dataset_version,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": str(source),

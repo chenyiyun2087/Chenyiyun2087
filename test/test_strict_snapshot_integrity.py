@@ -66,8 +66,24 @@ def test_evidence_verifier_rejects_tampering(tmp_path):
     evidence.mkdir()
     payload = evidence / "payload.txt"
     payload.write_text("original", encoding="utf-8")
-    (evidence / "manifest.json").write_text(json.dumps({"commit": "abc", "files": {"payload.txt": hashlib.sha256(payload.read_bytes()).hexdigest()}}), encoding="utf-8")
+    digest = hashlib.sha256(payload.read_bytes()).hexdigest()
+    (evidence / "manifest.json").write_text(json.dumps({"commit": "abc", "files": {"payload.txt": digest}}), encoding="utf-8")
+    (evidence / "SHA256SUMS").write_text(f"{digest}  payload.txt\n", encoding="utf-8")
     assert verify(evidence)["verified"] is True
     payload.write_text("changed", encoding="utf-8")
     with pytest.raises(RuntimeError, match="verification failed"):
+        verify(evidence)
+
+
+def test_evidence_verifier_rejects_missing_or_mismatched_sha256sums(tmp_path):
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    payload = evidence / "payload.txt"
+    payload.write_text("original", encoding="utf-8")
+    digest = hashlib.sha256(payload.read_bytes()).hexdigest()
+    (evidence / "manifest.json").write_text(json.dumps({"commit": "abc", "files": {"payload.txt": digest}}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="missing SHA256SUMS"):
+        verify(evidence)
+    (evidence / "SHA256SUMS").write_text("0" * 64 + "  payload.txt\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="manifest/SHA256SUMS mismatch"):
         verify(evidence)
