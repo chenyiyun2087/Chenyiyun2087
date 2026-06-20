@@ -5815,3 +5815,10 @@
 2026-06-20 23:00:00,159 - INFO - 2026-06-20 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-21 00:00:01,027 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-21 01:00:01,967 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 02:00:02,641 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 02:50:19,296 - INFO - Scheduler started.
+2026-06-21 02:50:19,309 - INFO - Database engine initialized with env-var credentials.
+2026-06-21 03:00:19,422 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 04:00:20,381 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 05:00:21,218 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 06:00:22,111 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
