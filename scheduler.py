@@ -291,6 +291,7 @@ def run_pipeline(target_date) -> bool:
                 get_engine(),
                 strategy=str(PRODUCTION_CONFIG["primary_strategy"]),
                 as_of_date=date_iso,
+                account_id="default",
             )
             if _superseded:
                 logger.warning(

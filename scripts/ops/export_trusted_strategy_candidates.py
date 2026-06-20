@@ -533,10 +533,19 @@ def _check_candidate_tradability(
     try:
         with engine.connect() as conn:
             rows = conn.execute(sql, params).mappings().fetchall()
-    except Exception:
-        return []  # Query failure → don't block (conservative: let PostScoreGate catch this)
+    except Exception as exc:
+        # Fail-closed: if we can't verify tradability, we must NOT generate orders.
+        return [{"symbol": "QUERY_ERROR", "issue": f"TRADABILITY_CHECK_FAILED: {exc}"}]
 
-    return [dict(r) for r in rows if r.get("issue")]
+    untradable = [dict(r) for r in rows if r.get("issue")]
+
+    # Detect candidates missing from label table entirely
+    found_symbols = {str(r.get("symbol", "")).zfill(6) for r in rows}
+    for sym in symbols:
+        if sym not in found_symbols:
+            untradable.append({"symbol": sym, "issue": "MISSING_LABEL"})
+
+    return untradable
 
 
 

@@ -1,88 +1,65 @@
 """Unified order repository — manages ads_local_strategy_orders with multi-strategy support.
 
-Migrates the legacy schema from (trade_date, ts_code, side) PK to
-(strategy, execution_date, ts_code, side) PK so that v1, Gate tuned shadow,
-and canary can coexist without key conflicts.
+Migrates the legacy schema from (trade_date, ts_code, side) PK to:
+  PRIMARY KEY (id)
+  UNIQUE KEY (account_id, strategy, execution_date, ts_code, side)
+
+This allows v1, Gate tuned shadow, and canary to coexist without key conflicts.
 
 Provides:
-  ensure_order_schema(engine)     — idempotent migration to v2 schema
-  supersede_pending_buys(engine)  — RED/STALE cleanup scoped to strategy+release
+  ensure_order_schema(engine)          — idempotent migration to v2 schema
+  supersede_pending_buys(engine, ...)  — RED/STALE cleanup scoped to strategy+account
+  write_orders_with_metadata(engine, ...) — v2 write with status protection
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import date
+
+logger = logging.getLogger(__name__)
+
+# Order statuses that must NEVER be overwritten by a new candidate run
+PROTECTED_STATUSES: frozenset[str] = frozenset({
+    "submitted",
+    "partial",
+    "filled",
+    "cancelled",
+    "rejected",
+    "superseded",
+    "expired",
+})
 
 # ---------------------------------------------------------------------------
 # v2 schema DDL
 # ---------------------------------------------------------------------------
 
-DDL_MIGRATE_V2 = """
--- Add strategy column (nullable initially, backfill after migration)
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS strategy VARCHAR(96) DEFAULT NULL
-  COMMENT 'Strategy identifier (e.g. production_governed_vol_position)';
+DDL_V2_COLUMNS: list[tuple[str, str]] = [
+    ("id", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN id BIGINT AUTO_INCREMENT UNIQUE"),
+    ("account_id", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN account_id VARCHAR(32) DEFAULT 'default' COMMENT 'Account identifier'"),
+    ("strategy", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN strategy VARCHAR(96) DEFAULT NULL COMMENT 'Strategy identifier'"),
+    ("execution_date", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN execution_date DATE DEFAULT NULL COMMENT 'Target execution date T+1'"),
+    ("release_id", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN release_id VARCHAR(64) DEFAULT NULL COMMENT 'Release version'"),
+    ("manual_confirmation_required", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN manual_confirmation_required TINYINT(1) NOT NULL DEFAULT 0"),
+    ("health_grade", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN health_grade VARCHAR(16) DEFAULT NULL"),
+    ("health_substatus", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN health_substatus VARCHAR(16) DEFAULT NULL"),
+    ("config_sha", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN config_sha VARCHAR(32) DEFAULT NULL"),
+    ("updated_at", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+]
 
--- Add execution_date column
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS execution_date DATE DEFAULT NULL
-  COMMENT 'Target execution date (T+1 of signal_date)';
-
--- Add release_id column
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS release_id VARCHAR(64) DEFAULT NULL
-  COMMENT 'Strategy release version';
-
--- Manual confirmation flag (YELLOW health)
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS manual_confirmation_required TINYINT(1) NOT NULL DEFAULT 0
-  COMMENT '1 = human approval required before execution';
-
--- Health grade at time of order generation
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS health_grade VARCHAR(16) DEFAULT NULL
-  COMMENT 'GREEN / YELLOW / RED at order generation time';
-
--- Health substatus
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS health_substatus VARCHAR(16) DEFAULT NULL
-  COMMENT 'UNKNOWN / STALE / None';
-
--- Config SHA at order generation time
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS config_sha VARCHAR(32) DEFAULT NULL
-  COMMENT 'SHA of production_strategy.yaml at order time';
-
--- Updated at timestamp
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-  COMMENT 'Last modification timestamp';
-
--- Drop the old PK and add the new one supporting multi-strategy
--- We handle this carefully: if the old PK exists, we drop and recreate.
-"""
-
-# The new unique key: (strategy, execution_date, ts_code, side)
-# This allows v1 and Gate tuned to both have BUY orders for the same stock
-# on the same day without conflicting.
-DDL_V2_UNIQUE_KEY = """
--- Remove legacy unique key if it exists (trade_date, ts_code, side)
+# These must run in order: first add id column, then swap PK to id, then add v2 unique key
+DDL_SWAP_PK = """
 ALTER TABLE chenyiyun.ads_local_strategy_orders
   DROP PRIMARY KEY,
   ADD PRIMARY KEY (id);
+"""
 
--- Add v2 unique constraint supporting multi-strategy
+DDL_V2_UNIQUE_KEY = """
 ALTER TABLE chenyiyun.ads_local_strategy_orders
   ADD UNIQUE KEY uk_strategy_order
-    (strategy, execution_date, ts_code, side);
+    (account_id, strategy, execution_date, ts_code, side);
 """
 
-# Add auto-increment id column if table is on old schema without one
-DDL_ADD_ID_COLUMN = """
-ALTER TABLE chenyiyun.ads_local_strategy_orders
-  ADD COLUMN IF NOT EXISTS id BIGINT AUTO_INCREMENT FIRST,
-  ADD PRIMARY KEY (id);
-"""
 
 # ---------------------------------------------------------------------------
 # Migration
@@ -92,46 +69,56 @@ ALTER TABLE chenyiyun.ads_local_strategy_orders
 def ensure_order_schema(engine) -> dict[str, bool]:
     """Idempotently migrate ads_local_strategy_orders to v2 multi-strategy schema.
 
+    Steps:
+      1. Add new columns (idempotent — skips if exists).
+      2. Swap PK from (trade_date, ts_code, side) to (id).
+      3. Add v2 unique key on (account_id, strategy, execution_date, ts_code, side).
+
     Returns a dict of migration steps and whether they were applied.
     """
     from sqlalchemy import text
 
     steps: dict[str, bool] = {}
 
-    # Run each ALTER TABLE individually — MySQL ignores ADD COLUMN IF NOT EXISTS
-    # for versions that don't support it, so we catch and continue.
-    migrations = [
-        ("id_column", DDL_ADD_ID_COLUMN),
-        ("strategy", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN strategy VARCHAR(96) DEFAULT NULL COMMENT 'Strategy identifier'"),
-        ("execution_date", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN execution_date DATE DEFAULT NULL COMMENT 'Target execution date T+1'"),
-        ("release_id", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN release_id VARCHAR(64) DEFAULT NULL COMMENT 'Release version'"),
-        ("manual_confirmation", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN manual_confirmation_required TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Human approval required'"),
-        ("health_grade", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN health_grade VARCHAR(16) DEFAULT NULL COMMENT 'GREEN/YELLOW/RED'"),
-        ("health_substatus", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN health_substatus VARCHAR(16) DEFAULT NULL COMMENT 'UNKNOWN/STALE'"),
-        ("config_sha", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN config_sha VARCHAR(32) DEFAULT NULL COMMENT 'Config SHA'"),
-        ("updated_at", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
-    ]
-
-    for name, ddl in migrations:
+    # Step 1: Add columns
+    for name, ddl in DDL_V2_COLUMNS:
         try:
             with engine.begin() as conn:
                 conn.execute(text(ddl))
             steps[name] = True
         except Exception:
-            # Column likely already exists — that's fine
             steps[name] = False
 
-    # Add v2 unique key (this may fail if it already exists, which is fine)
+    # Step 2: Swap primary key to id
+    # First check if the old PK still exists
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE "
+                "WHERE TABLE_SCHEMA = 'chenyiyun' "
+                "AND TABLE_NAME = 'ads_local_strategy_orders' "
+                "AND CONSTRAINT_NAME = 'PRIMARY' "
+                "ORDER BY ORDINAL_POSITION"
+            )).fetchall()
+        pk_cols = {r[0] for r in row} if row else set()
+        if "trade_date" in pk_cols:
+            # Old PK still in place — swap to id
+            with engine.begin() as conn:
+                conn.execute(text(DDL_SWAP_PK))
+            steps["pk_swapped_to_id"] = True
+            logger.info("Order schema: PK swapped from (trade_date,ts_code,side) to (id).")
+        else:
+            steps["pk_swapped_to_id"] = False
+    except Exception as exc:
+        steps["pk_swapped_to_id"] = False
+        logger.warning(f"Order schema: PK swap skipped ({exc}).")
+
+    # Step 3: Add v2 unique key
     try:
         with engine.begin() as conn:
-            conn.execute(text(
-                "ALTER TABLE chenyiyun.ads_local_strategy_orders "
-                "ADD UNIQUE KEY IF NOT EXISTS uk_strategy_order "
-                "(strategy, execution_date, ts_code, side)"
-            ))
+            conn.execute(text(DDL_V2_UNIQUE_KEY))
         steps["v2_unique_key"] = True
     except Exception:
-        # Key might already exist, or IF NOT EXISTS not supported
         steps["v2_unique_key"] = False
 
     return steps
@@ -146,11 +133,12 @@ def supersede_pending_buys(
     engine,
     strategy: str,
     as_of_date: str,
+    account_id: str = "default",
     reason: str = "health RED freeze",
 ) -> int:
-    """Supersede pending BUY orders for a specific strategy before as_of_date.
+    """Supersede pending BUY orders scoped to strategy + account.
 
-    Scoped to: strategy + BUY + planned + execution_date < today.
+    Only affects: account_id + strategy + BUY + planned + execution_date < today.
     Does NOT affect other strategies, accounts, or canary runs.
 
     Returns the number of rows updated.
@@ -165,6 +153,7 @@ def supersede_pending_buys(
         "    status_reason = CONCAT(COALESCE(status_reason, ''), "
         "      ' | superseded by ', :reason, ' on ', :today) "
         "WHERE side = 'BUY' "
+        "  AND account_id = :account_id "
         "  AND strategy = :strategy "
         "  AND order_status = 'planned' "
         "  AND (execution_date < :today OR "
@@ -173,7 +162,12 @@ def supersede_pending_buys(
     with engine.begin() as conn:
         result = conn.execute(
             sql,
-            {"strategy": strategy, "today": as_of_date, "reason": reason},
+            {
+                "account_id": account_id,
+                "strategy": strategy,
+                "today": as_of_date,
+                "reason": reason,
+            },
         )
     return result.rowcount
 
@@ -183,13 +177,19 @@ def write_orders_with_metadata(
     orders_df,
     strategy: str,
     execution_date: str,
+    account_id: str = "default",
     release_id: str | None = None,
     health_grade: str = "UNKNOWN",
     health_substatus: str | None = None,
     manual_confirmation_required: bool = False,
     config_sha: str | None = None,
 ) -> int:
-    """Write orders with v2 metadata columns populated.
+    """Write orders with v2 metadata. Protects existing order statuses.
+
+    Uses INSERT ... ON DUPLICATE KEY UPDATE, but ONLY updates orders whose
+    current status is NOT in PROTECTED_STATUSES. This prevents:
+      - Overwriting a 'filled' or 'submitted' status back to 'planned'
+      - Cancelling a manually submitted order
 
     Returns number of rows written.
     """
@@ -200,24 +200,22 @@ def write_orders_with_metadata(
     if orders_df.empty:
         return 0
 
-    # Add metadata columns to DataFrame
     orders_df = orders_df.copy()
     orders_df["strategy"] = strategy
     orders_df["execution_date"] = execution_date
+    orders_df["account_id"] = account_id
     orders_df["release_id"] = release_id
     orders_df["health_grade"] = health_grade
     orders_df["health_substatus"] = health_substatus
     orders_df["manual_confirmation_required"] = 1 if manual_confirmation_required else 0
     orders_df["config_sha"] = config_sha
 
-    # Use REPLACE INTO for upsert behavior with the v2 unique key
-    # (strategy, execution_date, ts_code, side)
     cols = [
         "trade_date", "ts_code", "side", "price",
         "current_shares", "target_shares", "delta_shares",
         "current_weight", "target_weight", "delta_weight",
         "order_status", "status_reason", "note",
-        "strategy", "execution_date", "release_id",
+        "account_id", "strategy", "execution_date", "release_id",
         "health_grade", "health_substatus",
         "manual_confirmation_required", "config_sha",
     ]
@@ -225,9 +223,14 @@ def write_orders_with_metadata(
 
     placeholders = ", ".join(f":{c}" for c in available)
     col_list = ", ".join(f"`{c}`" for c in available)
-    update_clause = ", ".join(
-        f"`{c}` = VALUES(`{c}`)" for c in available if c not in ("trade_date", "ts_code", "side", "strategy", "execution_date")
-    )
+
+    # Only update rows whose current status is NOT protected.
+    # Dynamically build: AND order_status NOT IN ('submitted', 'filled', ...)
+    protected_list = ", ".join(f"'{s}'" for s in PROTECTED_STATUSES)
+    # Update only non-key columns; the v2 unique key columns are excluded from UPDATE
+    key_cols = {"account_id", "strategy", "execution_date", "ts_code", "side"}
+    update_cols = [c for c in available if c not in key_cols]
+    update_clause = ", ".join(f"`{c}` = VALUES(`{c}`)" for c in update_cols)
 
     insert_sql = text(
         f"INSERT INTO chenyiyun.ads_local_strategy_orders "
@@ -236,10 +239,47 @@ def write_orders_with_metadata(
     )
 
     written = 0
+    skipped_protected = 0
     with engine.begin() as conn:
         for _, row in orders_df.iterrows():
-            params = {c: (None if (isinstance(row[c], float) and row[c] != row[c]) else row[c]) for c in available}
+            params = {}
+            for c in available:
+                v = row[c]
+                # Convert NaN to None
+                if isinstance(v, float) and v != v:
+                    params[c] = None
+                else:
+                    params[c] = v
+
+            # Check if this order exists with a protected status
+            check_sql = text(
+                "SELECT order_status FROM chenyiyun.ads_local_strategy_orders "
+                "WHERE account_id = :account_id AND strategy = :strategy "
+                "AND execution_date = :execution_date "
+                "AND ts_code = :ts_code AND side = :side LIMIT 1"
+            )
+            existing = conn.execute(
+                check_sql,
+                {
+                    "account_id": params.get("account_id"),
+                    "strategy": params.get("strategy"),
+                    "execution_date": params.get("execution_date"),
+                    "ts_code": params.get("ts_code"),
+                    "side": params.get("side"),
+                },
+            ).fetchone()
+
+            if existing and str(existing[0]) in PROTECTED_STATUSES:
+                skipped_protected += 1
+                continue
+
             conn.execute(insert_sql, params)
             written += 1
+
+    if skipped_protected:
+        logger.info(
+            f"Order write: skipped {skipped_protected} row(s) with protected status "
+            f"({', '.join(sorted(PROTECTED_STATUSES))})."
+        )
 
     return written
