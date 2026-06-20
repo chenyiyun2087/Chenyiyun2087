@@ -475,6 +475,18 @@ ORDER_PERMISSION_GRADE_RULES = {
         "manual_confirmation_required": False,
         "allow_sell_only": True,
     },
+    "STALE": {
+        "allow_new_buys": False,
+        "emit_orders": False,
+        "manual_confirmation_required": False,
+        "allow_sell_only": True,
+    },
+    "UNKNOWN": {
+        "allow_new_buys": True,
+        "emit_orders": True,
+        "manual_confirmation_required": True,
+        "allow_sell_only": False,
+    },
 }
 
 
@@ -482,16 +494,22 @@ def get_previous_trading_day_health(engine, as_of_date: str) -> dict[str, Any] |
     """Read the most recent health record before as_of_date.
 
     Returns None if no prior health record exists (e.g., first run).
+    Includes _trading_days_behind: number of trading days between the health
+    record date and as_of_date. Used for staleness detection.
     """
     from sqlalchemy import text
 
     sql = text(
         """
-        SELECT as_of_date, overall_grade, execution_grade, performance_grade,
-               risk_governor_grade, data_integrity_grade, warnings, active_strategies
-        FROM chenyiyun.ads_strategy_health_daily
-        WHERE as_of_date < :asof
-        ORDER BY as_of_date DESC
+        SELECT h.as_of_date, h.overall_grade, h.execution_grade, h.performance_grade,
+               h.risk_governor_grade, h.data_integrity_grade, h.warnings, h.active_strategies,
+               (SELECT COUNT(*) FROM chenyiyun.dim_trade_cal
+                WHERE exchange = 'SSE' AND is_open = 1
+                  AND cal_date > h.as_of_date AND cal_date <= :asof
+               ) AS _trading_days_behind
+        FROM chenyiyun.ads_strategy_health_daily h
+        WHERE h.as_of_date < :asof
+        ORDER BY h.as_of_date DESC
         LIMIT 1
         """
     )
@@ -505,27 +523,48 @@ def get_previous_trading_day_health(engine, as_of_date: str) -> dict[str, Any] |
 
 def resolve_order_permission(
     previous_health: dict[str, Any] | None,
+    max_stale_trading_days: int = 1,
 ) -> dict[str, Any]:
     """Determine order-generation permissions from previous-day health grade.
 
+    Fail-safe rules:
+      - No prior health record → YELLOW (manual confirmation; don't silently allow)
+      - Health record older than max_stale_trading_days → RED (data is stale, freeze buys)
+      - GREEN → normal order generation
+      - YELLOW → orders generated but require manual confirmation
+      - RED → no new buys, sell-only mode
+
     Returns a dict with:
-      allow_new_buys: bool
-      emit_orders: bool
-      manual_confirmation_required: bool
-      allow_sell_only: bool
-      health_grade: str ("GREEN" | "YELLOW" | "RED" | "UNKNOWN")
-      health_date: str | None
-      freeze_reason: str | None
+      allow_new_buys, emit_orders, manual_confirmation_required, allow_sell_only,
+      health_grade, health_date, freeze_reason
     """
+    # No prior health record → fail-safe: YELLOW (require human confirmation)
     if previous_health is None:
         return {
             "allow_new_buys": True,
             "emit_orders": True,
-            "manual_confirmation_required": False,
+            "manual_confirmation_required": True,
             "allow_sell_only": False,
             "health_grade": "UNKNOWN",
             "health_date": None,
-            "freeze_reason": None,
+            "freeze_reason": "No prior health record — orders require manual confirmation (fail-safe).",
+        }
+
+    # Staleness check: if the health record is too old, treat as RED
+    health_date_str = str(previous_health.get("as_of_date", ""))
+    trading_days_behind = previous_health.get("_trading_days_behind")
+    if trading_days_behind is not None and int(trading_days_behind) > max_stale_trading_days:
+        return {
+            "allow_new_buys": False,
+            "emit_orders": False,
+            "manual_confirmation_required": False,
+            "allow_sell_only": True,
+            "health_grade": "STALE",
+            "health_date": health_date_str,
+            "freeze_reason": (
+                f"Health record is {trading_days_behind} trading days old "
+                f"(max {max_stale_trading_days}). Data may be unreliable."
+            ),
         }
 
     grade = str(previous_health.get("overall_grade", "UNKNOWN")).upper()

@@ -64,14 +64,33 @@ class TestResolveOrderPermission:
         assert perm["freeze_reason"] is not None
         assert "RED" in str(perm["freeze_reason"])
 
-    def test_unknown_health_defaults_to_normal(self):
+    def test_unknown_health_is_fail_safe_yellow(self):
         from scripts.ops.run_daily_strategy_health_monitor import resolve_order_permission
 
-        # No prior health record
+        # No prior health record → UNKNOWN → YELLOW behavior (fail-safe)
         perm = resolve_order_permission(None)
         assert perm["allow_new_buys"] is True
         assert perm["emit_orders"] is True
+        assert perm["manual_confirmation_required"] is True, (
+            "UNKNOWN must require manual confirmation (fail-safe, not fail-open)"
+        )
         assert perm["health_grade"] == "UNKNOWN"
+
+    def test_stale_health_is_red(self):
+        from scripts.ops.run_daily_strategy_health_monitor import resolve_order_permission
+
+        # Health record from 5 trading days ago → STALE → RED
+        prev = {
+            "as_of_date": "2026-06-10",
+            "overall_grade": "GREEN",
+            "_trading_days_behind": 5,
+        }
+        perm = resolve_order_permission(prev, max_stale_trading_days=1)
+        assert perm["allow_new_buys"] is False
+        assert perm["emit_orders"] is False
+        assert perm["allow_sell_only"] is True
+        assert perm["health_grade"] == "STALE"
+        assert "5 trading days" in str(perm["freeze_reason"])
 
     def test_lowercase_grade_works(self):
         from scripts.ops.run_daily_strategy_health_monitor import resolve_order_permission

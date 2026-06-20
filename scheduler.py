@@ -279,8 +279,31 @@ def run_pipeline(target_date) -> bool:
         "--health-date", str(perm["health_date"] or ""),
     ]
     if not perm["emit_orders"]:
-        _export_args.append("--emit-orders=0")
+        # RED: do NOT pass --emit-orders at all (store_true default is False).
+        # Also supersede any unexecuted BUY drafts from previous days so they
+        # are not mistakenly displayed as current executable orders.
         logger.warning("Health RED: candidate export runs but order generation is SKIPPED.")
+        try:
+            from sqlalchemy import text as _text2
+            with get_engine().begin() as _conn2:
+                _result = _conn2.execute(
+                    _text2(
+                        "UPDATE chenyiyun.ads_local_strategy_orders "
+                        "SET status = 'SUPERSEDED', memo = CONCAT(COALESCE(memo, ''), "
+                        "  ' | superseded by health RED freeze on ', :today) "
+                        "WHERE side = 'BUY' AND status IN ('PENDING', 'DRAFT') "
+                        "  AND created_at < :today"
+                    ),
+                    {"today": date_iso},
+                )
+                _superseded = _result.rowcount
+            if _superseded:
+                logger.warning(
+                    f"Health RED: superseded {_superseded} stale BUY draft(s) "
+                    f"from previous days."
+                )
+        except Exception as _cleanup_exc:
+            logger.error(f"Health RED: failed to cleanup stale BUY drafts: {_cleanup_exc}")
     else:
         _export_args.append("--emit-orders")
     if perm["manual_confirmation_required"]:
