@@ -1,0 +1,3 @@
+symbol,signal_date,execution_date,trade_date,risk_event_types,precommit_uplift_risk_level,planned_shares,filled_shares,filled_price,reject_reason,root_cause,preventable_by_cap
+2759,2026-01-06,2026-01-07,2026-01-07,raw_close_drawdown_5d_ge_10pct,no_incremental_uplift,900.0,900.0,50.11,,B_no_incremental_uplift,False
+2716,2026-01-22,2026-01-23,2026-01-23,abs_open_gap_ge_5pct,no_incremental_uplift,2800.0,2800.0,16.0,,B_no_incremental_uplift,False

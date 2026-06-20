@@ -1,0 +1,16 @@
+strategy,order_id,signal_date,execution_date,symbol,side,raw_open,prev_raw_close,raw_close,is_st,execution_tradable,is_suspended,is_listed,daily_limit_ratio,independent_gate_pass,independent_gate_reason,cost_rate,lot_size
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-06:002465:BUY,2026-01-06,2026-01-07,002465,BUY,19.98,19.06,19.45,0.0,1.0,0.0,1.0,0.1,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-06:002759:BUY,2026-01-06,2026-01-07,002759,BUY,50.11,51.25,48.15,0.0,1.0,0.0,1.0,0.1,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-06:300058:BUY,2026-01-06,2026-01-07,300058,BUY,13.67,13.66,14.3,0.0,1.0,0.0,1.0,0.2,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-06:300136:BUY,2026-01-06,2026-01-07,300136,BUY,62.34,64.12,67.01,0.0,1.0,0.0,1.0,0.2,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-06:300418:BUY,2026-01-06,2026-01-07,300418,BUY,44.62,44.89,44.34,0.0,1.0,0.0,1.0,0.2,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:002465:SELL,2026-01-22,2026-01-23,002465,SELL,18.35,18.29,19.57,0.0,1.0,0.0,1.0,0.1,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:002759:SELL,2026-01-22,2026-01-23,002759,SELL,42.03,41.87,42.35,0.0,1.0,0.0,1.0,0.1,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:300058:SELL,2026-01-22,2026-01-23,300058,SELL,19.57,19.08,20.55,0.0,1.0,0.0,1.0,0.2,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:300136:SELL,2026-01-22,2026-01-23,300136,SELL,82.0,81.0,93.5,0.0,1.0,0.0,1.0,0.2,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:300418:SELL,2026-01-22,2026-01-23,300418,SELL,53.88,53.45,55.74,0.0,1.0,0.0,1.0,0.2,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:002156:BUY,2026-01-22,2026-01-23,002156,BUY,54.64,56.0,56.34,0.0,1.0,0.0,1.0,0.1,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:002716:BUY,2026-01-22,2026-01-23,002716,BUY,16.0,15.0,16.44,0.0,1.0,0.0,1.0,0.1,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:600036:BUY,2026-01-22,2026-01-23,600036,BUY,37.85,37.85,37.5,0.0,1.0,0.0,1.0,0.1,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:688008:BUY,2026-01-22,2026-01-23,688008,BUY,163.2,167.9,160.02,0.0,1.0,0.0,1.0,0.2,1,,0.00075,100.0
+production_governed_vol_position_v1_2b_strict_precommit_uplift,2026-01-22:688525:BUY,2026-01-22,2026-01-23,688525,BUY,187.8,187.8,186.46,0.0,1.0,0.0,1.0,0.2,1,,0.00075,100.0

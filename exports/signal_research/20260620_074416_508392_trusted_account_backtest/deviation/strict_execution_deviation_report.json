@@ -1,0 +1,8 @@
+{
+  "order_count": 15,
+  "unexpected_execution_residual": 0.0,
+  "price_buffer_residual": 63041.20000000008,
+  "limit_block_residual": 0.0,
+  "t1_reject_residual": 0.0,
+  "p95_weight_drift_bps": 298.9519712809736
+}

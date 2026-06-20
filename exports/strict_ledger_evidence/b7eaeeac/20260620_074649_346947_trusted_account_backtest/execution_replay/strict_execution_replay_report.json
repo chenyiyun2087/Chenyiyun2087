@@ -1,0 +1,11 @@
+{
+  "execution_replay_pass": true,
+  "order_count": 15,
+  "violation_count": 0,
+  "violations": [],
+  "price_mismatch_count": 0,
+  "fee_mismatch_count": 0,
+  "gate_mismatch_count": 0,
+  "timestamp_order_violation_count": 0,
+  "output": "exports/signal_research/20260620_074649_346947_trusted_account_backtest/execution_replay/strict_execution_replay_orders.csv"
+}

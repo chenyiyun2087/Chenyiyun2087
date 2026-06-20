@@ -1,0 +1,9 @@
+{
+  "replay_pass": true,
+  "failure_count": 0,
+  "failure_reasons": [],
+  "max_event_replay_error_bps": 0.0,
+  "max_ledger_vs_nav_error_bps": 0.0,
+  "order_count": 15,
+  "output": "exports/signal_research/20260620_074649_346947_trusted_account_backtest/replay/strict_ledger_replay_daily.csv"
+}

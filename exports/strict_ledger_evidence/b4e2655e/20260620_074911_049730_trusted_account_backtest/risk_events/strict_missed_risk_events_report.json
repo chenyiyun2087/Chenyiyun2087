@@ -1,0 +1,5 @@
+{
+  "event_count": 2,
+  "preventable_by_cap_count": 0,
+  "output": "exports/signal_research/20260620_074911_049730_trusted_account_backtest/risk_events/strict_missed_risk_events.csv"
+}
