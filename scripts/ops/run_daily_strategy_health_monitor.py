@@ -167,35 +167,112 @@ def grade_execution(engine, as_of_date: str) -> dict[str, Any]:
     return {"grade": overall, "detail": detail, "days_checked": len(rows)}
 
 
+def _compute_window_metrics(
+    daily_returns: list[float], nav_series: list[float]
+) -> dict[str, Any]:
+    """Compute real 20/60 day performance metrics from sorted returns and NAV."""
+    if not daily_returns:
+        return {"return": 0, "max_dd": 0, "ann_vol": 0, "worst_day": 0, "positive_days": 0, "negative_days": 0}
+
+    total_return = 1.0
+    for r in daily_returns:
+        total_return *= (1.0 + r)
+    total_return -= 1.0
+
+    # Max drawdown from NAV peak
+    peak = nav_series[0] if nav_series else 1.0
+    max_dd = 0.0
+    for nav in nav_series:
+        if nav > peak:
+            peak = nav
+        dd = (nav / peak - 1.0) if peak > 0 else 0.0
+        if dd < max_dd:
+            max_dd = dd
+
+    ann_vol = 0.0
+    if len(daily_returns) >= 5:
+        import math
+        std = (sum((r - sum(daily_returns) / len(daily_returns)) ** 2
+                   for r in daily_returns) / (len(daily_returns) - 1)) ** 0.5
+        ann_vol = std * (252 ** 0.5)
+
+    return {
+        "return": round(total_return, 6),
+        "max_dd": round(max_dd, 6),
+        "ann_vol": round(ann_vol, 6),
+        "worst_day": round(min(daily_returns), 6) if daily_returns else 0,
+        "positive_days": sum(1 for r in daily_returns if r > 0),
+        "negative_days": sum(1 for r in daily_returns if r < 0),
+    }
+
+
 def grade_performance(engine, as_of_date: str) -> dict[str, Any]:
-    """Grade multi-window performance from live_daily_snapshots."""
+    """Grade multi-window performance from live_daily_snapshots.
+
+    Computes real 20-day and 60-day metrics:
+      - return, max drawdown, annualized volatility, worst single day
+    Also fetches recent shadow execution quality (slippage, unfilled ratio).
+    """
     from sqlalchemy import text
 
-    sql = text(
+    # Load live snapshots filtered by strategy context
+    sql_snap = text(
         """
-        SELECT trade_date, cumulative_return, daily_return
+        SELECT trade_date, daily_return, total_equity
         FROM chenyiyun.live_daily_snapshots
         WHERE trade_date <= :asof
-        ORDER BY trade_date DESC
-        LIMIT 60
+        ORDER BY trade_date ASC
         """
     )
     try:
         with engine.connect() as conn:
-            rows = conn.execute(sql, {"asof": as_of_date}).mappings().fetchall()
+            rows = conn.execute(sql_snap, {"asof": as_of_date}).mappings().fetchall()
     except Exception as exc:
         return {"grade": "YELLOW", "reason": f"query_error={exc}", "detail": {}}
 
-    if not rows:
-        return {"grade": "YELLOW", "reason": "no_live_snapshots", "detail": {}}
+    if len(rows) < 5:
+        return {"grade": "YELLOW", "reason": f"insufficient_snapshots({len(rows)})", "detail": {}}
 
-    daily_returns = [float(r.get("daily_return", 0) or 0) for r in rows]
-    cum_return = float(rows[0].get("cumulative_return", 0) or 0)
+    # Full series in chronological order
+    returns_all = [float(r.get("daily_return", 0) or 0) for r in rows]
+    nav_all = [float(r.get("total_equity", 0) or 0) for r in rows]
 
-    # Simple heuristics
-    if cum_return > 0:
+    # 20-day window (most recent 20)
+    ret_20 = returns_all[-20:] if len(returns_all) >= 20 else returns_all
+    nav_20 = nav_all[-20:] if len(nav_all) >= 20 else nav_all
+    # 60-day window
+    ret_60 = returns_all[-60:] if len(returns_all) >= 60 else returns_all
+    nav_60 = nav_all[-60:] if len(nav_all) >= 60 else nav_all
+
+    m20 = _compute_window_metrics(ret_20, nav_20)
+    m60 = _compute_window_metrics(ret_60, nav_60)
+
+    # Fetch shadow execution quality for recent 20 trading days
+    sql_shadow = text(
+        """
+        SELECT AVG(avg_slippage_bps) AS avg_slip,
+               AVG(CAST(blocked_orders AS DECIMAL(10,4)) / NULLIF(total_orders, 0)) AS unfilled_ratio
+        FROM chenyiyun.ads_trusted_strategy_shadow_daily
+        WHERE execution_date <= :asof
+        ORDER BY execution_date DESC
+        LIMIT 20
+        """
+    )
+    try:
+        with engine.connect() as conn:
+            sr = conn.execute(sql_shadow, {"asof": as_of_date}).mappings().first()
+        shadow_avg_slip = float(sr["avg_slip"] or 0) if sr else None
+        shadow_unfilled = float(sr["unfilled_ratio"] or 0) if sr else None
+    except Exception:
+        shadow_avg_slip = None
+        shadow_unfilled = None
+
+    # Grade based on 20-day return and drawdown
+    ret20 = m20["return"]
+    dd20 = m20["max_dd"]
+    if ret20 > 0.02 and dd20 > -0.05:
         overall = "GREEN"
-    elif cum_return > -0.10:
+    elif ret20 > -0.05 and dd20 > -0.15:
         overall = "YELLOW"
     else:
         overall = "RED"
@@ -203,10 +280,11 @@ def grade_performance(engine, as_of_date: str) -> dict[str, Any]:
     return {
         "grade": overall,
         "detail": {
-            "cumulative_return": cum_return,
-            "snapshots_count": len(rows),
-            "days_positive": sum(1 for r in daily_returns if r > 0),
-            "days_negative": sum(1 for r in daily_returns if r < 0),
+            "window_20d": m20,
+            "window_60d": m60,
+            "shadow_20d_avg_slippage_bps": shadow_avg_slip,
+            "shadow_20d_avg_unfilled_ratio": shadow_unfilled,
+            "snapshots_total": len(rows),
         },
     }
 

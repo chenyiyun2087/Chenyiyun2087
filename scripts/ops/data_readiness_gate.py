@@ -240,11 +240,12 @@ class PreScoreGate:
     def check_suspension_st_basic(self, target_date: date) -> dict[str, Any]:
         """Verify suspension/ST labeling tables are accessible (not empty)."""
         text_fn = _get_text_sql()
+        date_str = target_date.strftime("%Y%m%d")
         try:
             with self._engine.connect() as conn:
                 st_cnt = conn.execute(
                     text_fn("SELECT COUNT(*) FROM tushare_stock.dwd_stock_label_daily WHERE trade_date = :date"),
-                    {"date": target_date.strftime("%Y%m%d")},
+                    {"date": date_str},
                 ).scalar()
         except Exception:
             st_cnt = None
@@ -256,6 +257,88 @@ class PreScoreGate:
             "label_rows": int(st_cnt or 0), "passed": passed, "severity": severity,
         }
 
+    def check_adjust_factor_coverage(self, target_date: date) -> dict[str, Any]:
+        """Verify adjust_factor coverage and detect abnormal jumps for target_date.
+
+        Checks:
+          - adjust_factor null rate on target_date
+          - extreme day-over-day jumps (>50% change) in adjust_factor
+        """
+        text_fn = _get_text_sql()
+        date_str = target_date.strftime("%Y%m%d")
+        try:
+            with self._engine.connect() as conn:
+                # Null rate on target_date
+                total = conn.execute(
+                    text_fn(
+                        "SELECT COUNT(*) FROM tushare_stock.dwd_stock_daily_standard "
+                        "WHERE trade_date = :date"
+                    ),
+                    {"date": date_str},
+                ).scalar()
+                null_adj = conn.execute(
+                    text_fn(
+                        "SELECT COUNT(*) FROM tushare_stock.dwd_stock_daily_standard "
+                        "WHERE trade_date = :date AND adj_factor IS NULL"
+                    ),
+                    {"date": date_str},
+                ).scalar()
+            total_int = int(total or 0)
+            null_int = int(null_adj or 0)
+            null_rate = null_int / max(total_int, 1)
+        except Exception as exc:
+            return {"check": "adjust_factor_coverage", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+
+        passed = null_rate <= 0.01  # >1% null adjust_factor is critical
+        return {
+            "check": "adjust_factor_coverage", "date": date_str,
+            "total_rows": total_int, "null_adj_factor": null_int,
+            "null_rate": round(null_rate, 4),
+            "passed": passed,
+            "severity": "critical" if null_rate > 0.01 else "info",
+        }
+
+    def check_suspension_completeness(self, target_date: date) -> dict[str, Any]:
+        """Verify suspension status fields are complete for the target_date.
+
+        Checks that key columns used for tradability filtering are present and
+        have acceptable null rates.
+        """
+        text_fn = _get_text_sql()
+        date_str = target_date.strftime("%Y%m%d")
+        try:
+            with self._engine.connect() as conn:
+                total = conn.execute(
+                    text_fn(
+                        "SELECT COUNT(*) FROM tushare_stock.dwd_stock_daily_standard "
+                        "WHERE trade_date = :date"
+                    ),
+                    {"date": date_str},
+                ).scalar()
+                # Check for null close prices (indicates suspended stocks)
+                null_close = conn.execute(
+                    text_fn(
+                        "SELECT COUNT(*) FROM tushare_stock.dwd_stock_daily_standard "
+                        "WHERE trade_date = :date AND (close IS NULL OR close = 0)"
+                    ),
+                    {"date": date_str},
+                ).scalar()
+            total_int = int(total or 0)
+            null_close_int = int(null_close or 0)
+            null_close_rate = null_close_int / max(total_int, 1)
+            # Normal suspension rate in A-share is ~2-8%. >15% is suspicious.
+            passed = null_close_rate <= 0.15
+        except Exception as exc:
+            return {"check": "suspension_completeness", "passed": False, "detail": f"query_error={exc}", "severity": "warning"}
+
+        return {
+            "check": "suspension_completeness", "date": date_str,
+            "total_rows": total_int, "null_close_count": null_close_int,
+            "null_close_rate": round(null_close_rate, 4),
+            "passed": passed,
+            "severity": "warning" if not passed else "info",
+        }
+
     def all_checks(self, target_date: date) -> dict[str, Any]:
         """Run all Pre-Score checks."""
         self._checks = [
@@ -263,7 +346,9 @@ class PreScoreGate:
             self.check_exchange_coverage(target_date),
             self.check_date_freshness(target_date),
             self.check_freshness_samples(target_date),
+            self.check_adjust_factor_coverage(target_date),
             self.check_suspension_st_basic(target_date),
+            self.check_suspension_completeness(target_date),
         ]
         return _summarize(self._checks, target_date, gate_name="pre_score")
 
@@ -392,6 +477,50 @@ class PostScoreGate:
             "passed": passed, "severity": "critical",
         }
 
+    def check_candidate_contamination(self, target_date: date, top_n: int = 100) -> dict[str, Any]:
+        """Verify top-N candidates by score don't include suspended/ST/delisted stocks.
+
+        Joins score_rank_daily with dwd_stock_label_daily and dwd_stock_daily_standard
+        to check if any top-scored stock is untradable on the target date.
+        """
+        date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
+        try:
+            with self._engine.connect() as conn:
+                # Top N by score, check for ST/suspended stocks
+                rows = conn.execute(
+                    text_fn(
+                        "SELECT s.symbol, s.score, "
+                        "  CASE WHEN l.is_st = 1 THEN 'ST' "
+                        "       WHEN l.is_suspended = 1 THEN 'SUSPENDED' "
+                        "       WHEN k.close IS NULL OR k.close = 0 THEN 'NO_CLOSE' "
+                        "  END AS issue "
+                        "FROM chenyiyun.score_rank_daily s "
+                        "LEFT JOIN tushare_stock.dwd_stock_label_daily l "
+                        "  ON CONCAT(LPAD(s.symbol, 6, '0'), '.SZ') = l.ts_code "
+                        "  AND l.trade_date = :date "
+                        "LEFT JOIN tushare_stock.dwd_stock_daily_standard k "
+                        "  ON (k.ts_code LIKE CONCAT('%', LPAD(s.symbol, 6, '0'), '%')) "
+                        "  AND k.trade_date = :date2 "
+                        "WHERE s.trade_date = :date3 "
+                        "ORDER BY s.score DESC LIMIT :top_n"
+                    ),
+                    {"date": date_str, "date2": date_str, "date3": date_str, "top_n": top_n},
+                ).mappings().fetchall()
+        except Exception as exc:
+            return {"check": "candidate_contamination", "passed": False, "detail": f"query_error={exc}", "severity": "warning"}
+
+        contaminated = [dict(r) for r in rows if r.get("issue")]
+        passed = len(contaminated) == 0
+        return {
+            "check": "candidate_contamination", "date": date_str,
+            "top_n_checked": top_n,
+            "contaminated_count": len(contaminated),
+            "contaminated": contaminated[:5],
+            "passed": passed,
+            "severity": "critical" if len(contaminated) > 5 else "warning",
+        }
+
     def all_checks(self, target_date: date) -> dict[str, Any]:
         """Run all Post-Score checks."""
         self._checks = [
@@ -399,6 +528,7 @@ class PostScoreGate:
             self.check_score_null_rates(target_date),
             self.check_industry_null_rate(target_date),
             self.check_candidate_pool_size(target_date),
+            self.check_candidate_contamination(target_date, top_n=100),
         ]
         return _summarize(self._checks, target_date, gate_name="post_score")
 

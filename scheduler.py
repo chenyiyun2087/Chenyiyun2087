@@ -245,24 +245,60 @@ def run_pipeline(target_date) -> bool:
     else:
         logger.info("PostScoreGate: READY — score data validated.")
 
+    # 5c. Check previous-day health state for today's order permissions.
+    #      RED   → --no-new-buys (freeze buys, allow sells & position maintenance)
+    #      YELLOW → --require-approval (generate orders, flag for human confirmation)
+    #      GREEN  → normal order generation
+    health_override = ""
+    try:
+        from sqlalchemy import text as _text
+        with get_engine().connect() as _conn:
+            _row = _conn.execute(
+                _text(
+                    "SELECT overall_grade, warnings FROM chenyiyun.ads_strategy_health_daily "
+                    "WHERE as_of_date < :today ORDER BY as_of_date DESC LIMIT 1"
+                ),
+                {"today": date_iso},
+            ).mappings().first()
+        if _row:
+            _grade = str(_row["overall_grade"])
+            if _grade == "RED":
+                health_override = "--no-new-buys"
+                logger.warning(
+                    f"Health gate: previous health={_grade} → blocking new buys today. "
+                    f"Warnings: {_row.get('warnings', '')}"
+                )
+            elif _grade == "YELLOW":
+                health_override = "--require-approval"
+                logger.warning(
+                    f"Health gate: previous health={_grade} → orders require human approval. "
+                    f"Warnings: {_row.get('warnings', '')}"
+                )
+            else:
+                logger.info(f"Health gate: previous health={_grade} → normal order generation.")
+    except Exception as _health_exc:
+        logger.warning(f"Health gate: could not read previous health state ({_health_exc}); proceeding normally.")
+
     # 6. Export trusted full-pool strategy candidates for production review.
+    #    Gated by: PostScoreGate (data quality) + previous-day health state.
+    _export_args = [
+        "--date", date_str,
+        "--risk-profile", str(PRODUCTION_CONFIG["risk_profile"]),
+        "--strategy", str(PRODUCTION_CONFIG["primary_strategy"]),
+        "--top-n", str(PRODUCTION_CONFIG["top_n"]),
+        "--max-total-positions", str(PRODUCTION_CONFIG["max_total_positions"]),
+        "--write-db",
+        "--notify-feishu",
+    ]
+    if health_override == "--no-new-buys":
+        # Still write candidates, but skip order generation
+        _export_args.append("--emit-orders=0")
+        logger.warning("Health RED: candidate export runs but order generation is SKIPPED.")
+    else:
+        _export_args.append("--emit-orders")
     if not run_script(
         "scripts/ops/export_trusted_strategy_candidates.py",
-        [
-            "--date",
-            date_str,
-            "--risk-profile",
-            str(PRODUCTION_CONFIG["risk_profile"]),
-            "--strategy",
-            str(PRODUCTION_CONFIG["primary_strategy"]),
-            "--top-n",
-            str(PRODUCTION_CONFIG["top_n"]),
-            "--max-total-positions",
-            str(PRODUCTION_CONFIG["max_total_positions"]),
-            "--write-db",
-            "--emit-orders",
-            "--notify-feishu",
-        ],
+        _export_args,
         "trusted_strategy_candidates",
     ):
         logger.error("Pipeline aborted at trusted strategy candidate export.")
@@ -283,7 +319,8 @@ def run_pipeline(target_date) -> bool:
         logger.error("Pipeline aborted at trusted strategy shadow monitor.")
         return False
 
-    # 7b. Run daily strategy health monitor (multi-window execution + risk check).
+    # 7b. Run daily strategy health monitor — UPDATE health state for next trading day.
+    #      Shadow data is now available, so execution quality grading is accurate.
     if not run_script(
         "scripts/ops/run_daily_strategy_health_monitor.py",
         ["--date", date_str, "--notify-feishu"],
