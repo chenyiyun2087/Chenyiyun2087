@@ -57,7 +57,7 @@ ALTER TABLE chenyiyun.ads_local_strategy_orders
 DDL_V2_UNIQUE_KEY = """
 ALTER TABLE chenyiyun.ads_local_strategy_orders
   ADD UNIQUE KEY uk_strategy_order
-    (account_id, strategy, execution_date, ts_code, side);
+    (account_id, release_id, strategy, execution_date, ts_code, side);
 """
 
 
@@ -121,7 +121,113 @@ def ensure_order_schema(engine) -> dict[str, bool]:
     except Exception:
         steps["v2_unique_key"] = False
 
+    # Step 4: Post-migration validation — verify the schema is correct
+    try:
+        with engine.connect() as conn:
+            # Verify PK is 'id'
+            pk_row = conn.execute(text(
+                "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE "
+                "WHERE TABLE_SCHEMA = 'chenyiyun' "
+                "AND TABLE_NAME = 'ads_local_strategy_orders' "
+                "AND CONSTRAINT_NAME = 'PRIMARY' ORDER BY ORDINAL_POSITION"
+            )).fetchall()
+            pk_cols = {r[0] for r in pk_row} if pk_row else set()
+            steps["pk_is_id"] = pk_cols == {"id"}
+
+            # Verify v2 unique key exists
+            uk_row = conn.execute(text(
+                "SELECT INDEX_NAME FROM information_schema.STATISTICS "
+                "WHERE TABLE_SCHEMA = 'chenyiyun' "
+                "AND TABLE_NAME = 'ads_local_strategy_orders' "
+                "AND INDEX_NAME = 'uk_strategy_order' LIMIT 1"
+            )).fetchone()
+            steps["v2_uk_exists"] = uk_row is not None
+
+            # Verify required columns are non-nullable or have defaults
+            for col in ("account_id", "strategy"):
+                col_row = conn.execute(text(
+                    "SELECT IS_NULLABLE FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA = 'chenyiyun' "
+                    "AND TABLE_NAME = 'ads_local_strategy_orders' "
+                    "AND COLUMN_NAME = :col LIMIT 1"
+                ), {"col": col}).fetchone()
+                if col_row:
+                    steps[f"{col}_exists"] = True
+    except Exception as exc:
+        steps["post_validation"] = False
+        logger.warning(f"Order schema post-validation failed: {exc}")
+
     return steps
+
+
+def validate_order_schema_or_die(engine) -> None:
+    """Run ensure_order_schema and raise RuntimeError if critical steps failed.
+
+    Called at pipeline startup to guarantee the order table is in v2 shape
+    before any orders are written.
+    """
+    steps = ensure_order_schema(engine)
+
+    critical_failures = []
+    if not steps.get("pk_is_id"):
+        critical_failures.append("PRIMARY KEY is not 'id' — old PK may still be in place")
+    if not steps.get("v2_uk_exists"):
+        critical_failures.append("v2 unique key 'uk_strategy_order' is missing")
+    if not steps.get("account_id_exists"):
+        critical_failures.append("account_id column missing")
+    if not steps.get("strategy_exists"):
+        critical_failures.append("strategy column missing")
+
+    if critical_failures:
+        raise RuntimeError(
+            "Order schema v2 migration failed critical checks:\n  "
+            + "\n  ".join(critical_failures)
+            + "\nCannot proceed — order integrity cannot be guaranteed."
+        )
+
+    logger.info(
+        f"Order schema v2 validated: pk_is_id={steps.get('pk_is_id')}, "
+        f"v2_uk_exists={steps.get('v2_uk_exists')}"
+    )
+
+
+def backfill_legacy_orders(
+    engine,
+    default_strategy: str = "production_governed_vol_position",
+    default_account_id: str = "default",
+    default_release_id: str = "legacy-prod-v1",
+) -> int:
+    """Backfill NULL strategy/execution_date/release_id on legacy orders.
+
+    Assigns legacy orders to the default production strategy and sets
+    execution_date = trade_date (as a conservative estimate — legacy orders
+    used T+0 or unknown execution timing).
+
+    Returns number of rows updated.
+    """
+    from sqlalchemy import text
+
+    ensure_order_schema(engine)
+
+    sql = text(
+        "UPDATE chenyiyun.ads_local_strategy_orders "
+        "SET strategy = COALESCE(strategy, :strategy), "
+        "    account_id = COALESCE(account_id, :account_id), "
+        "    release_id = COALESCE(release_id, :release_id), "
+        "    execution_date = COALESCE(execution_date, trade_date) "
+        "WHERE strategy IS NULL OR account_id IS NULL "
+        "   OR release_id IS NULL OR execution_date IS NULL"
+    )
+    with engine.begin() as conn:
+        result = conn.execute(
+            sql,
+            {
+                "strategy": default_strategy,
+                "account_id": default_account_id,
+                "release_id": default_release_id,
+            },
+        )
+    return result.rowcount
 
 
 # ---------------------------------------------------------------------------

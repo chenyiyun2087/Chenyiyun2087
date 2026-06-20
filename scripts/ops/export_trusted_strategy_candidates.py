@@ -2356,14 +2356,43 @@ def export_candidates(args: argparse.Namespace) -> dict:
         db_write["risk_decision"] = risk_governor.get("risk_decision") if risk_governor else None
         db_write["allow_new_buys"] = bool(risk_governor.get("allow_new_buys", True)) if risk_governor else True
         if args.write_db:
-            db_write.update(
-                _write_orders_and_signal_snapshot(
-                    engine,
-                    orders,
-                    order_table=args.order_table,
-                    signal_snapshot_table=args.signal_snapshot_table,
-                )
+            from scripts.ops.order_repository import write_orders_with_metadata
+            from scripts.ops.production_config import load_production_config
+            _prod_cfg = load_production_config()
+            _order_count = write_orders_with_metadata(
+                engine,
+                orders,
+                strategy=str(_prod_cfg.get("primary_strategy", spec.name)),
+                execution_date=asof_date,  # T+1: execution is next trading day
+                account_id="default",
+                release_id=str(_prod_cfg.get("config_sha", "")),
+                health_grade=getattr(args, "health_grade", "UNKNOWN"),
+                health_substatus=None,
+                manual_confirmation_required=getattr(args, "manual_confirmation", False),
+                config_sha=str(_prod_cfg.get("config_sha", "")),
             )
+            db_write.update({"orders_written_v2": _order_count})
+            # Also write signal snapshot for web dashboard compatibility
+            if not orders.empty:
+                from sqlalchemy import text as _txt3
+                _sig_sql = _txt3(
+                    "INSERT INTO chenyiyun.ads_chenyiyun_selected_signals "
+                    "(signal_time, trade_date, ts_code, stock_name, side, "
+                    " open_price, allocated_shares, current_shares, target_shares) "
+                    "VALUES (NOW(), :td, :ts, :nm, :sd, :pr, :alloc, :cur, :tgt) "
+                    "ON DUPLICATE KEY UPDATE "
+                    " open_price=VALUES(open_price), allocated_shares=VALUES(allocated_shares), "
+                    " current_shares=VALUES(current_shares), target_shares=VALUES(target_shares)"
+                )
+                with engine.begin() as _conn3:
+                    for _, _row in orders.iterrows():
+                        _conn3.execute(_sig_sql, {
+                            "td": asof_date, "ts": str(_row.get("ts_code", "")),
+                            "nm": str(_row.get("stock_name", "")), "sd": str(_row.get("side", "")),
+                            "pr": float(_row.get("price", 0)), "alloc": int(abs(_row.get("delta_shares", 0))),
+                            "cur": int(_row.get("current_shares", 0)), "tgt": int(_row.get("target_shares", 0)),
+                        })
+                db_write["signal_snapshot_rows"] = int(len(orders))
         strategy_order_details: dict[str, dict[str, pd.DataFrame]] = {}
         trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
         for detail_config in ORDER_DETAIL_CONFIGS:

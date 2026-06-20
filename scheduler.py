@@ -165,6 +165,15 @@ def run_pipeline(target_date) -> bool:
     date_str = target_date.strftime("%Y%m%d")
     date_iso = target_date.strftime("%Y-%m-%d")
     
+    # 0. Ensure order schema is at v2 before any order operations
+    try:
+        from scripts.ops.order_repository import validate_order_schema_or_die
+        validate_order_schema_or_die(get_engine())
+        logger.info("Order schema v2 validated.")
+    except RuntimeError as _schema_exc:
+        logger.error(f"Order schema validation FAILED: {_schema_exc}")
+        return False
+
     # 1. Pre-Score Gate: validate market data before scoring
     logger.info("Pre-Score Gate: validating market data readiness...")
     import json as _json
