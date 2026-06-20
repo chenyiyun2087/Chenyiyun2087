@@ -315,11 +315,18 @@ def run_pipeline(target_date) -> bool:
         )
         try:
             from scripts.ops.order_repository import supersede_pending_buys
+            from scripts.ops.strategy_release_registry import get_active_release
+            # Resolve release_id from registry; fall back to config_sha if registry is empty
+            _active = get_active_release(get_engine(), "primary_strategy")
+            _release_id = (
+                str(_active["id"]) if _active
+                else str(PRODUCTION_CONFIG.get("config_sha", "legacy-prod-v1"))
+            )
             _superseded = supersede_pending_buys(
                 get_engine(),
                 account_id="default",
                 strategy=str(PRODUCTION_CONFIG["primary_strategy"]),
-                release_id=str(PRODUCTION_CONFIG.get("config_sha", "legacy-prod-v1")),
+                release_id=_release_id,
                 as_of_date=date_iso,
             )
             if _superseded:

@@ -27,7 +27,7 @@ NEEDS_MYSQL = pytest.mark.skipif(
 )
 
 TEST_TABLE = "order_test_v2_migration"
-FULL_TABLE = f"chenyiyun.{TEST_TABLE}" if "." not in TEST_TABLE else TEST_TABLE
+FULL_TABLE = "chenyiyun.order_test_v2_migration"
 
 
 def _engine():
@@ -252,3 +252,65 @@ class TestStatusProtection:
                 "WHERE ts_code = '000004.SZ' AND side = 'BUY'"
             )).scalar()
         assert str(status) == "filled"
+
+
+@NEEDS_MYSQL
+class TestCrossAccountREDIsolation:
+    """Scenario 4: RED on one account must not affect others."""
+
+    def test_red_only_affects_target_account(self, migrated_table):
+        import pandas as pd
+        from scripts.ops.order_repository import write_orders_with_metadata, supersede_pending_buys
+        from sqlalchemy import text
+
+        for acct in ["default", "canary_bucket"]:
+            df = pd.DataFrame([{
+                "trade_date": "2026-07-01", "ts_code": "000005.SZ", "side": "BUY",
+                "price": 10.0, "delta_shares": 100, "order_status": "planned",
+            }])
+            write_orders_with_metadata(
+                _engine(), df, strategy="gate_tuned_v1_2b",
+                execution_date="2026-07-01", release_id="release-gt-canary",
+                account_id=acct, table_name=migrated_table,
+            )
+
+        supersede_pending_buys(
+            _engine(), account_id="default", strategy="gate_tuned_v1_2b",
+            release_id="release-gt-canary", as_of_date="2026-07-15",
+            table_name=migrated_table,
+        )
+
+        with _engine().connect() as conn:
+            d = conn.execute(text(
+                f"SELECT order_status FROM {migrated_table} "
+                "WHERE account_id='default' AND ts_code='000005.SZ'"
+            )).scalar()
+            c = conn.execute(text(
+                f"SELECT order_status FROM {migrated_table} "
+                "WHERE account_id='canary_bucket' AND ts_code='000005.SZ'"
+            )).scalar()
+        assert str(d) == "superseded"
+        assert str(c) == "planned"
+
+
+@NEEDS_MYSQL
+class TestT1CalendarBehavior:
+    """Scenario 5: T+1 via production _next_trading_day."""
+
+    def test_weekday(self, migrated_table):
+        from scripts.ops.export_trusted_strategy_candidates import _next_trading_day
+        assert _next_trading_day(_engine(), "2026-06-22") == "2026-06-23"
+
+    def test_friday(self, migrated_table):
+        from scripts.ops.export_trusted_strategy_candidates import _next_trading_day
+        assert _next_trading_day(_engine(), "2026-06-26") == "2026-06-29"
+
+    def test_calendar_missing_raises(self, migrated_table):
+        from scripts.ops.export_trusted_strategy_candidates import _next_trading_day
+        import pytest as _pytest
+        with _pytest.raises(RuntimeError, match="No next trading day"):
+            _next_trading_day(_engine(), "2027-12-31")
+
+
+def teardown_module():
+    _drop()

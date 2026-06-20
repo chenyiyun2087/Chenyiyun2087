@@ -409,6 +409,7 @@ def write_orders_with_metadata(
                 {
                     "account_id": params.get("account_id"),
                     "strategy": params.get("strategy"),
+                    "release_id": params.get("release_id"),
                     "execution_date": params.get("execution_date"),
                     "ts_code": params.get("ts_code"),
                     "side": params.get("side"),
