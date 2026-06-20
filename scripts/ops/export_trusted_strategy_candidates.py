@@ -517,6 +517,9 @@ def _format_order_notification(
     risk_profile: str = DEFAULT_RISK_PROFILE,
     risk_profile_description: str | None = None,
     strategy_order_details: dict[str, dict[str, pd.DataFrame]] | None = None,
+    health_grade: str = "UNKNOWN",
+    health_date: str = "",
+    manual_confirmation_required: bool = False,
 ) -> str:
     strategy_name = strategy_display_name(strategy)
     buy_orders = orders[orders["side"].eq("BUY")] if not orders.empty else pd.DataFrame()
@@ -561,10 +564,20 @@ def _format_order_notification(
             f"放权档位：{first_candidate.get('ashare_release_tier') or '-'}；"
             f"补位上限：{int(float(first_candidate.get('ashare_supplement_limit') or 0))}"
         )
+    health_line = ""
+    health_emoji = {"GREEN": "✅", "YELLOW": "⚠️", "RED": "🚨", "UNKNOWN": "❓"}
+    if manual_confirmation_required:
+        health_line = f"{health_emoji.get(health_grade, '❓')} 健康状态：{health_grade}（{health_date}）— ⚠️ 需人工确认后方可执行"
+    elif health_grade == "RED":
+        health_line = f"{health_emoji.get(health_grade, '❓')} 健康状态：{health_grade}（{health_date}）— 🚨 仅卖出/持仓维护，禁止新开仓"
+    else:
+        health_line = f"{health_emoji.get(health_grade, '❓')} 健康状态：{health_grade}（{health_date}）"
+
     lines = [
         "【核心精选本地订单草案已生成】",
         f"信号日：{asof_date}",
         strategy_identity_block(),
+        health_line,
         adaptive_line,
         f"资金基数：{total_equity_used:,.2f}",
         hold_gate_line,
@@ -2498,6 +2511,9 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 risk_profile=str(args.risk_profile),
                 risk_profile_description=str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
                 strategy_order_details=strategy_order_details,
+                health_grade=getattr(args, "health_grade", "UNKNOWN"),
+                health_date=getattr(args, "health_date", ""),
+                manual_confirmation_required=getattr(args, "manual_confirmation", False),
             )
             ok, reason = send_feishu_text(webhook_url, content)
             db_write["feishu_notify"] = reason
@@ -2547,6 +2563,9 @@ def main() -> None:
     parser.add_argument("--min-pool-size", type=int, default=5000)
     parser.add_argument("--write-db", action="store_true", help="Persist candidates to DB and sync the web stock pool.")
     parser.add_argument("--emit-orders", action="store_true", help="Generate local rebalance orders from candidates.")
+    parser.add_argument("--health-grade", default="UNKNOWN", help="Previous-day health grade (GREEN/YELLOW/RED/UNKNOWN).")
+    parser.add_argument("--health-date", default="", help="Date of the health grade used for order permission.")
+    parser.add_argument("--manual-confirmation", action="store_true", help="Flag orders as requiring human confirmation (YELLOW health).")
     parser.add_argument("--candidate-table", default="chenyiyun.ads_trusted_strategy_candidates")
     parser.add_argument("--pool-key", default=DEFAULT_POOL_KEY)
     parser.add_argument("--pool-name", default=DEFAULT_POOL_NAME)

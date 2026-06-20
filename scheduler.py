@@ -246,38 +246,24 @@ def run_pipeline(target_date) -> bool:
         logger.info("PostScoreGate: READY — score data validated.")
 
     # 5c. Check previous-day health state for today's order permissions.
-    #      RED   → --no-new-buys (freeze buys, allow sells & position maintenance)
-    #      YELLOW → --require-approval (generate orders, flag for human confirmation)
-    #      GREEN  → normal order generation
-    health_override = ""
+    from scripts.ops.run_daily_strategy_health_monitor import (
+        get_previous_trading_day_health,
+        resolve_order_permission,
+    )
     try:
-        from sqlalchemy import text as _text
-        with get_engine().connect() as _conn:
-            _row = _conn.execute(
-                _text(
-                    "SELECT overall_grade, warnings FROM chenyiyun.ads_strategy_health_daily "
-                    "WHERE as_of_date < :today ORDER BY as_of_date DESC LIMIT 1"
-                ),
-                {"today": date_iso},
-            ).mappings().first()
-        if _row:
-            _grade = str(_row["overall_grade"])
-            if _grade == "RED":
-                health_override = "--no-new-buys"
-                logger.warning(
-                    f"Health gate: previous health={_grade} → blocking new buys today. "
-                    f"Warnings: {_row.get('warnings', '')}"
-                )
-            elif _grade == "YELLOW":
-                health_override = "--require-approval"
-                logger.warning(
-                    f"Health gate: previous health={_grade} → orders require human approval. "
-                    f"Warnings: {_row.get('warnings', '')}"
-                )
-            else:
-                logger.info(f"Health gate: previous health={_grade} → normal order generation.")
+        prev_health = get_previous_trading_day_health(get_engine(), date_iso)
     except Exception as _health_exc:
         logger.warning(f"Health gate: could not read previous health state ({_health_exc}); proceeding normally.")
+        prev_health = None
+    perm = resolve_order_permission(prev_health)
+    logger.info(
+        f"Health gate: grade={perm['health_grade']} "
+        f"allow_new_buys={perm['allow_new_buys']} "
+        f"emit_orders={perm['emit_orders']} "
+        f"manual_confirmation={perm['manual_confirmation_required']}"
+    )
+    if perm["freeze_reason"]:
+        logger.warning(f"Health gate freeze: {perm['freeze_reason']}")
 
     # 6. Export trusted full-pool strategy candidates for production review.
     #    Gated by: PostScoreGate (data quality) + previous-day health state.
@@ -289,13 +275,17 @@ def run_pipeline(target_date) -> bool:
         "--max-total-positions", str(PRODUCTION_CONFIG["max_total_positions"]),
         "--write-db",
         "--notify-feishu",
+        "--health-grade", perm["health_grade"],
+        "--health-date", str(perm["health_date"] or ""),
     ]
-    if health_override == "--no-new-buys":
-        # Still write candidates, but skip order generation
+    if not perm["emit_orders"]:
         _export_args.append("--emit-orders=0")
         logger.warning("Health RED: candidate export runs but order generation is SKIPPED.")
     else:
         _export_args.append("--emit-orders")
+    if perm["manual_confirmation_required"]:
+        _export_args.append("--manual-confirmation")
+        logger.warning("Health YELLOW: orders require manual confirmation.")
     if not run_script(
         "scripts/ops/export_trusted_strategy_candidates.py",
         _export_args,

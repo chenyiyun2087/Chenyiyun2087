@@ -453,6 +453,112 @@ def persist_health(engine, health: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Order permission resolution
+# ---------------------------------------------------------------------------
+
+ORDER_PERMISSION_GRADE_RULES = {
+    "GREEN": {
+        "allow_new_buys": True,
+        "emit_orders": True,
+        "manual_confirmation_required": False,
+        "allow_sell_only": False,
+    },
+    "YELLOW": {
+        "allow_new_buys": True,
+        "emit_orders": True,
+        "manual_confirmation_required": True,
+        "allow_sell_only": False,
+    },
+    "RED": {
+        "allow_new_buys": False,
+        "emit_orders": False,
+        "manual_confirmation_required": False,
+        "allow_sell_only": True,
+    },
+}
+
+
+def get_previous_trading_day_health(engine, as_of_date: str) -> dict[str, Any] | None:
+    """Read the most recent health record before as_of_date.
+
+    Returns None if no prior health record exists (e.g., first run).
+    """
+    from sqlalchemy import text
+
+    sql = text(
+        """
+        SELECT as_of_date, overall_grade, execution_grade, performance_grade,
+               risk_governor_grade, data_integrity_grade, warnings, active_strategies
+        FROM chenyiyun.ads_strategy_health_daily
+        WHERE as_of_date < :asof
+        ORDER BY as_of_date DESC
+        LIMIT 1
+        """
+    )
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"asof": as_of_date}).mappings().first()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def resolve_order_permission(
+    previous_health: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Determine order-generation permissions from previous-day health grade.
+
+    Returns a dict with:
+      allow_new_buys: bool
+      emit_orders: bool
+      manual_confirmation_required: bool
+      allow_sell_only: bool
+      health_grade: str ("GREEN" | "YELLOW" | "RED" | "UNKNOWN")
+      health_date: str | None
+      freeze_reason: str | None
+    """
+    if previous_health is None:
+        return {
+            "allow_new_buys": True,
+            "emit_orders": True,
+            "manual_confirmation_required": False,
+            "allow_sell_only": False,
+            "health_grade": "UNKNOWN",
+            "health_date": None,
+            "freeze_reason": None,
+        }
+
+    grade = str(previous_health.get("overall_grade", "UNKNOWN")).upper()
+    rules = ORDER_PERMISSION_GRADE_RULES.get(grade, ORDER_PERMISSION_GRADE_RULES["GREEN"])
+    health_date = str(previous_health.get("as_of_date", ""))
+
+    freeze_reason = None
+    if grade == "RED":
+        warnings = previous_health.get("warnings")
+        if isinstance(warnings, str):
+            import json as _json
+            try:
+                warnings = _json.loads(warnings)
+            except Exception:
+                warnings = [warnings]
+        freeze_reason = f"Health RED ({health_date}): " + (
+            "; ".join(warnings[:3]) if warnings else "no specific warnings"
+        )
+    elif grade == "YELLOW":
+        freeze_reason = f"Health YELLOW ({health_date}): manual confirmation required"
+
+    return {
+        "allow_new_buys": bool(rules["allow_new_buys"]),
+        "emit_orders": bool(rules["emit_orders"]),
+        "manual_confirmation_required": bool(rules["manual_confirmation_required"]),
+        "allow_sell_only": bool(rules["allow_sell_only"]),
+        "health_grade": grade,
+        "health_date": health_date,
+        "freeze_reason": freeze_reason,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Feishu formatting
 # ---------------------------------------------------------------------------
 
