@@ -22,6 +22,7 @@ CANCELLED_T1_CLOSE = "CANCELLED_T1_CLOSE"
 # Compatibility alias for callers importing the old public constant.
 CANCELLED = CANCELLED_T1_CLOSE
 CORPORATE_ACTION_FREEZE = "CORPORATE_ACTION_FREEZE"
+ATOMIC_ACTION_TYPES = {"dividend_cash", "stock_bonus", "split_merge", "rights_subscription", "delist_cash_settlement", "dividend_stock"}
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,15 @@ class ExecutionLedger:
         self._append("order", order_status=PLANNED, event_timestamp=f"{order.signal_date}T15:00:00+08:00", **asdict(order))
 
     def apply_corporate_actions(self, actions: Iterable[CorporateAction]) -> None:
-        for action in actions:
+        actions = list(actions)
+        incomplete_parents = {action.source_event_id for action in actions if not action.source_complete}
+        if incomplete_parents:
+            self.freeze(actions[0].ex_date if actions else "", "incomplete_corporate_action_bundle")
+            raise RuntimeError("incomplete_corporate_action_bundle")
+        for action in sorted(actions, key=lambda value: ({"split_merge": 20, "stock_bonus": 30, "dividend_cash": 40, "rights_subscription": 50, "delist_cash_settlement": 60}.get(value.action_type, 999), value.source_event_id)):
+            if action.action_type not in ATOMIC_ACTION_TYPES:
+                self.freeze(action.ex_date, "unknown_corporate_action_type")
+                raise RuntimeError(f"unknown_corporate_action_type:{action.action_type}")
             if not action.source_complete:
                 raise RuntimeError(f"incomplete_corporate_action:{action.symbol}:{action.ex_date}:{action.source_reason}")
             held = int(self.shares.get(action.symbol, 0))
@@ -92,7 +101,7 @@ class ExecutionLedger:
             # The research policy is deterministic: subscribe in full only
             # when cash covers the full entitlement.  A shortfall is not
             # silently partially subscribed because broker treatment differs.
-            if action.rights_ratio:
+            if action.action_type == "rights_subscription" or action.rights_ratio:
                 if action.rights_price is None or action.rights_price < 0:
                     raise RuntimeError(f"rights_issue_requires_reconciliation:{action.symbol}:{action.ex_date}")
                 rights_shares = int(round(held * float(action.rights_ratio)))
