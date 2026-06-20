@@ -13,6 +13,10 @@ import sys
 from itertools import product
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from scripts.research.analyze_execution_safe_uplift_account_validation import run as validate_account
 from scripts.research.analyze_strict_execution_deviation import run as analyze_deviation
 from scripts.research.analyze_strict_missed_risk_events import run as analyze_risk_events
@@ -21,7 +25,6 @@ from scripts.research.replay_strict_execution_ledger import replay
 from scripts.research.replay_strict_execution_ledger_v2 import audit as execution_audit
 from scripts.research.verify_strict_ledger_evidence import verify
 
-ROOT = Path(__file__).resolve().parents[2]
 STRATEGIES = "production_governed_vol_position,production_governed_vol_position_v1_2b_gate_tuned,production_governed_vol_position_v1_2b_strict_precommit_uplift"
 WINDOWS = {"development": ("2023-11-30", "2025-06-18"), "holdout": ("2025-06-19", "2026-06-18")}
 COSTS, SLIPPAGE_BPS, CAPS = (.00075, .001, .0015), (0, 10, 25), ("no_cap", "extreme_only", "high_v1_plus_5pct", "strict_cap")
