@@ -68,6 +68,13 @@ jobs:
           assert 'strategy_release_audit_log' in DDL_RELEASE_AUDIT_LOG;
           print('OK: strategy_release_registry DDL loads');
           "
+      - name: Order repository module loads
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.');
+          from scripts.ops.order_repository import ensure_order_schema, supersede_pending_buys;
+          print('OK: order_repository loads (ensure_order_schema + supersede_pending_buys)');
+          "
       - name: Health order gating tests
         run: python -m pytest test/test_production_health_order_gating.py -v
       - name: Fixture tests (no DB needed)

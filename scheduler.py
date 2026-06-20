@@ -286,25 +286,17 @@ def run_pipeline(target_date) -> bool:
             f"order generation is SKIPPED. freeze_reason={perm.get('freeze_reason', '')}"
         )
         try:
-            from sqlalchemy import text as _text2
-            with get_engine().begin() as _conn2:
-                _result = _conn2.execute(
-                    _text2(
-                        "UPDATE chenyiyun.ads_local_strategy_orders "
-                        "SET order_status = 'superseded', "
-                        "    note = CONCAT(COALESCE(note, ''), "
-                        "      ' | superseded by health RED freeze on ', :today) "
-                        "WHERE side = 'BUY' "
-                        "  AND order_status IN ('planned') "
-                        "  AND trade_date < :today"
-                    ),
-                    {"today": date_iso},
-                )
-                _superseded = _result.rowcount
+            from scripts.ops.order_repository import supersede_pending_buys
+            _superseded = supersede_pending_buys(
+                get_engine(),
+                strategy=str(PRODUCTION_CONFIG["primary_strategy"]),
+                as_of_date=date_iso,
+            )
             if _superseded:
                 logger.warning(
                     f"Health RED: superseded {_superseded} stale BUY draft(s) "
-                    f"for trade_date < {date_iso}."
+                    f"for strategy={PRODUCTION_CONFIG['primary_strategy']} "
+                    f"execution_date < {date_iso}."
                 )
         except Exception as _cleanup_exc:
             # Fail-closed: if we can't cleanup old drafts, we must NOT proceed

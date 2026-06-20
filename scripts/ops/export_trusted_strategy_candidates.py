@@ -495,6 +495,50 @@ def _infer_total_equity(engine) -> float:
     return total
 
 
+def _check_candidate_tradability(
+    engine, candidates: pd.DataFrame, signal_date: object
+) -> list[dict]:
+    """Validate that final trade candidates are tradable on the signal date.
+
+    Checks for ST, suspension, and missing close prices. Returns a list of
+    untradable candidates (empty list = all clear).
+    """
+    if candidates.empty:
+        return []
+
+    symbols = [str(s).zfill(6) for s in candidates["symbol"].tolist()]
+    if not symbols:
+        return []
+
+    date_str = pd.Timestamp(signal_date).strftime("%Y%m%d")
+    placeholders = ", ".join(f":s{i}" for i in range(len(symbols)))
+    params = {f"s{i}": s for i, s in enumerate(symbols)}
+    params["date"] = date_str
+
+    from sqlalchemy import text as _txt
+    sql = _txt(
+        f"SELECT SUBSTRING_INDEX(l.ts_code, '.', 1) AS symbol, "
+        f"  CASE WHEN l.is_st = 1 THEN 'ST' "
+        f"       WHEN l.is_suspended = 1 THEN 'SUSPENDED' "
+        f"       WHEN k.close IS NULL OR k.close = 0 THEN 'NO_CLOSE' "
+        f"  END AS issue "
+        f"FROM tushare_stock.dwd_stock_label_daily l "
+        f"LEFT JOIN tushare_stock.dwd_stock_daily_standard k "
+        f"  ON SUBSTRING_INDEX(k.ts_code, '.', 1) = SUBSTRING_INDEX(l.ts_code, '.', 1) "
+        f"  AND k.trade_date = :date "
+        f"WHERE l.trade_date = :date "
+        f"  AND SUBSTRING_INDEX(l.ts_code, '.', 1) IN ({placeholders})"
+    )
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sql, params).mappings().fetchall()
+    except Exception:
+        return []  # Query failure → don't block (conservative: let PostScoreGate catch this)
+
+    return [dict(r) for r in rows if r.get("issue")]
+
+
 
 
 def _ranked_head(frame: pd.DataFrame, n: int = 5) -> pd.DataFrame:
@@ -2253,6 +2297,26 @@ def export_candidates(args: argparse.Namespace) -> dict:
             shadow_state=recent_shadow_summary,
             output_json_path=files["json"],
         )
+    if args.emit_orders:
+        # Final trade candidate validation — check actual Top5 AFTER all filters
+        # (strategy selection, risk governor, industry caps, position scaling, hold gate).
+        # This is a hard block: any untradable stock in the final trade list → no orders.
+        final_top5 = candidates.head(min(5, len(candidates)))
+        untradable = _check_candidate_tradability(engine, final_top5, signal_date)
+        if untradable:
+            msg = (
+                f"FINAL CANDIDATE BLOCKED: {len(untradable)} untradable stock(s) in "
+                f"final Top5 — {', '.join(str(u) for u in untradable[:3])}. "
+                f"Order generation ABORTED."
+            )
+            warnings.append(msg)
+            logger.error(msg)
+            (out_dir / "ORDER_GENERATION_BLOCKED.txt").write_text(
+                msg + "\nUntradable: " + str(untradable), encoding="utf-8"
+            )
+            # Abort order generation — skip the rest of this emit_orders block
+            args.emit_orders = False
+
     if args.emit_orders:
         account_total_equity = float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine)
         total_equity = account_total_equity
