@@ -70,6 +70,9 @@ def generate_targets(
     Returns:
         DecisionOutput with candidates, target weights, orders, and audit hash.
     """
+    strategy_release.validate_promotable()
+    if strategy_release.signal_date != as_of_date:
+        raise ValueError("decision_signal_date_release_mismatch")
     # This is the unified interface. Actual implementation delegates to the
     # existing strategy selection and risk governor, but through a single
     # controlled code path — no direct imports from scripts/research/*.
@@ -93,36 +96,44 @@ def generate_targets(
 
     config = load_production_config()
     if config.get("config_sha") != strategy_release.config_sha:
-        import logging
-        logging.warning(
-            f"Config SHA mismatch: manifest={strategy_release.config_sha[:8]} "
-            f"vs current={config.get('config_sha', 'unknown')[:8]}. "
-            f"Results may not be reproducible."
-        )
+        raise RuntimeError("decision_config_sha_release_mismatch")
 
-    # Build a minimal DecisionOutput — the full implementation would call
-    # the production selection pipeline and populate all fields.
+    # The export adapter supplies point-in-time ranked candidates in the
+    # snapshot. Keeping this pure lets historical replay, shadow and manual
+    # production consume exactly the same decision logic.
     import hashlib
     import json as _json
 
+    candidate_rows = list(data_snapshot.get("candidates", []))
+    candidates = sorted(candidate_rows, key=lambda row: (-float(row.get("score", row.get("total_score", 0)) or 0), str(row.get("symbol", row.get("ts_code", "")))) )[:max_positions]
+    if data_snapshot.get("data_gate_status") == "BLOCKED":
+        candidates = []
+    deployable_nav = portfolio_state.nav * target_position_ratio
+    equal_weight = (target_position_ratio / len(candidates)) if candidates else 0.0
+    target_weights = {str(row.get("symbol", row.get("ts_code"))): equal_weight for row in candidates}
+    orders = list(data_snapshot.get("orders", []))
+    if not orders:
+        orders = [{"intent_id": f"{strategy_release.release_id}:{symbol}", "symbol": symbol, "side": "BUY", "target_weight": weight,
+                   "planned_notional": deployable_nav / len(candidates) if candidates else 0.0, "status": "planned"}
+                  for symbol, weight in target_weights.items()]
     fingerprint_data = _json.dumps({
         "release_id": strategy_release.release_id,
         "as_of_date": as_of_date,
         "config_sha": strategy_release.config_sha,
         "nav": portfolio_state.nav,
         "cash": portfolio_state.cash,
-        "position_count": len(portfolio_state.positions),
+        "position_count": len(portfolio_state.positions), "candidates": candidates, "orders": orders,
     }, sort_keys=True).encode()
 
     return DecisionOutput(
         release=strategy_release,
         signal_date=as_of_date,
-        candidates=[],
-        target_weights={},
-        orders=[],
-        risk_decision={},
-        data_gate_status="READY",
-        health_grade="UNKNOWN",
+        candidates=candidates,
+        target_weights=target_weights,
+        orders=orders,
+        risk_decision=dict(data_snapshot.get("risk_decision", {})),
+        data_gate_status=str(data_snapshot.get("data_gate_status", "READY")),
+        health_grade=str(data_snapshot.get("health_grade", "UNKNOWN")),
         fingerprint=hashlib.sha256(fingerprint_data).hexdigest()[:16],
     )
 

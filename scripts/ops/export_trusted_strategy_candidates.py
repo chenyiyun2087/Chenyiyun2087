@@ -2393,6 +2393,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
         if args.write_db:
             from scripts.ops.order_repository import write_orders_with_metadata
             from scripts.ops.production_config import load_production_config
+            from sqlalchemy import text as _governance_text
             _prod_cfg = load_production_config()
             # Strategy: use the explicitly-passed CLI arg (v1, Gate tuned, shadow, etc.)
             # Do NOT override with primary_strategy from config — that would mislabel
@@ -2400,11 +2401,19 @@ def export_candidates(args: argparse.Namespace) -> dict:
             _order_strategy = str(getattr(args, "strategy", None) or spec.name)
             # T+1 execution_date: find next trading day after signal_date
             _exec_date = _next_trading_day(engine, asof_date)
-            # release_id from registry or config SHA
-            _release_id = (
-                getattr(args, "release_id", None)
-                or str(_prod_cfg.get("config_sha", ""))
-            )
+            _release_id = getattr(args, "release_id", None)
+            if not _release_id:
+                raise RuntimeError("governed_order_export_requires_release_id")
+            with engine.connect() as _governance_conn:
+                _release = _governance_conn.execute(_governance_text(
+                    "SELECT strategy_id, config_sha, execution_date FROM chenyiyun.strategy_releases WHERE release_id=:release_id"
+                ), {"release_id": _release_id}).mappings().first()
+            if not _release or str(_release["strategy_id"]) != _order_strategy:
+                raise RuntimeError("governed_order_export_release_strategy_mismatch")
+            if str(_release["config_sha"]) != str(_prod_cfg.get("config_sha", "")):
+                raise RuntimeError("governed_order_export_release_config_mismatch")
+            if str(_release["execution_date"]) != str(_exec_date):
+                raise RuntimeError("governed_order_export_release_execution_date_mismatch")
             _health_substatus = getattr(args, "health_substatus", None) or None
             _order_count = write_orders_with_metadata(
                 engine,

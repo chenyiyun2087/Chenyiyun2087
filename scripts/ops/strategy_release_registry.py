@@ -54,7 +54,7 @@ DDL_RELEASE_AUDIT_LOG = """
 CREATE TABLE IF NOT EXISTS chenyiyun.strategy_release_audit_log (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     release_id BIGINT NOT NULL,
-    action ENUM('CREATE', 'ACTIVATE', 'DEACTIVATE', 'ROLLBACK', 'PROMOTE_CANARY', 'FAIL')
+    action ENUM('CREATE', 'ACTIVATE', 'DEACTIVATE', 'ROLLBACK', 'PROMOTE_ENABLED_SHADOW', 'PROMOTE_CANARY', 'PROMOTE_SCALE_UP', 'FAIL')
         NOT NULL,
     actor VARCHAR(64),
     detail TEXT,
@@ -75,6 +75,21 @@ def ensure_registry_tables(engine) -> None:
     with engine.begin() as conn:
         conn.execute(text(DDL_RELEASE_REGISTRY))
         conn.execute(text(DDL_RELEASE_AUDIT_LOG))
+        # Existing installations require the enum migration too. Failure here
+        # is fatal to promotion callers, not silently ignored.
+        conn.execute(text("ALTER TABLE chenyiyun.strategy_release_audit_log MODIFY action ENUM('CREATE','ACTIVATE','DEACTIVATE','ROLLBACK','PROMOTE_ENABLED_SHADOW','PROMOTE_CANARY','PROMOTE_SCALE_UP','FAIL') NOT NULL"))
+
+
+def record_promotion_approval(engine, registry_release_id: int, action: str, *, strategy_id: str, runtime_release_id: str, gate_evidence_sha: str, actor: str) -> None:
+    """Record a human approval bound to exactly one strategy run and evidence set."""
+    allowed = {"PROMOTE_ENABLED_SHADOW", "PROMOTE_CANARY", "PROMOTE_SCALE_UP"}
+    if action not in allowed or not all((strategy_id, runtime_release_id, gate_evidence_sha, actor)):
+        raise ValueError("invalid_promotion_approval")
+    from sqlalchemy import text
+    ensure_registry_tables(engine)
+    detail = json_module.dumps({"strategy_id": strategy_id, "release_id": runtime_release_id, "gate_evidence_sha": gate_evidence_sha}, ensure_ascii=False, sort_keys=True)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO chenyiyun.strategy_release_audit_log (release_id, action, actor, detail) VALUES (:id,:action,:actor,:detail)"), {"id": registry_release_id, "action": action, "actor": actor, "detail": detail})
 
 
 def get_active_release(engine, registry_key: str) -> dict[str, Any] | None:

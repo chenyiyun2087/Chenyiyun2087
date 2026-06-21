@@ -74,6 +74,16 @@ def _columns_for_table(engine, full_table_name: str) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
+def _primary_key_columns(engine, full_table_name: str) -> list[str]:
+    table = _safe_table_name(full_table_name)
+    schema, name = table.split(".", 1) if "." in table else (None, table)
+    sql = text("""SELECT column_name FROM information_schema.key_column_usage
+                  WHERE table_schema=COALESCE(:schema, DATABASE()) AND table_name=:name AND constraint_name='PRIMARY'
+                  ORDER BY ordinal_position""")
+    with engine.connect() as conn:
+        return [str(row[0]) for row in conn.execute(sql, {"schema": schema, "name": name})]
+
+
 def _symbol_to_ts_code(symbol: str) -> str:
     digits = "".join(ch for ch in str(symbol or "") if ch.isdigit())[-6:].zfill(6)
     if digits.startswith(("6", "9")):
@@ -406,12 +416,16 @@ def summarize_fills(fills: pd.DataFrame, signal_date: str, execution_date: str) 
     }
 
 
-def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, summary_table: str) -> dict[str, int]:
+def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, summary_table: str, *, strategy_id: str, release_id: str) -> dict[str, int]:
+    if not strategy_id or not release_id:
+        raise ValueError("shadow_persistence_requires_strategy_id_and_release_id")
     fill_table = _safe_table_name(fill_table)
     summary_table = _safe_table_name(summary_table)
     create_fills = text(
         f"""
         CREATE TABLE IF NOT EXISTS {fill_table} (
+            strategy_id VARCHAR(128) NOT NULL,
+            release_id VARCHAR(128) NOT NULL,
             signal_date DATE NOT NULL,
             execution_date DATE NOT NULL,
             ts_code VARCHAR(16) NOT NULL,
@@ -431,15 +445,17 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
             note VARCHAR(255) NULL,
             create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (signal_date, execution_date, ts_code, side)
+            PRIMARY KEY (strategy_id, release_id, signal_date, execution_date, ts_code, side)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='可信策略影子盘成交质量明细'
         """
     )
     create_summary = text(
         f"""
         CREATE TABLE IF NOT EXISTS {summary_table} (
+            strategy_id VARCHAR(128) NOT NULL,
+            release_id VARCHAR(128) NOT NULL,
             signal_date DATE NOT NULL,
-            execution_date DATE NOT NULL PRIMARY KEY,
+            execution_date DATE NOT NULL,
             total_orders INT NOT NULL,
             buy_orders INT NOT NULL,
             sell_orders INT NOT NULL,
@@ -460,18 +476,24 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
             validation_status VARCHAR(16) NULL,
             validation_actions VARCHAR(32) NULL,
             validation_reason VARCHAR(255) NULL,
+            execution_proxy_available TINYINT(1) NOT NULL DEFAULT 1,
+            recovery_event_count INT NOT NULL DEFAULT 0,
+            recovery_event_return DOUBLE NULL,
+            execution_degraded TINYINT(1) NOT NULL DEFAULT 0,
             create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (strategy_id, release_id, execution_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='可信策略影子盘成交质量日汇总'
         """
     )
-    fill_rows = fills.replace({np.nan: None}).to_dict("records")
     summary_row = {k: (None if pd.isna(v) else v) for k, v in summary.items()}
     with engine.begin() as conn:
         conn.execute(create_fills)
         conn.execute(create_summary)
         existing_summary_cols = _columns_for_table(engine, summary_table)
         summary_alters = {
+            "strategy_id": "ALTER TABLE {table} ADD COLUMN strategy_id VARCHAR(128) NULL",
+            "release_id": "ALTER TABLE {table} ADD COLUMN release_id VARCHAR(128) NULL",
             "unfilled_ratio": "ALTER TABLE {table} ADD COLUMN unfilled_ratio DOUBLE NULL",
             "large_slippage_ratio": "ALTER TABLE {table} ADD COLUMN large_slippage_ratio DOUBLE NULL",
             "limit_up_buy_ratio": "ALTER TABLE {table} ADD COLUMN limit_up_buy_ratio DOUBLE NULL",
@@ -481,19 +503,40 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
             "validation_status": "ALTER TABLE {table} ADD COLUMN validation_status VARCHAR(16) NULL",
             "validation_actions": "ALTER TABLE {table} ADD COLUMN validation_actions VARCHAR(32) NULL",
             "validation_reason": "ALTER TABLE {table} ADD COLUMN validation_reason VARCHAR(255) NULL",
+            "execution_proxy_available": "ALTER TABLE {table} ADD COLUMN execution_proxy_available TINYINT(1) NOT NULL DEFAULT 1",
+            "recovery_event_count": "ALTER TABLE {table} ADD COLUMN recovery_event_count INT NOT NULL DEFAULT 0",
+            "recovery_event_return": "ALTER TABLE {table} ADD COLUMN recovery_event_return DOUBLE NULL",
+            "execution_degraded": "ALTER TABLE {table} ADD COLUMN execution_degraded TINYINT(1) NOT NULL DEFAULT 0",
         }
         for column, sql_tpl in summary_alters.items():
             if column not in existing_summary_cols:
                 conn.execute(text(sql_tpl.format(table=summary_table)))
+        # Old tables keyed only by date cannot safely host multiple strategy
+        # runs; block rather than overwrite another candidate's evidence.
+        actual_summary_cols = _columns_for_table(engine, summary_table)
+        if not {"strategy_id", "release_id"}.issubset(actual_summary_cols):
+            raise RuntimeError("shadow_summary_schema_not_release_scoped")
+        required_pk = ["strategy_id", "release_id", "execution_date"]
+        if _primary_key_columns(engine, summary_table) != required_pk:
+            raise RuntimeError("shadow_summary_primary_key_not_release_scoped_migration_required")
+        required_fill_pk = ["strategy_id", "release_id", "signal_date", "execution_date", "ts_code", "side"]
+        if _primary_key_columns(engine, fill_table) != required_fill_pk:
+            raise RuntimeError("shadow_fill_primary_key_not_release_scoped_migration_required")
+        fills = fills.copy()
+        fills["strategy_id"] = strategy_id
+        fills["release_id"] = release_id
+        fill_rows = fills.replace({np.nan: None}).to_dict("records")
+        summary_row.update({"strategy_id": strategy_id, "release_id": release_id, "execution_proxy_available": 1,
+                            "recovery_event_count": 0, "recovery_event_return": None, "execution_degraded": 0})
         fill_result = conn.execute(
             text(
                 f"""
                 INSERT INTO {fill_table}
-                    (signal_date, execution_date, ts_code, stock_name, side, planned_price, execution_open,
+                    (strategy_id, release_id, signal_date, execution_date, ts_code, stock_name, side, planned_price, execution_open,
                      prev_close, allocated_shares, planned_amount, execution_amount, amount, slippage_bps,
                      tradable_flag, tradable_status, risk_reason, note)
                 VALUES
-                    (:signal_date, :execution_date, :ts_code, :stock_name, :side, :planned_price, :execution_open,
+                    (:strategy_id, :release_id, :signal_date, :execution_date, :ts_code, :stock_name, :side, :planned_price, :execution_open,
                      :prev_close, :allocated_shares, :planned_amount, :execution_amount, :amount, :slippage_bps,
                      :tradable_flag, :tradable_status, :risk_reason, :note)
                 ON DUPLICATE KEY UPDATE
@@ -518,17 +561,19 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
             text(
                 f"""
                 INSERT INTO {summary_table}
-                    (signal_date, execution_date, total_orders, buy_orders, sell_orders, executable_orders,
+                    (strategy_id, release_id, signal_date, execution_date, total_orders, buy_orders, sell_orders, executable_orders,
                      blocked_orders, warning_orders, planned_amount, execution_amount, avg_slippage_bps,
                      max_adverse_slippage_bps, blocked_symbols, unfilled_ratio, large_slippage_ratio,
                      limit_up_buy_ratio, limit_down_sell_ratio, planned_vs_executable_ratio,
-                     shadow_vs_theory_gap, validation_status, validation_actions, validation_reason)
+                     shadow_vs_theory_gap, validation_status, validation_actions, validation_reason,
+                     execution_proxy_available, recovery_event_count, recovery_event_return, execution_degraded)
                 VALUES
-                    (:signal_date, :execution_date, :total_orders, :buy_orders, :sell_orders, :executable_orders,
+                    (:strategy_id, :release_id, :signal_date, :execution_date, :total_orders, :buy_orders, :sell_orders, :executable_orders,
                      :blocked_orders, :warning_orders, :planned_amount, :execution_amount, :avg_slippage_bps,
                      :max_adverse_slippage_bps, :blocked_symbols, :unfilled_ratio, :large_slippage_ratio,
                      :limit_up_buy_ratio, :limit_down_sell_ratio, :planned_vs_executable_ratio,
-                     :shadow_vs_theory_gap, :validation_status, :validation_actions, :validation_reason)
+                     :shadow_vs_theory_gap, :validation_status, :validation_actions, :validation_reason,
+                     :execution_proxy_available, :recovery_event_count, :recovery_event_return, :execution_degraded)
                 ON DUPLICATE KEY UPDATE
                     signal_date=VALUES(signal_date),
                     total_orders=VALUES(total_orders),
@@ -551,6 +596,10 @@ def persist_shadow(engine, fills: pd.DataFrame, summary: dict, fill_table: str, 
                     validation_status=VALUES(validation_status),
                     validation_actions=VALUES(validation_actions),
                     validation_reason=VALUES(validation_reason)
+                    , execution_proxy_available=VALUES(execution_proxy_available)
+                    , recovery_event_count=VALUES(recovery_event_count)
+                    , recovery_event_return=VALUES(recovery_event_return)
+                    , execution_degraded=VALUES(execution_degraded)
                 """
             ),
             summary_row,
@@ -605,7 +654,7 @@ def run_shadow_monitor(args: argparse.Namespace) -> dict:
             return _skip_payload(str(exc), execution_date=execution_date)
         raise
     summary = summarize_fills(fills, signal_date, execution_date)
-    db_write = persist_shadow(engine, fills, summary, args.fill_table, args.summary_table) if args.write_db else {}
+    db_write = persist_shadow(engine, fills, summary, args.fill_table, args.summary_table, strategy_id=args.strategy_id, release_id=args.release_id) if args.write_db else {}
     notify_result = None
     if args.notify_feishu:
         webhook = load_feishu_webhook(engine)
@@ -640,6 +689,8 @@ def main() -> None:
     parser.add_argument("--write-db", action="store_true")
     parser.add_argument("--notify-feishu", action="store_true")
     parser.add_argument("--allow-empty", action="store_true", help="Return success when no prior order draft exists; useful for first production day.")
+    parser.add_argument("--strategy-id", required=True, help="Immutable candidate strategy identity.")
+    parser.add_argument("--release-id", required=True, help="Immutable runtime release identity.")
     args = parser.parse_args()
     print(json.dumps(run_shadow_monitor(args), ensure_ascii=False, indent=2, default=str))
 

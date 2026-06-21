@@ -77,6 +77,8 @@ jobs:
           "
       - name: Health order gating tests
         run: python -m pytest test/test_production_health_order_gating.py -v
+      - name: Governance chain fail-closed tests
+        run: python -m pytest test/test_strategy_governance_chain.py -v
       - name: Fixture tests (no DB needed)
         run: python -m pytest test/test_project_network.py test/test_production_risk_governor.py test/test_db_connection_config.py -v
 

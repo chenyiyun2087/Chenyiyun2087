@@ -77,6 +77,45 @@ class LedgerState:
         )
 
 
+ALLOWED_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
+    OrderStatus.PLANNED: frozenset({OrderStatus.SUBMITTED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.SUPERSEDED, OrderStatus.EXPIRED, OrderStatus.CORPORATE_ACTION_FREEZE}),
+    OrderStatus.SUBMITTED: frozenset({OrderStatus.PARTIAL, OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED}),
+    OrderStatus.PARTIAL: frozenset({OrderStatus.PARTIAL, OrderStatus.FILLED, OrderStatus.CANCELLED}),
+    OrderStatus.FILLED: frozenset(), OrderStatus.CANCELLED: frozenset(), OrderStatus.REJECTED: frozenset(),
+    OrderStatus.SUPERSEDED: frozenset(), OrderStatus.EXPIRED: frozenset(), OrderStatus.CORPORATE_ACTION_FREEZE: frozenset(),
+}
+
+
+def validate_order_transition(previous: OrderStatus | str, next_status: OrderStatus | str) -> None:
+    """Enforce the one runtime state machine for research, shadow and canary."""
+    old = OrderStatus(previous)
+    new = OrderStatus(next_status)
+    if new not in ALLOWED_TRANSITIONS[old]:
+        raise ValueError(f"illegal_order_transition:{old.value}->{new.value}")
+
+
+def reconcile_daily(
+    theoretical_orders: list[dict[str, Any]], actual_orders: list[dict[str, Any]],
+    theoretical_positions: dict[str, float], actual_positions: dict[str, float],
+    theoretical_nav: float, actual_nav: float,
+) -> dict[str, Any]:
+    """Return the four mandatory, explainable daily reconciliation dimensions."""
+    theory_by_id = {str(row.get("intent_id") or row.get("order_id")): row for row in theoretical_orders}
+    actual_by_id = {str(row.get("intent_id") or row.get("order_id")): row for row in actual_orders}
+    missing_orders = sorted(set(theory_by_id) ^ set(actual_by_id))
+    price_diffs = {key: float(actual_by_id[key].get("filled_price") or 0) - float(theory_by_id[key].get("planned_price") or 0)
+                   for key in set(theory_by_id) & set(actual_by_id)}
+    position_diffs = {symbol: float(actual_positions.get(symbol, 0)) - float(theoretical_positions.get(symbol, 0))
+                      for symbol in set(theoretical_positions) | set(actual_positions)
+                      if float(actual_positions.get(symbol, 0)) != float(theoretical_positions.get(symbol, 0))}
+    return {
+        "theoretical_vs_actual_orders": {"unmatched_order_ids": missing_orders, "passed": not missing_orders},
+        "theoretical_vs_actual_prices": {"differences": price_diffs},
+        "theoretical_vs_actual_positions": {"differences": position_diffs, "passed": not position_diffs},
+        "theoretical_vs_actual_nav": {"difference": float(actual_nav) - float(theoretical_nav), "passed": actual_nav == theoretical_nav},
+    }
+
+
 def compute_rounding_tolerance(lot_size: int, price: float, account_nav: float) -> float:
     """Compute acceptable rounding tolerance per acceptance criteria.
 

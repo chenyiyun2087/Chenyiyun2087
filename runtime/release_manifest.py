@@ -43,6 +43,24 @@ class ReleaseManifest:
     source_file_hashes: dict[str, str] = field(default_factory=dict)
     acceptance_gate_results: dict[str, Any] = field(default_factory=dict)
 
+    def validate_promotable(self) -> None:
+        """Reject incomplete provenance before a release enters any promotion lane."""
+        required = {
+            "release_id": self.release_id,
+            "strategy_wrapper_id": self.strategy_wrapper_id,
+            "config_sha": self.config_sha,
+            "git_commit_sha": self.git_commit_sha,
+            "data_snapshot_hash": self.data_snapshot_hash,
+            "feature_schema_version": self.feature_schema_version,
+            "signal_date": self.signal_date,
+            "execution_date": self.execution_date,
+        }
+        missing = [name for name, value in required.items() if not str(value).strip() or str(value).upper() == "UNKNOWN"]
+        if missing:
+            raise ValueError(f"release_not_promotable_missing:{','.join(missing)}")
+        if self.execution_date <= self.signal_date:
+            raise ValueError("release_not_promotable_execution_not_t_plus_1")
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "release_id": self.release_id,
@@ -92,7 +110,7 @@ def freeze_production_release(
     ]
     release_id = "-".join(release_id_parts)
 
-    return ReleaseManifest(
+    manifest = ReleaseManifest(
         release_id=release_id,
         strategy_wrapper_id=str(config.get("primary_strategy", "")),
         selection_engine_id=str(config.get("primary_selection_strategy", "")),
@@ -105,3 +123,6 @@ def freeze_production_release(
         signal_date=signal_date,
         execution_date=execution_date,
     )
+    # Creating a manifest is allowed for research replay; callers promoting a
+    # release must call validate_promotable() and persist the immutable record.
+    return manifest
