@@ -997,8 +997,9 @@ def _latest_adaptive_decision(
     top_n: int,
 ) -> dict[str, object]:
     underlying_specs = {role: trusted_specs[name] for role, name in ADAPTIVE_UNDERLYING.items()}
+    day_indices = scores.groupby("trade_date", sort=True).indices
     scores_by_date = {day: group.copy() for day, group in scores.groupby("trade_date", sort=True)}
-    adaptive_perf = _build_adaptive_perf_table(scores_by_date, underlying_specs, top_n=top_n)
+    adaptive_perf = _build_adaptive_perf_table(scores, day_indices, underlying_specs, top_n=top_n)
     current_role: str | None = None
     current_role_days = 0
     latest: dict[str, object] | None = None
@@ -2354,7 +2355,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 f"Order generation ABORTED."
             )
             warnings.append(msg)
-            logger.error(msg)
+            print(f"[ERROR] {msg}", file=sys.stderr)
             (out_dir / "ORDER_GENERATION_BLOCKED.txt").write_text(
                 msg + "\nUntradable: " + str(untradable), encoding="utf-8"
             )

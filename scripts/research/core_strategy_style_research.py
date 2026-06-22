@@ -190,9 +190,10 @@ def _build_adaptive_event_report(
     strategies: dict[str, object],
     top_n: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    day_indices = scores.groupby("trade_date", sort=True).indices
     scores_by_date = {day: group.copy() for day, group in scores.groupby("trade_date", sort=True)}
     underlying_specs = {role: strategies[name] for role, name in ADAPTIVE_UNDERLYING.items() if name in strategies}
-    perf = _build_adaptive_perf_table(scores_by_date, underlying_specs, top_n=top_n, targets_cache=targets_cache)
+    perf = _build_adaptive_perf_table(scores, day_indices, underlying_specs, top_n=top_n, targets_cache=targets_cache)
     current_role: str | None = None
     current_role_days = 0
     decisions: list[dict[str, object]] = []

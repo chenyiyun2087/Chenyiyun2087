@@ -229,6 +229,18 @@ TASKS = {
         "next_run": "-",
         "trading_day_only": True,
     },
+    "candle_diag_scan": {
+        "name": "K线形态全市场扫描",
+        "description": "每日全市场K线形态诊断扫描，识别关键反转/突破形态",
+        "script": "scripts/ops/run_candle_diag_daily_scan.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": True,
+        "schedule_time": "21:40",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
     "eastmoney": {
         "name": "eastmoney 策略扫描",
         "description": "东方财富社区舆情扫描与个股热度分析",
@@ -330,6 +342,7 @@ SCHEDULED_TASK_WHITELIST = {
     "sina_snapshot",
     "sina_m7_sell",
     "bs_signal_monthly_cycle",
+    "candle_diag_scan",
 }
 
 NOTIFICATION_CHANNEL_DEFS = [
@@ -2486,11 +2499,14 @@ def _build_task_script_parts(task_name, run_options=None):
             return [script, '--date', datestr]
         return [script]
     if task_name == 'trusted_strategy_candidates':
+        target_date = datestr or datetime.now().strftime('%Y%m%d')
+        release_id = f"{TRUSTED_PRODUCTION_STRATEGY}_{target_date}_{TRUSTED_PRODUCTION_CONFIG['config_sha']}"
         args = [
             '--risk-profile',
             TRUSTED_PRODUCTION_RISK_PROFILE,
             '--strategy',
             TRUSTED_PRODUCTION_STRATEGY,
+            '--release-id', release_id,
             '--top-n',
             str(TRUSTED_PRODUCTION_CONFIG["top_n"]),
             '--max-total-positions',
@@ -2503,7 +2519,13 @@ def _build_task_script_parts(task_name, run_options=None):
             args.extend(['--date', datestr])
         return [script, *args]
     if task_name == 'trusted_strategy_shadow_monitor':
-        args = ['--write-db', '--notify-feishu', '--allow-empty']
+        target_date = datestr or datetime.now().strftime('%Y%m%d')
+        release_id = f"{TRUSTED_PRODUCTION_STRATEGY}_{target_date}_{TRUSTED_PRODUCTION_CONFIG['config_sha']}"
+        args = [
+            '--strategy-id', TRUSTED_PRODUCTION_STRATEGY,
+            '--release-id', release_id,
+            '--write-db', '--notify-feishu', '--allow-empty',
+        ]
         if datestr:
             args.extend(['--execution-date', datestr])
         return [script, *args]
@@ -2534,6 +2556,12 @@ def _build_task_script_parts(task_name, run_options=None):
         if datestr and len(datestr) == 8:
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
             args.extend(['--date', date_iso, '--force'])
+        return [script, *args]
+    if task_name == 'candle_diag_scan':
+        args = ['--skip-existing']
+        if datestr and len(datestr) == 8:
+            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
+            args.extend(['--date', date_iso])
         return [script, *args]
     if task_name == 'eastmoney':
         return [script, '--export', 'result']
