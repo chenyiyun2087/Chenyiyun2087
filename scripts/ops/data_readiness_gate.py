@@ -279,7 +279,7 @@ class PreScoreGate:
                 null_adj = conn.execute(
                     text_fn(
                         "SELECT COUNT(*) FROM tushare_stock.dwd_stock_daily_standard "
-                        "WHERE trade_date = :date AND adj_factor IS NULL"
+                        "WHERE trade_date = :date AND adj_close IS NULL"
                     ),
                     {"date": date_str},
                 ).scalar()

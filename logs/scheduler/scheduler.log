@@ -5824,3 +5824,47 @@
 2026-06-21 06:00:22,111 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-21 07:00:22,765 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
 2026-06-21 08:00:23,464 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 09:00:23,946 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 10:00:24,588 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 11:00:25,452 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 12:00:26,058 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 13:00:26,721 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 14:00:27,604 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 15:00:28,487 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 15:20:28,740 - INFO - Triggering task: sina_bs -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-21 16:00:29,275 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 16:30:29,713 - INFO - Triggering task: eastmoney_data -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-21 17:00:00,061 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 18:00:01,023 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 19:00:01,959 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 20:00:02,933 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 21:00:03,823 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 21:00:03,825 - INFO - Triggering task: daily_pipeline -> success-skip (non-trading day from chenyiyun.dim_trade_cal)
+2026-06-21 22:00:04,691 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-21 22:05:04,752 - INFO - Triggering task: sina_bs_image_weekly_cleanup -> success-skip (Friday-only task)
+2026-06-21 23:00:05,490 - INFO - 2026-06-21 is not a trading day. Scheduled tasks will be marked success-skip.
+2026-06-22 15:20:19,955 - INFO - Triggering task: sina_bs
+2026-06-22 15:20:19,966 - INFO - Starting sina_bs: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/sina/bs_detection/main.py config_1 20260622
+2026-06-22 15:42:22,750 - INFO - Finished sina_bs successfully.
+2026-06-22 16:30:23,487 - INFO - Triggering task: eastmoney_data
+2026-06-22 16:30:23,488 - INFO - Starting eastmoney_data: /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python /Volumes/extension/projects/Chenyiyun2087/eastmoney/main.py config_1 20260622
+2026-06-22 16:33:44,222 - INFO - Finished eastmoney_data successfully.
+2026-06-22 21:00:18,591 - INFO - Triggering task: daily_pipeline
+2026-06-22 21:00:18,808 - INFO - Order schema v2 validated: pk_is_id=True, v2_uk_exists=True
+2026-06-22 21:00:18,838 - INFO - Order schema: backfilled 198 legacy order(s).
+2026-06-22 21:00:18,839 - INFO - Order schema v2 validated + backfilled + zero-NULL verified.
+2026-06-22 21:00:18,839 - INFO - Pre-Score Gate: validating market data readiness...
+2026-06-22 21:00:18,887 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 1/24)...
+2026-06-22 21:05:18,926 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 2/24)...
+2026-06-22 21:10:18,959 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 3/24)...
+2026-06-22 21:15:18,966 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 4/24)...
+2026-06-22 21:20:19,005 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 5/24)...
+2026-06-22 21:25:19,045 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 6/24)...
+2026-06-22 21:30:19,084 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 7/24)...
+2026-06-22 21:35:19,105 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 8/24)...
+2026-06-22 21:40:19,124 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 9/24)...
+2026-06-22 21:45:19,150 - INFO - PreScoreGate: BLOCKED — failed=['adjust_factor_coverage']; retrying in 5 minutes (attempt 10/24)...
+2026-06-22 21:48:08,588 - ERROR - Order schema validation FAILED: Production DB credentials are not configured safely.
+  Required: non-root MySQL user with password, OR explicit CHENYIYUN_DB_URL.
+  Set CHENYIYUN_DB_USER / CHENYIYUN_DB_PASSWORD or CHENYIYUN_DB_URL.
+  Refusing to start scheduler with empty root password.
