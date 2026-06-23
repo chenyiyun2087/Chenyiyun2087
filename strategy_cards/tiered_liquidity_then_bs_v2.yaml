@@ -1,0 +1,25 @@
+strategy_id: tiered_liquidity_then_bs_v2
+strategy_version: "2026.06.23"
+release_id: shadow-20260623-01
+owner: chenyiyun
+status: SHADOW
+description: >
+  流动性分层 + B点增强v2。在 satisfaction 基础上增强 B/S 信号。
+  当前作为影子策略运行，不进入生产候选。
+
+signal_time: T_15_30
+execution_time: T+1_OPEN
+universe: ashare_full_liquid_pool_v1
+holding_days: 10
+max_positions: 5
+
+pit_contract:
+  data_cutoff: T_15_30
+  execution_assumption: T+1_OPEN
+  forbid_future_fields: true
+
+promotion:
+  status: SHADOW
+  required_evidence:
+    - walk_forward_pass
+    - shadow_pass_60_days

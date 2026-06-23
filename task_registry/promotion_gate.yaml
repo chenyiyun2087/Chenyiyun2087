@@ -1,0 +1,38 @@
+# 策略晋级门禁配置
+# 由 run_champion_challenger_eval.py 读取
+# 策略从 RESEARCH → SHADOW → PAPER → CANARY → PRODUCTION 的硬性条件
+
+promotion_gate:
+  # Walk-forward 晋级条件
+  walk_forward:
+    min_windows: 3
+    min_oos_calmar: 0.5
+    min_oos_sharpe: 0.3
+    min_hit_rate_5d: 0.40
+    require_no_pit_violation: true
+
+  # Shadow 影子盘晋级条件
+  shadow:
+    min_trading_days: 60
+    min_order_count: 100
+    max_execution_degraded_ratio: 0.05
+    max_theory_gap: 0.03
+    min_pass_rate: 0.80
+
+  # Paper 模拟盘晋级条件
+  paper:
+    min_trading_days: 30
+    min_order_count: 50
+    max_slippage_bps: 100
+
+  # Canary 小资金实盘晋级条件
+  canary:
+    min_trading_days: 20
+    min_order_count: 30
+    max_drawdown_vs_shadow: 0.02
+
+  # 通用条件
+  general:
+    require_independent_release_review: true
+    require_no_pit_violation: true
+    forbid_future_fields: true

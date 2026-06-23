@@ -1,0 +1,52 @@
+strategy_id: baseline_full_liquidity_detail_vol_position
+strategy_version: "2026.06.23"
+release_id: prod-20260623-01
+owner: chenyiyun
+status: PRODUCTION
+description: >
+  流动性质量防守策略+仓位自适应。当日候选排序基于 liquidity_detail_score，
+  结合 AShare 信号增强与双系统加权。风控锚为 adaptive_market_style v2.2。
+
+signal_time: T_15_30
+execution_time: T+1_OPEN
+universe: ashare_full_liquid_pool_v1
+holding_days: 10
+max_positions: 5
+
+cost_model: cn_stock_v2
+slippage_model: open_participation_v1
+risk_budget:
+  target_exposure: 0.70
+  max_single_name: 0.18
+  max_industry_exposure: 0.35
+
+feature_dependencies:
+  - technical_feature_v4
+  - liquidity_feature_v3
+  - adc_factor_snapshot_v2
+
+pit_contract:
+  data_cutoff: T_15_30
+  execution_assumption: T+1_OPEN
+  forbid_future_fields: true
+
+promotion:
+  status: PRODUCTION
+  required_evidence:
+    - walk_forward_pass
+    - shadow_pass
+    - execution_quality_pass
+
+rollback_rule:
+  max_drawdown_breach: true
+  execution_degradation_breach: true
+  action: FREEZE_NEW_BUYS
+
+shadow:
+  risk_strategy: adaptive_market_style
+  shadow_version: v2.2
+
+ashare_supplement:
+  enabled: true
+  limit: 2
+  weight_profile: prod_stage1

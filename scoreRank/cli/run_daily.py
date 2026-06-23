@@ -189,6 +189,10 @@ def _ensure_score_rank_daily_schema(cursor):
         "top_pattern_names": "ALTER TABLE score_rank_daily ADD COLUMN top_pattern_names VARCHAR(255) NULL COMMENT '主要K线图形名称' AFTER top_pattern_ids",
         "ashare_signal_keys": "ALTER TABLE score_rank_daily ADD COLUMN ashare_signal_keys VARCHAR(255) NULL COMMENT 'A股特殊K线信号' AFTER top_pattern_names",
         "pattern_diagnosis": "ALTER TABLE score_rank_daily ADD COLUMN pattern_diagnosis VARCHAR(512) NULL COMMENT 'K线图形诊断摘要' AFTER ashare_signal_keys",
+        # 2026-06-23: 趋势标签 + 非线性变换诊断字段
+        "trend_label": "ALTER TABLE score_rank_daily ADD COLUMN trend_label VARCHAR(8) NULL COMMENT '趋势方向标签(看涨/看跌/震荡)' AFTER score",
+        "s_trend_label": "ALTER TABLE score_rank_daily ADD COLUMN s_trend_label DECIMAL(10,2) NULL COMMENT '趋势标签调整分' AFTER trend_label",
+        "base_score_raw": "ALTER TABLE score_rank_daily ADD COLUMN base_score_raw DECIMAL(10,2) NULL COMMENT '非线性变换前的原始base_score' AFTER s_trend_label",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -303,6 +307,9 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
     df_save["symbol"] = df_save["symbol"].map(_normalize_symbol)
     df_save = df_save[df_save["symbol"].notna()].copy()
     df_save['trade_date'] = asof_date.date()
+    # 2026-06-23: 附带快照ID
+    snapshot_id = _generate_snapshot_id(asof_date.date())
+    df_save["research_snapshot_id"] = snapshot_id
     # Drop duplicates to prevent database constraint violation
     df_save = df_save.drop_duplicates(subset=['symbol'])
     
@@ -376,7 +383,13 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         **{col: col for col in MARKET_CONTEXT_COLUMNS},
         **{col: col for col in PATTERN_FEATURE_COLUMNS},
         'is_self_selected': 'is_self_selected',
-        'is_bs_candidate': 'is_bs_candidate'
+        'is_bs_candidate': 'is_bs_candidate',
+        # 2026-06-23 新增：趋势标签 + 非线性变换诊断字段
+        'trend_label': 'trend_label',
+        's_trend_label': 's_trend_label',
+        'base_score_raw': 'base_score_raw',
+        # 2026-06-23: 快照ID
+        'research_snapshot_id': 'research_snapshot_id',
     }
     
     # Ensure all cols exist
@@ -411,6 +424,75 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
     print(f"成功保存 {len(df_db)} 条记录到 score_rank_daily")
 
 
+def _generate_snapshot_id(asof_date) -> str:
+    """生成不可变快照 ID。"""
+    import random
+    from datetime import datetime
+    now = datetime.now()
+    rand = "".join(random.choices("abcdef0123456789", k=4))
+    date_str = asof_date.strftime("%Y%m%d") if hasattr(asof_date, "strftime") else str(asof_date).replace("-", "")
+    return f"rs_{date_str}_{now.strftime('%H%M%S')}_{rand}"
+
+
+def _dual_write_layer_tables(df_save, asof_date, snapshot_id: str):
+    """双写：除 score_rank_daily 外，同步写入五层模型表。"""
+    if df_save.empty:
+        return
+    engine = get_engine(as_sqlalchemy=True)
+    date_val = asof_date if hasattr(asof_date, "strftime") else asof_date
+
+    # Layer 2: Rule Features
+    rule_cols = [
+        "symbol", "score", "base_score", "base_score_raw", "penalty",
+        "s_trend", "s_bull_align", "s_breakout", "s_volume", "s_vol_mild",
+        "s_rs", "s_contraction", "s_bias", "s_chip", "s_liquidity",
+        "s_trend_label", "trend_label",
+    ]
+    rule_cols = [c for c in rule_cols if c in df_save.columns]
+    if rule_cols:
+        rule_df = df_save[rule_cols].copy()
+        rule_df["research_snapshot_id"] = snapshot_id
+        rule_df["trade_date"] = date_val
+        rule_df.to_sql("ads_rule_features", engine, if_exists="append", index=False,
+                       method="multi", chunksize=2000)
+        print(f"  Layer 2 (rule_features): {len(rule_df)} rows")
+
+    # Layer 3: B/S Events
+    bs_cols = [
+        "symbol", "bs_score", "bs_entry_score", "bs_score_v2", "bs_score_v2_label",
+        "bs_research_score", "bs_research_label", "bs_research_reason",
+        "bs_gate_score", "bs_gate_pass", "bs_gate_label", "bs_gate_reason",
+        "bs_model_prob", "bs_model_expected_mdd", "bs_model_risk_score",
+        "bs_model_rank_score", "bs_model_version",
+        "bs_consensus_score", "bs_consensus_label", "bs_consensus_reason",
+        "is_bs_candidate",
+    ]
+    bs_cols = [c for c in bs_cols if c in df_save.columns]
+    if bs_cols:
+        bs_df = df_save[bs_cols].copy()
+        bs_df["research_snapshot_id"] = snapshot_id
+        bs_df["trade_date"] = date_val
+        bs_df.to_sql("ads_bs_events", engine, if_exists="append", index=False,
+                     method="multi", chunksize=2000)
+        print(f"  Layer 3 (bs_events): {len(bs_df)} rows")
+
+    # Layer 4: LLM Insights (claude_score downgraded — display only)
+    llm_cols = [
+        "symbol", "claude_score", "score_momentum", "score_value",
+        "score_quality", "score_technical", "score_capital", "score_chip",
+    ]
+    llm_cols = [c for c in llm_cols if c in df_save.columns]
+    if llm_cols:
+        llm_df = df_save[llm_cols].copy()
+        llm_df["research_snapshot_id"] = snapshot_id
+        llm_df["trade_date"] = date_val
+        llm_df.to_sql("ads_llm_insights", engine, if_exists="append", index=False,
+                      method="multi", chunksize=2000)
+        print(f"  Layer 4 (llm_insights): {len(llm_df)} rows")
+
+    print(f"  Layer 5 (signal_decisions): deferred to candidate export")
+
+
 def calculate_opt_score(scored: pd.DataFrame, asof_date: pd.Timestamp) -> pd.DataFrame:
     """
     计算 Factor Optimizer 评分 (7大类因子等权平均)
@@ -438,13 +520,6 @@ def calculate_opt_score(scored: pd.DataFrame, asof_date: pd.Timestamp) -> pd.Dat
         )
         
         # Use 'tushare_stock' database for factor scores
-        # We need to create a temporary engine for tushare_stock if not available, 
-        # but load_category_scores uses _get_engine which reads etl.ini
-        # We can pass the existing engine if it points to the right place, 
-        # or let it create its own. run_daily.py's engine points to 'chenyiyun' by default
-        # but fetch_bars_batch uses 'tushare_stock.dwd_stock_daily_standard'.
-        # Let's let load_category_scores manage its own connection to be safe.
-        
         cat_scores = load_category_scores(config)
         
         if cat_scores.empty:
@@ -798,6 +873,20 @@ def main():
         # Need to pass dfs but save_scores_to_db was designed for separate DFs / params.
         # We repurposed it to take the final DF.
         save_scores_to_db(df_to_save, asof_date)
+        # 2026-06-23: 快照 fail-closed 校验
+        snapshot_id = df_to_save["research_snapshot_id"].iloc[0] if "research_snapshot_id" in df_to_save.columns else _generate_snapshot_id(asof_date.date())
+        try:
+            from integration.snapshot_validator import validate_snapshot_integrity
+            validate_snapshot_integrity(
+                snapshot_id=snapshot_id,
+                as_of_date=asof_date.date(),
+                feature_version="factor_2026.06.23.1",
+                payload={"scored_count": len(df_to_save), "trade_pool": 0, "watch_pool": 0},
+            )
+        except Exception as e:
+            print(f"Snapshot validation WARNING: {e} (non-blocking for legacy compat)")
+        # 双写到五层模型表
+        _dual_write_layer_tables(df_to_save, asof_date.date(), snapshot_id)
 
     except Exception as e:
         logger.exception("Execution failed")

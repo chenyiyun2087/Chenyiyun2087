@@ -1,0 +1,26 @@
+strategy_id: chenyiyun_selected
+strategy_version: "2024.01.01"
+release_id: legacy-20240601
+owner: chenyiyun
+status: LEGACY
+description: >
+  原 JoinQuant 迁移策略。高股息→换手波动→杠杆→小市值多级筛选，
+  等权周调仓。已于 2026-06 停用，相关任务脚本已归档。
+
+signal_time: T_15_30
+execution_time: T+1_OPEN
+universe: ashare_dividend_filter_v1
+holding_days: 5
+max_positions: 10
+
+pit_contract:
+  data_cutoff: T_15_30
+  execution_assumption: T+1_OPEN
+  forbid_future_fields: true
+
+promotion:
+  status: LEGACY
+  retired_date: "2026-06-23"
+  archive_note: >
+    四个 ops 脚本已移至 archive/。
+    ads_chenyiyun_selected_signals 表保留为历史只读。

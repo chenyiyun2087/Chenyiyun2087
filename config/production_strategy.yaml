@@ -33,3 +33,30 @@ production:
     max_capital: 100000
     candidate_strategy: production_governed_vol_position
     require_release_approval: true
+  # 2026-06-23 新增：基于订单前向表现诊断的优化配置
+  # 诊断报告: exports/order_forward_reviews/order_dispersion_diagnosis_*.md
+  score_config:
+    version: v2_dispersion_fix
+    description: "降低contraction/breakout权重，提升liquidity/rs权重，修复得分反转"
+  industry_filter:
+    enabled: true
+    description: "排除持续负收益行业（基于最近一个月前向一周表现）"
+    exclude_industries:
+      - 火力发电     # avg_ret=-5.41%, win_rate=16.7%
+      - 通信设备     # avg_ret=-1.82%, win_rate=50%
+    warn_industries:
+      - 矿物制品     # avg_ret=-14.95% (仅1笔，继续观察)
+      - 互联网       # avg_ret=-11.35% (仅1笔)
+      - 新型电力     # avg_ret=-12.85% (仅1笔)
+      - IT设备       # avg_ret=-20.70% (仅1笔)
+  d1_stop_loss:
+    enabled: false
+    description: "T+1尾盘止损规则（需代码实现后再启用）"
+    threshold_3pct: 0.50   # 首日跌超3%减仓50%
+    threshold_5pct: 1.00   # 首日跌超5%清仓
+  recurring_stock_bonus:
+    enabled: false
+    description: "常胜股加分（需代码实现后再启用）"
+    min_appearances: 3
+    min_win_rate: 0.75
+    bonus_score: 5.0

@@ -1,6 +1,11 @@
-import datetime
-import logging
 import os
+os.environ.setdefault('TMPDIR', '/Volumes/extension/projects/tmp')
+os.environ.setdefault('TEMP', '/Volumes/extension/projects/tmp')
+os.environ.setdefault('TMP', '/Volumes/extension/projects/tmp')
+
+import datetime
+from datetime import date
+import logging
 import subprocess
 import sys
 import time
@@ -503,8 +508,59 @@ def main():
         # Sleep
         time.sleep(30)
 
+def _recover_missed_tasks():
+    """启动时检查并补跑当天遗漏的定时任务"""
+    today = date.today()
+    date_str = today.strftime("%Y%m%d")
+    if not is_trade_day(today):
+        return
+    for task_name, config in JOBS.items():
+        if not config.get("trading_day_only", True):
+            continue
+        scheduled_hour, scheduled_minute = map(int, config["time"].split(":"))
+        scheduled_dt = datetime.datetime.combine(today, datetime.time(scheduled_hour, scheduled_minute))
+        if datetime.datetime.now() <= scheduled_dt + datetime.timedelta(hours=4):
+            continue  # 还未错过, 或距离太近
+        # 检查今天是否已成功执行
+        engine = get_engine()
+        with engine.connect() as conn:
+            r = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM chenyiyun.meta_batch_run "
+                    "WHERE run_date = :date AND display_batch_id = :bid AND status = 'SUCCESS'"
+                ),
+                {"date": date_str, "bid": task_name},
+            ).scalar()
+        if not r:
+            logger.info(f"Crash-recovery: 补跑遗漏任务 {task_name}")
+            try:
+                if config.get("type") == "pipeline":
+                    run_pipeline(today)
+                else:
+                    args = list(config.get("args", []))
+                    if config.get("append_date", True):
+                        args.append(date_str)
+                    run_script(config["script"], args, task_name)
+            except Exception as e:
+                logger.error(f"补跑 {task_name} 失败: {e}")
+
+
+def _disk_gate():
+    """启动磁盘健康检查"""
+    try:
+        import sys as _sys
+        _ashare_root = Path(__file__).resolve().parents[1] / "AShareDataCenter"
+        _sys.path.insert(0, str(_ashare_root))
+        from scripts.ops.disk_health_gate import check_disk_health
+        check_disk_health(min_free_gb=3.0)
+    except Exception as e:
+        logger.warning(f"磁盘健康检查跳过: {e}")
+
+
 if __name__ == "__main__":
     try:
+        _disk_gate()
+        _recover_missed_tasks()
         main()
     except KeyboardInterrupt:
         logger.info("Scheduler stopped by user.")

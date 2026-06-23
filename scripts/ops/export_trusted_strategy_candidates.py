@@ -936,6 +936,20 @@ def _write_strategy_order_detail_outputs(
     return payload["files"]
 
 
+def _confidence_multiplier(row) -> float:
+    """信心系数：基于 bs_model_prob 映射仓位调整。
+
+    bs_model_prob 范围约 0.3-0.9，映射到系数 0.7-1.3。
+    高信心(≥0.6)加仓，低信心(<0.4)减仓，无数据返回 1.0。
+    2026-06-23: P3 信心度加权，诊断显示高 bs_model_prob 订单胜率 69%。
+    """
+    prob = float(row.get("bs_model_prob", 0) or 0)
+    if prob <= 0:
+        return 1.0  # 无数据，不变
+    # 线性映射：0.3→0.7, 0.6→1.0, 0.9→1.3
+    return 0.7 + max(0.0, min(prob - 0.3, 0.6)) / 0.6 * 0.6
+
+
 def _build_candidate_rows(
     selected: pd.DataFrame,
     spec,
@@ -948,6 +962,16 @@ def _build_candidate_rows(
     for rank, (_, row) in enumerate(selected.iterrows(), start=1):
         position_weight = _position_weight(row, spec, selected_count=selected_count, top_n=top_n)
         market_scale = _market_exposure_scale(row, spec)
+        # 2026-06-23 P3: 信心度加权 — bs_model_prob 映射为仓位系数
+        confidence_mult = _confidence_multiplier(row)
+        # 2026-06-23 P2-b: V型反转复推检测
+        reentry_mult = 1.0
+        try:
+            from scripts.research.reentry_signal import classify_reentry
+            reentry_result = classify_reentry(str(row.get("symbol", "")), asof_date)
+            reentry_mult = float(reentry_result.get("multiplier", 1.0))
+        except Exception:
+            pass
         symbol = str(row.get("symbol", "")).zfill(6)
         industry = str(row.get("industry") or "").strip() or "未知"
         rows.append(
@@ -963,7 +987,7 @@ def _build_candidate_rows(
                 "rank_score": _safe_float(row.get("_rank_score")),
                 "position_weight": position_weight,
                 "market_exposure_scale": market_scale,
-                "effective_weight": position_weight * market_scale,
+                "effective_weight": position_weight * market_scale * confidence_mult * reentry_mult,
                 "latest_close": _safe_float(latest_prices.get(symbol)),
                 "score": _safe_float(row.get("score")),
                 "dynamic_factor_score": _safe_float(row.get("dynamic_factor_score")),
@@ -1046,7 +1070,63 @@ def _build_adaptive_dynamic_position_detail(
     selected = _select_candidates(day_scores, underlying_spec, top_n=top_n)
     if selected.empty:
         return pd.DataFrame(), decision
+    # 2026-06-23: 行业过滤 — 排除诊断中确认的持续负收益行业
+    industry_filter_cfg = PRODUCTION_CONFIG.get("industry_filter") or {}
+    if industry_filter_cfg.get("enabled") and not selected.empty:
+        exclude = set(industry_filter_cfg.get("exclude_industries") or [])
+        if exclude and "industry" in selected.columns:
+            before = len(selected)
+            selected = selected[~selected["industry"].astype(str).isin(exclude)]
+            logger.info(
+                "industry_filter: excluded %d stocks from industries %s (%d→%d)",
+                before - len(selected),
+                sorted(exclude),
+                before,
+                len(selected),
+            )
+    # 2026-06-23 P1-a: ADC补盲信号注入 — 将ADC选中但CY评分低的甜区股票加入候选池
+    blind_spot_df = pd.DataFrame()
+    try:
+        from scripts.research.cross_ref_adc_signals import get_blind_spot_candidates
+        blind_spot_df = get_blind_spot_candidates(asof_date)
+        if not blind_spot_df.empty:
+            # 将ADC补盲股转为selected格式，加入候选（放在末尾、排名靠后）
+            blind_rows = []
+            for _, bs in blind_spot_df.iterrows():
+                blind_rows.append({
+                    "symbol": str(bs["symbol"]),
+                    "name": bs.get("name", ""),
+                    "industry": bs.get("industry", ""),
+                    "score": bs.get("cy_score", 0),  # CY的评分（偏低但我们知道）
+                    "bs_model_prob": bs.get("cy_bs_model_prob", 0),
+                    "pool_type": "WATCH",  # ADC补盲标记为WATCH（降风险）
+                    "source": "adc_blind_spot",
+                    "adc_score": bs.get("adc_score", 0),
+                    "adc_weight_base": bs.get("adc_weight_base", 0.70),
+                })
+            blind_df = pd.DataFrame(blind_rows)
+            # 合并到selected，ADC补盲股放最后
+            selected = pd.concat([selected, blind_df], ignore_index=True)
+            logger.info(
+                "adc_blind_spot: injected %d candidates (total now %d)",
+                len(blind_df),
+                len(selected),
+            )
+    except Exception:
+        logger.warning("adc_blind_spot: skipped (non-blocking)", exc_info=True)
+
     candidates = _build_candidate_rows(selected, underlying_spec, asof_date, latest_prices, top_n)
+
+    # 对ADC补盲股降低权重
+    if not blind_spot_df.empty and not candidates.empty:
+        blind_symbols = set(blind_spot_df["symbol"].tolist())
+        for idx in candidates.index:
+            sym = str(candidates.at[idx, "symbol"]).zfill(6)
+            if sym in blind_symbols:
+                base_w = float(candidates.at[idx, "effective_weight"] or 0)
+                candidates.at[idx, "effective_weight"] = base_w * 0.70
+                candidates.at[idx, "source"] = "adc_blind_spot"
+
     position_scale, position_reason = _adaptive_position_scale(decision)
     if strategy_name == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
         ashare_all = _load_ashare_strategy_candidates(
@@ -2450,6 +2530,44 @@ def export_candidates(args: argparse.Namespace) -> dict:
                             "cur": int(_row.get("current_shares", 0)), "tgt": int(_row.get("target_shares", 0)),
                         })
                 db_write["signal_snapshot_rows"] = int(len(orders))
+            # 2026-06-23: 双写到 ads_order_intents（订单账本）
+            if not orders.empty and not candidates.empty:
+                _signal_id_base = f"sig_{asof_date}_{_order_strategy}"
+                _snapshot_id = str(db_write.get("research_snapshot_id", ""))
+                if not _snapshot_id:
+                    import random as _rnd
+                    _snapshot_id = f"rs_{asof_date}_{_rnd.randint(0,9999):04d}"
+                _intent_rows = 0
+                with engine.begin() as _conn_i:
+                    for _idx, _row in orders.iterrows():
+                        _sym = str(_row.get("ts_code", "")).split(".")[0].zfill(6)
+                        _signal_id = f"{_signal_id_base}_{_sym}"
+                        _conn_i.execute(text(
+                            "INSERT INTO chenyiyun.ads_order_intents "
+                            "(signal_id, research_snapshot_id, strategy_id, strategy_version, "
+                            " release_id, account_id, trade_date, execution_date, symbol, ts_code, "
+                            " side, target_weight, target_shares, target_notional, "
+                            " confidence_mult, reentry_mult, source, status) "
+                            "VALUES (:sid, :snap, :stid, :stver, :rid, :aid, :td, :ed, :sym, :ts, "
+                            " :side, :tw, :tsh, :tn, :cm, :rm, :src, 'DRAFT') "
+                            "ON DUPLICATE KEY UPDATE target_weight=VALUES(target_weight), "
+                            " target_shares=VALUES(target_shares), status='DRAFT'"
+                        ), {
+                            "sid": _signal_id, "snap": _snapshot_id,
+                            "stid": _order_strategy, "stver": "2026.06.23",
+                            "rid": _release_id, "aid": "default",
+                            "td": asof_date, "ed": _exec_date,
+                            "sym": _sym, "ts": str(_row.get("ts_code", "")),
+                            "side": str(_row.get("side", "BUY")),
+                            "tw": float(_row.get("target_weight", 0)),
+                            "tsh": int(_row.get("target_shares", 0)),
+                            "tn": float(_row.get("target_notional", 0)),
+                            "cm": 1.0, "rm": 1.0,
+                            "src": str(_row.get("source", "cy_primary")),
+                        })
+                        _intent_rows += 1
+                db_write["order_intents_written"] = _intent_rows
+                _logger.info("order_intents: wrote %d rows (snapshot=%s)", _intent_rows, _snapshot_id)
         strategy_order_details: dict[str, dict[str, pd.DataFrame]] = {}
         trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
         for detail_config in ORDER_DETAIL_CONFIGS:

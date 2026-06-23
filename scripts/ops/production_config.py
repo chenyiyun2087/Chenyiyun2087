@@ -85,6 +85,8 @@ def load_production_config() -> dict[str, object]:
         "live_canary": _normalize_live_canary(production.get("live_canary")),
         "config_path": str(CONFIG_PATH),
         "config_sha": hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16],
+        # 2026-06-23: industry filter from dispersion diagnosis
+        "industry_filter": production.get("industry_filter") or {},
     }
     canary = config["live_canary"]
     if canary["candidate_strategy"] != config["primary_strategy"]:

@@ -1,0 +1,30 @@
+strategy_id: adaptive_market_style
+strategy_version: "2026.06.23"
+release_id: shadow-20260623-01
+owner: chenyiyun
+status: SHADOW
+description: >
+  自适应市场风格策略 v2.2，作为生产策略的风控锚与仓位治理依据。
+  不直接生成生产订单，仅运行影子盘并产出风险信号。
+
+signal_time: T_15_30
+execution_time: T+1_OPEN
+universe: ashare_full_liquid_pool_v1
+holding_days: 10
+max_positions: 5
+
+pit_contract:
+  data_cutoff: T_15_30
+  execution_assumption: T+1_OPEN
+  forbid_future_fields: true
+
+promotion:
+  status: SHADOW
+  required_evidence:
+    - shadow_pass_60_days
+    - execution_quality_pass
+    - independent_release_review
+
+rollback_rule:
+  max_drawdown_breach: true
+  action: FREEZE_NEW_BUYS

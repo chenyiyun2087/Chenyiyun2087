@@ -170,8 +170,10 @@ def score_asof_date(
     # RS：rs20 分位数
     d["s_rs"] = _pct_rank_100(d["rs20"].fillna(d["rs20"].median()))
 
-    # 收敛：contraction 越小越好 → 反向分位
-    d["s_contraction"] = 100.0 - _pct_rank_100(d["contraction"].replace([np.inf, -np.inf], np.nan).fillna(d["contraction"].median()))
+    # 收敛：2026-06-23修正 — 诊断发现s_contraction与一周前向收益Spearman r=-0.205
+    # 原公式"contraction越小→分越高"的方向是反的，contraction越大反而越容易涨。
+    # 改为正向分位：contraction越大→分越高。
+    d["s_contraction"] = _pct_rank_100(d["contraction"].replace([np.inf, -np.inf], np.nan).fillna(d["contraction"].median()))
 
     # 乖离率：绝对乖离率越小越好
     bias_max = CONFIG["bias_abs_max"]
@@ -188,6 +190,28 @@ def score_asof_date(
     # 筹码健康：现价 > 近20日成交额加权均价（近似成本线）
     d["chip_healthy"] = ((d["raw_close"] > d["avg_price20"]) & (d["avg_price20"] > 0)).astype(int)
     d["s_chip"] = d["chip_healthy"] * 100.0
+
+    # === 趋势方向标签（2026-06-23 新增，仿ADC趋势框架）===
+    # ADC双系统验证："看涨"→胜率62%，"看跌"→胜率25%
+    # 基于已有特征推断三分类趋势方向
+    conditions_bull = (
+        (d["trend_ok"] == 1) &
+        (d["bull_align"] == 1) &
+        (d["rs20"] > 0)
+    )
+    conditions_bear = (
+        (d["trend_ok"] == 0) &
+        (d["rs20"] < -0.03) &
+        (d["bias_ma20"] < -0.05)
+    )
+    d["trend_label"] = "震荡"
+    d.loc[conditions_bull, "trend_label"] = "看涨"
+    d.loc[conditions_bear, "trend_label"] = "看跌"
+
+    # 趋势标签得分：看涨+3，看跌-5
+    d["s_trend_label"] = 0.0
+    d.loc[d["trend_label"] == "看涨", "s_trend_label"] = 3.0
+    d.loc[d["trend_label"] == "看跌", "s_trend_label"] = -5.0
 
     # ---- 合成总分 ----
     w = CONFIG["weights"]
@@ -212,15 +236,50 @@ def score_asof_date(
     d.loc[d["name"].str.contains("ST", na=False), "penalty"] += p["st_name"]
     d.loc[d["negative_news_flag"] == 1, "penalty"] += p["negative_news"]
 
-    d["score"] = (d["base_score"] - d["penalty"]).clip(0, 100)
+    # === 原始评分 ===
+    raw_score = (d["base_score"] - d["penalty"]).clip(0, 100)
 
-    # 今日触发：趋势ok 且 is_breakout=1（你后续可扩展为“回踩确认”等更稳触发）
+    # === 非线性变换（2026-06-23，网格搜索最优参数）===
+    # 原理：双系统验证高分(>75)与低分(<30)均表现不佳，中分(30-60)是甜区
+    # 三次方收缩：偏离中心越远，修正越大，压低极端高分、抬升极端低分
+    # 网格搜索结果：center=60, half_width=20, strength=0.30 时Spearman r最优
+    center = 60.0
+    half_width = 20.0
+    deviation = (raw_score - center) / half_width
+    adjustment = (deviation ** 3) * half_width * 0.30
+    # 对<30分区域额外温和抬升（三次方对称性不足覆盖极低端）
+    d["base_score_raw"] = raw_score  # 保留原始值用于诊断
+    d["score"] = (raw_score - adjustment + d["s_trend_label"]).clip(0, 100)
+
+    # === 行业共振调整（2026-06-23）===
+    ind_cfg = CONFIG.get("industry_resonance", {})
+    if ind_cfg.get("enabled") and "industry" in d.columns:
+        bearish_map = ind_cfg.get("bearish_penalty", {})
+        bullish_map = ind_cfg.get("bullish_bonus", {})
+        apply_trade_only = ind_cfg.get("apply_to_trade_only", True)
+
+        for ind, penalty in bearish_map.items():
+            mask = d["industry"].str.contains(ind, na=False)
+            if apply_trade_only:
+                mask = mask & (d["score"] >= CONFIG.get("trade_threshold", 75))
+            d.loc[mask, "score"] = (d.loc[mask, "score"] - penalty).clip(0, 100)
+
+        for ind, bonus in bullish_map.items():
+            mask = d["industry"].str.contains(ind, na=False)
+            # 仅对中分段(30-65)加分，避免推高高分段
+            mask = mask & (d["score"] >= 30) & (d["score"] <= 65)
+            if apply_trade_only:
+                mask = mask & (d["score"] >= CONFIG.get("trade_threshold", 75))
+            d.loc[mask, "score"] = (d.loc[mask, "score"] + bonus).clip(0, 100)
+
+    # 今日触发：趋势ok 且 is_breakout=1（你后续可扩展为"回踩确认"等更稳触发）
     d["trigger_today"] = ((d["trend_ok"] == 1) & (d["is_breakout"] == 1)).astype(int)
 
     # 输出更利于复盘的字段
     out_cols = [
         "symbol", "name", "trade_date",
-        "score", "base_score", "penalty", "trigger_today",
+        "score", "base_score", "base_score_raw", "penalty", "trigger_today",
+        "trend_label", "s_trend_label",
         "is_breakout", "breakout_dist", "vol_ratio", "rs20", "contraction", "avg_amount20",
         "bull_align", "bias_ma20", "chip_healthy",
         "s_trend", "s_bull_align", "s_breakout", "s_volume", "s_vol_mild", "s_rs",
