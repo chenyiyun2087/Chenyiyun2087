@@ -83,7 +83,45 @@ TRUSTED_PRODUCTION_CONFIG = load_production_config()
 TRUSTED_PRODUCTION_RISK_PROFILE = str(TRUSTED_PRODUCTION_CONFIG["risk_profile"])
 TRUSTED_PRODUCTION_STRATEGY = str(TRUSTED_PRODUCTION_CONFIG["primary_strategy"])
 
+
+def _load_pipeline_from_yaml() -> dict:
+    """从 task_registry/pipeline.yaml 加载流水线定义，合并到 TASKS 字典。"""
+    import yaml
+    pipeline_path = Path(__file__).resolve().parents[1] / "task_registry" / "pipeline.yaml"
+    if not pipeline_path.exists():
+        return {}
+    try:
+        pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+    merged = {}
+    for group_name, group_def in pipeline.items():
+        for task_def in group_def.get("tasks", []):
+            task_id = task_def.get("id")
+            if not task_id:
+                continue
+            merged[task_id] = {
+                "name": task_def.get("description", task_id),
+                "description": task_def.get("description", ""),
+                "script": task_def.get("script", ""),
+                "last_run": "Never",
+                "status": "Idle",
+                "switched_day": False,
+                "schedule_enabled": task_def.get("status") == "enabled",
+                "schedule_time": task_def.get("time", "00:00"),
+                "next_run": "-",
+                "trading_day_only": task_def.get("trading_day_only", True),
+                "day_of_week": task_def.get("day_of_week"),  # None = every trading day
+                "type": task_def.get("type", "script"),
+                "args": task_def.get("args", []),
+                "append_date": task_def.get("append_date", True),
+            }
+    return merged
+
+
 # Task Status Storage (Loaded from DB on start)
+# 优先从 pipeline.yaml 加载，保留硬编码 TASKS 作为兼容回退
 TASKS = {
     "sina_picture": {
         "name": "sina 图片截图",
@@ -315,6 +353,15 @@ TASKS = {
         "trading_day_only": True,
     },
 }
+# 2026-06-23: 从 pipeline.yaml 加载任务定义，合并到硬编码 TASKS
+_pipeline_tasks = _load_pipeline_from_yaml()
+if _pipeline_tasks:
+    # pipeline.yaml 的任务覆盖硬编码 TASKS 中同名任务
+    for _pt_name, _pt_def in _pipeline_tasks.items():
+        if _pt_name in TASKS:
+            TASKS[_pt_name].update(_pt_def)
+        else:
+            TASKS[_pt_name] = _pt_def
 TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
