@@ -123,6 +123,18 @@ def _load_pipeline_from_yaml() -> dict:
 # Task Status Storage (Loaded from DB on start)
 # 优先从 pipeline.yaml 加载，保留硬编码 TASKS 作为兼容回退
 TASKS = {
+    "db_bs_detect": {
+        "name": "DB B/S买卖点检测",
+        "description": "基于ML模型从数据库量价数据直接生成B/S买卖点（替代新浪OCR）",
+        "script": "scoreRank/cli/detect_bs_points.py",
+        "last_run": "Never",
+        "status": "Idle",
+        "switched_day": False,
+        "schedule_enabled": True,
+        "schedule_time": "21:05",
+        "next_run": "-",
+        "trading_day_only": True,
+    },
     "sina_picture": {
         "name": "sina 图片截图",
         "description": "Sina财经B/S信号批量截图",
@@ -130,7 +142,7 @@ TASKS = {
         "last_run": "Never",
         "status": "Idle",
         "switched_day": False,
-        "schedule_enabled": False,
+        "schedule_enabled": True,
         "schedule_time": "15:20",
         "next_run": "-",
         "trading_day_only": True,
@@ -142,7 +154,7 @@ TASKS = {
         "last_run": "Never",
         "status": "Idle",
         "switched_day": False,
-        "schedule_enabled": False,
+        "schedule_enabled": True,
         "schedule_time": "16:10",
         "next_run": "-",
         "trading_day_only": True,
@@ -279,18 +291,6 @@ TASKS = {
         "next_run": "-",
         "trading_day_only": True,
     },
-    "eastmoney": {
-        "name": "eastmoney 策略扫描",
-        "description": "东方财富社区舆情扫描与个股热度分析",
-        "script": "eastmoney/run_strategy.py",
-        "last_run": "Never",
-        "status": "Idle",
-        "switched_day": False,
-        "schedule_enabled": False,
-        "schedule_time": "16:30",
-        "next_run": "-",
-        "trading_day_only": True,
-    },
     "sync_trade_cal": {
         "name": "交易日历同步",
         "description": "同步Tushare官方交易日历到本地库",
@@ -302,55 +302,6 @@ TASKS = {
         "schedule_time": "08:00",
         "next_run": "-",
         "trading_day_only": False,
-    },
-    "chenyiyun_selected": {
-        "name": "陈依云旧精选信号检查（Legacy）",
-        "description": "旧高股息/小市值策略，仅保留归档；已从生产选股链路隔离，禁止在任务中心执行",
-        "script": "scripts/ops/run_chenyiyun_signal_check.py",
-        "last_run": "Never",
-        "status": "Idle",
-        "switched_day": False,
-        "schedule_enabled": False,
-        "schedule_time": "09:05",
-        "next_run": "-",
-        "trading_day_only": True,
-        "legacy": True,
-    },
-    "chenyiyun_weekly_rebalance": {
-        "name": "陈依云周调仓（周一09:30）",
-        "description": "每周一执行周度仓位调整",
-        "script": "scripts/ops/run_chenyiyun_weekly_rebalance.py",
-        "last_run": "Never",
-        "status": "Idle",
-        "switched_day": False,
-        "schedule_enabled": False,
-        "schedule_time": "09:30",
-        "next_run": "-",
-        "trading_day_only": True,
-    },
-    "chenyiyun_limitup_check": {
-        "name": "陈依云涨停检查（14:00）",
-        "description": "检查持仓涨停打开并生成卖出建议",
-        "script": "scripts/ops/run_chenyiyun_limitup_check.py",
-        "last_run": "Never",
-        "status": "Idle",
-        "switched_day": False,
-        "schedule_enabled": False,
-        "schedule_time": "14:00",
-        "next_run": "-",
-        "trading_day_only": True,
-    },
-    "chenyiyun_position_update": {
-        "name": "陈依云仓位更新（21:10）",
-        "description": "同步持仓价格并更新每日仓位快照",
-        "script": "scripts/ops/run_chenyiyun_position_update.py",
-        "last_run": "Never",
-        "status": "Idle",
-        "switched_day": False,
-        "schedule_enabled": False,
-        "schedule_time": "21:10",
-        "next_run": "-",
-        "trading_day_only": True,
     },
 }
 # 2026-06-23: 从 pipeline.yaml 加载任务定义，合并到硬编码 TASKS
@@ -371,25 +322,28 @@ TASK_QUEUE_SCAN_INTERVAL_SECONDS = 2
 # explicit: scripts which already perform their own freshness checks remain free to
 # do so, while the end-of-day write chain cannot silently consume yesterday's data.
 TASK_DEPENDENCIES = {
+    # 新浪截图 → OCR 链路
     "sina_analyse": ("sina_picture",),
-    "sina_bs_consensus": ("sina_score",),
-    "trusted_strategy_candidates": ("sina_bs_consensus",),
+    # ADC/DB B/S检测 → 候选导出 → 收益评估
+    "trusted_strategy_candidates": ("adc_bs_detect",),
     "trusted_strategy_performance_review": ("trusted_strategy_candidates",),
+    # sina_score → sina_bs_consensus 链路已停用
 }
 SCHEDULED_TASK_WHITELIST = {
-    "sina_picture",
-    "sina_analyse",
-    "sina_score",
-    "sina_bs_consensus",
-    "trusted_strategy_candidates",
-    "trusted_strategy_shadow_monitor",
-    "trusted_strategy_performance_review",
-    "sina_bs_image_weekly_cleanup",
-    "sina_m8",
-    "sina_snapshot",
-    "sina_m7_sell",
-    "bs_signal_monthly_cycle",
-    "candle_diag_scan",
+    # --- 盘中 ---
+    "sina_picture",                        # 15:20  新浪财经 B/S 信号批量截图
+    "sina_analyse",                        # 16:10  基于截图 OCR B/S 买卖点分析落库
+    # --- 夜间流水线 (daily_close) ---
+    "db_bs_detect",                        # 21:05  DB量价模型 B/S 检测
+    "adc_bs_detect",                       # 21:05  ADC数据源 B/S 检测
+    "bs_ocr_adc_compare",                  # 21:10  B/S 来源交叉比对
+    "trusted_strategy_candidates",         # 21:25  可信策略候选导出
+    "trusted_strategy_shadow_monitor",     # 21:28  影子盘监控
+    "trusted_strategy_performance_review", # 21:32  收益评估 + 飞书推送
+    "candle_diag_scan",                    # 21:40  K线形态全市场扫描
+    "bs_signal_monthly_cycle",             # 21:45  B点模型月度闭环
+    # --- 周度 ---
+    "sina_bs_image_weekly_cleanup",        # 周五 22:05 图片清理
 }
 
 NOTIFICATION_CHANNEL_DEFS = [
@@ -2610,26 +2564,6 @@ def _build_task_script_parts(task_name, run_options=None):
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
             args.extend(['--date', date_iso])
         return [script, *args]
-    if task_name == 'eastmoney':
-        return [script, '--export', 'result']
-    if task_name == 'chenyiyun_selected':
-        legacy_args = [
-            '--order-table',
-            'chenyiyun.ads_legacy_chenyiyun_orders',
-            '--signal-snapshot-table',
-            'chenyiyun.ads_legacy_chenyiyun_selected_signals',
-            '--signal-table',
-            'chenyiyun.ads_legacy_chenyiyun_daily_signals',
-        ]
-        if datestr and len(datestr) == 8:
-            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
-            return [script, '--date', date_iso, *legacy_args]
-        return [script, *legacy_args]
-    if task_name in {'chenyiyun_weekly_rebalance', 'chenyiyun_limitup_check', 'chenyiyun_position_update'}:
-        if datestr and len(datestr) == 8:
-            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
-            return [script, '--date', date_iso]
-        return [script]
     return [script]
 
 def init_tasks():
