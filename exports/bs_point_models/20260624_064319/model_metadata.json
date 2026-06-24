@@ -1,0 +1,238 @@
+{
+  "timestamp": "20260624_064319",
+  "dataset": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset.parquet",
+  "n_train": 46625,
+  "n_val": 7819,
+  "n_test": 6920,
+  "n_features": 103,
+  "train_buy_rate": 0.03187131367292225,
+  "train_sell_rate": 0.046005361930294905,
+  "models": {
+    "buy_lr": {
+      "model_type": "LogisticRegression",
+      "best_threshold": 0.9171022663089033,
+      "val_auc": 0.9626453686948813,
+      "test_auc": 0.9422857138783074,
+      "test_accuracy": 0.9609826589595376,
+      "test_precision": 0.3906810035842294,
+      "test_recall": 0.5215311004784688,
+      "test_f1": 0.44672131147540983
+    },
+    "sell_lr": {
+      "model_type": "LogisticRegression",
+      "best_threshold": 0.859840433619014,
+      "val_auc": 0.9426035235534559,
+      "test_auc": 0.9508645983169915,
+      "test_accuracy": 0.9729768786127168,
+      "test_precision": 0.32679738562091504,
+      "test_recall": 0.373134328358209,
+      "test_f1": 0.34843205574912894
+    },
+    "buy_rf": {
+      "model_type": "RandomForestClassifier",
+      "best_threshold": 0.8111577380655518,
+      "val_auc": 0.9753883933674794,
+      "test_auc": 0.9657999185797225,
+      "test_accuracy": 0.971820809248555,
+      "test_precision": 0.5271317829457365,
+      "test_recall": 0.6507177033492823,
+      "test_f1": 0.582441113490364,
+      "top_features": [
+        {
+          "feature": "close_vs_ma5",
+          "importance": 0.05695060696629012
+        },
+        {
+          "feature": "kdj_d_qfq",
+          "importance": 0.05273711855354119
+        },
+        {
+          "feature": "boll_position",
+          "importance": 0.052440053777501536
+        },
+        {
+          "feature": "rsi_qfq_6",
+          "importance": 0.05209415124113816
+        },
+        {
+          "feature": "ma_bull_align",
+          "importance": 0.04299964091115021
+        },
+        {
+          "feature": "close_vs_ma20",
+          "importance": 0.042578940379208056
+        },
+        {
+          "feature": "macd_hist_chg",
+          "importance": 0.040209414293865216
+        },
+        {
+          "feature": "close_vs_ma10",
+          "importance": 0.03686212170379799
+        },
+        {
+          "feature": "maroc_qfq",
+          "importance": 0.03682147635897905
+        },
+        {
+          "feature": "bias1_qfq",
+          "importance": 0.03478486529057945
+        },
+        {
+          "feature": "cci_qfq",
+          "importance": 0.03358163226267644
+        },
+        {
+          "feature": "wr1_qfq",
+          "importance": 0.03222624462639472
+        },
+        {
+          "feature": "rsi_14",
+          "importance": 0.030224582959554425
+        },
+        {
+          "feature": "mtmma_qfq",
+          "importance": 0.02933057313944913
+        },
+        {
+          "feature": "bias2_qfq",
+          "importance": 0.0280514006677034
+        },
+        {
+          "feature": "hma_slope",
+          "importance": 0.02767042412475726
+        },
+        {
+          "feature": "rsi_qfq_12",
+          "importance": 0.026612298125695506
+        },
+        {
+          "feature": "kdj_k_qfq",
+          "importance": 0.02447340089304115
+        },
+        {
+          "feature": "wr_qfq",
+          "importance": 0.020364867113937778
+        },
+        {
+          "feature": "topdays",
+          "importance": 0.019135534190344902
+        }
+      ]
+    },
+    "sell_rf": {
+      "model_type": "RandomForestClassifier",
+      "best_threshold": 0.7854036007029237,
+      "val_auc": 0.9680518212336363,
+      "test_auc": 0.9733967210807148,
+      "test_accuracy": 0.9823699421965318,
+      "test_precision": 0.5526315789473685,
+      "test_recall": 0.4701492537313433,
+      "test_f1": 0.5080645161290323,
+      "top_features": [
+        {
+          "feature": "close_vs_ma5",
+          "importance": 0.056245944527052345
+        },
+        {
+          "feature": "maroc_qfq",
+          "importance": 0.05319175358953598
+        },
+        {
+          "feature": "macd_hist_chg",
+          "importance": 0.05119314865746303
+        },
+        {
+          "feature": "bias1_qfq",
+          "importance": 0.048905038743996904
+        },
+        {
+          "feature": "ma_bear_align",
+          "importance": 0.04303811894579706
+        },
+        {
+          "feature": "lowdays",
+          "importance": 0.04109330675010063
+        },
+        {
+          "feature": "kdj_d_qfq",
+          "importance": 0.038969031529236045
+        },
+        {
+          "feature": "mtmma_qfq",
+          "importance": 0.038956974253524665
+        },
+        {
+          "feature": "wr1_qfq",
+          "importance": 0.037232076086175764
+        },
+        {
+          "feature": "hma_slope",
+          "importance": 0.03611189123430882
+        },
+        {
+          "feature": "rsi_qfq_6",
+          "importance": 0.03495221270903715
+        },
+        {
+          "feature": "boll_position",
+          "importance": 0.03088519920962517
+        },
+        {
+          "feature": "kdj_k_qfq",
+          "importance": 0.02734025353124766
+        },
+        {
+          "feature": "close_vs_ma10",
+          "importance": 0.02423843231602515
+        },
+        {
+          "feature": "bias2_qfq",
+          "importance": 0.02407541883186131
+        },
+        {
+          "feature": "cci_qfq",
+          "importance": 0.023880607673987062
+        },
+        {
+          "feature": "close_vs_ma20",
+          "importance": 0.023567765412818336
+        },
+        {
+          "feature": "wr_qfq",
+          "importance": 0.018077943276166603
+        },
+        {
+          "feature": "bias3_qfq",
+          "importance": 0.016024434296821162
+        },
+        {
+          "feature": "topdays",
+          "importance": 0.01566745810692419
+        }
+      ]
+    },
+    "buy_hgb": {
+      "model_type": "HistGradientBoostingClassifier",
+      "best_threshold": 0.8920949894302858,
+      "val_auc": 0.975087967054874,
+      "test_auc": 0.9607532159940225,
+      "test_accuracy": 0.9729768786127168,
+      "test_precision": 0.5495495495495496,
+      "test_recall": 0.583732057416268,
+      "test_f1": 0.5661252900232019
+    },
+    "sell_hgb": {
+      "model_type": "HistGradientBoostingClassifier",
+      "best_threshold": 0.8637121760319231,
+      "val_auc": 0.9710972744656844,
+      "test_auc": 0.9747790666473116,
+      "test_accuracy": 0.9829479768786127,
+      "test_precision": 0.5579710144927537,
+      "test_recall": 0.5746268656716418,
+      "test_f1": 0.5661764705882353
+    }
+  },
+  "best_buy_model": "sell_hgb",
+  "best_sell_model": "sell_hgb"
+}
