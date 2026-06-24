@@ -23,21 +23,34 @@ def normalize_opt_score(value: Any) -> float:
 
 
 def entry_timing_score(price_change_ratio: Any) -> float:
+    """买入时机评分：奖励回调/盘整，惩罚追高/恐慌。
+
+    问题背景：旧版在 gain 8-18% 给最高分 100，导致 TRADE pool 集中了已大涨的
+    股票，10 日平均收益 -0.48%，反而不如 WATCH pool (+1.03%)。
+    新逻辑采用均值回归友好设计：回调到支撑位最优，追高扣分。
+    """
     gain = _safe_float(price_change_ratio)
-    if gain < -12:
-        score = 15.0
-    elif gain < -5:
-        score = 15.0 + (gain + 12.0) * 35.0 / 7.0
-    elif gain < 0:
-        score = 50.0 + (gain + 5.0) * 25.0 / 5.0
+    if gain < -15:
+        # 深度回调，恐慌性下跌 → 回避
+        score = 10.0
+    elif gain < -8:
+        # 中等回调，可能是买入机会 → 高分
+        score = 65.0 + (gain + 15.0) * 35.0 / 7.0  # 65 → 100 (gain=-8 时 100)
+    elif gain < -2:
+        # 轻度回调，支撑位附近 → 最优
+        score = 90.0 + (gain + 8.0) * 10.0 / 6.0  # 90 → 100 (gain=-2 时 100)
+    elif gain < 3:
+        # 盘整/小幅波动 → 良好
+        score = 75.0 + (gain + 2.0) * 15.0 / 5.0  # 75 → 90
     elif gain < 8:
-        score = 75.0 + gain * 25.0 / 8.0
-    elif gain < 18:
-        score = 100.0 - (gain - 8.0) * 25.0 / 10.0
-    elif gain < 35:
-        score = 75.0 - (gain - 18.0) * 35.0 / 17.0
+        # 温和上涨 → 中性偏谨慎
+        score = 50.0 - (gain - 3.0) * 25.0 / 5.0  # 50 → 25
+    elif gain < 15:
+        # 已明显拉升 → 偏贵
+        score = 25.0 - (gain - 8.0) * 15.0 / 7.0  # 25 → 10
     else:
-        score = 40.0
+        # 大幅拉升 → 回避追高
+        score = 10.0
     return float(np.clip(score, 0.0, 100.0))
 
 
@@ -85,8 +98,9 @@ def calculate_bs_trade_gate(row: Mapping[str, Any]) -> dict[str, float | int | s
     if liquidity < 20:
         gate_score -= min(35.0, (20.0 - liquidity) * 2.0)
         reasons.append("流动性低于门槛")
-    if gain > 8:
-        gate_score -= min(28.0, (gain - 8.0) * 1.4)
+    if gain > 5:
+        # 收紧：原为 gain>8，TRADE pool 回测显示已涨 5-8% 的股票容易均值回归
+        gate_score -= min(28.0, (gain - 5.0) * 1.8)
         reasons.append("买点后涨幅偏高")
     elif gain <= -6:
         gate_score -= min(20.0, (-6.0 - gain) * 2.0)
@@ -95,8 +109,8 @@ def calculate_bs_trade_gate(row: Mapping[str, Any]) -> dict[str, float | int | s
         gate_score -= min(18.0, penalty * 0.6)
         reasons.append("基础评分存在惩罚项")
 
-    hard_block = is_limit_up or liquidity < 15 or gain > 18 or penalty >= 35
-    strict_pass = (not is_limit_up) and liquidity >= 20 and gain <= 8 and gain > -6 and penalty <= 0
+    hard_block = is_limit_up or liquidity < 15 or gain > 15 or penalty >= 35
+    strict_pass = (not is_limit_up) and liquidity >= 20 and gain <= 5 and gain > -6 and penalty <= 0
     gate_score = float(np.clip(gate_score, 0.0, 100.0))
 
     if strict_pass:
@@ -133,17 +147,26 @@ def calculate_bs_enhanced_score(row: Mapping[str, Any]) -> dict[str, float | str
     if int(_safe_float(row.get("is_limit_up"))) == 1:
         risk_penalty += 8.0
     if gain >= 35:
-        risk_penalty += 6.0
-    elif gain <= -12:
-        risk_penalty += 6.0
+        risk_penalty += 8.0
+    elif gain >= 15:
+        # 追高惩罚（新增梯度）
+        risk_penalty += 4.0
+    elif gain >= 8:
+        risk_penalty += 2.0
+    elif gain <= -15:
+        risk_penalty += 8.0
+    elif gain <= -8:
+        risk_penalty += 4.0
 
+    # 权重调整：降低动量类因子(opt+rs+entry)，提升质量/技术类
     enhanced = (
-        0.15 * score
-        + 0.30 * opt
-        + 0.25 * claude
-        + 0.15 * rs
-        + 0.05 * breakout
-        + 0.10 * entry
+        0.22 * score       # 技术总分（原 0.15 → 0.22）
+        + 0.22 * opt        # 因子优化（原 0.30 → 0.22，旧权重过高导致追涨）
+        + 0.25 * claude     # AI评分（保持）
+        + 0.10 * rs         # 相对强度（原 0.15 → 0.10）
+        + 0.05 * breakout   # 突破（保持）
+        + 0.08 * entry      # 入场时机（原 0.10 → 0.08，配合 entry_timing_score 反转）
+        + 0.08 * _safe_float(row.get("s_liquidity"), 50.0)  # 新增：流动性
         - risk_penalty
     )
     enhanced = float(np.clip(enhanced, 0.0, 100.0))
@@ -184,13 +207,17 @@ def calculate_bs_score_v2(row: Mapping[str, Any]) -> dict[str, float | str]:
     if liquidity < 20:
         risk_penalty += (20.0 - liquidity) * 0.25
     if gain >= 35:
-        risk_penalty += 8.0
+        risk_penalty += 10.0   # 极端追高
     elif gain >= 22:
-        risk_penalty += 3.0
+        risk_penalty += 6.0    # 明显追高（原 3.0 → 6.0）
+    elif gain >= 15:
+        risk_penalty += 4.0    # 已拉升（新增梯度）
+    elif gain >= 8:
+        risk_penalty += 2.0    # 温和追高（新增梯度）
     elif gain <= -12:
-        risk_penalty += 8.0
+        risk_penalty += 10.0   # 恐慌下跌
     elif gain <= -6:
-        risk_penalty += 3.0
+        risk_penalty += 4.0    # 中等回撤（原 3.0 → 4.0）
 
     enhanced = (
         0.18 * rs

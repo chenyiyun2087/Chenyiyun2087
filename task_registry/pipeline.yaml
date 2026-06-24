@@ -1,10 +1,24 @@
 # Chenyiyun2087 生产流水线定义
 # 唯一权威来源 — web/app.py worker 读取此文件执行任务
-# 生成日期: 2026-06-23
+# 更新日期: 2026-06-24
 
 daily_close:
   description: "每日收盘后流水线"
   tasks:
+    - id: adc_bs_detect
+      time: "21:05"
+      script: scoreRank/cli/detect_adc_bs_points.py
+      type: script
+      trading_day_only: true
+      status: enabled
+
+    - id: bs_ocr_adc_compare
+      time: "21:10"
+      script: scripts/research/compare_bs_sources.py
+      type: script
+      trading_day_only: true
+      status: enabled
+
     - id: trusted_strategy_candidates
       time: "21:25"
       script: scripts/ops/export_trusted_strategy_candidates.py
@@ -26,6 +40,13 @@ daily_close:
       trading_day_only: true
       status: enabled
 
+    - id: candle_diag_scan
+      time: "21:40"
+      script: scripts/ops/run_candle_diag_daily_scan.py
+      type: script
+      trading_day_only: true
+      status: enabled
+
     - id: bs_signal_monthly_cycle
       time: "21:45"
       script: scripts/ops/run_monthly_bs_signal_enhancement_cycle.py
@@ -33,9 +54,19 @@ daily_close:
       trading_day_only: true
       status: enabled
 
-    - id: candle_diag_scan
-      time: "21:40"
-      script: scripts/ops/run_candle_diag_daily_scan.py
+intraday:
+  description: "盘中任务"
+  tasks:
+    - id: sina_picture
+      time: "15:20"
+      script: sina/bs_detection/main.py
+      type: script
+      trading_day_only: true
+      status: enabled
+
+    - id: sina_analyse
+      time: "16:10"
+      script: sina/bs_detection/main.py
       type: script
       trading_day_only: true
       status: enabled
@@ -49,33 +80,3 @@ weekly:
       script: scripts/ops/cleanup_sina_bs_detection_images.py
       type: script
       status: enabled
-
-legacy_disabled:
-  description: "已停用的任务（保留定义，不调度）"
-  tasks:
-    - id: sina_picture
-      status: disabled
-    - id: sina_analyse
-      status: disabled
-    - id: sina_score
-      status: disabled
-    - id: sina_bs_consensus
-      status: disabled
-    - id: sina_m8
-      status: disabled
-    - id: sina_snapshot
-      status: disabled
-    - id: sina_m7_sell
-      status: disabled
-    - id: eastmoney
-      status: disabled
-    - id: sync_trade_cal
-      status: disabled
-    - id: chenyiyun_selected
-      status: disabled
-    - id: chenyiyun_weekly_rebalance
-      status: disabled
-    - id: chenyiyun_limitup_check
-      status: disabled
-    - id: chenyiyun_position_update
-      status: disabled

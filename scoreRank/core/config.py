@@ -13,17 +13,17 @@ CONFIG = {
     "watch_threshold": 60,
     "bs_trade_threshold": 75,
     "bs_watch_threshold": 58,
-    "bs_v2_trade_threshold": 72,
-    "bs_v2_watch_threshold": 58,
+    "bs_v2_trade_threshold": 68,        # 原 72，配合 entry_timing_score 反转降低
+    "bs_v2_watch_threshold": 55,        # 原 58
     "bs_dynamic_threshold_enabled": True,
-    "bs_dynamic_trade_min": 67,
-    "bs_dynamic_trade_max": 80,
-    "bs_dynamic_watch_min": 54,
-    "bs_dynamic_watch_max": 64,
-    "bs_consensus_trade_threshold": 66,
-    "bs_consensus_watch_threshold": 56,
-    "bs_model_rank_trade_threshold": 62,
-    "bs_model_rank_watch_threshold": 52,
+    "bs_dynamic_trade_min": 64,         # 原 67
+    "bs_dynamic_trade_max": 76,         # 原 80
+    "bs_dynamic_watch_min": 50,         # 原 54
+    "bs_dynamic_watch_max": 60,         # 原 64
+    "bs_consensus_trade_threshold": 62, # 原 66
+    "bs_consensus_watch_threshold": 52, # 原 56
+    "bs_model_rank_trade_threshold": 58, # 原 62
+    "bs_model_rank_watch_threshold": 48, # 原 52
     "max_trade_pool": 80,
 
     # 资金200万：用成交额门槛过滤小票（单位取决于你库中amount单位）

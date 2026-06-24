@@ -199,7 +199,7 @@ def _ensure_score_rank_daily_schema(cursor):
             cursor.execute(ddl)
 
 
-def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: list[str]) -> pd.DataFrame:
+def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: list[str], bs_batch: str = "ml_detect_v3") -> pd.DataFrame:
     symbols = _normalize_symbol_list(symbols)
     if not symbols:
         return pd.DataFrame(columns=["symbol", "buy_point_close"])
@@ -207,6 +207,7 @@ def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: 
     symbol_placeholders = ",".join(["%s"] * len(symbols))
     ts_codes = symbols_to_ts_codes(symbols)
     ts_placeholders = ",".join(["%s"] * len(ts_codes))
+    _ = symbol_placeholders, ts_codes, ts_placeholders
     sql = f"""
     SELECT
         latest.stock_code AS symbol,
@@ -222,6 +223,7 @@ def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: 
             WHERE history_buy.stock_code = latest.stock_code
               AND history_buy.has_buy_signal = 1
               AND history_buy.batch_date <= latest.max_buy_date
+              AND history_buy.batch_name = %s
         ) AS event_seq_for_symbol,
         k.adj_close AS buy_point_close
     FROM (
@@ -232,12 +234,14 @@ def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: 
             FROM bs_detection_results
             WHERE has_buy_signal = 1
               AND batch_date <= %s
-              AND stock_code IN ({symbol_placeholders})
-            GROUP BY stock_code
+              AND batch_date >= %s
+              AND batch_name = %s
+              GROUP BY stock_code
         ) picked
           ON picked.stock_code = b.stock_code
          AND picked.max_buy_date = b.batch_date
         WHERE b.has_buy_signal = 1
+          AND b.batch_name = %s
     ) latest
     LEFT JOIN tushare_stock.dwd_stock_daily_standard k
         ON k.ts_code = CASE
@@ -246,11 +250,8 @@ def fetch_bs_signals_by_symbol(db_conf: dict, asof_date: pd.Timestamp, symbols: 
             ELSE CONCAT(latest.stock_code, '.SZ')
         END
        AND k.trade_date = latest.max_buy_date
-       AND k.ts_code IN ({ts_placeholders})
-    """
-    params = [asof_date.strftime("%Y%m%d")]
-    params.extend(symbols)
-    params.extend(ts_codes)
+       """
+    params = [bs_batch, asof_date.strftime("%Y%m%d"), (asof_date - timedelta(days=10)).strftime("%Y%m%d"), bs_batch, bs_batch]
     df = _query_df(db_conf, sql, tuple(params))
     if df.empty:
         return df
@@ -581,6 +582,8 @@ def main():
     parser.add_argument("--force", action="store_true", help="Force run ignoring time check")
     parser.add_argument("--strategy", type=str, default="technical", choices=["technical", "claude"], help="Scoring strategy")
     parser.add_argument("--date", type=str, help="Target date YYYYMMDD or YYYY-MM-DD")
+    parser.add_argument("--bs-batch", type=str, default="ml_detect_v3",
+                        help="Batch name in bs_detection_results (default: ml_detect_v3=ML全市场, config_1=OCR自选)")
     args = parser.parse_args()
 
     try:
@@ -603,7 +606,8 @@ def main():
              _announce("Step 1: Get latest B/S signals...")
              latest_bs_date = _query_scalar(
                  engine,
-                 "SELECT MAX(batch_date) AS max_batch_date FROM bs_detection_results"
+                 "SELECT MAX(batch_date) AS max_batch_date FROM bs_detection_results WHERE batch_name = %(bs_batch)s",
+                 {"bs_batch": args.bs_batch}
              )
                 
              if not latest_bs_date:
@@ -634,19 +638,21 @@ def main():
                 MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
             FROM bs_detection_results
             WHERE batch_date <= %(target_date)s
+              AND batch_name = %(bs_batch)s
             GROUP BY stock_code
         ) AS summary
             ON latest_buy.stock_code = summary.stock_code
             AND latest_buy.batch_date = summary.latest_buy_date
         WHERE latest_buy.has_buy_signal = 1
+          AND latest_buy.batch_name = %(bs_batch)s
           AND (summary.latest_sell_date IS NULL
                OR summary.latest_buy_date > summary.latest_sell_date)
         """
-        
+
         # Use simple string replacement or param binding depending on read_sql support
         # pandas read_sql supports params.
-        
-        df_bs = _query_df(engine, sql_bs, {"target_date": target_date_str})
+
+        df_bs = _query_df(engine, sql_bs, {"target_date": target_date_str, "bs_batch": args.bs_batch})
         bs_symbols = _normalize_symbol_list(df_bs.get("stock_code", pd.Series(dtype=str)).tolist())
         _announce("Found %s B/S candidate symbols as of %s.", len(bs_symbols), target_date_str)
 
@@ -773,7 +779,7 @@ def main():
                 print(f"Error calculating candle pattern features: {e}")
         else:
             features = pd.DataFrame()
-        bs_signals = fetch_bs_signals_by_symbol(engine, asof_date, all_symbols)
+        bs_signals = fetch_bs_signals_by_symbol(engine, asof_date, all_symbols, args.bs_batch)
         
         if not bs_signals.empty and "buy_point_close" in bs_signals.columns:
             scored["symbol"] = scored["symbol"].map(_normalize_symbol)
@@ -830,9 +836,9 @@ def main():
         scored = attach_threshold_columns(scored, threshold_decision)
         scored = assign_shadow_pool(scored, CONFIG)
         
-        # Logic for Pool Type (Only for B/S candidates)
+        # Pool Type 分层（修复：所有股票都应获得 pool_type，避免 86% NULL）
         scored['pool_type'] = None
-        
+
         mask_bs = (scored['is_bs_candidate'] == 1)
         gate_pass = pd.to_numeric(scored.get('bs_gate_pass', 0), errors='coerce').fillna(0).astype(int) == 1
         gate_label = scored.get('bs_gate_label', pd.Series("", index=scored.index)).fillna("").astype(str)
@@ -840,7 +846,7 @@ def main():
             scored['bs_score_v2'] >= scored["dynamic_trade_threshold"]
         )
         scored.loc[mask_trade, 'pool_type'] = 'TRADE'
-        
+
         mask_watch = mask_bs & (~mask_trade) & (
             scored['bs_score_v2'] >= scored["dynamic_watch_threshold"]
         ) & (gate_label != "过滤")
@@ -850,6 +856,15 @@ def main():
             & (scored['bs_research_score'] >= CONFIG.get("bs_research_watch_threshold", 58))
         )
         scored.loc[mask_watch, 'pool_type'] = 'WATCH'
+
+        # 非 BS 候选股也分层，消除 86% NULL
+        mask_non_bs = (~mask_bs) & (scored['pool_type'].isna())
+        # CORE: 技术分 >= 70 的非候选股 → 潜在未来候选
+        scored.loc[mask_non_bs & (scored['score'] >= 70), 'pool_type'] = 'CORE'
+        # SCAN: 技术分 55-69 → 跟踪观察
+        scored.loc[mask_non_bs & (scored['score'] >= 55) & (scored['pool_type'].isna()), 'pool_type'] = 'SCAN'
+        # BASE: 其余全市场股票
+        scored.loc[scored['pool_type'].isna(), 'pool_type'] = 'BASE'
         
         # Filter for saving
         # [MODIFIED] Now saving ALL scored symbols instead of filtering.
@@ -861,6 +876,9 @@ def main():
         _announce("  Total Scored: %s", len(scored))
         _announce("  TRADE Pool  : %s", len(scored[scored['pool_type']=='TRADE']))
         _announce("  WATCH Pool  : %s", len(scored[scored['pool_type']=='WATCH']))
+        _announce("  CORE  Pool  : %s", len(scored[scored['pool_type']=='CORE']))
+        _announce("  SCAN  Pool  : %s", len(scored[scored['pool_type']=='SCAN']))
+        _announce("  BASE  Pool  : %s", len(scored[scored['pool_type']=='BASE']))
         _announce("  Shadow TRADE: %s", len(scored[scored['pool_type_shadow']=='TRADE']))
         _announce("  Threshold   : %s/%s (%s)", threshold_decision.trade_threshold, threshold_decision.watch_threshold, threshold_decision.reason)
         _announce("  Self-Select : %s", len(scored[scored['is_self_selected']==1]))
