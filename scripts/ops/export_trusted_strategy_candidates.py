@@ -10,11 +10,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import math
 import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -28,7 +31,9 @@ from scoreRank.core.config import CONFIG
 from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.ops.production_config import load_production_config, production_risk_profile_description
 from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
-from scripts.ops.feishu_notifier import load_feishu_webhook, send_feishu_text, strategy_identity_block
+from scripts.ops.data_readiness_gate import PipelineReadinessGate
+from scripts.ops.feishu_notifier import send_feishu_text_audited, strategy_identity_block
+from scripts.ops.market_regime import build_market_regime_decision
 from scripts.strategy_display import strategy_display_name
 from scripts.research_trusted_strategy_account_backtest import (
     ADAPTIVE_DYNAMIC_POSITION_STRATEGY_NAME,
@@ -315,6 +320,9 @@ def _candidate_columns(frame: pd.DataFrame) -> list[str]:
         "name",
         "industry",
         "industry_key",
+        "candidate_pool",
+        "candidate_pool_role",
+        "market_regime",
         "sort_col",
         "rank_score",
         "effective_weight",
@@ -515,12 +523,22 @@ def _check_candidate_tradability(
     params = {f"s{i}": s for i, s in enumerate(symbols)}
     params["date"] = date_str
 
+    try:
+        label_columns = _columns_for_table(engine, "tushare_stock.dwd_stock_label_daily")
+    except Exception as exc:
+        # Fail-closed: if we can't verify the label schema, we must NOT generate orders.
+        return [{"symbol": "QUERY_ERROR", "issue": f"TRADABILITY_CHECK_FAILED: {exc}"}]
+    st_col = next((col for col in ("is_st", "st_flag") if col in label_columns), None)
+    suspended_col = next((col for col in ("is_suspended", "suspended", "is_suspend") if col in label_columns), None)
+    st_case = f"  CASE WHEN l.{st_col} = 1 THEN 'ST' " if st_col else "  CASE "
+    suspended_case = f"       WHEN l.{suspended_col} = 1 THEN 'SUSPENDED' " if suspended_col else ""
+
     from sqlalchemy import text as _txt
     sql = _txt(
         f"SELECT SUBSTRING_INDEX(l.ts_code, '.', 1) AS symbol, "
-        f"  CASE WHEN l.is_st = 1 THEN 'ST' "
-        f"       WHEN l.is_suspended = 1 THEN 'SUSPENDED' "
-        f"       WHEN k.close IS NULL OR k.close = 0 THEN 'NO_CLOSE' "
+        f"{st_case}"
+        f"{suspended_case}"
+        f"       WHEN k.adj_close IS NULL OR k.adj_close = 0 THEN 'NO_CLOSE' "
         f"  END AS issue "
         f"FROM tushare_stock.dwd_stock_label_daily l "
         f"LEFT JOIN tushare_stock.dwd_stock_daily_standard k "
@@ -556,6 +574,8 @@ def _next_trading_day(engine, from_date: str) -> str:
     """
     from sqlalchemy import text as _txt
     row = None
+    # Normalize to YYYYMMDD integer for INT-typed cal_date column
+    _from_int = int(pd.Timestamp(from_date).strftime("%Y%m%d"))
     try:
         with engine.connect() as conn:
             row = conn.execute(
@@ -563,7 +583,7 @@ def _next_trading_day(engine, from_date: str) -> str:
                     "SELECT MIN(cal_date) FROM chenyiyun.dim_trade_cal "
                     "WHERE exchange = 'SSE' AND is_open = 1 AND cal_date > :d"
                 ),
-                {"d": from_date},
+                {"d": _from_int},
             ).fetchone()
     except Exception as exc:
         raise RuntimeError(
@@ -983,6 +1003,8 @@ def _build_candidate_rows(
                 "name": row.get("name"),
                 "industry": industry,
                 "industry_key": industry if industry != "未知" else f"UNKNOWN_{symbol}",
+                "candidate_pool": getattr(spec, "candidate_pool", "generic"),
+                "candidate_pool_role": getattr(spec, "pool_role", "research"),
                 "sort_col": spec.sort_col,
                 "rank_score": _safe_float(row.get("_rank_score")),
                 "position_weight": position_weight,
@@ -1434,7 +1456,7 @@ def _build_rebalance_orders(
     if total_equity <= 0:
         raise ValueError("total_equity must be positive.")
 
-    candidate_by_symbol = candidates.set_index("symbol").to_dict("index")
+    candidate_by_symbol = candidates.drop_duplicates(subset=["symbol"], keep="first").set_index("symbol").to_dict("index")
     target_symbols = set(candidate_by_symbol)
     position_symbols = set(positions) if include_sells else set()
     locked_symbols: list[str] = []
@@ -2098,6 +2120,13 @@ def export_candidates(args: argparse.Namespace) -> dict:
     engine = create_engine(build_sqlalchemy_url())
     asof_date = _normalize_date(args.date) or _latest_score_date(engine)
     start_date = (pd.Timestamp(asof_date) - pd.Timedelta(days=int(args.history_days))).strftime("%Y-%m-%d")
+    signal_date = pd.Timestamp(asof_date).date()
+    pipeline_gate = PipelineReadinessGate(engine)
+    pipeline_preflight = pipeline_gate.all_checks(signal_date, emit_orders=bool(args.emit_orders))
+    pipeline_preflight_path = PipelineReadinessGate.write_evidence(pipeline_preflight, OUT_ROOT / asof_date)
+    if args.emit_orders and not bool(pipeline_preflight.get("passed")):
+        failed = ", ".join(pipeline_preflight.get("failed_critical") or [])
+        raise RuntimeError(f"Pipeline readiness blocked order draft generation: {failed}")
     if args.emit_orders:
         _validate_order_prerequisites(engine, asof_date=asof_date, min_pool_size=args.min_pool_size)
 
@@ -2148,8 +2177,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
     market_env = build_market_environment(scores, prices)
     scores = attach_market_environment(scores, market_env)
 
-    signal_date = pd.Timestamp(asof_date).date()
     day_scores = scores[scores["trade_date"].eq(signal_date)].copy()
+    market_regime_decision = build_market_regime_decision(scores, asof_date, PRODUCTION_CONFIG)
     adaptive_decision: dict[str, object] | None = None
     risk_governor: dict[str, object] | None = None
     target_position_ratio = float(args.position_ratio)
@@ -2262,6 +2291,14 @@ def export_candidates(args: argparse.Namespace) -> dict:
         adaptive_decision=adaptive_decision,
         recent_shadow_summary=recent_shadow_summary,
     )
+    if str(market_regime_decision.get("regime")) == "stress":
+        risk_governor = {
+            **risk_governor,
+            "risk_decision": "freeze_buy",
+            "target_position_ratio": min(float(risk_governor.get("target_position_ratio") or 0.0), 0.10),
+            "allow_new_buys": False,
+            "reasons": [*list(risk_governor.get("reasons") or []), "market_regime_stress_freeze"],
+        }
 
     governor_fallback = str(risk_governor.get("fallback_strategy") or "").strip()
     if governor_fallback and governor_fallback in trusted_specs:
@@ -2276,6 +2313,13 @@ def export_candidates(args: argparse.Namespace) -> dict:
     if args.strategy == PRODUCTION_GOVERNED_STRATEGY_NAME and not candidates.empty:
         candidates["strategy"] = export_strategy_name
         candidates["selected_strategy"] = spec.name
+    if not candidates.empty:
+        candidates["market_regime"] = str(market_regime_decision.get("regime") or "")
+        candidates["market_regime_raw"] = str(market_regime_decision.get("raw_regime") or "")
+        if "candidate_pool" not in candidates.columns:
+            candidates["candidate_pool"] = getattr(spec, "candidate_pool", "generic")
+        if "candidate_pool_role" not in candidates.columns:
+            candidates["candidate_pool_role"] = getattr(spec, "pool_role", "research")
     target_position_ratio = float(risk_governor.get("target_position_ratio") or target_position_ratio)
     candidates = _scale_candidate_weights_for_export(candidates, target_position_ratio)
     candidates.attrs["risk_governor"] = risk_governor
@@ -2338,6 +2382,15 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "risk_fallback_strategy": risk_governor.get("fallback_strategy") if risk_governor else None,
         "allow_new_buys": bool(risk_governor.get("allow_new_buys", True)) if risk_governor else True,
         "shadow_validation_state": recent_shadow_summary,
+        "market_regime_decision": market_regime_decision,
+        "candidate_pool": getattr(spec, "candidate_pool", "generic"),
+        "candidate_pool_role": getattr(spec, "pool_role", "research"),
+        "candidate_pool_allowed_regimes": list(getattr(spec, "allowed_regimes", ())),
+        "candidate_pools": dict(PRODUCTION_CONFIG.get("candidate_pools") or {}),
+        "portfolio_risk_budget": dict(PRODUCTION_CONFIG.get("portfolio_risk_budget") or {}),
+        "challenger_lanes": dict(PRODUCTION_CONFIG.get("challenger_lanes") or {}),
+        "pipeline_readiness_status": pipeline_preflight.get("status"),
+        "pipeline_readiness_evidence": str(pipeline_preflight_path),
         "market_gate": bool(spec.market_gate),
         "market_gate_triggered": bool(
             "underlying_market_exposure_scale" in candidates.columns
@@ -2400,6 +2453,17 @@ def export_candidates(args: argparse.Namespace) -> dict:
         )
     output_strategy_name = str(params.get("strategy") or spec.name)
     out_dir = OUT_ROOT / datetime.now().strftime(f"%Y%m%d_%H%M%S_{output_strategy_name}")
+    pipeline_with_candidates = pipeline_gate.all_checks(
+        signal_date,
+        candidate_count=int(len(candidates)),
+        emit_orders=bool(args.emit_orders),
+    )
+    pipeline_evidence_path = PipelineReadinessGate.write_evidence(pipeline_with_candidates, out_dir)
+    params["pipeline_readiness_status"] = pipeline_with_candidates.get("status")
+    params["pipeline_readiness_evidence"] = str(pipeline_evidence_path)
+    if args.emit_orders and not bool(pipeline_with_candidates.get("passed")):
+        failed = ", ".join(pipeline_with_candidates.get("failed_critical") or [])
+        raise RuntimeError(f"Pipeline readiness blocked order draft generation: {failed}")
     files = _write_outputs(out_dir, candidates, factor_weights, market_env, params, warnings)
     db_write: dict[str, object] = {}
     if args.write_db:
@@ -2423,6 +2487,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
             output_json_path=files["json"],
         )
     if args.emit_orders:
+        if str(market_regime_decision.get("regime")) == "stress":
+            warnings.append("市场状态为 stress：禁止新买入，仅允许卖出/持仓维护。")
         # Final trade candidate validation — check actual Top5 AFTER all filters
         # (strategy selection, risk governor, industry caps, position scaling, hold gate).
         # This is a hard block: any untradable stock in the final trade list → no orders.
@@ -2567,7 +2633,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                         })
                         _intent_rows += 1
                 db_write["order_intents_written"] = _intent_rows
-                _logger.info("order_intents: wrote %d rows (snapshot=%s)", _intent_rows, _snapshot_id)
+                print(f"order_intents: wrote {_intent_rows} rows (snapshot={_snapshot_id})")
         strategy_order_details: dict[str, dict[str, pd.DataFrame]] = {}
         trusted_specs = {item.name: item for item in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
         for detail_config in ORDER_DETAIL_CONFIGS:
@@ -2575,6 +2641,10 @@ def export_candidates(args: argparse.Namespace) -> dict:
             base_strategy = str(detail_config.get("base_strategy") or detail_name)
             detail_hold_days = int(detail_config.get("hold_days") or args.hold_days)
             detail_position_ratio = float(detail_config.get("position_ratio", args.position_ratio))
+            if base_strategy == "tiered_liquidity_then_bs_v2":
+                attack_cap = float(market_regime_decision.get("attack_budget_cap") or 0.0)
+                configured_cap = float(dict(PRODUCTION_CONFIG.get("portfolio_risk_budget") or {}).get("max_attack_pool_budget_share", 0.35))
+                detail_position_ratio = min(detail_position_ratio, float(args.position_ratio) * min(attack_cap, configured_cap))
             detail_total_equity = account_total_equity
             detail_meta: dict[str, object] = {
                 "base_strategy": base_strategy,
@@ -2772,12 +2842,6 @@ def export_candidates(args: argparse.Namespace) -> dict:
         detail_files = _write_strategy_order_detail_outputs(out_dir, strategy_order_details)
         db_write["strategy_order_detail_files"] = detail_files
         if args.notify_feishu:
-            webhook_url = load_feishu_webhook(engine)
-            if not webhook_url:
-                raise RuntimeError(
-                    "Feishu notification requested but no enabled webhook was found. "
-                    "Configure FEISHU_WEBHOOK_URL or chenyiyun.app_notification_channel."
-                )
             content = _format_order_notification(
                 asof_date=asof_date,
                 strategy=spec.name,
@@ -2792,7 +2856,14 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 health_date=getattr(args, "health_date", ""),
                 manual_confirmation_required=getattr(args, "manual_confirmation", False),
             )
-            ok, reason = send_feishu_text(webhook_url, content)
+            ok, reason = send_feishu_text_audited(
+                engine,
+                content,
+                business_date=asof_date.replace("-", ""),
+                notification_type="trusted_strategy_candidates",
+                task_name="trusted_strategy_candidates",
+                dedupe_key=f"trusted_strategy_candidates:{asof_date.replace('-', '')}",
+            )
             db_write["feishu_notify"] = reason
             if not ok:
                 raise RuntimeError(f"Feishu notification failed: {reason}")

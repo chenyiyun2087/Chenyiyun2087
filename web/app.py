@@ -19,7 +19,7 @@ from project_network import build_direct_network_env, enforce_direct_network
 enforce_direct_network()
 
 from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2, calculate_bs_trade_gate
-from scoreRank.core.db_config import build_pymysql_config
+from scoreRank.core.db_config import build_pymysql_config, validate_db_credentials
 from scripts.ops.production_config import load_production_config
 from scripts.strategy_display import strategy_display_name
 
@@ -324,9 +324,10 @@ TASK_QUEUE_SCAN_INTERVAL_SECONDS = 2
 TASK_DEPENDENCIES = {
     # 新浪截图 → OCR 链路
     "sina_analyse": ("sina_picture",),
-    # ADC/DB B/S检测 → 候选导出 → 收益评估
+    # ADC/DB B/S检测 → 回测 → 候选导出 → 收益评估
+    "trusted_strategy_backtest": ("adc_bs_detect",),
     "trusted_strategy_candidates": ("adc_bs_detect",),
-    "trusted_strategy_performance_review": ("trusted_strategy_candidates",),
+    "trusted_strategy_performance_review": ("trusted_strategy_backtest", "trusted_strategy_candidates"),
     # sina_score → sina_bs_consensus 链路已停用
 }
 SCHEDULED_TASK_WHITELIST = {
@@ -337,11 +338,13 @@ SCHEDULED_TASK_WHITELIST = {
     "db_bs_detect",                        # 21:05  DB量价模型 B/S 检测
     "adc_bs_detect",                       # 21:05  ADC数据源 B/S 检测
     "bs_ocr_adc_compare",                  # 21:10  B/S 来源交叉比对
+    "trusted_strategy_backtest",           # 21:15  每日策略回测
     "trusted_strategy_candidates",         # 21:25  可信策略候选导出
     "trusted_strategy_shadow_monitor",     # 21:28  影子盘监控
     "trusted_strategy_performance_review", # 21:32  收益评估 + 飞书推送
     "candle_diag_scan",                    # 21:40  K线形态全市场扫描
     "bs_signal_monthly_cycle",             # 21:45  B点模型月度闭环
+    "ops_daily_batch_audit",               # 22:10  日终批量巡检
     # --- 周度 ---
     "sina_bs_image_weekly_cleanup",        # 周五 22:05 图片清理
 }
@@ -353,6 +356,7 @@ NOTIFICATION_CHANNEL_DEFS = [
     ("custom", "自定义Webhook"),
 ]
 DEFAULT_FEISHU_TEST_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/a8374c19-3620-4891-8c7a-df6885229607"
+OPS_DAILY_BATCH_AUDIT_TASK = "ops_daily_batch_audit"
 
 UPLOAD_BACKTEST_DIR = Path('web/uploads/backtest_results')
 BACKTEST_RESULT_DIRS = [
@@ -692,6 +696,44 @@ def _ensure_task_management_schema(cursor):
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_daily_batch_audit (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            business_date VARCHAR(8) NOT NULL,
+            task_name VARCHAR(64) NOT NULL,
+            expected_time VARCHAR(5) NULL,
+            status VARCHAR(32) NOT NULL,
+            reason TEXT NULL,
+            queue_id BIGINT NULL,
+            queue_status VARCHAR(16) NULL,
+            history_status VARCHAR(32) NULL,
+            notification_status VARCHAR(32) NULL,
+            replay_required TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_daily_batch_task (business_date, task_name),
+            KEY idx_daily_batch_date (business_date, status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_notification_delivery (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            business_date VARCHAR(8) NOT NULL,
+            notification_type VARCHAR(64) NOT NULL,
+            task_name VARCHAR(64) NULL,
+            channel_key VARCHAR(32) NOT NULL,
+            status VARCHAR(32) NOT NULL,
+            reason TEXT NULL,
+            dedupe_key VARCHAR(160) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_notification_delivery_date (business_date, task_name, notification_type),
+            KEY idx_notification_delivery_dedupe (dedupe_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """
+    )
     for task_name in TASKS.keys():
         cursor.execute(
             """
@@ -892,6 +934,7 @@ def _refresh_task_next_runs():
 
 
 def _insert_task_history(task_name, trigger_type, status, started_at, finished_at=None, exit_code=None, duration_seconds=None, message=None):
+    conn = None
     try:
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
@@ -979,6 +1022,65 @@ def _get_queued_jobs(limit=100):
     except Exception as e:
         print(f"Failed to load queued jobs: {e}")
         return []
+
+
+def _audit_business_date_from_request():
+    return _normalize_datestr(request.form.get("business_date") or request.args.get("business_date")) or datetime.now().strftime("%Y%m%d")
+
+
+def _get_daily_batch_audit_rows(business_date):
+    rows = []
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                SELECT business_date, task_name, expected_time, status, reason, queue_id,
+                       queue_status, history_status, notification_status, replay_required, updated_at
+                FROM app_daily_batch_audit
+                WHERE business_date = %s
+                ORDER BY expected_time, task_name
+                """,
+                (business_date,),
+            )
+            rows = cursor.fetchall()
+    except Exception as e:
+        print(f"Failed to load daily batch audit rows: {e}")
+    return rows
+
+
+def _run_daily_batch_audit_now(business_date, notify_feishu=False):
+    from scripts.ops.daily_batch_audit import run_audit
+
+    return run_audit(business_date, notify_feishu=notify_feishu)
+
+
+def _enqueue_replay_required_jobs(business_date):
+    rows = _get_daily_batch_audit_rows(business_date)
+    replay_rows = [row for row in rows if int(row.get("replay_required") or 0) == 1]
+    created = []
+    deduped = []
+    failed = []
+    for row in replay_rows:
+        task_name = row.get("task_name")
+        if task_name not in TASKS:
+            failed.append((task_name, "unknown task"))
+            continue
+        if task_name == OPS_DAILY_BATCH_AUDIT_TASK:
+            continue
+        job, was_created, reason = _enqueue_task(
+            task_name,
+            trigger_type="replay",
+            run_options={"datestr": business_date},
+        )
+        if job and was_created:
+            created.append(job)
+        elif job:
+            deduped.append(job)
+        else:
+            failed.append((task_name, reason or "enqueue failed"))
+    return {"created": created, "deduped": deduped, "failed": failed, "requested": replay_rows}
 
 
 def _get_task_runner():
@@ -1788,13 +1890,31 @@ def _verify_trusted_strategy_performance_review_result(started_at, finished_at, 
             and backtests.get("primary", {}).get("summary", {}).get("total_return") is not None
             and judgement.get("decision")
         )
-        ok = bool(json_ok and md_ok and strategy_ok and date_ok and summary_ok)
+        rolling_3m = backtests.get("primary", {}).get("rolling_window_3m") or {}
+        rolling_3m_ok = bool(
+            rolling_3m.get("status") == "PASS"
+            and rolling_3m.get("freshness_ok") is True
+            and rolling_3m.get("actual_trade_days", 0) > 0
+            and rolling_3m.get("total_return") is not None
+            and rolling_3m.get("max_drawdown") is not None
+        )
+        notify_ok = payload.get("notify_result") == "ok"
+        ok = bool(json_ok and md_ok and strategy_ok and date_ok and summary_ok and rolling_3m_ok and notify_ok)
         lines.append(
             "result="
             + ("PASS" if ok else "FAIL")
             + f"; review_date={review_date or '-'}; strategy={params.get('strategy') or '-'}"
         )
-        lines.append(f"date_ok={date_ok}; strategy_ok={strategy_ok}; summary_ok={summary_ok}; markdown_exists={md_ok}")
+        lines.append(
+            f"date_ok={date_ok}; strategy_ok={strategy_ok}; summary_ok={summary_ok}; "
+            f"rolling_3m_ok={rolling_3m_ok}; notify_ok={notify_ok}; markdown_exists={md_ok}"
+        )
+        if rolling_3m:
+            lines.append(
+                f"rolling_3m_status={rolling_3m.get('status')}; "
+                f"window={rolling_3m.get('window_start') or '-'}~{rolling_3m.get('window_end') or '-'}; "
+                f"days={rolling_3m.get('actual_trade_days') or 0}/{rolling_3m.get('requested_trade_days') or 0}"
+            )
         lines.append(f"output={latest_path}")
         return ok, lines
     except Exception as e:
@@ -1854,19 +1974,153 @@ def _verify_sina_m7_sell_result(started_at, finished_at, run_options=None):
         return False, [f"result=FAIL; verifier_error={e}"]
 
 
+def _verify_adc_bs_detect_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS rows_cnt,
+                           SUM(CASE WHEN has_buy_signal = 1 THEN 1 ELSE 0 END) AS b_cnt,
+                           SUM(CASE WHEN has_sell_signal = 1 THEN 1 ELSE 0 END) AS s_cnt
+                    FROM bs_detection_results
+                    WHERE batch_date = %s
+                    """,
+                    (target_datestr,),
+                )
+                row = cursor.fetchone() or {}
+        finally:
+            conn.close()
+        rows_cnt = int(row.get("rows_cnt") or 0)
+        ok = rows_cnt > 0
+        return ok, [
+            f"result={'PASS' if ok else 'FAIL'}; task=adc_bs_detect; business_date={target_datestr}; rows={rows_cnt}",
+            f"b_cnt={int(row.get('b_cnt') or 0)}; s_cnt={int(row.get('s_cnt') or 0)}",
+        ]
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
+def _verify_daily_strategy_backtest_result(started_at, finished_at, run_options=None):
+    target_datestr = _queue_business_date(run_options)
+    out_root = Path(app.root_path).parent / "exports" / "signal_research"
+    candidates = []
+    for path in out_root.glob("*/trusted_account_backtest_report.json"):
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            continue
+        if (started_at - timedelta(seconds=30)) <= mtime <= (finished_at + timedelta(seconds=300)):
+            candidates.append((mtime, path))
+    ok = bool(candidates)
+    latest = sorted(candidates, key=lambda item: item[0], reverse=True)[0][1] if candidates else None
+    return ok, [
+        f"result={'PASS' if ok else 'FAIL'}; task=trusted_strategy_backtest; business_date={target_datestr}",
+        f"output={latest or '-'}",
+    ]
+
+
+def _verify_shadow_monitor_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS rows_cnt
+                    FROM ads_trusted_strategy_shadow_daily
+                    WHERE signal_date = %s OR execution_date = %s
+                    """,
+                    (f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}", f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"),
+                )
+                row = cursor.fetchone() or {}
+        finally:
+            conn.close()
+        rows_cnt = int(row.get("rows_cnt") or 0)
+        return True, [
+            f"result=PASS; task=trusted_strategy_shadow_monitor; business_date={target_datestr}; summary_rows={rows_cnt}",
+            "allow_empty=true",
+        ]
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
+def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    date_iso = f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) AS rows_cnt FROM ads_candle_diag_daily WHERE trade_date = %s",
+                    (date_iso,),
+                )
+                row = cursor.fetchone() or {}
+        finally:
+            conn.close()
+        rows_cnt = int(row.get("rows_cnt") or 0)
+        ok = rows_cnt > 0
+        return ok, [f"result={'PASS' if ok else 'FAIL'}; task=candle_diag_scan; business_date={target_datestr}; rows={rows_cnt}"]
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
+def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    return True, [f"result=PASS; task=bs_signal_monthly_cycle; business_date={target_datestr}; process_completed=true"]
+
+
+def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    rows = _get_daily_batch_audit_rows(target_datestr)
+    if not rows:
+        return False, [f"result=FAIL; reason=no_audit_rows; business_date={target_datestr}"]
+    replay_required = sum(int(row.get("replay_required") or 0) for row in rows)
+    bad = [row for row in rows if row.get("status") not in {"OK", "SKIPPED_NON_TRADING"}]
+    lines = [
+        f"result=PASS; business_date={target_datestr}; rows={len(rows)}; replay_required={replay_required}",
+        "status=" + ("ACTION_REQUIRED" if bad else "PASS"),
+    ]
+    for row in bad[:8]:
+        lines.append(f"{row.get('task_name')}: {row.get('status')} / {row.get('reason') or '-'}")
+    return True, lines
+
+
 def _run_task_result_verification(task_name, started_at, finished_at, run_options=None):
+    if task_name == "adc_bs_detect":
+        return _verify_adc_bs_detect_result(started_at, finished_at, run_options=run_options)
+    if task_name == "trusted_strategy_backtest":
+        return _verify_daily_strategy_backtest_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_score":
         return _verify_sina_score_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_bs_consensus":
         return _verify_sina_bs_consensus_result(started_at, finished_at, run_options=run_options)
     if task_name == "trusted_strategy_candidates":
         return _verify_trusted_strategy_candidates_result(started_at, finished_at, run_options=run_options)
+    if task_name == "trusted_strategy_shadow_monitor":
+        return _verify_shadow_monitor_result(started_at, finished_at, run_options=run_options)
     if task_name == "trusted_strategy_performance_review":
         return _verify_trusted_strategy_performance_review_result(started_at, finished_at, run_options=run_options)
+    if task_name == "candle_diag_scan":
+        return _verify_candle_diag_scan_result(started_at, finished_at, run_options=run_options)
+    if task_name == "bs_signal_monthly_cycle":
+        return _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_m8":
         return _verify_sina_m8_result(started_at, finished_at)
     if task_name == "sina_m7_sell":
         return _verify_sina_m7_sell_result(started_at, finished_at, run_options=run_options)
+    if task_name == OPS_DAILY_BATCH_AUDIT_TASK:
+        return _verify_daily_batch_audit_result(started_at, finished_at, run_options=run_options)
     return None, [f"result=SKIP; no verifier for task={task_name}"]
 
 
@@ -2224,38 +2478,80 @@ def _post_channel_webhook(channel_key, webhook_url, content):
         return False, f"exception={e}"
 
 
-def _dispatch_task_notification(content):
+def _record_notification_delivery(cursor, *, business_date, notification_type, task_name, channel_key, status, reason, dedupe_key=None):
+    cursor.execute(
+        """
+        INSERT INTO app_notification_delivery
+            (business_date, notification_type, task_name, channel_key, status, reason, dedupe_key)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            business_date,
+            notification_type,
+            task_name,
+            channel_key,
+            status,
+            str(reason or "")[:2000],
+            dedupe_key,
+        ),
+    )
+
+
+def _dispatch_task_notification(content, *, business_date=None, notification_type="task_completion", task_name=None, dedupe_key=None):
     conn = pymysql.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
             channels = _load_notification_channels_from_cursor(cursor)
+
+            enabled_channels = [
+                row for row in channels
+                if int(row.get("enabled") or 0) == 1 and _normalize_webhook_url(row.get("webhook_url"))
+            ]
+            if not enabled_channels:
+                _record_notification_delivery(
+                    cursor,
+                    business_date=business_date or datetime.now().strftime("%Y%m%d"),
+                    notification_type=notification_type,
+                    task_name=task_name,
+                    channel_key="all",
+                    status="no_webhook",
+                    reason="no enabled webhook channels configured",
+                    dedupe_key=dedupe_key,
+                )
+                conn.commit()
+                print("Task notification skipped: no enabled webhook channels configured.")
+                return
+
+            success_cnt = 0
+            fail_logs = []
+            for row in enabled_channels:
+                channel_key = row.get("channel_key")
+                webhook_url = _normalize_webhook_url(row.get("webhook_url"))
+                if not webhook_url:
+                    continue
+                ok, reason = _post_channel_webhook(channel_key, webhook_url, content)
+                _record_notification_delivery(
+                    cursor,
+                    business_date=business_date or datetime.now().strftime("%Y%m%d"),
+                    notification_type=notification_type,
+                    task_name=task_name,
+                    channel_key=channel_key,
+                    status="ok" if ok else "failed",
+                    reason=reason,
+                    dedupe_key=dedupe_key,
+                )
+                if ok:
+                    success_cnt += 1
+                else:
+                    fail_logs.append(f"{channel_key}:{reason}")
+            conn.commit()
+        print(
+            f"Task notification dispatched: success={success_cnt}/{len(enabled_channels)}"
+            + (f"; failures={' | '.join(fail_logs)}" if fail_logs else "")
+        )
     finally:
         conn.close()
-
-    enabled_channels = [
-        row for row in channels
-        if int(row.get("enabled") or 0) == 1 and _normalize_webhook_url(row.get("webhook_url"))
-    ]
-    if not enabled_channels:
-        print("Task notification skipped: no enabled webhook channels configured.")
-        return
-
-    success_cnt = 0
-    fail_logs = []
-    for row in enabled_channels:
-        channel_key = row.get("channel_key")
-        webhook_url = _normalize_webhook_url(row.get("webhook_url"))
-        if not webhook_url:
-            continue
-        ok, reason = _post_channel_webhook(channel_key, webhook_url, content)
-        if ok:
-            success_cnt += 1
-        else:
-            fail_logs.append(f"{channel_key}:{reason}")
-    print(
-        f"Task notification dispatched: success={success_cnt}/{len(enabled_channels)}"
-        + (f"; failures={' | '.join(fail_logs)}" if fail_logs else "")
-    )
 
 
 def _send_task_completion_notification(task_name, history_status, trigger_type, started_at, finished_at, run_options=None):
@@ -2273,7 +2569,14 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
         )
         if not content:
             return
-        _dispatch_task_notification(content)
+        business_date = _queue_business_date(run_options)
+        _dispatch_task_notification(
+            content,
+            business_date=business_date,
+            notification_type="task_completion",
+            task_name=task_name,
+            dedupe_key=f"task_completion:{task_name}:{business_date}",
+        )
     except Exception as e:
         print(f"Task notification error ({task_name}): {e}")
 
@@ -2491,10 +2794,14 @@ def _build_task_script_parts(task_name, run_options=None):
     if task_name == 'sina_analyse':
         target_date = datestr or datetime.now().strftime('%Y%m%d')
         return [script, 'config_1', target_date, '--analyze-only']
+    if task_name == 'adc_bs_detect':
+        if datestr:
+            return [script, '--date', datestr]
+        return [script, '--date', datetime.now().strftime('%Y%m%d')]
     if task_name == 'sina_score':
         if datestr:
             return [script, '--date', datestr, '--force']
-        return [script]
+        return [script, '--force']
     if task_name == 'sina_bs_consensus':
         if datestr:
             return [script, '--date', datestr]
@@ -2530,8 +2837,13 @@ def _build_task_script_parts(task_name, run_options=None):
         if datestr:
             args.extend(['--execution-date', datestr])
         return [script, *args]
+    if task_name == 'trusted_strategy_backtest':
+        args: list[str] = []
+        if datestr:
+            args.extend(['--date', datestr])
+        return [script, *args]
     if task_name == 'trusted_strategy_performance_review':
-        args = ['--notify-feishu']
+        args = ['--notify-feishu', '--review-window-days', '63']
         if datestr:
             args.extend(['--date', datestr])
         return [script, *args]
@@ -2563,6 +2875,11 @@ def _build_task_script_parts(task_name, run_options=None):
         if datestr and len(datestr) == 8:
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
             args.extend(['--date', date_iso])
+        return [script, *args]
+    if task_name == OPS_DAILY_BATCH_AUDIT_TASK:
+        args = ['--notify-feishu']
+        if datestr:
+            args.extend(['--date', datestr])
         return [script, *args]
     return [script]
 
@@ -6085,10 +6402,12 @@ def admin():
     task_results = []
     task_locks = []
     queued_jobs = []
+    audit_rows = []
+    audit_business_date = _normalize_datestr(request.args.get("business_date")) or datetime.now().strftime("%Y%m%d")
     task_runner = {}
     notification_channels = _default_notification_channels()
     active_tab = str(request.args.get("tab") or "center-tab")
-    if active_tab not in {"center-tab", "queue-tab", "lock-tab", "result-tab"}:
+    if active_tab not in {"center-tab", "queue-tab", "lock-tab", "result-tab", "audit-tab"}:
         active_tab = "center-tab"
     _reconcile_stale_task_states()
     try:
@@ -6103,6 +6422,8 @@ def admin():
         elif active_tab == "lock-tab":
             task_locks = _get_task_lock_rows(limit=50)
             task_runner = _get_task_runner()
+        elif active_tab == "audit-tab":
+            audit_rows = _get_daily_batch_audit_rows(audit_business_date)
     except Exception as e:
         print(f"Failed to load stock pools in admin: {e}")
 
@@ -6117,6 +6438,8 @@ def admin():
                            queued_jobs=queued_jobs,
                            task_runner=task_runner,
                            notification_channels=notification_channels,
+                           audit_rows=audit_rows,
+                           audit_business_date=audit_business_date,
                            active_tab=active_tab)
 
 
@@ -6316,6 +6639,41 @@ def update_notification_channels():
     return redirect(url_for("admin", tab="center-tab"))
 
 
+@app.route('/admin/daily_batch_audit/run', methods=['POST'])
+def run_daily_batch_audit():
+    business_date = _audit_business_date_from_request()
+    notify_feishu = request.form.get("notify_feishu") == "on"
+    try:
+        summary = _run_daily_batch_audit_now(business_date, notify_feishu=notify_feishu)
+        flash(
+            f"日终巡检完成：{summary['status']}，需确认补跑 {summary['replay_required_count']} 项。",
+            "success" if summary["status"] == "PASS" else "warning",
+        )
+    except Exception as e:
+        flash(f"日终巡检失败：{e}", "danger")
+    return redirect(url_for('admin', tab='audit-tab', business_date=business_date))
+
+
+@app.route('/admin/daily_batch_audit/replay', methods=['POST'])
+def replay_daily_batch_audit():
+    business_date = _audit_business_date_from_request()
+    try:
+        result = _enqueue_replay_required_jobs(business_date)
+        if result["failed"]:
+            flash(
+                f"补跑入队部分失败：成功 {len(result['created'])}，合并 {len(result['deduped'])}，失败 {len(result['failed'])}。",
+                "warning",
+            )
+        else:
+            flash(
+                f"补跑已确认入队：新增 {len(result['created'])}，已存在合并 {len(result['deduped'])}。",
+                "success",
+            )
+    except Exception as e:
+        flash(f"补跑入队失败：{e}", "danger")
+    return redirect(url_for('admin', tab='audit-tab', business_date=business_date))
+
+
 @app.route('/admin/run_task/<task_name>', methods=['POST'])
 def run_task(task_name):
     wants_json = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or (
@@ -6461,6 +6819,68 @@ def start_task_scheduler_loop():
     scheduler_thread.start()
     worker_thread.start()
 
+
+def _run_web_startup_preflight():
+    issues = []
+    if not validate_db_credentials():
+        issues.append("DB credentials are unsafe: set CHENYIYUN_DB_PASSWORD or CHENYIYUN_DB_URL.")
+    pipeline_path = Path(__file__).resolve().parents[1] / "task_registry" / "pipeline.yaml"
+    if not pipeline_path.exists():
+        issues.append(f"Missing pipeline registry: {pipeline_path}")
+    else:
+        try:
+            import yaml
+
+            payload = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
+            for group in payload.values():
+                for task_def in group.get("tasks", []):
+                    if task_def.get("status") != "enabled":
+                        continue
+                    script = str(task_def.get("script") or "")
+                    if script and not (Path(__file__).resolve().parents[1] / script).exists():
+                        issues.append(f"Enabled task script missing: {task_def.get('id')} -> {script}")
+        except Exception as exc:
+            issues.append(f"Cannot parse pipeline registry: {exc}")
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.execute("SHOW TABLES LIKE 'app_notification_channel'")
+            if not cursor.fetchone():
+                issues.append("Notification channel table is missing.")
+                feishu = None
+            else:
+                cursor.execute(
+                    """
+                    SELECT channel_key, channel_name, webhook_url, enabled
+                    FROM app_notification_channel
+                    WHERE channel_key = 'feishu'
+                    LIMIT 1
+                    """
+                )
+                feishu = cursor.fetchone()
+            url = str((feishu or {}).get("webhook_url") or "")
+            if not feishu or int(feishu.get("enabled") or 0) != 1:
+                issues.append("Feishu channel is not enabled.")
+            elif not _normalize_webhook_url(url):
+                issues.append("Feishu webhook URL is invalid.")
+            elif url == DEFAULT_FEISHU_TEST_WEBHOOK:
+                issues.append("Feishu webhook still points to the default test webhook.")
+    except Exception as exc:
+        issues.append(f"DB preflight failed: {exc}")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if issues:
+        print("Web startup preflight warnings:")
+        for issue in issues:
+            print(f" - {issue}")
+    else:
+        print("Web startup preflight passed.")
+
 @app.route('/admin/add_position', methods=['POST'])
 def add_position():
     symbol = request.form.get('symbol')
@@ -6506,6 +6926,7 @@ def add_position():
     return redirect(url_for('admin'))
 
 if os.environ.get("DISABLE_APP_SCHEDULER_LOOP") != "1":
+    _run_web_startup_preflight()
     start_task_scheduler_loop()
 
 if __name__ == '__main__':

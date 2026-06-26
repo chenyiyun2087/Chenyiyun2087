@@ -7,7 +7,7 @@ daily_close:
   tasks:
     - id: adc_bs_detect
       time: "21:05"
-      script: scoreRank/cli/detect_adc_bs_points.py
+      script: scoreRank/cli/detect_bs_points.py
       type: script
       trading_day_only: true
       status: enabled
@@ -15,6 +15,13 @@ daily_close:
     - id: bs_ocr_adc_compare
       time: "21:10"
       script: scripts/research/compare_bs_sources.py
+      type: script
+      trading_day_only: true
+      status: enabled
+
+    - id: trusted_strategy_backtest
+      time: "21:15"
+      script: scripts/ops/run_daily_strategy_backtest.py
       type: script
       trading_day_only: true
       status: enabled
@@ -50,6 +57,13 @@ daily_close:
     - id: bs_signal_monthly_cycle
       time: "21:45"
       script: scripts/ops/run_monthly_bs_signal_enhancement_cycle.py
+      type: script
+      trading_day_only: true
+      status: enabled
+
+    - id: ops_daily_batch_audit
+      time: "22:10"
+      script: scripts/ops/daily_batch_audit.py
       type: script
       trading_day_only: true
       status: enabled

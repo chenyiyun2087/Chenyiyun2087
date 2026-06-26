@@ -20,7 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.ops.production_config import load_production_config
 from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
-from scripts.ops.feishu_notifier import load_feishu_webhook, send_feishu_text, strategy_identity_block
+from scripts.ops.feishu_notifier import send_feishu_text_audited, strategy_identity_block
 from scripts.strategy_display import strategy_display_name
 
 
@@ -33,6 +33,15 @@ DEFAULT_POSITION_RATIO = float(PRODUCTION_CONFIG["position_ratio"])
 DEFAULT_HOLD_DAYS = int(PRODUCTION_CONFIG["hold_days"])
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "exports" / "production_strategy_reviews"
 DEFAULT_SIGNAL_RESEARCH_DIR = PROJECT_ROOT / "exports" / "signal_research"
+DEFAULT_REVIEW_WINDOW_DAYS = 63
+
+# Fallback chain: when the production-governed strategy requires corporate-action
+# snapshots that aren't available, try these alternatives that don't need them.
+_VOL_STRATEGY_FALLBACKS = [
+    "production_governed_vol_position_v1_2b_dynamic_score",
+    "production_governed_vol_position_v1_2b_execution_safe_uplift",
+    "baseline_full_liquidity_detail_vol_position",
+]
 
 
 def _discover_latest_backtest_dir(
@@ -171,6 +180,22 @@ def _table_exists(engine, full_table_name: str) -> bool:
 
 
 def _latest_trade_date(engine) -> str:
+    if _table_exists(engine, "chenyiyun.ads_trusted_strategy_candidates"):
+        value = None
+        with engine.connect() as conn:
+            value = conn.execute(
+                text(
+                    """
+                    SELECT MAX(trade_date)
+                    FROM chenyiyun.ads_trusted_strategy_candidates
+                    WHERE strategy = :strategy
+                    """
+                ),
+                {"strategy": DEFAULT_STRATEGY},
+            ).scalar()
+        if value is not None:
+            return pd.Timestamp(value).strftime("%Y-%m-%d")
+
     candidates = [
         ("chenyiyun.ads_trusted_strategy_candidates", "trade_date"),
         ("chenyiyun.ads_local_strategy_orders", "trade_date"),
@@ -215,6 +240,37 @@ def _load_window_rows(backtest_dir: Path, strategy: str) -> list[dict]:
     return _records(matched)
 
 
+def _resolve_strategy(backtest_dir: Path, strategy: str, fallbacks: list[str] | None = None) -> str:
+    """Resolve the best available strategy name from the backtest summary.
+
+    If *strategy* is found, return it. Otherwise try each fallback in order.
+    Raises RuntimeError if no match is found.
+    """
+    path = backtest_dir / "trusted_account_backtest_summary.csv"
+    if not path.exists():
+        raise RuntimeError(f"Missing backtest summary: {path}")
+    frame = pd.read_csv(path)
+    available = set(frame["strategy"].astype(str).unique())
+    for candidate in [strategy] + (fallbacks or []):
+        if candidate in available:
+            if candidate != strategy:
+                print(f"[review] strategy '{strategy}' not found, using '{candidate}' (fallback)")
+            return candidate
+    raise RuntimeError(
+        f"Strategy '{strategy}' (and fallbacks {fallbacks}) not found in {path}. "
+        f"Available: {sorted(available)}"
+    )
+
+
+def _load_strategy_block(backtest_dir: Path, strategy: str, required: bool = True, fallbacks: list[str] | None = None) -> dict:
+    resolved = _resolve_strategy(backtest_dir, strategy, fallbacks=fallbacks)
+    return {
+        "summary": _load_summary_row(backtest_dir, resolved),
+        "windows": _load_window_rows(backtest_dir, resolved),
+        "resolved_strategy": resolved,
+    }
+
+
 def _load_compare_rows(backtest_dir: Path) -> list[dict]:
     path = backtest_dir / "trusted_account_backtest_summary.csv"
     if not path.exists():
@@ -235,28 +291,137 @@ def _load_compare_rows(backtest_dir: Path) -> list[dict]:
     return _records(frame[existing].copy())
 
 
+def _current_drawdown(nav_values: list[float]) -> float:
+    if not nav_values:
+        return 0.0
+    peak = max(nav_values)
+    last = nav_values[-1]
+    return (last / peak - 1.0) if peak > 0 else 0.0
+
+
+def compute_rolling_window_metrics(
+    nav_frame: pd.DataFrame,
+    strategy: str,
+    review_date: str,
+    window_days: int = DEFAULT_REVIEW_WINDOW_DAYS,
+) -> dict:
+    """Compute recent account-level performance from trusted NAV rows."""
+    required = {"strategy", "trade_date", "nav"}
+    missing = sorted(required - set(nav_frame.columns))
+    if missing:
+        raise RuntimeError(f"trusted_account_backtest_nav.csv missing columns: {', '.join(missing)}")
+    if nav_frame.empty:
+        raise RuntimeError("trusted_account_backtest_nav.csv is empty.")
+
+    frame = nav_frame[nav_frame["strategy"].astype(str).eq(strategy)].copy()
+    if frame.empty:
+        raise RuntimeError(f"Strategy {strategy} not found in trusted_account_backtest_nav.csv")
+
+    frame["trade_date"] = pd.to_datetime(frame["trade_date"])
+    frame["nav"] = pd.to_numeric(frame["nav"], errors="coerce")
+    if "gross_exposure" in frame.columns:
+        frame["gross_exposure"] = pd.to_numeric(frame["gross_exposure"], errors="coerce")
+    frame = frame.dropna(subset=["trade_date", "nav"]).sort_values("trade_date")
+    if frame.empty:
+        raise RuntimeError(f"Strategy {strategy} has no valid NAV rows.")
+
+    review_ts = pd.Timestamp(review_date)
+    available = frame[frame["trade_date"] <= review_ts].copy()
+    if available.empty:
+        raise RuntimeError(f"No NAV rows on or before review date {review_date}.")
+
+    last_date = available["trade_date"].max()
+    window = available.tail(max(1, int(window_days))).copy()
+    nav = window["nav"].astype(float).tolist()
+    daily_returns = window["nav"].pct_change().dropna().astype(float).tolist()
+
+    status = "PASS"
+    warnings: list[str] = []
+    if len(window) < int(window_days):
+        status = "INSUFFICIENT"
+        warnings.append(f"only_{len(window)}_trade_days_available_for_{window_days}_day_window")
+    if last_date < review_ts:
+        status = "STALE"
+        warnings.append(f"nav_last_date_{last_date.strftime('%Y-%m-%d')}_before_review_date_{review_ts.strftime('%Y-%m-%d')}")
+
+    total_return = (nav[-1] / nav[0] - 1.0) if len(nav) >= 2 and nav[0] > 0 else 0.0
+    annualized_return = ((1.0 + total_return) ** (252.0 / max(len(window) - 1, 1)) - 1.0) if len(nav) >= 2 else 0.0
+    max_drawdown = 0.0
+    peak = nav[0] if nav else 1.0
+    for value in nav:
+        peak = max(peak, value)
+        drawdown = (value / peak - 1.0) if peak > 0 else 0.0
+        max_drawdown = min(max_drawdown, drawdown)
+
+    volatility = 0.0
+    sharpe = None
+    if len(daily_returns) >= 2:
+        mean_ret = sum(daily_returns) / len(daily_returns)
+        variance = sum((r - mean_ret) ** 2 for r in daily_returns) / (len(daily_returns) - 1)
+        volatility = variance ** 0.5 * (252 ** 0.5)
+        sharpe = (mean_ret / (variance ** 0.5) * (252 ** 0.5)) if variance > 0 else None
+    calmar = (annualized_return / abs(max_drawdown)) if max_drawdown < 0 else None
+    avg_exposure = None
+    if "gross_exposure" in window.columns:
+        exposure = window["gross_exposure"].dropna()
+        avg_exposure = float(exposure.mean()) if not exposure.empty else None
+
+    return {
+        "status": status,
+        "freshness_ok": status == "PASS",
+        "strategy": strategy,
+        "requested_trade_days": int(window_days),
+        "actual_trade_days": int(len(window)),
+        "window_start": window["trade_date"].min().strftime("%Y-%m-%d"),
+        "window_end": last_date.strftime("%Y-%m-%d"),
+        "review_date": review_ts.strftime("%Y-%m-%d"),
+        "total_return": float(total_return),
+        "annualized_return": float(annualized_return),
+        "max_drawdown": float(max_drawdown),
+        "current_drawdown": float(_current_drawdown(nav)),
+        "win_rate": float(sum(1 for r in daily_returns if r > 0) / len(daily_returns)) if daily_returns else None,
+        "worst_day": float(min(daily_returns)) if daily_returns else None,
+        "volatility": float(volatility),
+        "sharpe": float(sharpe) if sharpe is not None and math.isfinite(sharpe) else None,
+        "calmar": float(calmar) if calmar is not None and math.isfinite(calmar) else None,
+        "avg_gross_exposure": avg_exposure,
+        "warnings": warnings,
+    }
+
+
+def _load_rolling_window_metrics(backtest_dir: Path, strategy: str, review_date: str, window_days: int) -> dict:
+    path = backtest_dir / "trusted_account_backtest_nav.csv"
+    if not path.exists():
+        raise RuntimeError(f"Missing backtest NAV: {path}")
+    frame = pd.read_csv(path)
+    return compute_rolling_window_metrics(frame, strategy, review_date, window_days)
+
+
 def _load_backtests(args: argparse.Namespace) -> dict:
     primary_dir = Path(args.vol_backtest_dir)
     adaptive_dir = Path(args.adaptive_v22_backtest_dir)
     dual_dir = Path(args.dual_3m_backtest_dir)
+    review_date = _normalize_date(getattr(args, "date", None)) or getattr(args, "review_date", None)
+    review_window_days = int(getattr(args, "review_window_days", DEFAULT_REVIEW_WINDOW_DAYS))
+    vol_strategy = getattr(args, "vol_backtest_strategy", None) or DEFAULT_STRATEGY
+    primary = _load_strategy_block(primary_dir, vol_strategy, required=True, fallbacks=_VOL_STRATEGY_FALLBACKS)
+    resolved = primary.get("resolved_strategy", vol_strategy)
+    if review_date:
+        primary["rolling_window_3m"] = _load_rolling_window_metrics(
+            primary_dir,
+            resolved,
+            review_date,
+            review_window_days,
+        )
     return {
         "source_dirs": {
             "primary_governed": str(primary_dir),
             "adaptive_market_style_v22": str(adaptive_dir),
             "dual_system_3m": str(dual_dir),
         },
-        "primary": {
-            "summary": _load_summary_row(primary_dir, DEFAULT_STRATEGY),
-            "windows": _load_window_rows(primary_dir, DEFAULT_STRATEGY),
-        },
-        "primary_shadow_adaptive": {
-            "summary": _load_summary_row(primary_dir, "adaptive_market_style"),
-            "windows": _load_window_rows(primary_dir, "adaptive_market_style"),
-        },
-        "adaptive_market_style_v22": {
-            "summary": _load_summary_row(adaptive_dir, "adaptive_market_style"),
-            "windows": _load_window_rows(adaptive_dir, "adaptive_market_style"),
-        },
+        "primary": primary,
+        "primary_shadow_adaptive": _load_strategy_block(primary_dir, "adaptive_market_style", required=False),
+        "adaptive_market_style_v22": _load_strategy_block(adaptive_dir, "adaptive_market_style", required=False),
         "dual_system_3m_compare": _load_compare_rows(dual_dir),
     }
 
@@ -265,9 +430,44 @@ def _read_sql(engine, sql: str, params: dict | None = None) -> pd.DataFrame:
     return pd.read_sql(text(sql), engine, params=params or {})
 
 
+def _existing_columns(engine, full_table_name: str, desired: list[str]) -> list[str]:
+    schema, table = full_table_name.split(".", 1) if "." in full_table_name else ("chenyiyun", full_table_name)
+    try:
+        frame = _read_sql(
+            engine,
+            """
+            SELECT column_name AS column_name
+            FROM information_schema.columns
+            WHERE table_schema = :schema AND table_name = :table
+            """,
+            {"schema": schema, "table": table},
+        )
+    except Exception:
+        return desired
+    available = set(frame["column_name"].astype(str).tolist()) if not frame.empty else set()
+    return [col for col in desired if col in available]
+
+
+def _select_columns(engine, full_table_name: str, desired: list[str]) -> str:
+    columns = _existing_columns(engine, full_table_name, desired)
+    if not columns:
+        raise RuntimeError(f"No expected columns found in {full_table_name}.")
+    return ", ".join(f"`{col}`" for col in columns)
+
+
 def _load_candidates(engine, review_date: str) -> tuple[pd.DataFrame, dict]:
     if not _table_exists(engine, "chenyiyun.ads_trusted_strategy_candidates"):
         raise RuntimeError("Missing table chenyiyun.ads_trusted_strategy_candidates.")
+    cols = _select_columns(
+        engine,
+        "chenyiyun.ads_trusted_strategy_candidates",
+        [
+            "trade_date", "strategy", "rank_no", "rank", "symbol", "ts_code", "stock_name", "name",
+            "industry", "effective_weight", "target_weight", "weight", "rank_score", "latest_close",
+            "dynamic_factor_score", "liquidity_detail_score", "s_liquidity", "market_liquidity_bucket",
+            "index_bucket", "output_json_path",
+        ],
+    )
     meta = _read_sql(
         engine,
         """
@@ -278,11 +478,11 @@ def _load_candidates(engine, review_date: str) -> tuple[pd.DataFrame, dict]:
     frame = _read_sql(
         engine,
         """
-        SELECT *
+        SELECT {cols}
         FROM chenyiyun.ads_trusted_strategy_candidates
         WHERE trade_date = :review_date AND strategy = :strategy
         ORDER BY rank_no, symbol
-        """,
+        """.format(cols=cols),
         {"review_date": review_date, "strategy": DEFAULT_STRATEGY},
     )
     if frame.empty:
@@ -293,6 +493,15 @@ def _load_candidates(engine, review_date: str) -> tuple[pd.DataFrame, dict]:
 def _load_orders(engine, review_date: str) -> tuple[pd.DataFrame, dict]:
     if not _table_exists(engine, "chenyiyun.ads_local_strategy_orders"):
         return pd.DataFrame(), {"warning": "missing table ads_local_strategy_orders"}
+    cols = _select_columns(
+        engine,
+        "chenyiyun.ads_local_strategy_orders",
+        [
+            "trade_date", "strategy", "ts_code", "symbol", "stock_name", "name", "side", "price",
+            "delta_shares", "allocated_shares", "target_weight", "delta_weight", "order_status",
+            "reason", "create_time", "updated_at",
+        ],
+    )
     meta = _read_sql(
         engine,
         """
@@ -303,11 +512,11 @@ def _load_orders(engine, review_date: str) -> tuple[pd.DataFrame, dict]:
     frame = _read_sql(
         engine,
         """
-        SELECT *
+        SELECT {cols}
         FROM chenyiyun.ads_local_strategy_orders
         WHERE trade_date = :review_date
         ORDER BY side DESC, ts_code
-        """,
+        """.format(cols=cols),
         {"review_date": review_date},
     )
     return frame, {k: _safe_json_value(v) for k, v in meta.items()}
@@ -349,14 +558,22 @@ def _load_candidate_output_params(candidates: pd.DataFrame) -> dict:
 def _load_production_risk_decision(engine, review_date: str) -> dict:
     if not _table_exists(engine, "chenyiyun.ads_production_risk_decisions"):
         return {}
+    cols = _select_columns(
+        engine,
+        "chenyiyun.ads_production_risk_decisions",
+        [
+            "trade_date", "risk_decision", "target_position_ratio", "fallback_strategy",
+            "allow_new_buys", "reasons_json", "created_at",
+        ],
+    )
     frame = _read_sql(
         engine,
         """
-        SELECT *
+        SELECT {cols}
         FROM chenyiyun.ads_production_risk_decisions
         WHERE trade_date = :review_date
         LIMIT 1
-        """,
+        """.format(cols=cols),
         {"review_date": review_date},
     )
     if frame.empty:
@@ -374,15 +591,24 @@ def _load_production_risk_decision(engine, review_date: str) -> dict:
 def _load_shadow(engine, review_date: str) -> tuple[pd.DataFrame, dict, dict]:
     if not _table_exists(engine, "chenyiyun.ads_trusted_strategy_shadow_daily"):
         return pd.DataFrame(), {}, {"warning": "missing table ads_trusted_strategy_shadow_daily"}
+    summary_cols = _select_columns(
+        engine,
+        "chenyiyun.ads_trusted_strategy_shadow_daily",
+        [
+            "signal_date", "execution_date", "validation_status", "validation_actions",
+            "total_orders", "executable_orders", "blocked_orders", "warning_orders",
+            "avg_slippage_bps", "max_adverse_slippage_bps", "shadow_vs_theory_gap",
+        ],
+    )
     summary = _read_sql(
         engine,
         """
-        SELECT *
+        SELECT {cols}
         FROM chenyiyun.ads_trusted_strategy_shadow_daily
         WHERE execution_date = :review_date
         ORDER BY execution_date DESC
         LIMIT 1
-        """,
+        """.format(cols=summary_cols),
         {"review_date": review_date},
     )
     meta = _read_sql(
@@ -394,15 +620,24 @@ def _load_shadow(engine, review_date: str) -> tuple[pd.DataFrame, dict, dict]:
     ).iloc[0].to_dict()
     fills = pd.DataFrame()
     if not summary.empty and _table_exists(engine, "chenyiyun.ads_trusted_strategy_shadow_fills"):
+        fill_cols = _select_columns(
+            engine,
+            "chenyiyun.ads_trusted_strategy_shadow_fills",
+            [
+                "signal_date", "execution_date", "ts_code", "symbol", "stock_name", "name", "side",
+                "planned_price", "execution_price", "shares", "tradable_flag", "block_reason",
+                "slippage_bps", "warning_reason",
+            ],
+        )
         signal_date = pd.Timestamp(summary.iloc[0]["signal_date"]).strftime("%Y-%m-%d")
         fills = _read_sql(
             engine,
             """
-            SELECT *
+            SELECT {cols}
             FROM chenyiyun.ads_trusted_strategy_shadow_fills
             WHERE signal_date = :signal_date AND execution_date = :review_date
             ORDER BY tradable_flag ASC, side DESC, ts_code
-            """,
+            """.format(cols=fill_cols),
             {"signal_date": signal_date, "review_date": review_date},
         )
     return fills, (_records(summary)[0] if not summary.empty else {}), {k: _safe_json_value(v) for k, v in meta.items()}
@@ -417,6 +652,15 @@ def _load_live(engine, review_date: str) -> dict:
         "warnings": [],
     }
     if _table_exists(engine, "chenyiyun.live_daily_snapshots"):
+        snap_cols = _select_columns(
+            engine,
+            "chenyiyun.live_daily_snapshots",
+            [
+                "snapshot_date", "trade_date", "total_equity", "cash", "positions_value",
+                "daily_return_pct", "daily_return", "hs300_return_pct", "excess_return_pct",
+                "created_at",
+            ],
+        )
         meta = _read_sql(
             engine,
             """
@@ -428,12 +672,12 @@ def _load_live(engine, review_date: str) -> dict:
         snap = _read_sql(
             engine,
             """
-            SELECT *
+            SELECT {cols}
             FROM chenyiyun.live_daily_snapshots
             WHERE snapshot_date <= :review_date
             ORDER BY snapshot_date DESC
             LIMIT 1
-            """,
+            """.format(cols=snap_cols),
             {"review_date": review_date},
         )
         if not snap.empty:
@@ -444,12 +688,24 @@ def _load_live(engine, review_date: str) -> dict:
         result["warnings"].append("missing table live_daily_snapshots")
 
     if _table_exists(engine, "chenyiyun.live_positions"):
+        pos_cols = _existing_columns(
+            engine,
+            "chenyiyun.live_positions",
+            ["symbol", "ts_code", "stock_name", "name", "shares", "current_price", "cost_price", "market_value", "unrealized_pnl", "updated_at"],
+        )
+        computed_market_value = ""
+        if "market_value" not in pos_cols and {"shares", "current_price"}.issubset(set(pos_cols)):
+            computed_market_value = ", COALESCE(shares, 0) * COALESCE(current_price, 0) AS market_value"
+        if not pos_cols:
+            raise RuntimeError("No expected columns found in chenyiyun.live_positions.")
+        select_cols = ", ".join(f"`{col}`" for col in pos_cols) + computed_market_value
+        order_col = "market_value" if ("market_value" in pos_cols or computed_market_value) else pos_cols[0]
         positions = _read_sql(
             engine,
-            """
-            SELECT *, COALESCE(shares, 0) * COALESCE(current_price, 0) AS market_value
+            f"""
+            SELECT {select_cols}
             FROM chenyiyun.live_positions
-            ORDER BY market_value DESC
+            ORDER BY `{order_col}` DESC
             """,
         )
         result["positions"] = _records(positions)
@@ -460,14 +716,19 @@ def _load_live(engine, review_date: str) -> dict:
         result["warnings"].append("missing table live_positions")
 
     if _table_exists(engine, "chenyiyun.live_trades"):
+        trade_cols = _select_columns(
+            engine,
+            "chenyiyun.live_trades",
+            ["trade_date", "symbol", "ts_code", "stock_name", "name", "side", "price", "shares", "amount", "reason", "created_at"],
+        )
         trades = _read_sql(
             engine,
             """
-            SELECT *
+            SELECT {cols}
             FROM chenyiyun.live_trades
             ORDER BY trade_date DESC, created_at DESC
             LIMIT 10
-            """,
+            """.format(cols=trade_cols),
         )
         result["recent_trades"] = _records(trades)
         result["meta"]["live_trades"] = {"rows_loaded": int(len(trades))}
@@ -581,6 +842,7 @@ def _format_candidate_line(row: dict) -> str:
 def _format_feishu(payload: dict) -> str:
     bt = payload["backtests"]
     primary = bt["primary"]["summary"]
+    rolling = bt["primary"].get("rolling_window_3m") or {}
     adaptive = bt["adaptive_market_style_v22"]["summary"]
     candidate_summary = payload["current"]["candidate_summary"]
     order_summary = payload["current"]["order_summary"]
@@ -595,7 +857,12 @@ def _format_feishu(payload: dict) -> str:
         strategy_identity_block(),
         f"结论：{decision['decision']}",
         "",
-        "收益/回撤：",
+        "最近3个月收益评估：",
+        f"- 状态：{rolling.get('status') or '-'}；区间 {rolling.get('window_start') or '-'}~{rolling.get('window_end') or '-'}，交易日 {rolling.get('actual_trade_days') or 0}/{rolling.get('requested_trade_days') or 0}",
+        f"- 收益 {_pct(rolling.get('total_return'))}，年化 {_pct(rolling.get('annualized_return'))}，最大回撤 {_pct(rolling.get('max_drawdown'))}，当前回撤 {_pct(rolling.get('current_drawdown'))}",
+        f"- 胜率 {_pct(rolling.get('win_rate'))}，最差单日 {_pct(rolling.get('worst_day'))}，波动率 {_pct(rolling.get('volatility'))}，Sharpe {_num(rolling.get('sharpe'))}，Calmar {_num(rolling.get('calmar'))}，平均暴露 {_pct(rolling.get('avg_gross_exposure'))}",
+        "",
+        "长期收益/回撤：",
         f"- 主策略三年：累计{_pct(primary.get('total_return'))}，年化{_pct(primary.get('annualized_return'))}，最大回撤{_pct(primary.get('max_drawdown'))}，期末权益{_money(primary.get('final_equity'))}",
         f"- 风控影子v2.2：累计{_pct(adaptive.get('total_return'))}，年化{_pct(adaptive.get('annualized_return'))}，最大回撤{_pct(adaptive.get('max_drawdown'))}",
         "",
@@ -624,6 +891,8 @@ def _format_feishu(payload: dict) -> str:
         )
     for warning in live.get("warnings", [])[:2]:
         lines.append(f"- 数据提醒：{warning}")
+    for warning in rolling.get("warnings", [])[:2]:
+        lines.append(f"- 3个月评估提醒：{warning}")
     lines.append("")
     lines.append("Top5：")
     for row in payload["current"]["candidates"][:5]:
@@ -639,7 +908,7 @@ def _markdown_table(rows: list[dict], columns: list[tuple[str, str]]) -> list[st
         values = []
         for _, key in columns:
             value = row.get(key)
-            if key in {"total_return", "annualized_return", "max_drawdown", "avg_gross_exposure", "effective_weight", "target_weight", "weight"}:
+            if key in {"total_return", "annualized_return", "max_drawdown", "current_drawdown", "win_rate", "worst_day", "volatility", "avg_gross_exposure", "effective_weight", "target_weight", "weight"}:
                 values.append(_pct(value))
             elif key in {"final_equity", "planned_amount", "execution_amount"}:
                 values.append(_money(value))
@@ -652,6 +921,7 @@ def _markdown_table(rows: list[dict], columns: list[tuple[str, str]]) -> list[st
 def _format_markdown(payload: dict) -> str:
     bt = payload["backtests"]
     primary = bt["primary"]["summary"]
+    rolling = bt["primary"].get("rolling_window_3m") or {}
     adaptive = bt["adaptive_market_style_v22"]["summary"]
     current = payload["current"]
     shadow_history = current.get("shadow_history") or {}
@@ -673,6 +943,14 @@ def _format_markdown(payload: dict) -> str:
             f"- TopN：{DEFAULT_TOP_N}；总持仓上限：{DEFAULT_MAX_TOTAL_POSITIONS}；持有期：{DEFAULT_HOLD_DAYS} 个交易日；默认仓位：{_pct(DEFAULT_POSITION_RATIO)}",
             f"- 配置文件：`{PRODUCTION_CONFIG.get('config_path')}`",
             "- 回测口径：T 日信号、T+1 执行、账户级、初始资金 50 万，成本/滑点沿用既有回测导出。",
+            "",
+            "## 最近3个月收益评估",
+            "",
+            f"- 状态：`{rolling.get('status') or '-'}`；freshness_ok={rolling.get('freshness_ok')}",
+            f"- 区间：{rolling.get('window_start') or '-'} ~ {rolling.get('window_end') or '-'}；交易日：{rolling.get('actual_trade_days') or 0}/{rolling.get('requested_trade_days') or 0}",
+            f"- 累计收益：{_pct(rolling.get('total_return'))}；年化收益：{_pct(rolling.get('annualized_return'))}；最大回撤：{_pct(rolling.get('max_drawdown'))}；当前回撤：{_pct(rolling.get('current_drawdown'))}",
+            f"- 胜率：{_pct(rolling.get('win_rate'))}；最差单日：{_pct(rolling.get('worst_day'))}；波动率：{_pct(rolling.get('volatility'))}；Sharpe：{_num(rolling.get('sharpe'))}；Calmar：{_num(rolling.get('calmar'))}；平均暴露：{_pct(rolling.get('avg_gross_exposure'))}",
+            *[f"- 数据提醒：{warning}" for warning in rolling.get("warnings", [])],
             "",
             "## 历史回测",
             "",
@@ -731,6 +1009,7 @@ def _format_markdown(payload: dict) -> str:
 def run_review(args: argparse.Namespace) -> dict:
     engine = create_engine(build_sqlalchemy_url())
     review_date = _normalize_date(args.date) or _latest_trade_date(engine)
+    setattr(args, "review_date", review_date)
     backtests = _load_backtests(args)
     candidates, candidate_meta = _load_candidates(engine, review_date)
     candidate_params = _load_candidate_output_params(candidates)
@@ -767,6 +1046,7 @@ def run_review(args: argparse.Namespace) -> dict:
             "shadow_risk_strategy": str(PRODUCTION_CONFIG["shadow_risk_strategy"]),
             "shadow_version": str(PRODUCTION_CONFIG["shadow_version"]),
             "config_path": str(PRODUCTION_CONFIG["config_path"]),
+            "review_window_days": int(getattr(args, "review_window_days", DEFAULT_REVIEW_WINDOW_DAYS)),
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         },
         "backtests": backtests,
@@ -797,10 +1077,14 @@ def run_review(args: argparse.Namespace) -> dict:
     feishu_path.write_text(feishu_text, encoding="utf-8")
 
     if args.notify_feishu:
-        webhook = load_feishu_webhook(engine)
-        if not webhook:
-            raise RuntimeError("Feishu notification requested but no enabled webhook was found.")
-        ok, reason = send_feishu_text(webhook, feishu_text)
+        ok, reason = send_feishu_text_audited(
+            engine,
+            feishu_text,
+            business_date=_date_compact(review_date),
+            notification_type="trusted_strategy_performance_review",
+            task_name="trusted_strategy_performance_review",
+            dedupe_key=f"trusted_strategy_performance_review:{_date_compact(review_date)}",
+        )
         payload["notify_result"] = reason
         json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         if not ok:
@@ -813,9 +1097,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build trusted strategy performance review and optionally push Feishu.")
     parser.add_argument("--date", default=None, help="Review date YYYY-MM-DD or YYYYMMDD. Defaults to latest production date.")
     parser.add_argument("--notify-feishu", action="store_true", help="Send a standalone Feishu strategy performance review.")
+    parser.add_argument("--review-window-days", type=int, default=DEFAULT_REVIEW_WINDOW_DAYS, help="Recent performance review window in trading days. Defaults to 63.")
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     _resolved = str(_resolve_backtest_default(_BACKTEST_DIR_CACHE))
     parser.add_argument("--vol-backtest-dir", default=_resolved)
+    parser.add_argument(
+        "--vol-backtest-strategy",
+        default=None,
+        help="Override the strategy name to load from the vol backtest summary. "
+             "Defaults to the production primary_strategy; falls back through "
+             f"{_VOL_STRATEGY_FALLBACKS}.",
+    )
     parser.add_argument("--adaptive-v22-backtest-dir", default=_resolved)
     parser.add_argument("--dual-3m-backtest-dir", default=_resolved)
     args = parser.parse_args()
