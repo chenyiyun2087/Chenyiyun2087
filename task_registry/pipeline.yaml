@@ -26,6 +26,13 @@ daily_close:
       trading_day_only: true
       status: enabled
 
+    - id: rolling_strategy_scorer
+      time: "21:20"
+      script: scripts/ops/run_rolling_strategy_scorer.py
+      type: script
+      trading_day_only: true
+      status: enabled
+
     - id: trusted_strategy_candidates
       time: "21:25"
       script: scripts/ops/export_trusted_strategy_candidates.py

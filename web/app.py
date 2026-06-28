@@ -324,8 +324,9 @@ TASK_QUEUE_SCAN_INTERVAL_SECONDS = 2
 TASK_DEPENDENCIES = {
     # 新浪截图 → OCR 链路
     "sina_analyse": ("sina_picture",),
-    # ADC/DB B/S检测 → 回测 → 候选导出 → 收益评估
+    # ADC/DB B/S检测 → 回测 → 轮动评分 → 候选导出 → 收益评估
     "trusted_strategy_backtest": ("adc_bs_detect",),
+    "rolling_strategy_scorer": ("trusted_strategy_backtest",),
     "trusted_strategy_candidates": ("adc_bs_detect",),
     "trusted_strategy_performance_review": ("trusted_strategy_backtest", "trusted_strategy_candidates"),
     # sina_score → sina_bs_consensus 链路已停用
@@ -339,6 +340,7 @@ SCHEDULED_TASK_WHITELIST = {
     "adc_bs_detect",                       # 21:05  ADC数据源 B/S 检测
     "bs_ocr_adc_compare",                  # 21:10  B/S 来源交叉比对
     "trusted_strategy_backtest",           # 21:15  每日策略回测
+    "rolling_strategy_scorer",             # 21:20  滚动策略轮动评分+权重
     "trusted_strategy_candidates",         # 21:25  可信策略候选导出
     "trusted_strategy_shadow_monitor",     # 21:28  影子盘监控
     "trusted_strategy_performance_review", # 21:32  收益评估 + 飞书推送
