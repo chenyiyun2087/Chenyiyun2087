@@ -3,6 +3,13 @@ strategy_version: "2026.06.23"
 release_id: shadow-20260623-01
 owner: chenyiyun
 status: SHADOW
+candidate_pool: diversification
+pool_role: diversification_challenger
+allowed_regimes:
+  - strong_risk_on
+  - normal_risk_on
+  - neutral
+max_budget_share: 0.20
 description: >
   双系统自适应路由。融合 Chenyiyun adaptive 与 AShare AUTO/趋势/保守策略源。
   收益优先并保留弱市降仓与风险否决。仅运行影子盘观察。

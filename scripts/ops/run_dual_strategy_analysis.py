@@ -257,24 +257,27 @@ def run_dual_analysis(
     # Feishu push
     if notify_feishu:
         from scripts.ops.feishu_notifier import (
-            load_feishu_webhook, send_feishu_text, strategy_identity_block,
+            send_feishu_text_audited, strategy_identity_block,
         )
-        webhook = load_feishu_webhook(engine)
-        if webhook:
-            cards = [
-                ("生产策略", build_production_card(prod)),
-                ("高收益策略-OBS", build_research_card(research)),
-                ("策略分歧预警", build_divergence_card(result["divergence"])),
-                ("风险雷达", build_risk_radar_card(prod, research, report.risk_gap)),
-            ]
-            results = {}
-            for label, card in cards:
-                full = f"{strategy_identity_block()}\n\n{card}"
-                ok, reason = send_feishu_text(webhook, full)
-                results[label] = "ok" if ok else f"FAIL: {reason}"
-            result["feishu"] = results
-        else:
-            result["feishu"] = {"error": "no_webhook"}
+        cards = [
+            ("生产策略", build_production_card(prod)),
+            ("高收益策略-OBS", build_research_card(research)),
+            ("策略分歧预警", build_divergence_card(result["divergence"])),
+            ("风险雷达", build_risk_radar_card(prod, research, report.risk_gap)),
+        ]
+        results = {}
+        for label, card in cards:
+            full = f"{strategy_identity_block()}\n\n{card}"
+            ok, reason = send_feishu_text_audited(
+                engine,
+                full,
+                business_date=asof.strftime("%Y%m%d"),
+                notification_type="dual_strategy_analysis",
+                task_name="dual_strategy_analysis",
+                dedupe_key=f"dual_strategy_analysis:{asof.strftime('%Y%m%d')}:{label}",
+            )
+            results[label] = "ok" if ok else f"FAIL: {reason}"
+        result["feishu"] = results
 
     return result
 

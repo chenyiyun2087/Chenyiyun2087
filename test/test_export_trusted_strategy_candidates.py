@@ -2,7 +2,12 @@ import argparse
 
 import pandas as pd
 
-from scripts.ops.export_trusted_strategy_candidates import _apply_risk_profile_defaults, _build_rebalance_orders
+from scripts.ops import export_trusted_strategy_candidates as export_candidates_mod
+from scripts.ops.export_trusted_strategy_candidates import (
+    _apply_risk_profile_defaults,
+    _build_rebalance_orders,
+    _check_candidate_tradability,
+)
 from scripts.ops.production_config import load_production_config
 from scripts.research_trusted_strategy_account_backtest import (
     ASHARE_ADAPTIVE_VERSION,
@@ -138,6 +143,49 @@ def test_production_default_strategy_is_not_model_risk():
 
     assert config["allow_model_risk_fields"] is False
     assert spec.pit_status == "trusted"
+
+
+def test_candidate_tradability_allows_label_schema_without_suspended_column(monkeypatch):
+    captured_sql = []
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def fetchall(self):
+            return [{"symbol": "000001", "issue": None}]
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params):
+            captured_sql.append(str(sql))
+            return FakeResult()
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr(
+        export_candidates_mod,
+        "_columns_for_table",
+        lambda engine, table: {"ts_code", "trade_date", "is_st"},
+    )
+
+    result = _check_candidate_tradability(
+        FakeEngine(),
+        pd.DataFrame([{"symbol": "000001"}]),
+        "2026-06-23",
+    )
+
+    assert result == []
+    assert captured_sql
+    assert "is_suspended" not in captured_sql[0]
+    assert "is_st" in captured_sql[0]
 
 
 def test_dual_system_targets_boost_intersection_and_apply_position_ratio():

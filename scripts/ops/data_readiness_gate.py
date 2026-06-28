@@ -21,7 +21,9 @@ Output states: READY | READY_WITH_WARNING | BLOCKED
 from __future__ import annotations
 
 import logging
+import json
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -289,13 +291,14 @@ class PreScoreGate:
         except Exception as exc:
             return {"check": "adjust_factor_coverage", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
 
-        passed = null_rate <= 0.01  # >1% null adjust_factor is critical
+        # A missing partition must not pass as 0/max(0, 1) == 0.
+        passed = total_int > 0 and null_rate <= 0.01
         return {
             "check": "adjust_factor_coverage", "date": date_str,
             "total_rows": total_int, "null_adj_factor": null_int,
             "null_rate": round(null_rate, 4),
             "passed": passed,
-            "severity": "critical" if null_rate > 0.01 else "info",
+            "severity": "critical" if not passed else "info",
         }
 
     def check_suspension_completeness(self, target_date: date) -> dict[str, Any]:
@@ -595,6 +598,160 @@ def _summarize(checks: list[dict[str, Any]], target_date: date, gate_name: str) 
     }
 
 
+class PipelineReadinessGate:
+    """End-to-end daily gate before candidate export can emit order drafts."""
+
+    def __init__(self, engine) -> None:
+        self._engine = engine
+        self._checks: list[dict[str, Any]] = []
+
+    def check_market_data_complete(self, target_date: date) -> dict[str, Any]:
+        result = PreScoreGate(self._engine).all_checks(target_date)
+        return {
+            "check": "market_data_complete",
+            "passed": bool(result.get("passed")),
+            "severity": "critical",
+            "status": result.get("status"),
+            "failed": list(result.get("failed_critical") or []),
+        }
+
+    def check_scoring_complete(self, target_date: date) -> dict[str, Any]:
+        result = PostScoreGate(self._engine).all_checks(target_date)
+        failed = set(result.get("failed_critical") or [])
+        blocking = [item for item in ("score_date_matches", "score_null_rates", "candidate_pool_size") if item in failed]
+        return {
+            "check": "scoring_complete",
+            "passed": not blocking,
+            "severity": "critical",
+            "status": result.get("status"),
+            "failed": blocking,
+        }
+
+    def check_industry_complete(self, target_date: date) -> dict[str, Any]:
+        result = PostScoreGate(self._engine).check_industry_null_rate(target_date)
+        return {
+            "check": "industry_complete",
+            "passed": bool(result.get("passed")),
+            "severity": "critical",
+            "detail": result,
+        }
+
+    def check_bs_signal_complete(self, target_date: date) -> dict[str, Any]:
+        date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
+        fields = ("bs_score_v2", "bs_consensus_score")
+        field_results: dict[str, dict[str, Any]] = {}
+        try:
+            with self._engine.connect() as conn:
+                total = int(conn.execute(
+                    text_fn("SELECT COUNT(*) FROM chenyiyun.score_rank_daily WHERE trade_date = :date"),
+                    {"date": date_str},
+                ).scalar() or 0)
+                for col in fields:
+                    null_cnt = int(conn.execute(
+                        text_fn(
+                            f"SELECT COUNT(*) FROM chenyiyun.score_rank_daily "
+                            f"WHERE trade_date = :date AND `{col}` IS NULL"
+                        ),
+                        {"date": date_str},
+                    ).scalar() or 0)
+                    null_rate = null_cnt / max(total, 1)
+                    field_results[col] = {
+                        "null_count": null_cnt,
+                        "null_rate": round(null_rate, 4),
+                        "passed": total > 0 and null_rate <= MAX_NULL_RATIO,
+                    }
+        except Exception as exc:
+            return {"check": "bs_signal_complete", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+
+        passed = bool(field_results) and all(item["passed"] for item in field_results.values())
+        return {
+            "check": "bs_signal_complete",
+            "date": date_str,
+            "total_rows": total,
+            "fields": field_results,
+            "passed": passed,
+            "severity": "critical",
+        }
+
+    def check_health_monitor_ready(self, target_date: date) -> dict[str, Any]:
+        text_fn = _get_text_sql()
+        try:
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    text_fn(
+                        "SELECT as_of_date, overall_grade FROM chenyiyun.ads_strategy_health_daily "
+                        "WHERE as_of_date <= :date ORDER BY as_of_date DESC LIMIT 1"
+                    ),
+                    {"date": target_date.isoformat()},
+                ).fetchone()
+        except Exception as exc:
+            return {"check": "health_monitor_ready", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+        if not row:
+            return {"check": "health_monitor_ready", "passed": False, "detail": "missing_health_record", "severity": "critical"}
+        grade = str(row[1] or "UNKNOWN").upper()
+        return {
+            "check": "health_monitor_ready",
+            "passed": grade in {"GREEN", "YELLOW"},
+            "severity": "critical" if grade not in {"GREEN", "YELLOW"} else "info",
+            "as_of_date": str(row[0]),
+            "overall_grade": grade,
+        }
+
+    def check_candidate_export_ready(self, target_date: date, candidate_count: int | None = None) -> dict[str, Any]:
+        passed = candidate_count is None or int(candidate_count) > 0
+        return {
+            "check": "candidate_export_ready",
+            "passed": passed,
+            "severity": "critical",
+            "candidate_count": candidate_count,
+            "detail": "candidate_count_not_supplied_pre_export" if candidate_count is None else "",
+        }
+
+    def check_order_draft_ready(self, target_date: date, *, emit_orders: bool, order_count: int | None = None) -> dict[str, Any]:
+        if not emit_orders:
+            return {
+                "check": "order_draft_ready",
+                "passed": True,
+                "severity": "info",
+                "detail": "emit_orders_disabled",
+                "order_count": order_count,
+            }
+        return {
+            "check": "order_draft_ready",
+            "passed": order_count is None or int(order_count) >= 0,
+            "severity": "critical",
+            "order_count": order_count,
+        }
+
+    def all_checks(
+        self,
+        target_date: date,
+        *,
+        candidate_count: int | None = None,
+        emit_orders: bool = False,
+        order_count: int | None = None,
+    ) -> dict[str, Any]:
+        self._checks = [
+            self.check_market_data_complete(target_date),
+            self.check_scoring_complete(target_date),
+            self.check_industry_complete(target_date),
+            self.check_bs_signal_complete(target_date),
+            self.check_health_monitor_ready(target_date),
+            self.check_candidate_export_ready(target_date, candidate_count),
+            self.check_order_draft_ready(target_date, emit_orders=emit_orders, order_count=order_count),
+        ]
+        return _summarize(self._checks, target_date, gate_name="pipeline_readiness")
+
+    @staticmethod
+    def write_evidence(result: dict[str, Any], output_dir: str | Path) -> Path:
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "pipeline_readiness.json"
+        path.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        return path
+
+
 # Backward-compatible thin wrapper
 class DataReadinessGate:
     """Convenience wrapper that runs PreScoreGate (the safe default for scheduler).
@@ -615,3 +772,19 @@ def run_pre_gate(engine, target_date: date) -> dict[str, Any]:
 
 def run_post_gate(engine, target_date: date) -> dict[str, Any]:
     return PostScoreGate(engine).all_checks(target_date)
+
+
+def run_pipeline_gate(
+    engine,
+    target_date: date,
+    *,
+    candidate_count: int | None = None,
+    emit_orders: bool = False,
+    order_count: int | None = None,
+) -> dict[str, Any]:
+    return PipelineReadinessGate(engine).all_checks(
+        target_date,
+        candidate_count=candidate_count,
+        emit_orders=emit_orders,
+        order_count=order_count,
+    )

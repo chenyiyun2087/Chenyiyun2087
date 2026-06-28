@@ -1,0 +1,7 @@
+strategy,recommendations,unique_stocks,unique_industries,top_industry,top_industry_share,top_stock,top_stock_share,largest_winner_share_of_positive_pnl
+adaptive_market_style,4120,574,79,通信设备,0.13519417475728154,300750,0.05145631067961165,0.06455009231919476
+ashare_auto_shadow,102,95,33,元器件,0.19607843137254902,600152,0.0196078431372549,0.5740387143932297
+ashare_hybrid_conservative_shadow,2,2,1,元器件,1.0,002655,0.5,
+baseline_full_liquidity_detail_vol_position,4110,586,80,半导体,0.1,300502,0.01508515815085158,0.053960136348149126
+dual_system_adaptive_route,250,89,24,通信设备,0.236,300502,0.056,0.4796313214036757
+tiered_liquidity_then_bs_v2,4115,1338,99,元器件,0.08262454434993925,300502,0.006318347509113001,0.08717792982006542

@@ -3,6 +3,11 @@
 **/归档.zip
 exports/归档.zip
 
+# ===== 大型生成物：禁止提交（模型/数据集/处理数据）=====
+exports/bs_point_models/
+exports/signal_enhancement/
+data/processed/
+
 /sina/sina_bs_capture.log
 /sina_bs_capture.log
 /sina/bs_detection/**/*.png
@@ -17,6 +22,9 @@ __pycache__/
 /.agents/
 /.claude/
 /.codex/
+/.env
+/.env.*
+!/.env.example
 /.skill_merge_backup_*/
 /eastmoney/logs/debug_screenshots/timeout_002358_163255.png
 /eastmoney/logs/debug_screenshots/timeout_002369_163257.png

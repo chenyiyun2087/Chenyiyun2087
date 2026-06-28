@@ -3,6 +3,11 @@ strategy_version: "2026.06.23"
 release_id: shadow-20260623-01
 owner: chenyiyun
 status: SHADOW
+candidate_pool: trend_continuation
+pool_role: attack_challenger
+allowed_regimes:
+  - strong_risk_on
+max_budget_share: 0.35
 description: >
   流动性分层 + B点增强v2。在 satisfaction 基础上增强 B/S 信号。
   当前作为影子策略运行，不进入生产候选。
@@ -23,3 +28,4 @@ promotion:
   required_evidence:
     - walk_forward_pass
     - shadow_pass_60_days
+  production_constraint: attack_budget_only

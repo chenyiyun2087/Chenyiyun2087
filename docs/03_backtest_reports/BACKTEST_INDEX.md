@@ -1,5 +1,9 @@
 # 回测报告索引
 
+> 2026-06-28 生产可信策略推荐前向复盘：最近约 35 个自然日共 30 条 Top5 推荐，仅 2026-06-18 的 5 条已有完整 T+1 开盘至 T+5 收盘数据，平均收益 -0.03%、胜率 40.0%、相对沪深300超额 +1.61%；其余 25 条仍在观察中，不进入统计。本周 25 条推荐去重为 12 只，半导体集中风险明显。详见 `2026-06-28_生产可信策略推荐前向一周复盘.md`。
+
+> 2026-06-28 系统内置策略全面评估：按 `strategy_cards/` 的 9 张策略卡完成统一复盘，7 个策略具有可审计账户账本，`repair_reversal_shadow` 与 `chenyiyun_selected` 因无兼容可信账本标记为不可验证。长期证据中 `adaptive_market_style` 收益 +42.09%、最大回撤 -37.33%；生产选股底座 `baseline_full_liquidity_detail_vol_position` 收益 +18.40%、最大回撤 -66.41%，需生产降级复核；`tiered_liquidity_then_bs_v2` 收益 -70.63%、最大回撤 -94.20%，仅保留研究/受限攻击用途。外部影子策略只有约三个月样本，不得年化外推。逐策略、逐股票和逐笔明细见 `2026-06-28_系统内置策略全面评估与逐股复盘.md`，原始输出位于 `exports/signal_research/20260628_082814_builtin_strategy_full_review/`。
+
 > 2026-06-21 策略治理与人工 Canary 门禁：新增 `scripts/ops/run_strategy_governance_audit.py`，统一输出生产、影子、防守、研究和历史策略台账，以及 T 日信号/T+1 执行、动态权重 `exit_date < signal_date`、model-risk 禁用和人工实盘边界。Canary 固定为 100 万账户中的 10 万元上限，默认关闭；严格账本、启用影子盘、GREEN 健康度和版本审批任一缺失均 fail-closed。运行手册见 `docs/04_live_trading/CANARY_RUNBOOK.md`。
 
 > 2026-06-20 strict 研发闭环升级：新增版本化公司行为快照、配股全额认购/资金不足冻结状态机、精确拒单原因独立 replay、偏离归因扩展及可靠性矩阵脚本。生产默认与 `research_shadow_candidate.enabled=false` 均未改变；在 clean 全历史证据与所有门槛通过前，strict 继续不可晋级。

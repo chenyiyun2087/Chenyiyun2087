@@ -68,6 +68,9 @@ class StrategySpec:
     breakout_discount: float = 0.5
     market_gate: bool = False
     position_mode: str = "equal"
+    candidate_pool: str = "generic"
+    allowed_regimes: tuple[str, ...] = ("strong_risk_on", "normal_risk_on", "neutral", "risk_off")
+    pool_role: str = "research"
 
 
 def _symbol_from_ts_code(ts_code: str) -> str:
@@ -124,13 +127,28 @@ def build_strategy_specs() -> list[StrategySpec]:
         StrategySpec("tiered_liquidity_then_liquidity_detail", "liquidity_tiered", "liquidity_detail_score"),
         StrategySpec("tiered_liquidity_then_dynamic_factor", "liquidity_tiered", "dynamic_factor_score"),
         StrategySpec("tiered_liquidity_then_dynamic_ic_factor", "liquidity_tiered", "dynamic_ic_factor_score"),
-        StrategySpec("tiered_liquidity_then_bs_v2", "liquidity_tiered", "bs_score_v2"),
+        StrategySpec(
+            "tiered_liquidity_then_bs_v2",
+            "liquidity_tiered",
+            "bs_score_v2",
+            candidate_pool="trend_continuation",
+            allowed_regimes=("strong_risk_on",),
+            pool_role="attack_challenger",
+        ),
         StrategySpec("baseline_full_score_market_gate", "full", "score", market_gate=True),
         StrategySpec("baseline_full_liquidity_detail_market_gate", "full", "liquidity_detail_score", market_gate=True),
         StrategySpec("tiered_liquidity_then_bs_v2_market_gate", "liquidity_tiered", "bs_score_v2", market_gate=True),
         StrategySpec("baseline_full_liquidity_detail_hist_mdd_position", "full", "liquidity_detail_score", position_mode="hist_mdd_20"),
         StrategySpec("baseline_full_score_hist_mdd_position", "full", "score", position_mode="hist_mdd_20"),
-        StrategySpec("baseline_full_liquidity_detail_vol_position", "full", "liquidity_detail_score", position_mode="vol_20"),
+        StrategySpec(
+            "baseline_full_liquidity_detail_vol_position",
+            "full",
+            "liquidity_detail_score",
+            position_mode="vol_20",
+            candidate_pool="liquidity_quality",
+            allowed_regimes=("strong_risk_on", "normal_risk_on", "neutral", "risk_off"),
+            pool_role="champion_core",
+        ),
         StrategySpec("baseline_full_score_expected_mdd_position", "full", "score", position_mode="expected_mdd", pit_status="model_risk", risk_note="uses_latest_model_expected_mdd_backfilled_to_history"),
         StrategySpec("baseline_full_liquidity_industry_cap2", "full", "s_liquidity", max_per_industry=2),
         StrategySpec("baseline_full_liquidity_industry_penalty_0p10pt", "full", "s_liquidity", industry_penalty_step=0.10),

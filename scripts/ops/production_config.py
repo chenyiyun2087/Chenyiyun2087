@@ -59,6 +59,182 @@ def _normalize_live_canary(raw: dict | None) -> dict[str, object]:
     }
 
 
+DEFAULT_MARKET_REGIME = {
+    "enabled": True,
+    "confirmation_days": 3,
+    "min_hold_days": 5,
+    "stress_immediate": True,
+    "regimes": {
+        "strong_risk_on": {
+            "target_exposure_range": [0.70, 0.85],
+            "allowed_pools": ["trend_continuation", "liquidity_quality"],
+            "attack_budget_cap": 0.35,
+        },
+        "normal_risk_on": {
+            "target_exposure_range": [0.55, 0.70],
+            "allowed_pools": ["liquidity_quality"],
+            "attack_budget_cap": 0.20,
+        },
+        "neutral": {
+            "target_exposure_range": [0.35, 0.55],
+            "allowed_pools": ["liquidity_quality", "repair_reversal"],
+            "attack_budget_cap": 0.0,
+        },
+        "risk_off": {
+            "target_exposure_range": [0.10, 0.35],
+            "allowed_pools": ["liquidity_quality"],
+            "attack_budget_cap": 0.0,
+        },
+        "stress": {
+            "target_exposure_range": [0.0, 0.10],
+            "allowed_pools": [],
+            "attack_budget_cap": 0.0,
+        },
+    },
+}
+
+
+DEFAULT_CANDIDATE_POOLS = {
+    "liquidity_quality": {
+        "role": "champion_core",
+        "strategy": "baseline_full_liquidity_detail_vol_position",
+        "allowed_regimes": ["strong_risk_on", "normal_risk_on", "neutral", "risk_off"],
+        "order_lane": "production",
+    },
+    "trend_continuation": {
+        "role": "attack_challenger",
+        "strategy": "tiered_liquidity_then_bs_v2",
+        "allowed_regimes": ["strong_risk_on"],
+        "order_lane": "shadow",
+        "max_budget_share": 0.35,
+    },
+    "repair_reversal": {
+        "role": "research_challenger",
+        "strategy": "repair_reversal_shadow",
+        "allowed_regimes": ["neutral"],
+        "order_lane": "research",
+        "max_budget_share": 0.0,
+    },
+}
+
+
+DEFAULT_PORTFOLIO_RISK_BUDGET = {
+    "max_total_exposure": 0.85,
+    "champion_default_exposure": 0.70,
+    "max_single_position_weight_pct_nav": 20,
+    "max_single_industry_weight_pct_nav": 40,
+    "max_correlated_theme_weight_pct_nav": 55,
+    "max_daily_new_position_pct_nav": 30,
+    "max_daily_turnover_pct_nav": 50,
+    "max_attack_pool_budget_share": 0.35,
+}
+
+
+DEFAULT_CHALLENGER_LANES = {
+    "tiered_liquidity_then_bs_v2": {
+        "lane": "shadow",
+        "candidate_pool": "trend_continuation",
+        "allowed_regimes": ["strong_risk_on"],
+        "max_budget_share": 0.35,
+        "require_enabled_shadow_gate": True,
+    },
+    "ashare_auto_shadow": {
+        "lane": "shadow",
+        "candidate_pool": "diversification",
+        "allowed_regimes": ["strong_risk_on", "normal_risk_on"],
+        "max_budget_share": 0.20,
+        "require_enabled_shadow_gate": True,
+    },
+    "dual_system_adaptive_route": {
+        "lane": "shadow",
+        "candidate_pool": "diversification",
+        "allowed_regimes": ["strong_risk_on", "normal_risk_on", "neutral"],
+        "max_budget_share": 0.20,
+        "require_enabled_shadow_gate": True,
+    },
+    "repair_reversal_shadow": {
+        "lane": "research",
+        "candidate_pool": "repair_reversal",
+        "allowed_regimes": ["neutral"],
+        "max_budget_share": 0.0,
+        "require_enabled_shadow_gate": True,
+    },
+}
+
+
+def _as_float_pair(raw: object, default: list[float]) -> list[float]:
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return list(default)
+    lo = float(raw[0])
+    hi = float(raw[1])
+    if lo < 0 or hi > 1 or lo > hi:
+        raise ValueError("target_exposure_range must be [lo, hi] within 0..1")
+    return [lo, hi]
+
+
+def _normalize_market_regime(raw: dict | None) -> dict[str, object]:
+    values = dict(DEFAULT_MARKET_REGIME)
+    values.update(dict(raw or {}))
+    regimes_raw = dict(DEFAULT_MARKET_REGIME["regimes"])
+    regimes_raw.update(dict((raw or {}).get("regimes") or {}))
+    regimes: dict[str, dict[str, object]] = {}
+    for name in ("strong_risk_on", "normal_risk_on", "neutral", "risk_off", "stress"):
+        source = dict(DEFAULT_MARKET_REGIME["regimes"][name])
+        source.update(dict(regimes_raw.get(name) or {}))
+        regimes[name] = {
+            "target_exposure_range": _as_float_pair(
+                source.get("target_exposure_range"),
+                DEFAULT_MARKET_REGIME["regimes"][name]["target_exposure_range"],
+            ),
+            "allowed_pools": [str(item) for item in source.get("allowed_pools", [])],
+            "attack_budget_cap": float(source.get("attack_budget_cap", 0.0)),
+        }
+    return {
+        "enabled": bool(values.get("enabled", True)),
+        "confirmation_days": int(values.get("confirmation_days", 3)),
+        "min_hold_days": int(values.get("min_hold_days", 5)),
+        "stress_immediate": bool(values.get("stress_immediate", True)),
+        "regimes": regimes,
+    }
+
+
+def _normalize_candidate_pools(raw: dict | None) -> dict[str, dict[str, object]]:
+    merged = {key: dict(value) for key, value in DEFAULT_CANDIDATE_POOLS.items()}
+    for key, value in dict(raw or {}).items():
+        merged[str(key)] = {**dict(merged.get(str(key), {})), **dict(value or {})}
+    out: dict[str, dict[str, object]] = {}
+    for key, value in merged.items():
+        out[key] = {
+            "role": str(value.get("role") or ""),
+            "strategy": str(value.get("strategy") or ""),
+            "allowed_regimes": [str(item) for item in value.get("allowed_regimes", [])],
+            "order_lane": str(value.get("order_lane") or "shadow"),
+            "max_budget_share": float(value.get("max_budget_share", 0.0)),
+        }
+    return out
+
+
+def _normalize_portfolio_risk_budget(raw: dict | None) -> dict[str, float]:
+    values = {**DEFAULT_PORTFOLIO_RISK_BUDGET, **dict(raw or {})}
+    return {key: float(value) for key, value in values.items()}
+
+
+def _normalize_challenger_lanes(raw: dict | None) -> dict[str, dict[str, object]]:
+    merged = {key: dict(value) for key, value in DEFAULT_CHALLENGER_LANES.items()}
+    for key, value in dict(raw or {}).items():
+        merged[str(key)] = {**dict(merged.get(str(key), {})), **dict(value or {})}
+    out: dict[str, dict[str, object]] = {}
+    for key, value in merged.items():
+        out[key] = {
+            "lane": str(value.get("lane") or "shadow"),
+            "candidate_pool": str(value.get("candidate_pool") or ""),
+            "allowed_regimes": [str(item) for item in value.get("allowed_regimes", [])],
+            "max_budget_share": float(value.get("max_budget_share", 0.0)),
+            "require_enabled_shadow_gate": bool(value.get("require_enabled_shadow_gate", True)),
+        }
+    return out
+
+
 @lru_cache(maxsize=1)
 def load_production_config() -> dict[str, object]:
     if not CONFIG_PATH.exists():
@@ -83,6 +259,10 @@ def load_production_config() -> dict[str, object]:
         "shadow_validation": _normalize_shadow_validation(production.get("shadow_validation")),
         "research_shadow_candidate": _normalize_research_shadow_candidate(production.get("research_shadow_candidate")),
         "live_canary": _normalize_live_canary(production.get("live_canary")),
+        "market_regime": _normalize_market_regime(production.get("market_regime")),
+        "candidate_pools": _normalize_candidate_pools(production.get("candidate_pools")),
+        "portfolio_risk_budget": _normalize_portfolio_risk_budget(production.get("portfolio_risk_budget")),
+        "challenger_lanes": _normalize_challenger_lanes(production.get("challenger_lanes")),
         "config_path": str(CONFIG_PATH),
         "config_sha": hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16],
         # 2026-06-23: industry filter from dispersion diagnosis
@@ -91,6 +271,10 @@ def load_production_config() -> dict[str, object]:
     canary = config["live_canary"]
     if canary["candidate_strategy"] != config["primary_strategy"]:
         raise ValueError("live_canary candidate_strategy must match the current primary_strategy")
+    if config["research_shadow_candidate"]["enabled"]:
+        raise ValueError("research_shadow_candidate.enabled must remain false until manual promotion")
+    if canary["enabled"]:
+        raise ValueError("live_canary.enabled must remain false until manual approval")
     return config
 
 

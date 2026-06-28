@@ -3,6 +3,14 @@ strategy_version: "2026.06.23"
 release_id: prod-20260623-01
 owner: chenyiyun
 status: PRODUCTION
+candidate_pool: liquidity_quality
+pool_role: champion_core
+allowed_regimes:
+  - strong_risk_on
+  - normal_risk_on
+  - neutral
+  - risk_off
+max_budget_share: 0.70
 description: >
   流动性质量防守策略+仓位自适应。当日候选排序基于 liquidity_detail_score，
   结合 AShare 信号增强与双系统加权。风控锚为 adaptive_market_style v2.2。
@@ -19,6 +27,7 @@ risk_budget:
   target_exposure: 0.70
   max_single_name: 0.18
   max_industry_exposure: 0.35
+  max_budget_share: 0.70
 
 feature_dependencies:
   - technical_feature_v4

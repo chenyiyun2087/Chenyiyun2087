@@ -3,6 +3,15 @@ strategy_version: "2026.06.23"
 release_id: shadow-20260623-01
 owner: chenyiyun
 status: SHADOW
+candidate_pool: risk_anchor
+pool_role: risk_anchor
+allowed_regimes:
+  - strong_risk_on
+  - normal_risk_on
+  - neutral
+  - risk_off
+  - stress
+max_budget_share: 0.00
 description: >
   自适应市场风格策略 v2.2，作为生产策略的风控锚与仓位治理依据。
   不直接生成生产订单，仅运行影子盘并产出风险信号。

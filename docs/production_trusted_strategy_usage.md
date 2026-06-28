@@ -2,7 +2,7 @@
 
 ## 当前推荐策略
 
-当前生产默认口径以 `config/production_strategy.yaml` 为唯一配置源；Web、scheduler、候选导出和收益评估均应与该文件保持一致。
+当前生产默认口径以 `config/production_strategy.yaml` 为唯一配置源；Web 任务中心、候选导出和收益评估均应与该文件保持一致。
 
 当前生产默认使用风险档位 `adaptive`，但飞书主推送策略已改为收益优先的 `baseline_full_liquidity_detail_vol_position`：
 
@@ -30,24 +30,22 @@
 
 ## 每日生产流程
 
-日终批量任务已自动包含候选导出。独立调度器 `scheduler.py` 的 `daily_pipeline` 顺序为：
+日终批量任务由 Web 任务中心统一调度，任务定义以 `task_registry/pipeline.yaml` 为准；根目录 `scheduler.py` 已退役并归档到 `archive/scheduler.py`。交易日日终默认顺序为：
 
-1. 等待当日行情数据就绪。
-2. 执行 `eastmoney/run_strategy.py`。
-3. 执行 `scoreRank/run_daily.py --date <交易日> --force`，评分日期显式绑定到本次 pipeline 交易日。
-4. 执行 `scripts/backfill_score_rank_daily_industry.py --execute`，仅回填当日空行业。
-5. 执行 `scoreRank/cli/build_bs_consensus.py --date <交易日>`。
-6. 执行 `scripts/ops/export_trusted_strategy_candidates.py --risk-profile adaptive --write-db --emit-orders --notify-feishu --max-total-positions 5`，导出 `vol_position` 主推送候选名单，并自动写入候选表、Web 股票池、核心精选信号和本地订单表；订单草案生成后发送飞书通知。
-7. 执行 `scripts/ops/run_trusted_strategy_shadow_monitor.py --execution-date <交易日> --write-db --notify-feishu --allow-empty`，复盘上一信号日订单在本交易日开盘的可成交性、涨跌停风险和滑点，并发送飞书通知。
-8. 执行 `scripts/ops/run_strategy_performance_review.py --date <交易日> --notify-feishu`，汇总主策略收益、回撤、候选订单、影子盘和实盘同步状态，生成 `exports/production_strategy_reviews/` 审计文件，并单独发送飞书收益评估。
-9. 每周五 22:05 执行 `scripts/ops/cleanup_sina_bs_detection_images.py --execute`，删除上一周 `sina/bs_detection/SinaAppBS/config_1/YYYYMMDD/` 图片日期目录，降低检测图片占用。
-10. 继续执行 M1、M8 和实盘快照同步。
+1. `adc_bs_detect`：执行 `scoreRank/cli/detect_adc_bs_points.py`。
+2. `bs_ocr_adc_compare`：执行 B/S 来源交叉比对。
+3. `trusted_strategy_backtest`：执行每日策略回测。
+4. `trusted_strategy_candidates`：执行 `scripts/ops/export_trusted_strategy_candidates.py --write-db --emit-orders --notify-feishu`，生成候选、订单草案和飞书主推送。
+5. `trusted_strategy_shadow_monitor`：执行影子盘可成交性、涨跌停和滑点复盘，并推送飞书。
+6. `trusted_strategy_performance_review`：执行收益评估并推送飞书。
+7. `candle_diag_scan`、`bs_signal_monthly_cycle`：执行后续形态扫描和 B 点模型闭环。
+8. `ops_daily_batch_audit`：执行 `scripts/ops/daily_batch_audit.py --notify-feishu`，巡检当日队列、历史结果和通知投递。
 
-Web 任务中心也已注册“可信全量池候选导出”、“可信策略影子盘监控”和“可信策略收益评估”，默认交易日 `21:25`、`21:28`、`21:32` 执行，可手动触发或调整调度时间。
+Web 任务中心已注册以上任务，可在 `/admin` 调整调度时间、手动入队或查看队列状态。相同任务与业务日期会自动合并，避免重复补跑。
 
 Web 任务中心同时注册“Sina检测图片周清理（周五）”，默认 `22:05` 执行。该任务不依赖交易日，脚本自身只在周五执行删除；不带 `--execute` 时只做 dry-run。
 
-代码更新后需要重启独立 `scheduler.py` 进程和 Web 服务，新的流水线步骤与 Web 任务才会生效。
+代码更新后只需要重启 Web 服务，新的流水线步骤与 Web 任务才会生效。若某个交易日漏跑，先进入 `/admin?tab=audit-tab` 选择业务日期刷新巡检；只有人工点击“确认补跑待处理任务”后，系统才会以 `trigger_type=replay` 把缺失任务重新加入队列并重新发送对应飞书消息。
 
 以下步骤用于人工复核、手动补跑或排查：
 

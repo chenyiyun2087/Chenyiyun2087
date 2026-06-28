@@ -135,6 +135,104 @@ def send_feishu_text(webhook_url: str, content: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def ensure_notification_delivery_table(engine: "Engine") -> None:
+    """Create the notification delivery audit table if it does not exist."""
+    text_fn = _get_text_sql()
+    with engine.begin() as conn:
+        conn.execute(
+            text_fn(
+                """
+                CREATE TABLE IF NOT EXISTS chenyiyun.app_notification_delivery (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    business_date VARCHAR(8) NOT NULL,
+                    notification_type VARCHAR(64) NOT NULL,
+                    task_name VARCHAR(64) NULL,
+                    channel_key VARCHAR(32) NOT NULL,
+                    status VARCHAR(32) NOT NULL,
+                    reason TEXT NULL,
+                    dedupe_key VARCHAR(160) NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    KEY idx_notification_delivery_date (business_date, task_name, notification_type),
+                    KEY idx_notification_delivery_dedupe (dedupe_key)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        )
+
+
+def record_notification_delivery(
+    engine: "Engine",
+    *,
+    business_date: str,
+    notification_type: str,
+    task_name: str | None,
+    channel_key: str,
+    status: str,
+    reason: str,
+    dedupe_key: str | None = None,
+) -> None:
+    """Persist one notification delivery attempt."""
+    ensure_notification_delivery_table(engine)
+    text_fn = _get_text_sql()
+    with engine.begin() as conn:
+        conn.execute(
+            text_fn(
+                """
+                INSERT INTO chenyiyun.app_notification_delivery
+                    (business_date, notification_type, task_name, channel_key, status, reason, dedupe_key)
+                VALUES (:business_date, :notification_type, :task_name, :channel_key, :status, :reason, :dedupe_key)
+                """
+            ),
+            {
+                "business_date": str(business_date or ""),
+                "notification_type": str(notification_type or "unknown"),
+                "task_name": task_name,
+                "channel_key": str(channel_key or "feishu"),
+                "status": str(status or "unknown"),
+                "reason": str(reason or "")[:2000],
+                "dedupe_key": dedupe_key,
+            },
+        )
+
+
+def send_feishu_text_audited(
+    engine: "Engine",
+    content: str,
+    *,
+    business_date: str,
+    notification_type: str,
+    task_name: str | None = None,
+    dedupe_key: str | None = None,
+) -> tuple[bool, str]:
+    """Send a Feishu message and record the delivery result."""
+    webhook = load_feishu_webhook(engine)
+    if not webhook:
+        record_notification_delivery(
+            engine,
+            business_date=business_date,
+            notification_type=notification_type,
+            task_name=task_name,
+            channel_key="feishu",
+            status="no_webhook",
+            reason="no enabled Feishu webhook",
+            dedupe_key=dedupe_key,
+        )
+        return False, "no_webhook"
+
+    ok, reason = send_feishu_text(webhook, content)
+    record_notification_delivery(
+        engine,
+        business_date=business_date,
+        notification_type=notification_type,
+        task_name=task_name,
+        channel_key="feishu",
+        status="ok" if ok else "failed",
+        reason=reason,
+        dedupe_key=dedupe_key,
+    )
+    return ok, reason
+
+
 def strategy_identity_block() -> str:
     """Return a standardized strategy identity block for all Feishu cards.
 

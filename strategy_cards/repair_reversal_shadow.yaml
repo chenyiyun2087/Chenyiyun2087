@@ -1,0 +1,31 @@
+strategy_id: repair_reversal_shadow
+strategy_version: "2026.06.24"
+release_id: research-20260624-01
+owner: chenyiyun
+status: RESEARCH
+candidate_pool: repair_reversal
+pool_role: research_challenger
+allowed_regimes:
+  - neutral
+max_budget_share: 0.00
+description: >
+  修复反转候选池占位策略卡。第一版只允许研究和影子证据积累，
+  不允许生成生产订单。
+
+signal_time: T_15_30
+execution_time: T+1_OPEN
+universe: ashare_full_liquid_pool_v1
+holding_days: 10
+max_positions: 5
+
+pit_contract:
+  data_cutoff: T_15_30
+  execution_assumption: T+1_OPEN
+  forbid_future_fields: true
+
+promotion:
+  status: RESEARCH
+  required_evidence:
+    - walk_forward_pass
+    - shadow_pass_60_days
+    - execution_quality_pass

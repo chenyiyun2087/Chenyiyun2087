@@ -10,6 +10,8 @@
         href="{{ url_for('admin', tab='queue-tab') }}">作业队列</a>
     <a id="tab-btn-lock-tab" class="sub-tab {% if active_tab == 'lock-tab' %}active{% endif %}"
         href="{{ url_for('admin', tab='lock-tab') }}">任务锁状态</a>
+    <a id="tab-btn-audit-tab" class="sub-tab {% if active_tab == 'audit-tab' %}active{% endif %}"
+        href="{{ url_for('admin', tab='audit-tab') }}">日终巡检</a>
     <a id="tab-btn-result-tab" class="sub-tab {% if active_tab == 'result-tab' %}active{% endif %}"
         href="{{ url_for('admin', tab='result-tab') }}">任务结果查询</a>
 </div>
@@ -244,6 +246,70 @@
                         <td colspan="6" style="text-align:center; padding: 30px; color: var(--text-muted);">当前无任务锁记录
                         </td>
                     </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% elif active_tab == 'audit-tab' %}
+<div id="audit-tab" class="admin-tab-content">
+    <section class="panel">
+        <div class="panel-title">日终批量巡检</div>
+        <form method="post" action="{{ url_for('run_daily_batch_audit') }}" class="form-grid" style="margin-bottom: 12px;">
+            <div class="form-grid-2col">
+                <div class="form-group">
+                    <label>业务日期</label>
+                    <input name="business_date" value="{{ audit_business_date }}" pattern="[0-9]{8}" required style="width:100%;">
+                </div>
+                <div class="form-group">
+                    <label>通知</label>
+                    <label class="schedule-label" style="margin-top: 8px;">
+                        <input type="checkbox" name="notify_feishu" checked>
+                        异常时发送飞书巡检卡
+                    </label>
+                </div>
+            </div>
+            <button class="btn form-submit-btn">刷新巡检</button>
+        </form>
+        <form method="post" action="{{ url_for('replay_daily_batch_audit') }}" style="margin-bottom: 12px;">
+            <input type="hidden" name="business_date" value="{{ audit_business_date }}">
+            <button class="btn btn-outline">确认补跑待处理任务</button>
+        </form>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>任务</th>
+                        <th>时间</th>
+                        <th>巡检状态</th>
+                        <th>队列/历史</th>
+                        <th>通知</th>
+                        <th>补跑</th>
+                        <th>原因</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in audit_rows %}
+                    <tr>
+                        <td><code class="task-id">{{ row.task_name }}</code></td>
+                        <td class="time-display">{{ row.expected_time or '-' }}</td>
+                        <td>
+                            <span class="status-badge
+                                {% if row.status in ['OK','SKIPPED_NON_TRADING'] %}status-success
+                                {% elif row.status in ['PENDING','RUNNING'] %}status-running
+                                {% else %}status-failed{% endif %}">{{ row.status }}</span>
+                        </td>
+                        <td>
+                            <div class="time-display">queue: {{ row.queue_status or '-' }}{% if row.queue_id %} #{{ row.queue_id }}{% endif %}</div>
+                            <div class="time-display">history: {{ row.history_status or '-' }}</div>
+                        </td>
+                        <td>{{ row.notification_status or '-' }}</td>
+                        <td>{% if row.replay_required %}<span class="result-fail">需要确认</span>{% else %}<span class="result-pass">否</span>{% endif %}</td>
+                        <td class="job-message">{{ row.reason or '-' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="empty-state">暂无巡检记录，请先刷新巡检。</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+from datetime import date
+
+import pandas as pd
+
+from scripts.ops.data_readiness_gate import PipelineReadinessGate
+from scripts.ops.market_regime import apply_state_switch_constraints, build_market_regime_decision
+from scripts.ops.production_config import load_production_config
+from scripts.research_full_pool_liquidity_strategies import build_strategy_specs, filter_strategy_specs
+from strategy_registry import load_all_cards, status_gate
+
+
+def test_production_config_loads_upgrade_sections_without_changing_defaults():
+    config = load_production_config()
+
+    assert config["primary_strategy"] == "production_governed_vol_position"
+    assert config["primary_selection_strategy"] == "baseline_full_liquidity_detail_vol_position"
+    assert config["position_ratio"] == 0.70
+    assert config["research_shadow_candidate"]["enabled"] is False
+    assert config["live_canary"]["enabled"] is False
+    assert "market_regime" in config
+    assert "candidate_pools" in config
+    assert "portfolio_risk_budget" in config
+    assert "challenger_lanes" in config
+    assert config["candidate_pools"]["trend_continuation"]["strategy"] == "tiered_liquidity_then_bs_v2"
+
+
+def test_market_regime_confirmation_hold_and_stress_immediate():
+    regime, confirmed, hold_remaining, reasons = apply_state_switch_constraints(
+        "strong_risk_on",
+        ["neutral", "strong_risk_on", "strong_risk_on"],
+        previous_regime="neutral",
+        confirmation_days=3,
+        min_hold_days=5,
+        days_in_previous_regime=2,
+    )
+
+    assert regime == "neutral"
+    assert confirmed == 2
+    assert hold_remaining == 3
+    assert reasons
+
+    regime, confirmed, hold_remaining, reasons = apply_state_switch_constraints(
+        "stress",
+        ["normal_risk_on", "risk_off", "stress"],
+        previous_regime="normal_risk_on",
+        confirmation_days=3,
+        min_hold_days=5,
+        days_in_previous_regime=1,
+    )
+
+    assert regime == "stress"
+    assert confirmed == 1
+    assert hold_remaining == 0
+    assert reasons == ["stress_immediate_downgrade"]
+
+
+def test_market_regime_outputs_required_shape():
+    config = load_production_config()
+    rows = []
+    for idx in range(10):
+        rows.append(
+            {
+                "trade_date": "2026-06-24",
+                "symbol": f"{idx:06d}",
+                "market_amount_ratio_20": 1.25,
+                "vol_20": 0.02,
+                "index_bucket": "index_strong",
+                "industry": f"I{idx % 3}",
+            }
+        )
+    decision = build_market_regime_decision(pd.DataFrame(rows), "2026-06-24", config)
+
+    assert set(
+        [
+            "regime",
+            "target_exposure_range",
+            "allowed_pools",
+            "attack_budget_cap",
+            "reasons",
+            "confirmation_days",
+            "min_hold_days_remaining",
+        ]
+    ).issubset(decision)
+
+
+def test_pipeline_readiness_blocks_when_any_critical_link_fails(monkeypatch):
+    gate = PipelineReadinessGate(engine=object())
+
+    monkeypatch.setattr(gate, "check_market_data_complete", lambda target: {"check": "market_data_complete", "passed": True, "severity": "critical"})
+    monkeypatch.setattr(gate, "check_scoring_complete", lambda target: {"check": "scoring_complete", "passed": False, "severity": "critical"})
+    monkeypatch.setattr(gate, "check_industry_complete", lambda target: {"check": "industry_complete", "passed": True, "severity": "critical"})
+    monkeypatch.setattr(gate, "check_bs_signal_complete", lambda target: {"check": "bs_signal_complete", "passed": True, "severity": "critical"})
+    monkeypatch.setattr(gate, "check_health_monitor_ready", lambda target: {"check": "health_monitor_ready", "passed": True, "severity": "info"})
+
+    result = gate.all_checks(date(2026, 6, 24), candidate_count=5, emit_orders=True, order_count=0)
+
+    assert result["status"] == "BLOCKED"
+    assert result["passed"] is False
+    assert result["failed_critical"] == ["scoring_complete"]
+
+
+def test_strategy_spec_candidate_pool_metadata_preserves_trusted_filter():
+    specs = {spec.name: spec for spec in build_strategy_specs()}
+    trusted = {spec.name for spec in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
+
+    champion = specs["baseline_full_liquidity_detail_vol_position"]
+    attack = specs["tiered_liquidity_then_bs_v2"]
+    assert champion.candidate_pool == "liquidity_quality"
+    assert champion.pool_role == "champion_core"
+    assert attack.candidate_pool == "trend_continuation"
+    assert attack.allowed_regimes == ("strong_risk_on",)
+    assert "baseline_full_liquidity_detail_vol_position" in trusted
+    assert "tiered_liquidity_then_bs_v2" in trusted
+
+
+def test_research_reversal_card_cannot_generate_orders():
+    cards = load_all_cards()
+
+    assert cards["repair_reversal_shadow"].candidate_pool == "repair_reversal"
+    allowed, reason = status_gate("repair_reversal_shadow", action="generate_orders")
+    assert allowed is False
+    assert "RESEARCH" in reason

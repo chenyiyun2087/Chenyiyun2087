@@ -25,7 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.ops.production_config import load_production_config
-from scripts.ops.feishu_notifier import load_feishu_webhook, send_feishu_text, strategy_identity_block
+from scripts.ops.feishu_notifier import send_feishu_text_audited, strategy_identity_block
 
 
 DEFAULT_ORDER_TABLE = "chenyiyun.ads_local_strategy_orders"
@@ -657,10 +657,14 @@ def run_shadow_monitor(args: argparse.Namespace) -> dict:
     db_write = persist_shadow(engine, fills, summary, args.fill_table, args.summary_table, strategy_id=args.strategy_id, release_id=args.release_id) if args.write_db else {}
     notify_result = None
     if args.notify_feishu:
-        webhook = load_feishu_webhook(engine)
-        if not webhook:
-            raise RuntimeError("Feishu notification requested but no enabled webhook was found.")
-        ok, reason = send_feishu_text(webhook, _format_notification(summary, fills))
+        ok, reason = send_feishu_text_audited(
+            engine,
+            _format_notification(summary, fills),
+            business_date=execution_date.replace("-", ""),
+            notification_type="trusted_strategy_shadow_monitor",
+            task_name="trusted_strategy_shadow_monitor",
+            dedupe_key=f"trusted_strategy_shadow_monitor:{execution_date.replace('-', '')}",
+        )
         notify_result = reason
         if not ok:
             raise RuntimeError(f"Feishu notification failed: {reason}")

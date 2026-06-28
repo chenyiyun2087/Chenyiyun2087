@@ -3,6 +3,11 @@ strategy_version: "2026.06.23"
 release_id: shadow-20260623-01
 owner: chenyiyun
 status: SHADOW
+candidate_pool: trend_continuation
+pool_role: watchlist_challenger
+allowed_regimes:
+  - strong_risk_on
+max_budget_share: 0.00
 description: >
   AShare 趋势突破影子策略。来自 ADC 的趋势突破选股信号。
   仅运行影子盘观察。

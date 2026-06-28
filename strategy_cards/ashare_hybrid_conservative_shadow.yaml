@@ -3,6 +3,12 @@ strategy_version: "2026.06.23"
 release_id: shadow-20260623-01
 owner: chenyiyun
 status: SHADOW
+candidate_pool: liquidity_quality
+pool_role: watchlist_challenger
+allowed_regimes:
+  - neutral
+  - risk_off
+max_budget_share: 0.00
 description: >
   AShare 保守融合影子策略。来自 ADC 的保守风格选股信号。
   仅运行影子盘观察。

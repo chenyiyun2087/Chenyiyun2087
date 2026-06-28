@@ -1,0 +1,32 @@
+【核心精选策略收益评估】
+日期：2026-06-25
+生产策略：production_governed_vol_position
+选股内核：流动性质量稳健策略（波动仓位）（baseline_full_liquidity_detail_vol_position）
+风险档位：adaptive / 当前目标仓位 70%
+结论：风险总闸触发：defensive_only，目标仓位 50.00%
+
+最近3个月收益评估：
+- 状态：PASS；区间 2026-03-24~2026-06-25，交易日 63/63
+- 收益 41.70%，年化 312.35%，最大回撤 -8.10%，当前回撤 -4.74%
+- 胜率 54.84%，最差单日 -8.10%，波动率 38.03%，Sharpe 3.92，Calmar 38.54，平均暴露 65.45%
+
+长期收益/回撤：
+- 主策略三年：累计50.01%，年化69.81%，最大回撤-13.12%，期末权益750,049
+- 风控影子v2.2：累计29.95%，年化40.78%，最大回撤-14.50%
+
+当前运行：
+- 候选 5 只，目标仓位合计50.00%；行业：半导体3只、元器件1只、陶瓷1只
+- 订单 4 笔（BUY 4 / SELL 0），计划金额 166,775
+- 影子盘：可成交 5 / 不可成交 0，均值滑点 368.5 bps；验收 fail / reduce_position
+- 最近影子盘：fail_streak 5，worst_action reduce_position
+- 实盘快照：总权益 500,000，现金 500,000，持仓市值 0，日收益 0.00%
+- 数据提醒：live_positions is empty; live realized strategy trend cannot be judged
+
+Top5：
+- 1. 000021 深科技 元器件 权重10.00%
+- 2. 300285 国瓷材料 陶瓷 权重10.00%
+- 3. 688110 东芯股份 半导体 权重10.00%
+- 4. 688521 芯原股份 半导体 权重10.00%
+- 5. 603986 兆易创新 半导体 权重10.00%
+
+报告：/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260626_093558_20260625/strategy_performance_review.md

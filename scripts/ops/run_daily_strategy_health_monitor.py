@@ -643,12 +643,17 @@ def run_health_monitor(engine, as_of_date: str, args: argparse.Namespace) -> dic
 
     notify_result = None
     if args.notify_feishu:
-        from scripts.ops.feishu_notifier import load_feishu_webhook, send_feishu_text
+        from scripts.ops.feishu_notifier import send_feishu_text_audited
 
-        webhook = load_feishu_webhook(engine)
-        if webhook:
-            ok, reason = send_feishu_text(webhook, format_health_feishu(health))
-            notify_result = reason if not ok else "ok"
+        ok, reason = send_feishu_text_audited(
+            engine,
+            format_health_feishu(health),
+            business_date=as_of_date.replace("-", ""),
+            notification_type="daily_strategy_health",
+            task_name="daily_strategy_health_monitor",
+            dedupe_key=f"daily_strategy_health:{as_of_date.replace('-', '')}",
+        )
+        notify_result = reason if not ok else "ok"
 
     return {**health, "notify_result": notify_result, "db_write": True}
 

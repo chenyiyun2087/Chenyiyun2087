@@ -48,6 +48,10 @@ class StrategyCard:
 
     # 来源
     raw: dict = field(default_factory=dict)
+    candidate_pool: str = ""
+    allowed_regimes: tuple[str, ...] = ()
+    pool_role: str = ""
+    max_budget_share: float = 0.0
 
     @property
     def is_production(self) -> bool:
@@ -103,6 +107,10 @@ def load_all_cards() -> dict[str, StrategyCard]:
             target_exposure=float(
                 raw.get("risk_budget", {}).get("target_exposure", 0.70)
             ),
+            candidate_pool=str(raw.get("candidate_pool") or raw.get("pool", {}).get("candidate_pool", "")),
+            allowed_regimes=tuple(str(item) for item in raw.get("allowed_regimes", raw.get("pool", {}).get("allowed_regimes", []))),
+            pool_role=str(raw.get("pool_role") or raw.get("pool", {}).get("role", "")),
+            max_budget_share=float(raw.get("max_budget_share", raw.get("risk_budget", {}).get("max_budget_share", 0.0))),
             raw=raw,
         )
 

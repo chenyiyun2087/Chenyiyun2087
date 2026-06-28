@@ -939,6 +939,20 @@ def _insert_task_history(task_name, trigger_type, status, started_at, finished_a
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
+            # Polling continues after the scheduled time. Terminal jobs clear
+            # active_dedupe_key, so guard the date explicitly to prevent a
+            # failed dependency from creating hundreds of duplicate jobs.
+            if trigger_type == "scheduled":
+                cursor.execute(
+                    """SELECT * FROM app_task_queue
+                       WHERE task_name=%s AND business_date=%s AND trigger_type='scheduled'
+                       ORDER BY id DESC LIMIT 1 FOR UPDATE""",
+                    (task_name, business_date),
+                )
+                scheduled_existing = cursor.fetchone()
+                if scheduled_existing:
+                    conn.commit()
+                    return scheduled_existing, False, "scheduled task already recorded for business date"
             cursor.execute(
                 """
                 INSERT INTO app_task_history

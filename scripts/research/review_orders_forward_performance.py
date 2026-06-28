@@ -7,7 +7,7 @@ by week/signal-date to assess how well the strategy picks performed.
 
 from __future__ import annotations
 
-import os
+import argparse
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -20,17 +20,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-os.environ.setdefault("CHENYIYUN_DB_PASSWORD", "19871019")
 from scoreRank.core.db_config import build_sqlalchemy_url
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-TODAY = date.today()  # 2026-06-23
+TODAY = date.today()
 LOOKBACK_DAYS = 35  # roughly one month
 FORWARD_TRADING_DAYS = 5  # one trading week
-ORDER_TABLE = "chenyiyun.ads_local_strategy_orders"
+CANDIDATE_TABLE = "chenyiyun.ads_trusted_strategy_candidates"
+PRODUCTION_STRATEGY = "production_governed_vol_position"
 PRICE_TABLE = "tushare_stock.dwd_stock_daily_standard"
 INDEX_TABLE = "tushare_stock.dwd_index_daily"
 BENCHMARK_CODE = "000300.SH"  # CSI 300
@@ -95,24 +95,34 @@ def load_trade_calendar(engine) -> pd.DataFrame:
     return cal
 
 
-def load_orders(engine, start_date: int, end_date: int) -> pd.DataFrame:
-    """Load BUY orders within date range."""
+def load_orders(engine, start_date: int, end_date: int, strategy: str = PRODUCTION_STRATEGY) -> pd.DataFrame:
+    """Load the latest persisted trusted candidate set for each signal date."""
     orders = pd.read_sql(
         text(
             f"""
-        SELECT id, trade_date, execution_date, strategy, ts_code, side,
-               target_weight, delta_weight, order_status
-        FROM {ORDER_TABLE}
-        WHERE trade_date >= :start_date AND trade_date <= :end_date
-          AND side = 'BUY'
-        ORDER BY trade_date, ts_code
+        SELECT c.id, c.trade_date, c.strategy, c.symbol AS ts_code,
+               c.stock_name, c.industry, c.rank_no, c.rank_score,
+               c.effective_weight AS target_weight, c.bs_score_v2,
+               c.is_bs_candidate, c.index_bucket, c.market_liquidity_bucket
+        FROM {CANDIDATE_TABLE} c
+        JOIN (
+            SELECT trade_date, strategy, MAX(signal_time) AS latest_signal_time
+            FROM {CANDIDATE_TABLE}
+            WHERE trade_date >= :start_date AND trade_date <= :end_date
+              AND strategy = :strategy
+            GROUP BY trade_date, strategy
+        ) latest
+          ON latest.trade_date=c.trade_date AND latest.strategy=c.strategy
+         AND latest.latest_signal_time=c.signal_time
+        WHERE c.strategy = :strategy
+        ORDER BY c.trade_date, c.rank_no, c.symbol
         """
         ),
         engine,
-        params={"start_date": int(start_date), "end_date": int(end_date)},
+        params={"start_date": int(start_date), "end_date": int(end_date), "strategy": strategy},
     )
     # Normalize date columns to YYYYMMDD int
-    for col in ["trade_date", "execution_date"]:
+    for col in ["trade_date"]:
         if col in orders.columns:
             orders[col] = orders[col].apply(
                 lambda x: _to_int_date(x) if pd.notna(x) else 0
@@ -255,11 +265,12 @@ def compute_forward_returns(
             else:
                 rets[f"forward_ret_d{i+1}"] = np.nan
 
-        # 1-week return (day 5 close vs entry open)
-        if closes and np.isfinite(closes[-1]) and np.isfinite(entry_open) and entry_open > 0:
-            rets["forward_ret_1w"] = closes[-1] / entry_open - 1.0
+        complete_week = len(exit_dates) == FORWARD_TRADING_DAYS and len(closes) == FORWARD_TRADING_DAYS
+        if complete_week and all(np.isfinite(c) for c in closes) and np.isfinite(entry_open) and entry_open > 0:
+            rets["forward_ret_1w"] = closes[FORWARD_TRADING_DAYS - 1] / entry_open - 1.0
         else:
             rets["forward_ret_1w"] = np.nan
+        rets["observation_status"] = "complete" if np.isfinite(rets["forward_ret_1w"]) else "observing"
 
         # Max return during the 5 days
         finite_closes = [c for c in closes if np.isfinite(c)]
@@ -274,6 +285,12 @@ def compute_forward_returns(
                 "ts_code": ts_code,
                 "strategy": order.get("strategy", ""),
                 "target_weight": order.get("target_weight", np.nan),
+                "stock_name": order.get("stock_name", ""),
+                "industry": order.get("industry", ""),
+                "rank_no": order.get("rank_no", np.nan),
+                "rank_score": order.get("rank_score", np.nan),
+                "bs_score_v2": order.get("bs_score_v2", np.nan),
+                "is_bs_candidate": order.get("is_bs_candidate", np.nan),
                 "exec_date": exec_date,
                 **rets,
             }
@@ -301,7 +318,7 @@ def summarize_by_signal_date(results: pd.DataFrame) -> pd.DataFrame:
         avg_ret_d5=("forward_ret_d5", "mean"),
         avg_ret_1w=("forward_ret_1w", "mean"),
         avg_max_ret=("forward_max_ret", "mean"),
-        win_rate_1w=("forward_ret_1w", lambda x: (x > 0).mean()),
+        win_rate_1w=("forward_ret_1w", lambda x: (x.dropna() > 0).mean()),
         stocks=("ts_code", lambda x: ",".join(sorted(x))),
     ).reset_index()
     return agg.sort_values("trade_date")
@@ -322,10 +339,10 @@ def summarize_by_week(results: pd.DataFrame) -> pd.DataFrame:
         unique_stocks=("ts_code", "nunique"),
         avg_ret_1w=("forward_ret_1w", "mean"),
         avg_max_ret=("forward_max_ret", "mean"),
-        win_rate_1w=("forward_ret_1w", lambda x: (x > 0).mean()),
-        hit_3pct=("forward_ret_1w", lambda x: (x >= 0.03).mean()),
-        hit_5pct=("forward_ret_1w", lambda x: (x >= 0.05).mean()),
-        hit_10pct=("forward_ret_1w", lambda x: (x >= 0.10).mean()),
+        win_rate_1w=("forward_ret_1w", lambda x: (x.dropna() > 0).mean()),
+        hit_3pct=("forward_ret_1w", lambda x: (x.dropna() >= 0.03).mean()),
+        hit_5pct=("forward_ret_1w", lambda x: (x.dropna() >= 0.05).mean()),
+        hit_10pct=("forward_ret_1w", lambda x: (x.dropna() >= 0.10).mean()),
     ).reset_index()
     if not agg.empty:
         agg["week_start"] = agg["week_start"].apply(
@@ -409,11 +426,12 @@ def print_report(
     complete = results["forward_ret_1w"].notna().sum()
     incomplete = total_orders - complete
     overall_avg_1w = results["forward_ret_1w"].mean()
-    overall_win_rate = (results["forward_ret_1w"] > 0).mean()
+    valid_results = results.dropna(subset=["forward_ret_1w"])
+    overall_win_rate = (valid_results["forward_ret_1w"] > 0).mean()
     overall_avg_max = results["forward_max_ret"].mean()
-    hit_3 = (results["forward_ret_1w"] >= 0.03).mean()
-    hit_5 = (results["forward_ret_1w"] >= 0.05).mean()
-    hit_10 = (results["forward_ret_1w"] >= 0.10).mean()
+    hit_3 = (valid_results["forward_ret_1w"] >= 0.03).mean()
+    hit_5 = (valid_results["forward_ret_1w"] >= 0.05).mean()
+    hit_10 = (valid_results["forward_ret_1w"] >= 0.10).mean()
 
     # Distribution stats
     valid_rets = results["forward_ret_1w"].dropna()
@@ -541,9 +559,17 @@ def print_report(
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Review production recommendations from T+1 open to T+5 close.")
+    parser.add_argument("--as-of-date", default=date.today().isoformat(), help="YYYY-MM-DD report cutoff")
+    parser.add_argument("--lookback-days", type=int, default=LOOKBACK_DAYS)
+    parser.add_argument("--strategy", default=PRODUCTION_STRATEGY)
+    parser.add_argument("--output-dir", default=str(PROJECT_ROOT / "exports" / "order_forward_reviews"))
+    args = parser.parse_args()
+    global TODAY
+    TODAY = date.fromisoformat(args.as_of_date)
     engine = create_engine(build_sqlalchemy_url())
 
-    start_date = _to_int_date(TODAY - timedelta(days=LOOKBACK_DAYS))
+    start_date = _to_int_date(TODAY - timedelta(days=args.lookback_days))
     end_date = _to_int_date(TODAY)
 
     print(f"Loading data: {start_date} ~ {end_date}")
@@ -554,7 +580,7 @@ def main():
     print(f"  Calendar: {len(calendar)} trading days")
 
     # 2. Load orders
-    orders = load_orders(engine, start_date, end_date)
+    orders = load_orders(engine, start_date, end_date, strategy=args.strategy)
     print(f"  Orders: {len(orders)} BUY orders, {orders['trade_date'].nunique()} signal dates")
 
     if orders.empty:
@@ -612,7 +638,7 @@ def main():
     print(report)
 
     # 8. Save to file
-    output_dir = PROJECT_ROOT / "exports" / "order_forward_reviews"
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     ts = TODAY.strftime("%Y%m%d_%H%M%S")
     report_path = output_dir / f"orders_forward_1w_review_{ts}.md"

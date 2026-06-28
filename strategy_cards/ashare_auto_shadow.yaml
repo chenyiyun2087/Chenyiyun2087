@@ -3,6 +3,12 @@ strategy_version: "2026.06.23"
 release_id: shadow-20260623-01
 owner: chenyiyun
 status: SHADOW
+candidate_pool: diversification
+pool_role: diversification_challenger
+allowed_regimes:
+  - strong_risk_on
+  - normal_risk_on
+max_budget_share: 0.20
 description: >
   AShare AUTO 影子策略。来自 ADC 的全自动选股信号。
   仅运行影子盘观察，不进入生产候选。
