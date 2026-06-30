@@ -1,0 +1,11 @@
+strategy,record_type,date,order_id,runtime_initial_cash,strict_initial_cash,runtime_ending_cash,strict_ending_cash,runtime_market_value,strict_market_value,runtime_nav,strict_nav,cash_residual,position_value_residual,share_quantity_residual,trade_count_residual,status,reason
+production_governed_vol_position,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+baseline_full_liquidity_detail_vol_position,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+adaptive_market_style,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+dual_system_adaptive_route,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+ashare_auto_shadow,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+tiered_liquidity_then_bs_v2,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+ashare_hybrid_conservative_shadow,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+ashare_trend_breakout_shadow,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+chenyiyun_selected,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine
+repair_reversal_shadow,AUDIT_STATUS,,,,,,,,,,,,,,,NOT_VERIFIABLE,fresh replay blocked by missing immutable snapshots; runtime/ledger_runtime.py has no independent fill/NAV replay engine

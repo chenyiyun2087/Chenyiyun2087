@@ -615,9 +615,11 @@ class PipelineReadinessGate:
             "failed": list(result.get("failed_critical") or []),
         }
 
-    def check_scoring_complete(self, target_date: date) -> dict[str, Any]:
+    def check_scoring_complete(self, target_date: date, *, allow_historical: bool = False) -> dict[str, Any]:
         result = PostScoreGate(self._engine).all_checks(target_date)
         failed = set(result.get("failed_critical") or [])
+        if allow_historical:
+            failed.discard("score_date_matches")
         blocking = [item for item in ("score_date_matches", "score_null_rates", "candidate_pool_size") if item in failed]
         return {
             "check": "scoring_complete",
@@ -731,10 +733,16 @@ class PipelineReadinessGate:
         candidate_count: int | None = None,
         emit_orders: bool = False,
         order_count: int | None = None,
+        allow_historical: bool = False,
     ) -> dict[str, Any]:
+        scoring_check = (
+            self.check_scoring_complete(target_date, allow_historical=True)
+            if allow_historical
+            else self.check_scoring_complete(target_date)
+        )
         self._checks = [
             self.check_market_data_complete(target_date),
-            self.check_scoring_complete(target_date),
+            scoring_check,
             self.check_industry_complete(target_date),
             self.check_bs_signal_complete(target_date),
             self.check_health_monitor_ready(target_date),

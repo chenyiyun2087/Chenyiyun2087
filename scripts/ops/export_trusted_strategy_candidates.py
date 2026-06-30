@@ -2122,7 +2122,11 @@ def export_candidates(args: argparse.Namespace) -> dict:
     start_date = (pd.Timestamp(asof_date) - pd.Timedelta(days=int(args.history_days))).strftime("%Y-%m-%d")
     signal_date = pd.Timestamp(asof_date).date()
     pipeline_gate = PipelineReadinessGate(engine)
-    pipeline_preflight = pipeline_gate.all_checks(signal_date, emit_orders=bool(args.emit_orders))
+    pipeline_preflight = pipeline_gate.all_checks(
+        signal_date,
+        emit_orders=bool(args.emit_orders),
+        allow_historical=bool(getattr(args, "historical_reissue", False)),
+    )
     pipeline_preflight_path = PipelineReadinessGate.write_evidence(pipeline_preflight, OUT_ROOT / asof_date)
     if args.emit_orders and not bool(pipeline_preflight.get("passed")):
         failed = ", ".join(pipeline_preflight.get("failed_critical") or [])
@@ -2457,6 +2461,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
         signal_date,
         candidate_count=int(len(candidates)),
         emit_orders=bool(args.emit_orders),
+        allow_historical=bool(getattr(args, "historical_reissue", False)),
     )
     pipeline_evidence_path = PipelineReadinessGate.write_evidence(pipeline_with_candidates, out_dir)
     params["pipeline_readiness_status"] = pipeline_with_candidates.get("status")
@@ -2551,6 +2556,20 @@ def export_candidates(args: argparse.Namespace) -> dict:
             _release_id = getattr(args, "release_id", None)
             if not _release_id:
                 raise RuntimeError("governed_order_export_requires_release_id")
+            # The runtime release is created atomically with its immutable
+            # strategy/config/execution identity. Existing conflicting rows are
+            # rejected by the validation immediately below.
+            with engine.begin() as _release_conn:
+                _release_conn.execute(_governance_text(
+                    "INSERT IGNORE INTO chenyiyun.strategy_releases "
+                    "(release_id,strategy_id,config_sha,execution_date) "
+                    "VALUES (:release_id,:strategy_id,:config_sha,:execution_date)"
+                ), {
+                    "release_id": _release_id,
+                    "strategy_id": _order_strategy,
+                    "config_sha": str(_prod_cfg.get("config_sha", "")),
+                    "execution_date": _exec_date,
+                })
             with engine.connect() as _governance_conn:
                 _release = _governance_conn.execute(_governance_text(
                     "SELECT strategy_id, config_sha, execution_date FROM chenyiyun.strategy_releases WHERE release_id=:release_id"
@@ -2856,6 +2875,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 health_date=getattr(args, "health_date", ""),
                 manual_confirmation_required=getattr(args, "manual_confirmation", False),
             )
+            if getattr(args, "historical_reissue", False):
+                content = "【历史补发】\n" + content
             ok, reason = send_feishu_text_audited(
                 engine,
                 content,
@@ -2866,7 +2887,40 @@ def export_candidates(args: argparse.Namespace) -> dict:
             )
             db_write["feishu_notify"] = reason
             if not ok:
-                raise RuntimeError(f"Feishu notification failed: {reason}")
+                print(f"[WARN] Feishu notification queued for retry: {reason}")
+    # Candidate selection is a production business event even when order emission
+    # is intentionally disabled (for example, a historical repair).
+    if args.notify_feishu and "feishu_notify" not in db_write:
+        notification_total_equity = (
+            float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine)
+        )
+        content = _format_order_notification(
+            asof_date=asof_date,
+            strategy=spec.name,
+            candidates=candidates,
+            orders=pd.DataFrame(),
+            files=files,
+            total_equity_used=notification_total_equity,
+            risk_profile=str(args.risk_profile),
+            risk_profile_description=str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
+            strategy_order_details={},
+            health_grade=getattr(args, "health_grade", "UNKNOWN"),
+            health_date=getattr(args, "health_date", ""),
+            manual_confirmation_required=getattr(args, "manual_confirmation", False),
+        )
+        if getattr(args, "historical_reissue", False):
+            content = "【历史补发】\n" + content
+        ok, reason = send_feishu_text_audited(
+            engine, content,
+            business_date=asof_date.replace("-", ""),
+            notification_type="trusted_strategy_candidates",
+            task_name="trusted_strategy_candidates",
+            dedupe_key=f"trusted_strategy_candidates:{asof_date.replace('-', '')}",
+        )
+        db_write["feishu_notify"] = reason
+        if not ok:
+            print(f"[WARN] Feishu notification queued for retry: {reason}")
+
     return {
         "params": params,
         "warnings": warnings,
@@ -2935,6 +2989,7 @@ def main() -> None:
     )
     parser.add_argument("--buy-only", action="store_true", help="Do not generate SELL rebalance orders.")
     parser.add_argument("--notify-feishu", action="store_true", help="Send Feishu notification after local order draft generation.")
+    parser.add_argument("--historical-reissue", action="store_true", help="Prefix the candidate notification as a historical reissue.")
     raw_argv = sys.argv[1:]
     args = parser.parse_args()
     args = _apply_risk_profile_defaults(

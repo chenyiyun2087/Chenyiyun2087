@@ -42,7 +42,10 @@ def test_dependency_state_blocks_when_upstream_has_terminal_failure():
 
 
 def test_dependency_state_accepts_successful_upstream_job():
-    cursor = FakeCursor([{"task_name": "adc_bs_detect", "status": "SUCCESS"}])
+    cursor = FakeCursor([
+        {"task_name": "sina_bs_consensus", "status": "SUCCESS"},
+        {"task_name": "rolling_strategy_scorer", "status": "SUCCESS"},
+    ])
     state, message = web_app._dependency_state(cursor, "trusted_strategy_candidates", "20260620")
     assert state == "READY"
     assert not message
@@ -63,6 +66,38 @@ def test_pipeline_enabled_scripts_exist_and_are_whitelisted():
     missing = [task.script for task in expected if not (root / task.script).exists()]
     assert missing == []
     assert {task.task_name for task in expected}.issubset(web_app.SCHEDULED_TASK_WHITELIST)
+    names = [task.task_name for task in expected if task.group == "daily_close"]
+    assert names.index("sina_score") < names.index("sina_bs_consensus")
+    assert names.index("sina_bs_consensus") < names.index("trusted_strategy_candidates")
+
+
+def test_generic_completion_notification_covers_failures_and_manual_runs(monkeypatch):
+    sent = []
+    monkeypatch.setattr(web_app, "_has_successful_business_notification", lambda *_: False)
+    monkeypatch.setattr(web_app, "_dispatch_task_notification", lambda content, **kwargs: sent.append((content, kwargs)))
+    from datetime import datetime, timedelta
+    started = datetime(2026, 6, 29, 21, 0, 0)
+    web_app._send_task_completion_notification(
+        "sina_score", "Failed", "manual", started, started + timedelta(seconds=12),
+        run_options={"datestr": "20260629"}, message="verification failed",
+    )
+    assert len(sent) == 1
+    assert "状态：Failed" in sent[0][0]
+    assert "触发方式：manual" in sent[0][0]
+    assert sent[0][1]["task_name"] == "sina_score"
+
+
+def test_rich_business_notification_suppresses_generic_duplicate(monkeypatch):
+    sent = []
+    monkeypatch.setattr(web_app, "_has_successful_business_notification", lambda *_: True)
+    monkeypatch.setattr(web_app, "_dispatch_task_notification", lambda *args, **kwargs: sent.append(1))
+    from datetime import datetime
+    now = datetime(2026, 6, 29, 21, 35, 0)
+    web_app._send_task_completion_notification(
+        "trusted_strategy_candidates", "Success", "schedule", now, now,
+        run_options={"datestr": "20260629"},
+    )
+    assert sent == []
 
 
 def test_daily_batch_audit_classifies_missing_and_non_trading_skip():

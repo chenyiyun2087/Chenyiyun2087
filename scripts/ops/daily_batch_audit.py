@@ -24,13 +24,6 @@ from scripts.ops.feishu_notifier import send_feishu_text_audited
 
 PIPELINE_PATH = PROJECT_ROOT / "task_registry" / "pipeline.yaml"
 AUDIT_TASK_ID = "ops_daily_batch_audit"
-NOTIFICATION_REQUIRED_TASKS = {
-    "trusted_strategy_candidates",
-    "trusted_strategy_shadow_monitor",
-    "trusted_strategy_performance_review",
-}
-
-
 @dataclass(frozen=True)
 class ExpectedTask:
     task_name: str
@@ -160,8 +153,6 @@ def _latest_history(cursor, task_name: str, business_date: str) -> dict[str, Any
 
 
 def _notification_status(cursor, task_name: str, business_date: str) -> str | None:
-    if task_name not in NOTIFICATION_REQUIRED_TASKS:
-        return None
     cursor.execute(
         """
         SELECT status
@@ -178,14 +169,23 @@ def _notification_status(cursor, task_name: str, business_date: str) -> str | No
 
 def _recovered_artifact(cursor, task_name: str, business_date: str) -> str | None:
     """Return durable output evidence for tasks repaired outside the queue."""
+    if task_name == "trusted_strategy_candidates":
+        cursor.execute(
+            """SELECT
+                 (SELECT COUNT(*) FROM chenyiyun.ads_trusted_strategy_candidates WHERE trade_date=%s) AS candidates,
+                 (SELECT COUNT(*) FROM chenyiyun.ads_chenyiyun_selected_signals WHERE trade_date=%s) AS signals""",
+            (business_date, business_date),
+        )
+        row = cursor.fetchone() or {}
+        candidate_count = int(row.get("candidates") or 0)
+        signal_count = int(row.get("signals") or 0)
+        if candidate_count > 0 and signal_count > 0:
+            return f"补跑产物已核验：生产候选 {candidate_count} 行，每日信号 {signal_count} 行"
+        return None
     checks = {
         "adc_bs_detect": (
             "SELECT COUNT(*) AS c FROM chenyiyun.bs_detection_results WHERE batch_date=%s",
             "B/S检测结果",
-        ),
-        "trusted_strategy_candidates": (
-            "SELECT COUNT(*) AS c FROM chenyiyun.ads_trusted_strategy_candidates WHERE trade_date=%s",
-            "生产候选",
         ),
     }
     spec = checks.get(task_name)
@@ -249,11 +249,11 @@ def classify_task(
         if notification == "MISSING":
             status = "NOTIFICATION_MISSING"
             reason = "任务成功，但未发现飞书投递审计记录"
-            replay_required = 1
+            replay_required = 0
         elif notification and notification != "ok":
             status = "NOTIFICATION_FAILED"
             reason = f"任务成功，但通知投递失败：{notification}"
-            replay_required = 1
+            replay_required = 0
         else:
             status = "OK"
             reason = "任务完成"
@@ -326,7 +326,7 @@ def format_audit_notification(summary: dict[str, Any]) -> str:
 
 def run_audit(
     business_date: str, *, notify_feishu: bool = False,
-    require_notifications: bool = False,
+    require_notifications: bool = True,
 ) -> dict[str, Any]:
     expected_tasks = load_expected_daily_tasks()
     conn = pymysql.connect(**build_pymysql_config())
@@ -357,7 +357,7 @@ def run_audit(
         "rows": rows,
     }
 
-    if notify_feishu and bad_count > 0:
+    if notify_feishu:
         engine = create_engine(build_sqlalchemy_url())
         send_feishu_text_audited(
             engine,
@@ -365,7 +365,7 @@ def run_audit(
             business_date=business_date,
             notification_type="daily_batch_audit",
             task_name=AUDIT_TASK_ID,
-            dedupe_key=f"daily_batch_audit:{business_date}:{summary['status']}",
+            dedupe_key=f"daily_batch_audit:{business_date}",
         )
     return summary
 
@@ -374,11 +374,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Audit daily batch task completion and notifications.")
     parser.add_argument("--date", default=None, help="Business date, YYYYMMDD or YYYY-MM-DD. Defaults to today.")
     parser.add_argument("--notify-feishu", action="store_true")
-    parser.add_argument("--require-notifications", action="store_true")
+    parser.add_argument("--no-require-notifications", action="store_true")
     args = parser.parse_args()
     summary = run_audit(
         normalize_datestr(args.date), notify_feishu=args.notify_feishu,
-        require_notifications=args.require_notifications,
+        require_notifications=not args.no_require_notifications,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 

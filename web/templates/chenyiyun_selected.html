@@ -4,6 +4,21 @@
 {% block page_title %}核心精选{% endblock %}
 
 {% block content %}
+<div class="panel" style="border-left: 4px solid {% if freshness_issues %}#dc2626{% else %}#16a34a{% endif %};">
+    <div class="panel-title">数据鲜度</div>
+    <div style="font-size: 13px;">
+        最新完整交易日：{{ latest_pipeline_data_date or '-' }}；
+        {% if freshness_issues %}
+        <strong style="color:#b91c1c;">存在 {{ freshness_issues|length }} 项滞后</strong>
+        <ul style="margin:8px 0 0 18px;">
+            {% for issue in freshness_issues %}<li>{{ issue }}</li>{% endfor %}
+        </ul>
+        {% else %}
+        <strong style="color:#15803d;">候选、每日信号、影子执行数据均已对齐</strong>
+        {% endif %}
+    </div>
+</div>
+
 <div class="panel">
     <div class="panel-title">策略参数</div>
     <form method="post" action="{{ url_for('update_chenyiyun_selected_settings') }}" style="display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 12px; align-items:end;">

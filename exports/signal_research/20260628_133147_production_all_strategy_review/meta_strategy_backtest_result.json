@@ -1,0 +1,11 @@
+{
+  "meta_return": 4.098482212640131,
+  "meta_mdd": -19.40610856581107,
+  "meta_sharpe": 0.07863347607876353,
+  "meta_win_rate": 0.5,
+  "baseline_return": 19.594957382739643,
+  "equal_weight_return": 0.5901970239607035,
+  "weight_changes": 101,
+  "cb_triggers": 41,
+  "trading_days": 558
+}

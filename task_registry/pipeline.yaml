@@ -19,61 +19,86 @@ daily_close:
       trading_day_only: true
       status: enabled
 
+    - id: sina_score
+      description: "全A股评分"
+      time: "21:12"
+      script: scoreRank/run_daily.py
+      type: script
+      trading_day_only: true
+      status: enabled
+      depends_on: [adc_bs_detect]
+
+    - id: sina_bs_consensus
+      description: "B点综合评分建议"
+      time: "21:20"
+      script: scoreRank/cli/build_bs_consensus.py
+      type: script
+      trading_day_only: true
+      status: enabled
+      depends_on: [sina_score]
+
     - id: trusted_strategy_backtest
-      time: "21:15"
+      time: "21:25"
       script: scripts/ops/run_daily_strategy_backtest.py
       type: script
       trading_day_only: true
       status: enabled
+      depends_on: [sina_bs_consensus]
 
     - id: rolling_strategy_scorer
-      time: "21:20"
+      time: "21:30"
       script: scripts/ops/run_rolling_strategy_scorer.py
       type: script
       trading_day_only: true
       status: enabled
+      depends_on: [trusted_strategy_backtest]
 
     - id: trusted_strategy_candidates
-      time: "21:25"
+      time: "21:35"
       script: scripts/ops/export_trusted_strategy_candidates.py
       type: pipeline
       trading_day_only: true
       status: enabled
+      depends_on: [sina_bs_consensus, rolling_strategy_scorer]
 
     - id: trusted_strategy_shadow_monitor
-      time: "21:28"
+      time: "21:40"
       script: scripts/ops/run_trusted_strategy_shadow_monitor.py
       type: script
       trading_day_only: true
       status: enabled
+      depends_on: [trusted_strategy_candidates]
 
     - id: trusted_strategy_performance_review
-      time: "21:32"
+      time: "21:45"
       script: scripts/ops/run_strategy_performance_review.py
       type: script
       trading_day_only: true
       status: enabled
+      depends_on: [trusted_strategy_backtest, trusted_strategy_candidates]
 
     - id: candle_diag_scan
-      time: "21:40"
+      time: "21:50"
       script: scripts/ops/run_candle_diag_daily_scan.py
       type: script
       trading_day_only: true
       status: enabled
+      depends_on: [sina_score]
 
     - id: bs_signal_monthly_cycle
-      time: "21:45"
+      time: "22:00"
       script: scripts/ops/run_monthly_bs_signal_enhancement_cycle.py
       type: script
       trading_day_only: true
       status: enabled
 
     - id: ops_daily_batch_audit
-      time: "22:10"
+      time: "22:20"
       script: scripts/ops/daily_batch_audit.py
       type: script
       trading_day_only: true
       status: enabled
+      depends_on: [trusted_strategy_shadow_monitor, trusted_strategy_performance_review, candle_diag_scan]
 
 intraday:
   description: "盘中任务"

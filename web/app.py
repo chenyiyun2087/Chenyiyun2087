@@ -19,7 +19,7 @@ from project_network import build_direct_network_env, enforce_direct_network
 enforce_direct_network()
 
 from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2, calculate_bs_trade_gate
-from scoreRank.core.db_config import build_pymysql_config, validate_db_credentials
+from scoreRank.core.db_config import build_pymysql_config, build_sqlalchemy_url, validate_db_credentials
 from scripts.ops.production_config import load_production_config
 from scripts.strategy_display import strategy_display_name
 
@@ -116,6 +116,7 @@ def _load_pipeline_from_yaml() -> dict:
                 "type": task_def.get("type", "script"),
                 "args": task_def.get("args", []),
                 "append_date": task_def.get("append_date", True),
+                "depends_on": list(task_def.get("depends_on") or []),
             }
     return merged
 
@@ -306,6 +307,7 @@ TASKS = {
 }
 # 2026-06-23: 从 pipeline.yaml 加载任务定义，合并到硬编码 TASKS
 _pipeline_tasks = _load_pipeline_from_yaml()
+PIPELINE_TASK_NAMES = frozenset(_pipeline_tasks)
 if _pipeline_tasks:
     # pipeline.yaml 的任务覆盖硬编码 TASKS 中同名任务
     for _pt_name, _pt_def in _pipeline_tasks.items():
@@ -325,12 +327,19 @@ TASK_DEPENDENCIES = {
     # 新浪截图 → OCR 链路
     "sina_analyse": ("sina_picture",),
     # ADC/DB B/S检测 → 回测 → 轮动评分 → 候选导出 → 收益评估
-    "trusted_strategy_backtest": ("adc_bs_detect",),
+    "sina_score": ("adc_bs_detect",),
+    "sina_bs_consensus": ("sina_score",),
+    "trusted_strategy_backtest": ("sina_bs_consensus",),
     "rolling_strategy_scorer": ("trusted_strategy_backtest",),
-    "trusted_strategy_candidates": ("adc_bs_detect",),
+    "trusted_strategy_candidates": ("sina_bs_consensus", "rolling_strategy_scorer"),
+    "trusted_strategy_shadow_monitor": ("trusted_strategy_candidates",),
     "trusted_strategy_performance_review": ("trusted_strategy_backtest", "trusted_strategy_candidates"),
     # sina_score → sina_bs_consensus 链路已停用
 }
+# Pipeline YAML is authoritative for dependencies as well as schedules.
+for _task_name, _task in TASKS.items():
+    if _task.get("depends_on"):
+        TASK_DEPENDENCIES[_task_name] = tuple(_task["depends_on"])
 SCHEDULED_TASK_WHITELIST = {
     # --- 盘中 ---
     "sina_picture",                        # 15:20  新浪财经 B/S 信号批量截图
@@ -339,6 +348,8 @@ SCHEDULED_TASK_WHITELIST = {
     "db_bs_detect",                        # 21:05  DB量价模型 B/S 检测
     "adc_bs_detect",                       # 21:05  ADC数据源 B/S 检测
     "bs_ocr_adc_compare",                  # 21:10  B/S 来源交叉比对
+    "sina_score",                          # 21:12  全A股评分
+    "sina_bs_consensus",                   # 21:20  B点综合评分
     "trusted_strategy_backtest",           # 21:15  每日策略回测
     "rolling_strategy_scorer",             # 21:20  滚动策略轮动评分+权重
     "trusted_strategy_candidates",         # 21:25  可信策略候选导出
@@ -941,20 +952,6 @@ def _insert_task_history(task_name, trigger_type, status, started_at, finished_a
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
-            # Polling continues after the scheduled time. Terminal jobs clear
-            # active_dedupe_key, so guard the date explicitly to prevent a
-            # failed dependency from creating hundreds of duplicate jobs.
-            if trigger_type == "scheduled":
-                cursor.execute(
-                    """SELECT * FROM app_task_queue
-                       WHERE task_name=%s AND business_date=%s AND trigger_type='scheduled'
-                       ORDER BY id DESC LIMIT 1 FOR UPDATE""",
-                    (task_name, business_date),
-                )
-                scheduled_existing = cursor.fetchone()
-                if scheduled_existing:
-                    conn.commit()
-                    return scheduled_existing, False, "scheduled task already recorded for business date"
             cursor.execute(
                 """
                 INSERT INTO app_task_history
@@ -1423,6 +1420,20 @@ def _enqueue_task(task_name, trigger_type="manual", run_options=None, scheduled_
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
+            # A scheduled slot is terminal for the business date even after its
+            # active key is cleared. Prevent repeated blocked/failed jobs every
+            # scheduler poll interval.
+            if trigger_type == "schedule":
+                cursor.execute(
+                    """SELECT * FROM app_task_queue
+                       WHERE task_name=%s AND business_date=%s AND trigger_type='schedule'
+                       ORDER BY id DESC LIMIT 1 FOR UPDATE""",
+                    (task_name, business_date),
+                )
+                scheduled_existing = cursor.fetchone()
+                if scheduled_existing:
+                    conn.commit()
+                    return scheduled_existing, False, "scheduled task already recorded for business date"
             cursor.execute(
                 "SELECT * FROM app_task_queue WHERE active_dedupe_key = %s FOR UPDATE",
                 (dedupe_key,),
@@ -1852,7 +1863,7 @@ def _verify_trusted_strategy_candidates_result(started_at, finished_at, run_opti
             conn.close()
         except Exception as db_error:
             lines.append(f"db_verify_error={db_error}")
-        ok = bool(len(rows) > 0 and price_cutoff_ok and db_candidate_rows > 0)
+        ok = bool(len(rows) > 0 and price_cutoff_ok and db_candidate_rows > 0 and db_signal_rows > 0)
         lines.append(
             "result="
             + ("PASS" if ok else "FAIL")
@@ -2051,17 +2062,18 @@ def _verify_shadow_monitor_result(started_at, finished_at, run_options=None):
                     """
                     SELECT COUNT(*) AS rows_cnt
                     FROM ads_trusted_strategy_shadow_daily
-                    WHERE signal_date = %s OR execution_date = %s
+                    WHERE execution_date = %s
                     """,
-                    (f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}", f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"),
+                    (f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}",),
                 )
                 row = cursor.fetchone() or {}
         finally:
             conn.close()
         rows_cnt = int(row.get("rows_cnt") or 0)
-        return True, [
-            f"result=PASS; task=trusted_strategy_shadow_monitor; business_date={target_datestr}; summary_rows={rows_cnt}",
-            "allow_empty=true",
+        ok = rows_cnt > 0
+        return ok, [
+            f"result={'PASS' if ok else 'FAIL'}; task=trusted_strategy_shadow_monitor; business_date={target_datestr}; summary_rows={rows_cnt}",
+            "fresh_execution_date_required=true",
         ]
     except Exception as e:
         return False, [f"result=FAIL; verifier_error={e}"]
@@ -2410,32 +2422,35 @@ def _build_sina_snapshot_notification(cursor, run_options=None):
     )
 
 
-def _build_task_completion_notification(task_name, trigger_type, started_at, finished_at, run_options=None):
-    if task_name not in {"sina_analyse", "sina_m8", "sina_snapshot"}:
-        return None
-
-    conn = pymysql.connect(**DB_CONFIG)
-    try:
-        with conn.cursor() as cursor:
-            _ensure_task_management_schema(cursor)
-            if task_name == "sina_analyse":
-                detail = _build_sina_analyse_notification(cursor, run_options=run_options)
-            elif task_name == "sina_m8":
-                detail = _build_sina_m8_notification(cursor, run_options=run_options)
-            else:
-                detail = _build_sina_snapshot_notification(cursor, run_options=run_options)
-    finally:
-        conn.close()
+def _build_task_completion_notification(task_name, trigger_type, started_at, finished_at,
+                                        run_options=None, history_status="Success", message=None):
+    detail = None
+    if task_name in {"sina_analyse", "sina_m8", "sina_snapshot"} and history_status == "Success":
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                _ensure_task_management_schema(cursor)
+                if task_name == "sina_analyse":
+                    detail = _build_sina_analyse_notification(cursor, run_options=run_options)
+                elif task_name == "sina_m8":
+                    detail = _build_sina_m8_notification(cursor, run_options=run_options)
+                else:
+                    detail = _build_sina_snapshot_notification(cursor, run_options=run_options)
+        finally:
+            conn.close()
 
     task_display_name = TASKS.get(task_name, {}).get("name") or task_name
     lines = [
-        f"【任务完成】{task_display_name}",
+        f"【批任务终态】{task_display_name}",
         f"任务ID：{task_name}",
+        f"业务日：{_queue_business_date(run_options)}",
         f"触发方式：{trigger_type or '-'}",
+        f"状态：{history_status}",
         f"开始时间：{started_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(started_at, datetime) else started_at}",
         f"完成时间：{finished_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(finished_at, datetime) else finished_at}",
         "",
-        str(detail or "无摘要信息。"),
+        f"耗时：{max(0, int((finished_at - started_at).total_seconds())) if isinstance(started_at, datetime) and isinstance(finished_at, datetime) else '-'} 秒",
+        str(detail or message or "无摘要信息。"),
     ]
     return "\n".join(lines)
 
@@ -2536,6 +2551,15 @@ def _dispatch_task_notification(content, *, business_date=None, notification_typ
                     dedupe_key=dedupe_key,
                 )
                 conn.commit()
+                from sqlalchemy import create_engine
+                from scripts.ops.feishu_notifier import enqueue_notification_retry
+                enqueue_notification_retry(
+                    create_engine(build_sqlalchemy_url()), content,
+                    business_date=business_date or datetime.now().strftime("%Y%m%d"),
+                    notification_type=notification_type, task_name=task_name,
+                    dedupe_key=dedupe_key or f"{notification_type}:{task_name}:{business_date}",
+                    reason="no enabled webhook channels configured",
+                )
                 print("Task notification skipped: no enabled webhook channels configured.")
                 return
 
@@ -2561,6 +2585,16 @@ def _dispatch_task_notification(content, *, business_date=None, notification_typ
                     success_cnt += 1
                 else:
                     fail_logs.append(f"{channel_key}:{reason}")
+                    if channel_key == "feishu":
+                        from sqlalchemy import create_engine
+                        from scripts.ops.feishu_notifier import enqueue_notification_retry
+                        enqueue_notification_retry(
+                            create_engine(build_sqlalchemy_url()), content,
+                            business_date=business_date or datetime.now().strftime("%Y%m%d"),
+                            notification_type=notification_type, task_name=task_name,
+                            dedupe_key=dedupe_key or f"{notification_type}:{task_name}:{business_date}",
+                            reason=reason,
+                        )
             conn.commit()
         print(
             f"Task notification dispatched: success={success_cnt}/{len(enabled_channels)}"
@@ -2570,22 +2604,41 @@ def _dispatch_task_notification(content, *, business_date=None, notification_typ
         conn.close()
 
 
-def _send_task_completion_notification(task_name, history_status, trigger_type, started_at, finished_at, run_options=None):
-    if history_status != "Success":
-        return
-    if task_name not in {"sina_analyse", "sina_m8", "sina_snapshot"}:
-        return
+def _has_successful_business_notification(task_name, business_date):
+    conn = pymysql.connect(**DB_CONFIG)
     try:
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """SELECT 1 FROM app_notification_delivery
+                   WHERE business_date=%s AND task_name=%s AND status='ok'
+                     AND notification_type <> 'task_completion'
+                   LIMIT 1""",
+                (business_date, task_name),
+            )
+            return cursor.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _send_task_completion_notification(task_name, history_status, trigger_type, started_at, finished_at,
+                                       run_options=None, message=None):
+    try:
+        business_date = _queue_business_date(run_options)
+        # A rich, audited business notification is also the completion notice.
+        if history_status == "Success" and _has_successful_business_notification(task_name, business_date):
+            return
         content = _build_task_completion_notification(
             task_name=task_name,
             trigger_type=trigger_type,
             started_at=started_at,
             finished_at=finished_at,
             run_options=run_options,
+            history_status=history_status,
+            message=message,
         )
         if not content:
             return
-        business_date = _queue_business_date(run_options)
         _dispatch_task_notification(
             content,
             business_date=business_date,
@@ -2708,6 +2761,7 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
             started_at=started_at,
             finished_at=finished_at,
             run_options=run_options,
+            message=message,
         )
         _mark_task_lock_finished(task_name, lock_status, message or lock_status)
 
@@ -2778,11 +2832,12 @@ def _is_trading_day(target_date=None):
     return False
 
 
-def _mark_scheduled_non_trading_success(task_name, scheduled_for):
+def _mark_scheduled_skip_success(task_name, scheduled_for, reason_code="NON_TRADING_DAY"):
     started_at = scheduled_for or datetime.now().replace(second=0, microsecond=0)
-    message = "result=SKIP; reason=NON_TRADING_DAY; source=chenyiyun.dim_trade_cal"
+    source = "chenyiyun.dim_trade_cal" if reason_code == "NON_TRADING_DAY" else "task_registry/pipeline.yaml"
+    message = f"result=SKIP; reason={reason_code}; source={source}"
     with TASKS_LOCK:
-        TASKS[task_name]["status"] = "Success (Non-trading day skip)"
+        TASKS[task_name]["status"] = f"Success ({reason_code} skip)"
         TASKS[task_name]["switched_day"] = True
         TASKS[task_name]["last_run"] = started_at.strftime("%Y-%m-%d %H:%M:%S")
         TASKS[task_name]["error_log"] = ""
@@ -2797,6 +2852,14 @@ def _mark_scheduled_non_trading_success(task_name, scheduled_for):
         duration_seconds=0,
         message=message,
     )
+    _send_task_completion_notification(
+        task_name, f"SKIPPED_{reason_code}", "schedule", started_at, started_at,
+        run_options={"datestr": started_at.strftime("%Y%m%d")}, message=message,
+    )
+
+
+def _mark_scheduled_non_trading_success(task_name, scheduled_for):
+    _mark_scheduled_skip_success(task_name, scheduled_for, "NON_TRADING_DAY")
 
 
 def _build_task_script_parts(task_name, run_options=None):
@@ -2914,9 +2977,9 @@ def init_tasks():
                         TASKS[name]['last_run'] = row['last_run'].strftime('%Y-%m-%d %H:%M:%S') if row.get('last_run') else "Never"
                         TASKS[name]['status'] = row.get('status') or "Idle"
                         TASKS[name]['switched_day'] = bool(row.get('switched_day'))
-                        if 'schedule_enabled' in row:
+                        if name not in PIPELINE_TASK_NAMES and 'schedule_enabled' in row:
                             TASKS[name]['schedule_enabled'] = bool(row.get('schedule_enabled'))
-                        if row.get('schedule_time'):
+                        if name not in PIPELINE_TASK_NAMES and row.get('schedule_time'):
                             normalized = _normalize_schedule_time(row.get('schedule_time'))
                             if normalized:
                                 TASKS[name]['schedule_time'] = normalized
@@ -3699,6 +3762,8 @@ def chenyiyun_selected_dashboard():
     strategy_settings = _normalize_chenyiyun_selected_settings(DEFAULT_CHENYIYUN_SELECTED_SETTINGS)
     latest_snapshot_equity = None
     latest_signal_trade_date = None
+    latest_pipeline_data_date = None
+    freshness_issues = []
     signal_stats = {
         "total_rows": 0,
         "unique_codes": 0,
@@ -3795,12 +3860,13 @@ def chenyiyun_selected_dashboard():
             if cursor.fetchone() is not None:
                 cursor.execute(
                     """
-                    SELECT signal_date, execution_date, total_orders, buy_orders, sell_orders,
+                    SELECT signal_date, execution_date, strategy_id, release_id,
+                           total_orders, buy_orders, sell_orders,
                            executable_orders, blocked_orders, warning_orders, planned_amount,
                            execution_amount, avg_slippage_bps, max_adverse_slippage_bps,
                            blocked_symbols
                     FROM ads_trusted_strategy_shadow_daily
-                    ORDER BY execution_date DESC
+                    ORDER BY execution_date DESC, update_time DESC
                     LIMIT 1
                     """
                 )
@@ -3815,10 +3881,16 @@ def chenyiyun_selected_dashboard():
                                    slippage_bps, tradable_flag, tradable_status, risk_reason
                             FROM ads_trusted_strategy_shadow_fills
                             WHERE execution_date = %s
+                              AND strategy_id = %s
+                              AND release_id = %s
                             ORDER BY tradable_flag ASC, ABS(COALESCE(slippage_bps, 0)) DESC, side ASC, ts_code ASC
                             LIMIT 20
                             """,
-                            (latest_shadow_summary.get("execution_date"),),
+                            (
+                                latest_shadow_summary.get("execution_date"),
+                                latest_shadow_summary.get("strategy_id"),
+                                latest_shadow_summary.get("release_id"),
+                            ),
                         )
                         shadow_fills = cursor.fetchall()
 
@@ -3885,6 +3957,23 @@ def chenyiyun_selected_dashboard():
             cursor.execute("SELECT total_equity FROM live_daily_snapshots ORDER BY snapshot_date DESC LIMIT 1")
             snapshot_row = cursor.fetchone() or {}
             latest_snapshot_equity = snapshot_row.get("total_equity")
+
+            cursor.execute("SELECT MAX(trade_date) AS d FROM score_rank_daily")
+            latest_pipeline_data_date = (cursor.fetchone() or {}).get("d")
+            if latest_pipeline_data_date:
+                if latest_trusted_candidate_date != latest_pipeline_data_date:
+                    freshness_issues.append(
+                        f"可信候选停在 {latest_trusted_candidate_date or '-'}，最新完整评分日为 {latest_pipeline_data_date}"
+                    )
+                if latest_signal_trade_date != latest_pipeline_data_date:
+                    freshness_issues.append(
+                        f"每日信号停在 {latest_signal_trade_date or '-'}，最新完整评分日为 {latest_pipeline_data_date}"
+                    )
+                shadow_execution_date = (latest_shadow_summary or {}).get("execution_date")
+                if shadow_execution_date != latest_pipeline_data_date:
+                    freshness_issues.append(
+                        f"影子盘执行日停在 {shadow_execution_date or '-'}，最新完整行情日为 {latest_pipeline_data_date}"
+                    )
     except Exception as e:
         flash(f"陈依云精选策略页面数据库不可用: {e}", "danger")
 
@@ -3909,6 +3998,8 @@ def chenyiyun_selected_dashboard():
         signal_stats=signal_stats,
         scope=scope,
         side_filter=side_filter,
+        latest_pipeline_data_date=latest_pipeline_data_date,
+        freshness_issues=freshness_issues,
     )
 
 
@@ -6585,6 +6676,10 @@ def update_task_schedule(task_name):
         flash(f"Unknown task: {task_name}", 'danger')
         return redirect(url_for('admin'))
 
+    if task_name in PIPELINE_TASK_NAMES:
+        flash('该任务由 task_registry/pipeline.yaml 统一管理，Web 页面不允许覆盖。', 'warning')
+        return redirect(url_for('admin'))
+
     if TASKS[task_name].get("legacy"):
         with TASKS_LOCK:
             TASKS[task_name]['schedule_enabled'] = False
@@ -6780,6 +6875,7 @@ def _run_scheduled_tasks_loop():
             is_trade_day = _is_trading_day(now.date())
             due_tasks = []
             skipped_non_trade_tasks = []
+            skipped_schedule_tasks = []
             with TASKS_LOCK:
                 for task_name, task in TASKS.items():
                     if task_name not in SCHEDULED_TASK_WHITELIST:
@@ -6799,6 +6895,10 @@ def _run_scheduled_tasks_loop():
                     # Cross-process idempotence: prevent duplicate "catch-up" runs for the same slot.
                     if _has_scheduled_run_in_slot(task_name, scheduled_for):
                         continue
+                    day_of_week = task.get("day_of_week")
+                    if day_of_week is not None and now.weekday() != int(day_of_week):
+                        skipped_schedule_tasks.append((task_name, scheduled_for))
+                        continue
                     if task.get('trading_day_only', True) and not is_trade_day:
                         skipped_non_trade_tasks.append((task_name, scheduled_for))
                     else:
@@ -6807,6 +6907,10 @@ def _run_scheduled_tasks_loop():
             for task_name, scheduled_for in skipped_non_trade_tasks:
                 _mark_scheduled_non_trading_success(task_name, scheduled_for)
                 print(f"Scheduled task success-skip (non-trading day): {task_name}")
+
+            for task_name, scheduled_for in skipped_schedule_tasks:
+                _mark_scheduled_skip_success(task_name, scheduled_for, "SCHEDULE_DAY")
+                print(f"Scheduled task success-skip (non-schedule weekday): {task_name}")
 
             for task_name in due_tasks:
                 job, created, reason = _trigger_task_execution(
@@ -6832,12 +6936,29 @@ def start_task_scheduler_loop():
         return
     scheduler_thread = threading.Thread(target=_run_scheduled_tasks_loop, name="task-scheduler", daemon=True)
     worker_thread = threading.Thread(target=_run_queued_tasks_loop, name="task-queue-worker", daemon=True)
+    notification_thread = threading.Thread(
+        target=_run_notification_outbox_loop, name="notification-outbox-worker", daemon=True
+    )
     scheduler_thread.start()
     worker_thread.start()
+    notification_thread.start()
+
+
+def _run_notification_outbox_loop():
+    from sqlalchemy import create_engine
+    from scripts.ops.feishu_notifier import process_notification_outbox
+    engine = create_engine(build_sqlalchemy_url())
+    while True:
+        try:
+            process_notification_outbox(engine, limit=10)
+        except Exception as exc:
+            print(f"Notification outbox worker error: {exc}")
+        time.sleep(20)
 
 
 def _run_web_startup_preflight():
     issues = []
+    conn = None
     if not validate_db_credentials():
         issues.append("DB credentials are unsafe: set CHENYIYUN_DB_PASSWORD or CHENYIYUN_DB_URL.")
     pipeline_path = Path(__file__).resolve().parents[1] / "task_registry" / "pipeline.yaml"

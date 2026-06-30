@@ -68,8 +68,7 @@
     {
       "check": "order_draft_ready",
       "passed": true,
-      "severity": "info",
-      "detail": "emit_orders_disabled",
+      "severity": "critical",
       "order_count": null
     }
   ],

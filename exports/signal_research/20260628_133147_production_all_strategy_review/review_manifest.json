@@ -1,0 +1,188 @@
+{
+  "generated_at": "2026-06-28T13:37:27.888904",
+  "git_commit": "da175d36e5e28e06a300eed6873e544d12cca464",
+  "cards": [
+    {
+      "strategy": "adaptive_market_style",
+      "strategy_version": "2026.06.23",
+      "release_id": "shadow-20260623-01",
+      "status": "SHADOW",
+      "description": "自适应市场风格策略 v2.2，作为生产策略的风控锚与仓位治理依据。 不直接生成生产订单，仅运行影子盘并产出风险信号。",
+      "holding_days": 10,
+      "max_positions": 5,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "risk_anchor",
+      "card_file": "strategy_cards/adaptive_market_style_shadow.yaml"
+    },
+    {
+      "strategy": "ashare_auto_shadow",
+      "strategy_version": "2026.06.23",
+      "release_id": "shadow-20260623-01",
+      "status": "SHADOW",
+      "description": "AShare AUTO 影子策略。来自 ADC 的全自动选股信号。 仅运行影子盘观察，不进入生产候选。",
+      "holding_days": 10,
+      "max_positions": 5,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "diversification",
+      "card_file": "strategy_cards/ashare_auto_shadow.yaml"
+    },
+    {
+      "strategy": "ashare_hybrid_conservative_shadow",
+      "strategy_version": "2026.06.23",
+      "release_id": "shadow-20260623-01",
+      "status": "SHADOW",
+      "description": "AShare 保守融合影子策略。来自 ADC 的保守风格选股信号。 仅运行影子盘观察。",
+      "holding_days": 10,
+      "max_positions": 5,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "liquidity_quality",
+      "card_file": "strategy_cards/ashare_hybrid_conservative_shadow.yaml"
+    },
+    {
+      "strategy": "ashare_trend_breakout_shadow",
+      "strategy_version": "2026.06.23",
+      "release_id": "shadow-20260623-01",
+      "status": "SHADOW",
+      "description": "AShare 趋势突破影子策略。来自 ADC 的趋势突破选股信号。 仅运行影子盘观察。",
+      "holding_days": 10,
+      "max_positions": 5,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "trend_continuation",
+      "card_file": "strategy_cards/ashare_trend_breakout_shadow.yaml"
+    },
+    {
+      "strategy": "baseline_full_liquidity_detail_vol_position",
+      "strategy_version": "2026.06.23",
+      "release_id": "prod-20260623-01",
+      "status": "PRODUCTION",
+      "description": "流动性质量防守策略+仓位自适应。当日候选排序基于 liquidity_detail_score， 结合 AShare 信号增强与双系统加权。风控锚为 adaptive_market_style v2.2。",
+      "holding_days": 10,
+      "max_positions": 5,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "liquidity_quality",
+      "card_file": "strategy_cards/baseline_full_liquidity_detail_vol_position.yaml"
+    },
+    {
+      "strategy": "chenyiyun_selected",
+      "strategy_version": "2024.01.01",
+      "release_id": "legacy-20240601",
+      "status": "LEGACY",
+      "description": "原 JoinQuant 迁移策略。高股息→换手波动→杠杆→小市值多级筛选， 等权周调仓。已于 2026-06 停用，相关任务脚本已归档。",
+      "holding_days": 5,
+      "max_positions": 10,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "",
+      "card_file": "strategy_cards/chenyiyun_selected_legacy.yaml"
+    },
+    {
+      "strategy": "dual_system_adaptive_route",
+      "strategy_version": "2026.06.23",
+      "release_id": "shadow-20260623-01",
+      "status": "SHADOW",
+      "description": "双系统自适应路由。融合 Chenyiyun adaptive 与 AShare AUTO/趋势/保守策略源。 收益优先并保留弱市降仓与风险否决。仅运行影子盘观察。",
+      "holding_days": 10,
+      "max_positions": 5,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "diversification",
+      "card_file": "strategy_cards/dual_system_adaptive_route.yaml"
+    },
+    {
+      "strategy": "repair_reversal_shadow",
+      "strategy_version": "2026.06.24",
+      "release_id": "research-20260624-01",
+      "status": "RESEARCH",
+      "description": "修复反转候选池占位策略卡。第一版只允许研究和影子证据积累， 不允许生成生产订单。",
+      "holding_days": 10,
+      "max_positions": 5,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "repair_reversal",
+      "card_file": "strategy_cards/repair_reversal_shadow.yaml"
+    },
+    {
+      "strategy": "tiered_liquidity_then_bs_v2",
+      "strategy_version": "2026.06.23",
+      "release_id": "shadow-20260623-01",
+      "status": "SHADOW",
+      "description": "流动性分层 + B点增强v2。在 satisfaction 基础上增强 B/S 信号。 当前作为影子策略运行，不进入生产候选。",
+      "holding_days": 10,
+      "max_positions": 5,
+      "signal_time": "T_15_30",
+      "execution_time": "T+1_OPEN",
+      "candidate_pool": "trend_continuation",
+      "card_file": "strategy_cards/tiered_liquidity_then_bs_v2.yaml"
+    }
+  ],
+  "sources": {
+    "baseline_full_liquidity_detail_vol_position": "exports/signal_research/20260628_133147_468726_trusted_account_backtest",
+    "adaptive_market_style": "exports/signal_research/20260628_133147_468726_trusted_account_backtest",
+    "tiered_liquidity_then_bs_v2": "exports/signal_research/20260628_133147_468726_trusted_account_backtest",
+    "ashare_auto_shadow": "exports/signal_research/20260628_133147_468726_trusted_account_backtest",
+    "ashare_trend_breakout_shadow": "exports/signal_research/20260628_133147_468726_trusted_account_backtest",
+    "ashare_hybrid_conservative_shadow": "exports/signal_research/20260628_133147_468726_trusted_account_backtest",
+    "dual_system_adaptive_route": "exports/signal_research/20260628_133147_468726_trusted_account_backtest"
+  },
+  "parameters": {
+    "primary_capital": 1000000.0,
+    "capacity_capitals": [
+      500000,
+      1000000,
+      1500000,
+      3000000
+    ],
+    "top_n": 5,
+    "hold_days": 10,
+    "trade_cost_rates": [
+      0.00075,
+      0.0015,
+      0.003,
+      0.005
+    ],
+    "slippage_bps": [
+      10,
+      25,
+      50,
+      100
+    ],
+    "execution": "T signal / T+1 open",
+    "min_window_coverage": 0.9
+  },
+  "data_cutoff_by_strategy": {
+    "adaptive_market_style": "2026-06-26",
+    "ashare_auto_shadow": "2026-06-26",
+    "ashare_hybrid_conservative_shadow": "2026-06-26",
+    "ashare_trend_breakout_shadow": "2026-06-26",
+    "baseline_full_liquidity_detail_vol_position": "2026-06-26",
+    "dual_system_adaptive_route": "2026-06-26",
+    "tiered_liquidity_then_bs_v2": "2026-06-26"
+  },
+  "production_allocation_decision": {
+    "primary_capital": 1000000.0,
+    "approved_for_scale_up": false,
+    "recommended_initial_exposure": 0.0,
+    "hard_fail_present": true,
+    "capacity_verified": true,
+    "benchmark_available": true,
+    "decision": "DO_NOT_SCALE",
+    "freeze_triggers": [
+      "5日亏损<=-8%",
+      "20日回撤<=-15%",
+      "峰值回撤<=-25%",
+      "数据延迟连续3日",
+      "执行偏离连续2日"
+    ]
+  },
+  "limitations": [
+    "Review consumes saved immutable exports; database refresh must be run separately.",
+    "Evidence dates differ by strategy.",
+    "Current strategy-card versions may post-date source runs.",
+    "Capacity remains UNVERIFIED when execution proxy fields are absent."
+  ]
+}

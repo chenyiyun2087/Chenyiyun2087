@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import subprocess
+import sys
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -40,12 +41,39 @@ DEFAULT_SOURCES = {
 }
 
 WINDOWS = (("full_history", None), ("1y", 252), ("6m", 126), ("3m", 63))
+DEFAULT_MIN_WINDOW_COVERAGE = 0.90
+DEFAULT_CAPITALS = (500_000, 1_000_000, 1_500_000, 3_000_000)
+DEFAULT_COST_RATES = (0.00075, 0.0015, 0.0030, 0.0050)
+DEFAULT_SLIPPAGE_BPS = (10, 25, 50, 100)
 
 
 def read_csv(path: Path) -> pd.DataFrame:
     if not path.exists() or path.stat().st_size == 0:
         return pd.DataFrame()
     return pd.read_csv(path, low_memory=False)
+
+
+def load_csi300_from_db() -> pd.DataFrame:
+    from sqlalchemy import create_engine, text
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from scoreRank.core.db_config import build_sqlalchemy_url
+
+    engine = create_engine(build_sqlalchemy_url(), pool_pre_ping=True)
+    return pd.read_sql(
+        text("""SELECT trade_date, `close` FROM tushare_stock.dwd_index_daily
+                WHERE ts_code = '000300.SH' ORDER BY trade_date"""),
+        engine,
+    ).assign(trade_date=lambda x: x.trade_date.astype(str))
+
+
+def load_csi300_from_market_environment(path: Path) -> pd.DataFrame:
+    frame = read_csv(path)
+    required = {"trade_date", "market_hs300_pct_chg"}
+    if not required.issubset(frame.columns):
+        raise ValueError(f"market environment missing {sorted(required - set(frame.columns))}")
+    returns = pd.to_numeric(frame.market_hs300_pct_chg, errors="coerce").fillna(0) / 100.0
+    return pd.DataFrame({"trade_date": frame.trade_date.astype(str), "close": (1 + returns).cumprod()})
 
 
 def git_commit() -> str:
@@ -104,8 +132,22 @@ def max_drawdown(nav: pd.Series) -> float:
     return float((nav / nav.cummax() - 1).min())
 
 
-def nav_metrics(nav: pd.DataFrame, label: str, days: int | None) -> dict:
+def _drawdown_recovery_days(nav: pd.Series) -> float:
+    values = pd.to_numeric(nav, errors="coerce").dropna().reset_index(drop=True)
+    if values.empty:
+        return np.nan
+    drawdown = values / values.cummax() - 1
+    trough = int(drawdown.idxmin())
+    peak_value = float(values.iloc[: trough + 1].max())
+    recovered = values.iloc[trough + 1 :]
+    hits = recovered[recovered >= peak_value]
+    return float(int(hits.index[0]) - trough) if len(hits) else np.nan
+
+
+def nav_metrics(nav: pd.DataFrame, label: str, days: int | None,
+                min_coverage: float = DEFAULT_MIN_WINDOW_COVERAGE) -> dict:
     x = nav.sort_values("trade_date").copy()
+    available_days = len(x)
     if days:
         x = x.tail(days)
     if x.empty:
@@ -120,20 +162,109 @@ def nav_metrics(nav: pd.DataFrame, label: str, days: int | None) -> dict:
     sharpe = float(daily.mean() / daily.std(ddof=1) * math.sqrt(252)) if len(daily) > 1 and daily.std(ddof=1) else np.nan
     mdd = max_drawdown(pd.to_numeric(x["total_equity"], errors="coerce"))
     calmar = ann_ret / abs(mdd) if pd.notna(mdd) and mdd < 0 else np.nan
+    coverage = min(1.0, available_days / days) if days else 1.0
+    comparable = not days or coverage >= min_coverage
+    downside = daily[daily < 0].std(ddof=1)
+    sortino = float(daily.mean() / downside * math.sqrt(252)) if pd.notna(downside) and downside else np.nan
+    var_95 = float(daily.quantile(0.05)) if len(daily) else np.nan
+    cvar_95 = float(daily[daily <= var_95].mean()) if len(daily) else np.nan
+    monthly = x.assign(month=pd.to_datetime(x["trade_date"]).dt.to_period("M")).groupby("month")["total_equity"].agg(["first", "last"])
+    monthly_ret = monthly["last"] / monthly["first"] - 1 if len(monthly) else pd.Series(dtype=float)
     return {
         "window": label,
-        "comparable": True,
+        "comparable": comparable,
+        "coverage_ratio": coverage,
+        "coverage_status": "FULL" if comparable else "INSUFFICIENT_SAMPLE",
         "window_start": str(x["trade_date"].iloc[0]),
         "window_end": str(x["trade_date"].iloc[-1]),
         "trading_days": len(x),
         "total_return": total_ret,
-        "annualized_return": ann_ret,
+        "annualized_return": ann_ret if comparable else np.nan,
         "max_drawdown": mdd,
         "annualized_volatility": vol,
-        "sharpe": sharpe,
-        "calmar": calmar,
+        "sharpe": sharpe if comparable else np.nan,
+        "sortino": sortino if comparable else np.nan,
+        "calmar": calmar if comparable else np.nan,
         "daily_win_rate": float((daily > 0).mean()) if len(daily) else np.nan,
+        "monthly_win_rate": float((monthly_ret > 0).mean()) if len(monthly_ret) else np.nan,
+        "var_95_daily": var_95,
+        "cvar_95_daily": cvar_95,
+        "worst_day": float(daily.min()) if len(daily) else np.nan,
+        "worst_month": float(monthly_ret.min()) if len(monthly_ret) else np.nan,
+        "drawdown_recovery_trading_days": _drawdown_recovery_days(x["total_equity"]),
     }
+
+
+def benchmark_metrics(nav: pd.DataFrame, benchmark: pd.DataFrame, windows: tuple = WINDOWS) -> pd.DataFrame:
+    columns = ["strategy", "window", "coverage_ratio", "benchmark", "strategy_return", "benchmark_return",
+               "excess_return", "tracking_error", "information_ratio", "up_capture", "down_capture"]
+    if nav.empty or benchmark.empty:
+        return pd.DataFrame(columns=columns)
+    bm = benchmark.copy()
+    date_col = "trade_date" if "trade_date" in bm else "date"
+    close_col = next((c for c in ("close", "adj_close", "total_equity") if c in bm), None)
+    if close_col is None:
+        raise ValueError("benchmark CSV requires close, adj_close, or total_equity")
+    bm = bm.rename(columns={date_col: "trade_date", close_col: "benchmark_close"})
+    bm["trade_date"] = bm.trade_date.astype(str)
+    rows = []
+    for strategy, group in nav.groupby("strategy"):
+        merged = group[["trade_date", "total_equity"]].merge(bm[["trade_date", "benchmark_close"]], on="trade_date").sort_values("trade_date")
+        for label, days in windows:
+            x = merged.tail(days) if days else merged
+            sr = pd.to_numeric(x.total_equity, errors="coerce").pct_change().dropna()
+            br = pd.to_numeric(x.benchmark_close, errors="coerce").pct_change().dropna()
+            aligned = pd.concat([sr.rename("strategy"), br.rename("benchmark")], axis=1).dropna()
+            if len(aligned) < 2:
+                continue
+            active = aligned.strategy - aligned.benchmark
+            te = active.std(ddof=1) * math.sqrt(252)
+            up = aligned[aligned.benchmark > 0]
+            down = aligned[aligned.benchmark < 0]
+            coverage = min(1.0, len(x) / days) if days else 1.0
+            rows.append({
+                "strategy": strategy, "window": label, "coverage_ratio": coverage,
+                "benchmark": "CSI300", "strategy_return": float((1 + aligned.strategy).prod() - 1),
+                "benchmark_return": float((1 + aligned.benchmark).prod() - 1),
+                "excess_return": float((1 + aligned.strategy).prod() / (1 + aligned.benchmark).prod() - 1),
+                "tracking_error": float(te),
+                "information_ratio": float(active.mean() * 252 / te) if te else np.nan,
+                "up_capture": float(up.strategy.mean() / up.benchmark.mean()) if len(up) and up.benchmark.mean() else np.nan,
+                "down_capture": float(down.strategy.mean() / down.benchmark.mean()) if len(down) and down.benchmark.mean() else np.nan,
+            })
+    return pd.DataFrame(rows, columns=columns)
+
+
+def stress_matrix(summary: pd.DataFrame, candidates: pd.DataFrame, capitals=DEFAULT_CAPITALS,
+                  cost_rates=DEFAULT_COST_RATES, slippage_bps=DEFAULT_SLIPPAGE_BPS) -> pd.DataFrame:
+    """Conservative first-order capacity/cost stress using saved ledger proxies."""
+    rows = []
+    proxy_cols = {"estimated_turnover_impact", "unfilled_ratio_proxy", "adjusted_target_weight"}
+    for _, s in summary[summary.evaluation_status.eq("evaluated")].iterrows():
+        group = candidates[candidates.strategy.eq(s.strategy)] if not candidates.empty else pd.DataFrame()
+        impact = pd.to_numeric(group.get("estimated_turnover_impact", pd.Series(dtype=float)), errors="coerce")
+        unfilled = pd.to_numeric(group.get("unfilled_ratio_proxy", pd.Series(dtype=float)), errors="coerce")
+        has_activity = int(s.get("trade_count", 0) or 0) > 0 and not group.empty
+        proxy_available = has_activity and proxy_cols.intersection(group.columns) == proxy_cols
+        base_turnover = float(s.get("turnover", 0) or 0)
+        initial_cash = float(s.get("initial_cash", 500_000) or 500_000)
+        for capital in capitals:
+            scale = capital / initial_cash
+            scaled_impact = impact * scale if len(impact) else impact
+            for cost in cost_rates:
+                for slip_bps in slippage_bps:
+                    # The refreshed production ledger already includes 7.5bp cost and 10bp slippage.
+                    incremental_drag = base_turnover * max(0.0, cost - 0.00075) + base_turnover * max(0, slip_bps - 10) / 10_000
+                    rows.append({
+                        "strategy": s.strategy, "capital": capital, "cost_rate": cost,
+                        "slippage_bps": slip_bps, "estimated_return_after_incremental_friction": float(s.total_return) - incremental_drag,
+                        "proxy_available": proxy_available,
+                        "p95_adv_or_turnover_impact": float(scaled_impact.quantile(.95)) if len(scaled_impact.dropna()) else np.nan,
+                        "max_adv_or_turnover_impact": float(scaled_impact.max()) if len(scaled_impact.dropna()) else np.nan,
+                        "unfilled_ratio": float((unfilled > 0).mean()) if len(unfilled.dropna()) else np.nan,
+                        "capacity_status": "INSUFFICIENT_TRADES" if not has_activity else ("UNVERIFIED" if not proxy_available else ("FAIL" if (scaled_impact > .03).any() or (unfilled > 0).mean() > .08 else "PASS")),
+                    })
+    return pd.DataFrame(rows)
 
 
 def pair_round_trips(trades: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -353,12 +484,13 @@ def recommendation(row: pd.Series) -> str:
 
 def write_report(path: Path, cards: pd.DataFrame, summary: pd.DataFrame, windows: pd.DataFrame,
                  stocks: pd.DataFrame, quality: pd.DataFrame, risk: pd.DataFrame, output_dir: Path,
-                 commit: str) -> None:
+                 commit: str, title: str = "系统内置策略全面评估与逐股复盘",
+                 benchmark_available: bool = False) -> None:
     evaluated = summary[summary.evaluation_status.eq("evaluated")].sort_values("total_return", ascending=False)
     unavailable = summary[~summary.evaluation_status.eq("evaluated")]
     top = evaluated.iloc[0] if len(evaluated) else None
     lines = [
-        "# 系统内置策略全面评估与逐股复盘",
+        f"# {title}",
         "",
         "## Executive Summary",
         "",
@@ -389,12 +521,12 @@ def write_report(path: Path, cards: pd.DataFrame, summary: pd.DataFrame, windows
         "",
         "## 分窗口表现揭示明显的行情依赖",
         "",
-        "| 策略 | 窗口 | 起止 | 收益 | 最大回撤 | 波动率 | 夏普 |",
-        "|---|---|---|---:|---:|---:|---:|",
+        "| 策略 | 窗口 | 覆盖 | 起止 | 收益 | 最大回撤 | 波动率 | 夏普 |",
+        "|---|---|---|---|---:|---:|---:|---:|",
     ]
     for _, row in windows.iterrows():
         lines.append(
-            f"| `{row.strategy}` | {row.window} | {row.window_start}～{row.window_end} | {fmt_pct(row.total_return)} | {fmt_pct(row.max_drawdown)} | {fmt_pct(row.annualized_volatility)} | "
+            f"| `{row.strategy}` | {row.window} | {row.coverage_status} ({row.coverage_ratio:.1%}) | {row.window_start}～{row.window_end} | {fmt_pct(row.total_return)} | {fmt_pct(row.max_drawdown)} | {fmt_pct(row.annualized_volatility)} | "
             f"{'—' if pd.isna(row.sharpe) else f'{row.sharpe:.2f}'} |"
         )
     lines += [
@@ -442,10 +574,10 @@ def write_report(path: Path, cards: pd.DataFrame, summary: pd.DataFrame, windows
         "",
         "## 口径、限制与审计结论",
         "",
-        "- 初始资金 50 万，Top 5，持有 10 日，单边成本 0.075%，信号 T 日、执行 T+1；实际参数以每个源账本为准并保存在 `strategy_summary.csv`。",
+        f"- 主回测初始资金 {num0(evaluated.initial_cash.iloc[0]) / 10000:.0f} 万元，Top 5，持有 10 日，单边成本 0.075%，信号 T 日、执行 T+1；实际参数以每个源账本为准并保存在 `strategy_summary.csv`。" if len(evaluated) else "- 账户参数不可验证。",
         "- 各源运行日期不同；全历史是各策略自身可得全历史，不是严格共同交集。跨策略结论因此以风险画像为主，不做显著性声明。",
         "- 动态策略的已保存决策字段使用 `exit_date < signal_date`；交易因果性和禁用模型字段检查结果见 `data_quality_checks.csv`。",
-        "- 未接入新的外部数据；没有足够一致的指数序列，因此本次不计算指数超额收益。",
+        "- 沪深300基准已由本次冻结市场环境中的逐日收益重建；超额收益、信息比率和上下行捕获见 `benchmark_metrics.csv`。" if benchmark_available else "- 沪深300基准不可用，因此本次不计算指数超额收益。",
         f"- Git commit：`{commit}`；原始复盘目录：`{output_dir.relative_to(ROOT)}`。",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -456,10 +588,18 @@ def main() -> None:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--report-date", default=datetime.now().strftime("%Y-%m-%d"))
     parser.add_argument("--source", action="append", default=[], help="Override source as strategy=run_directory")
+    parser.add_argument("--benchmark-csv", default=None, help="CSI300 daily CSV with trade_date and close")
+    parser.add_argument("--benchmark-from-db", action="store_true", help="Load CSI300 from configured read-only database")
+    parser.add_argument("--benchmark-market-environment", default=None, help="Use frozen market environment HS300 daily returns")
+    parser.add_argument("--min-window-coverage", type=float, default=DEFAULT_MIN_WINDOW_COVERAGE)
+    parser.add_argument("--primary-capital", type=float, default=1_000_000)
+    parser.add_argument("--expected-data-date", default=None, help="Fail closed when evidence ends before this date")
+    parser.add_argument("--production-allocation-review", action="store_true", help="Use production allocation artifact names and fail-closed appendix")
     args = parser.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(args.output_dir) if args.output_dir else EXPORT_ROOT / f"{stamp}_builtin_strategy_full_review"
+    suffix = "production_all_strategy_review" if args.production_allocation_review else "builtin_strategy_full_review"
+    output_dir = Path(args.output_dir) if args.output_dir else EXPORT_ROOT / f"{stamp}_{suffix}"
     if not output_dir.is_absolute():
         output_dir = ROOT / output_dir
     if output_dir.exists():
@@ -514,7 +654,9 @@ def main() -> None:
             "open_or_unmatched_lots": open_or_unmatched,
         })
         for label, days in WINDOWS:
-            metric = nav_metrics(nav, label, days)
+            metric = nav_metrics(nav, label, days, args.min_window_coverage)
+            if int(trade_metrics.get("completed_round_trips", 0)) < 5:
+                metric.update({"comparable": False, "coverage_status": "INSUFFICIENT_TRADES", "annualized_return": np.nan, "sharpe": np.nan, "sortino": np.nan, "calmar": np.nan})
             if label == "full_history":
                 metric.update({
                     "window_start": raw.get("first_date"), "window_end": raw.get("last_date"),
@@ -552,6 +694,22 @@ def main() -> None:
         cost_diff = abs(trade_cost - summary_cost)
         quality_rows.append({"strategy": strategy, "check": "trade_cost_reconciliation", "status": "PASS" if cost_diff < 0.01 else "FAIL", "details": f"difference={cost_diff:.6f}"})
         quality_rows.append({"strategy": strategy, "check": "card_version_matches_saved_run", "status": "WARN", "details": f"card_version={card.strategy_version}; source={source.name}"})
+        report_path = source / "trusted_account_backtest_report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+        provenance = report.get("provenance") or report.get("params") or {}
+        ledger_status = provenance.get("ledger_implementation_status", "MISSING")
+        ca_status = provenance.get("corporate_action_coverage_status", "MISSING")
+        lifecycle_hash = provenance.get("security_lifecycle_snapshot_sha256")
+        reproducibility = provenance.get("reproducibility_status", "MISSING")
+        quality_rows.extend([
+            {"strategy": strategy, "check": "strict_ledger_verified", "status": "PASS" if ledger_status == "VERIFIED" else "FAIL", "details": str(ledger_status)},
+            {"strategy": strategy, "check": "corporate_action_coverage", "status": "PASS" if ca_status in {"VERIFIED", "COMPLETE"} else "FAIL", "details": str(ca_status)},
+            {"strategy": strategy, "check": "security_lifecycle_snapshot", "status": "PASS" if lifecycle_hash else "FAIL", "details": str(lifecycle_hash or "missing")},
+            {"strategy": strategy, "check": "deterministic_reproducibility", "status": "PASS" if reproducibility == "REPRODUCIBLE" else "FAIL", "details": str(reproducibility)},
+        ])
+        if args.expected_data_date:
+            current = pd.Timestamp(raw.get("last_date")) >= pd.Timestamp(args.expected_data_date)
+            quality_rows.append({"strategy": strategy, "check": "data_cutoff_current", "status": "PASS" if current else "FAIL", "details": f"last_date={raw.get('last_date')}; expected>={args.expected_data_date}"})
 
     candidates = pd.concat(all_candidates, ignore_index=True, sort=False) if all_candidates else pd.DataFrame()
     trades = pd.concat(all_trades, ignore_index=True, sort=False) if all_trades else pd.DataFrame()
@@ -574,12 +732,25 @@ def main() -> None:
     stock = stock_summary(candidates, round_trips)
     detail = recommendation_detail(candidates, trades, round_trips)
     risk = risk_exposure(candidates, round_trips)
+    benchmark_sources = sum(bool(x) for x in (args.benchmark_csv, args.benchmark_from_db, args.benchmark_market_environment))
+    if benchmark_sources > 1:
+        raise ValueError("choose only one benchmark source")
+    if args.benchmark_from_db:
+        benchmark = load_csi300_from_db()
+    elif args.benchmark_market_environment:
+        benchmark = load_csi300_from_market_environment(Path(args.benchmark_market_environment))
+    else:
+        benchmark = read_csv(Path(args.benchmark_csv)) if args.benchmark_csv else pd.DataFrame()
+    benchmark_result = benchmark_metrics(nav, benchmark)
+    stress = stress_matrix(summary, candidates)
 
     for column in ("total_return", "annualized_return", "max_drawdown", "sharpe", "completed_round_trips"):
         if column not in summary:
             summary[column] = np.nan
     summary["risk_level"] = summary.apply(risk_level, axis=1)
     summary["recommendation"] = summary.apply(recommendation, axis=1)
+    failed_strategies = set(quality.loc[quality.status.eq("FAIL"), "strategy"].astype(str))
+    summary.loc[summary.strategy.astype(str).isin(failed_strategies) & summary.status.eq("PRODUCTION"), "recommendation"] = "不批准生产扩仓"
     baseline = summary.loc[summary.strategy.eq("baseline_full_liquidity_detail_vol_position"), "total_return"]
     summary["excess_vs_internal_defensive_baseline"] = summary.total_return - (baseline.iloc[0] if len(baseline) else np.nan)
 
@@ -594,17 +765,46 @@ def main() -> None:
     samples.to_csv(output_dir / "trade_audit_samples.csv", index=False)
     risk.to_csv(output_dir / "risk_exposure.csv", index=False)
     quality.to_csv(output_dir / "data_quality_checks.csv", index=False)
+    benchmark_result.to_csv(output_dir / "benchmark_metrics.csv", index=False)
+    stress.to_csv(output_dir / "stress_capacity_matrix.csv", index=False)
+    hard_fail = bool((quality.status == "FAIL").any())
+    production_names = set(summary.loc[summary.status.eq("PRODUCTION") & summary.evaluation_status.eq("evaluated"), "strategy"])
+    primary_capacity = stress[(stress.strategy.isin(production_names)) & (stress.capital == args.primary_capital) & (stress.cost_rate == DEFAULT_COST_RATES[0]) & (stress.slippage_bps == DEFAULT_SLIPPAGE_BPS[0])] if not stress.empty else pd.DataFrame()
+    capacity_verified = bool(not primary_capacity.empty and primary_capacity.capacity_status.eq("PASS").all())
+    production_decision = {
+        "primary_capital": args.primary_capital,
+        "approved_for_scale_up": bool(not hard_fail and capacity_verified and not benchmark_result.empty),
+        "recommended_initial_exposure": 0.0 if hard_fail or not capacity_verified else 0.10,
+        "hard_fail_present": hard_fail,
+        "capacity_verified": capacity_verified,
+        "benchmark_available": not benchmark_result.empty,
+        "decision": "DO_NOT_SCALE" if hard_fail or not capacity_verified or benchmark_result.empty else "CANARY_ONLY",
+        "freeze_triggers": ["5日亏损<=-8%", "20日回撤<=-15%", "峰值回撤<=-25%", "数据延迟连续3日", "执行偏离连续2日"],
+    }
+    (output_dir / "production_allocation_decision.json").write_text(json.dumps(production_decision, ensure_ascii=False, indent=2), encoding="utf-8")
     provenance = {
         "generated_at": datetime.now().isoformat(), "git_commit": git_commit(),
         "cards": cards.to_dict(orient="records"),
         "sources": {k: display_path(v) for k, v in sources.items()},
-        "parameters": {"initial_cash": 500000, "top_n": 5, "hold_days": 10, "trade_cost_rate": 0.00075, "execution": "T signal / T+1 open"},
-        "limitations": ["No database credential was used; this review consumes saved immutable exports.", "Evidence dates differ by strategy.", "Current strategy-card versions may post-date source runs."],
+        "parameters": {"primary_capital": args.primary_capital, "capacity_capitals": DEFAULT_CAPITALS, "top_n": 5, "hold_days": 10, "trade_cost_rates": DEFAULT_COST_RATES, "slippage_bps": DEFAULT_SLIPPAGE_BPS, "execution": "T signal / T+1 open", "min_window_coverage": args.min_window_coverage},
+        "data_cutoff_by_strategy": summary.set_index("strategy").get("last_date", pd.Series(dtype=object)).dropna().astype(str).to_dict(),
+        "production_allocation_decision": production_decision,
+        "limitations": ["Review consumes saved immutable exports; database refresh must be run separately.", "Evidence dates differ by strategy.", "Current strategy-card versions may post-date source runs.", "Capacity remains UNVERIFIED when execution proxy fields are absent."],
     }
     (output_dir / "review_manifest.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    report_path = DOC_ROOT / f"{args.report_date}_系统内置策略全面评估与逐股复盘.md"
-    write_report(report_path, cards, summary, windows, stock, quality, risk, output_dir, provenance["git_commit"])
+    report_name = "系统全策略生产投配回测评估" if args.production_allocation_review else "系统内置策略全面评估与逐股复盘"
+    report_path = DOC_ROOT / f"{args.report_date}_{report_name}.md"
+    write_report(report_path, cards, summary, windows, stock, quality, risk, output_dir, provenance["git_commit"], report_name, not benchmark_result.empty)
+    if args.production_allocation_review:
+        with report_path.open("a", encoding="utf-8") as handle:
+            handle.write("\n## 生产投配结论（Fail-closed）\n\n")
+            handle.write(f"- 100万元投配结论：**{production_decision['decision']}**。\n")
+            handle.write(f"- 建议初始风险暴露：{production_decision['recommended_initial_exposure']:.0%}。\n")
+            handle.write(f"- 严格检查失败：{production_decision['hard_fail_present']}；容量已验证：{production_decision['capacity_verified']}；沪深300基准可用：{production_decision['benchmark_available']}。\n")
+            handle.write("- 任一数据时效、严格账本、容量或基准检查失败时，不批准扩仓；不得用短窗口高收益覆盖长期回撤。\n")
+            handle.write("- 冻结触发：" + "；".join(production_decision["freeze_triggers"]) + "。\n")
+            handle.write("\n完整压力矩阵、基准指标和决策 JSON 位于同一原始输出目录。\n")
     print(json.dumps({"output_dir": str(output_dir), "report": str(report_path), "evaluated": int(summary.evaluation_status.eq('evaluated').sum()), "unavailable": int((~summary.evaluation_status.eq('evaluated')).sum())}, ensure_ascii=False, indent=2))
 
 

@@ -1,0 +1,16 @@
+{
+  "primary_capital": 1000000.0,
+  "approved_for_scale_up": false,
+  "recommended_initial_exposure": 0.0,
+  "hard_fail_present": true,
+  "capacity_verified": true,
+  "benchmark_available": true,
+  "decision": "DO_NOT_SCALE",
+  "freeze_triggers": [
+    "5日亏损<=-8%",
+    "20日回撤<=-15%",
+    "峰值回撤<=-25%",
+    "数据延迟连续3日",
+    "执行偏离连续2日"
+  ]
+}

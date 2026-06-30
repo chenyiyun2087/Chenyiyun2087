@@ -1,0 +1,24 @@
+{
+  "calc_date": "2026-06-26",
+  "review_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260628_133147_production_all_strategy_review",
+  "weights": {
+    "adaptive_market_style": 0.0,
+    "baseline_full_liquidity_detail_vol_position": 0.7,
+    "dual_system_adaptive_route": 0.0,
+    "tiered_liquidity_then_bs_v2": 0.0
+  },
+  "scores": {
+    "adaptive_market_style": 20.0,
+    "baseline_full_liquidity_detail_vol_position": 85.0,
+    "dual_system_adaptive_route": 25.3,
+    "tiered_liquidity_then_bs_v2": 0.0
+  },
+  "effective_exposure": 0.7,
+  "circuit_breaker": false,
+  "circuit_breaker_reason": "正常",
+  "top3_strategies": [
+    "baseline_full_liquidity_detail_vol_position",
+    "dual_system_adaptive_route",
+    "adaptive_market_style"
+  ]
+}

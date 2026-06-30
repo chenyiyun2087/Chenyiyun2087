@@ -906,18 +906,22 @@ def run(args):
                 )
                 try:
                     from scripts.ops.feishu_notifier import (
-                        load_feishu_webhook,
-                        send_feishu_text,
+                        send_feishu_text_audited,
                     )
                     from sqlalchemy import create_engine
                     engine = create_engine(build_sqlalchemy_url())
-                    webhook = load_feishu_webhook(engine)
+                    business_date = str(calc_date).replace("-", "")[:8]
+                    ok, reason = send_feishu_text_audited(
+                        engine, card, business_date=business_date,
+                        notification_type="rolling_strategy_scorer",
+                        task_name="rolling_strategy_scorer",
+                        dedupe_key=f"rolling_strategy_scorer:{business_date}",
+                    )
                     engine.dispose()
-                    if webhook:
-                        send_feishu_text(webhook, card)
+                    if ok:
                         print("[INFO] 飞书推送成功")
                     else:
-                        print("[WARN] 未配置飞书 webhook，跳过推送")
+                        print(f"[WARN] 飞书通知已进入补偿队列: {reason}")
                 except Exception as e:
                     print(f"[WARN] 飞书推送失败: {e}")
         finally:

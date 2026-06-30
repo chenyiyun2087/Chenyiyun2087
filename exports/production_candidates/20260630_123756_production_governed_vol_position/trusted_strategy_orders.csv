@@ -1,0 +1,4 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,order_status,submitted_at,filled_shares,filled_price,status_reason,note
+2026-06-26,000021,深科技,BUY,53.51,0,900,900,900,0.0,0.09999999999999999,0.09999999999999999,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-06-26,002008,大族激光,BUY,151.27,0,300,300,300,0.0,0.09999999999999999,0.09999999999999999,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-06-26,688110,东芯股份,BUY,190.53,0,200,200,200,0.0,0.09999999999999999,0.09999999999999999,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5

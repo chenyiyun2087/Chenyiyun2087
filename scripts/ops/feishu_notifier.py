@@ -158,6 +158,106 @@ def ensure_notification_delivery_table(engine: "Engine") -> None:
                 """
             )
         )
+        conn.execute(
+            text_fn(
+                """
+                CREATE TABLE IF NOT EXISTS chenyiyun.app_notification_outbox (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    business_date VARCHAR(8) NOT NULL,
+                    notification_type VARCHAR(64) NOT NULL,
+                    task_name VARCHAR(64) NULL,
+                    channel_key VARCHAR(32) NOT NULL DEFAULT 'feishu',
+                    content MEDIUMTEXT NOT NULL,
+                    dedupe_key VARCHAR(160) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                    retry_count INT NOT NULL DEFAULT 0,
+                    max_retries INT NOT NULL DEFAULT 3,
+                    next_retry_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_error TEXT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uniq_notification_outbox_dedupe (dedupe_key),
+                    KEY idx_notification_outbox_ready (status, next_retry_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        )
+
+
+def enqueue_notification_retry(
+    engine: "Engine", content: str, *, business_date: str, notification_type: str,
+    task_name: str | None, dedupe_key: str, reason: str,
+) -> None:
+    """Persist a failed delivery without changing the business task result."""
+    ensure_notification_delivery_table(engine)
+    text_fn = _get_text_sql()
+    with engine.begin() as conn:
+        conn.execute(
+            text_fn(
+                """INSERT INTO chenyiyun.app_notification_outbox
+                   (business_date,notification_type,task_name,content,dedupe_key,status,
+                    retry_count,max_retries,next_retry_at,last_error)
+                   VALUES (:business_date,:notification_type,:task_name,:content,:dedupe_key,
+                           'PENDING',0,3,DATE_ADD(NOW(), INTERVAL 1 MINUTE),:reason)
+                   ON DUPLICATE KEY UPDATE
+                     content=IF(status='SENT',content,VALUES(content)),
+                     last_error=IF(status='SENT',last_error,VALUES(last_error)),
+                     status=IF(status='SENT','SENT','PENDING')"""
+            ),
+            {
+                "business_date": business_date,
+                "notification_type": notification_type,
+                "task_name": task_name,
+                "content": content,
+                "dedupe_key": dedupe_key,
+                "reason": str(reason or "")[:2000],
+            },
+        )
+
+
+def process_notification_outbox(engine: "Engine", limit: int = 10) -> dict[str, int]:
+    """Retry due Feishu messages. Delays are 1, 5 and 15 minutes."""
+    ensure_notification_delivery_table(engine)
+    text_fn = _get_text_sql()
+    with engine.connect() as conn:
+        rows = list(conn.execute(
+            text_fn(
+                """SELECT id,business_date,notification_type,task_name,content,dedupe_key,retry_count,max_retries
+                   FROM chenyiyun.app_notification_outbox
+                   WHERE status='PENDING' AND next_retry_at<=NOW()
+                   ORDER BY next_retry_at,id LIMIT :limit"""
+            ), {"limit": int(limit)}
+        ).mappings())
+    result = {"sent": 0, "failed": 0, "pending": 0}
+    webhook = load_feishu_webhook(engine)
+    for row in rows:
+        ok, reason = send_feishu_text(webhook, row["content"]) if webhook else (False, "no_webhook")
+        record_notification_delivery(
+            engine, business_date=row["business_date"], notification_type=row["notification_type"],
+            task_name=row["task_name"], channel_key="feishu", status="ok" if ok else "failed",
+            reason=reason, dedupe_key=row["dedupe_key"],
+        )
+        retry_count = int(row["retry_count"] or 0) + 1
+        if ok:
+            status, result_key = "SENT", "sent"
+        elif retry_count >= int(row["max_retries"] or 3):
+            status, result_key = "NOTIFICATION_FAILED", "failed"
+        else:
+            status, result_key = "PENDING", "pending"
+        result[result_key] += 1
+        delay_minutes = {1: 5, 2: 15}.get(retry_count, 15)
+        with engine.begin() as conn:
+            conn.execute(
+                text_fn(
+                    """UPDATE chenyiyun.app_notification_outbox
+                       SET status=:status,retry_count=:retry_count,last_error=:reason,
+                           next_retry_at=DATE_ADD(NOW(), INTERVAL :delay MINUTE)
+                       WHERE id=:id"""
+                ),
+                {"status": status, "retry_count": retry_count, "reason": reason,
+                 "delay": delay_minutes, "id": row["id"]},
+            )
+    return result
 
 
 def record_notification_delivery(
@@ -205,6 +305,20 @@ def send_feishu_text_audited(
     dedupe_key: str | None = None,
 ) -> tuple[bool, str]:
     """Send a Feishu message and record the delivery result."""
+    effective_dedupe_key = dedupe_key or f"{notification_type}:{task_name or 'none'}:{business_date}"
+    delivered = False
+    if hasattr(engine, "connect") and hasattr(engine, "begin"):
+        ensure_notification_delivery_table(engine)
+        text_fn = _get_text_sql()
+        with engine.connect() as conn:
+            delivered = conn.execute(
+                text_fn(
+                    """SELECT 1 FROM chenyiyun.app_notification_delivery
+                       WHERE dedupe_key=:dedupe_key AND status='ok' LIMIT 1"""
+                ), {"dedupe_key": effective_dedupe_key}
+            ).scalar()
+    if delivered:
+        return True, "deduped_already_delivered"
     webhook = load_feishu_webhook(engine)
     if not webhook:
         record_notification_delivery(
@@ -215,8 +329,13 @@ def send_feishu_text_audited(
             channel_key="feishu",
             status="no_webhook",
             reason="no enabled Feishu webhook",
-            dedupe_key=dedupe_key,
+            dedupe_key=effective_dedupe_key,
         )
+        if hasattr(engine, "begin"):
+            enqueue_notification_retry(
+                engine, content, business_date=business_date, notification_type=notification_type,
+                task_name=task_name, dedupe_key=effective_dedupe_key, reason="no_webhook",
+            )
         return False, "no_webhook"
 
     ok, reason = send_feishu_text(webhook, content)
@@ -228,8 +347,13 @@ def send_feishu_text_audited(
         channel_key="feishu",
         status="ok" if ok else "failed",
         reason=reason,
-        dedupe_key=dedupe_key,
+        dedupe_key=effective_dedupe_key,
     )
+    if not ok:
+        enqueue_notification_retry(
+            engine, content, business_date=business_date, notification_type=notification_type,
+            task_name=task_name, dedupe_key=effective_dedupe_key, reason=reason,
+        )
     return ok, reason
 
 
@@ -249,6 +373,25 @@ def strategy_identity_block() -> str:
         f"生产策略：{strategy_display_name(governor, include_id=True)}\n"
         f"选股内核：{strategy_display_name(selection, include_id=True)}\n"
         f"风险档位：{risk_profile} / 当前目标仓位 {int(position_ratio * 100)}%"
+    )
+
+
+def dual_strategy_identity_block() -> str:
+    """Return a dual-strategy identity block showing both risk-anchor and selection.
+
+    Strategy A (风控锚): adaptive_market_style — governs position sizing & risk regime
+    Strategy B (选股内核): baseline_full_liquidity_detail_vol_position — generates candidate pool
+    """
+    config = load_production_config()
+    risk_anchor = str(config.get("shadow_risk_strategy", "adaptive_market_style"))
+    selection = str(config.get("primary_selection_strategy", "baseline_full_liquidity_detail_vol_position"))
+    risk_profile = str(config.get("risk_profile", "-"))
+    position_ratio = config.get("position_ratio", 0.70)
+
+    return (
+        f"风控锚(A)：{strategy_display_name(risk_anchor, include_id=True)}\n"
+        f"选股内核(B)：{strategy_display_name(selection, include_id=True)}\n"
+        f"风险档位：{risk_profile} / 目标仓位 {int(position_ratio * 100)}%"
     )
 
 
@@ -287,6 +430,100 @@ def format_trade_card(
     lines.append("")
     lines.append("订单草案：")
     lines.extend(order_lines[:10] if order_lines else ["- 无需调仓"])
+
+    return "\n".join(lines)
+
+
+def format_dual_strategy_card(
+    asof_date: str,
+    data_status: str = "READY",
+    # --- Strategy A (风控锚: adaptive_market_style) ---
+    anchor_return_3m: float = 0.0,
+    anchor_return_6m: float = 0.0,
+    anchor_return_1y: float = 0.0,
+    anchor_max_dd: float = 0.0,
+    anchor_sharpe_3m: float = 0.0,
+    anchor_daily_win_rate: float = 0.0,
+    anchor_regime: str = "-",
+    anchor_target_exposure: float = 0.50,
+    anchor_candidate_count: int = 0,
+    anchor_top5_lines: list[str] | None = None,
+    # --- Strategy B (选股内核: baseline_full_liquidity_detail_vol_position) ---
+    selection_return_3m: float = 0.0,
+    selection_return_6m: float = 0.0,
+    selection_return_1y: float = 0.0,
+    selection_max_dd: float = 0.0,
+    selection_sharpe_3m: float = 0.0,
+    selection_daily_win_rate: float = 0.0,
+    selection_candidate_count: int = 0,
+    selection_top5_lines: list[str] | None = None,
+    selection_cost_ratio: float = 0.0,
+    # --- Warnings ---
+    warnings: list[str] | None = None,
+) -> str:
+    """Format a Dual-Strategy Card (双策略对照卡) for Feishu.
+
+    Top section: adaptive_market_style (risk anchor + position governance)
+    Middle section: adaptive candidates
+    Bottom section: baseline_full_liquidity_detail_vol_position (candidate selection)
+    """
+    def _pct(v: float) -> str:
+        return f"{v:+.2f}%" if v else "—"
+
+    def _dd(v: float) -> str:
+        return f"{v:.2f}%" if v else "—"
+
+    def _sharpe(v: float) -> str:
+        return f"{v:.2f}" if v else "—"
+
+    anchor_regime_emoji = {
+        "strong_risk_on": "🟢", "normal_risk_on": "🟡",
+        "neutral": "⚪", "risk_off": "🔵", "stress": "🔴",
+    }.get(anchor_regime, "❓")
+
+    lines = [
+        "📊 【双策略对照卡】",
+        f"信号日：{asof_date}",
+        dual_strategy_identity_block(),
+        f"数据就绪：{data_status}",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━",
+        f"{anchor_regime_emoji} 风控锚(A) 市场风格自适应策略",
+        "━━━━━━━━━━━━━━━━━━━━━━━",
+        f"近3月收益：{_pct(anchor_return_3m)}  |  近6月：{_pct(anchor_return_6m)}  |  近1年：{_pct(anchor_return_1y)}",
+        f"全期最大回撤：{_dd(anchor_max_dd)}",
+        f"近3月 Sharpe：{_sharpe(anchor_sharpe_3m)}  |  日胜率：{_pct(anchor_daily_win_rate)}",
+        f"当前市场状态：{anchor_regime}  |  目标敞口：{anchor_target_exposure:.0%}",
+        "",
+        "候选 Top5（影子盘，研究参考）：",
+    ]
+    if anchor_top5_lines:
+        lines.extend(anchor_top5_lines[:5])
+    else:
+        lines.append("- 无候选数据")
+    lines.append(f"候选数：{anchor_candidate_count}  |  职能：风控锚，不直接生成生产订单")
+
+    lines.extend([
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━",
+        "📋 选股内核(B) 流动性质量稳健策略",
+        "━━━━━━━━━━━━━━━━━━━━━━━",
+        f"近3月收益：{_pct(selection_return_3m)}  |  近6月：{_pct(selection_return_6m)}  |  近1年：{_pct(selection_return_1y)}",
+        f"全期最大回撤：{_dd(selection_max_dd)}",
+        f"近3月 Sharpe：{_sharpe(selection_sharpe_3m)}  |  日胜率：{_pct(selection_daily_win_rate)}",
+        f"候选数：{selection_candidate_count}  |  成本/毛收益：{selection_cost_ratio:.1%}",
+        "",
+        "候选 Top5（生产候选池）：",
+    ])
+    if selection_top5_lines:
+        lines.extend(selection_top5_lines[:5])
+    else:
+        lines.append("- 无候选")
+
+    if warnings:
+        lines.append("")
+        lines.append("⚠️ 告警：")
+        lines.extend(f"  {i+1}. {w}" for i, w in enumerate(warnings[:5]))
 
     return "\n".join(lines)
 
