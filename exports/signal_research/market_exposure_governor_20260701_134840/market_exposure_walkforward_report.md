@@ -1,0 +1,15 @@
+# Market Exposure Governor v1 — 回测报告
+生成时间: 2026-07-01 13:48:41
+
+## 1. 基准曲线与消融结果
+
+| 曲线 | 描述 | 总收益 | 年化收益 | 最大回撤 | Sharpe | Calmar |
+|------|------|--------|----------|----------|--------|--------|
+
+## 3. 消融分析：每增加一个变量对Calmar的边际贡献
+
+## 4. 数据说明
+- 回测框架: 复用既有 ExecutionLedger + _rebalance() 严格T+1执行
+- 核心策略: baseline_full_liquidity_detail_vol_position
+- ⚠️ 当前数据量(197日)不足以完成标准Walk-Forward (需≥3年)
+- 结论等级: 研究级证据

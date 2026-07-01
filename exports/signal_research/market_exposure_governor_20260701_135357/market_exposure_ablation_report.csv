@@ -1,0 +1,3 @@
+ablation,description,total_return,max_drawdown,calmar,sharpe
+B4,B3 + 状态迟滞与恢复机制,0.0,0.0,0.0,0.0
+B5,B4 + 账户级风险治理器,0.0,0.0,0.0,0.0

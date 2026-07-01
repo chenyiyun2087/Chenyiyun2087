@@ -1,0 +1,151 @@
+# Market Exposure Governor v1 Configuration
+# B方案：固定核心选股策略 + 动态总仓位控制
+# 只决定 target_total_exposure，不选择策略、不修改因子、不替换候选池
+
+governor:
+  version: "v1"
+  description: "Market Exposure Governor — 市场状态决定总仓位，核心策略负责选股与执行"
+
+  # ── 基准策略 ──────────────────────────────────────────
+  core_strategy:
+    name: "baseline_full_liquidity_detail_vol_position"
+    top_n: 5
+    hold_days: 10
+    max_total_positions: 5
+    sort_col: "liquidity_detail_score"
+
+  # ── 执行参数 (与既有回测完全一致) ──────────────────────
+  execution:
+    initial_cash: 500000
+    lot_size: 100
+    trade_cost_rate: 0.00075
+    slippage_rate: 0.0
+    min_trade_value: 500.0
+    price_tick: 0.01
+    execution_mode: "strict_t1_open_precommit"
+    hard_stop_loss_pct: 999.0  # disabled
+
+  # ── 五档离散仓位 ──────────────────────────────────────
+  position_levels:
+    FREEZE: 0.00
+    RISK_OFF: 0.35
+    NEUTRAL: 0.55
+    RISK_ON: 0.70
+    BROAD_RISK_ON: 0.80
+
+  # ── 市场状态输入 ──────────────────────────────────────
+  market_inputs:
+    # 趋势与广度
+    trend:
+      hs300_ret_20: {risk_on_above: 0.02, risk_off_below: -0.08}
+      csi1000_ret_20: {risk_on_above: 0.02}
+      chinext_ret_20: {risk_on_above: 0.02}
+      breadth: {freeze_below: 0.15, risk_off_below: 0.30, risk_on_above: 0.55, broad_risk_on_above: 0.70}
+
+    # 流动性与波动
+    liquidity:
+      turnover_ratio_20: {freeze_below: 0.50, risk_off_below: 0.75, risk_on_above: 1.10, broad_risk_on_above: 1.20}
+      vol_20_median: {freeze_above: 0.055, risk_off_above: 0.045}
+      limit_up_diffusion_min: 0.01
+      limit_down_freeze_above: 0.05
+
+    # 机会质量
+    opportunity:
+      candidate_pool_min: 150
+      candidate_avg_score_min: 65.0
+      industry_concentration_max: {broad_risk_on: 0.30, risk_on_warn: 0.40}
+      high_score_industry_dispersion_min: 6
+
+  # ── 状态切换规则 ──────────────────────────────────────
+  state_transitions:
+    # 降仓：单日触发即可立即执行
+    instant_downgrade: true
+    # 加仓：需要连续确认
+    upgrade_confirmation:
+      risk_off_to_neutral: 3
+      neutral_to_risk_on: 2
+      risk_on_to_broad_risk_on: 3
+    # FREEZE 触发后最小持续天数
+    freeze_min_duration: 5
+    # 风险恢复缓慢加仓：每次最多升一档
+    max_upgrade_per_step: 1
+
+  # ── 基准曲线定义 ──────────────────────────────────────
+  benchmarks:
+    A0:
+      description: "固定核心策略，固定70%仓位 (与既有回测一致)"
+      position_mode: "fixed"
+      position_ratio: 0.70
+      use_market_state: false
+
+    A1:
+      description: "固定核心策略，仓位与B平均仓位一致"
+      position_mode: "fixed"
+      position_ratio: 0.55  # to be calibrated from B's actual average
+      use_market_state: false
+
+    A2:
+      description: "核心策略，随机化仓位序列 (保持B的仓位分布)"
+      position_mode: "randomized"
+      use_market_state: false
+
+    B0:
+      description: "仅使用大盘趋势 (hs300_ret_20)"
+      position_mode: "market_state"
+      inputs: ["trend_hs300"]
+
+    B1:
+      description: "B0 + 成交额相对20日均值"
+      position_mode: "market_state"
+      inputs: ["trend_hs300", "turnover_ratio"]
+
+    B2:
+      description: "B1 + 市场广度 + 中证1000/创业板趋势"
+      position_mode: "market_state"
+      inputs: ["trend_hs300", "turnover_ratio", "breadth", "trend_csi1000", "trend_chinext"]
+
+    B3:
+      description: "B2 + 候选池质量"
+      position_mode: "market_state"
+      inputs: ["trend_hs300", "turnover_ratio", "breadth", "trend_csi1000", "trend_chinext", "candidate_quality"]
+
+    B4:
+      description: "B3 + 状态迟滞与恢复机制"
+      position_mode: "market_state"
+      inputs: ["trend_hs300", "turnover_ratio", "breadth", "trend_csi1000", "trend_chinext", "candidate_quality"]
+      use_hysteresis: true
+
+    B5:
+      description: "B4 + 账户级风险治理器"
+      position_mode: "market_state"
+      inputs: ["trend_hs300", "turnover_ratio", "breadth", "trend_csi1000", "trend_chinext", "candidate_quality"]
+      use_hysteresis: true
+      use_risk_governor: true
+
+  # ── 验收标准 ──────────────────────────────────────────
+  acceptance:
+    baseline_parity: "G0 must pass before B is valid"
+    calmar_vs_a1: {min_improvement_pct: 10}
+    maxdd_vs_a1: {min_reduction_pct: 10}
+    return_vs_a1: {min_ratio: 0.90}
+    effective_test_folds: {min_ratio: 0.60}
+    stress_slippage_10bp: "must not fail"
+    capacity_1_5m: "must be executable"
+    randomized_control: "B must beat A2 significantly"
+
+  # ── 容量测试 ──────────────────────────────────────────
+  capacity:
+    account_sizes: [500000, 1500000, 3000000, 5000000]
+    max_adv_pct: 0.05
+    max_impact_bps: 50
+    stress_slippage_bps: [0, 5, 10]
+
+  # ── Walk-Forward ──────────────────────────────────────
+  walkforward:
+    warmup_days: 30   # 自适应：当前数据不足以支持252天
+    health_window: 63
+    anchor_window: 126
+    validation_fold_days: 21
+    holdout_ratio: 0.20
+    embargo_days: 10
+    n_bootstrap: 1000

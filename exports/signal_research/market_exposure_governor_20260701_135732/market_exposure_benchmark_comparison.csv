@@ -1,0 +1,2 @@
+curve,description,total_return,annualized_return,max_drawdown,sharpe,calmar,volatility
+A0,固定核心策略，固定70%仓位 (与既有回测一致),0.0,0.0,0.0,0.0,0.0,0.0
