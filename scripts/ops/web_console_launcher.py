@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = Path(os.environ.get("CHENYIYUN_ENV_FILE", "~/.config/chenyiyun/web.env")).expanduser()
+VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 
 def load_env(path: Path) -> None:
@@ -27,11 +27,14 @@ def main() -> None:
     load_env(ENV_FILE)
     if not (os.environ.get("CHENYIYUN_DB_URL") or os.environ.get("CHENYIYUN_DB_PASSWORD")):
         raise SystemExit(f"FATAL: database credentials are missing from {ENV_FILE}")
+    if not VENV_PYTHON.is_file():
+        raise SystemExit(f"FATAL: project Python is missing: {VENV_PYTHON}")
     os.chdir(PROJECT_ROOT)
+    python = str(VENV_PYTHON)
     os.execvpe(
-        sys.executable,
+        python,
         [
-            sys.executable,
+            python,
             "-m",
             "flask",
             "--app",

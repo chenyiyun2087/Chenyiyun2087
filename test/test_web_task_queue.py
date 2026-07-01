@@ -206,6 +206,7 @@ def test_historical_replay_disables_orders_and_marks_business_notifications():
 def test_launchd_assets_use_user_env_and_keepalive():
     root = Path(web_app.__file__).resolve().parents[1]
     start_source = (root / "start_web_console.sh").read_text(encoding="utf-8")
+    launcher_source = (root / "scripts/ops/web_console_launcher.py").read_text(encoding="utf-8")
     plist_source = (root / "scripts/ops/com.chenyiyun.web-console.plist").read_text(encoding="utf-8")
     install_source = (root / "scripts/ops/install_web_launchd.sh").read_text(encoding="utf-8")
 
@@ -214,6 +215,9 @@ def test_launchd_assets_use_user_env_and_keepalive():
     assert "<key>KeepAlive</key>" in plist_source
     assert "/opt/homebrew/bin/python3.14" in plist_source
     assert "web_console_launcher.py" in plist_source
+    assert 'VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"' in launcher_source
+    assert "python = str(VENV_PYTHON)" in launcher_source
+    assert "os.execvpe(\n        python," in launcher_source
     assert "must have mode 600" in install_source
 
 
