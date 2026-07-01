@@ -1,0 +1,9 @@
+{
+  "run_timestamp": "2026-07-01T22:06:09.353643",
+  "ledger_s60_sha256": "7379ec394a40ab45",
+  "ledger_b2_sha256": "9b87cb77a605401d",
+  "strategy_version": "B2_SCALE40_R151",
+  "start_date": "2023-01-03",
+  "end_date": "2026-06-30",
+  "initial_cash": 500000.0
+}
