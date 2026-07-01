@@ -1,0 +1,16 @@
+{
+  "c0_return": 0.133731,
+  "c0_calmar": 0.109,
+  "c1_return": 0.086644,
+  "c1_calmar": 0.0857,
+  "c2_return": 0.662899,
+  "c2_calmar": 0.6914,
+  "c3_return": 0.41441,
+  "c3_calmar": 0.5489,
+  "exposure_effect": -0.047087,
+  "holdings_effect": 0.529168,
+  "total_effect": 0.280679,
+  "interaction": -0.201402,
+  "exposure_pct": 16.8,
+  "holdings_pct": 188.5
+}
