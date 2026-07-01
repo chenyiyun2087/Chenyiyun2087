@@ -1,0 +1,13 @@
+{
+  "run_timestamp": "2026-07-01T22:21:32.593195",
+  "ledger_s60_sha256": "6fb2e2fb8387aef9dd6d7539fb69a7f6b6e73c34e82e6ce374b546a09914f302",
+  "ledger_b2_sha256": "3228edd1e0518f0be3ab153141578cdb689f68872a5c9782d9be0ec4f44c6ed5",
+  "prices_sha256": "c1e61b376035adfdb25429b506919647af201c8abdf488ac4d1584b8b1ead3c3",
+  "scores_sha256": "2e1ca4d131ea80cd29e85f2a26bf0087b33ffe2dcf31018b3f356aa51d6dbec7",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.0,
+    "target_normal": 0.6,
+    "target_risk": 0.4
+  }
+}
