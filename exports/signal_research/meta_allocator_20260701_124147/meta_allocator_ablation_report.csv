@@ -1,0 +1,6 @@
+ablation,description,total_return,max_drawdown,calmar,sharpe
+position_only,仅市场仓位控制 (等权策略分配),0.0,0.0,0.0,0.0
+health_only,仅策略健康度分配 (固定70%仓位),0.0,0.0,0.0,0.0
+market_state_plus_health,市场状态 + 健康度 (无重叠惩罚),0.0,0.0,0.0,0.0
+market_state_plus_health_overlap,市场状态 + 健康度 + 重叠惩罚,0.0,0.0,0.0,0.0
+full_system,完整系统 (全部功能启用),0.0,0.0,0.0,0.0

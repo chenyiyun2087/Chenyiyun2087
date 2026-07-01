@@ -1,0 +1,6 @@
+curve,description,total_return,annualized_return,max_drawdown,sharpe,calmar,volatility,n_days
+A,固定核心策略 (baseline),0.0,0.0,0.0,0.0,0.0,0.0,196
+B,核心策略 + Meta总仓位控制,0.0,0.0,0.0,0.0,0.0,0.0,196
+C,固定角色等权组合,0.0,0.0,0.0,0.0,0.0,0.0,196
+D,,0.0,0.0,0.0,0.0,0.0,0.0,0
+E,完整 Meta Allocator,0.0,0.0,0.0,0.0,0.0,0.0,196

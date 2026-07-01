@@ -1,0 +1,382 @@
+# Meta Allocator Walk-Forward Backtest Configuration v1
+# 严格遵循 T+1 账户级回测规格
+
+meta_allocator:
+  version: "v1"
+  description: "Meta Allocator Walk-Forward 回测——验证动态市场状态识别和策略预算分配"
+
+  # ============================================================
+  # 策略池定义 (四角色)
+  # ============================================================
+  strategy_pool:
+    core:
+      underlying_strategy: "baseline_full_liquidity_detail_vol_position"
+      max_budget: 0.65
+      hold_days: 10
+      sort_col: "score"
+      position_mode: "vol_position"
+      pool: "liquidity_quality"
+      candidate_pool: "liquidity_quality"
+      allowed_regimes: ["strong_risk_on", "normal_risk_on", "neutral", "risk_off"]
+      pool_role: "champion_core"
+      description: "核心策略——流动性质量+波动率仓位"
+
+    attack:
+      underlying_strategy: "tiered_liquidity_then_bs_v2"
+      max_budget: 0.30
+      hold_days: 10
+      sort_col: "score"
+      position_mode: "equal"
+      pool: "trend_continuation"
+      candidate_pool: "trend_continuation"
+      allowed_regimes: ["strong_risk_on"]
+      pool_role: "attack_challenger"
+      description: "进攻策略——流动性分层+B点增强"
+
+    balanced:
+      underlying_strategy: "baseline_full_liquidity_detail_market_gate"
+      max_budget: 0.40
+      hold_days: 12
+      sort_col: "score"
+      position_mode: "equal"
+      pool: "liquidity_quality"
+      candidate_pool: "liquidity_quality"
+      allowed_regimes: ["strong_risk_on", "normal_risk_on", "neutral", "risk_off"]
+      pool_role: "champion_core"
+      description: "均衡策略——流动性质量+市场门禁"
+
+    defensive:
+      underlying_strategy: "baseline_full_liquidity"
+      max_budget: 0.45
+      hold_days: 12
+      sort_col: "score"
+      position_mode: "equal"
+      pool: "liquidity_quality"
+      candidate_pool: "liquidity_quality"
+      allowed_regimes: ["strong_risk_on", "normal_risk_on", "neutral", "risk_off", "stress"]
+      pool_role: "champion_core"
+      description: "防御策略——纯流动性质量"
+
+  # ============================================================
+  # 基础参数
+  # ============================================================
+  base_params:
+    top_n: 5
+    lot_size: 100
+    trade_cost_rate: 0.00075       # 万7.5 佣金
+    slippage_rate: 0.0             # bps (strict_precommit 使用 raw prices)
+    min_trade_value: 500.0
+    initial_cash: 10_000_000.0     # 1000万初始资金
+    max_total_positions: 5
+    max_single_stock_pct: 0.25     # 单股权重上限 (占NAV)
+    max_industry_pct: 0.40         # 行业权重上限 (占NAV)
+    price_tick: 0.01
+    execution_mode: "strict_t1_open_precommit"
+
+  # ============================================================
+  # 市场状态参数
+  # ============================================================
+  market_state:
+    # --- 风险状态阈值 ---
+    risk_state:
+      # FREEZE: 极端恐慌/流动性枯竭
+      freeze:
+        turnover_ratio_below: 0.50       # 成交额 < 20日均值的50%
+        breadth_below: 0.15              # 上涨家数占比 < 15%
+        limit_down_above: 0.05           # 跌停家数占比 > 5%
+        vol_20_above: 0.055              # 中位数20日波动率 > 5.5%
+
+      # RISK_OFF: 防御
+      risk_off:
+        turnover_ratio_below: 0.75       # 成交额 < 20日均值的75%
+        breadth_below: 0.30              # 上涨家数占比 < 30%
+        vol_20_above: 0.045              # 中位数波动率 > 4.5%
+        index_20d_return_below: -0.08    # 沪深300 20日收益 < -8%
+
+      # RISK_ON: 进攻
+      risk_on:
+        turnover_ratio_above: 1.10       # 成交额 > 20日均值的110%
+        breadth_above: 0.55              # 上涨家数占比 > 55%
+        index_20d_return_above: 0.02     # 沪深300 20日收益 > 2%
+        candidate_pool_min: 150          # 候选池 >= 150只
+        limit_up_diffusion_min: 0.01     # 涨停家数占比 >= 1%
+
+      # BROAD_RISK_ON: 全面进攻
+      broad_risk_on:
+        turnover_ratio_above: 1.20       # 成交额 > 20日均值的120%
+        breadth_above: 0.70              # 上涨家数占比 > 70%
+        industry_concentration_max: 0.30 # 行业集中度 < 30%
+        high_score_dispersion_min: 6     # 高分股分布 >= 6个行业
+
+    # --- 机会结构阈值 ---
+    opportunity_structure:
+      # BROAD_TREND: 广泛趋势行情
+      broad_trend:
+        min_index_trend_align: 2         # 至少2个指数趋势向上
+        breadth_above: 0.60
+        turnover_ratio_above: 1.00
+        industry_concentration_max: 0.35
+
+      # NARROW_MOMENTUM: 窄基动量
+      narrow_momentum:
+        bs_candidate_ratio_high: true     # B/S候选比偏向一侧
+        breadth_range: [0.35, 0.55]
+        industry_concentration_min: 0.35  # 行业集中
+
+      # ROTATION: 行业轮动
+      rotation:
+        turnover_ratio_above: 0.90
+        breadth_range: [0.30, 0.50]
+        industry_concentration_min: 0.40
+        industry_dispersion_high: true    # 行业间收益率差异大
+
+      # NO_EDGE: 无明确机会
+      # (fallthrough default)
+
+    # --- 指数参考 ---
+    index_reference:
+      csi300: "000300.SH"
+      csi1000: "000852.SH"
+      chinext: "399006.SZ"
+
+  # ============================================================
+  # 策略健康度参数
+  # ============================================================
+  health:
+    # 六组件权重 (必须合计1.0)
+    component_weights:
+      conditional_net_return: 0.30
+      conditional_downside_risk: 0.20
+      recent_performance_trend: 0.20
+      candidate_pool_quality: 0.15
+      expected_cost_executability: 0.10
+      sample_reliability: 0.05
+
+    # 参考窗口 (交易日)
+    reference_windows: [20, 63, 126]
+
+    # Bootstrap 配置
+    cohort_size: 10                    # 非重叠cohort大小
+    n_bootstrap: 1000                  # bootstrap迭代次数
+    shrinkage_weight: 0.30             # 向长期均值收缩的权重
+    shrinkage_prior_effective_n: 20    # 先验有效样本数
+
+    # 健康度乘数范围
+    health_multiplier_min: 0.50
+    health_multiplier_max: 1.50
+
+    # 候选池质量
+    candidate_pool_quality:
+      score_percentile_lookback: 126   # 历史评分分布回看窗口
+      signal_stability_weight: 0.30    # 信号稳定性权重
+      industry_diversity_weight: 0.30  # 行业多样性权重
+      avg_score_weight: 0.40           # 平均评分权重
+
+    # 交易成本与可执行性
+    cost_executability:
+      amplitude_amount_ratio_threshold: 0.05  # 振幅/成交额 阈值
+      impact_estimate_adv_pct: 0.01           # 预估冲击占ADV比例
+
+  # ============================================================
+  # 仓位与预算参数
+  # ============================================================
+  position_sizing:
+    # 总仓位框架 (风险状态 → 目标总仓位)
+    total_position_table:
+      FREEZE: 0.10
+      RISK_OFF: 0.35
+      NEUTRAL: 0.55
+      RISK_ON: 0.70
+      BROAD_RISK_ON: 0.78
+
+    # 策略预算框架 (机会结构 → 各角色预算占比)
+    # 预算占比是总仓位的百分比分配
+    strategy_budget_table:
+      BROAD_TREND:
+        core: 0.45
+        attack: 0.30
+        balanced: 0.15
+        defensive: 0.10
+      NARROW_MOMENTUM:
+        core: 0.55
+        attack: 0.15
+        balanced: 0.10
+        defensive: 0.20
+      ROTATION:
+        core: 0.35
+        attack: 0.10
+        balanced: 0.35
+        defensive: 0.20
+      NO_EDGE:
+        core: 0.20
+        attack: 0.00
+        balanced: 0.15
+        defensive: 0.65
+
+    # 预算调整参数
+    market_fit_weight: 1.0             # 市场适配度权重
+    overlap_penalty: 0.15              # 重叠惩罚系数
+    health_multiplier_min: 0.50
+    health_multiplier_max: 1.50
+    diversification_multiplier_min: 0.60
+    diversification_multiplier_max: 1.00
+
+  # ============================================================
+  # Walk-Forward 参数
+  # ============================================================
+  walkforward:
+    warmup_days: 252                   # 预热期 (理想值, 当前数据可能不足)
+    health_window: 63                  # 健康度主窗口
+    anchor_window: 126                 # 长期锚定窗口
+    validation_fold_days: 21           # 每个验证折交易日
+    holdout_ratio: 0.20                # 最终留出比例
+    min_effective_folds: 2             # 最少有效折数
+    n_bootstrap_robustness: 1000       # 稳健性检验bootstrap次数
+    bootstrap_ci_level: 0.90           # bootstrap置信区间
+
+  # ============================================================
+  # 基准曲线定义 (A-E)
+  # ============================================================
+  comparison_benchmarks:
+    - label: "A"
+      description: "固定核心策略 (baseline)"
+      mode: "fixed_core"
+      use_meta_total_position: false
+      use_health_allocation: false
+      use_market_state: false
+      use_overlap_penalty: false
+      fixed_strategies: ["baseline_full_liquidity_detail_vol_position"]
+      fixed_weights: {"baseline_full_liquidity_detail_vol_position": 1.0}
+      position_ratio: 0.65
+
+    - label: "B"
+      description: "核心策略 + Meta总仓位控制"
+      mode: "core_with_meta_position"
+      use_meta_total_position: true
+      use_health_allocation: false
+      use_market_state: true
+      use_overlap_penalty: false
+      fixed_strategies: ["baseline_full_liquidity_detail_vol_position"]
+
+    - label: "C"
+      description: "固定角色等权组合"
+      mode: "fixed_equal_weight"
+      use_meta_total_position: false
+      use_health_allocation: false
+      use_market_state: false
+      use_overlap_penalty: false
+      fixed_strategies:
+        - "baseline_full_liquidity_detail_vol_position"
+        - "tiered_liquidity_then_bs_v2"
+        - "baseline_full_liquidity_detail_market_gate"
+        - "baseline_full_liquidity"
+      fixed_weights:
+        "baseline_full_liquidity_detail_vol_position": 0.25
+        "tiered_liquidity_then_bs_v2": 0.25
+        "baseline_full_liquidity_detail_market_gate": 0.25
+        "baseline_full_liquidity": 0.25
+      position_ratio: 0.70
+
+    - label: "D"
+      description: "当前 adaptive_market_style"
+      mode: "adaptive_market_style"
+      use_meta_total_position: false
+      use_health_allocation: false
+      use_market_state: false
+      use_overlap_penalty: false
+
+    - label: "E"
+      description: "完整 Meta Allocator"
+      mode: "full_meta_allocator"
+      use_meta_total_position: true
+      use_health_allocation: true
+      use_market_state: true
+      use_overlap_penalty: true
+
+  # ============================================================
+  # 消融实验配置
+  # ============================================================
+  ablation:
+    - name: "position_only"
+      description: "仅市场仓位控制 (等权策略分配)"
+      use_market_state: true
+      use_health: false
+      use_overlap_penalty: false
+      position_ratio_source: "market_state"
+      allocation_mode: "equal_weight"
+
+    - name: "health_only"
+      description: "仅策略健康度分配 (固定70%仓位)"
+      use_market_state: false
+      use_health: true
+      use_overlap_penalty: false
+      position_ratio_source: "fixed_0.70"
+      allocation_mode: "health_weighted"
+
+    - name: "market_state_plus_health"
+      description: "市场状态 + 健康度 (无重叠惩罚)"
+      use_market_state: true
+      use_health: true
+      use_overlap_penalty: false
+      position_ratio_source: "market_state"
+      allocation_mode: "health_weighted"
+
+    - name: "market_state_plus_health_overlap"
+      description: "市场状态 + 健康度 + 重叠惩罚"
+      use_market_state: true
+      use_health: true
+      use_overlap_penalty: true
+      position_ratio_source: "market_state"
+      allocation_mode: "health_weighted"
+
+    - name: "full_system"
+      description: "完整系统 (全部功能启用)"
+      use_market_state: true
+      use_health: true
+      use_overlap_penalty: true
+      position_ratio_source: "market_state"
+      allocation_mode: "health_weighted"
+      include_risk_governor: true
+
+  # ============================================================
+  # 验收标准
+  # ============================================================
+  acceptance:
+    calmar_improvement_pct: 15         # Calmar至少提升15%
+    max_drawdown_reduction_pct: 10     # 最大回撤至少降低10%
+    min_net_return_ratio: 0.85         # 净收益不低于核心策略的85%
+    max_turnover_ratio: 1.20           # 换手率不超过核心策略的120%
+    min_effective_folds: 2             # 至少2个有效Walk-Forward折
+    require_bootstrap_robustness: true # 需要bootstrap稳健性检验
+    require_no_catastrophic_fold: true # 不允许单个折的灾难性失效
+
+  # ============================================================
+  # 数据配置
+  # ============================================================
+  data:
+    score_table: "tushare_stock.score_rank_daily"
+    price_table: "tushare_stock.ashare_eod_prices"
+    calendar_table: "tushare_stock.dim_trade_cal"
+    index_daily_table: "tushare_stock.dwd_index_daily"
+    industry_table: "tushare_stock.dim_stock"
+    min_history_days: 252             # 最少历史数据天数
+
+  # ============================================================
+  # 输出配置
+  # ============================================================
+  output:
+    base_dir: "exports/signal_research"
+    sub_dir_prefix: "meta_allocator"
+    files:
+      nav: "meta_allocator_nav.csv"
+      decisions: "meta_allocator_decisions.csv"
+      strategy_budget: "meta_allocator_strategy_budget.csv"
+      orders: "meta_allocator_orders.csv"
+      positions: "meta_allocator_positions.csv"
+      attribution: "meta_allocator_attribution.csv"
+      regime_summary: "meta_allocator_regime_summary.csv"
+      overlap_report: "meta_allocator_overlap_report.csv"
+      ablation_report: "meta_allocator_ablation_report.csv"
+      benchmark_comparison: "meta_allocator_benchmark_comparison.csv"
+      walkforward_report_md: "meta_allocator_walkforward_report.md"
+      walkforward_report_json: "meta_allocator_walkforward_report.json"

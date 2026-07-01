@@ -1,0 +1,229 @@
+{
+  "meta_allocator_version": "v1",
+  "generated_at": "2026-07-01T12:45:24.504779",
+  "benchmark_curves": {
+    "A": {
+      "description": "固定核心策略 (baseline)",
+      "metrics": {
+        "total_return": -0.693477,
+        "annualized_return": -0.781355,
+        "max_drawdown": -0.73707,
+        "sharpe": -0.9136,
+        "calmar": -1.0601,
+        "volatility": 0.855226,
+        "n_days": 196
+      }
+    },
+    "B": {
+      "description": "核心策略 + Meta总仓位控制",
+      "metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "max_drawdown": 0.0,
+        "sharpe": 0.0,
+        "calmar": 0.0,
+        "volatility": 0.0,
+        "n_days": 196
+      }
+    },
+    "C": {
+      "description": "固定角色等权组合",
+      "metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "max_drawdown": 0.0,
+        "sharpe": 0.0,
+        "calmar": 0.0,
+        "volatility": 0.0,
+        "n_days": 196
+      }
+    },
+    "D": {
+      "description": "",
+      "metrics": {}
+    },
+    "E": {
+      "description": "完整 Meta Allocator",
+      "metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "max_drawdown": 0.0,
+        "sharpe": 0.0,
+        "calmar": 0.0,
+        "volatility": 0.0,
+        "n_days": 196
+      }
+    }
+  },
+  "ablation_experiments": {
+    "position_only": {
+      "description": "仅市场仓位控制 (等权策略分配)",
+      "metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "max_drawdown": 0.0,
+        "sharpe": 0.0,
+        "calmar": 0.0,
+        "volatility": 0.0,
+        "n_days": 196
+      },
+      "config": {
+        "name": "position_only",
+        "description": "仅市场仓位控制 (等权策略分配)",
+        "use_market_state": true,
+        "use_health": false,
+        "use_overlap_penalty": false,
+        "position_ratio_source": "market_state",
+        "allocation_mode": "equal_weight"
+      }
+    },
+    "health_only": {
+      "description": "仅策略健康度分配 (固定70%仓位)",
+      "metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "max_drawdown": 0.0,
+        "sharpe": 0.0,
+        "calmar": 0.0,
+        "volatility": 0.0,
+        "n_days": 196
+      },
+      "config": {
+        "name": "health_only",
+        "description": "仅策略健康度分配 (固定70%仓位)",
+        "use_market_state": false,
+        "use_health": true,
+        "use_overlap_penalty": false,
+        "position_ratio_source": "fixed_0.70",
+        "allocation_mode": "health_weighted"
+      }
+    },
+    "market_state_plus_health": {
+      "description": "市场状态 + 健康度 (无重叠惩罚)",
+      "metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "max_drawdown": 0.0,
+        "sharpe": 0.0,
+        "calmar": 0.0,
+        "volatility": 0.0,
+        "n_days": 196
+      },
+      "config": {
+        "name": "market_state_plus_health",
+        "description": "市场状态 + 健康度 (无重叠惩罚)",
+        "use_market_state": true,
+        "use_health": true,
+        "use_overlap_penalty": false,
+        "position_ratio_source": "market_state",
+        "allocation_mode": "health_weighted"
+      }
+    },
+    "market_state_plus_health_overlap": {
+      "description": "市场状态 + 健康度 + 重叠惩罚",
+      "metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "max_drawdown": 0.0,
+        "sharpe": 0.0,
+        "calmar": 0.0,
+        "volatility": 0.0,
+        "n_days": 196
+      },
+      "config": {
+        "name": "market_state_plus_health_overlap",
+        "description": "市场状态 + 健康度 + 重叠惩罚",
+        "use_market_state": true,
+        "use_health": true,
+        "use_overlap_penalty": true,
+        "position_ratio_source": "market_state",
+        "allocation_mode": "health_weighted"
+      }
+    },
+    "full_system": {
+      "description": "完整系统 (全部功能启用)",
+      "metrics": {
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "max_drawdown": 0.0,
+        "sharpe": 0.0,
+        "calmar": 0.0,
+        "volatility": 0.0,
+        "n_days": 196
+      },
+      "config": {
+        "name": "full_system",
+        "description": "完整系统 (全部功能启用)",
+        "use_market_state": true,
+        "use_health": true,
+        "use_overlap_penalty": true,
+        "position_ratio_source": "market_state",
+        "allocation_mode": "health_weighted",
+        "include_risk_governor": true
+      }
+    }
+  },
+  "walkforward": {
+    "n_folds": 6,
+    "effective_folds": 5,
+    "holdout_folds": 1,
+    "folds": [
+      {
+        "index": 0,
+        "warmup_start": "2025-09-02",
+        "warmup_end": "2025-12-09",
+        "validation_start": "2025-12-10",
+        "validation_end": "2026-01-09",
+        "is_holdout": false
+      },
+      {
+        "index": 1,
+        "warmup_start": "2025-10-09",
+        "warmup_end": "2026-01-09",
+        "validation_start": "2026-01-12",
+        "validation_end": "2026-02-09",
+        "is_holdout": false
+      },
+      {
+        "index": 2,
+        "warmup_start": "2025-11-07",
+        "warmup_end": "2026-02-09",
+        "validation_start": "2026-02-10",
+        "validation_end": "2026-03-18",
+        "is_holdout": false
+      },
+      {
+        "index": 3,
+        "warmup_start": "2025-12-08",
+        "warmup_end": "2026-03-18",
+        "validation_start": "2026-03-19",
+        "validation_end": "2026-04-17",
+        "is_holdout": false
+      },
+      {
+        "index": 4,
+        "warmup_start": "2026-01-08",
+        "warmup_end": "2026-04-17",
+        "validation_start": "2026-04-20",
+        "validation_end": "2026-05-21",
+        "is_holdout": false
+      },
+      {
+        "index": 5,
+        "warmup_start": "2026-02-06",
+        "warmup_end": "2026-05-21",
+        "validation_start": "2026-05-22",
+        "validation_end": "2026-06-22",
+        "is_holdout": true
+      }
+    ],
+    "data_note": "当前数据量有限, Walk-Forward折叠数不足, 结果仅供参考"
+  },
+  "acceptance_config": {
+    "calmar_improvement_pct": 15.0,
+    "max_drawdown_reduction_pct": 10.0,
+    "min_net_return_ratio": 0.85,
+    "max_turnover_ratio": 1.2
+  },
+  "data_note": "当前仅197个交易日 (2025-09-02 至 2026-06-30)，结论为研究级证据。需要至少3年可信T+1数据才能得出最终结论。"
+}
