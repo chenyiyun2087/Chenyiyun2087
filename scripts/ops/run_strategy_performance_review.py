@@ -1071,6 +1071,8 @@ def run_review(args: argparse.Namespace) -> dict:
     }
 
     feishu_text = _format_feishu(payload)
+    if args.historical_reissue:
+        feishu_text = "【历史补发】\n" + feishu_text
     markdown = _format_markdown(payload)
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     md_path.write_text(markdown, encoding="utf-8")
@@ -1097,6 +1099,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build trusted strategy performance review and optionally push Feishu.")
     parser.add_argument("--date", default=None, help="Review date YYYY-MM-DD or YYYYMMDD. Defaults to latest production date.")
     parser.add_argument("--notify-feishu", action="store_true", help="Send a standalone Feishu strategy performance review.")
+    parser.add_argument("--historical-reissue", action="store_true", help="Prefix the notification as a historical reissue.")
     parser.add_argument("--review-window-days", type=int, default=DEFAULT_REVIEW_WINDOW_DAYS, help="Recent performance review window in trading days. Defaults to 63.")
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     _resolved = str(_resolve_backtest_default(_BACKTEST_DIR_CACHE))

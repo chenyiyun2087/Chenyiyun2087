@@ -41,6 +41,8 @@
                     class="{% if request.endpoint in ['stock_pool', 'stock_pool_items', 'add_stock_pool','rename_stock_pool','add_stock_pool_item','delete_stock_pool_item'] %}active{% endif %}">股票池管理</a>
                 <a href="{{ url_for('sina_all_scores') }}"
                     class="{% if request.endpoint == 'sina_all_scores' %}active{% endif %}">全量股票评分</a>
+                <a href="{{ url_for('batch_operations') }}"
+                    class="{% if request.endpoint == 'batch_operations' %}active{% endif %}">批量任务监控</a>
                 <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">管理台</a>
             </nav>
         </aside>

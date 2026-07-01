@@ -2,6 +2,8 @@
 
 本文档记录项目主链路和常用操作入口。更详细的生产候选导出步骤见 `docs/production_trusted_strategy_usage.md`。
 
+生产自动任务的完整时间表、依赖顺序、消息摘要和排障入口见[《系统批量任务与消息推送运维总览》](BATCH_TASK_OPERATIONS.md)。
+
 ## 1. Sina 信号主线
 
 ```text
@@ -88,3 +90,15 @@ python3 scripts/research/run_production_governed_vol_position_backtest.py \
 - T+1 开盘成交，不能用 T+1 之后价格决定 T 日候选。
 - 动态因子和策略切换只能使用 `exit_date < T` 的已完成样本。
 - `bs_model_*` 历史回填字段默认不参与可信回测。
+
+## 7. Web 调度器常驻与健康检查
+
+数据库凭据放在用户级文件 `~/.config/chenyiyun/web.env`，权限必须为 `600`；不要把凭据写入仓库或 launchd plist。
+
+```bash
+chmod 600 ~/.config/chenyiyun/web.env
+scripts/ops/install_web_launchd.sh
+scripts/ops/check_web_console.sh
+```
+
+项目位于外置卷时，macOS 必须允许 `/bin/bash` 和项目使用的 Python 访问“可移除卷”；若 launchd 日志出现 `Operation not permitted`，先在“系统设置 → 隐私与安全性”授予权限，再重新运行安装脚本。日志位于 `~/Library/Logs/Chenyiyun2087/`。

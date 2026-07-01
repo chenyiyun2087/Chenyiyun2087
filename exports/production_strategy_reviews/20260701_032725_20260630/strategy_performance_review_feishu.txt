@@ -1,0 +1,33 @@
+【历史补发】
+【核心精选策略收益评估】
+日期：2026-06-30
+生产策略：production_governed_vol_position
+选股内核：流动性质量稳健策略（波动仓位）（baseline_full_liquidity_detail_vol_position）
+风险档位：adaptive / 当前目标仓位 70%
+结论：风险总闸触发：defensive_only，目标仓位 50.00%
+
+最近3个月收益评估：
+- 状态：PASS；区间 2026-03-27~2026-06-30，交易日 63/63
+- 收益 44.72%，年化 349.29%，最大回撤 -8.10%，当前回撤 0.00%
+- 胜率 58.06%，最差单日 -8.10%，波动率 38.01%，Sharpe 4.15，Calmar 43.10，平均暴露 65.50%
+
+长期收益/回撤：
+- 主策略三年：累计57.77%，年化79.73%，最大回撤-13.12%，期末权益788,864
+- 风控影子v2.2：累计27.92%，年化37.24%，最大回撤-14.50%
+
+当前运行：
+- 候选 5 只，目标仓位合计50.00%；行业：半导体4只、元器件1只
+- 订单 0 笔（BUY 0 / SELL 0），计划金额 0
+- 影子盘：可成交 4 / 不可成交 0，均值滑点 14.8 bps；验收 pass / none
+- 最近影子盘：fail_streak 0，worst_action reduce_position
+- 实盘快照：总权益 500,000，现金 500,000，持仓市值 0，日收益 0.00%
+- 数据提醒：live_positions is empty; live realized strategy trend cannot be judged
+
+Top5：
+- 1. 000021 深科技 元器件 权重10.00%
+- 2. 688110 东芯股份 半导体 权重10.00%
+- 3. 688120 华海清科 半导体 权重10.00%
+- 4. 688012 中微公司 半导体 权重10.00%
+- 5. 300223 北京君正 半导体 权重10.00%
+
+报告：/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260701_032725_20260630/strategy_performance_review.md

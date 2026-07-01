@@ -71,6 +71,41 @@ def test_pipeline_enabled_scripts_exist_and_are_whitelisted():
     assert names.index("sina_bs_consensus") < names.index("trusted_strategy_candidates")
 
 
+def test_batch_monitor_definition_and_status_merge_follow_pipeline():
+    definitions = web_app._load_batch_monitor_definition()
+    assert len(definitions) == 15
+    assert definitions[0]["task_name"] == "adc_bs_detect"
+    assert {row["group_label"] for row in definitions} == {"盘中", "日终", "周度"}
+
+    rows = web_app._build_batch_monitor_rows(
+        definitions[:2],
+        [{"task_name": "adc_bs_detect", "status": "OK", "replay_required": 0}],
+        [{"id": 9, "task_name": "bs_ocr_adc_compare", "status": "RUNNING", "message": "working"}],
+        [],
+        [{"task_name": "adc_bs_detect", "status": "ok", "notification_type": "task_completion"}],
+    )
+    assert rows[0]["status_tone"] == "success"
+    assert rows[0]["notification_status"] == "ok"
+    assert rows[1]["status_tone"] == "running"
+    assert rows[1]["queue_id"] == 9
+
+
+def test_batch_operations_page_renders_monitor(monkeypatch):
+    monkeypatch.setattr(web_app, "_get_batch_monitor_data", lambda _: {
+        "rows": [],
+        "summary": {"total": 15, "healthy": 10, "active": 2, "attention": 1, "notified": 5},
+        "feishu_deliveries": [],
+        "feishu_summary": {"ok": 5, "failed": 0},
+        "channels": [],
+        "error": None,
+    })
+    client = web_app.app.test_client()
+    response = client.get("/batch-operations?business_date=20260630")
+    assert response.status_code == 200
+    assert "批量任务与飞书监控" in response.get_data(as_text=True)
+    assert "20260630" in response.get_data(as_text=True)
+
+
 def test_generic_completion_notification_covers_failures_and_manual_runs(monkeypatch):
     sent = []
     monkeypatch.setattr(web_app, "_has_successful_business_notification", lambda *_: False)
@@ -139,6 +174,47 @@ def test_start_scheduler_delegates_to_web_console():
     source = Path("start_scheduler.sh").read_text(encoding="utf-8")
     assert "start_web_console.sh" in source
     assert 'SCRIPT="scheduler.py"' not in source
+
+
+def test_historical_replay_disables_orders_and_marks_business_notifications():
+    options = {
+        "datestr": "20260630",
+        "historical_safe": True,
+        "historical_reissue": True,
+    }
+    candidate = web_app._build_task_script_parts("trusted_strategy_candidates", options)
+    assert "--no-emit-orders" in candidate
+    assert "--emit-orders" not in candidate
+    assert "--historical-reissue" in candidate
+    assert "--write-signal-snapshot" in candidate
+
+    rolling = web_app._build_task_script_parts("rolling_strategy_scorer", options)
+    assert rolling[-3:] == ["--calc-date", "2026-06-30", "--no-push"]
+    assert web_app._build_task_script_parts("bs_ocr_adc_compare", options)[-4:] == [
+        "--start", "20260630", "--end", "20260630",
+    ]
+    assert "--force" not in web_app._build_task_script_parts("bs_signal_monthly_cycle", options)
+
+    for task_name in (
+        "trusted_strategy_shadow_monitor",
+        "trusted_strategy_performance_review",
+        "ops_daily_batch_audit",
+    ):
+        assert "--historical-reissue" in web_app._build_task_script_parts(task_name, options)
+
+
+def test_launchd_assets_use_user_env_and_keepalive():
+    root = Path(web_app.__file__).resolve().parents[1]
+    start_source = (root / "start_web_console.sh").read_text(encoding="utf-8")
+    plist_source = (root / "scripts/ops/com.chenyiyun.web-console.plist").read_text(encoding="utf-8")
+    install_source = (root / "scripts/ops/install_web_launchd.sh").read_text(encoding="utf-8")
+
+    assert ".config/chenyiyun/web.env" in start_source
+    assert "CHENYIYUN_DB_PASSWORD" not in plist_source
+    assert "<key>KeepAlive</key>" in plist_source
+    assert "/opt/homebrew/bin/python3.14" in plist_source
+    assert "web_console_launcher.py" in plist_source
+    assert "must have mode 600" in install_source
 
 
 def test_feishu_audit_records_no_webhook(monkeypatch):

@@ -651,15 +651,33 @@ def run_shadow_monitor(args: argparse.Namespace) -> dict:
         fills = build_shadow_fills(engine, signal_date, execution_date, args.order_table)
     except RuntimeError as exc:
         if args.allow_empty:
-            return _skip_payload(str(exc), execution_date=execution_date)
+            payload = _skip_payload(str(exc), execution_date=execution_date)
+            if args.notify_feishu:
+                content = "【影子盘监控】\n" + f"执行日期：{execution_date}\n状态：跳过\n原因：{exc}"
+                if args.historical_reissue:
+                    content = "【历史补发】\n" + content
+                ok, reason = send_feishu_text_audited(
+                    engine, content,
+                    business_date=execution_date.replace("-", ""),
+                    notification_type="trusted_strategy_shadow_monitor",
+                    task_name="trusted_strategy_shadow_monitor",
+                    dedupe_key=f"trusted_strategy_shadow_monitor:{execution_date.replace('-', '')}",
+                )
+                payload["notify_result"] = reason
+                if not ok:
+                    print(f"[WARN] Feishu notification queued for retry: {reason}")
+            return payload
         raise
     summary = summarize_fills(fills, signal_date, execution_date)
     db_write = persist_shadow(engine, fills, summary, args.fill_table, args.summary_table, strategy_id=args.strategy_id, release_id=args.release_id) if args.write_db else {}
     notify_result = None
     if args.notify_feishu:
+        content = _format_notification(summary, fills)
+        if args.historical_reissue:
+            content = "【历史补发】\n" + content
         ok, reason = send_feishu_text_audited(
             engine,
-            _format_notification(summary, fills),
+            content,
             business_date=execution_date.replace("-", ""),
             notification_type="trusted_strategy_shadow_monitor",
             task_name="trusted_strategy_shadow_monitor",
@@ -692,6 +710,7 @@ def main() -> None:
     parser.add_argument("--summary-table", default=DEFAULT_SUMMARY_TABLE)
     parser.add_argument("--write-db", action="store_true")
     parser.add_argument("--notify-feishu", action="store_true")
+    parser.add_argument("--historical-reissue", action="store_true", help="Prefix the notification as a historical reissue.")
     parser.add_argument("--allow-empty", action="store_true", help="Return success when no prior order draft exists; useful for first production day.")
     parser.add_argument("--strategy-id", required=True, help="Immutable candidate strategy identity.")
     parser.add_argument("--release-id", required=True, help="Immutable runtime release identity.")

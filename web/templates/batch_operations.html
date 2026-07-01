@@ -1,0 +1,189 @@
+{% extends 'layout.html' %}
+{% block title %}批量任务与飞书监控{% endblock %}
+{% block page_title %}批量任务与飞书监控{% endblock %}
+{% block content %}
+
+<div class="ops-monitor">
+    <section class="ops-hero" aria-labelledby="ops-overview-title">
+        <div>
+            <div class="ops-eyebrow">PRODUCTION OPERATIONS</div>
+            <h2 id="ops-overview-title">今天的生产链，哪里正在运行，哪里需要你看一眼</h2>
+            <p>按计划时间和依赖顺序汇总批量任务，并核对飞书业务通知与终态投递。</p>
+        </div>
+        <form class="ops-date-form" method="get" aria-label="选择监控业务日期">
+            <label for="business-date">业务日期</label>
+            <div class="ops-date-control">
+                <input id="business-date" name="business_date" value="{{ business_date }}"
+                    inputmode="numeric" pattern="[0-9]{8}" maxlength="8" aria-describedby="business-date-help">
+                <button class="btn" type="submit">查看</button>
+            </div>
+            <span id="business-date-help">格式：YYYYMMDD</span>
+        </form>
+    </section>
+
+    {% if error %}
+    <div class="ops-alert ops-alert-danger" role="alert">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.6 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/></svg>
+        <div><strong>监控数据未完整加载</strong><span>{{ error }}</span></div>
+    </div>
+    {% endif %}
+
+    <section class="ops-kpis" aria-label="任务状态概要">
+        <article class="ops-kpi">
+            <span class="ops-kpi-label">计划任务</span>
+            <strong>{{ summary.total }}</strong>
+            <span>YAML 启用任务</span>
+        </article>
+        <article class="ops-kpi ops-kpi-success">
+            <span class="ops-kpi-label">健康完成</span>
+            <strong>{{ summary.healthy }}</strong>
+            <span>成功或合法跳过</span>
+        </article>
+        <article class="ops-kpi ops-kpi-active">
+            <span class="ops-kpi-label">运行 / 等待</span>
+            <strong>{{ summary.active }}</strong>
+            <span>队列处理中</span>
+        </article>
+        <article class="ops-kpi ops-kpi-danger">
+            <span class="ops-kpi-label">需要关注</span>
+            <strong>{{ summary.attention }}</strong>
+            <span>失败、缺失或阻塞</span>
+        </article>
+        <article class="ops-kpi ops-kpi-notify">
+            <span class="ops-kpi-label">通知成功</span>
+            <strong>{{ summary.notified }}</strong>
+            <span>已有成功投递记录</span>
+        </article>
+    </section>
+
+    <div class="ops-toolbar" aria-label="监控快捷操作">
+        <div class="ops-legend">
+            <span><i class="ops-dot dot-success"></i>健康</span>
+            <span><i class="ops-dot dot-running"></i>运行 / 等待</span>
+            <span><i class="ops-dot dot-failed"></i>异常</span>
+            <span><i class="ops-dot dot-idle"></i>未开始</span>
+        </div>
+        <div class="ops-toolbar-actions">
+            <label class="ops-auto-refresh"><input id="ops-auto-refresh" type="checkbox"> 60 秒自动刷新</label>
+            <a class="btn btn-outline" href="{{ url_for('admin', tab='audit-tab', business_date=business_date) }}">打开日终巡检</a>
+            <a class="btn btn-outline" href="{{ url_for('admin', tab='queue-tab') }}">查看作业队列</a>
+        </div>
+    </div>
+
+    <div class="ops-monitor-grid">
+        <section class="ops-task-panel" aria-labelledby="task-timeline-title">
+            <div class="ops-section-heading">
+                <div>
+                    <span class="ops-section-kicker">TIME &amp; DEPENDENCY</span>
+                    <h3 id="task-timeline-title">批量任务时间线</h3>
+                </div>
+                <span class="ops-section-meta">计划时间 ≠ 实际开始时间</span>
+            </div>
+
+            {% for group_name, group_rows in rows|groupby('group_order') %}
+            <div class="ops-task-group">
+                <div class="ops-group-label">
+                    <span>{{ group_rows[0].group_label }}</span>
+                    <small>{{ group_rows|length }} 项</small>
+                </div>
+                <div class="ops-timeline">
+                    {% for task in group_rows %}
+                    <article class="ops-task-row tone-{{ task.status_tone }}">
+                        <div class="ops-time">
+                            <strong>{{ task.runtime_time }}</strong>
+                            {% if task.day_of_week is not none %}<span>周五</span>{% elif task.trading_day_only %}<span>交易日</span>{% else %}<span>每日</span>{% endif %}
+                        </div>
+                        <div class="ops-rail" aria-hidden="true"><span></span></div>
+                        <div class="ops-task-body">
+                            <div class="ops-task-mainline">
+                                <div>
+                                    <h4>{{ task.name }}</h4>
+                                    <code>{{ task.task_name }}</code>
+                                </div>
+                                <span class="ops-status ops-status-{{ task.status_tone }}">
+                                    {% if task.status_tone == 'success' %}<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
+                                    {% elif task.status_tone == 'running' %}<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/></svg>
+                                    {% elif task.status_tone == 'failed' %}<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 8v5m0 4h.01"/><circle cx="12" cy="12" r="9"/></svg>
+                                    {% else %}<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>{% endif %}
+                                    {{ task.display_status }}
+                                </span>
+                            </div>
+                            <p>{{ task.description or task.script }}</p>
+                            <div class="ops-task-meta">
+                                {% if task.depends_on %}<span>等待：{% for dep in task.depends_on %}<code>{{ dep }}</code>{% if not loop.last %} + {% endif %}{% endfor %}</span>{% else %}<span>无上游依赖</span>{% endif %}
+                                {% if task.queue_id %}<span>队列 #{{ task.queue_id }}</span>{% endif %}
+                                {% if task.notification_status %}<span>通知 {{ task.notification_status }}</span>{% endif %}
+                            </div>
+                            {% if task.message %}<div class="ops-task-message">{{ task.message }}</div>{% endif %}
+                        </div>
+                    </article>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </section>
+
+        <aside class="ops-notify-panel" aria-labelledby="feishu-title">
+            <div class="ops-section-heading">
+                <div>
+                    <span class="ops-section-kicker">FEISHU DELIVERY</span>
+                    <h3 id="feishu-title">飞书通知</h3>
+                </div>
+                <span class="ops-channel-health {% if feishu_summary.failed %}has-error{% endif %}">
+                    {{ feishu_summary.ok }} 成功 / {{ feishu_summary.failed }} 异常
+                </span>
+            </div>
+
+            <div class="ops-channel-list" aria-label="通知渠道状态">
+                {% for channel in channels %}
+                <div class="ops-channel-row">
+                    <span class="ops-channel-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M5 5h14v10H9l-4 4V5Z"/></svg>
+                    </span>
+                    <div><strong>{{ channel.channel_name }}</strong><span>{{ '已启用' if channel.enabled else '未启用' }}</span></div>
+                    <i class="ops-dot {{ 'dot-success' if channel.enabled and channel.webhook_url else 'dot-idle' }}" aria-label="{{ '可用' if channel.enabled and channel.webhook_url else '未启用' }}"></i>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="ops-notify-feed">
+                <div class="ops-feed-heading"><strong>最近投递</strong><span>最多 30 条</span></div>
+                {% for item in feishu_deliveries %}
+                <article class="ops-notify-item">
+                    <span class="ops-notify-mark notify-{{ 'ok' if item.status == 'ok' else 'failed' }}" aria-hidden="true"></span>
+                    <div>
+                        <div class="ops-notify-title"><strong>{{ item.notification_type }}</strong><span>{{ item.status }}</span></div>
+                        <code>{{ item.task_name or 'system' }}</code>
+                        {% if item.reason %}<p>{{ item.reason }}</p>{% endif %}
+                        <time>{{ item.created_at }}</time>
+                    </div>
+                </article>
+                {% else %}
+                <div class="ops-empty">
+                    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v10H9l-4 4V5Z"/></svg>
+                    <strong>该业务日暂无飞书投递</strong>
+                    <span>任务完成后，业务摘要或通用终态会出现在这里。</span>
+                </div>
+                {% endfor %}
+            </div>
+            <a class="ops-panel-link" href="{{ url_for('admin', tab='center-tab') }}">配置通知渠道 <span aria-hidden="true">→</span></a>
+        </aside>
+    </div>
+</div>
+
+<script>
+(function () {
+    const checkbox = document.getElementById('ops-auto-refresh');
+    const storageKey = 'batch-operations-auto-refresh';
+    let timer;
+    function syncRefresh() {
+        window.clearInterval(timer);
+        localStorage.setItem(storageKey, checkbox.checked ? '1' : '0');
+        if (checkbox.checked) timer = window.setInterval(() => window.location.reload(), 60000);
+    }
+    checkbox.checked = localStorage.getItem(storageKey) === '1';
+    checkbox.addEventListener('change', syncRefresh);
+    syncRefresh();
+}());
+</script>
+{% endblock %}

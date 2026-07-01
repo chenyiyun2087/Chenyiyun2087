@@ -622,6 +622,7 @@ def _ensure_task_management_schema(cursor):
             task_name VARCHAR(64) NOT NULL,
             task_display_name VARCHAR(128) NOT NULL,
             trigger_type VARCHAR(16) NOT NULL DEFAULT 'manual',
+            business_date VARCHAR(8) NULL,
             started_at DATETIME NOT NULL,
             finished_at DATETIME NULL,
             status VARCHAR(32) NOT NULL,
@@ -634,6 +635,10 @@ def _ensure_task_management_schema(cursor):
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
+    cursor.execute("SHOW COLUMNS FROM app_task_history LIKE 'business_date'")
+    if cursor.fetchone() is None:
+        cursor.execute("ALTER TABLE app_task_history ADD COLUMN business_date VARCHAR(8) NULL AFTER trigger_type")
+        cursor.execute("ALTER TABLE app_task_history ADD KEY idx_history_business_date (business_date, task_name)")
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS app_task_runner (
@@ -946,7 +951,7 @@ def _refresh_task_next_runs():
             task['next_run'] = next_dt.strftime('%Y-%m-%d %H:%M:%S') if next_dt else '-'
 
 
-def _insert_task_history(task_name, trigger_type, status, started_at, finished_at=None, exit_code=None, duration_seconds=None, message=None):
+def _insert_task_history(task_name, trigger_type, status, started_at, finished_at=None, exit_code=None, duration_seconds=None, message=None, business_date=None):
     conn = None
     try:
         conn = pymysql.connect(**DB_CONFIG)
@@ -955,10 +960,10 @@ def _insert_task_history(task_name, trigger_type, status, started_at, finished_a
             cursor.execute(
                 """
                 INSERT INTO app_task_history
-                    (task_name, task_display_name, trigger_type, started_at, finished_at, status, exit_code, duration_seconds, message)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (task_name, task_display_name, trigger_type, business_date, started_at, finished_at, status, exit_code, duration_seconds, message)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (task_name, TASKS[task_name]['name'], trigger_type, started_at, finished_at, status, exit_code, duration_seconds, message),
+                (task_name, TASKS[task_name]['name'], trigger_type, business_date, started_at, finished_at, status, exit_code, duration_seconds, message),
             )
             conn.commit()
         conn.close()
@@ -1061,6 +1066,181 @@ def _get_daily_batch_audit_rows(business_date):
     except Exception as e:
         print(f"Failed to load daily batch audit rows: {e}")
     return rows
+
+
+def _load_batch_monitor_definition():
+    """Load enabled production tasks in pipeline order for the monitoring page."""
+    import yaml
+
+    pipeline_path = Path(__file__).resolve().parents[1] / "task_registry" / "pipeline.yaml"
+    payload = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
+    rows = []
+    group_labels = {"intraday": "盘中", "daily_close": "日终", "weekly": "周度"}
+    group_order = {"intraday": 1, "daily_close": 2, "weekly": 3}
+    for group_name, group in payload.items():
+        for task in group.get("tasks", []):
+            if task.get("status") != "enabled":
+                continue
+            task_name = str(task.get("id") or "").strip()
+            runtime = TASKS.get(task_name, {})
+            rows.append({
+                "task_name": task_name,
+                "name": runtime.get("name") or task.get("description") or task_name,
+                "description": task.get("description") or runtime.get("description") or "",
+                "group": group_name,
+                "group_order": group_order.get(group_name, 99),
+                "group_label": group_labels.get(group_name, group_name),
+                "schedule_time": str(task.get("time") or "-"),
+                "day_of_week": task.get("day_of_week"),
+                "trading_day_only": bool(task.get("trading_day_only", group_name != "weekly")),
+                "depends_on": list(task.get("depends_on") or TASK_DEPENDENCIES.get(task_name, ())),
+                "script": str(task.get("script") or ""),
+                "runtime_enabled": bool(runtime.get("schedule_enabled")),
+                "runtime_time": str(runtime.get("schedule_time") or task.get("time") or "-"),
+            })
+    return rows
+
+
+def _build_batch_monitor_rows(definitions, audit_rows, queue_rows, history_rows, notification_rows):
+    """Merge task definitions with current-day operational evidence."""
+    def latest_by_task(rows):
+        latest = {}
+        for row in rows:
+            task_name = row.get("task_name")
+            if task_name and task_name not in latest:
+                latest[task_name] = row
+        return latest
+
+    audits = {row.get("task_name"): row for row in audit_rows}
+    queues = latest_by_task(queue_rows)
+    histories = latest_by_task(history_rows)
+    notifications = latest_by_task(notification_rows)
+    result = []
+    for definition in definitions:
+        row = dict(definition)
+        task_name = row["task_name"]
+        audit = audits.get(task_name) or {}
+        queue = queues.get(task_name) or {}
+        history = histories.get(task_name) or {}
+        notification = notifications.get(task_name) or {}
+        queue_status = str(queue.get("status") or "").upper()
+        history_status = str(history.get("status") or "")
+        audit_status = str(audit.get("status") or "")
+
+        if audit_status:
+            display_status = audit_status
+        elif queue_status:
+            display_status = queue_status
+        elif history_status:
+            display_status = history_status
+        else:
+            display_status = "NOT_STARTED"
+
+        normalized = display_status.upper()
+        if normalized in {"OK", "SUCCESS", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"}:
+            status_tone = "success"
+        elif normalized in {"RUNNING", "PENDING", "WAITING", "QUEUED"}:
+            status_tone = "running"
+        elif normalized in {"NOT_STARTED", "IDLE"}:
+            status_tone = "idle"
+        else:
+            status_tone = "failed"
+
+        row.update({
+            "display_status": display_status,
+            "status_tone": status_tone,
+            "queue_id": queue.get("id"),
+            "queue_status": queue_status or None,
+            "history_status": history_status or None,
+            "started_at": queue.get("started_at") or history.get("started_at"),
+            "finished_at": queue.get("finished_at") or history.get("finished_at"),
+            "message": audit.get("reason") or queue.get("message") or history.get("message") or "",
+            "notification_status": notification.get("status"),
+            "notification_type": notification.get("notification_type"),
+            "notification_time": notification.get("created_at"),
+            "replay_required": bool(audit.get("replay_required")),
+        })
+        result.append(row)
+    return result
+
+
+def _get_batch_monitor_data(business_date):
+    definitions = _load_batch_monitor_definition()
+    task_names = [row["task_name"] for row in definitions]
+    audit_rows = []
+    queue_rows = []
+    history_rows = []
+    notification_rows = []
+    feishu_deliveries = []
+    channels = _default_notification_channels()
+    error = None
+    try:
+        conn = get_db()
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            channels = _load_notification_channels_from_cursor(cursor)
+            placeholders = ",".join(["%s"] * len(task_names))
+            cursor.execute(
+                """SELECT task_name, status, reason, replay_required
+                   FROM app_daily_batch_audit WHERE business_date=%s""",
+                (business_date,),
+            )
+            audit_rows = cursor.fetchall()
+            cursor.execute(
+                f"""SELECT id, task_name, status, started_at, finished_at, message
+                    FROM app_task_queue
+                    WHERE business_date=%s AND task_name IN ({placeholders})
+                    ORDER BY requested_at DESC, id DESC""",
+                (business_date, *task_names),
+            )
+            queue_rows = cursor.fetchall()
+            cursor.execute(
+                f"""SELECT task_name, status, started_at, finished_at, message
+                    FROM app_task_history
+                    WHERE business_date=%s AND task_name IN ({placeholders})
+                    ORDER BY started_at DESC, id DESC""",
+                (business_date, *task_names),
+            )
+            history_rows = cursor.fetchall()
+            cursor.execute(
+                f"""SELECT task_name, notification_type, status, created_at
+                    FROM app_notification_delivery
+                    WHERE business_date=%s AND task_name IN ({placeholders})
+                    ORDER BY created_at DESC, id DESC""",
+                (business_date, *task_names),
+            )
+            notification_rows = cursor.fetchall()
+            cursor.execute(
+                """SELECT id, task_name, notification_type, status, reason, created_at
+                   FROM app_notification_delivery
+                   WHERE business_date=%s AND channel_key='feishu'
+                   ORDER BY created_at DESC, id DESC LIMIT 30""",
+                (business_date,),
+            )
+            feishu_deliveries = cursor.fetchall()
+    except Exception as exc:
+        error = str(exc)
+
+    rows = _build_batch_monitor_rows(definitions, audit_rows, queue_rows, history_rows, notification_rows)
+    summary = {
+        "total": len(rows),
+        "healthy": sum(row["status_tone"] == "success" for row in rows),
+        "active": sum(row["status_tone"] == "running" for row in rows),
+        "attention": sum(row["status_tone"] == "failed" for row in rows),
+        "notified": sum(str(row.get("notification_status") or "").lower() == "ok" for row in rows),
+    }
+    feishu_summary = {
+        "ok": sum(str(row.get("status") or "").lower() == "ok" for row in feishu_deliveries),
+        "failed": sum(str(row.get("status") or "").lower() in {"failed", "no_webhook"} for row in feishu_deliveries),
+    }
+    return {
+        "rows": rows,
+        "summary": summary,
+        "feishu_deliveries": feishu_deliveries,
+        "feishu_summary": feishu_summary,
+        "channels": channels,
+        "error": error,
+    }
 
 
 def _run_daily_batch_audit_now(business_date, notify_feishu=False):
@@ -2751,6 +2931,7 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
             exit_code=exit_code,
             duration_seconds=duration_seconds,
             message=message,
+            business_date=_queue_business_date(run_options),
         )
         if queue_job is not None:
             _finish_queued_task(queue_job, history_status, exit_code, message or history_status)
@@ -2851,6 +3032,7 @@ def _mark_scheduled_skip_success(task_name, scheduled_for, reason_code="NON_TRAD
         exit_code=0,
         duration_seconds=0,
         message=message,
+        business_date=started_at.strftime("%Y%m%d"),
     )
     _send_task_completion_notification(
         task_name, f"SKIPPED_{reason_code}", "schedule", started_at, started_at,
@@ -2867,6 +3049,8 @@ def _build_task_script_parts(task_name, run_options=None):
     script = task_config['script']
     run_options = run_options or {}
     datestr = _normalize_datestr(run_options.get("datestr"))
+    historical_safe = bool(run_options.get("historical_safe"))
+    historical_reissue = bool(run_options.get("historical_reissue"))
     if task_name == 'sina_picture':
         target_date = datestr or datetime.now().strftime('%Y%m%d')
         return [script, 'config_1', target_date, '--capture-only']
@@ -2877,6 +3061,9 @@ def _build_task_script_parts(task_name, run_options=None):
         if datestr:
             return [script, '--date', datestr]
         return [script, '--date', datetime.now().strftime('%Y%m%d')]
+    if task_name == 'bs_ocr_adc_compare':
+        target_date = datestr or datetime.now().strftime('%Y%m%d')
+        return [script, '--start', target_date, '--end', target_date]
     if task_name == 'sina_score':
         if datestr:
             return [script, '--date', datestr, '--force']
@@ -2885,6 +3072,13 @@ def _build_task_script_parts(task_name, run_options=None):
         if datestr:
             return [script, '--date', datestr]
         return [script]
+    if task_name == 'rolling_strategy_scorer':
+        args = []
+        if datestr:
+            args.extend(['--calc-date', f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"])
+        if historical_safe:
+            args.append('--no-push')
+        return [script, *args]
     if task_name == 'trusted_strategy_candidates':
         target_date = datestr or datetime.now().strftime('%Y%m%d')
         release_id = f"{TRUSTED_PRODUCTION_STRATEGY}_{target_date}_{TRUSTED_PRODUCTION_CONFIG['config_sha']}"
@@ -2899,9 +3093,13 @@ def _build_task_script_parts(task_name, run_options=None):
             '--max-total-positions',
             str(TRUSTED_PRODUCTION_CONFIG["max_total_positions"]),
             '--write-db',
-            '--emit-orders',
             '--notify-feishu',
         ]
+        args.append('--no-emit-orders' if historical_safe else '--emit-orders')
+        if historical_safe:
+            args.append('--write-signal-snapshot')
+        if historical_reissue:
+            args.append('--historical-reissue')
         if datestr:
             args.extend(['--date', datestr])
         return [script, *args]
@@ -2915,6 +3113,8 @@ def _build_task_script_parts(task_name, run_options=None):
         ]
         if datestr:
             args.extend(['--execution-date', datestr])
+        if historical_reissue:
+            args.append('--historical-reissue')
         return [script, *args]
     if task_name == 'trusted_strategy_backtest':
         args: list[str] = []
@@ -2925,6 +3125,8 @@ def _build_task_script_parts(task_name, run_options=None):
         args = ['--notify-feishu', '--review-window-days', '63']
         if datestr:
             args.extend(['--date', datestr])
+        if historical_reissue:
+            args.append('--historical-reissue')
         return [script, *args]
     if task_name == 'sina_bs_image_weekly_cleanup':
         args = ['--execute']
@@ -2947,7 +3149,9 @@ def _build_task_script_parts(task_name, run_options=None):
         args = []
         if datestr and len(datestr) == 8:
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
-            args.extend(['--date', date_iso, '--force'])
+            args.extend(['--date', date_iso])
+            if not historical_safe:
+                args.append('--force')
         return [script, *args]
     if task_name == 'candle_diag_scan':
         args = ['--skip-existing']
@@ -2959,6 +3163,8 @@ def _build_task_script_parts(task_name, run_options=None):
         args = ['--notify-feishu']
         if datestr:
             args.extend(['--date', datestr])
+        if historical_reissue:
+            args.append('--historical-reissue')
         return [script, *args]
     return [script]
 
@@ -6501,6 +6707,18 @@ def delete_stock_pool_item(item_id):
             flash(f'删除失败: {e}', 'danger')
 
     return redirect(url_for('stock_pool', pool_id=row['pool_id']))
+
+
+@app.route('/batch-operations')
+def batch_operations():
+    business_date = _normalize_datestr(request.args.get("business_date")) or datetime.now().strftime("%Y%m%d")
+    monitor = _get_batch_monitor_data(business_date)
+    return render_template(
+        "batch_operations.html",
+        business_date=business_date,
+        now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        **monitor,
+    )
 
 
 @app.route('/admin')

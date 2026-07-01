@@ -143,11 +143,12 @@ def _latest_history(cursor, task_name: str, business_date: str) -> dict[str, Any
         """
         SELECT status, exit_code, message, started_at, finished_at
         FROM app_task_history
-        WHERE task_name = %s AND started_at >= %s AND started_at < DATE_ADD(%s, INTERVAL 1 DAY)
+        WHERE task_name = %s
+          AND (business_date = %s OR (business_date IS NULL AND started_at >= %s AND started_at < DATE_ADD(%s, INTERVAL 1 DAY)))
         ORDER BY started_at DESC
         LIMIT 1
         """,
-        (task_name, day_start, day_start),
+        (task_name, business_date, day_start, day_start),
     )
     return cursor.fetchone() or {}
 
@@ -326,7 +327,7 @@ def format_audit_notification(summary: dict[str, Any]) -> str:
 
 def run_audit(
     business_date: str, *, notify_feishu: bool = False,
-    require_notifications: bool = True,
+    require_notifications: bool = True, historical_reissue: bool = False,
 ) -> dict[str, Any]:
     expected_tasks = load_expected_daily_tasks()
     conn = pymysql.connect(**build_pymysql_config())
@@ -359,9 +360,12 @@ def run_audit(
 
     if notify_feishu:
         engine = create_engine(build_sqlalchemy_url())
+        content = format_audit_notification(summary)
+        if historical_reissue:
+            content = "【历史补发】\n" + content
         send_feishu_text_audited(
             engine,
-            format_audit_notification(summary),
+            content,
             business_date=business_date,
             notification_type="daily_batch_audit",
             task_name=AUDIT_TASK_ID,
@@ -375,10 +379,12 @@ def main() -> None:
     parser.add_argument("--date", default=None, help="Business date, YYYYMMDD or YYYY-MM-DD. Defaults to today.")
     parser.add_argument("--notify-feishu", action="store_true")
     parser.add_argument("--no-require-notifications", action="store_true")
+    parser.add_argument("--historical-reissue", action="store_true", help="Prefix the notification as a historical reissue.")
     args = parser.parse_args()
     summary = run_audit(
         normalize_datestr(args.date), notify_feishu=args.notify_feishu,
         require_notifications=not args.no_require_notifications,
+        historical_reissue=args.historical_reissue,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 

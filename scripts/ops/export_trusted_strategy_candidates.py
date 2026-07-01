@@ -2491,6 +2491,25 @@ def export_candidates(args: argparse.Namespace) -> dict:
             shadow_state=recent_shadow_summary,
             output_json_path=files["json"],
         )
+        if args.write_signal_snapshot and not candidates.empty:
+            from sqlalchemy import text as _snapshot_text
+            snapshot_sql = _snapshot_text(
+                "INSERT INTO chenyiyun.ads_chenyiyun_selected_signals "
+                "(signal_time,trade_date,ts_code,stock_name,side,open_price,"
+                " allocated_shares,current_shares,target_shares) "
+                "VALUES (NOW(),:td,:ts,:nm,'WATCH',:pr,0,0,0) "
+                "ON DUPLICATE KEY UPDATE stock_name=VALUES(stock_name),"
+                " open_price=VALUES(open_price),signal_time=VALUES(signal_time)"
+            )
+            with engine.begin() as snapshot_conn:
+                for _, candidate in candidates.iterrows():
+                    snapshot_conn.execute(snapshot_sql, {
+                        "td": asof_date,
+                        "ts": str(candidate.get("symbol") or candidate.get("ts_code") or "").zfill(6),
+                        "nm": str(candidate.get("name") or candidate.get("stock_name") or ""),
+                        "pr": float(candidate.get("latest_close") or 0.0),
+                    })
+            db_write["signal_snapshot_rows"] = int(len(candidates))
     if args.emit_orders:
         if str(market_regime_decision.get("regime")) == "stress":
             warnings.append("市场状态为 stress：禁止新买入，仅允许卖出/持仓维护。")
@@ -2966,6 +2985,7 @@ def main() -> None:
     parser.add_argument("--write-db", action="store_true", help="Persist candidates to DB and sync the web stock pool.")
     parser.add_argument("--emit-orders", action="store_true", default=False, help="Generate local rebalance orders from candidates. Omit for no orders.")
     parser.add_argument("--no-emit-orders", action="store_false", dest="emit_orders", help="Explicitly skip order generation (RED health).")
+    parser.add_argument("--write-signal-snapshot", action="store_true", help="Persist non-order WATCH snapshots for historical repair and dashboard continuity.")
     parser.add_argument("--health-grade", default="UNKNOWN", help="Previous-day health grade (GREEN/YELLOW/RED/UNKNOWN).")
     parser.add_argument("--health-substatus", default=None, help="Health substatus (UNKNOWN/STALE).")
     parser.add_argument("--health-date", default="", help="Date of the health grade used for order permission.")
