@@ -1,0 +1,3 @@
+risk_state,days,avg_position,avg_turnover_ratio,avg_csi300_ret20,avg_breadth,avg_candidate_pool
+NEUTRAL,159,0.55,0.9598,0.0049,0.4763,294.0
+RISK_ON,37,0.7,1.2485,0.0544,0.4809,297.0
