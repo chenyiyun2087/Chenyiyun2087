@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "s60_risk_days": 0,
+  "e1_risk_days": 512,
+  "e1_non_risk_positions_ok": true,
+  "e1_risk_positions_ok": true
+}
