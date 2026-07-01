@@ -507,7 +507,7 @@ def main():
         "| 曲线 | 收益 | MaxDD | Calmar | 被阻止 | 强制卖出 |",
         "|------|------|-------|--------|--------|----------|",
     ]
-    for label, _, _, _, _ in cr9_configs:
+    for label, _, _, _, _, _ in cr9_configs:
         r = results[label]; m = r["metrics"]
         report.append(f"| {label} | {m['total_return']:.2%} | {m['max_drawdown']:.2%} | {m['calmar']:.2f} | {r['n_blocked']} | {r['n_force_sells']} |")
 
