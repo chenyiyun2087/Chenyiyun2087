@@ -75,6 +75,10 @@ def test_queue_contract_keeps_active_deduplication_and_single_retry():
     assert "TASK_RETRY_DELAY_SECONDS" in source
 
 
+def test_stale_timeout_is_close_to_heartbeat_cadence():
+    assert web_app.TASK_STALE_TIMEOUT_SECONDS <= 15 * web_app.TASK_HEARTBEAT_INTERVAL_SECONDS
+
+
 def test_pipeline_enabled_scripts_exist_and_are_whitelisted():
     root = Path(web_app.__file__).resolve().parents[1]
     expected = load_expected_daily_tasks(root / "task_registry" / "pipeline.yaml")

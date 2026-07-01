@@ -320,7 +320,10 @@ if _pipeline_tasks:
             TASKS[_pt_name] = _pt_def
 TASKS_LOCK = threading.Lock()
 TASK_HEARTBEAT_INTERVAL_SECONDS = 20
-TASK_STALE_TIMEOUT_SECONDS = 3 * 3600  # Sina B/S full run can take ~1h
+# Long-running tasks refresh their heartbeat every 20 seconds.  A five-minute
+# grace period tolerates short DB stalls while still recovering promptly when
+# the web process is restarted and its child process disappears.
+TASK_STALE_TIMEOUT_SECONDS = 5 * 60
 TASK_RETRY_DELAY_SECONDS = 60
 TASK_QUEUE_SCAN_INTERVAL_SECONDS = 2
 # Dependencies are evaluated against the same business date.  Keep this small and
@@ -1367,7 +1370,7 @@ def _reconcile_stale_task_states():
 
                 cursor.execute(
                     """
-                    SELECT status
+                    SELECT status, started_at, heartbeat_at
                     FROM app_task_lock
                     WHERE task_name = %s
                     LIMIT 1
@@ -1377,7 +1380,23 @@ def _reconcile_stale_task_states():
                 lock_row = cursor.fetchone() or {}
                 lock_status = str(lock_row.get("status") or "IDLE").upper()
                 if lock_status == "RUNNING":
-                    continue
+                    heartbeat = lock_row.get("heartbeat_at") or lock_row.get("started_at")
+                    heartbeat_is_fresh = bool(
+                        heartbeat
+                        and (datetime.now() - heartbeat).total_seconds() <= TASK_STALE_TIMEOUT_SECONDS
+                    )
+                    if heartbeat_is_fresh:
+                        continue
+                    cursor.execute(
+                        """
+                        UPDATE app_task_lock
+                        SET status='FAILED', finished_at=NOW(),
+                            message='stale heartbeat timeout reset'
+                        WHERE task_name=%s AND status='RUNNING'
+                        """,
+                        (task_name,),
+                    )
+                    lock_status = "FAILED"
 
                 cursor.execute(
                     """
