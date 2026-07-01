@@ -1,0 +1,38 @@
+{
+  "A1_risk_new_buys_zero": {
+    "passed": true,
+    "value": 0,
+    "note": "NEW_BUY = position did not exist before trade"
+  },
+  "A2_no_new_positions_in_risk": {
+    "passed": true,
+    "value": 0
+  },
+  "A3_non_risk_blocked_zero": {
+    "passed": true,
+    "value": 0
+  },
+  "A4_forced_sells_zero": {
+    "passed": true,
+    "value": 0
+  },
+  "A5_all_skipped_in_risk": {
+    "passed": true,
+    "value": 0
+  },
+  "A6_corresponding_s60_buys": {
+    "passed": true,
+    "value": 2247,
+    "note": "2247 blocked, verified against s60 candidates"
+  },
+  "A7_first_divergence": {
+    "passed": true,
+    "value": 229,
+    "note": "Divergence at day 229"
+  },
+  "A8_pre_risk_identical": {
+    "passed": true,
+    "value": 223,
+    "note": "223 pre-risk days, first risk at 2023-12-05"
+  }
+}
