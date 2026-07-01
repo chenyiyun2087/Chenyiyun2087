@@ -1,0 +1,17 @@
+{
+  "SKIPPED_BUY_count": 261,
+  "SKIPPED_BUY_fwd_5d_mean": -0.003425,
+  "SKIPPED_BUY_fwd_5d_pct_positive": 0.4061,
+  "SKIPPED_BUY_fwd_10d_mean": 0.004013,
+  "SKIPPED_BUY_fwd_10d_pct_positive": 0.4444,
+  "SKIPPED_BUY_fwd_20d_mean": 0.016849,
+  "SKIPPED_BUY_fwd_20d_pct_positive": 0.4828,
+  "FORCED_SELL_count": 189,
+  "FORCED_SELL_fwd_5d_mean": -0.000626,
+  "FORCED_SELL_fwd_5d_pct_positive": 0.4762,
+  "FORCED_SELL_fwd_10d_mean": 0.007234,
+  "FORCED_SELL_fwd_10d_pct_positive": 0.4974,
+  "FORCED_SELL_fwd_20d_mean": 0.012003,
+  "FORCED_SELL_fwd_20d_pct_positive": 0.4868,
+  "top_symbol_pct": 0.0156
+}
