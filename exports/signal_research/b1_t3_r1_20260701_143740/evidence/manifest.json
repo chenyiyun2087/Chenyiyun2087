@@ -1,0 +1,80 @@
+{
+  "git_sha": "98935bbbd859183454362e2a2a29d6261e0b5102",
+  "config_sha": "73e74def312f865e",
+  "strategy_id": "b1_t3_r1",
+  "strategy_version": "R1",
+  "rebalance_engine": "research_trusted_strategy_account_backtest._rebalance()",
+  "execution_mode": "t_plus_1_open_non_strict",
+  "data": {
+    "score_table": "tushare_stock.score_rank_daily",
+    "price_table": "tushare_stock.ashare_eod_prices",
+    "calendar_table": "tushare_stock.dim_trade_cal",
+    "index_table": "tushare_stock.dwd_index_daily",
+    "index_codes": [
+      "000300.SH",
+      "399006.SZ"
+    ],
+    "note": "CSI1000 (000852.SH) not in database"
+  },
+  "parameters": {
+    "start_date": "2025-09-02",
+    "end_date": "2026-06-30",
+    "initial_cash": 500000,
+    "top_n": 5,
+    "hold_days": 10,
+    "max_total_positions": 5,
+    "trade_cost_rate": 0.00075,
+    "slippage_rate": 0.0,
+    "lot_size": 100,
+    "min_trade_value": 500.0,
+    "t3_csi300_threshold": 0.02,
+    "t3_turnover_threshold": 1.1,
+    "risk_on_position": 0.7,
+    "neutral_position": 0.55
+  },
+  "results": {
+    "T0": {
+      "total_return": 1.044844,
+      "max_drawdown": -0.284765,
+      "calmar": 5.2975,
+      "sharpe": 2.295,
+      "avg_target_position": 0.7000000000000001,
+      "avg_actual_exposure": 0.6698016930885003
+    },
+    "T3": {
+      "total_return": 0.904144,
+      "max_drawdown": -0.204799,
+      "calmar": 6.2932,
+      "sharpe": 2.6486,
+      "avg_target_position": 0.5783163265306122,
+      "avg_actual_exposure": 0.5515720380225686
+    },
+    "A1": {
+      "total_return": 0.66177,
+      "max_drawdown": -0.198211,
+      "calmar": 4.648,
+      "sharpe": 2.5708,
+      "avg_target_position": 0.5783163265306123,
+      "avg_actual_exposure": 0.5517074388760841
+    },
+    "T3_lag_5": {
+      "total_return": 1.044844,
+      "max_drawdown": -0.284765,
+      "calmar": 5.2975,
+      "sharpe": 2.295,
+      "avg_target_position": 0.7000000000000001,
+      "avg_actual_exposure": 0.6698016930885003
+    },
+    "T3_lag_10": {
+      "total_return": 1.044844,
+      "max_drawdown": -0.284765,
+      "calmar": 5.2975,
+      "sharpe": 2.295,
+      "avg_target_position": 0.7000000000000001,
+      "avg_actual_exposure": 0.6698016930885003
+    }
+  },
+  "generated_at": "2026-07-01T14:47:39.177802",
+  "b1_t3_r1_rating": "RESEARCH_VALIDATED",
+  "shadow_eligible": false
+}

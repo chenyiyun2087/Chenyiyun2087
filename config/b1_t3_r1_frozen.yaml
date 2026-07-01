@@ -1,0 +1,104 @@
+# B1-T3-R1 Frozen Configuration
+# 冻结日期: 2026-07-01
+# 此配置在R2证伪回测完成前不得修改
+
+b1_t3_r1:
+  version: "R1"
+  status: "RESEARCH_VALIDATED"
+  frozen_date: "2026-07-01"
+
+  # ── 核心策略 (不修改) ──────────────────────────────────
+  core_strategy:
+    name: "baseline_full_liquidity_detail_vol_position"
+    top_n: 5
+    hold_days: 10
+    max_total_positions: 5
+
+  # ── 执行参数 (与既有账户级回测一致) ──────────────────
+  execution:
+    initial_cash: 500000
+    lot_size: 100
+    trade_cost_rate: 0.00075
+    slippage_rate: 0.0
+    min_trade_value: 500.0
+    execution_mode: "t_plus_1_open"
+    price_basis: "adj_open"
+
+  # ── T3 仓位规则 (冻结) ────────────────────────────────
+  t3_rules:
+    description: "双因子共识仓位控制"
+    signal_date: "T日收盘后"
+    execution_date: "T+1开盘"
+
+    risk_on_conditions:
+      csi300_ret20_threshold: 0.02       # CSI300 20日收益 > 2%
+      turnover_ratio_threshold: 1.10     # 成交额/20日均值 > 1.10
+      logic: "AND"                        # 两个条件必须同时满足
+
+    positions:
+      RISK_ON: 0.70
+      NEUTRAL: 0.55
+      # RISK_OFF 在当前样本中未触发，保留为未来扩展
+
+    # ── 当前T3结果 (2025-09-02 ~ 2026-06-30, 197交易日) ──
+    current_results:
+      total_return_pct: 90.41
+      max_drawdown_pct: -20.48
+      calmar: 6.29
+      sharpe: null
+      avg_target_exposure: 0.578
+      avg_actual_exposure: null       # P1计算
+      risk_on_days: 37
+      neutral_days: 159
+      risk_off_days: 0
+      total_trading_days: 197
+
+  # ── 基准曲线 ──────────────────────────────────────────
+  benchmarks:
+    T0:
+      description: "固定70%仓位核心策略"
+      position: 0.70
+
+    A1:
+      description: "固定仓位，与T3平均暴露一致"
+      position: 0.578                    # P1计算后冻结
+
+    A2_5d:
+      description: "5日区块随机化 (2000次)"
+      block_size: 5
+      n_iterations: 2000
+
+    A2_10d:
+      description: "10日区块随机化 (2000次)"
+      block_size: 10
+      n_iterations: 2000
+
+    T3_lag_5:
+      description: "T3信号延迟5日执行"
+
+    T3_lag_10:
+      description: "T3信号延迟10日执行"
+
+  # ── 验收标准 ──────────────────────────────────────────
+  acceptance:
+    r2_calmar_vs_a1: {min_improvement_pct: 10}
+    r2_maxdd_vs_a1: {min_reduction_pct: 10}
+    r2_return_vs_a1: {min_ratio: 0.95}
+    r2_randomization_pvalue: {max: 0.05}
+    r2_lag_superiority: "T3 > T3_lag_5 AND T3 > T3_lag_10"
+
+    s1_calmar_vs_a1: {min_improvement_pct: 10}
+    s1_maxdd_vs_a1: {min_reduction_pct: 10}
+    s1_return_vs_a1: {min_ratio: 0.95}
+
+  # ── 数据快照 ──────────────────────────────────────────
+  data:
+    score_table: "tushare_stock.score_rank_daily"
+    price_table: "tushare_stock.ashare_eod_prices"
+    calendar_table: "tushare_stock.dim_trade_cal"
+    index_table: "tushare_stock.dwd_index_daily"
+    start_date: "2025-09-02"
+    end_date: "2026-06-30"
+    trading_days: 197
+    index_codes: ["000300.SH", "399006.SZ"]
+    note: "CSI1000 (000852.SH) not available in database"
