@@ -79,6 +79,7 @@ def main():
 
     total_buys = 0
     total_sells = 0
+    failed_dates = []
 
     for i, date_str in enumerate(dates):
         print(f"\n[{i+1}/{len(dates)}] Processing {date_str}")
@@ -87,6 +88,7 @@ def main():
             predictions = inferrer.predict(date_str, stock_codes)
         except Exception as e:
             print(f"[ERROR] Failed to predict for {date_str}: {e}")
+            failed_dates.append(date_str)
             continue
 
         if predictions.empty:
@@ -121,6 +123,9 @@ def main():
     if not args.dry_run:
         print(f"  Batch name: {args.batch_name}")
         print(f"  Results in: chenyiyun.bs_detection_results")
+    if failed_dates:
+        print(f"[FAILED] Prediction failed for {len(failed_dates)} date(s): {', '.join(failed_dates)}")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

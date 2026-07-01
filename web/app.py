@@ -135,6 +135,9 @@ TASKS = {
         "schedule_time": "21:05",
         "next_run": "-",
         "trading_day_only": True,
+        # Replaced by adc_bs_detect in task_registry/pipeline.yaml. Keep the
+        # definition only so historical records remain readable in /admin.
+        "legacy": True,
     },
     "sina_picture": {
         "name": "sina 图片截图",
@@ -345,7 +348,6 @@ SCHEDULED_TASK_WHITELIST = {
     "sina_picture",                        # 15:20  新浪财经 B/S 信号批量截图
     "sina_analyse",                        # 16:10  基于截图 OCR B/S 买卖点分析落库
     # --- 夜间流水线 (daily_close) ---
-    "db_bs_detect",                        # 21:05  DB量价模型 B/S 检测
     "adc_bs_detect",                       # 21:05  ADC数据源 B/S 检测
     "bs_ocr_adc_compare",                  # 21:10  B/S 来源交叉比对
     "sina_score",                          # 21:12  全A股评分
@@ -2191,21 +2193,78 @@ def _verify_adc_bs_detect_result(started_at, finished_at, run_options=None):
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS rows_cnt,
+                           COUNT(DISTINCT stock_code) AS stock_cnt,
                            SUM(CASE WHEN has_buy_signal = 1 THEN 1 ELSE 0 END) AS b_cnt,
                            SUM(CASE WHEN has_sell_signal = 1 THEN 1 ELSE 0 END) AS s_cnt
                     FROM bs_detection_results
-                    WHERE batch_date = %s
+                    WHERE batch_date = %s AND batch_name = 'ml_detect_v3'
                     """,
                     (target_datestr,),
                 )
                 row = cursor.fetchone() or {}
+                cursor.execute(
+                    """
+                    SELECT COUNT(DISTINCT ts_code) AS expected_cnt
+                    FROM tushare_stock.ods_stk_factor
+                    WHERE trade_date = %s
+                    """,
+                    (target_datestr,),
+                )
+                expected_row = cursor.fetchone() or {}
         finally:
             conn.close()
         rows_cnt = int(row.get("rows_cnt") or 0)
-        ok = rows_cnt > 0
+        stock_cnt = int(row.get("stock_cnt") or 0)
+        expected_cnt = int(expected_row.get("expected_cnt") or 0)
+        ok = expected_cnt > 0 and rows_cnt == expected_cnt and stock_cnt == expected_cnt
         return ok, [
-            f"result={'PASS' if ok else 'FAIL'}; task=adc_bs_detect; business_date={target_datestr}; rows={rows_cnt}",
+            f"result={'PASS' if ok else 'FAIL'}; task=adc_bs_detect; business_date={target_datestr}; "
+            f"rows={rows_cnt}; distinct_stocks={stock_cnt}; expected_stocks={expected_cnt}",
             f"b_cnt={int(row.get('b_cnt') or 0)}; s_cnt={int(row.get('s_cnt') or 0)}",
+        ]
+    except Exception as e:
+        return False, [f"result=FAIL; verifier_error={e}"]
+
+
+def _verify_bs_ocr_adc_compare_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        COUNT(DISTINCT CASE WHEN batch_name='config_1' THEN stock_code END) AS ocr_cnt,
+                        COUNT(DISTINCT CASE WHEN batch_name='ml_detect_v3' THEN stock_code END) AS ml_cnt
+                    FROM bs_detection_results
+                    WHERE batch_date=%s AND batch_name IN ('config_1', 'ml_detect_v3')
+                    """,
+                    (target_datestr,),
+                )
+                row = cursor.fetchone() or {}
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS overlap_cnt
+                    FROM bs_detection_results o
+                    INNER JOIN bs_detection_results m
+                      ON m.batch_date=o.batch_date AND m.stock_code=o.stock_code
+                     AND m.batch_name='ml_detect_v3'
+                    WHERE o.batch_date=%s AND o.batch_name='config_1'
+                    """,
+                    (target_datestr,),
+                )
+                overlap_row = cursor.fetchone() or {}
+        finally:
+            conn.close()
+        ocr_cnt = int(row.get("ocr_cnt") or 0)
+        ml_cnt = int(row.get("ml_cnt") or 0)
+        overlap_cnt = int(overlap_row.get("overlap_cnt") or 0)
+        ok = ocr_cnt > 0 and ml_cnt > 0 and overlap_cnt > 0
+        return ok, [
+            f"result={'PASS' if ok else 'FAIL'}; task=bs_ocr_adc_compare; business_date={target_datestr}; "
+            f"ocr_stocks={ocr_cnt}; ml_stocks={ml_cnt}; overlap={overlap_cnt}"
         ]
     except Exception as e:
         return False, [f"result=FAIL; verifier_error={e}"]
@@ -2307,6 +2366,8 @@ def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
 def _run_task_result_verification(task_name, started_at, finished_at, run_options=None):
     if task_name == "adc_bs_detect":
         return _verify_adc_bs_detect_result(started_at, finished_at, run_options=run_options)
+    if task_name == "bs_ocr_adc_compare":
+        return _verify_bs_ocr_adc_compare_result(started_at, finished_at, run_options=run_options)
     if task_name == "trusted_strategy_backtest":
         return _verify_daily_strategy_backtest_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_score":

@@ -51,6 +51,23 @@ def test_dependency_state_accepts_successful_upstream_job():
     assert not message
 
 
+def test_bs_compare_depends_on_same_day_adc_detection():
+    assert web_app.TASK_DEPENDENCIES["bs_ocr_adc_compare"] == ("adc_bs_detect",)
+    cursor = FakeCursor([])
+    state, message = web_app._dependency_state(cursor, "bs_ocr_adc_compare", "20260701")
+    assert state == "WAITING"
+    assert "adc_bs_detect" in message
+
+
+def test_bs_compare_has_result_verifier(monkeypatch):
+    expected = (True, ["result=PASS"])
+    monkeypatch.setattr(web_app, "_verify_bs_ocr_adc_compare_result", lambda *args, **kwargs: expected)
+    result = web_app._run_task_result_verification(
+        "bs_ocr_adc_compare", None, None, run_options={"datestr": "20260701"}
+    )
+    assert result == expected
+
+
 def test_queue_contract_keeps_active_deduplication_and_single_retry():
     source = open(web_app.__file__, encoding="utf-8").read()
     assert "UNIQUE KEY uniq_queue_active_dedupe" in source
@@ -69,6 +86,12 @@ def test_pipeline_enabled_scripts_exist_and_are_whitelisted():
     names = [task.task_name for task in expected if task.group == "daily_close"]
     assert names.index("sina_score") < names.index("sina_bs_consensus")
     assert names.index("sina_bs_consensus") < names.index("trusted_strategy_candidates")
+
+
+def test_retired_db_bs_detect_cannot_be_scheduled():
+    assert web_app.TASKS["db_bs_detect"]["legacy"] is True
+    assert "db_bs_detect" not in web_app.SCHEDULED_TASK_WHITELIST
+    assert "adc_bs_detect" in web_app.SCHEDULED_TASK_WHITELIST
 
 
 def test_batch_monitor_definition_and_status_merge_follow_pipeline():

@@ -18,6 +18,7 @@ daily_close:
       type: script
       trading_day_only: true
       status: enabled
+      depends_on: [adc_bs_detect]
 
     - id: sina_score
       description: "全A股评分"

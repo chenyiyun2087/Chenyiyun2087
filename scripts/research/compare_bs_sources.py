@@ -111,12 +111,13 @@ def main():
     df_a = load_signals(engine, args.batch_a, args.start, args.end)
     df_b = load_signals(engine, args.batch_b, args.start, args.end)
 
-    if df_a.empty:
-        print(f"No data for {args.batch_a}")
-        return
-    if df_b.empty:
-        print(f"No data for {args.batch_b}")
-        return
+    missing = [name for name, df in ((args.batch_a, df_a), (args.batch_b, df_b)) if df.empty]
+    if missing:
+        engine.dispose()
+        parser.error(
+            f"no data for {', '.join(missing)} in range {args.start}..{args.end}; "
+            "comparison was not produced"
+        )
 
     compare(df_a, df_b, args.batch_a, args.batch_b)
     engine.dispose()

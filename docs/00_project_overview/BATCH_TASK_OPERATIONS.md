@@ -46,7 +46,8 @@
 flowchart TD
     P["15:20 sina_picture"] --> A["16:10 sina_analyse"]
 
-    D["21:05 adc_bs_detect"] --> S["21:12 sina_score"]
+    D["21:05 adc_bs_detect"] --> X["21:10 bs_ocr_adc_compare"]
+    D --> S["21:12 sina_score"]
     S --> C["21:20 sina_bs_consensus"]
     C --> B["21:25 trusted_strategy_backtest"]
     B --> R["21:30 rolling_strategy_scorer"]
@@ -60,14 +61,14 @@ flowchart TD
     V --> Q
     K --> Q
 
-    X["21:10 bs_ocr_adc_compare（独立）"]
     Y["22:00 bs_signal_monthly_cycle（独立）"]
     W["周五 22:05 sina_bs_image_weekly_cleanup（独立）"]
 ```
 
 - `sina_picture -> sina_analyse` 来自 `web/app.py` 的兼容依赖定义；当前 YAML 未重复声明。
 - 日终主链其他依赖来自 YAML 的 `depends_on`。
-- `bs_ocr_adc_compare`、`bs_signal_monthly_cycle` 和周清理任务没有调度层上游依赖。
+- `bs_ocr_adc_compare` 必须等待同一业务日的 `adc_bs_detect` 成功，避免在 ML 全量结果写入前产生空对比。
+- `bs_signal_monthly_cycle` 和周清理任务没有调度层上游依赖。
 - 非交易日时，仅交易日任务会以成功跳过记录终态；周清理仍按星期判断。
 
 ## 3. 消息推送内容
@@ -142,4 +143,3 @@ flowchart TD
 - `sina_analyse` 的截图依赖目前来自兼容代码而非 YAML。若未来彻底移除硬编码回退，应先把该依赖补入 YAML。
 - `archive/scheduler.py` 仅作历史参考；生产事故复盘以 Web 队列、历史表和通知投递记录为准。
 - 研究、维护、迁移、导出脚本以及仅可手工运行的任务不属于本文生产自动任务清单。
-

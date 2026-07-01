@@ -473,16 +473,16 @@ class BSPointInferrer:
         if df.empty:
             return pd.DataFrame()
 
-        # Prepare feature matrix
-        X = df[self.feature_names].copy()
-
-        # Handle missing columns (fill with 0)
+        # Models can reference optional DWS/ADC columns which are absent when
+        # an upstream table is unavailable. Add them before selecting the
+        # trained feature set; selecting first raises KeyError and prevents the
+        # intended zero-fill fallback from ever running.
         for col in self.feature_names:
-            if col not in X.columns:
-                X[col] = 0.0
+            if col not in df.columns:
+                df[col] = 0.0
 
         # Ensure column order matches training
-        X = X[self.feature_names]
+        X = df[self.feature_names].copy()
 
         # Fill NaN
         X = X.fillna(0).replace([np.inf, -np.inf], 0)
