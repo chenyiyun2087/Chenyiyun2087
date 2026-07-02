@@ -1,0 +1,9 @@
+{
+  "label": "S60_c15bp",
+  "config": {
+    "cost_rate": 0.0015,
+    "slip_rate": 0.0
+  },
+  "ledger_sha256": "de90801985cae36d260bdba211c70bb791f0f85f5a2fba388767c0519bd34910",
+  "replay_ok": false
+}

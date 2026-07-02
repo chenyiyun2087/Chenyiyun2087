@@ -1,0 +1,9 @@
+{
+  "label": "B2_s10bp",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.001
+  },
+  "ledger_sha256": "c7045a2badde793948fcf772d94c76fdd5509bea8ce0e42d06f1b76432532089",
+  "replay_ok": false
+}

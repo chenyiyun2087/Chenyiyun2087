@@ -1,0 +1,9 @@
+{
+  "label": "B2_c15bp",
+  "config": {
+    "cost_rate": 0.0015,
+    "slip_rate": 0.0
+  },
+  "ledger_sha256": "1fa0e305d776bff163caae38fb50411fde716e20c2d30a0abe7c4ec2d2ce21e9",
+  "replay_ok": false
+}

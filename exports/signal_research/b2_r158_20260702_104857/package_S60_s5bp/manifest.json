@@ -1,0 +1,9 @@
+{
+  "label": "S60_s5bp",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.0005
+  },
+  "ledger_sha256": "6fd4d8f410d833aae7ead543c7b4bfa6a1969733ead7be090986ba872649a011",
+  "replay_ok": false
+}

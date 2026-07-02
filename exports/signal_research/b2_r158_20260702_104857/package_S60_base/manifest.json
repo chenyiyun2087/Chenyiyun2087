@@ -1,0 +1,9 @@
+{
+  "label": "S60_base",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.0
+  },
+  "ledger_sha256": "71f2960fbf5723e02ec3809712fc9d39145efc95314469eeddd3d91a09f6969d",
+  "replay_ok": false
+}
