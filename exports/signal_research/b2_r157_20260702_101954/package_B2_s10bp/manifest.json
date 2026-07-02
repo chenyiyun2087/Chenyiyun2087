@@ -1,0 +1,14 @@
+{
+  "package": "B2_s10bp",
+  "generated": "2026-07-02T10:23:20.074255",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.001,
+    "target_normal": 0.6,
+    "target_risk": 0.4
+  },
+  "ledger_sha256": "a9c16fccee326ccefe8b7a3805b9d60cb485c4961f73064b57b0426294742119",
+  "holdings_sha256": "c47df9cb435f45ae3f168c54f266665c5a7d2446c84af9ff8c40743e970802f4",
+  "snapshots_sha256": "cf39d2d07ba6d80725ec192753f3b8da612b582a73dc3e79ded2b8849a1bf937",
+  "replay_ok": false
+}

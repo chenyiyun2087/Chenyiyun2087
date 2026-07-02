@@ -1,0 +1,14 @@
+{
+  "package": "S60_s10bp",
+  "generated": "2026-07-02T10:22:57.107040",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.001,
+    "target_normal": 0.6,
+    "target_risk": 0.4
+  },
+  "ledger_sha256": "f15c91a602e3ba819fe066a1394580c4d977f39cd5b68e8fe75618b3f39c120c",
+  "holdings_sha256": "e661a726aa5cbc82d16e1f10772afb89a73fe7237317ff819af332bdf4c10ec1",
+  "snapshots_sha256": "4f41c38cc43056805b968355ad21e845996ebdef622504eee6b651e42f361ad8",
+  "replay_ok": false
+}
