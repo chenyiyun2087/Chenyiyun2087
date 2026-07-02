@@ -1,0 +1,9 @@
+{
+  "label": "S60_s20bp",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.002
+  },
+  "ledger_sha256": "7f8efc92cb2176adeaba0895aa8367fc710f9c6869da48619b9f7eb6fec38ef4",
+  "replay_ok": true
+}

@@ -1,0 +1,9 @@
+{
+  "label": "B2_s5bp",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.0005
+  },
+  "ledger_sha256": "77b3a01aabc5722cf1de4d2864841772871807c6201f1d318b5166604075274f",
+  "replay_ok": true
+}

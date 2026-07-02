@@ -1,0 +1,9 @@
+{
+  "label": "B2_base",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.0
+  },
+  "ledger_sha256": "a56fef14779ea8fb7d6983b76946e8d1b02ae5250411f174b77cd5f0d3f937df",
+  "replay_ok": true
+}
