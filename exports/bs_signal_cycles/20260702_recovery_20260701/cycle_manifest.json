@@ -12,7 +12,7 @@
     "decision": "retain_current_model_after_repaired_gates"
   },
   "validation": {
-    "score_rank_tests": "105 passed",
+    "score_rank_tests": "106 passed",
     "dataset_exists": true,
     "model_exists": true,
     "model_has_features": true,

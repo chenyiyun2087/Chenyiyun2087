@@ -359,6 +359,21 @@ def run_audit(
                 )
                 for task in expected_tasks
             ]
+            # Record the audit task itself only after all classifications have
+            # completed. This proves the script ran without making it depend on
+            # its own queue/history record (which is finalized by the parent
+            # worker after this process exits).
+            rows.append({
+                "task_name": AUDIT_TASK_ID,
+                "expected_time": "22:20",
+                "status": "OK",
+                "reason": "巡检脚本已完成；业务异常见各任务状态",
+                "queue_id": None,
+                "queue_status": None,
+                "history_status": "Success",
+                "notification_status": None,
+                "replay_required": 0,
+            })
             for row in rows:
                 persist_audit_row(cursor, business_date, row)
             conn.commit()

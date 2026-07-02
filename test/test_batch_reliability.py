@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 from scripts.ops import runtime_preflight
@@ -52,3 +53,19 @@ def test_model_activation_is_atomic_and_preserves_previous_pointer(monkeypatch, 
     assert previous == old
     assert json.loads(active_path.read_text(encoding="utf-8"))["model_dir"] == "/models/new"
     assert not list(tmp_path.glob(".active_model.*.tmp"))
+
+
+def test_failed_preflight_writes_failure_manifest_without_activation(monkeypatch, tmp_path):
+    failed = subprocess.CompletedProcess(["pytest"], 1, stdout="FAILED test_gate", stderr="")
+    monkeypatch.setattr(cycle.subprocess, "run", lambda *args, **kwargs: failed)
+
+    try:
+        cycle._run_preflight_tests(tmp_path, enabled=True)
+    except RuntimeError as exc:
+        assert "active model unchanged" in str(exc)
+    else:
+        raise AssertionError("preflight failure must abort the cycle")
+
+    manifest = json.loads((tmp_path / "cycle_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed"
+    assert manifest["activation"]["committed"] is False

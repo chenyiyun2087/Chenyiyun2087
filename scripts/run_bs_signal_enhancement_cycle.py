@@ -107,6 +107,29 @@ def _run_optional(cmd: list[str], enabled: bool) -> tuple[dict | None, str]:
     return _run(cmd)
 
 
+def _run_preflight_tests(run_dir: Path, *, enabled: bool) -> tuple[dict | None, str]:
+    if not enabled:
+        return None, ""
+    cmd = [sys.executable, "-m", "pytest", "-q", "test/ScoreRank"]
+    proc = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True, capture_output=True)
+    output = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
+    (run_dir / "tests.log").write_text(output, encoding="utf-8")
+    if proc.returncode != 0:
+        failed = {
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "status": "failed",
+            "failed_stage": "preflight_tests",
+            "activation": {"committed": False},
+            "command": cmd,
+            "exit_code": proc.returncode,
+        }
+        (run_dir / "cycle_manifest.json").write_text(
+            json.dumps(failed, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        raise RuntimeError(f"Preflight tests failed ({proc.returncode}); active model unchanged.\n{output}")
+    return {"passed": True}, output
+
+
 def _activate_model(summary: dict) -> tuple[Path, dict | None]:
     model_path = Path(str(summary.get("model_path") or ""))
     active_path = MODEL_ROOT / "active_model.json"
@@ -171,11 +194,7 @@ def main() -> None:
 
     # A deterministic code/test failure must happen before exporting data,
     # training models, importing scores, or changing the active model pointer.
-    test_summary, test_log = _run_optional(
-        [sys.executable, "-m", "pytest", "-q", "test/ScoreRank"],
-        enabled=not args.skip_tests,
-    )
-    (run_dir / "tests.log").write_text(test_log, encoding="utf-8")
+    test_summary, test_log = _run_preflight_tests(run_dir, enabled=not args.skip_tests)
 
     export_summary, export_log = _run([sys.executable, "scripts/export_signal_enhancement_dataset.py"])
     dataset_dir = Path(export_summary["output_dir"])
@@ -279,11 +298,19 @@ def main() -> None:
             ]
         )
 
+    metrics = _metric_snapshot(model_dir / "metrics.json", str(deploy_summary.get("model_kind")))
+    # Persist all non-activation evidence before the commit point.
+    (run_dir / "export.log").write_text(export_log, encoding="utf-8")
+    (run_dir / "research.log").write_text(research_log, encoding="utf-8")
+    (run_dir / "train.log").write_text(train_log, encoding="utf-8")
+    (run_dir / "import.log").write_text(import_log, encoding="utf-8")
+    (run_dir / "check.log").write_text(check_log, encoding="utf-8")
+    for name, log_text in report_logs.items():
+        (run_dir / f"{name}.log").write_text(log_text, encoding="utf-8")
+
     # Commit is deliberately last and uses atomic rename. All validation and
     # downstream report gates above must succeed first.
     active_model_path, previous_active_model = _activate_model(deploy_summary)
-
-    metrics = _metric_snapshot(model_dir / "metrics.json", str(deploy_summary.get("model_kind")))
     manifest = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "target": args.target,
@@ -312,13 +339,6 @@ def main() -> None:
         "status": "completed",
     }
     (run_dir / "cycle_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    (run_dir / "export.log").write_text(export_log, encoding="utf-8")
-    (run_dir / "research.log").write_text(research_log, encoding="utf-8")
-    (run_dir / "train.log").write_text(train_log, encoding="utf-8")
-    (run_dir / "import.log").write_text(import_log, encoding="utf-8")
-    (run_dir / "check.log").write_text(check_log, encoding="utf-8")
-    for name, log_text in report_logs.items():
-        (run_dir / f"{name}.log").write_text(log_text, encoding="utf-8")
     print(json.dumps({**manifest, "run_dir": str(run_dir)}, ensure_ascii=False, indent=2))
 
 

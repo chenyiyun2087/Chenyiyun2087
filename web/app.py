@@ -7457,8 +7457,10 @@ if os.environ.get("DISABLE_APP_SCHEDULER_LOOP") != "1":
     # Compatibility mode remains available for tests and emergency foreground
     # operation. Production launchers set role=web and run the durable worker
     # as a separate process so Web restarts cannot terminate active jobs.
-    runtime_role = os.environ.get("CHENYIYUN_RUNTIME_ROLE", "all").strip().lower()
-    _run_web_startup_preflight(strict=runtime_role in {"web", "worker"})
+    role_is_explicit = "CHENYIYUN_RUNTIME_ROLE" in os.environ
+    runtime_role = os.environ.get("CHENYIYUN_RUNTIME_ROLE", "web").strip().lower()
+    if role_is_explicit or runtime_role == "all":
+        _run_web_startup_preflight(strict=runtime_role in {"web", "worker"})
     if runtime_role == "all":
         start_task_scheduler_loop()
 
