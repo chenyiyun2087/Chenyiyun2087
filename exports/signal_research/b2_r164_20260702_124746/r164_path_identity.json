@@ -1,0 +1,18 @@
+{
+  "s60_sha": "d24db22459a401e63346ac0ec0310934c0571fd3afba46184c64bb2cd16756c2",
+  "b2_sha": "40a2f6c38186d9546b1724255858c1b251209a1cdc95ad5ca335cfb433372832",
+  "identical": false,
+  "s60_rows": 624,
+  "b2_rows": 626,
+  "row_diffs": 2,
+  "common_symbols": 193,
+  "s60_only_symbols": 23,
+  "b2_only_symbols": 21,
+  "s60_buys": 315,
+  "b2_buys": 317,
+  "s60_sells": 309,
+  "b2_sells": 309,
+  "s60_new_entries": 308,
+  "b2_new_entries": 308,
+  "conclusion": "DIFFERENT \u2014 proceed with Shapley decomposition"
+}
