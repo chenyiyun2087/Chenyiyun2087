@@ -1,0 +1,21 @@
+{
+  "c0_return": 0.109281,
+  "c1_return": 0.407379,
+  "c2_return": 0.109281,
+  "c3_return": 0.407379,
+  "c0_calmar": 0.0897,
+  "c1_calmar": 0.5399,
+  "c2_calmar": 0.0897,
+  "c3_calmar": 0.5399,
+  "security_contribution": 0.0,
+  "exposure_contribution": 0.298098,
+  "total_change": 0.298098,
+  "residual": 0.0,
+  "security_calmar": 0.0,
+  "exposure_calmar": 0.4502,
+  "security_maxdd": 0.0,
+  "exposure_maxdd": 0.152,
+  "mechanism": "EXPOSURE_PATH",
+  "security_pct": 0.0,
+  "exposure_pct": 100.0
+}
