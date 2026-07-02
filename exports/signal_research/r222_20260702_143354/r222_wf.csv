@@ -1,0 +1,4 @@
+window,core_return,core_calmar,eq_calmar,rand_calmar,rev_calmar,core_beats_eq,core_beats_rand,core_beats_rev,core_positive,passes
+W1,-0.09842,-0.942,-0.8832,0.4053,1.4886,False,False,False,False,False
+W2,-0.086299,-0.6275,0.1417,1.8144,7.0761,False,False,False,False,False
+W3,0.199104,2.7652,5.3579,4.2231,-1.6759,False,False,True,True,False
