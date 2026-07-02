@@ -1,0 +1,12 @@
+{
+  "n_errors": 625,
+  "max_nav_bps": 0.0001,
+  "ok": false,
+  "sample_errors": [
+    "O1: GN mismatch 99262.76 vs 99262.80",
+    "O1: PIC mismatch 6942.7636 vs 6942.8000",
+    "O3: GN mismatch 18634.14 vs 18634.16",
+    "O3: PIC mismatch 234.1355 vs 234.1600",
+    "O5: GN mismatch 69495.73 vs 69495.75"
+  ]
+}

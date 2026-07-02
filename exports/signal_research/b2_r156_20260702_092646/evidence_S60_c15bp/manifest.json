@@ -1,0 +1,12 @@
+{
+  "package": "S60_c15bp",
+  "generated": "2026-07-02T09:31:12.661002",
+  "ledger_sha256": "235ed479ffc3437130ab81291159d89f91dced0b5c552a7cc48bccb987867445",
+  "config": {
+    "cost_rate": 0.0015,
+    "slip_rate": 0.0,
+    "target_normal": 0.6,
+    "target_risk": 0.4
+  },
+  "replay_ok": true
+}

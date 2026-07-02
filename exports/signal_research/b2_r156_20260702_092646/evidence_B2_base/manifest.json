@@ -1,0 +1,12 @@
+{
+  "package": "B2_base",
+  "generated": "2026-07-02T09:29:46.851866",
+  "ledger_sha256": "14351280ff516d7c59069e31afbfa3e93a91eb4388267b68c69655c42e2f21ae",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.0,
+    "target_normal": 0.6,
+    "target_risk": 0.4
+  },
+  "replay_ok": true
+}

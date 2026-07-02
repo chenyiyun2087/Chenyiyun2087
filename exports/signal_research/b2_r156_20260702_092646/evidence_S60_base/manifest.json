@@ -1,0 +1,12 @@
+{
+  "package": "S60_base",
+  "generated": "2026-07-02T09:28:22.152583",
+  "ledger_sha256": "7a60479613490b0240eac2e3f04cf17d6db879607186ecc64d266f34601606d4",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.0,
+    "target_normal": 0.6,
+    "target_risk": 0.4
+  },
+  "replay_ok": true
+}

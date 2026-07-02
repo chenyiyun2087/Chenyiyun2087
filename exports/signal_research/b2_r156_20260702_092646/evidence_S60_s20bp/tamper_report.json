@@ -1,0 +1,18 @@
+{
+  "detection_rate": "13/13",
+  "details": {
+    "fill_price": true,
+    "reference_open_price": true,
+    "shares_filled": true,
+    "gross_notional": true,
+    "price_impact_cost": true,
+    "commission": true,
+    "stamp_tax": true,
+    "transfer_fee": true,
+    "total_fee": true,
+    "cash_delta": true,
+    "cash_before": true,
+    "cash_after": true,
+    "execution_sequence": true
+  }
+}

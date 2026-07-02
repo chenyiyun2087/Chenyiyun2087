@@ -1,0 +1,12 @@
+{
+  "package": "B2_s20bp",
+  "generated": "2026-07-02T09:41:04.463814",
+  "ledger_sha256": "acee53bf9e232ef980e8f32c00f589285bfc279ad48849bf5fe112365cc112b6",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.002,
+    "target_normal": 0.6,
+    "target_risk": 0.4
+  },
+  "replay_ok": false
+}

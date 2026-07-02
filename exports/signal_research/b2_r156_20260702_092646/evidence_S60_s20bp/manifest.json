@@ -1,0 +1,12 @@
+{
+  "package": "S60_s20bp",
+  "generated": "2026-07-02T09:39:40.057942",
+  "ledger_sha256": "7512dc377047de2ae3c870ca811d6dcc4bc32446a3fcf071f9233d70a426ff2c",
+  "config": {
+    "cost_rate": 0.00075,
+    "slip_rate": 0.002,
+    "target_normal": 0.6,
+    "target_risk": 0.4
+  },
+  "replay_ok": false
+}
