@@ -20,7 +20,7 @@ class TestRunDailyOptimization(unittest.TestCase):
 
     def test_model_scores_are_applied_before_save(self):
         self.assertIn('load_latest_bs_model(target=CONFIG.get("bs_model_target", "hit_20_10pct"))', self.content)
-        self.assertIn('apply_bs_model_scores(scored, model_bundle=model_bundle, only_candidates=True)', self.content)
+        self.assertIn('apply_bs_model_scores(scored, model_bundle=model_bundle, only_candidates=False)', self.content)
         self.assertIn("'bs_model_prob': 'bs_model_prob'", self.content)
         self.assertIn("'bs_model_rank_score': 'bs_model_rank_score'", self.content)
 

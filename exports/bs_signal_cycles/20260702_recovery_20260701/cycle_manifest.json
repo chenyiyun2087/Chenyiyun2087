@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-07-02T09:20:00+08:00",
+  "recovered_for_business_date": "20260701",
+  "status": "completed",
+  "recovery_type": "post_incident_validation",
+  "dataset_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_enhancement/20260701_221342",
+  "model_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260701_222545_255922",
+  "model_path": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260701_222545_255922/random_forest_hit_20_10pct.joblib",
+  "activation": {
+    "committed": true,
+    "model_path": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260701_222545_255922/random_forest_hit_20_10pct.joblib",
+    "decision": "retain_current_model_after_repaired_gates"
+  },
+  "validation": {
+    "score_rank_tests": "105 passed",
+    "dataset_exists": true,
+    "model_exists": true,
+    "model_has_features": true,
+    "db_model_columns_present": true,
+    "test_roc_auc": 0.775889,
+    "test_average_precision": 0.529246,
+    "test_precision_at_20": 0.65,
+    "monitoring_warnings": []
+  },
+  "retained_abnormal_artifacts": [
+    "exports/signal_enhancement/20260701_220011",
+    "exports/bs_signal_models/20260701_221139_413415",
+    "exports/bs_signal_models/20260701_221141_399708",
+    "exports/bs_signal_models/20260701_221145_466807",
+    "exports/signal_enhancement/20260701_221342",
+    "exports/bs_signal_models/20260701_222543_495342",
+    "exports/bs_signal_models/20260701_222545_255922",
+    "exports/bs_signal_models/20260701_222549_553445"
+  ],
+  "note": "Two failed task attempts and all generated artifacts are retained. This manifest records recovery validation; it does not rewrite immutable task history."
+}

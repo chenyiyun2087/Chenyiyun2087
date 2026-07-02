@@ -131,7 +131,7 @@ TASKS = {
         "last_run": "Never",
         "status": "Idle",
         "switched_day": False,
-        "schedule_enabled": True,
+        "schedule_enabled": False,
         "schedule_time": "21:05",
         "next_run": "-",
         "trading_day_only": True,
@@ -346,26 +346,10 @@ TASK_DEPENDENCIES = {
 for _task_name, _task in TASKS.items():
     if _task.get("depends_on"):
         TASK_DEPENDENCIES[_task_name] = tuple(_task["depends_on"])
-SCHEDULED_TASK_WHITELIST = {
-    # --- 盘中 ---
-    "sina_picture",                        # 15:20  新浪财经 B/S 信号批量截图
-    "sina_analyse",                        # 16:10  基于截图 OCR B/S 买卖点分析落库
-    # --- 夜间流水线 (daily_close) ---
-    "adc_bs_detect",                       # 21:05  ADC数据源 B/S 检测
-    "bs_ocr_adc_compare",                  # 21:10  B/S 来源交叉比对
-    "sina_score",                          # 21:12  全A股评分
-    "sina_bs_consensus",                   # 21:20  B点综合评分
-    "trusted_strategy_backtest",           # 21:15  每日策略回测
-    "rolling_strategy_scorer",             # 21:20  滚动策略轮动评分+权重
-    "trusted_strategy_candidates",         # 21:25  可信策略候选导出
-    "trusted_strategy_shadow_monitor",     # 21:28  影子盘监控
-    "trusted_strategy_performance_review", # 21:32  收益评估 + 飞书推送
-    "candle_diag_scan",                    # 21:40  K线形态全市场扫描
-    "bs_signal_monthly_cycle",             # 21:45  B点模型月度闭环
-    "ops_daily_batch_audit",               # 22:10  日终批量巡检
-    # --- 周度 ---
-    "sina_bs_image_weekly_cleanup",        # 周五 22:05 图片清理
-}
+# pipeline.yaml is the only source allowed to schedule production tasks.
+# Keeping this derived prevents a legacy TASKS row or stale DB setting from
+# silently becoming executable again.
+SCHEDULED_TASK_WHITELIST = frozenset(PIPELINE_TASK_NAMES)
 
 NOTIFICATION_CHANNEL_DEFS = [
     ("feishu", "飞书"),
@@ -1743,6 +1727,33 @@ def _claim_next_queued_task():
             conn.close()
 
 
+TRANSIENT_FAILURE_MARKERS = (
+    "deadlock", "lock wait timeout", "connection reset", "connection refused",
+    "lost connection", "server has gone away", "temporarily unavailable",
+    "timed out", "timeout", "(1205", "(1213", "(2006", "(2013",
+)
+
+
+def _classify_task_failure(history_status, exit_code, message):
+    """Return a stable error kind and whether an automatic retry is safe."""
+    text = str(message or "").lower()
+    if history_status == "Success":
+        return None, False
+    if "modulenotfounderror" in text or "missing_module" in text:
+        return "DEPENDENCY", False
+    if "usage:" in text or "unrecognized arguments" in text or int(exit_code or 0) == 2:
+        return "ARGUMENT", False
+    if "failed test" in text or "pytest" in text or "assertionerror" in text:
+        return "TEST_GATE", False
+    if "[verify]" in text and "result=fail" in text:
+        return "VERIFICATION", False
+    if any(marker in text for marker in TRANSIENT_FAILURE_MARKERS):
+        return "TRANSIENT", True
+    if int(exit_code or 0) < 0:
+        return "PROCESS", True
+    return str(history_status or "FAILED").upper(), False
+
+
 def _finish_queued_task(job, history_status, exit_code, message):
     """Finish a claimed job, scheduling exactly one automatic retry when needed."""
     conn = None
@@ -1750,19 +1761,20 @@ def _finish_queued_task(job, history_status, exit_code, message):
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
-            retry = history_status != "Success" and int(job.get("attempt_count") or 0) < int(job.get("max_attempts") or 2)
+            error_kind, retryable = _classify_task_failure(history_status, exit_code, message)
+            retry = retryable and int(job.get("attempt_count") or 0) < int(job.get("max_attempts") or 2)
             if retry:
                 cursor.execute(
                     """UPDATE app_task_queue SET status='PENDING', available_at=DATE_ADD(NOW(), INTERVAL %s SECOND),
                        exit_code=%s, error_kind=%s, message=%s WHERE id=%s""",
-                    (TASK_RETRY_DELAY_SECONDS, exit_code, history_status.upper(), message, job["id"]),
+                    (TASK_RETRY_DELAY_SECONDS, exit_code, error_kind, message, job["id"]),
                 )
             else:
                 status = "SUCCESS" if history_status == "Success" else "FAILED"
                 cursor.execute(
                     """UPDATE app_task_queue SET status=%s, finished_at=NOW(), exit_code=%s,
                        error_kind=%s, message=%s, active_dedupe_key=NULL WHERE id=%s""",
-                    (status, exit_code, None if status == "SUCCESS" else history_status.upper(), message, job["id"]),
+                    (status, exit_code, None if status == "SUCCESS" else error_kind, message, job["id"]),
                 )
         conn.commit()
     except Exception as e:
@@ -1819,6 +1831,44 @@ def _has_scheduled_run_in_slot(task_name, scheduled_for):
     finally:
         if conn:
             conn.close()
+
+
+def _verify_sina_picture_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    project_root = Path(app.root_path).parent
+    output_dir = project_root / "sina" / "bs_detection" / "SinaAppBS" / "config_1" / target_datestr
+    produced = len(list(output_dir.glob(f"*_{target_datestr}.png"))) if output_dir.exists() else 0
+    expected = 0
+    try:
+        import pandas as pd
+        expected = len(pd.read_excel(project_root / "sina" / "stock_codes.xlsx"))
+    except Exception:
+        expected = 0
+    minimum = max(1, int(expected * 0.95)) if expected else 1
+    ok = produced >= minimum
+    return ok, [
+        f"result={'PASS' if ok else 'FAIL'}; task=sina_picture; business_date={target_datestr}",
+        f"images={produced}; expected_rows={expected or '-'}; minimum={minimum}; output={output_dir}",
+    ]
+
+
+def _verify_sina_analyse_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) AS c FROM bs_detection_results WHERE batch_date=%s AND batch_name=%s",
+                (target_datestr, "config_1"),
+            )
+            rows = int((cursor.fetchone() or {}).get("c") or 0)
+        conn.close()
+        ok = rows > 0
+        return ok, [f"result={'PASS' if ok else 'FAIL'}; task=sina_analyse; business_date={target_datestr}; rows={rows}"]
+    except Exception as exc:
+        return False, [f"result=FAIL; task=sina_analyse; verifier_error={exc}"]
 
 
 def _verify_sina_score_result(started_at, finished_at, run_options=None):
@@ -2360,19 +2410,48 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
 
 
 def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
-    _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
-    return True, [f"result=PASS; task=bs_signal_monthly_cycle; business_date={target_datestr}; process_completed=true"]
+    run_root = Path(app.root_path).parent / "exports" / "bs_signal_cycles"
+    manifests = []
+    for path in run_root.glob("*/cycle_manifest.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            mtime = datetime.fromtimestamp(path.stat().st_mtime)
+        except (OSError, ValueError, TypeError):
+            continue
+        if (started_at - timedelta(seconds=30)) <= mtime <= (finished_at + timedelta(seconds=300)):
+            manifests.append((mtime, path, payload))
+    if not manifests:
+        return False, [f"result=FAIL; reason=no_completed_manifest; business_date={target_datestr}"]
+    _, manifest_path, payload = max(manifests, key=lambda item: item[0])
+    ok = payload.get("status") == "completed" and bool(payload.get("activation", {}).get("committed"))
+    return ok, [
+        f"result={'PASS' if ok else 'FAIL'}; task=bs_signal_monthly_cycle; business_date={target_datestr}",
+        f"manifest={manifest_path}; status={payload.get('status')}; activation_committed={payload.get('activation', {}).get('committed')}",
+    ]
 
 
 def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
-    rows = _get_daily_batch_audit_rows(target_datestr)
+    rows = []
+    conn = pymysql.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """SELECT business_date, task_name, expected_time, status, reason, queue_id,
+                          queue_status, history_status, notification_status, replay_required, updated_at
+                   FROM app_daily_batch_audit WHERE business_date=%s
+                   ORDER BY expected_time, task_name""",
+                (target_datestr,),
+            )
+            rows = cursor.fetchall()
+    finally:
+        conn.close()
     if not rows:
         return False, [f"result=FAIL; reason=no_audit_rows; business_date={target_datestr}"]
     replay_required = sum(int(row.get("replay_required") or 0) for row in rows)
-    bad = [row for row in rows if row.get("status") not in {"OK", "SKIPPED_NON_TRADING"}]
+    bad = [row for row in rows if row.get("status") not in {"OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"}]
     lines = [
         f"result=PASS; business_date={target_datestr}; rows={len(rows)}; replay_required={replay_required}",
         "status=" + ("ACTION_REQUIRED" if bad else "PASS"),
@@ -2383,6 +2462,10 @@ def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
 
 
 def _run_task_result_verification(task_name, started_at, finished_at, run_options=None):
+    if task_name == "sina_picture":
+        return _verify_sina_picture_result(started_at, finished_at, run_options=run_options)
+    if task_name == "sina_analyse":
+        return _verify_sina_analyse_result(started_at, finished_at, run_options=run_options)
     if task_name == "adc_bs_detect":
         return _verify_adc_bs_detect_result(started_at, finished_at, run_options=run_options)
     if task_name == "bs_ocr_adc_compare":
@@ -2932,7 +3015,10 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
     try:
         script_parts = _build_task_script_parts(task_name, run_options=run_options)
         script_abs_path = project_root / script_parts[0]
-        cmd = [sys.executable, str(script_abs_path)] + script_parts[1:]
+        project_python = project_root / ".venv" / "bin" / "python"
+        if not project_python.exists():
+            raise RuntimeError(f"project Python is missing: {project_python}")
+        cmd = [str(project_python), str(script_abs_path)] + script_parts[1:]
         env = _build_task_subprocess_env(task_name, project_root)
 
         with tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stdout.log") as out_fh, \
@@ -3230,8 +3316,8 @@ def _build_task_script_parts(task_name, run_options=None):
         if datestr and len(datestr) == 8:
             date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
             args.extend(['--date', date_iso])
-            if not historical_safe:
-                args.append('--force')
+        if bool(run_options.get("force")):
+            args.append('--force')
         return [script, *args]
     if task_name == 'candle_diag_scan':
         args = ['--skip-existing']
@@ -7212,7 +7298,10 @@ def _run_scheduled_tasks_loop():
 
             for task_name in due_tasks:
                 job, created, reason = _trigger_task_execution(
-                    task_name, trigger_type='schedule', scheduled_for=now.replace(second=0, microsecond=0)
+                    task_name,
+                    trigger_type='schedule',
+                    run_options={"datestr": now.strftime("%Y%m%d")},
+                    scheduled_for=now.replace(second=0, microsecond=0),
                 )
                 if job and created:
                     print(f"Scheduled task queued: {task_name} (job={job['id']})")
@@ -7254,8 +7343,10 @@ def _run_notification_outbox_loop():
         time.sleep(20)
 
 
-def _run_web_startup_preflight():
-    issues = []
+def _run_web_startup_preflight(*, strict=False):
+    from scripts.ops.runtime_preflight import collect_runtime_issues
+
+    issues = collect_runtime_issues(require_database=True)
     conn = None
     if not validate_db_credentials():
         issues.append("DB credentials are unsafe: set CHENYIYUN_DB_PASSWORD or CHENYIYUN_DB_URL.")
@@ -7310,9 +7401,11 @@ def _run_web_startup_preflight():
             except Exception:
                 pass
     if issues:
-        print("Web startup preflight warnings:")
+        print("Runtime startup preflight issues:")
         for issue in issues:
             print(f" - {issue}")
+        if strict:
+            raise RuntimeError("runtime startup preflight failed: " + " | ".join(issues))
     else:
         print("Web startup preflight passed.")
 
@@ -7361,8 +7454,13 @@ def add_position():
     return redirect(url_for('admin'))
 
 if os.environ.get("DISABLE_APP_SCHEDULER_LOOP") != "1":
-    _run_web_startup_preflight()
-    start_task_scheduler_loop()
+    # Compatibility mode remains available for tests and emergency foreground
+    # operation. Production launchers set role=web and run the durable worker
+    # as a separate process so Web restarts cannot terminate active jobs.
+    runtime_role = os.environ.get("CHENYIYUN_RUNTIME_ROLE", "all").strip().lower()
+    _run_web_startup_preflight(strict=runtime_role in {"web", "worker"})
+    if runtime_role == "all":
+        start_task_scheduler_loop()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)

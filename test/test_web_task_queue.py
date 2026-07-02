@@ -197,9 +197,9 @@ def test_replay_required_jobs_enqueue_as_replay(monkeypatch):
     assert calls == [("trusted_strategy_candidates", "replay", {"datestr": "20260624"}, None)]
 
 
-def test_start_scheduler_delegates_to_web_console():
+def test_start_scheduler_delegates_to_dedicated_services():
     source = Path("start_scheduler.sh").read_text(encoding="utf-8")
-    assert "start_web_console.sh" in source
+    assert "install_web_launchd.sh" in source
     assert 'SCRIPT="scheduler.py"' not in source
 
 

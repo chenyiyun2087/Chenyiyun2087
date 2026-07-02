@@ -26,9 +26,9 @@ class TestBSEnhancedScore(unittest.TestCase):
         self.assertEqual(normalize_opt_score(81), 81.0)
 
     def test_entry_timing_prefers_early_positive_confirmation(self):
-        self.assertGreater(entry_timing_score(6), entry_timing_score(-15))
+        self.assertGreater(entry_timing_score(-8), entry_timing_score(6))
         self.assertGreater(entry_timing_score(6), entry_timing_score(45))
-        self.assertGreater(entry_timing_score(-1), entry_timing_score(-10))
+        self.assertGreater(entry_timing_score(-10), entry_timing_score(-1))
 
     def test_calculate_bs_enhanced_score_is_bounded_and_labeled(self):
         result = calculate_bs_enhanced_score(

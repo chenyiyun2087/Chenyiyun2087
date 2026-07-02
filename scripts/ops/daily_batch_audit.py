@@ -170,6 +170,23 @@ def _notification_status(cursor, task_name: str, business_date: str) -> str | No
 
 def _recovered_artifact(cursor, task_name: str, business_date: str) -> str | None:
     """Return durable output evidence for tasks repaired outside the queue."""
+    if task_name == "bs_signal_monthly_cycle":
+        for manifest_path in sorted((PROJECT_ROOT / "exports" / "bs_signal_cycles").glob("*/cycle_manifest.json"), reverse=True):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            recovery_date = str(manifest.get("recovered_for_business_date") or "")
+            activation = manifest.get("activation") or {}
+            model_path = Path(str(manifest.get("model_path") or activation.get("model_path") or ""))
+            if (
+                recovery_date == business_date
+                and manifest.get("status") == "completed"
+                and bool(activation.get("committed"))
+                and model_path.is_file()
+            ):
+                return f"补跑产物已核验：月度模型 {model_path.parent.name}（原失败记录保留）"
+        return None
     if task_name == "trusted_strategy_candidates":
         cursor.execute(
             """SELECT

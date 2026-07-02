@@ -28,6 +28,7 @@ if [ -z "${CHENYIYUN_DB_URL:-}" ] && [ -z "${CHENYIYUN_DB_PASSWORD:-}" ]; then
     echo "FATAL: set CHENYIYUN_DB_PASSWORD/CHENYIYUN_DB_URL in $USER_ENV_FILE or $PROJECT_DIR/.env." >&2
     exit 1
 fi
+export CHENYIYUN_RUNTIME_ROLE=web
 
 if [ "$RUN_MODE" != "--foreground" ] && pgrep -f "flask --app web.app run --host $HOST --port $PORT" > /dev/null; then
     echo "Web console is already running on port $PORT."

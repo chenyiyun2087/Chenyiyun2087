@@ -2,7 +2,7 @@
 
 本文档整理生产自动批量任务的默认时间、依赖关系、消息推送和排障入口。
 
-配置口径以 `task_registry/pipeline.yaml` 中状态为 `enabled` 的任务为准；本文记录的是仓库默认值，不代表管理员后台当前保存的运行时启停与时间。生产调度入口为 `web/app.py`，历史文件 `archive/scheduler.py` 不参与生产运行。
+配置口径以 `task_registry/pipeline.yaml` 中状态为 `enabled` 的任务为准；本文记录的是仓库默认值，不代表管理员后台当前保存的运行时启停与时间。任务定义和入队逻辑由 `web/app.py` 提供，实际调度与执行由独立的 `scripts/ops/task_queue_worker.py` 承担；Web 重启不会终止正在执行的批任务。历史文件 `archive/scheduler.py` 不参与生产运行。
 
 ## 1. 时间顺序
 
@@ -100,6 +100,10 @@ flowchart TD
 
 ## 4. 手工补跑与排障
 
+生产环境使用 `scripts/ops/install_web_launchd.sh` 同时安装 Web 与独立任务 worker。worker 启动时强制检查项目 `.venv`、关键 Python 依赖、数据库凭据和任务脚本，并通过数据库租约拒绝第二个 worker。`scripts/ops/check_web_console.sh` 必须同时检查两个服务。
+
+自动重试仅用于数据库死锁、连接中断和超时等瞬态故障；缺依赖、参数错误、测试失败和产物校验失败不会盲目重跑。月度模型任务只有在测试、检查、报告和导入全部成功后才原子切换生产模型。
+
 ### 4.1 推荐操作入口
 
 优先使用 Web `/admin` 任务中心，不要直接启动历史调度器。后台提供：
@@ -137,9 +141,9 @@ flowchart TD
 
 ## 5. 已知差异与维护规则
 
-- `task_registry/pipeline.yaml` 是本文采用的任务目录和默认时间口径；修改生产流水线时应先更新该文件，再同步必要的兼容代码和文档。
+- `task_registry/pipeline.yaml` 是唯一允许启用生产调度的任务目录；数据库旧配置和 `web/app.py` 的历史兼容定义不能额外启用任务。
 - `web/app.py` 仍保留硬编码 `TASKS` 作为兼容回退，部分默认时间和附近注释早于 YAML，不能用这些旧值替代 YAML 正文。
-- `db_bs_detect` 仍存在于硬编码任务表和 `SCHEDULED_TASK_WHITELIST`，但不在当前 YAML 中；按“YAML 为权威源”的规则，本总览未将其计入正式时序。部署前应在 `/admin` 核对它是否仍被运行时配置启用，避免与 `adc_bs_detect` 在 21:05 重复执行。
+- `db_bs_detect` 仅保留为历史记录的展示定义，已从调度集合永久排除，不能被数据库旧配置重新启用。
 - `sina_analyse` 的截图依赖目前来自兼容代码而非 YAML。若未来彻底移除硬编码回退，应先把该依赖补入 YAML。
 - `archive/scheduler.py` 仅作历史参考；生产事故复盘以 Web 队列、历史表和通知投递记录为准。
 - 研究、维护、迁移、导出脚本以及仅可手工运行的任务不属于本文生产自动任务清单。

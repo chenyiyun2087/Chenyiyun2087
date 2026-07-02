@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -105,7 +107,7 @@ def _run_optional(cmd: list[str], enabled: bool) -> tuple[dict | None, str]:
     return _run(cmd)
 
 
-def _activate_model(summary: dict) -> Path:
+def _activate_model(summary: dict) -> tuple[Path, dict | None]:
     model_path = Path(str(summary.get("model_path") or ""))
     active_path = MODEL_ROOT / "active_model.json"
     payload = {
@@ -118,8 +120,22 @@ def _activate_model(summary: dict) -> Path:
         "feature_schema_hash": summary.get("feature_schema_hash"),
         "selection_source": "run_bs_signal_enhancement_cycle",
     }
-    active_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return active_path
+    previous = None
+    if active_path.exists():
+        try:
+            previous = json.loads(active_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = None
+    MODEL_ROOT.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=MODEL_ROOT, prefix=".active_model.", suffix=".tmp", delete=False
+    ) as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
+        staged_path = Path(handle.name)
+    os.replace(staged_path, active_path)
+    return active_path, previous
 
 
 def main() -> None:
@@ -153,6 +169,14 @@ def main() -> None:
     run_dir = RUN_ROOT / stamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # A deterministic code/test failure must happen before exporting data,
+    # training models, importing scores, or changing the active model pointer.
+    test_summary, test_log = _run_optional(
+        [sys.executable, "-m", "pytest", "-q", "test/ScoreRank"],
+        enabled=not args.skip_tests,
+    )
+    (run_dir / "tests.log").write_text(test_log, encoding="utf-8")
+
     export_summary, export_log = _run([sys.executable, "scripts/export_signal_enhancement_dataset.py"])
     dataset_dir = Path(export_summary["output_dir"])
 
@@ -176,19 +200,6 @@ def main() -> None:
     summaries = _model_summaries(train_summary)
     deploy_summary = _select_deploy_model(summaries, args.deploy_model_kind, args.deploy_metric)
     model_dir = Path(deploy_summary["output_dir"])
-    active_model_path = _activate_model(deploy_summary)
-
-    import_summary = None
-    import_log = ""
-    if not args.skip_import:
-        import_summary, import_log = _run(
-            [
-                sys.executable,
-                "scripts/import_bs_model_scores.py",
-                "--model-dir",
-                str(model_dir),
-            ]
-        )
 
     report_outputs: dict[str, Any] = {}
     report_logs: dict[str, str] = {}
@@ -256,10 +267,21 @@ def main() -> None:
         ],
         enabled=not args.skip_check,
     )
-    test_summary, test_log = _run_optional(
-        [sys.executable, "-m", "pytest", "-q", "test/ScoreRank"],
-        enabled=not args.skip_tests,
-    )
+    import_summary = None
+    import_log = ""
+    if not args.skip_import:
+        import_summary, import_log = _run(
+            [
+                sys.executable,
+                "scripts/import_bs_model_scores.py",
+                "--model-dir",
+                str(model_dir),
+            ]
+        )
+
+    # Commit is deliberately last and uses atomic rename. All validation and
+    # downstream report gates above must succeed first.
+    active_model_path, previous_active_model = _activate_model(deploy_summary)
 
     metrics = _metric_snapshot(model_dir / "metrics.json", str(deploy_summary.get("model_kind")))
     manifest = {
@@ -273,6 +295,11 @@ def main() -> None:
         "research_dir": research_summary.get("output_dir") if research_summary else None,
         "model_dir": str(model_dir),
         "active_model": str(active_model_path),
+        "activation": {
+            "committed": True,
+            "previous_model_dir": (previous_active_model or {}).get("model_dir"),
+            "new_model_dir": str(model_dir),
+        },
         "model_summaries": summaries,
         "model_import": import_summary,
         "metrics": metrics,
@@ -290,7 +317,6 @@ def main() -> None:
     (run_dir / "train.log").write_text(train_log, encoding="utf-8")
     (run_dir / "import.log").write_text(import_log, encoding="utf-8")
     (run_dir / "check.log").write_text(check_log, encoding="utf-8")
-    (run_dir / "tests.log").write_text(test_log, encoding="utf-8")
     for name, log_text in report_logs.items():
         (run_dir / f"{name}.log").write_text(log_text, encoding="utf-8")
     print(json.dumps({**manifest, "run_dir": str(run_dir)}, ensure_ascii=False, indent=2))
