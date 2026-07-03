@@ -1,4 +1,6 @@
 import os
+import json
+from datetime import datetime
 from pathlib import Path
 
 os.environ.setdefault("DISABLE_APP_SCHEDULER_LOOP", "1")
@@ -66,6 +68,56 @@ def test_bs_compare_has_result_verifier(monkeypatch):
         "bs_ocr_adc_compare", None, None, run_options={"datestr": "20260701"}
     )
     assert result == expected
+
+
+def test_monthly_bs_verifier_accepts_existing_committed_cycle(monkeypatch, tmp_path):
+    run_root = tmp_path / "exports" / "bs_signal_cycles" / "20260702_recovery"
+    run_root.mkdir(parents=True)
+    (run_root / "cycle_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-07-02T09:20:00+08:00",
+                "status": "completed",
+                "activation": {"committed": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_app.app, "root_path", str(tmp_path / "web"))
+
+    ok, lines = web_app._verify_monthly_bs_cycle_result(
+        datetime(2026, 7, 2, 22, 0),
+        datetime(2026, 7, 2, 22, 1),
+        run_options={"datestr": "20260702"},
+    )
+
+    assert ok is True
+    assert "evidence=existing_monthly_cycle" in lines[0]
+
+
+def test_monthly_bs_verifier_rejects_prior_month_cycle(monkeypatch, tmp_path):
+    run_root = tmp_path / "exports" / "bs_signal_cycles" / "202606_cycle"
+    run_root.mkdir(parents=True)
+    (run_root / "cycle_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-30T22:00:00+08:00",
+                "status": "completed",
+                "activation": {"committed": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_app.app, "root_path", str(tmp_path / "web"))
+
+    ok, lines = web_app._verify_monthly_bs_cycle_result(
+        datetime(2026, 7, 2, 22, 0),
+        datetime(2026, 7, 2, 22, 1),
+        run_options={"datestr": "20260702"},
+    )
+
+    assert ok is False
+    assert "reason=no_completed_manifest" in lines[0]
 
 
 def test_queue_contract_keeps_active_deduplication_and_single_retry():

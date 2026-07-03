@@ -1860,13 +1860,31 @@ def _verify_sina_analyse_result(started_at, finished_at, run_options=None):
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT COUNT(*) AS c FROM bs_detection_results WHERE batch_date=%s AND batch_name=%s",
+                """
+                SELECT COUNT(*) AS c,
+                       COALESCE(SUM(total_b_points), 0) AS total_b,
+                       COALESCE(SUM(total_s_points), 0) AS total_s,
+                       MAX(created_at) AS max_created
+                FROM bs_detection_results
+                WHERE batch_date=%s AND batch_name=%s
+                """,
                 (target_datestr, "config_1"),
             )
-            rows = int((cursor.fetchone() or {}).get("c") or 0)
+            result = cursor.fetchone() or {}
+            rows = int(result.get("c") or 0)
+            total_b = int(result.get("total_b") or 0)
+            total_s = int(result.get("total_s") or 0)
+            max_created = result.get("max_created")
         conn.close()
-        ok = rows > 0
-        return ok, [f"result={'PASS' if ok else 'FAIL'}; task=sina_analyse; business_date={target_datestr}; rows={rows}"]
+        # A full universe with no B and no S markers is an OCR-runtime failure,
+        # not a plausible successful analysis. Also require this run to have
+        # refreshed the rows instead of accepting stale data.
+        refreshed = bool(max_created and max_created >= started_at.replace(microsecond=0))
+        ok = rows > 0 and (total_b + total_s) > 0 and refreshed
+        return ok, [
+            f"result={'PASS' if ok else 'FAIL'}; task=sina_analyse; business_date={target_datestr}; "
+            f"rows={rows}; total_b={total_b}; total_s={total_s}; refreshed={int(refreshed)}"
+        ]
     except Exception as exc:
         return False, [f"result=FAIL; task=sina_analyse; verifier_error={exc}"]
 
@@ -2411,8 +2429,10 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
 
 def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
+    target_month = f"{target_datestr[:4]}-{target_datestr[4:6]}"
     run_root = Path(app.root_path).parent / "exports" / "bs_signal_cycles"
-    manifests = []
+    recent_manifests = []
+    monthly_manifests = []
     for path in run_root.glob("*/cycle_manifest.json"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -2420,13 +2440,28 @@ def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
         except (OSError, ValueError, TypeError):
             continue
         if (started_at - timedelta(seconds=30)) <= mtime <= (finished_at + timedelta(seconds=300)):
-            manifests.append((mtime, path, payload))
-    if not manifests:
+            recent_manifests.append((mtime, path, payload))
+        generated_at = str(payload.get("generated_at") or "")
+        if (
+            generated_at.startswith(target_month)
+            and payload.get("status") == "completed"
+            and bool(payload.get("activation", {}).get("committed"))
+        ):
+            monthly_manifests.append((generated_at, path, payload))
+    if recent_manifests:
+        _, manifest_path, payload = max(recent_manifests, key=lambda item: item[0])
+        evidence = "current_run"
+    elif monthly_manifests:
+        # The monthly runner is idempotent: on later trading days it exits cleanly
+        # when a committed cycle already exists for the month. Treat that durable
+        # manifest as successful verification instead of requiring a newly written one.
+        _, manifest_path, payload = max(monthly_manifests, key=lambda item: item[0])
+        evidence = "existing_monthly_cycle"
+    else:
         return False, [f"result=FAIL; reason=no_completed_manifest; business_date={target_datestr}"]
-    _, manifest_path, payload = max(manifests, key=lambda item: item[0])
     ok = payload.get("status") == "completed" and bool(payload.get("activation", {}).get("committed"))
     return ok, [
-        f"result={'PASS' if ok else 'FAIL'}; task=bs_signal_monthly_cycle; business_date={target_datestr}",
+        f"result={'PASS' if ok else 'FAIL'}; task=bs_signal_monthly_cycle; business_date={target_datestr}; evidence={evidence}",
         f"manifest={manifest_path}; status={payload.get('status')}; activation_committed={payload.get('activation', {}).get('committed')}",
     ]
 

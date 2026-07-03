@@ -16,9 +16,21 @@ try:
 except ImportError:
     from SinaLatestBSShow import print_latest_buy_signals
 
-_tesseract_cmd = shutil.which("tesseract")
-if _tesseract_cmd:
-    pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
+def ensure_tesseract_available():
+    """Resolve Tesseract even when launchd provides a minimal PATH."""
+    candidates = [
+        os.environ.get("TESSERACT_CMD"),
+        shutil.which("tesseract"),
+        "/opt/homebrew/bin/tesseract",
+        "/usr/local/bin/tesseract",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            pytesseract.pytesseract.tesseract_cmd = candidate
+            return candidate
+    raise RuntimeError(
+        "Tesseract OCR不可用；请安装tesseract或设置TESSERACT_CMD，禁止写入全零识别结果"
+    )
 
 # 全局配置
 THREAD_LOCK = threading.Lock()
@@ -430,6 +442,10 @@ def batch_process_images(
     :param debug_mode: 是否启用调试模式
     """
     global DETECTION_RESULTS
+
+    # Fail before processing/writing.  Previously a missing executable was
+    # swallowed per image and 435 all-zero rows were committed as valid OCR.
+    ensure_tesseract_available()
 
     # 确定处理的日期文件夹
     if base_dir is None:
