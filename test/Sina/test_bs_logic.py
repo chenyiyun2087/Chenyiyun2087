@@ -22,7 +22,12 @@ sys.modules['selenium.webdriver'] = MagicMock()
 sys.modules['pymysql'] = MagicMock()
 
 # Now import
-from sina.bs_detection.SinaBSDetector import normalize_stock_codes, deduplicate_results, analyze_bs_points
+from sina.bs_detection.SinaBSDetector import (
+    analyze_bs_points,
+    deduplicate_results,
+    ensure_tesseract_available,
+    normalize_stock_codes,
+)
 
 class TestBSLogic(unittest.TestCase):
     def test_normalize_stock_codes(self):
@@ -54,6 +59,21 @@ class TestBSLogic(unittest.TestCase):
         self.assertFalse(result["has_sell_signal"])
         self.assertEqual(result["buy_points_count"], 1)
         self.assertEqual(result["total_b_points"], 2)
+
+    @patch("sina.bs_detection.SinaBSDetector.os.access", return_value=True)
+    @patch("sina.bs_detection.SinaBSDetector.os.path.isfile", return_value=True)
+    @patch("sina.bs_detection.SinaBSDetector.shutil.which", return_value=None)
+    @patch.dict("os.environ", {"TESSERACT_CMD": "/custom/tesseract"})
+    def test_tesseract_env_override(self, _which, _isfile, _access):
+        self.assertEqual(ensure_tesseract_available(), "/custom/tesseract")
+
+    @patch("sina.bs_detection.SinaBSDetector.os.access", return_value=False)
+    @patch("sina.bs_detection.SinaBSDetector.os.path.isfile", return_value=False)
+    @patch("sina.bs_detection.SinaBSDetector.shutil.which", return_value=None)
+    @patch.dict("os.environ", {}, clear=True)
+    def test_missing_tesseract_fails_before_batch_write(self, _which, _isfile, _access):
+        with self.assertRaisesRegex(RuntimeError, "Tesseract OCR不可用"):
+            ensure_tesseract_available()
 
 if __name__ == "__main__":
     unittest.main()

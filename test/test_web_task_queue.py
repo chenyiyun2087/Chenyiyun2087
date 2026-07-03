@@ -70,6 +70,42 @@ def test_bs_compare_has_result_verifier(monkeypatch):
     assert result == expected
 
 
+def test_every_enabled_pipeline_task_has_a_result_verifier():
+    root = Path(web_app.__file__).resolve().parents[1]
+    expected = load_expected_daily_tasks(root / "task_registry" / "pipeline.yaml")
+    verifier_tasks = {
+        "sina_picture", "sina_analyse", "adc_bs_detect", "bs_ocr_adc_compare",
+        "sina_score", "sina_bs_consensus", "trusted_strategy_backtest",
+        "rolling_strategy_scorer", "trusted_strategy_candidates",
+        "trusted_strategy_shadow_monitor", "trusted_strategy_performance_review",
+        "candle_diag_scan", "bs_signal_monthly_cycle",
+        "sina_bs_image_weekly_cleanup",
+    }
+    assert {task.task_name for task in expected} == verifier_tasks
+
+
+def test_rolling_strategy_scorer_is_dispatched_to_verifier(monkeypatch):
+    expected = (True, ["result=PASS"])
+    monkeypatch.setattr(web_app, "_verify_rolling_strategy_scorer_result", lambda *args, **kwargs: expected)
+    assert web_app._run_task_result_verification(
+        "rolling_strategy_scorer", None, None, run_options={"datestr": "20260702"}
+    ) == expected
+
+
+def test_weekly_cleanup_verifier_rejects_remaining_previous_week_dir(monkeypatch, tmp_path):
+    root = tmp_path / "sina" / "bs_detection" / "SinaAppBS" / "config_1"
+    (root / "20260626").mkdir(parents=True)
+    monkeypatch.setattr(web_app.app, "root_path", str(tmp_path / "web"))
+
+    ok, lines = web_app._verify_weekly_image_cleanup_result(
+        datetime(2026, 7, 3, 22, 5), datetime(2026, 7, 3, 22, 6),
+        run_options={"datestr": "20260703"},
+    )
+
+    assert ok is False
+    assert "remaining_dirs=1" in lines[0]
+
+
 def test_monthly_bs_verifier_accepts_existing_committed_cycle(monkeypatch, tmp_path):
     run_root = tmp_path / "exports" / "bs_signal_cycles" / "20260702_recovery"
     run_root.mkdir(parents=True)

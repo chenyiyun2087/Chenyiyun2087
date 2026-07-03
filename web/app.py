@@ -2376,6 +2376,51 @@ def _verify_daily_strategy_backtest_result(started_at, finished_at, run_options=
     ]
 
 
+def _verify_rolling_strategy_scorer_result(started_at, finished_at, run_options=None):
+    """Require a complete, bounded weight set for the requested business date."""
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    date_iso = f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS rows_cnt,
+                           COALESCE(SUM(smooth_weight), 0) AS total_weight,
+                           COALESCE(MIN(smooth_weight), 0) AS min_weight,
+                           COALESCE(MAX(smooth_weight), 0) AS max_weight,
+                           COUNT(DISTINCT strategy) AS strategy_cnt
+                    FROM ads_rolling_strategy_weights
+                    WHERE calc_date = %s
+                    """,
+                    (date_iso,),
+                )
+                row = cursor.fetchone() or {}
+        finally:
+            conn.close()
+        rows_cnt = int(row.get("rows_cnt") or 0)
+        strategy_cnt = int(row.get("strategy_cnt") or 0)
+        total_weight = float(row.get("total_weight") or 0)
+        min_weight = float(row.get("min_weight") or 0)
+        max_weight = float(row.get("max_weight") or 0)
+        ok = (
+            rows_cnt > 0
+            and strategy_cnt == rows_cnt
+            and 0 < total_weight <= 1.000001
+            and 0 <= min_weight <= 1
+            and 0 <= max_weight <= 1
+        )
+        return ok, [
+            f"result={'PASS' if ok else 'FAIL'}; task=rolling_strategy_scorer; business_date={target_datestr}; "
+            f"rows={rows_cnt}; strategies={strategy_cnt}; total_weight={total_weight:.6f}; "
+            f"min_weight={min_weight:.6f}; max_weight={max_weight:.6f}"
+        ]
+    except Exception as e:
+        return False, [f"result=FAIL; task=rolling_strategy_scorer; verifier_error={e}"]
+
+
 def _verify_shadow_monitor_result(started_at, finished_at, run_options=None):
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
@@ -2466,6 +2511,24 @@ def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
     ]
 
 
+def _verify_weekly_image_cleanup_result(started_at, finished_at, run_options=None):
+    """On its scheduled Friday, no previous-week image directory may remain."""
+    _ = started_at, finished_at
+    from scripts.ops.cleanup_sina_bs_detection_images import collect_previous_week_image_dirs
+
+    target_datestr = _queue_business_date(run_options)
+    target_date = datetime.strptime(target_datestr, "%Y%m%d").date()
+    root = Path(app.root_path).parent / "sina" / "bs_detection" / "SinaAppBS" / "config_1"
+    week_start, week_end, remaining = collect_previous_week_image_dirs(root, target_date)
+    scheduled = target_date.weekday() == 4
+    ok = scheduled and not remaining
+    return ok, [
+        f"result={'PASS' if ok else 'FAIL'}; task=sina_bs_image_weekly_cleanup; "
+        f"business_date={target_datestr}; scheduled_friday={int(scheduled)}; remaining_dirs={len(remaining)}",
+        f"week={week_start.isoformat()}..{week_end.isoformat()}; root={root}",
+    ]
+
+
 def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
@@ -2507,6 +2570,8 @@ def _run_task_result_verification(task_name, started_at, finished_at, run_option
         return _verify_bs_ocr_adc_compare_result(started_at, finished_at, run_options=run_options)
     if task_name == "trusted_strategy_backtest":
         return _verify_daily_strategy_backtest_result(started_at, finished_at, run_options=run_options)
+    if task_name == "rolling_strategy_scorer":
+        return _verify_rolling_strategy_scorer_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_score":
         return _verify_sina_score_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_bs_consensus":
@@ -2521,6 +2586,8 @@ def _run_task_result_verification(task_name, started_at, finished_at, run_option
         return _verify_candle_diag_scan_result(started_at, finished_at, run_options=run_options)
     if task_name == "bs_signal_monthly_cycle":
         return _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=run_options)
+    if task_name == "sina_bs_image_weekly_cleanup":
+        return _verify_weekly_image_cleanup_result(started_at, finished_at, run_options=run_options)
     if task_name == "sina_m8":
         return _verify_sina_m8_result(started_at, finished_at)
     if task_name == "sina_m7_sell":

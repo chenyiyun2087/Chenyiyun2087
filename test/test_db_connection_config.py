@@ -5,6 +5,7 @@ from scripts.ops.check_db_connection import mask_sqlalchemy_url
 def test_sqlalchemy_url_preserves_tcp_default_without_socket(monkeypatch):
     monkeypatch.delenv("CHENYIYUN_DB_URL", raising=False)
     monkeypatch.delenv("CHENYIYUN_DB_UNIX_SOCKET", raising=False)
+    monkeypatch.delenv("CHENYIYUN_DB_PASSWORD", raising=False)
     monkeypatch.setenv("CHENYIYUN_DB_USER", "root")
     monkeypatch.setenv("CHENYIYUN_DB_HOST", "127.0.0.1")
     monkeypatch.setenv("CHENYIYUN_DB_PORT", "3307")
