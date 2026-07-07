@@ -1,0 +1,3 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,order_status,submitted_at,filled_shares,filled_price,status_reason,note
+2026-07-03,000021,深科技,BUY,55.91,0,1000,1000,1000,0.0,0.11642862066590537,0.11642862066590537,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-07-03,300223,北京君正,BUY,259.56,0,100,100,100,0.0,0.09038670885679266,0.09038670885679266,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5

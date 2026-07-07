@@ -1,6 +1,6 @@
 {
-  "status": "BLOCKED",
-  "passed": false,
+  "status": "READY",
+  "passed": true,
   "gate_name": "pipeline_readiness",
   "checks": [
     {
@@ -12,12 +12,10 @@
     },
     {
       "check": "scoring_complete",
-      "passed": false,
+      "passed": true,
       "severity": "critical",
       "status": "BLOCKED",
-      "failed": [
-        "score_date_matches"
-      ]
+      "failed": []
     },
     {
       "check": "industry_complete",
@@ -25,8 +23,8 @@
       "severity": "critical",
       "detail": {
         "check": "industry_null_rate",
-        "date": "20260629",
-        "total_rows": 5160,
+        "date": "20260703",
+        "total_rows": 5163,
         "null_count": 0,
         "null_rate": 0.0,
         "threshold": 0.02,
@@ -36,8 +34,8 @@
     },
     {
       "check": "bs_signal_complete",
-      "date": "20260629",
-      "total_rows": 5160,
+      "date": "20260703",
+      "total_rows": 5163,
       "fields": {
         "bs_score_v2": {
           "null_count": 0,
@@ -64,21 +62,18 @@
       "check": "candidate_export_ready",
       "passed": true,
       "severity": "critical",
-      "candidate_count": null,
-      "detail": "candidate_count_not_supplied_pre_export"
+      "candidate_count": 5,
+      "detail": ""
     },
     {
       "check": "order_draft_ready",
       "passed": true,
-      "severity": "info",
-      "detail": "emit_orders_disabled",
+      "severity": "critical",
       "order_count": null
     }
   ],
-  "failed_critical": [
-    "scoring_complete"
-  ],
+  "failed_critical": [],
   "failed_warnings": [],
-  "target_date": "2026-06-29",
+  "target_date": "2026-07-03",
   "gate_version": "2.0"
 }

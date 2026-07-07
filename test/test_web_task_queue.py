@@ -7,7 +7,12 @@ os.environ.setdefault("DISABLE_APP_SCHEDULER_LOOP", "1")
 
 from web import app as web_app
 from scripts.ops import feishu_notifier
-from scripts.ops.daily_batch_audit import ExpectedTask, classify_task, load_expected_daily_tasks
+from scripts.ops.daily_batch_audit import (
+    ExpectedTask,
+    _recovered_artifact,
+    classify_task,
+    load_expected_daily_tasks,
+)
 
 
 class FakeCursor:
@@ -49,6 +54,19 @@ def test_dependency_state_accepts_successful_upstream_job():
         {"task_name": "rolling_strategy_scorer", "status": "SUCCESS"},
     ])
     state, message = web_app._dependency_state(cursor, "trusted_strategy_candidates", "20260620")
+    assert state == "READY"
+    assert not message
+
+
+def test_dependency_state_accepts_verified_recovery_artifact(monkeypatch):
+    cursor = FakeCursor([])
+    monkeypatch.setattr(
+        "scripts.ops.daily_batch_audit._recovered_artifact",
+        lambda _cursor, task_name, business_date: (
+            "verified rows" if task_name == "adc_bs_detect" and business_date == "20260701" else None
+        ),
+    )
+    state, message = web_app._dependency_state(cursor, "bs_ocr_adc_compare", "20260701")
     assert state == "READY"
     assert not message
 
@@ -263,6 +281,21 @@ def test_daily_batch_audit_classifies_missing_and_non_trading_skip():
     assert skipped["replay_required"] == 0
 
 
+def test_adc_recovery_evidence_requires_ml_batch():
+    cursor = FakeCursor([{"c": 435}])
+    assert _recovered_artifact(cursor, "adc_bs_detect", "20260629")
+    sql, params = cursor.calls[0]
+    assert "batch_name='ml_detect_v3'" in sql
+    assert params == ("20260629",)
+
+
+def test_score_recovery_evidence_requires_complete_core_fields():
+    cursor = FakeCursor([{"c": 5160, "null_score": 0, "null_opt": 0, "null_claude": 0}])
+    evidence = _recovered_artifact(cursor, "sina_score", "20260629")
+    assert evidence and "5160" in evidence
+    assert "STR_TO_DATE" in cursor.calls[0][0]
+
+
 def test_replay_required_jobs_enqueue_as_replay(monkeypatch):
     monkeypatch.setattr(
         web_app,
@@ -282,7 +315,10 @@ def test_replay_required_jobs_enqueue_as_replay(monkeypatch):
     result = web_app._enqueue_replay_required_jobs("20260624")
 
     assert len(result["created"]) == 1
-    assert calls == [("trusted_strategy_candidates", "replay", {"datestr": "20260624"}, None)]
+    assert calls == [(
+        "trusted_strategy_candidates", "replay",
+        {"datestr": "20260624", "historical_safe": True}, None,
+    )]
 
 
 def test_start_scheduler_delegates_to_dedicated_services():
@@ -318,6 +354,22 @@ def test_historical_replay_disables_orders_and_marks_business_notifications():
         assert "--historical-reissue" in web_app._build_task_script_parts(task_name, options)
 
 
+def test_historical_replay_suppresses_business_notifications_without_reissue():
+    options = {"datestr": "20260629", "historical_safe": True}
+    for task_name in (
+        "trusted_strategy_candidates",
+        "trusted_strategy_shadow_monitor",
+        "trusted_strategy_performance_review",
+    ):
+        assert "--notify-feishu" not in web_app._build_task_script_parts(task_name, options)
+
+
+def test_performance_review_verifier_accounts_for_historical_notification_policy():
+    source = Path(web_app.__file__).read_text(encoding="utf-8")
+    assert "notification_expected = not historical_safe or historical_reissue" in source
+    assert "notify_result in (None, \"skipped\")" in source
+
+
 def test_launchd_assets_use_user_env_and_keepalive():
     root = Path(web_app.__file__).resolve().parents[1]
     start_source = (root / "start_web_console.sh").read_text(encoding="utf-8")
@@ -334,6 +386,8 @@ def test_launchd_assets_use_user_env_and_keepalive():
     assert "python = str(VENV_PYTHON)" in launcher_source
     assert "os.execvpe(\n        python," in launcher_source
     assert "must have mode 600" in install_source
+    assert "launchctl print \"$DOMAIN/$LABEL\"" in install_source
+    assert "failed to register $LABEL after bounded retries" in install_source
 
 
 def test_feishu_audit_records_no_webhook(monkeypatch):

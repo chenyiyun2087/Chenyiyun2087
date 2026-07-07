@@ -1254,7 +1254,10 @@ def _enqueue_replay_required_jobs(business_date):
         job, was_created, reason = _enqueue_task(
             task_name,
             trigger_type="replay",
-            run_options={"datestr": business_date},
+            # Historical replay must never emit orders or silently resend old
+            # business notifications.  A separate explicit reissue action may
+            # opt into notifications when an operator actually requests it.
+            run_options={"datestr": business_date, "historical_safe": True},
         )
         if job and was_created:
             created.append(job)
@@ -1672,6 +1675,14 @@ def _dependency_state(cursor, task_name, business_date):
     latest = {}
     for row in cursor.fetchall():
         latest.setdefault(row["task_name"], str(row["status"]).upper())
+    # Historical recovery may have durable verified output without a SUCCESS
+    # queue row (for example data repaired before the durable queue existed).
+    # Use the same conservative evidence rules as the daily audit so replay
+    # dependencies and audit classification cannot disagree.
+    from scripts.ops.daily_batch_audit import _recovered_artifact
+    for dependency in dependencies:
+        if _recovered_artifact(cursor, dependency, business_date):
+            latest[dependency] = "SUCCESS"
     missing = [name for name in dependencies if name not in latest]
     failed = [name for name in dependencies if latest.get(name) in {"FAILED", "CANCELLED", "BLOCKED"}]
     if failed:
@@ -1910,9 +1921,10 @@ def _verify_sina_score_result(started_at, finished_at, run_options=None):
                            SUM(opt_score IS NULL) AS null_opt,
                            SUM(claude_score IS NULL) AS null_claude
                     FROM score_rank_daily
-                    WHERE trade_date = (SELECT MAX(trade_date) FROM score_rank_daily)
+                    WHERE trade_date = %s
                     GROUP BY trade_date
-                    """
+                    """,
+                    (datetime.strptime(target_datestr, "%Y%m%d").date(),),
                 )
                 stat = cursor.fetchone() or {}
 
@@ -1937,7 +1949,8 @@ def _verify_sina_score_result(started_at, finished_at, run_options=None):
         )
 
         expected_datestr = target_datestr or latest_bs_datestr
-        date_match = bool(latest_score_datestr and expected_datestr and latest_score_datestr == expected_datestr)
+        stat_datestr = _db_value_to_datestr(stat.get("trade_date"))
+        date_match = bool(stat_datestr and expected_datestr and stat_datestr == expected_datestr)
 
         null_claude = int(stat.get('null_claude') or 0)
         claude_coverage_ok = rows_cnt <= 0 or null_claude < rows_cnt
@@ -1945,7 +1958,8 @@ def _verify_sina_score_result(started_at, finished_at, run_options=None):
         lines.append(
             "result="
             + ("PASS" if ok else "FAIL")
-            + f"; expected_score_date={expected_datestr or '-'}; latest_score_date={latest_score_datestr or '-'}"
+            + f"; expected_score_date={expected_datestr or '-'}; target_score_date={stat_datestr or '-'}; "
+            + f"latest_score_date={latest_score_datestr or '-'}"
         )
         lines.append(
             f"score_rank_daily rows={rows_cnt}, max_created={max_created or '-'}, "
@@ -2194,7 +2208,11 @@ def _verify_trusted_strategy_performance_review_result(started_at, finished_at, 
             and rolling_3m.get("total_return") is not None
             and rolling_3m.get("max_drawdown") is not None
         )
-        notify_ok = payload.get("notify_result") == "ok"
+        historical_safe = bool((run_options or {}).get("historical_safe"))
+        historical_reissue = bool((run_options or {}).get("historical_reissue"))
+        notification_expected = not historical_safe or historical_reissue
+        notify_result = payload.get("notify_result")
+        notify_ok = notify_result == "ok" if notification_expected else notify_result in (None, "skipped")
         ok = bool(json_ok and md_ok and strategy_ok and date_ok and summary_ok and rolling_3m_ok and notify_ok)
         lines.append(
             "result="
@@ -2203,7 +2221,8 @@ def _verify_trusted_strategy_performance_review_result(started_at, finished_at, 
         )
         lines.append(
             f"date_ok={date_ok}; strategy_ok={strategy_ok}; summary_ok={summary_ok}; "
-            f"rolling_3m_ok={rolling_3m_ok}; notify_ok={notify_ok}; markdown_exists={md_ok}"
+            f"rolling_3m_ok={rolling_3m_ok}; notification_expected={notification_expected}; "
+            f"notify_result={notify_result or '-'}; notify_ok={notify_ok}; markdown_exists={md_ok}"
         )
         if rolling_3m:
             lines.append(
@@ -3361,8 +3380,9 @@ def _build_task_script_parts(task_name, run_options=None):
             '--max-total-positions',
             str(TRUSTED_PRODUCTION_CONFIG["max_total_positions"]),
             '--write-db',
-            '--notify-feishu',
         ]
+        if not historical_safe or historical_reissue:
+            args.append('--notify-feishu')
         args.append('--no-emit-orders' if historical_safe else '--emit-orders')
         if historical_safe:
             args.append('--write-signal-snapshot')
@@ -3377,8 +3397,10 @@ def _build_task_script_parts(task_name, run_options=None):
         args = [
             '--strategy-id', TRUSTED_PRODUCTION_STRATEGY,
             '--release-id', release_id,
-            '--write-db', '--notify-feishu', '--allow-empty',
+            '--write-db', '--allow-empty',
         ]
+        if not historical_safe or historical_reissue:
+            args.append('--notify-feishu')
         if datestr:
             args.extend(['--execution-date', datestr])
         if historical_reissue:
@@ -3390,7 +3412,9 @@ def _build_task_script_parts(task_name, run_options=None):
             args.extend(['--date', datestr])
         return [script, *args]
     if task_name == 'trusted_strategy_performance_review':
-        args = ['--notify-feishu', '--review-window-days', '63']
+        args = ['--review-window-days', '63']
+        if not historical_safe or historical_reissue:
+            args.append('--notify-feishu')
         if datestr:
             args.extend(['--date', datestr])
         if historical_reissue:

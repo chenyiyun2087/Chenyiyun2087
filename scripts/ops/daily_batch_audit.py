@@ -200,9 +200,26 @@ def _recovered_artifact(cursor, task_name: str, business_date: str) -> str | Non
         if candidate_count > 0 and signal_count > 0:
             return f"补跑产物已核验：生产候选 {candidate_count} 行，每日信号 {signal_count} 行"
         return None
+    if task_name == "sina_score":
+        cursor.execute(
+            """SELECT COUNT(*) AS c,
+                      COALESCE(SUM(score IS NULL), 0) AS null_score,
+                      COALESCE(SUM(opt_score IS NULL), 0) AS null_opt,
+                      COALESCE(SUM(claude_score IS NULL), 0) AS null_claude
+               FROM chenyiyun.score_rank_daily
+               WHERE trade_date=STR_TO_DATE(%s, '%%Y%%m%%d')""",
+            (business_date,),
+        )
+        row = cursor.fetchone() or {}
+        count = int(row.get("c") or 0)
+        nulls = sum(int(row.get(key) or 0) for key in ("null_score", "null_opt", "null_claude"))
+        if count > 0 and nulls == 0:
+            return f"补跑产物已核验：全市场评分 {count} 行，核心评分字段完整"
+        return None
     checks = {
         "adc_bs_detect": (
-            "SELECT COUNT(*) AS c FROM chenyiyun.bs_detection_results WHERE batch_date=%s",
+            """SELECT COUNT(*) AS c FROM chenyiyun.bs_detection_results
+               WHERE batch_date=%s AND batch_name='ml_detect_v3'""",
             "B/S检测结果",
         ),
     }
