@@ -4,6 +4,7 @@ from datetime import date
 
 import pandas as pd
 
+from scripts.ops import data_readiness_gate
 from scripts.ops.data_readiness_gate import PipelineReadinessGate
 from scripts.ops.market_regime import apply_state_switch_constraints, build_market_regime_decision
 from scripts.ops.production_config import load_production_config
@@ -99,6 +100,25 @@ def test_pipeline_readiness_blocks_when_any_critical_link_fails(monkeypatch):
     assert result["status"] == "BLOCKED"
     assert result["passed"] is False
     assert result["failed_critical"] == ["scoring_complete"]
+
+
+def test_pipeline_scoring_status_matches_allowed_historical_pass(monkeypatch):
+    class FakePostScoreGate:
+        def __init__(self, engine):
+            self.engine = engine
+
+        def all_checks(self, target_date):
+            return {"status": "BLOCKED", "failed_critical": ["score_date_matches"]}
+
+    monkeypatch.setattr(data_readiness_gate, "PostScoreGate", FakePostScoreGate)
+    gate = PipelineReadinessGate(engine=object())
+
+    result = gate.check_scoring_complete(date(2026, 7, 7), allow_historical=True)
+
+    assert result["passed"] is True
+    assert result["status"] == "READY_WITH_ALLOWED_HISTORICAL"
+    assert result["original_status"] == "BLOCKED"
+    assert result["allowed_failures"] == ["score_date_matches"]
 
 
 def test_strategy_spec_candidate_pool_metadata_preserves_trusted_filter():

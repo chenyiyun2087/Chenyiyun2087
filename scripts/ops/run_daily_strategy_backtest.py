@@ -29,6 +29,7 @@ FIXED_START_DATE = "2025-09-01"
 # Strategies that do NOT require corporate-action / lifecycle snapshots.
 # These are the 4 strategies the downstream performance review consumes.
 DAILY_STRATEGIES = (
+    "production_governed_vol_position,"
     "production_governed_vol_position_v1_2b_dynamic_score,"
     "production_governed_vol_position_v1_2b_execution_safe_uplift,"
     "adaptive_market_style,"

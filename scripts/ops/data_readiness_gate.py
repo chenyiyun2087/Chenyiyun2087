@@ -617,15 +617,24 @@ class PipelineReadinessGate:
 
     def check_scoring_complete(self, target_date: date, *, allow_historical: bool = False) -> dict[str, Any]:
         result = PostScoreGate(self._engine).all_checks(target_date)
-        failed = set(result.get("failed_critical") or [])
+        original_failed = set(result.get("failed_critical") or [])
+        failed = set(original_failed)
+        allowed_failures: list[str] = []
         if allow_historical:
-            failed.discard("score_date_matches")
+            if "score_date_matches" in failed:
+                allowed_failures.append("score_date_matches")
+                failed.discard("score_date_matches")
         blocking = [item for item in ("score_date_matches", "score_null_rates", "candidate_pool_size") if item in failed]
+        status = result.get("status")
+        if not blocking:
+            status = "READY_WITH_ALLOWED_HISTORICAL" if allowed_failures else "READY"
         return {
             "check": "scoring_complete",
             "passed": not blocking,
             "severity": "critical",
-            "status": result.get("status"),
+            "status": status,
+            "original_status": result.get("status"),
+            "allowed_failures": allowed_failures,
             "failed": blocking,
         }
 

@@ -65,7 +65,16 @@ def test_format_feishu_promotes_recent_three_month_metrics():
         "params": {"review_date": "2026-06-24"},
         "backtests": {
             "primary": {
-                "summary": {"total_return": 0.2, "annualized_return": 0.1, "max_drawdown": -0.08, "final_equity": 600000},
+                "resolved_strategy": "production_governed_vol_position",
+                "summary": {
+                    "first_date": "2026-01-01",
+                    "last_date": "2026-06-24",
+                    "trading_days": 100,
+                    "total_return": 0.2,
+                    "annualized_return": 0.1,
+                    "max_drawdown": -0.08,
+                    "final_equity": 600000,
+                },
                 "rolling_window_3m": {
                     "status": "PASS",
                     "window_start": "2026-03-24",
@@ -86,7 +95,14 @@ def test_format_feishu_promotes_recent_three_month_metrics():
                 },
             },
             "adaptive_market_style_v22": {
-                "summary": {"total_return": 0.12, "annualized_return": 0.08, "max_drawdown": -0.05}
+                "summary": {
+                    "first_date": "2026-01-01",
+                    "last_date": "2026-06-24",
+                    "trading_days": 100,
+                    "total_return": 0.12,
+                    "annualized_return": 0.08,
+                    "max_drawdown": -0.05,
+                }
             },
         },
         "current": {
@@ -97,7 +113,7 @@ def test_format_feishu_promotes_recent_three_month_metrics():
             "live": {"snapshot": {}, "warnings": []},
             "candidates": [{"rank_no": 1, "symbol": "000001", "stock_name": "A", "industry": "测试", "effective_weight": 0.7}],
         },
-        "judgement": {"decision": "继续运行"},
+        "judgement": {"decision": "继续运行", "risk_governor": {"risk_governor_version": "v1", "target_position_ratio": 0.5}},
         "outputs": {"markdown_path": "/tmp/review.md"},
     }
 
@@ -106,6 +122,9 @@ def test_format_feishu_promotes_recent_three_month_metrics():
     assert "最近3个月收益评估" in text
     assert "交易日 63/63" in text
     assert "收益 6.00%" in text
+    assert "实际回测策略" in text
+    assert "当前回测窗口收益/回撤" in text
+    assert "主策略三年" not in text
 
 
 def test_task_command_includes_notify_and_review_window():

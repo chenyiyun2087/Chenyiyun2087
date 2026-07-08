@@ -165,6 +165,7 @@ def build_risk_governor_decision(
         "market_state": str(adaptive.get("market_state") or adaptive.get("index_bucket") or ""),
         "industry_state": industry_state,
         "shadow_state": str(shadow.get("latest_status") or "unknown"),
+        "risk_governor_version": "v1",
     }
 
 

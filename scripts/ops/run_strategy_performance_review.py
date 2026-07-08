@@ -563,7 +563,7 @@ def _load_production_risk_decision(engine, review_date: str) -> dict:
         "chenyiyun.ads_production_risk_decisions",
         [
             "trade_date", "risk_decision", "target_position_ratio", "fallback_strategy",
-            "allow_new_buys", "reasons_json", "created_at",
+            "allow_new_buys", "reasons_json", "risk_governor_version", "created_at",
         ],
     )
     frame = _read_sql(
@@ -787,6 +787,21 @@ def _summarize_orders(orders: pd.DataFrame) -> dict:
     }
 
 
+def _backtest_window_label(summary: dict) -> str:
+    start = summary.get("first_date") or "-"
+    end = summary.get("last_date") or "-"
+    days = summary.get("trading_days")
+    try:
+        days_text = f"{int(days)}个交易日"
+    except Exception:
+        days_text = "交易日数未知"
+    return f"{start}~{end}（{days_text}）"
+
+
+def _primary_backtest_strategy(backtests: dict) -> str:
+    return str(backtests.get("primary", {}).get("resolved_strategy") or DEFAULT_STRATEGY)
+
+
 def _build_decision(backtests: dict, shadow_summary: dict, shadow_history: dict, live: dict, candidate_params: dict, risk_decision_row: dict | None = None) -> dict:
     primary = backtests["primary"]["summary"]
     adaptive = backtests["adaptive_market_style_v22"]["summary"]
@@ -811,13 +826,14 @@ def _build_decision(backtests: dict, shadow_summary: dict, shadow_history: dict,
             "fallback_strategy": risk_decision_row.get("fallback_strategy"),
             "allow_new_buys": bool(risk_decision_row.get("allow_new_buys", True)),
             "reasons": risk_decision_row.get("reasons") or [],
+            "risk_governor_version": risk_decision_row.get("risk_governor_version") or "v1",
         }
     else:
         governor = build_risk_governor_decision(PRODUCTION_CONFIG, adaptive_state, shadow_history)
-    decision = "继续运行70%主推送，但不升仓；保留 adaptive_market_style v2.2 作为风控锚"
+    decision = "继续运行飞书订单草案但不升仓；保留 adaptive_market_style v2.2 作为风控锚"
     reasons = [
-        f"主策略三年累计{_pct(primary.get('total_return'))}，近1年弹性强，但最大回撤{_pct(primary_mdd)}偏深。",
-        f"adaptive_market_style v2.2三年回撤{_pct(adaptive_mdd)}，长期风险收益更稳，适合做降风险参照。",
+        f"主策略当前回测窗口（{_backtest_window_label(primary)}）累计{_pct(primary.get('total_return'))}，最大回撤{_pct(primary_mdd)}。",
+        f"adaptive_market_style v2.2同窗回撤{_pct(adaptive_mdd)}，适合做降风险参照。",
     ]
     if blocked:
         decision = "继续运行但需人工复核不可成交订单；若连续出现成交受阻，降到 defensive 或降低仓位"
@@ -844,6 +860,9 @@ def _format_feishu(payload: dict) -> str:
     primary = bt["primary"]["summary"]
     rolling = bt["primary"].get("rolling_window_3m") or {}
     adaptive = bt["adaptive_market_style_v22"]["summary"]
+    primary_strategy = _primary_backtest_strategy(bt)
+    primary_window = _backtest_window_label(primary)
+    adaptive_window = _backtest_window_label(adaptive)
     candidate_summary = payload["current"]["candidate_summary"]
     order_summary = payload["current"]["order_summary"]
     shadow = payload["current"].get("shadow_summary") or {}
@@ -855,6 +874,8 @@ def _format_feishu(payload: dict) -> str:
         "【核心精选策略收益评估】",
         f"日期：{payload['params']['review_date']}",
         strategy_identity_block(),
+        f"实际回测策略：{strategy_display_name(primary_strategy, include_id=True)}",
+        f"风险总闸版本：{decision.get('risk_governor', {}).get('risk_governor_version') or 'v1'} / 目标仓位 {_pct(decision.get('risk_governor', {}).get('target_position_ratio'))}",
         f"结论：{decision['decision']}",
         "",
         "最近3个月收益评估：",
@@ -862,9 +883,9 @@ def _format_feishu(payload: dict) -> str:
         f"- 收益 {_pct(rolling.get('total_return'))}，年化 {_pct(rolling.get('annualized_return'))}，最大回撤 {_pct(rolling.get('max_drawdown'))}，当前回撤 {_pct(rolling.get('current_drawdown'))}",
         f"- 胜率 {_pct(rolling.get('win_rate'))}，最差单日 {_pct(rolling.get('worst_day'))}，波动率 {_pct(rolling.get('volatility'))}，Sharpe {_num(rolling.get('sharpe'))}，Calmar {_num(rolling.get('calmar'))}，平均暴露 {_pct(rolling.get('avg_gross_exposure'))}",
         "",
-        "长期收益/回撤：",
-        f"- 主策略三年：累计{_pct(primary.get('total_return'))}，年化{_pct(primary.get('annualized_return'))}，最大回撤{_pct(primary.get('max_drawdown'))}，期末权益{_money(primary.get('final_equity'))}",
-        f"- 风控影子v2.2：累计{_pct(adaptive.get('total_return'))}，年化{_pct(adaptive.get('annualized_return'))}，最大回撤{_pct(adaptive.get('max_drawdown'))}",
+        "当前回测窗口收益/回撤：",
+        f"- 主策略窗口 {primary_window}：累计{_pct(primary.get('total_return'))}，年化{_pct(primary.get('annualized_return'))}，最大回撤{_pct(primary.get('max_drawdown'))}，期末权益{_money(primary.get('final_equity'))}",
+        f"- 风控影子v2.2窗口 {adaptive_window}：累计{_pct(adaptive.get('total_return'))}，年化{_pct(adaptive.get('annualized_return'))}，最大回撤{_pct(adaptive.get('max_drawdown'))}",
         "",
         "当前运行：",
         f"- 候选 {candidate_summary['rows']} 只，目标仓位合计{_pct(candidate_summary.get('weight_sum'))}；行业："
@@ -923,6 +944,9 @@ def _format_markdown(payload: dict) -> str:
     primary = bt["primary"]["summary"]
     rolling = bt["primary"].get("rolling_window_3m") or {}
     adaptive = bt["adaptive_market_style_v22"]["summary"]
+    primary_strategy = _primary_backtest_strategy(bt)
+    primary_window = _backtest_window_label(primary)
+    adaptive_window = _backtest_window_label(adaptive)
     current = payload["current"]
     shadow_history = current.get("shadow_history") or {}
     lines = [
@@ -940,6 +964,7 @@ def _format_markdown(payload: dict) -> str:
             "",
             f"- 风险档：`{DEFAULT_RISK_PROFILE}`",
             f"- 主策略：`{DEFAULT_STRATEGY}`",
+            f"- 实际回测策略：`{primary_strategy}`",
             f"- TopN：{DEFAULT_TOP_N}；总持仓上限：{DEFAULT_MAX_TOTAL_POSITIONS}；持有期：{DEFAULT_HOLD_DAYS} 个交易日；默认仓位：{_pct(DEFAULT_POSITION_RATIO)}",
             f"- 配置文件：`{PRODUCTION_CONFIG.get('config_path')}`",
             "- 回测口径：T 日信号、T+1 执行、账户级、初始资金 50 万，成本/滑点沿用既有回测导出。",
@@ -952,19 +977,19 @@ def _format_markdown(payload: dict) -> str:
             f"- 胜率：{_pct(rolling.get('win_rate'))}；最差单日：{_pct(rolling.get('worst_day'))}；波动率：{_pct(rolling.get('volatility'))}；Sharpe：{_num(rolling.get('sharpe'))}；Calmar：{_num(rolling.get('calmar'))}；平均暴露：{_pct(rolling.get('avg_gross_exposure'))}",
             *[f"- 数据提醒：{warning}" for warning in rolling.get("warnings", [])],
             "",
-            "## 历史回测",
+            "## 当前回测窗口",
             "",
             "|策略|区间|期末权益|累计收益|年化收益|最大回撤|平均暴露|交易数|",
             "|---|---|---:|---:|---:|---:|---:|---:|",
-            f"|主策略 vol_position|{primary.get('first_date')}~{primary.get('last_date')}|{_money(primary.get('final_equity'))}|{_pct(primary.get('total_return'))}|{_pct(primary.get('annualized_return'))}|{_pct(primary.get('max_drawdown'))}|{_pct(primary.get('avg_gross_exposure'))}|{primary.get('trade_count')}|",
-            f"|adaptive_market_style v2.2|{adaptive.get('first_date')}~{adaptive.get('last_date')}|{_money(adaptive.get('final_equity'))}|{_pct(adaptive.get('total_return'))}|{_pct(adaptive.get('annualized_return'))}|{_pct(adaptive.get('max_drawdown'))}|{_pct(adaptive.get('avg_gross_exposure'))}|{adaptive.get('trade_count')}|",
+            f"|主策略窗口（{primary_strategy}）|{primary_window}|{_money(primary.get('final_equity'))}|{_pct(primary.get('total_return'))}|{_pct(primary.get('annualized_return'))}|{_pct(primary.get('max_drawdown'))}|{_pct(primary.get('avg_gross_exposure'))}|{primary.get('trade_count')}|",
+            f"|adaptive_market_style v2.2窗口|{adaptive_window}|{_money(adaptive.get('final_equity'))}|{_pct(adaptive.get('total_return'))}|{_pct(adaptive.get('annualized_return'))}|{_pct(adaptive.get('max_drawdown'))}|{_pct(adaptive.get('avg_gross_exposure'))}|{adaptive.get('trade_count')}|",
             "",
             "### 主策略近期窗口",
             "",
         ]
     )
     lines.extend(_markdown_table(bt["primary"]["windows"], [("窗口", "window"), ("起始", "window_start"), ("结束", "window_end"), ("收益", "total_return"), ("最大回撤", "max_drawdown"), ("平均暴露", "avg_gross_exposure")]))
-    lines.extend(["", "### 3个月双系统对照", ""])
+    lines.extend(["", "### 策略同窗对照", ""])
     lines.extend(_markdown_table(bt["dual_system_3m_compare"], [("策略", "strategy"), ("收益", "total_return"), ("年化", "annualized_return"), ("最大回撤", "max_drawdown"), ("平均暴露", "avg_gross_exposure"), ("交易数", "trade_count")]))
     lines.extend(["", "## 当前候选与订单", ""])
     lines.extend(_markdown_table(current["candidates"][:10], [("排名", "rank_no"), ("代码", "symbol"), ("名称", "stock_name"), ("行业", "industry"), ("权重", "effective_weight")]))

@@ -5,8 +5,10 @@ import pandas as pd
 from scripts.ops import export_trusted_strategy_candidates as export_candidates_mod
 from scripts.ops.export_trusted_strategy_candidates import (
     _apply_risk_profile_defaults,
+    _build_canary_orders,
     _build_rebalance_orders,
     _check_candidate_tradability,
+    _format_order_notification,
 )
 from scripts.ops.production_config import load_production_config
 from scripts.research_trusted_strategy_account_backtest import (
@@ -104,6 +106,98 @@ def test_rebalance_orders_effective_weight_uses_total_account_equity():
     assert orders.iloc[0]["side"] == "BUY"
     assert orders.iloc[0]["allocated_shares"] == 70000
     assert orders.iloc[0]["allocated_shares"] * orders.iloc[0]["price"] == 700000.0
+
+
+def test_canary_orders_use_independent_small_capital_base():
+    candidates = pd.DataFrame(
+        [
+            {
+                "signal_date": "2026-07-07",
+                "symbol": "000001",
+                "name": "A",
+                "effective_weight": 0.25,
+                "latest_close": 10.0,
+                "strategy": "production_governed_vol_position",
+            },
+            {
+                "signal_date": "2026-07-07",
+                "symbol": "000002",
+                "name": "B",
+                "effective_weight": 0.25,
+                "latest_close": 20.0,
+                "strategy": "production_governed_vol_position",
+            },
+        ]
+    )
+
+    orders = _build_canary_orders(
+        candidates,
+        total_equity=100_000.0,
+        lot_size=100,
+        min_trade_value=100.0,
+        allow_new_buys=True,
+        min_holding_days=10,
+        max_total_positions=5,
+    )
+
+    assert not orders.empty
+    assert set(orders["side"]) == {"BUY"}
+    assert (orders["allocated_shares"] * orders["price"]).sum() <= 50_000.0
+    assert orders.attrs["max_total_positions"] == 5
+
+
+def test_order_notification_shows_governor_version_and_canary_preview():
+    candidates = pd.DataFrame(
+        [
+            {
+                "rank": 1,
+                "symbol": "000001",
+                "name": "A",
+                "effective_weight": 0.5,
+                "rank_score": 90,
+            }
+        ]
+    )
+    candidates.attrs["risk_governor"] = {
+        "risk_decision": "reduce_position",
+        "risk_governor_version": "v1",
+        "target_position_ratio": 0.5,
+        "allow_new_buys": True,
+        "reasons": ["shadow_validation_reduce"],
+    }
+    orders = pd.DataFrame(
+        [
+            {
+                "side": "BUY",
+                "ts_code": "000001",
+                "stock_name": "A",
+                "delta_shares": 1000,
+                "allocated_shares": 1000,
+                "price": 10.0,
+            }
+        ]
+    )
+    orders.attrs["hold_gate_min_days"] = 10
+    orders.attrs["hold_gate_locked_symbols"] = []
+    orders.attrs["max_total_positions"] = 5
+    orders.attrs["position_cap_skipped_symbols"] = []
+    canary_orders = orders.copy()
+
+    text = _format_order_notification(
+        asof_date="2026-07-07",
+        strategy="production_governed_vol_position",
+        candidates=candidates,
+        orders=orders,
+        files={"markdown": "/tmp/candidates.md"},
+        total_equity_used=500_000.0,
+        canary_orders=canary_orders,
+        canary_total_equity=100_000.0,
+        canary_orders_path="/tmp/canary.csv",
+    )
+
+    assert "风险总闸：版本=v1；reduce_position" in text
+    assert "Canary人工试运行：资金基数=100,000.00" in text
+    assert "仅人工确认，不写入正式订单表" in text
 
 
 def test_rebalance_orders_freeze_buy_keeps_sells_only():

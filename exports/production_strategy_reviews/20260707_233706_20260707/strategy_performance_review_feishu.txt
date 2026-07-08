@@ -1,0 +1,32 @@
+【核心精选策略收益评估】
+日期：2026-07-07
+生产策略：production_governed_vol_position
+选股内核：流动性质量稳健策略（波动仓位）（baseline_full_liquidity_detail_vol_position）
+风险档位：adaptive / 当前目标仓位 70%
+结论：风险总闸触发：reduce_position，目标仓位 50.00%
+
+最近3个月收益评估：
+- 状态：PASS；区间 2026-04-03~2026-07-07，交易日 63/63
+- 收益 31.21%，年化 201.68%，最大回撤 -10.58%，当前回撤 -10.58%
+- 胜率 58.06%，最差单日 -8.10%，波动率 41.19%，Sharpe 2.89，Calmar 19.05，平均暴露 65.39%
+
+长期收益/回撤：
+- 主策略三年：累计41.07%，年化53.94%，最大回撤-13.12%，期末权益705,364
+- 风控影子v2.2：累计22.92%，年化29.52%，最大回撤-14.50%
+
+当前运行：
+- 候选 5 只，目标仓位合计50.00%；行业：半导体3只、IT设备1只、机械基件1只
+- 订单 2 笔（BUY 2 / SELL 0），计划金额 146,747
+- 影子盘：可成交 2 / 不可成交 0，均值滑点 -681.7 bps；验收 fail / reduce_position
+- 最近影子盘：fail_streak 1，worst_action reduce_position
+- 实盘快照：总权益 500,000，现金 500,000，持仓市值 0，日收益 0.00%
+- 数据提醒：live_positions is empty; live realized strategy trend cannot be judged
+
+Top5：
+- 1. 002371 北方华创 半导体 权重16.27%
+- 2. 688120 华海清科 半导体 权重4.17%
+- 3. 000938 紫光股份 IT设备 权重13.36%
+- 4. 688766 普冉股份 半导体 权重7.72%
+- 5. 688017 绿的谐波 机械基件 权重8.48%
+
+报告：/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260707_233706_20260707/strategy_performance_review.md

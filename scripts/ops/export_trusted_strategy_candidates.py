@@ -628,6 +628,9 @@ def _format_order_notification(
     health_grade: str = "UNKNOWN",
     health_date: str = "",
     manual_confirmation_required: bool = False,
+    canary_orders: pd.DataFrame | None = None,
+    canary_total_equity: float | None = None,
+    canary_orders_path: str | None = None,
 ) -> str:
     strategy_name = strategy_display_name(strategy)
     buy_orders = orders[orders["side"].eq("BUY")] if not orders.empty else pd.DataFrame()
@@ -707,6 +710,7 @@ def _format_order_notification(
             [
                 "",
                 "风险总闸："
+                f"版本={governor.get('risk_governor_version') or 'v1'}；"
                 f"{governor.get('risk_decision') or '-'}；"
                 f"目标仓位={float(governor.get('target_position_ratio') or 0):.0%}；"
                 f"允许新买入={'是' if governor.get('allow_new_buys', True) else '否'}",
@@ -714,6 +718,24 @@ def _format_order_notification(
         )
         if governor.get("reasons"):
             lines.append("风险原因：" + " / ".join(str(item) for item in governor.get("reasons")[:5]))
+    canary_orders = canary_orders if canary_orders is not None else pd.DataFrame()
+    if canary_total_equity is not None:
+        canary_buy = canary_orders[canary_orders["side"].eq("BUY")] if not canary_orders.empty else pd.DataFrame()
+        canary_notional = (
+            float((canary_buy["allocated_shares"] * canary_buy["price"]).sum()) if not canary_buy.empty else 0.0
+        )
+        lines.extend(
+            [
+                "",
+                "Canary人工试运行："
+                f"资金基数={float(canary_total_equity):,.2f}；"
+                f"订单{len(canary_orders)}笔；"
+                f"计划买入={canary_notional:,.2f}；"
+                "仅人工确认，不写入正式订单表",
+            ]
+        )
+        if canary_orders_path:
+            lines.append(f"Canary订单：{canary_orders_path}")
     lines = [line for line in lines if line]
     if strategy_order_details:
         lines.extend(["", "策略订单对照："])
@@ -1572,6 +1594,44 @@ def _build_rebalance_orders(
     return out
 
 
+def _resolve_canary_total_equity(args: argparse.Namespace) -> float:
+    raw = getattr(args, "canary_total_equity", None)
+    if raw is not None:
+        return float(raw)
+    canary = dict(PRODUCTION_CONFIG.get("live_canary") or {})
+    return float(canary.get("max_capital") or 100_000.0)
+
+
+def _build_canary_orders(
+    candidates: pd.DataFrame,
+    *,
+    total_equity: float,
+    lot_size: int,
+    min_trade_value: float,
+    allow_new_buys: bool,
+    min_holding_days: int,
+    max_total_positions: int,
+) -> pd.DataFrame:
+    """Build a separate manual canary order preview from a clean canary book.
+
+    This does not write to the production order table. It scales the final,
+    risk-governed candidate weights to the canary capital base so operators do
+    not accidentally reuse the full production/research notional.
+    """
+    return _build_rebalance_orders(
+        candidates=candidates,
+        positions={},
+        latest_price_lookup={},
+        total_equity=float(total_equity),
+        lot_size=lot_size,
+        min_trade_value=min_trade_value,
+        include_sells=False,
+        allow_new_buys=allow_new_buys,
+        min_holding_days=min_holding_days,
+        max_total_positions=max_total_positions,
+    )
+
+
 def _db_float(value) -> float | None:
     value = _safe_float(value)
     if value is None:
@@ -1958,6 +2018,7 @@ def _write_production_risk_decision(
             risk_profile VARCHAR(32) NOT NULL,
             primary_strategy VARCHAR(96) NOT NULL,
             risk_decision VARCHAR(32) NOT NULL,
+            risk_governor_version VARCHAR(32) NULL,
             target_position_ratio DOUBLE NULL,
             fallback_strategy VARCHAR(96) NULL,
             allow_new_buys TINYINT(1) NOT NULL DEFAULT 1,
@@ -1977,6 +2038,7 @@ def _write_production_risk_decision(
         "risk_profile": params.get("risk_profile"),
         "primary_strategy": PRODUCTION_CONFIG["primary_strategy"],
         "risk_decision": governor.get("risk_decision") or "normal",
+        "risk_governor_version": governor.get("risk_governor_version") or "v1",
         "target_position_ratio": float(governor.get("target_position_ratio") or params.get("target_position_ratio") or 0.0),
         "fallback_strategy": governor.get("fallback_strategy"),
         "allow_new_buys": int(bool(governor.get("allow_new_buys", True))),
@@ -1989,21 +2051,25 @@ def _write_production_risk_decision(
     }
     with engine.begin() as conn:
         conn.execute(create_sql)
+        existing_cols = _columns_for_table(engine, table)
+        if "risk_governor_version" not in existing_cols:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN risk_governor_version VARCHAR(32) NULL AFTER risk_decision"))
         result = conn.execute(
             text(
                 f"""
                 INSERT INTO {table}
-                    (trade_date, risk_profile, primary_strategy, risk_decision, target_position_ratio,
+                    (trade_date, risk_profile, primary_strategy, risk_decision, risk_governor_version, target_position_ratio,
                      fallback_strategy, allow_new_buys, reasons_json, shadow_status, shadow_fail_streak,
                      shadow_worst_action, config_sha, output_json_path)
                 VALUES
-                    (:trade_date, :risk_profile, :primary_strategy, :risk_decision, :target_position_ratio,
+                    (:trade_date, :risk_profile, :primary_strategy, :risk_decision, :risk_governor_version, :target_position_ratio,
                      :fallback_strategy, :allow_new_buys, :reasons_json, :shadow_status, :shadow_fail_streak,
                      :shadow_worst_action, :config_sha, :output_json_path)
                 ON DUPLICATE KEY UPDATE
                     risk_profile=VALUES(risk_profile),
                     primary_strategy=VALUES(primary_strategy),
                     risk_decision=VALUES(risk_decision),
+                    risk_governor_version=VALUES(risk_governor_version),
                     target_position_ratio=VALUES(target_position_ratio),
                     fallback_strategy=VALUES(fallback_strategy),
                     allow_new_buys=VALUES(allow_new_buys),
@@ -2382,6 +2448,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
         "allow_model_risk_fields": bool(PRODUCTION_CONFIG["allow_model_risk_fields"]),
         "shadow_validation": dict(PRODUCTION_CONFIG["shadow_validation"]),
         "risk_decision": risk_governor.get("risk_decision") if risk_governor else None,
+        "risk_governor_version": risk_governor.get("risk_governor_version") if risk_governor else None,
         "risk_decision_reasons": list(risk_governor.get("reasons") or []) if risk_governor else [],
         "risk_fallback_strategy": risk_governor.get("fallback_strategy") if risk_governor else None,
         "allow_new_buys": bool(risk_governor.get("allow_new_buys", True)) if risk_governor else True,
@@ -2471,6 +2538,9 @@ def export_candidates(args: argparse.Namespace) -> dict:
         raise RuntimeError(f"Pipeline readiness blocked order draft generation: {failed}")
     files = _write_outputs(out_dir, candidates, factor_weights, market_env, params, warnings)
     db_write: dict[str, object] = {}
+    canary_orders = pd.DataFrame()
+    canary_total_equity: float | None = None
+    canary_order_path: Path | None = None
     if args.write_db:
         db_write["candidate_rows"] = _write_candidates_to_db(
             engine,
@@ -2551,7 +2621,22 @@ def export_candidates(args: argparse.Namespace) -> dict:
         )
         order_path = out_dir / "trusted_strategy_orders.csv"
         orders.to_csv(order_path, index=False)
+        canary_total_equity = _resolve_canary_total_equity(args)
+        canary_orders = _build_canary_orders(
+            candidates,
+            total_equity=canary_total_equity,
+            lot_size=args.lot_size,
+            min_trade_value=args.min_trade_value,
+            allow_new_buys=bool(risk_governor.get("allow_new_buys", True)) if risk_governor else True,
+            min_holding_days=args.hold_days,
+            max_total_positions=args.max_total_positions,
+        )
+        canary_order_path = out_dir / "trusted_strategy_canary_orders.csv"
+        canary_orders.to_csv(canary_order_path, index=False)
         db_write["orders_csv"] = str(order_path)
+        db_write["canary_orders_csv"] = str(canary_order_path)
+        db_write["canary_total_equity"] = canary_total_equity
+        db_write["canary_order_rows"] = int(len(canary_orders))
         db_write["total_equity_used"] = total_equity
         db_write["target_position_ratio"] = float(target_position_ratio)
         db_write["order_rows"] = int(len(orders))
@@ -2893,6 +2978,9 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 health_grade=getattr(args, "health_grade", "UNKNOWN"),
                 health_date=getattr(args, "health_date", ""),
                 manual_confirmation_required=getattr(args, "manual_confirmation", False),
+                canary_orders=canary_orders,
+                canary_total_equity=canary_total_equity,
+                canary_orders_path=str(canary_order_path) if canary_order_path else None,
             )
             if getattr(args, "historical_reissue", False):
                 content = "【历史补发】\n" + content
@@ -2926,6 +3014,9 @@ def export_candidates(args: argparse.Namespace) -> dict:
             health_grade=getattr(args, "health_grade", "UNKNOWN"),
             health_date=getattr(args, "health_date", ""),
             manual_confirmation_required=getattr(args, "manual_confirmation", False),
+            canary_orders=canary_orders,
+            canary_total_equity=canary_total_equity,
+            canary_orders_path=str(canary_order_path) if canary_order_path else None,
         )
         if getattr(args, "historical_reissue", False):
             content = "【历史补发】\n" + content
@@ -2998,6 +3089,12 @@ def main() -> None:
     parser.add_argument("--order-table", default="chenyiyun.ads_local_strategy_orders")
     parser.add_argument("--signal-snapshot-table", default="chenyiyun.ads_chenyiyun_selected_signals")
     parser.add_argument("--total-equity", type=float, default=None)
+    parser.add_argument(
+        "--canary-total-equity",
+        type=float,
+        default=None,
+        help="Independent manual canary capital base for the review-only canary order CSV. Defaults to production.live_canary.max_capital.",
+    )
     parser.add_argument("--position-ratio", type=float, default=None)
     parser.add_argument("--lot-size", type=int, default=100)
     parser.add_argument("--min-trade-value", type=float, default=500.0)

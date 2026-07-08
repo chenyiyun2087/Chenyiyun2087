@@ -6,6 +6,7 @@ os.environ.setdefault("DISABLE_APP_SCHEDULER_LOOP", "1")
 from scripts.ops.production_config import load_production_config
 import web.app as web_app
 from scripts.ops import export_trusted_strategy_candidates as export_candidates
+from scripts.ops import run_daily_strategy_backtest
 from scripts.ops import run_strategy_performance_review as review
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,7 @@ def test_shared_production_defaults_are_consistent():
     assert config["primary_strategy"] == "production_governed_vol_position"
     assert config["primary_selection_strategy"] == "baseline_full_liquidity_detail_vol_position"
     assert config["research_shadow_candidate"]["enabled"] is False
+    assert config["primary_strategy"] in set(run_daily_strategy_backtest.DAILY_STRATEGIES.split(","))
 
 
 def test_strategy_registry_consistent_with_production_config():

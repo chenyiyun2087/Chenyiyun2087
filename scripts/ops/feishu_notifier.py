@@ -366,12 +366,15 @@ def strategy_identity_block() -> str:
     config = load_production_config()
     governor = str(config.get("primary_strategy", "-"))
     selection = str(config.get("primary_selection_strategy", governor))
+    risk_anchor = str(config.get("shadow_risk_strategy", "-"))
+    shadow_version = str(config.get("shadow_version", "-"))
     risk_profile = str(config.get("risk_profile", "-"))
     position_ratio = config.get("position_ratio", 0.70)
 
     return (
-        f"生产策略：{strategy_display_name(governor, include_id=True)}\n"
+        f"生产外壳：{strategy_display_name(governor, include_id=True)}\n"
         f"选股内核：{strategy_display_name(selection, include_id=True)}\n"
+        f"风控锚：{strategy_display_name(risk_anchor, include_id=True)} {shadow_version}\n"
         f"风险档位：{risk_profile} / 当前目标仓位 {int(position_ratio * 100)}%"
     )
 
