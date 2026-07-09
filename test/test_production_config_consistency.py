@@ -28,7 +28,9 @@ def test_shared_production_defaults_are_consistent():
     assert config["primary_strategy"] == "production_governed_vol_position"
     assert config["primary_selection_strategy"] == "baseline_full_liquidity_detail_vol_position"
     assert config["research_shadow_candidate"]["enabled"] is False
-    assert config["primary_strategy"] in set(run_daily_strategy_backtest.DAILY_STRATEGIES.split(","))
+    daily_backtest_strategies = set(run_daily_strategy_backtest.DAILY_STRATEGIES.split(","))
+    assert config["primary_strategy"] not in daily_backtest_strategies
+    assert set(review._VOL_STRATEGY_FALLBACKS).intersection(daily_backtest_strategies)
 
 
 def test_strategy_registry_consistent_with_production_config():

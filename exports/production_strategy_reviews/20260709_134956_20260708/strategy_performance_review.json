@@ -1,0 +1,1053 @@
+{
+  "params": {
+    "review_date": "2026-07-08",
+    "risk_profile": "adaptive",
+    "strategy": "production_governed_vol_position",
+    "top_n": 5,
+    "max_total_positions": 5,
+    "position_ratio": 0.7,
+    "hold_days": 10,
+    "execution_mode": "t_plus_1_open",
+    "shadow_risk_strategy": "adaptive_market_style",
+    "shadow_version": "v2.2",
+    "config_path": "/Volumes/extension/projects/Chenyiyun2087/config/production_strategy.yaml",
+    "review_window_days": 63,
+    "generated_at": "2026-07-09 13:49:56"
+  },
+  "backtests": {
+    "source_dirs": {
+      "primary_governed": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260709_134735_974993_trusted_account_backtest",
+      "adaptive_market_style_v22": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260709_134735_974993_trusted_account_backtest",
+      "dual_system_3m": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260709_134735_974993_trusted_account_backtest"
+    },
+    "primary": {
+      "summary": {
+        "first_date": "2025-09-02",
+        "last_date": "2026-07-08",
+        "trading_days": 203,
+        "initial_cash": 500000.0,
+        "final_equity": 697321.1179650002,
+        "total_return": 0.3946422359300003,
+        "annualized_return": 0.5143314276280098,
+        "max_drawdown": -0.1312322596617282,
+        "daily_win_rate": 0.5172413793103449,
+        "best_day": 0.060760817997201,
+        "worst_day": -0.0810403787295029,
+        "avg_gross_exposure": 0.6098392469351327,
+        "avg_position_count": 4.886699507389163,
+        "trade_count": 203,
+        "buy_count": 103,
+        "sell_count": 100,
+        "stop_loss_sell_count": 0,
+        "turnover": 24.51180004734436,
+        "total_cost": 10442.482035,
+        "adaptive_switch_count": 26,
+        "adaptive_attack_days": 12,
+        "adaptive_recent_champion_days": 114,
+        "adaptive_balanced_days": 0,
+        "adaptive_robust_days": 0,
+        "adaptive_defensive_days": 76,
+        "adaptive_fallback_days": 0,
+        "dual_attack_days": 0,
+        "dual_neutral_days": 0,
+        "dual_defensive_days": 0,
+        "dual_freeze_days": 0,
+        "adaptive_avg_target_position_ratio": 0.6136138613861387,
+        "adaptive_min_target_position_ratio": 0.45,
+        "adaptive_max_target_position_ratio": 0.7999999999999999,
+        "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+        "sort_col": "adaptive",
+        "pool": "adaptive",
+        "top_n": 5,
+        "hold_days": 10,
+        "trade_cost_rate": 0.00075,
+        "slippage_rate": 0.0,
+        "lot_size": 100,
+        "min_trade_value": 500.0,
+        "max_total_positions": 5,
+        "position_ratio": 0.7,
+        "risk_profile": "adaptive",
+        "risk_profile_description": "自适应档：最近3个月收益优先选择冠军策略，并按T日市场/行业状态动态调整50%-80%仓位，强进攻阶段才短期开到进攻策略。",
+        "market_gate": false,
+        "hard_stop_loss_pct": 0.0,
+        "execution_safe_uplift_recovery_days": null,
+        "execution_safe_uplift_fallback_days": null,
+        "execution_safe_uplift_incremental_hard_block_days": null,
+        "execution_safe_uplift_preflight_unknown_days": null,
+        "execution_safe_uplift_warning_only_days": null
+      },
+      "windows": [
+        {
+          "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+          "window": "3m",
+          "window_start": "2026-04-08",
+          "window_end": "2026-07-08",
+          "trading_days": 62,
+          "initial_cash": 500000.0,
+          "window_start_equity": 561206.9587775001,
+          "window_end_equity": 697321.1179650002,
+          "total_return": 0.2425382598319934,
+          "max_drawdown": -0.1160440870213923,
+          "annualized_volatility": 0.4016380110913222,
+          "daily_win_rate": 0.5645161290322581,
+          "avg_gross_exposure": 0.652564785993072,
+          "avg_position_count": 4.82258064516129
+        },
+        {
+          "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+          "window": "6m",
+          "window_start": "2026-01-08",
+          "window_end": "2026-07-08",
+          "trading_days": 119,
+          "initial_cash": 500000.0,
+          "window_start_equity": 521170.5307825,
+          "window_end_equity": 697321.1179650002,
+          "total_return": 0.3379903060098637,
+          "max_drawdown": -0.1160440870213923,
+          "annualized_volatility": 0.3731348235602619,
+          "daily_win_rate": 0.5042016806722689,
+          "avg_gross_exposure": 0.6466437256477379,
+          "avg_position_count": 4.882352941176471
+        },
+        {
+          "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+          "window": "1y",
+          "window_start": "2025-09-02",
+          "window_end": "2026-07-08",
+          "trading_days": 203,
+          "initial_cash": 500000.0,
+          "window_start_equity": 492830.0016975,
+          "window_end_equity": 697321.1179650002,
+          "total_return": 0.4149323611857081,
+          "max_drawdown": -0.1312322596617284,
+          "annualized_volatility": 0.3328018232032525,
+          "daily_win_rate": 0.5172413793103449,
+          "avg_gross_exposure": 0.6098392469351327,
+          "avg_position_count": 4.886699507389163
+        },
+        {
+          "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+          "window": "3y",
+          "window_start": "2025-09-02",
+          "window_end": "2026-07-08",
+          "trading_days": 203,
+          "initial_cash": 500000.0,
+          "window_start_equity": 492830.0016975,
+          "window_end_equity": 697321.1179650002,
+          "total_return": 0.4149323611857081,
+          "max_drawdown": -0.1312322596617284,
+          "annualized_volatility": 0.3328018232032525,
+          "daily_win_rate": 0.5172413793103449,
+          "avg_gross_exposure": 0.6098392469351327,
+          "avg_position_count": 4.886699507389163
+        }
+      ],
+      "resolved_strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+      "rolling_window_3m": {
+        "status": "PASS",
+        "freshness_ok": true,
+        "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+        "requested_trade_days": 63,
+        "actual_trade_days": 63,
+        "window_start": "2026-04-07",
+        "window_end": "2026-07-08",
+        "review_date": "2026-07-08",
+        "total_return": 0.298015160856443,
+        "annualized_return": 1.8868713613897286,
+        "max_drawdown": -0.11604408702139235,
+        "current_drawdown": -0.11604408702139235,
+        "win_rate": 0.5806451612903226,
+        "worst_day": -0.08104037872950298,
+        "volatility": 0.4130940110303665,
+        "sharpe": 2.7764432009852547,
+        "calmar": 16.25995265956024,
+        "avg_gross_exposure": 0.6532396674633695,
+        "warnings": []
+      }
+    },
+    "primary_shadow_adaptive": {
+      "summary": {
+        "first_date": "2025-09-02",
+        "last_date": "2026-07-08",
+        "trading_days": 203,
+        "initial_cash": 500000.0,
+        "final_equity": 595460.767795,
+        "total_return": 0.19092153559,
+        "annualized_return": 0.2435581735522651,
+        "max_drawdown": -0.145024579570364,
+        "daily_win_rate": 0.541871921182266,
+        "best_day": 0.0802321985688456,
+        "worst_day": -0.0628935855378367,
+        "avg_gross_exposure": 0.3905162288457725,
+        "avg_position_count": 4.605911330049261,
+        "trade_count": 185,
+        "buy_count": 95,
+        "sell_count": 90,
+        "stop_loss_sell_count": 0,
+        "turnover": 15.895094217986813,
+        "total_cost": 6571.9522050000005,
+        "adaptive_switch_count": 26,
+        "adaptive_attack_days": 12,
+        "adaptive_recent_champion_days": 114,
+        "adaptive_balanced_days": 0,
+        "adaptive_robust_days": 0,
+        "adaptive_defensive_days": 76,
+        "adaptive_fallback_days": 0,
+        "dual_attack_days": 0,
+        "dual_neutral_days": 0,
+        "dual_defensive_days": 0,
+        "dual_freeze_days": 0,
+        "adaptive_avg_target_position_ratio": 0.4193069306930692,
+        "adaptive_min_target_position_ratio": 0.315,
+        "adaptive_max_target_position_ratio": 0.5599999999999999,
+        "strategy": "adaptive_market_style",
+        "sort_col": "adaptive",
+        "pool": "adaptive",
+        "top_n": 5,
+        "hold_days": 10,
+        "trade_cost_rate": 0.00075,
+        "slippage_rate": 0.0,
+        "lot_size": 100,
+        "min_trade_value": 500.0,
+        "max_total_positions": 5,
+        "position_ratio": 0.7,
+        "risk_profile": "adaptive",
+        "risk_profile_description": "自适应档：最近3个月收益优先选择冠军策略，并按T日市场/行业状态动态调整50%-80%仓位，强进攻阶段才短期开到进攻策略。",
+        "market_gate": false,
+        "hard_stop_loss_pct": 0.0,
+        "execution_safe_uplift_recovery_days": null,
+        "execution_safe_uplift_fallback_days": null,
+        "execution_safe_uplift_incremental_hard_block_days": null,
+        "execution_safe_uplift_preflight_unknown_days": null,
+        "execution_safe_uplift_warning_only_days": null
+      },
+      "windows": [
+        {
+          "strategy": "adaptive_market_style",
+          "window": "3m",
+          "window_start": "2026-04-08",
+          "window_end": "2026-07-08",
+          "trading_days": 62,
+          "initial_cash": 500000.0,
+          "window_start_equity": 586173.4669350001,
+          "window_end_equity": 595460.767795,
+          "total_return": 0.0158439461761406,
+          "max_drawdown": -0.1064492000906253,
+          "annualized_volatility": 0.273129485151336,
+          "daily_win_rate": 0.5645161290322581,
+          "avg_gross_exposure": 0.4342475027036264,
+          "avg_position_count": 4.67741935483871
+        },
+        {
+          "strategy": "adaptive_market_style",
+          "window": "6m",
+          "window_start": "2026-01-08",
+          "window_end": "2026-07-08",
+          "trading_days": 119,
+          "initial_cash": 500000.0,
+          "window_start_equity": 550787.9918050002,
+          "window_end_equity": 595460.767795,
+          "total_return": 0.0811070260330142,
+          "max_drawdown": -0.145024579570364,
+          "annualized_volatility": 0.2996376083186794,
+          "daily_win_rate": 0.5462184873949579,
+          "avg_gross_exposure": 0.4219561634143016,
+          "avg_position_count": 4.6722689075630255
+        },
+        {
+          "strategy": "adaptive_market_style",
+          "window": "1y",
+          "window_start": "2025-09-02",
+          "window_end": "2026-07-08",
+          "trading_days": 203,
+          "initial_cash": 500000.0,
+          "window_start_equity": 494109.972835,
+          "window_end_equity": 595460.767795,
+          "total_return": 0.2051178898059691,
+          "max_drawdown": -0.1450245795703642,
+          "annualized_volatility": 0.2787580410793809,
+          "daily_win_rate": 0.541871921182266,
+          "avg_gross_exposure": 0.3905162288457725,
+          "avg_position_count": 4.605911330049261
+        },
+        {
+          "strategy": "adaptive_market_style",
+          "window": "3y",
+          "window_start": "2025-09-02",
+          "window_end": "2026-07-08",
+          "trading_days": 203,
+          "initial_cash": 500000.0,
+          "window_start_equity": 494109.972835,
+          "window_end_equity": 595460.767795,
+          "total_return": 0.2051178898059691,
+          "max_drawdown": -0.1450245795703642,
+          "annualized_volatility": 0.2787580410793809,
+          "daily_win_rate": 0.541871921182266,
+          "avg_gross_exposure": 0.3905162288457725,
+          "avg_position_count": 4.605911330049261
+        }
+      ],
+      "resolved_strategy": "adaptive_market_style"
+    },
+    "adaptive_market_style_v22": {
+      "summary": {
+        "first_date": "2025-09-02",
+        "last_date": "2026-07-08",
+        "trading_days": 203,
+        "initial_cash": 500000.0,
+        "final_equity": 595460.767795,
+        "total_return": 0.19092153559,
+        "annualized_return": 0.2435581735522651,
+        "max_drawdown": -0.145024579570364,
+        "daily_win_rate": 0.541871921182266,
+        "best_day": 0.0802321985688456,
+        "worst_day": -0.0628935855378367,
+        "avg_gross_exposure": 0.3905162288457725,
+        "avg_position_count": 4.605911330049261,
+        "trade_count": 185,
+        "buy_count": 95,
+        "sell_count": 90,
+        "stop_loss_sell_count": 0,
+        "turnover": 15.895094217986813,
+        "total_cost": 6571.9522050000005,
+        "adaptive_switch_count": 26,
+        "adaptive_attack_days": 12,
+        "adaptive_recent_champion_days": 114,
+        "adaptive_balanced_days": 0,
+        "adaptive_robust_days": 0,
+        "adaptive_defensive_days": 76,
+        "adaptive_fallback_days": 0,
+        "dual_attack_days": 0,
+        "dual_neutral_days": 0,
+        "dual_defensive_days": 0,
+        "dual_freeze_days": 0,
+        "adaptive_avg_target_position_ratio": 0.4193069306930692,
+        "adaptive_min_target_position_ratio": 0.315,
+        "adaptive_max_target_position_ratio": 0.5599999999999999,
+        "strategy": "adaptive_market_style",
+        "sort_col": "adaptive",
+        "pool": "adaptive",
+        "top_n": 5,
+        "hold_days": 10,
+        "trade_cost_rate": 0.00075,
+        "slippage_rate": 0.0,
+        "lot_size": 100,
+        "min_trade_value": 500.0,
+        "max_total_positions": 5,
+        "position_ratio": 0.7,
+        "risk_profile": "adaptive",
+        "risk_profile_description": "自适应档：最近3个月收益优先选择冠军策略，并按T日市场/行业状态动态调整50%-80%仓位，强进攻阶段才短期开到进攻策略。",
+        "market_gate": false,
+        "hard_stop_loss_pct": 0.0,
+        "execution_safe_uplift_recovery_days": null,
+        "execution_safe_uplift_fallback_days": null,
+        "execution_safe_uplift_incremental_hard_block_days": null,
+        "execution_safe_uplift_preflight_unknown_days": null,
+        "execution_safe_uplift_warning_only_days": null
+      },
+      "windows": [
+        {
+          "strategy": "adaptive_market_style",
+          "window": "3m",
+          "window_start": "2026-04-08",
+          "window_end": "2026-07-08",
+          "trading_days": 62,
+          "initial_cash": 500000.0,
+          "window_start_equity": 586173.4669350001,
+          "window_end_equity": 595460.767795,
+          "total_return": 0.0158439461761406,
+          "max_drawdown": -0.1064492000906253,
+          "annualized_volatility": 0.273129485151336,
+          "daily_win_rate": 0.5645161290322581,
+          "avg_gross_exposure": 0.4342475027036264,
+          "avg_position_count": 4.67741935483871
+        },
+        {
+          "strategy": "adaptive_market_style",
+          "window": "6m",
+          "window_start": "2026-01-08",
+          "window_end": "2026-07-08",
+          "trading_days": 119,
+          "initial_cash": 500000.0,
+          "window_start_equity": 550787.9918050002,
+          "window_end_equity": 595460.767795,
+          "total_return": 0.0811070260330142,
+          "max_drawdown": -0.145024579570364,
+          "annualized_volatility": 0.2996376083186794,
+          "daily_win_rate": 0.5462184873949579,
+          "avg_gross_exposure": 0.4219561634143016,
+          "avg_position_count": 4.6722689075630255
+        },
+        {
+          "strategy": "adaptive_market_style",
+          "window": "1y",
+          "window_start": "2025-09-02",
+          "window_end": "2026-07-08",
+          "trading_days": 203,
+          "initial_cash": 500000.0,
+          "window_start_equity": 494109.972835,
+          "window_end_equity": 595460.767795,
+          "total_return": 0.2051178898059691,
+          "max_drawdown": -0.1450245795703642,
+          "annualized_volatility": 0.2787580410793809,
+          "daily_win_rate": 0.541871921182266,
+          "avg_gross_exposure": 0.3905162288457725,
+          "avg_position_count": 4.605911330049261
+        },
+        {
+          "strategy": "adaptive_market_style",
+          "window": "3y",
+          "window_start": "2025-09-02",
+          "window_end": "2026-07-08",
+          "trading_days": 203,
+          "initial_cash": 500000.0,
+          "window_start_equity": 494109.972835,
+          "window_end_equity": 595460.767795,
+          "total_return": 0.2051178898059691,
+          "max_drawdown": -0.1450245795703642,
+          "annualized_volatility": 0.2787580410793809,
+          "daily_win_rate": 0.541871921182266,
+          "avg_gross_exposure": 0.3905162288457725,
+          "avg_position_count": 4.605911330049261
+        }
+      ],
+      "resolved_strategy": "adaptive_market_style"
+    },
+    "dual_system_3m_compare": [
+      {
+        "strategy": "production_governed_vol_position_v1_2b_dynamic_score",
+        "first_date": "2025-09-02",
+        "last_date": "2026-07-08",
+        "final_equity": 697321.1179650002,
+        "total_return": 0.3946422359300003,
+        "annualized_return": 0.5143314276280098,
+        "max_drawdown": -0.1312322596617282,
+        "avg_gross_exposure": 0.6098392469351327,
+        "trade_count": 203
+      },
+      {
+        "strategy": "production_governed_vol_position_v1_2b_execution_safe_uplift",
+        "first_date": "2025-09-02",
+        "last_date": "2026-07-08",
+        "final_equity": 697321.1179650002,
+        "total_return": 0.3946422359300003,
+        "annualized_return": 0.5143314276280098,
+        "max_drawdown": -0.1312322596617282,
+        "avg_gross_exposure": 0.6098392469351327,
+        "trade_count": 203
+      },
+      {
+        "strategy": "adaptive_market_style",
+        "first_date": "2025-09-02",
+        "last_date": "2026-07-08",
+        "final_equity": 595460.767795,
+        "total_return": 0.19092153559,
+        "annualized_return": 0.2435581735522651,
+        "max_drawdown": -0.145024579570364,
+        "avg_gross_exposure": 0.3905162288457725,
+        "trade_count": 185
+      }
+    ]
+  },
+  "current": {
+    "candidate_meta": {
+      "latest_date": "2026-07-08",
+      "total_rows": 205
+    },
+    "candidate_params": {
+      "asof_date": "2026-07-08",
+      "start_date": "2025-11-30",
+      "history_days": 220,
+      "strategy": "production_governed_vol_position",
+      "selected_strategy": "baseline_full_liquidity",
+      "selected_strategy_display_name": "纯流动性防守策略",
+      "primary_selection_strategy": "baseline_full_liquidity_detail_vol_position",
+      "sort_col": "production_governed_vol_position:baseline_full_liquidity_detail_vol_position:liquidity_detail_score",
+      "top_n": 5,
+      "hold_days": 10,
+      "max_total_positions": 5,
+      "position_ratio": 0.7,
+      "target_position_ratio": 0.5,
+      "risk_profile": "adaptive",
+      "risk_profile_description": "收益优先主推送档：使用当前生产主策略作为进攻引擎，默认70%仓位；adaptive_market_style v2.2 保留为风控锚与仓位治理依据。",
+      "adaptive_version": "v2.2",
+      "ashare_weight_profile": null,
+      "ashare_release_tier": null,
+      "ashare_supplement_limit": null,
+      "dynamic_lookback_dates": 20,
+      "min_pool_size": 5000,
+      "score_dates": 144,
+      "score_rows": 756330,
+      "price_max_date": "2026-07-08",
+      "pit_status": "trusted",
+      "risk_note": "uses_signal_date_or_prior_data",
+      "production_config_path": "/Volumes/extension/projects/Chenyiyun2087/config/production_strategy.yaml",
+      "execution_mode": "t_plus_1_open",
+      "shadow_risk_strategy": "adaptive_market_style",
+      "shadow_version": "v2.2",
+      "allow_model_risk_fields": false,
+      "shadow_validation": {
+        "max_large_slippage_bps": 300.0,
+        "max_unfilled_ratio": 0.2,
+        "max_limit_up_buy_ratio": 0.2,
+        "max_shadow_theory_gap": 0.03,
+        "consecutive_bad_days_to_reduce": 2,
+        "consecutive_bad_days_to_defensive": 3
+      },
+      "risk_decision": "reduce_position",
+      "risk_governor_version": "v1",
+      "risk_decision_reasons": [
+        "shadow_validation_reduce"
+      ],
+      "risk_fallback_strategy": null,
+      "allow_new_buys": true,
+      "shadow_validation_state": {
+        "rows": [
+          {
+            "execution_date": "2026-07-07",
+            "validation_status": "fail",
+            "validation_actions": "reduce_position",
+            "shadow_vs_theory_gap": 0.06554613636918871
+          },
+          {
+            "execution_date": "2026-07-03",
+            "validation_status": "pass",
+            "validation_actions": "none",
+            "shadow_vs_theory_gap": 0.012880735759493667
+          },
+          {
+            "execution_date": "2026-07-02",
+            "validation_status": "fail",
+            "validation_actions": "reduce_position",
+            "shadow_vs_theory_gap": 0.07687704801253736
+          },
+          {
+            "execution_date": "2026-07-01",
+            "validation_status": "fail",
+            "validation_actions": "reduce_position",
+            "shadow_vs_theory_gap": 0.0
+          },
+          {
+            "execution_date": "2026-06-30",
+            "validation_status": "pass",
+            "validation_actions": "none",
+            "shadow_vs_theory_gap": 0.0
+          }
+        ],
+        "latest": {
+          "execution_date": "2026-07-07",
+          "validation_status": "fail",
+          "validation_actions": "reduce_position",
+          "shadow_vs_theory_gap": 0.06554613636918871
+        },
+        "fail_streak": 1,
+        "worst_action": "reduce_position",
+        "latest_status": "fail",
+        "latest_shadow_theory_gap": 0.06554613636918871
+      },
+      "market_regime_decision": {
+        "regime": "neutral",
+        "target_exposure_range": [
+          0.35,
+          0.55
+        ],
+        "allowed_pools": [
+          "liquidity_quality",
+          "repair_reversal"
+        ],
+        "attack_budget_cap": 0.0,
+        "reasons": [
+          "market_amount_ratio_20=0.80",
+          "candidate_vol_20_median=3.31%",
+          "index_bucket=index_neutral",
+          "top100_industry_weight=5.00%",
+          "neutral_rule=default_balanced_state"
+        ],
+        "confirmation_days": 2,
+        "min_hold_days_remaining": 0,
+        "raw_regime": "neutral"
+      },
+      "candidate_pool": "liquidity_quality",
+      "candidate_pool_role": "champion_core",
+      "candidate_pool_allowed_regimes": [
+        "strong_risk_on",
+        "normal_risk_on",
+        "neutral",
+        "risk_off"
+      ],
+      "candidate_pools": {
+        "liquidity_quality": {
+          "role": "champion_core",
+          "strategy": "baseline_full_liquidity_detail_vol_position",
+          "allowed_regimes": [
+            "strong_risk_on",
+            "normal_risk_on",
+            "neutral",
+            "risk_off"
+          ],
+          "order_lane": "production",
+          "max_budget_share": 0.0
+        },
+        "trend_continuation": {
+          "role": "attack_challenger",
+          "strategy": "tiered_liquidity_then_bs_v2",
+          "allowed_regimes": [
+            "strong_risk_on"
+          ],
+          "order_lane": "shadow",
+          "max_budget_share": 0.35
+        },
+        "repair_reversal": {
+          "role": "research_challenger",
+          "strategy": "repair_reversal_shadow",
+          "allowed_regimes": [
+            "neutral"
+          ],
+          "order_lane": "research",
+          "max_budget_share": 0.0
+        }
+      },
+      "portfolio_risk_budget": {
+        "max_total_exposure": 0.85,
+        "champion_default_exposure": 0.7,
+        "max_single_position_weight_pct_nav": 20.0,
+        "max_single_industry_weight_pct_nav": 40.0,
+        "max_correlated_theme_weight_pct_nav": 55.0,
+        "max_daily_new_position_pct_nav": 30.0,
+        "max_daily_turnover_pct_nav": 50.0,
+        "max_attack_pool_budget_share": 0.35
+      },
+      "challenger_lanes": {
+        "tiered_liquidity_then_bs_v2": {
+          "lane": "shadow",
+          "candidate_pool": "trend_continuation",
+          "allowed_regimes": [
+            "strong_risk_on"
+          ],
+          "max_budget_share": 0.35,
+          "require_enabled_shadow_gate": true
+        },
+        "ashare_auto_shadow": {
+          "lane": "shadow",
+          "candidate_pool": "diversification",
+          "allowed_regimes": [
+            "strong_risk_on",
+            "normal_risk_on"
+          ],
+          "max_budget_share": 0.2,
+          "require_enabled_shadow_gate": true
+        },
+        "dual_system_adaptive_route": {
+          "lane": "shadow",
+          "candidate_pool": "diversification",
+          "allowed_regimes": [
+            "strong_risk_on",
+            "normal_risk_on",
+            "neutral"
+          ],
+          "max_budget_share": 0.2,
+          "require_enabled_shadow_gate": true
+        },
+        "repair_reversal_shadow": {
+          "lane": "research",
+          "candidate_pool": "repair_reversal",
+          "allowed_regimes": [
+            "neutral"
+          ],
+          "max_budget_share": 0.0,
+          "require_enabled_shadow_gate": true
+        }
+      },
+      "pipeline_readiness_status": "READY",
+      "pipeline_readiness_evidence": "/Volumes/extension/projects/Chenyiyun2087/exports/production_candidates/20260709_134948_production_governed_vol_position/pipeline_readiness.json",
+      "market_gate": false,
+      "market_gate_triggered": false,
+      "strategy_display_name": "production_governed_vol_position",
+      "market_style_state": "defensive",
+      "style_reason": "defensive_weak_market_or_attack_industry_risk",
+      "switch_reason": "defensive_weak_market_or_attack_industry_risk",
+      "recent_champion_strategy": "baseline_full_liquidity_detail_market_gate",
+      "recent_champion_display_name": "流动性质量防守策略（市场门禁）",
+      "champion_score": 104.31409885780243,
+      "weekly_switch_allowed": 0,
+      "market_state": "index_neutral",
+      "industry_state": "normal",
+      "strategy_source": null,
+      "ashare_resolved_strategy": null,
+      "ashare_weight_cache_key": null,
+      "ashare_available": null,
+      "ashare_candidate_count": null,
+      "ashare_risk_veto_ratio": null,
+      "ashare_market_regime": null,
+      "ashare_governance_hint": null,
+      "dual_intersection_count": null,
+      "dual_union_count": null,
+      "ashare_weighted_hit_count": null,
+      "ashare_supplement_count": null,
+      "ashare_weekly_penalty_count": null,
+      "ashare_risk_veto_filtered_count": null,
+      "ashare_industry_concentration_triggered": null,
+      "route_reason": null,
+      "risk_veto_reason": null,
+      "adaptive_position_scale": null,
+      "adaptive_position_reason": null,
+      "adaptive_underlying_strategy": "baseline_full_liquidity_detail_vol_position",
+      "adaptive_data_cutoff_date": "2026-07-08",
+      "adaptive_completed_history_rule": "exit_date < signal_date"
+    },
+    "risk_decision": {
+      "trade_date": "2026-07-08",
+      "risk_decision": "reduce_position",
+      "target_position_ratio": 0.5,
+      "fallback_strategy": null,
+      "allow_new_buys": 1,
+      "reasons_json": "[\"shadow_validation_reduce\"]",
+      "risk_governor_version": "v1",
+      "reasons": [
+        "shadow_validation_reduce"
+      ]
+    },
+    "order_meta": {
+      "latest_date": "2026-07-07",
+      "total_rows": 220
+    },
+    "shadow_meta": {
+      "latest_date": "2026-07-08",
+      "total_rows": 24
+    },
+    "candidates": [
+      {
+        "trade_date": "2026-07-08",
+        "strategy": "production_governed_vol_position",
+        "rank_no": 1,
+        "symbol": "002371",
+        "stock_name": "北方华创",
+        "industry": "半导体",
+        "effective_weight": 0.15532409855430837,
+        "rank_score": 94.59993803253292,
+        "latest_close": 802.32,
+        "dynamic_factor_score": null,
+        "liquidity_detail_score": 94.59993803253292,
+        "s_liquidity": 29.79,
+        "market_liquidity_bucket": "normal_liquidity",
+        "index_bucket": "index_neutral",
+        "output_json_path": "/Volumes/extension/projects/Chenyiyun2087/exports/production_candidates/20260709_134948_production_governed_vol_position/trusted_strategy_candidates.json"
+      },
+      {
+        "trade_date": "2026-07-08",
+        "strategy": "production_governed_vol_position",
+        "rank_no": 2,
+        "symbol": "688120",
+        "stock_name": "华海清科",
+        "industry": "半导体",
+        "effective_weight": 0.038508415396379635,
+        "rank_score": 94.22158533436613,
+        "latest_close": 295.0,
+        "dynamic_factor_score": null,
+        "liquidity_detail_score": 94.22158533436613,
+        "s_liquidity": 29.3,
+        "market_liquidity_bucket": "normal_liquidity",
+        "index_bucket": "index_neutral",
+        "output_json_path": "/Volumes/extension/projects/Chenyiyun2087/exports/production_candidates/20260709_134948_production_governed_vol_position/trusted_strategy_candidates.json"
+      },
+      {
+        "trade_date": "2026-07-08",
+        "strategy": "production_governed_vol_position",
+        "rank_no": 3,
+        "symbol": "688432",
+        "stock_name": "有研硅",
+        "industry": "半导体",
+        "effective_weight": 0.059335049798269104,
+        "rank_score": 93.44841982958947,
+        "latest_close": 44.81,
+        "dynamic_factor_score": null,
+        "liquidity_detail_score": 93.44841982958947,
+        "s_liquidity": 28.32,
+        "market_liquidity_bucket": "normal_liquidity",
+        "index_bucket": "index_neutral",
+        "output_json_path": "/Volumes/extension/projects/Chenyiyun2087/exports/production_candidates/20260709_134948_production_governed_vol_position/trusted_strategy_candidates.json"
+      },
+      {
+        "trade_date": "2026-07-08",
+        "strategy": "production_governed_vol_position",
+        "rank_no": 4,
+        "symbol": "603893",
+        "stock_name": "瑞芯微",
+        "industry": "半导体",
+        "effective_weight": 0.1497734426016006,
+        "rank_score": 93.16036405886909,
+        "latest_close": 202.0,
+        "dynamic_factor_score": null,
+        "liquidity_detail_score": 93.16036405886909,
+        "s_liquidity": 28.56,
+        "market_liquidity_bucket": "normal_liquidity",
+        "index_bucket": "index_neutral",
+        "output_json_path": "/Volumes/extension/projects/Chenyiyun2087/exports/production_candidates/20260709_134948_production_governed_vol_position/trusted_strategy_candidates.json"
+      },
+      {
+        "trade_date": "2026-07-08",
+        "strategy": "production_governed_vol_position",
+        "rank_no": 5,
+        "symbol": "002384",
+        "stock_name": "东山精密",
+        "industry": "元器件",
+        "effective_weight": 0.0970589936494423,
+        "rank_score": 93.0901032791118,
+        "latest_close": 237.56,
+        "dynamic_factor_score": null,
+        "liquidity_detail_score": 93.0901032791118,
+        "s_liquidity": 29.98,
+        "market_liquidity_bucket": "normal_liquidity",
+        "index_bucket": "index_neutral",
+        "output_json_path": "/Volumes/extension/projects/Chenyiyun2087/exports/production_candidates/20260709_134948_production_governed_vol_position/trusted_strategy_candidates.json"
+      }
+    ],
+    "orders": [],
+    "shadow_summary": {
+      "signal_date": "2026-07-07",
+      "execution_date": "2026-07-08",
+      "validation_status": "fail",
+      "validation_actions": "reduce_position",
+      "total_orders": 2,
+      "executable_orders": 1,
+      "blocked_orders": 1,
+      "warning_orders": 0,
+      "avg_slippage_bps": 0.0,
+      "max_adverse_slippage_bps": 0.0,
+      "shadow_vs_theory_gap": 0.45048961818640243
+    },
+    "shadow_history": {
+      "rows": [
+        {
+          "execution_date": "2026-07-08",
+          "validation_status": "fail",
+          "validation_actions": "reduce_position",
+          "shadow_vs_theory_gap": 0.45048961818640243
+        },
+        {
+          "execution_date": "2026-07-07",
+          "validation_status": "fail",
+          "validation_actions": "reduce_position",
+          "shadow_vs_theory_gap": 0.06554613636918871
+        },
+        {
+          "execution_date": "2026-07-03",
+          "validation_status": "pass",
+          "validation_actions": "none",
+          "shadow_vs_theory_gap": 0.012880735759493667
+        },
+        {
+          "execution_date": "2026-07-02",
+          "validation_status": "fail",
+          "validation_actions": "reduce_position",
+          "shadow_vs_theory_gap": 0.07687704801253736
+        },
+        {
+          "execution_date": "2026-07-01",
+          "validation_status": "fail",
+          "validation_actions": "reduce_position",
+          "shadow_vs_theory_gap": 0.0
+        }
+      ],
+      "latest": {
+        "execution_date": "2026-07-08",
+        "validation_status": "fail",
+        "validation_actions": "reduce_position",
+        "shadow_vs_theory_gap": 0.45048961818640243
+      },
+      "fail_streak": 2,
+      "worst_action": "reduce_position",
+      "latest_status": "fail",
+      "latest_shadow_theory_gap": 0.45048961818640243
+    },
+    "shadow_fills": [
+      {
+        "signal_date": "2026-07-07",
+        "execution_date": "2026-07-08",
+        "ts_code": "000938",
+        "stock_name": "紫光股份",
+        "side": "BUY",
+        "planned_price": 31.48,
+        "tradable_flag": 0,
+        "slippage_bps": 959.3392630241415
+      },
+      {
+        "signal_date": "2026-07-07",
+        "execution_date": "2026-07-08",
+        "ts_code": "002371",
+        "stock_name": "北方华创",
+        "side": "BUY",
+        "planned_price": 806.39,
+        "tradable_flag": 1,
+        "slippage_bps": 0.0
+      }
+    ],
+    "live": {
+      "snapshot": {
+        "snapshot_date": "2026-06-29",
+        "total_equity": 500000.0,
+        "cash": 500000.0,
+        "positions_value": 0.0,
+        "daily_return_pct": 0.0,
+        "excess_return_pct": null,
+        "created_at": "2026-06-29 21:25:20"
+      },
+      "positions": [],
+      "recent_trades": [
+        {
+          "trade_date": "2026-03-02",
+          "symbol": "600522",
+          "price": 30.6226,
+          "shares": 7600,
+          "amount": 232731.7,
+          "reason": "目标权重提升；资金约束下调 [REBALANCE_BUY]",
+          "created_at": "2026-03-02 09:40:30"
+        },
+        {
+          "trade_date": "2026-03-02",
+          "symbol": "000791",
+          "price": 7.7077,
+          "shares": 46500,
+          "amount": 358408.05,
+          "reason": "目标权重提升 [REBALANCE_BUY]",
+          "created_at": "2026-03-02 09:39:29"
+        },
+        {
+          "trade_date": "2026-03-02",
+          "symbol": "600507",
+          "price": 7.013,
+          "shares": 16800,
+          "amount": 117818.06,
+          "reason": "目标权重下调 [REBALANCE_SELL]",
+          "created_at": "2026-03-02 09:39:17"
+        },
+        {
+          "trade_date": "2026-03-02",
+          "symbol": "603612",
+          "price": 35.0549,
+          "shares": 10200,
+          "amount": 357560.08,
+          "reason": "目标权重下调 [REBALANCE_SELL]",
+          "created_at": "2026-03-02 09:38:57"
+        },
+        {
+          "trade_date": "2026-03-02",
+          "symbol": "000039",
+          "price": 13.6963,
+          "shares": 8900,
+          "amount": 121896.98,
+          "reason": "目标权重下调 [REBALANCE_SELL]",
+          "created_at": "2026-03-02 09:38:35"
+        },
+        {
+          "trade_date": "2026-02-27",
+          "symbol": "603612",
+          "price": 33.033,
+          "shares": 3200,
+          "amount": 105705.6,
+          "reason": "目标权重提升",
+          "created_at": "2026-02-27 09:50:33"
+        },
+        {
+          "trade_date": "2026-02-27",
+          "symbol": "600507",
+          "price": 7.1822,
+          "shares": 33400,
+          "amount": 239884.64,
+          "reason": "目标权重提升",
+          "created_at": "2026-02-27 09:45:32"
+        },
+        {
+          "trade_date": "2026-02-27",
+          "symbol": "600216",
+          "price": 16.1339,
+          "shares": 21100,
+          "amount": 340424.24,
+          "reason": "目标权重下调",
+          "created_at": "2026-02-27 09:45:12"
+        },
+        {
+          "trade_date": "2026-02-27",
+          "symbol": "000039",
+          "price": 13.1468,
+          "shares": 600,
+          "amount": 7888.1,
+          "reason": "目标权重下调",
+          "created_at": "2026-02-27 09:44:09"
+        },
+        {
+          "trade_date": "2026-02-26",
+          "symbol": "000039",
+          "price": 12.5826,
+          "shares": 9500,
+          "amount": 119534.42,
+          "reason": "目标权重提升",
+          "created_at": "2026-02-26 10:09:04"
+        }
+      ],
+      "meta": {
+        "live_daily_snapshots": {
+          "latest_date": "2026-06-29",
+          "total_rows": 16
+        },
+        "live_positions": {
+          "rows": 0
+        },
+        "live_trades": {
+          "rows_loaded": 10
+        }
+      },
+      "warnings": [
+        "live_positions is empty; live realized strategy trend cannot be judged"
+      ]
+    },
+    "candidate_summary": {
+      "rows": 5,
+      "weight_col": "effective_weight",
+      "weight_sum": 0.5,
+      "industry_counts": {
+        "半导体": 4,
+        "元器件": 1
+      },
+      "industry_weight": {
+        "半导体": 0.40294100635055774,
+        "元器件": 0.0970589936494423
+      }
+    },
+    "order_summary": {
+      "rows": 0,
+      "buy_orders": 0,
+      "sell_orders": 0,
+      "planned_amount": 0.0,
+      "target_weight_sum": null,
+      "status_counts": {}
+    }
+  },
+  "judgement": {
+    "decision": "风险总闸触发：reduce_position，目标仓位 50.00%",
+    "reasons": [
+      "主策略当前回测窗口（2025-09-02~2026-07-08（203个交易日））累计39.46%，最大回撤-13.12%。",
+      "adaptive_market_style v2.2同窗回撤-14.50%，适合做降风险参照。",
+      "今日影子盘不可成交订单 1 个。",
+      "shadow_validation_reduce",
+      "实盘持仓为空或同步不足，不能用现有 live 表评价真实收益趋势。"
+    ],
+    "risk_governor": {
+      "risk_decision": "reduce_position",
+      "target_position_ratio": 0.5,
+      "fallback_strategy": null,
+      "allow_new_buys": true,
+      "reasons": [
+        "shadow_validation_reduce"
+      ],
+      "risk_governor_version": "v1"
+    }
+  },
+  "outputs": {
+    "output_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260709_134956_20260708",
+    "json_path": "/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260709_134956_20260708/strategy_performance_review.json",
+    "markdown_path": "/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260709_134956_20260708/strategy_performance_review.md",
+    "feishu_text_path": "/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260709_134956_20260708/strategy_performance_review_feishu.txt"
+  },
+  "notify_result": null
+}

@@ -27,13 +27,12 @@ BACKTEST_SCRIPT = PROJECT_ROOT / "scripts" / "research_trusted_strategy_account_
 FIXED_START_DATE = "2025-09-01"
 
 # Strategies that do NOT require corporate-action / lifecycle snapshots.
-# These are the 4 strategies the downstream performance review consumes.
+# The raw-ledger production strategy is reviewed through the fallback chain until
+# strict snapshots are available to the daily runner.
 DAILY_STRATEGIES = (
-    "production_governed_vol_position,"
     "production_governed_vol_position_v1_2b_dynamic_score,"
     "production_governed_vol_position_v1_2b_execution_safe_uplift,"
-    "adaptive_market_style,"
-    "baseline_full_liquidity_detail_vol_position"
+    "adaptive_market_style"
 )
 
 
