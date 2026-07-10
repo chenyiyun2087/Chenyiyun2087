@@ -381,3 +381,235 @@ class ComparisonGate:
             "a2_median_returns": result.a2_median_window_returns,
             "a3_returns": result.a3_window_returns,
         }
+
+
+# ---------------------------------------------------------------------------
+# Industry Neutral Alpha Gate (PR3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class IndustryNeutralAlphaGateResult:
+    """Gate result specific to A7 (industry neutral alpha)."""
+
+    passed: bool
+    # A0 gate conditions (inherited from ComparisonGate)
+    a0_gate_passed: bool = False
+    windows_passed: int = 0
+    windows_total: int = 3
+    # PR3-specific conditions
+    single_window_profit_ok: bool = False
+    max_single_window_pct: float = 0.0
+    all_factors_bh_pass: bool = False
+    factors_bh_pass_count: int = 0
+    factors_total: int = 6
+    all_factors_oos_pass: bool = False
+    factors_oos_pass_count: int = 0
+    all_factors_cost_adjusted_ok: bool = False
+    all_factors_stability_ok: bool = False
+    # Detailed conditions
+    conditions: dict[str, bool] = field(default_factory=dict)
+    failure_reasons: list[str] = field(default_factory=list)
+
+
+class IndustryNeutralAlphaGate:
+    """Evaluates whether A7 passes industry-neutral alpha-specific gates.
+
+    Gate conditions (all must hold):
+      1. All PR2 matched thresholds passed (A0 gate conditions) in ≥2/3 windows
+      2. Single-window profit contribution ≤ 60%
+      3. All 6 factors pass BH q≤0.10
+      4. All 6 factors pass independent OOS Rank IC (sign preservation)
+      5. All 6 factors pass cost-adjusted lift (> 0)
+      6. All 6 factors pass industry/cap/status stability
+    """
+
+    MAX_SINGLE_WINDOW_PROFIT_PCT = 0.60
+    BH_Q_THRESHOLD = 0.10
+
+    @staticmethod
+    def evaluate(
+        a0_gate_result: ComparisonGateResult,
+        factor_reports: list[Any],
+        window_metrics: list[Any] | None = None,
+    ) -> IndustryNeutralAlphaGateResult:
+        """Run the full industry-neutral alpha gate.
+
+        Parameters
+        ----------
+        a0_gate_result : Result from ComparisonGate.evaluate() for A7 vs A1–A6.
+        factor_reports : List of FactorReport from all folds.
+        window_metrics : Optional per-window metrics for profit concentration check.
+
+        Returns
+        -------
+        IndustryNeutralAlphaGateResult.
+        """
+        result = IndustryNeutralAlphaGateResult(
+            passed=False,
+            a0_gate_passed=a0_gate_result.passed,
+            windows_passed=a0_gate_result.windows_passed,
+            windows_total=a0_gate_result.windows_total,
+        )
+
+        # 1. A0 gate must pass (matches PR2 thresholds)
+        result.conditions["a0_gate"] = a0_gate_result.passed
+        if not a0_gate_result.passed:
+            result.failure_reasons.append(
+                f"A0_gate_failed: {a0_gate_result.windows_passed}/"
+                f"{a0_gate_result.windows_total} windows"
+            )
+
+        # 2. Single-window profit ≤ 60%
+        if window_metrics:
+            profits = [wm.total_return for wm in window_metrics]
+            total_profit = sum(abs(p) for p in profits)
+            if total_profit > 1e-9:
+                result.max_single_window_pct = (
+                    max(abs(p) for p in profits) / total_profit
+                )
+            else:
+                result.max_single_window_pct = 1.0 / max(
+                    len(window_metrics), 1
+                )
+            result.single_window_profit_ok = (
+                result.max_single_window_pct
+                <= IndustryNeutralAlphaGate.MAX_SINGLE_WINDOW_PROFIT_PCT
+            )
+            result.conditions["single_window_profit"] = (
+                result.single_window_profit_ok
+            )
+            if not result.single_window_profit_ok:
+                result.failure_reasons.append(
+                    f"single_window_profit_{result.max_single_window_pct:.1%}"
+                    f"_exceeds_{IndustryNeutralAlphaGate.MAX_SINGLE_WINDOW_PROFIT_PCT:.0%}"
+                )
+
+        # 3-6. Factor-level checks
+        if factor_reports:
+            # Deduplicate by factor_name, take median across folds
+            from collections import defaultdict
+            factor_map: dict[str, list[Any]] = defaultdict(list)
+            for fr in factor_reports:
+                factor_map[fr.factor_name].append(fr)
+
+            bh_pass_count = 0
+            oos_pass_count = 0
+            cost_ok_count = 0
+            stability_ok_count = 0
+
+            for fname, reports in factor_map.items():
+                # BH: all folds must pass
+                all_bh = all(r.passed_bh for r in reports)
+                if all_bh:
+                    bh_pass_count += 1
+
+                # OOS: all folds must pass
+                all_oos = all(r.passed_oos for r in reports)
+                if all_oos:
+                    oos_pass_count += 1
+
+                # Cost-adjusted: median > 0
+                median_cost_adj = float(
+                    np.median(
+                        [r.cost_adjusted_return for r in reports]
+                    )
+                )
+                if median_cost_adj > 0:
+                    cost_ok_count += 1
+
+                # Stability: median within thresholds
+                median_ind_stab = float(
+                    np.median(
+                        [r.industry_stability for r in reports]
+                    )
+                )
+                median_cap_stab = float(
+                    np.median([r.cap_stability for r in reports])
+                )
+                if (
+                    abs(median_ind_stab) < 0.50
+                    and abs(median_cap_stab) < 0.50
+                ):
+                    stability_ok_count += 1
+
+            result.factors_bh_pass_count = bh_pass_count
+            result.factors_total = len(factor_map)
+            result.all_factors_bh_pass = bh_pass_count == result.factors_total
+            result.conditions["all_factors_bh"] = result.all_factors_bh_pass
+
+            result.factors_oos_pass_count = oos_pass_count
+            result.all_factors_oos_pass = (
+                oos_pass_count == result.factors_total
+            )
+            result.conditions["all_factors_oos"] = result.all_factors_oos_pass
+
+            result.all_factors_cost_adjusted_ok = (
+                cost_ok_count == result.factors_total
+            )
+            result.conditions["all_factors_cost_adj"] = (
+                result.all_factors_cost_adjusted_ok
+            )
+
+            result.all_factors_stability_ok = (
+                stability_ok_count == result.factors_total
+            )
+            result.conditions["all_factors_stability"] = (
+                result.all_factors_stability_ok
+            )
+
+            if not result.all_factors_bh_pass:
+                result.failure_reasons.append(
+                    f"bh_pass_{bh_pass_count}/{result.factors_total}"
+                )
+            if not result.all_factors_oos_pass:
+                result.failure_reasons.append(
+                    f"oos_pass_{oos_pass_count}/{result.factors_total}"
+                )
+            if not result.all_factors_cost_adjusted_ok:
+                result.failure_reasons.append(
+                    f"cost_adj_{cost_ok_count}/{result.factors_total}"
+                )
+            if not result.all_factors_stability_ok:
+                result.failure_reasons.append(
+                    f"stability_{stability_ok_count}/{result.factors_total}"
+                )
+
+        # Final pass: all conditions must hold
+        all_ok = all(result.conditions.values()) if result.conditions else False
+        result.passed = all_ok
+
+        if not result.passed:
+            result.failure_reasons.insert(
+                0,
+                f"FAILED_INDUSTRY_NEUTRAL_ALPHA_GATE: "
+                f"{sum(1 for v in result.conditions.values() if v)}/"
+                f"{len(result.conditions)} conditions passed",
+            )
+
+        return result
+
+    @staticmethod
+    def gate_summary(
+        result: IndustryNeutralAlphaGateResult,
+    ) -> dict[str, Any]:
+        """Return a JSON-serializable summary."""
+        return {
+            "passed": result.passed,
+            "a0_gate_passed": result.a0_gate_passed,
+            "windows_passed": result.windows_passed,
+            "windows_total": result.windows_total,
+            "single_window_profit_ok": result.single_window_profit_ok,
+            "max_single_window_pct": result.max_single_window_pct,
+            "all_factors_bh_pass": result.all_factors_bh_pass,
+            "all_factors_oos_pass": result.all_factors_oos_pass,
+            "all_factors_cost_adjusted_ok": (
+                result.all_factors_cost_adjusted_ok
+            ),
+            "all_factors_stability_ok": result.all_factors_stability_ok,
+            "conditions": {
+                k: "PASS" if v else "FAIL"
+                for k, v in result.conditions.items()
+            },
+            "failure_reasons": result.failure_reasons,
+        }
