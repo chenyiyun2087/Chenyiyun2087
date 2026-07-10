@@ -239,6 +239,8 @@ def load_scores(
             COALESCE(NULLIF(TRIM(s.industry), ''), ds.industry) AS industry,
             s.is_bs_candidate,
             s.score,
+            {score_expr("opt_score")},
+            {score_expr("claude_score")},
             s.s_breakout,
             s.s_liquidity,
             s.s_rs,

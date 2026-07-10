@@ -30,6 +30,9 @@ class TestLiveTracker(unittest.TestCase):
         # Default behavior for setup (_load_state)
         mock_db.get_all_positions.return_value = []
         mock_db.get_latest_snapshot.return_value = None
+        self.db_patcher = patch('sina.live_tracker.live_tracker.db', mock_db)
+        self.db_patcher.start()
+        self.addCleanup(self.db_patcher.stop)
         
         # Mock LIVE_CONFIG inside the module if needed
         with patch('sina.live_tracker.live_tracker.LIVE_CONFIG', {

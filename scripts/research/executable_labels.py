@@ -14,14 +14,17 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from scripts.research.execution_costs import ExecutionCostModel
+
 DEFAULT_HOLD_DAYS = 10
-DEFAULT_ROUND_TRIP_COST = 0.0015  # 15 bps per side × 2
+DEFAULT_ROUND_TRIP_COST = 0.0015
 
 
 def compute_executable_forward_returns(
     prices: pd.DataFrame,
     hold_days: int = DEFAULT_HOLD_DAYS,
-    cost_rate: float = DEFAULT_ROUND_TRIP_COST,
+    cost_rate: float | None = None,
+    cost_model: ExecutionCostModel | None = None,
 ) -> pd.DataFrame:
     """Compute execution-aware forward returns.
 
@@ -46,32 +49,45 @@ def compute_executable_forward_returns(
         return pd.DataFrame()
 
     prices_sorted = prices.sort_values(["symbol", "trade_date"]).copy()
-    has_open = "adj_open" in prices_sorted.columns
+    if "adj_open" not in prices_sorted.columns:
+        raise ValueError("executable labels require adj_open; close fallback is forbidden")
 
     g = prices_sorted.groupby("symbol", group_keys=False)
 
-    # Entry: T+1 open (or T+1 close as fallback)
-    if has_open:
-        prices_sorted["entry_price"] = g["adj_open"].shift(-1)
+    # Entry: T+1 open only.  Missing entry is an invalid label.
+    prices_sorted["entry_price"] = g["adj_open"].shift(-1)
+    if "execution_tradable" in prices_sorted.columns:
+        prices_sorted["entry_tradable"] = g["execution_tradable"].shift(-1).eq(1)
     else:
-        prices_sorted["entry_price"] = g["adj_close"].shift(-1)
+        prices_sorted["entry_tradable"] = prices_sorted["entry_price"].notna()
 
     # Exit prices at various horizons
     for h in [5, 10, 15]:
         prices_sorted[f"exit_price_{h}d"] = g["adj_close"].shift(-h)
+
+    model = cost_model or ExecutionCostModel()
+    model_round_trip = (
+        2 * model.commission_rate
+        + 2 * model.transfer_fee_rate
+        + model.stamp_duty_rate
+        + 2 * model.slippage_rate
+        + 2 * model.impact_rate
+    )
+    round_trip_cost = model_round_trip if cost_rate is None else float(cost_rate)
 
     # Executable forward returns
     for h in [5, 10, 15]:
         ext = prices_sorted[f"exit_price_{h}d"]
         ent = prices_sorted["entry_price"]
         prices_sorted[f"fwd_ret_{h}d_exec"] = (
-            ext.fillna(0.0) / ent.fillna(1.0).clip(lower=0.01) - 1.0 - cost_rate
+            ext.fillna(0.0) / ent.fillna(1.0).clip(lower=0.01) - 1.0 - round_trip_cost
         )
         # Mark as NaN if either price is missing
         prices_sorted.loc[
-            ext.isna() | ent.isna() | (ent <= 0),
+            ext.isna() | ent.isna() | (ent <= 0) | ~prices_sorted["entry_tradable"],
             f"fwd_ret_{h}d_exec",
         ] = np.nan
+        prices_sorted[f"fwd_ret_{h}d_exec_net"] = prices_sorted[f"fwd_ret_{h}d_exec"]
 
     # MFE/MAE: max/min cumulative return between entry and exit
     prices_sorted["mfe_10d"] = np.nan
@@ -98,7 +114,8 @@ def compute_executable_forward_returns(
     result_cols = [
         "symbol", "trade_date",
         "fwd_ret_5d_exec", "fwd_ret_10d_exec", "fwd_ret_15d_exec",
-        "mfe_10d", "mae_10d",
+        "fwd_ret_5d_exec_net", "fwd_ret_10d_exec_net", "fwd_ret_15d_exec_net",
+        "mfe_10d", "mae_10d", "entry_tradable",
     ]
     # Also keep entry/exit for audit
     keep_cols = result_cols + ["entry_price"] + [f"exit_price_{h}d" for h in [5, 10, 15]]
@@ -109,13 +126,13 @@ def compute_executable_forward_returns(
 def compute_forward_returns_grouped(
     prices: pd.DataFrame,
     hold_days: int = 10,
-    cost_rate: float = DEFAULT_ROUND_TRIP_COST,
+    cost_rate: float | None = None,
 ) -> pd.DataFrame:
     """Convenience wrapper: returns only the primary label column + fwd_ret."""
     result = compute_executable_forward_returns(prices, hold_days, cost_rate)
     keep = ["symbol", "trade_date"]
     for h in [5, 10, 15]:
-        col = f"fwd_ret_{h}d_exec"
-        if col in result.columns:
-            keep.append(col)
+        for col in (f"fwd_ret_{h}d_exec", f"fwd_ret_{h}d_exec_net"):
+            if col in result.columns:
+                keep.append(col)
     return result[keep].copy()

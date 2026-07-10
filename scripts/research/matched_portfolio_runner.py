@@ -29,6 +29,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -101,6 +103,10 @@ class MatchedExperimentSpec:
     exposure_mode: str = "fixed"
     # PR12: TopN variant label
     top_n_variant: str = ""  # "5" | "8" | "10" — for reporting
+    stamp_duty_rate: float = 0.0005
+    transfer_fee_rate: float = 0.00001
+    impact_rate: float = 0.0
+    strict_execution_metadata: bool = True
 
 
 @dataclass
@@ -126,6 +132,7 @@ class CurveResult:
     curve_name: str
     nav_rows: list[dict[str, Any]] = field(default_factory=list)
     trade_rows: list[dict[str, Any]] = field(default_factory=list)
+    rejection_rows: list[dict[str, Any]] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
     random_seed: str = ""  # only populated for matched_random
     error: str = ""         # non-empty if the curve failed
@@ -209,6 +216,13 @@ class MatchedPortfolioRunner:
             day: idx for idx, day in enumerate(self.calendar)
         }
         self.decay_exit_rule = decay_exit_rule  # PR5: alpha decay exit
+        self.cost_model = ExecutionCostModel(
+            commission_rate=float(spec.cost_rate),
+            stamp_duty_rate=float(spec.stamp_duty_rate),
+            transfer_fee_rate=float(spec.transfer_fee_rate),
+            slippage_rate=float(spec.slippage_rate),
+            impact_rate=float(spec.impact_rate),
+        )
 
     # ------------------------------------------------------------------
     # Price / tradability helpers
@@ -220,12 +234,16 @@ class MatchedPortfolioRunner:
         price_info: dict[str, Any],
     ) -> tuple[bool, str]:
         """Check if a stock is tradable using T-day metadata."""
+        required = {"raw_volume", "is_listed", "is_suspended", "adj_open", "adj_close"}
+        missing = sorted(required - set(price_info))
+        if missing:
+            return False, f"unknown_execution_metadata:{','.join(missing)}"
         volume = _safe_float(price_info.get("raw_volume"), 0.0)
         if volume <= 0:
             return False, "suspended_or_zero_volume"
-        is_listed = _safe_float(price_info.get("is_listed"), 1.0)
+        is_listed = _safe_float(price_info.get("is_listed"), np.nan)
         is_suspended = _safe_float(price_info.get("is_suspended"), 0.0)
-        if is_listed != 1 or is_suspended != 0:
+        if not np.isfinite(is_listed) or is_listed != 1 or is_suspended != 0:
             return False, "not_listed_or_suspended"
         open_price = _safe_float(price_info.get("adj_open"), np.nan)
         close_price = _safe_float(price_info.get("adj_close"), np.nan)
@@ -247,15 +265,19 @@ class MatchedPortfolioRunner:
             return False, reason, None
 
         open_price = _safe_float(price_info.get("adj_open"), np.nan)
-        prev_close = _safe_float(price_info.get("prev_adj_close"), np.nan)
+        limit_open = _safe_float(price_info.get("raw_open"), open_price)
+        prev_close = _safe_float(
+            price_info.get("raw_pre_close", price_info.get("prev_adj_close")),
+            np.nan,
+        )
         is_st = _safe_float(price_info.get("is_st"), 0.0)
 
         if not np.isfinite(prev_close) or prev_close <= 0:
-            return True, "", float(open_price)
+            return False, "missing_prev_close_limit_unknown", None
         upper, lower = _limit_prices(prev_close, symbol, is_st)
-        if side == "BUY" and open_price >= upper:
+        if side == "BUY" and limit_open >= upper:
             return False, "limit_up_block", None
-        if side == "SELL" and open_price <= lower:
+        if side == "SELL" and limit_open <= lower:
             return False, "limit_down_block", None
 
         return True, "", float(open_price)
@@ -278,14 +300,20 @@ class MatchedPortfolioRunner:
     ) -> int:
         if shares <= 0:
             return 0
-        total_per_share = float(price) * (1.0 + float(self.spec.cost_rate))
+        estimated_rate = (
+            self.cost_model.commission_rate
+            + self.cost_model.transfer_fee_rate
+            + self.cost_model.slippage_rate
+            + self.cost_model.impact_rate
+        )
+        total_per_share = float(price) * (1.0 + estimated_rate)
         affordable = int(math.floor(account.cash / total_per_share))
         buy_shares = _round_lot(min(int(shares), affordable), self.spec.lot_size)
         if buy_shares <= 0:
             return 0
         gross = buy_shares * float(price)
-        cost = gross * float(self.spec.cost_rate)
-        account.cash -= gross + cost
+        breakdown = CostBreakdown.calculate(gross, "BUY", self.cost_model)
+        account.cash -= gross + breakdown.total_cost
         if symbol in account.positions:
             account.positions[symbol].shares += buy_shares
         else:
@@ -297,7 +325,8 @@ class MatchedPortfolioRunner:
             "trade_date": trade_date, "symbol": symbol, "name": name,
             "industry": industry, "side": "BUY", "price": float(price),
             "shares": int(buy_shares), "gross_amount": float(gross),
-            "cost": float(cost), "cash_after": float(account.cash),
+            "cost": float(breakdown.total_cost), **breakdown.to_dict(),
+            "cash_after": float(account.cash),
             "reason": reason,
         })
         return buy_shares
@@ -319,18 +348,21 @@ class MatchedPortfolioRunner:
         if sell_shares <= 0:
             return 0
         gross = sell_shares * float(price)
-        cost = gross * float(self.spec.cost_rate)
-        account.cash += gross - cost
+        breakdown = CostBreakdown.calculate(gross, "SELL", self.cost_model)
+        account.cash += gross - breakdown.total_cost
         position.shares -= sell_shares
         rows.append({
             "trade_date": trade_date, "symbol": symbol, "name": position.name,
             "industry": position.industry, "side": "SELL",
             "price": float(price), "shares": int(sell_shares),
-            "gross_amount": float(gross), "cost": float(cost),
+            "gross_amount": float(gross), "cost": float(breakdown.total_cost),
+            **breakdown.to_dict(),
             "cash_after": float(account.cash), "reason": reason,
         })
         if position.shares <= 0:
             account.positions.pop(symbol, None)
+            if self.decay_exit_rule is not None and hasattr(self.decay_exit_rule, "tracker"):
+                self.decay_exit_rule.tracker.close_position(symbol, str(trade_date), reason)
         return sell_shares
 
     # ------------------------------------------------------------------
@@ -413,6 +445,7 @@ class MatchedPortfolioRunner:
         account = AccountState(cash=self.initial_cash)
         nav_rows: list[dict] = []
         trade_rows: list[dict] = []
+        rejection_rows: list[dict] = []
 
         # Build signal-to-execution mapping
         signal_dates = sorted(scores["trade_date"].dropna().unique())
@@ -488,14 +521,46 @@ class MatchedPortfolioRunner:
                 continue
             targets = ranked.head(top_n)
 
-            # --- Hold gate ---
+            # --- Stateful hold/decay/extension gate ---
             locked_symbols: set[str] = set()
+            decay_unlocked: list[str] = []
             locked_value = 0.0
+            day_score_map: dict[str, dict[str, Any]] = {}
+            for _, score_row in day_scores.iterrows():
+                sym = str(score_row["symbol"]).zfill(6)
+                day_score_map[sym] = {
+                    "rank_score": float(score_row.get("rank_score", 0.0)),
+                    "rank": int(score_row.get("rank", 0)),
+                }
+            candidate_count = max(len(day_scores), 1)
             for symbol, pos in account.positions.items():
                 holding_days = _trade_day_count(
                     self.calendar, pos.entry_date, signal_date
                 )
-                if holding_days < int(self.spec.hold_days):
+                should_sell = False
+                if self.decay_exit_rule is not None:
+                    score_info = day_score_map.get(symbol, {})
+                    should_sell, _ = self.decay_exit_rule.should_exit(
+                        symbol,
+                        str(signal_date),
+                        float(score_info.get("rank_score", 0.0)),
+                        int(score_info.get("rank", candidate_count)),
+                        candidate_count,
+                        holding_days=holding_days,
+                        hold_days_required=int(self.spec.hold_days),
+                    )
+                    if should_sell:
+                        decay_unlocked.append(symbol)
+                extended = False
+                if (
+                    self.decay_exit_rule is not None
+                    and not should_sell
+                    and holding_days >= int(self.spec.hold_days)
+                ):
+                    extend, _ = self.decay_exit_rule.should_extend(symbol)
+                    max_days = int(getattr(self.decay_exit_rule.config, "max_holding_days", 20))
+                    extended = extend and holding_days < max_days
+                if not should_sell and (holding_days < int(self.spec.hold_days) or extended):
                     locked_symbols.add(symbol)
                     pos_price = _safe_float(
                         price_day.loc[symbol, "adj_open"]
@@ -505,36 +570,6 @@ class MatchedPortfolioRunner:
                     )
                     if np.isfinite(pos_price) and pos_price > 0:
                         locked_value += float(pos.shares) * pos_price
-
-            # --- PR5: Alpha decay exit — override hold gate for decayed positions ---
-            decay_unlocked: list[str] = []
-            if self.decay_exit_rule is not None and day_scores is not None:
-                day_score_map: dict[str, dict[str, Any]] = {}
-                for _, row in day_scores.iterrows():
-                    sym = str(row["symbol"]).zfill(6)
-                    day_score_map[sym] = {
-                        "rank_score": float(row.get("rank_score", 0.0)),
-                        "rank": int(row.get("rank", 0)),
-                    }
-                for symbol in list(locked_symbols):
-                    score_info = day_score_map.get(symbol, {})
-                    rank_score = score_info.get("rank_score", 0.0)
-                    rank = score_info.get("rank", 0)
-                    pos = account.positions.get(symbol)
-                    holding_days = (
-                        _trade_day_count(self.calendar, pos.entry_date, signal_date)
-                        if pos
-                        else 0
-                    )
-                    should_sell, reason = self.decay_exit_rule.should_exit(
-                        symbol, str(signal_date), rank_score, rank,
-                        position_entry_date=str(pos.entry_date) if pos else None,
-                        holding_days=holding_days,
-                        hold_days_required=int(self.spec.hold_days),
-                    )
-                    if should_sell:
-                        locked_symbols.discard(symbol)
-                        decay_unlocked.append(symbol)
 
             # --- PR5: Sell decay-unlocked positions (before regular sell) ---
             for symbol in decay_unlocked:
@@ -548,14 +583,13 @@ class MatchedPortfolioRunner:
                     symbol, "SELL", price_info
                 )
                 if allowed and exec_price is not None:
-                    sell_price = exec_price * (
-                        1.0 - float(self.spec.slippage_rate)
-                    )
                     self._execute_sell(
                         account, symbol, int(pos.shares),
-                        sell_price, trade_date, trade_rows,
+                        exec_price, trade_date, trade_rows,
                         f"sell_alpha_decay:{t1_reason}" if t1_reason else "sell_alpha_decay",
                     )
+                else:
+                    rejection_rows.append({"trade_date": trade_date, "signal_date": signal_date, "symbol": symbol, "side": "SELL", "reason": t1_reason or "unknown_execution_state", "curve": curve_name})
 
             # --- Sell non-target positions ---
             target_symbols: set[str] = {
@@ -572,14 +606,13 @@ class MatchedPortfolioRunner:
                         symbol, "SELL", price_info
                     )
                     if allowed and exec_price is not None:
-                        sell_price = exec_price * (
-                            1.0 - float(self.spec.slippage_rate)
-                        )
                         self._execute_sell(
                             account, symbol, int(pos.shares),
-                            sell_price, trade_date, trade_rows,
+                            exec_price, trade_date, trade_rows,
                             f"sell_not_in_targets:{reason}" if reason else "sell_rebalance",
                         )
+                    else:
+                        rejection_rows.append({"trade_date": trade_date, "signal_date": signal_date, "symbol": symbol, "side": "SELL", "reason": reason or "unknown_execution_state", "curve": curve_name})
 
             # --- Buy new targets ---
             equity = account.cash
@@ -611,21 +644,35 @@ class MatchedPortfolioRunner:
                     symbol, "BUY", price_info
                 )
                 if not allowed or exec_price is None:
+                    rejection_rows.append({"trade_date": trade_date, "signal_date": signal_date, "symbol": symbol, "side": "BUY", "reason": reason or "unknown_execution_state", "curve": curve_name})
                     continue
-                buy_price = exec_price * (1.0 + float(self.spec.slippage_rate))
                 target_shares = max(
-                    0, int(math.floor(target_value / buy_price))
+                    0, int(math.floor(target_value / exec_price))
                 )
                 target_shares = _round_lot(target_shares, self.spec.lot_size)
                 if target_shares <= 0:
                     continue
                 name = str(row.get("name") or "")
                 industry = str(row.get("industry") or "")
-                self._execute_buy(
+                was_open = symbol in account.positions
+                bought = self._execute_buy(
                     account, symbol, name, industry,
-                    target_shares, buy_price, trade_date, trade_rows,
+                    target_shares, exec_price, trade_date, trade_rows,
                     reason or "buy_rebalance",
                 )
+                if (
+                    bought > 0
+                    and not was_open
+                    and self.decay_exit_rule is not None
+                    and hasattr(self.decay_exit_rule, "tracker")
+                ):
+                    self.decay_exit_rule.tracker.open_position(
+                        symbol,
+                        str(trade_date),
+                        float(row.get("rank_score", 0.0)),
+                        int(row.get("rank", candidate_count)),
+                        candidate_count,
+                    )
 
         # --- Summary ---
         summary = self._summarize(nav_rows, trade_rows, curve_name)
@@ -633,6 +680,7 @@ class MatchedPortfolioRunner:
             curve_name=curve_name,
             nav_rows=nav_rows,
             trade_rows=trade_rows,
+            rejection_rows=rejection_rows,
             summary=summary,
         )
 

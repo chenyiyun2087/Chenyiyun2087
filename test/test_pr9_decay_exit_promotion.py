@@ -138,9 +138,9 @@ class TestCostStress:
     def test_stress_at_all_levels(self):
         nav = pd.Series([1.0, 1.01, 1.02, 1.015, 1.03, 1.04, 1.05])
         results = stress_test_returns(nav, trade_count=20)
-        assert len(results) == 4
+        assert len(results) == 5
         assert results[0].slippage_bps == 0
-        assert results[-1].slippage_bps == 15
+        assert results[-1].slippage_bps == 25
 
     def test_stress_report_passes_10bp(self):
         nav = pd.Series([1.0, 1.03, 1.06, 1.10])

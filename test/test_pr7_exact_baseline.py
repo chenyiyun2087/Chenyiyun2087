@@ -48,6 +48,7 @@ def _make_scores(prices, with_extras=True):
             row = {"symbol": sym, "trade_date": date, "score": rng.uniform(0, 100)}
             if with_extras:
                 row["liquidity_detail_score"] = rng.uniform(30, 80)
+                row["s_liquidity"] = rng.uniform(0, 100)
                 row["opt_score"] = rng.uniform(0, 10)
                 row["claude_score"] = rng.uniform(0, 100)
             rows.append(row)

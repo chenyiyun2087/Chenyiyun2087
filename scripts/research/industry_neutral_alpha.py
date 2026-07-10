@@ -1077,7 +1077,7 @@ class AlphaModel:
 
                 # PR8: Significance shrinkage — higher p-value → lower weight
                 # sig_shrinkage = 1.0 at p=0, decays to near 0 at p=0.20
-                sig_shrinkage = max(0.0, 1.0 - min(p_value, 0.20) / 0.20)
+                sig_shrinkage = max(0.05, 1.0 - min(p_value, 0.20) / 0.20)
 
                 if not passes:
                     # BH failed: use significance-shrunken prior as weak regularizer only

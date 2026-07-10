@@ -31,7 +31,7 @@ def _make_data(n_symbols=20, n_days=60):
         for d in dates:
             px *= (1 + rng.normal(0.0005, 0.02))
             p_rows.append({"symbol": sym, "trade_date": d.strftime("%Y-%m-%d"), "adj_close": px, "adj_open": px * 1.001})
-            s_rows.append({"symbol": sym, "trade_date": d.strftime("%Y-%m-%d"), "score": rng.uniform(0, 100), "liquidity_detail_score": rng.uniform(30, 80), "opt_score": rng.uniform(0, 10), "claude_score": rng.uniform(0, 100)})
+            s_rows.append({"symbol": sym, "trade_date": d.strftime("%Y-%m-%d"), "score": rng.uniform(0, 100), "liquidity_detail_score": rng.uniform(30, 80), "s_liquidity": rng.uniform(0, 100), "opt_score": rng.uniform(0, 10), "claude_score": rng.uniform(0, 100)})
     return pd.DataFrame(p_rows), pd.DataFrame(s_rows)
 
 

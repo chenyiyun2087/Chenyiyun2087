@@ -238,18 +238,20 @@ def test_a6_trend_persistence_ranking(sample_scores, sample_prices):
     assert not ranked.empty
 
 
-def test_a7_raises_not_available(sample_scores, sample_prices):
-    with pytest.raises(NotImplementedError, match="A7_NOT_AVAILABLE"):
-        a7_industry_neutral_alpha_v3(
-            sample_scores, sample_prices, "", "",
-        )
+def test_a7_is_registered_as_frozen_alpha_runtime():
+    spec = build_experiment_specs()["A7"]
+    assert spec.is_available is True
+    assert spec.runtime_id == "alpha_v3"
 
 
 def test_build_experiment_specs_has_all():
     specs = build_experiment_specs()
-    assert set(specs.keys()) == {"A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"}
-    assert not specs["A7"].is_available
-    for exp_id in ("A0", "A1", "A2", "A3", "A4", "A5", "A6"):
+    assert {"P0", "C0", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"}.issubset(specs)
+    assert specs["A7"].is_available
+    assert specs["A8"].runtime_id == "alpha_risk_v2"
+    assert specs["A9"].runtime_id == "alpha_risk_exit_v2"
+    assert specs["A0"].is_available is False
+    for exp_id in ("A1", "A2", "A3", "A4", "A5", "A6"):
         assert specs[exp_id].is_available
 
 

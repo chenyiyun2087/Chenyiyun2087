@@ -70,6 +70,51 @@ def compute_pit_downside_vol(
     return ps[["symbol", "trade_date", col]].dropna(subset=[col])
 
 
+def compute_pit_risk_panel(
+    prices: pd.DataFrame,
+    window: int = 20,
+) -> pd.DataFrame:
+    """Return the complete per-date PIT risk contract.
+
+    Every value is computed with rolling observations ending on the row's
+    trade date.  Missing inputs remain missing so callers can fail closed.
+    """
+    required = {"symbol", "trade_date", "adj_close", "adj_open"}
+    missing = required - set(prices.columns)
+    if missing:
+        raise ValueError(f"PIT risk missing columns: {sorted(missing)}")
+    ps = prices.sort_values(["symbol", "trade_date"]).copy()
+    ps["daily_ret"] = ps.groupby("symbol")["adj_close"].pct_change()
+    ps["down_ret"] = ps["daily_ret"].clip(upper=0.0)
+    prev_close = ps.groupby("symbol")["adj_close"].shift(1)
+    ps["open_gap"] = ps["adj_open"] / prev_close - 1.0
+    amount_col = "amount" if "amount" in ps.columns else "raw_amount" if "raw_amount" in ps.columns else None
+    if amount_col is None:
+        ps["_amount"] = np.nan
+        amount_col = "_amount"
+    min_periods = max(window // 2, 5)
+    grouped = ps.groupby("symbol")
+    ps[f"pit_vol_{window}"] = grouped["daily_ret"].transform(
+        lambda s: s.rolling(window, min_periods=min_periods).std()
+    ) * np.sqrt(252)
+    ps[f"pit_downside_vol_{window}"] = grouped["down_ret"].transform(
+        lambda s: s.rolling(window, min_periods=min_periods).std()
+    ) * np.sqrt(252)
+    ps[f"pit_gap_risk_{window}"] = grouped["open_gap"].transform(
+        lambda s: s.abs().rolling(window, min_periods=min_periods).quantile(0.95)
+    )
+    rolling_amount = grouped[amount_col].transform(
+        lambda s: s.rolling(window, min_periods=min_periods).mean()
+    )
+    ps[f"pit_liquidity_risk_{window}"] = 1.0 / rolling_amount.where(rolling_amount > 0)
+    columns = [
+        "symbol", "trade_date", f"pit_vol_{window}",
+        f"pit_downside_vol_{window}", f"pit_gap_risk_{window}",
+        f"pit_liquidity_risk_{window}",
+    ]
+    return ps[columns]
+
+
 def merge_pit_risk_to_scores(
     scores: pd.DataFrame,
     pit_vol: pd.DataFrame,
