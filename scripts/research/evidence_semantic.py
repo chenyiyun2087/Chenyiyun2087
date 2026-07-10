@@ -383,10 +383,18 @@ def validate_ledger_nav_conservation(
 ) -> dict[str, Any]:
     """Check that portfolio NAV is consistent with cash + positions - costs.
 
-    PR19: Implements true daily conservation:
-        cash[t] + market_value[t] - accrued_cost[t] ≈ nav[t]
+    PR20 Cost Accounting Contract:
+      - cash[t] = cash[t-1] + proceeds[t] - costs[t]
+      - market_value[t] = sum(position_shares[s,t] × close_price[s,t])
+      - total_equity[t] = cash[t] + market_value[t]
+      - cumulative_cost[t] = sum of all trading costs up to day t
+      - nav[t] = total_equity[t] / initial_cash
+      - Conservation: cash[t] + market_value[t] - accrued_cost[t] ≈ nav[t]
+      - Tolerance: max(1bp × nav[t], 1bp)
 
-    Falls back to date-overlap check if cash/market_value columns missing.
+    PR20: If cash, market_value, or nav columns are missing, the check
+    returns a HARD FAILURE — no fallback to date-overlap-only. Evidence
+    without these columns is NON_REPRODUCIBLE.
     """
     errors: list[str] = []
     details: dict[str, Any] = {}
@@ -474,12 +482,27 @@ def validate_ledger_nav_conservation(
             "conservation_violations": conservation_violations,
         })
     else:
-        # Fallback: basic date + non-negative check
+        # PR20: Missing required columns is a hard failure — no fallback.
+        # Evidence without cash + market_value + nav columns is NON_REPRODUCIBLE.
+        missing_cols = []
+        if not nav_val_col:
+            missing_cols.append("nav/total_equity/equity")
+        if not cash_col:
+            missing_cols.append("cash/available_cash/cash_balance")
+        if not mv_col:
+            missing_cols.append("market_value/position_value/holdings_value")
+        errors.append(
+            f"Ledger-NAV conservation FAILED: missing required columns "
+            f"({', '.join(missing_cols)}). Evidence is NON_REPRODUCIBLE. "
+            f"Required: cash, market_value, nav. "
+            f"Cost accounting: nav = cash + market_value - accrued_cost"
+        )
         details.update({
             "nav_dates": len(nav_dates),
             "ledger_dates": len(ledger_dates),
             "orphan_trades": len(orphan_trades),
-            "conservation_check": "date_overlap_only",
+            "conservation_check": "failed_missing_columns",
+            "missing_columns": missing_cols,
         })
 
     # Check NAV never goes negative
@@ -540,8 +563,14 @@ def validate_daily_decisions_nonempty(
 
 REQUIRED_EXPERIMENTS_FOR_OOS = frozenset({"P0", "C0", "A7", "A8", "A9"})
 FIXED_VALIDATION_WINDOWS = frozenset({
-    "2024H1", "2024H2", "2025H1", "2025H2", "2026H1", "2026H2",
+    "2024H1", "2024H2", "2025H1", "2025H2", "2026H1",
 })
+# PR20: Windows still in progress — excluded from promotion statistics
+INCOMPLETE_VALIDATION_WINDOWS = frozenset({"2026H2"})
+# PR20: Minimum trading days per window (aligned with PR19 MIN_SESSIONS_PER_WINDOW)
+MIN_TRADING_DAYS_PER_WINDOW = 15
+# PR20: Minimum coverage ratio (actual trading days / official calendar days)
+MIN_COVERAGE_RATIO = 0.95
 
 
 def validate_evidence_per_experiment_window(output_dir: Path) -> dict[str, Any]:
@@ -653,10 +682,17 @@ def validate_evidence_per_experiment_window(output_dir: Path) -> dict[str, Any]:
             f"{'; '.join(missing[:10])}"
         )
     elif structure == "flat":
-        # Flat packages: if we found experiment coverage via factor states, report it.
-        # If not, the global file checks (NAV, candidates, etc.) provide validation.
-        # Flat packages always pass the per-experiment check.
-        pass
+        # PR20: Flat evidence structure is NOT accepted.
+        # Must use per-experiment subdirectories (P0/, C0/, A7/, A8/, A9/)
+        # each with their own window-level evidence files.
+        errors.append(
+            "FLAT_EVIDENCE_REJECTED: evidence must use per-experiment directory "
+            "structure (P0/, C0/, A7/, A8/, A9/). Flat evidence packages are no "
+            "longer accepted for promotion evaluation."
+        )
+        # Mark all required experiments as uncovered
+        for exp_id in REQUIRED_EXPERIMENTS_FOR_OOS:
+            missing.append(f"{exp_id}: flat structure — no per-experiment directory")
 
     passed = len(errors) == 0
 
@@ -687,7 +723,7 @@ def _check_experiment_windows(exp_dir: Path) -> set[str]:
                         if window_dates:
                             start, end = window_dates
                             matches = [d for d in nav_dates if start <= d <= end]
-                            if len(matches) >= 5:  # at least 5 trading days in window
+                            if len(matches) >= MIN_TRADING_DAYS_PER_WINDOW:
                                 windows.add(window_label)
         except Exception:
             pass

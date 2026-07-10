@@ -556,7 +556,11 @@ class TestEvidenceSemanticValidation:
     """Semantic evidence validation gates."""
 
     def _make_minimal_evidence_dir(self, tmp_path, **overrides):
-        """Create a minimal evidence package directory for testing."""
+        """Create a minimal evidence package directory for testing.
+
+        PR20: Creates per-experiment subdirectories (P0/, C0/, A7/, A8/, A9/)
+        since flat evidence packages are no longer accepted.
+        """
         evidence_dir = tmp_path / "evidence"
         evidence_dir.mkdir()
 
@@ -596,13 +600,23 @@ class TestEvidenceSemanticValidation:
         for name, content in {**defaults, **overrides}.items():
             (evidence_dir / name).write_text(str(content), encoding="utf-8")
 
-        # Create empty parquet files
+        # Create empty parquet files at root level
         for name in ["daily_nav.parquet", "trade_ledger.parquet",
                       "daily_candidates.parquet", "daily_weights.parquet",
                       "daily_exposure.parquet", "rejection_ledger.parquet"]:
             path = evidence_dir / name
             if not path.exists():
                 pd.DataFrame().to_parquet(path)
+
+        # PR20: Create per-experiment subdirectories with minimal data
+        for exp_id in ["P0", "C0", "A7", "A8", "A9"]:
+            exp_dir = evidence_dir / exp_id
+            exp_dir.mkdir(exist_ok=True)
+            for name in ["daily_nav.parquet", "trade_ledger.parquet",
+                          "daily_candidates.parquet", "daily_weights.parquet"]:
+                path = exp_dir / name
+                if not path.exists():
+                    pd.DataFrame().to_parquet(path)
 
         # Create empty CSV files
         for name in ["random_seed_results.csv", "walk_forward_metrics.csv",
@@ -630,9 +644,11 @@ class TestEvidenceSemanticValidation:
 
         report = validate_evidence_semantics(evidence_dir)
         assert not report.passed
+        # PR20: Empty per-exp dirs cause INSUFFICIENT_OOS_COVERAGE (checked before EMPTY)
         assert report.status in (
             SemanticEvidenceStatus.EMPTY_RESULTS.value,
             SemanticEvidenceStatus.NON_REPRODUCIBLE.value,
+            SemanticEvidenceStatus.INSUFFICIENT_OOS_COVERAGE.value,
         )
 
     def test_empty_ledger_fails_semantic(self, tmp_path):
@@ -660,12 +676,14 @@ class TestEvidenceSemanticValidation:
         evidence_dir = self._make_minimal_evidence_dir(tmp_path)
         # factor_state_by_fold already has NOT_FITTED (default)
 
-        # Add NAV data to get past EMPTY check
-        nav = pd.DataFrame({
-            "trade_date": ["2026-01-02"],
-            "nav": [1.0],
-        })
+        # Add NAV data to get past EMPTY check (root + per-experiment)
+        dates = pd.date_range("2025-01-02", periods=30, freq="B")
+        nav = pd.DataFrame({"trade_date": dates, "nav": np.cumprod(1 + np.random.randn(30) * 0.01)})
         nav.to_parquet(evidence_dir / "daily_nav.parquet")
+        # PR20: Also write to per-experiment directories
+        for exp_id in ["P0", "C0", "A7", "A8", "A9"]:
+            exp_dir = evidence_dir / exp_id
+            nav.to_parquet(exp_dir / "daily_nav.parquet")
 
         # Add candidates
         candidates = pd.DataFrame({
@@ -713,9 +731,13 @@ class TestEvidenceSemanticValidation:
             "2026H1": {"status": "FITTED"},
         }))
 
-        # Add data to get past EMPTY check
-        nav = pd.DataFrame({"trade_date": ["2026-01-02"], "nav": [1.0]})
+        # Add data to get past EMPTY check (root + per-experiment for PR20)
+        dates = pd.date_range("2025-01-02", periods=30, freq="B")
+        nav = pd.DataFrame({"trade_date": dates, "nav": np.cumprod(1 + np.random.randn(30) * 0.01)})
         nav.to_parquet(evidence_dir / "daily_nav.parquet")
+        # PR20: Write to per-experiment directories too
+        for exp_id in ["P0", "C0", "A7", "A8", "A9"]:
+            nav.to_parquet((evidence_dir / exp_id) / "daily_nav.parquet")
         candidates = pd.DataFrame({"trade_date": ["2026-01-02"], "symbol": ["000001"]})
         candidates.to_parquet(evidence_dir / "daily_candidates.parquet")
         ledger = pd.DataFrame({"trade_date": ["2026-01-02"], "symbol": ["000001"]})
@@ -735,7 +757,10 @@ class TestEvidenceSemanticValidation:
         assert report.status == SemanticEvidenceStatus.SOURCE_INCOMPLETE.value
 
     def test_all_valid_passes_semantic(self, tmp_path):
-        """Fully valid evidence package should pass."""
+        """Fully valid evidence package should pass.
+
+        PR20: Requires per-experiment directories with actual data across windows.
+        """
         from scripts.research.evidence_semantic import validate_evidence_semantics, SemanticEvidenceStatus
 
         overrides = {
@@ -755,10 +780,20 @@ class TestEvidenceSemanticValidation:
         }
         evidence_dir = self._make_minimal_evidence_dir(tmp_path, **overrides)
 
-        # Add valid data
-        dates = pd.date_range("2026-01-02", periods=60, freq="B")
-        nav = pd.DataFrame({"trade_date": dates, "nav": np.cumprod(1 + np.random.randn(60) * 0.01)})
+        # Add valid data to root
+        dates = list(pd.date_range("2025-01-02", "2025-06-30", freq="B"))
+        nav_vals = np.cumprod(1 + np.random.randn(len(dates)) * 0.01)
+        nav = pd.DataFrame({
+            "trade_date": dates,
+            "nav": nav_vals,
+            "cash": nav_vals * 0.3,           # PR20: required column
+            "market_value": nav_vals * 0.7,    # PR20: required column
+            "accrued_cost": 0.0,               # PR20: required column
+        })
         nav.to_parquet(evidence_dir / "daily_nav.parquet")
+        # PR20: Write to per-experiment directories (covers 2025H1 window)
+        for exp_id in ["P0", "C0", "A7", "A8", "A9"]:
+            nav.to_parquet((evidence_dir / exp_id) / "daily_nav.parquet")
 
         candidates = pd.DataFrame({
             "trade_date": np.repeat(dates[:30], 5),
@@ -784,7 +819,7 @@ class TestEvidenceSemanticValidation:
         }).to_csv(evidence_dir / "random_seed_results.csv", index=False)
 
         report = validate_evidence_semantics(evidence_dir)
-        assert report.passed
+        assert report.passed, f"Should pass: {report.errors}"
         assert report.status == SemanticEvidenceStatus.REPRODUCIBLE.value
 
     def test_missing_random_results_fails(self, tmp_path):
