@@ -87,7 +87,11 @@ class PromotionEvaluator:
         "risk_portfolio",
         "decay_exit",
         "promotion",
+        "cost_stress",
+        "attribution",
     ]
+
+    REQUIRED_GATES = frozenset(GATE_NAMES)
 
     def __init__(
         self,
@@ -191,13 +195,24 @@ class PromotionEvaluator:
         gates_total = len({e.gate_name for e in evidence})
         overall_score = conditions_passed / max(conditions_total, 1)
 
+        # PR9: Check for missing required gates
+        present_gates = {e.gate_name for e in evidence}
+        missing_gates = self.REQUIRED_GATES - present_gates
+        for mg in sorted(missing_gates):
+            failure_reasons.append(f"missing_required_gate:{mg}")
+            evidence.append(PromotionEvidence(
+                gate_name=mg, condition="gate_present", passed=False,
+                value="missing", threshold="required",
+                detail=f"Required gate '{mg}' has no evidence",
+            ))
+
         # Collect failures
         for e in evidence:
             if not e.passed:
                 failure_reasons.append(f"{e.gate_name}/{e.condition}: failed")
 
-        # Require at least one piece of evidence to recommend promotion
-        recommend = len(evidence) > 0 and all(e.passed for e in evidence)
+        # Require at least one piece of evidence AND no missing gates to recommend promotion
+        recommend = len(evidence) > 0 and len(missing_gates) == 0 and all(e.passed for e in evidence)
 
         summary = (
             f"PROMOTION RECOMMENDED" if recommend
