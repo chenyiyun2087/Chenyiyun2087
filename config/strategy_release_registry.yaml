@@ -179,6 +179,26 @@ releases:
     approved_by: chenyiyun
     approved_at: "2026-07-10T00:00:00+08:00"
 
+  alpha_risk_portfolio_v2:
+    strategy_id: alpha_risk_portfolio_v2
+    strategy_version: "2026.07.10"
+    release_id: portfolio-constructor-20260710-01
+    role: PORTFOLIO_CONSTRUCTOR
+    lifecycle_status: RESEARCH
+    research_status: PENDING_WALKFORWARD
+    walk_forward_status: PENDING
+    execution_status: RESEARCH_ONLY
+    promotion_status: BLOCKED
+    capital_status: NO_SCALE
+    approved_principal: 0
+    order_policy: SHADOW
+    walk_forward_passed: false
+    git_commit_sha: PENDING_PR4
+    config_sha: PENDING_PR4
+    approved_snapshot: PENDING_PR4
+    approved_by: chenyiyun
+    approved_at: "2026-07-10T00:00:00+08:00"
+
   chenyiyun_selected:
     strategy_id: chenyiyun_selected
     strategy_version: "legacy"

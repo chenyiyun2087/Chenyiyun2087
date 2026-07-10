@@ -8,6 +8,10 @@ period, costs, T+1, limit rules) are shared.
 A7 (industry_neutral_alpha_v3) is now implemented — a 6-factor
 cross-sectional model with industry neutralization, IC-based weighting,
 and Benjamini-Hochberg correction.
+
+A8 (risk_weighted_alpha_v2) wraps A7 with risk-adjusted position weights
+via RiskPortfolioBuilder — replacing equal-weight with score-weighted
+inverse-volatility weights, concentration caps, and drawdown scaling.
 """
 
 from __future__ import annotations
@@ -411,6 +415,43 @@ def a7_industry_neutral_alpha_v3(
 
 
 # ---------------------------------------------------------------------------
+# A8 — Risk-Weighted Alpha V2
+# ---------------------------------------------------------------------------
+
+def a8_risk_weighted_alpha_v2(
+    scores: pd.DataFrame,
+    prices: pd.DataFrame,
+    train_start: str,
+    train_end: str,
+) -> pd.DataFrame:
+    """Risk-weighted alpha v2 — A7 rankings + risk-adjusted position weights.
+
+    Wraps A7's industry-neutral alpha model and passes the output through
+    RiskPortfolioBuilder to produce risk-adjusted effective_weight values.
+    The ranking (rank_score) is identical to A7 — only the effective_weight
+    differs, replacing equal-weight with score-weighted inverse-volatility
+    weights subject to concentration caps and drawdown scaling.
+
+    Parameters and return format are identical to all other A* experiments.
+    """
+    # Get A7 rankings (same alpha model, equal-weight)
+    ranked = a7_industry_neutral_alpha_v3(
+        scores, prices, train_start, train_end
+    )
+
+    # Apply risk portfolio weights
+    from scripts.research.alpha_risk_portfolio import (
+        RiskPortfolioBuilder,
+        RiskPortfolioConfig,
+    )
+
+    builder = RiskPortfolioBuilder(RiskPortfolioConfig())
+    risk_weighted = builder.compute_risk_weights(ranked, prices)
+
+    return risk_weighted
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -465,6 +506,13 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A7",
             description="Industry-neutral alpha v3 — 6-factor cross-sectional model",
             ranking_fn=a7_industry_neutral_alpha_v3,
+            needs_training=True,
+            is_available=True,
+        ),
+        "A8": ExperimentSpec(
+            experiment_id="A8",
+            description="Risk-weighted alpha v2 — A7 + risk-adjusted position weights",
+            ranking_fn=a8_risk_weighted_alpha_v2,
             needs_training=True,
             is_available=True,
         ),

@@ -613,3 +613,180 @@ class IndustryNeutralAlphaGate:
             },
             "failure_reasons": result.failure_reasons,
         }
+
+
+# ---------------------------------------------------------------------------
+# Risk Portfolio Gate (PR4)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RiskPortfolioGateResult:
+    """Gate result specific to A8 (risk-weighted alpha portfolio)."""
+
+    passed: bool
+    # A7 must already pass its gates (A0 comparison + factor diagnostics)
+    a7_gate_passed: bool = False
+    # Risk-specific conditions
+    return_improved: bool = False       # A8 return > A7 return in ≥2/3 windows
+    drawdown_improved: bool = False     # A8 max_dd < A7 max_dd in ≥2/3 windows  (less severe)
+    volatility_reduced: bool = False    # A8 ann_vol < A7 ann_vol in ≥2/3 windows
+    concentration_ok: bool = False      # A8 max_single_position ≤ max_single_pct
+    windows_passed: int = 0
+    windows_total: int = 3
+    conditions: dict[str, bool] = field(default_factory=dict)
+    failure_reasons: list[str] = field(default_factory=list)
+
+
+class RiskPortfolioGate:
+    """Evaluates whether A8 (risk-weighted) improves on A7 (equal-weight).
+
+    Gate conditions (all must hold):
+      1. A8 total_return > A7 total_return in ≥2/3 windows
+         (risk weighting adds value, not just reduces risk)
+      2. A8 max_drawdown < A7 max_drawdown in ≥2/3 windows
+         (risk weighting reduces downside)
+      3. A8 ann_volatility < A7 ann_volatility in ≥2/3 windows
+         (risk weighting reduces portfolio volatility)
+      4. A8 max_single_position ≤ max_single_pct (concentration limit obeyed)
+    """
+
+    WINDOW_LABELS = ("2025H1", "2025H2", "2026H1")
+    MAX_SINGLE_PCT = 0.25
+
+    @staticmethod
+    def evaluate(
+        a7_metrics: dict[str, Any],
+        a8_metrics: dict[str, Any],
+        a7_gate_passed: bool = True,
+        a8_max_single_weight: float = 0.0,
+    ) -> RiskPortfolioGateResult:
+        """Run the risk portfolio comparison gate.
+
+        Parameters
+        ----------
+        a7_metrics : {window_label: WindowMetrics} for A7 (equal-weight alpha).
+        a8_metrics : {window_label: WindowMetrics} for A8 (risk-weighted).
+        a7_gate_passed : Whether A7 passed its own gates (PR2+PR3).
+        a8_max_single_weight : Maximum single-position weight observed in A8.
+
+        Returns
+        -------
+        RiskPortfolioGateResult.
+        """
+        result = RiskPortfolioGateResult(
+            passed=False,
+            a7_gate_passed=a7_gate_passed,
+        )
+
+        if not a7_gate_passed:
+            result.failure_reasons.append("A7_gate_not_passed")
+
+        windows_return_ok = 0
+        windows_dd_ok = 0
+        windows_vol_ok = 0
+
+        for window in RiskPortfolioGate.WINDOW_LABELS:
+            a7_wm = a7_metrics.get(window)
+            a8_wm = a8_metrics.get(window)
+            if a7_wm is None or a8_wm is None:
+                continue
+
+            # Return improvement: A8 > A7
+            if a8_wm.total_return > a7_wm.total_return:
+                windows_return_ok += 1
+
+            # Drawdown improvement: A8 less severe than A7
+            # max_drawdown is negative; less negative = better
+            if a8_wm.max_drawdown > a7_wm.max_drawdown:
+                windows_dd_ok += 1
+
+            # Volatility reduction
+            if a8_wm.ann_volatility < a7_wm.ann_volatility:
+                windows_vol_ok += 1
+
+        result.windows_total = 3
+        result.return_improved = (
+            windows_return_ok >= ComparisonGate.REQUIRED_WINDOWS_PASS
+            if hasattr(ComparisonGate, "REQUIRED_WINDOWS_PASS")
+            else windows_return_ok >= 2
+        )
+        result.drawdown_improved = windows_dd_ok >= 2
+        result.volatility_reduced = windows_vol_ok >= 2
+
+        # Concentration check
+        result.concentration_ok = (
+            a8_max_single_weight <= RiskPortfolioGate.MAX_SINGLE_PCT
+        )
+
+        # Count passing conditions
+        result.conditions["return_improved"] = result.return_improved
+        result.conditions["drawdown_improved"] = result.drawdown_improved
+        result.conditions["volatility_reduced"] = result.volatility_reduced
+        result.conditions["concentration_ok"] = result.concentration_ok
+
+        windows_passed_count = sum(
+            [
+                windows_return_ok,
+                min(windows_dd_ok, windows_return_ok),
+                min(windows_vol_ok, windows_return_ok),
+            ]
+        )
+        result.windows_passed = windows_return_ok
+
+        # Collect failures
+        if not result.return_improved:
+            result.failure_reasons.append(
+                f"return_not_improved:{windows_return_ok}/3"
+            )
+        if not result.drawdown_improved:
+            result.failure_reasons.append(
+                f"drawdown_not_improved:{windows_dd_ok}/3"
+            )
+        if not result.volatility_reduced:
+            result.failure_reasons.append(
+                f"volatility_not_reduced:{windows_vol_ok}/3"
+            )
+        if not result.concentration_ok:
+            result.failure_reasons.append(
+                f"concentration_exceeded:"
+                f"{a8_max_single_weight:.1%}>{RiskPortfolioGate.MAX_SINGLE_PCT:.0%}"
+            )
+
+        # Final pass: all four conditions must hold
+        all_ok = (
+            result.return_improved
+            and result.drawdown_improved
+            and result.volatility_reduced
+            and result.concentration_ok
+        )
+        result.passed = all_ok
+
+        if not result.passed:
+            result.failure_reasons.insert(
+                0,
+                f"FAILED_RISK_PORTFOLIO_GATE: "
+                f"{sum(1 for v in result.conditions.values() if v)}/"
+                f"{len(result.conditions)} conditions passed",
+            )
+
+        return result
+
+    @staticmethod
+    def gate_summary(result: RiskPortfolioGateResult) -> dict[str, Any]:
+        """Return a JSON-serializable summary."""
+        return {
+            "passed": result.passed,
+            "a7_gate_passed": result.a7_gate_passed,
+            "return_improved": result.return_improved,
+            "drawdown_improved": result.drawdown_improved,
+            "volatility_reduced": result.volatility_reduced,
+            "concentration_ok": result.concentration_ok,
+            "windows_passed": result.windows_passed,
+            "windows_total": result.windows_total,
+            "conditions": {
+                k: "PASS" if v else "FAIL"
+                for k, v in result.conditions.items()
+            },
+            "failure_reasons": result.failure_reasons,
+        }
