@@ -39,6 +39,8 @@ class ReleaseRecord(BaseModel):
     cost_model: str = "NOT_FROZEN"
     approved_principal: float = 0.0
     order_policy: str = "BLOCKED"
+    walk_forward_passed: bool = False
+    walk_forward_windows_passed: int = 0
     approved_snapshot: str = ""
     approved_by: str = ""
     approved_at: str = ""

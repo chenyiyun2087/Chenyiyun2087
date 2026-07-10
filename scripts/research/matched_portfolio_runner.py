@@ -784,6 +784,24 @@ class MatchedPortfolioRunner:
 
         return results
 
+    def run_experiment(
+        self,
+        scores: pd.DataFrame,
+        prices: pd.DataFrame,
+        rank_fn,
+        experiment_name: str = "experiment",
+    ) -> CurveResult:
+        """Run a single experiment curve with an arbitrary ranking function.
+
+        This is the generic entry point for A0–A7 walk-forward experiments.
+        The *rank_fn* receives (candidates_df) and must return a DataFrame
+        with at least ``rank`` and ``effective_weight`` columns.
+        """
+        return self._run_base_curve(
+            scores, prices, experiment_name,
+            rank_fn=rank_fn,
+        )
+
     # ------------------------------------------------------------------
     # Summary / Export
     # ------------------------------------------------------------------

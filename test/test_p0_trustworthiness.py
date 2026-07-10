@@ -33,6 +33,8 @@ def test_champion_is_frozen_without_switching_production_route():
     assert champion.execution_status == "RESEARCH_ONLY"
     assert champion.order_policy == "SHADOW"
     assert champion.approved_principal == 500_000.0
+    assert champion.walk_forward_passed is False
+    assert champion.walk_forward_windows_passed == 0
 
 
 def test_production_config_rejects_unknown_fields():
