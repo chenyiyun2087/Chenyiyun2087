@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
+        run: pip install flask pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
       - name: Production config consistency
         run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py -v
       - name: Runtime and batch pipeline integrity
@@ -160,3 +160,5 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

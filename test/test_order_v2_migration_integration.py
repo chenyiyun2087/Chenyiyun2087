@@ -27,7 +27,8 @@ NEEDS_MYSQL = pytest.mark.skipif(
 )
 
 TEST_TABLE = "order_test_v2_migration"
-FULL_TABLE = "chenyiyun.order_test_v2_migration"
+TEST_SCHEMA = "chenyiyun"
+FULL_TABLE = f"{TEST_SCHEMA}.{TEST_TABLE}"
 
 
 def _engine():
@@ -108,9 +109,9 @@ class TestV2Migration:
         with _engine().connect() as conn:
             pk = conn.execute(text(
                 "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE "
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :tbl "
+                "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :tbl "
                 "AND CONSTRAINT_NAME = 'PRIMARY' ORDER BY ORDINAL_POSITION"
-            ), {"tbl": TEST_TABLE}).fetchall()
+            ), {"schema": TEST_SCHEMA, "tbl": TEST_TABLE}).fetchall()
         assert {r[0] for r in pk} == {"id"}
 
     def test_uk_column_order(self, migrated_table):
@@ -118,9 +119,9 @@ class TestV2Migration:
         with _engine().connect() as conn:
             uk = conn.execute(text(
                 "SELECT COLUMN_NAME FROM information_schema.STATISTICS "
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :tbl "
+                "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :tbl "
                 "AND INDEX_NAME = 'uk_strategy_order' ORDER BY SEQ_IN_INDEX"
-            ), {"tbl": TEST_TABLE}).fetchall()
+            ), {"schema": TEST_SCHEMA, "tbl": TEST_TABLE}).fetchall()
         assert [r[0] for r in uk] == [
             "account_id", "release_id", "strategy",
             "execution_date", "ts_code", "side",
