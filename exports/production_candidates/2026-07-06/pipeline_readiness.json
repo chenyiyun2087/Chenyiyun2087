@@ -27,7 +27,7 @@
       "severity": "critical",
       "detail": {
         "check": "industry_null_rate",
-        "date": "20260708",
+        "date": "20260706",
         "total_rows": 5164,
         "null_count": 0,
         "null_rate": 0.0,
@@ -38,7 +38,7 @@
     },
     {
       "check": "bs_signal_complete",
-      "date": "20260708",
+      "date": "20260706",
       "total_rows": 5164,
       "fields": {
         "bs_score_v2": {
@@ -81,6 +81,6 @@
     "scoring_complete"
   ],
   "failed_warnings": [],
-  "target_date": "2026-07-08",
+  "target_date": "2026-07-06",
   "gate_version": "2.0"
 }

@@ -223,7 +223,7 @@ class PreScoreGate:
                 for symbol in FRESHNESS_CHECK_SYMBOLS:
                     row = conn.execute(
                         text_fn(
-                            "SELECT ts_code, close, amount FROM tushare_stock.dwd_stock_daily_standard "
+                            "SELECT ts_code, adj_close, amount FROM tushare_stock.dwd_stock_daily_standard "
                             "WHERE trade_date = :date AND ts_code = :symbol LIMIT 1"
                         ),
                         {"date": date_str, "symbol": symbol},
@@ -237,6 +237,46 @@ class PreScoreGate:
         return {
             "check": "freshness_samples", "date": date_str, "samples": samples,
             "passed": all_ok, "severity": "warning",
+        }
+
+    def check_factor_qfq_coverage(self, target_date: date) -> dict[str, Any]:
+        """Verify the factor table used by B/S detection and qfq scoring is ready."""
+        date_str = target_date.strftime("%Y%m%d")
+        text_fn = _get_text_sql()
+        try:
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    text_fn(
+                        """
+                        SELECT COUNT(DISTINCT ts_code) AS stock_count,
+                               SUM(CASE WHEN close_qfq IS NULL OR close_qfq = 0 THEN 1 ELSE 0 END) AS null_qfq,
+                               SUM(CASE WHEN adj_factor IS NULL OR adj_factor = 0 THEN 1 ELSE 0 END) AS null_adj
+                        FROM tushare_stock.ods_stk_factor
+                        WHERE trade_date = :date
+                        """
+                    ),
+                    {"date": date_str},
+                ).fetchone()
+            stock_count = int((row[0] if row else 0) or 0)
+            null_qfq = int((row[1] if row else 0) or 0)
+            null_adj = int((row[2] if row else 0) or 0)
+        except Exception as exc:
+            return {"check": "factor_qfq_coverage", "passed": False, "detail": f"query_error={exc}", "severity": "critical"}
+
+        qfq_null_rate = null_qfq / max(stock_count, 1)
+        adj_null_rate = null_adj / max(stock_count, 1)
+        passed = stock_count >= EXPECTED_MIN_ROWS and qfq_null_rate <= 0.01 and adj_null_rate <= 0.01
+        return {
+            "check": "factor_qfq_coverage",
+            "date": date_str,
+            "stock_count": stock_count,
+            "threshold": EXPECTED_MIN_ROWS,
+            "null_qfq": null_qfq,
+            "null_adj_factor": null_adj,
+            "qfq_null_rate": round(qfq_null_rate, 4),
+            "adj_null_rate": round(adj_null_rate, 4),
+            "passed": passed,
+            "severity": "critical" if not passed else "info",
         }
 
     def check_suspension_st_basic(self, target_date: date) -> dict[str, Any]:
@@ -322,7 +362,7 @@ class PreScoreGate:
                 null_close = conn.execute(
                     text_fn(
                         "SELECT COUNT(*) FROM tushare_stock.dwd_stock_daily_standard "
-                        "WHERE trade_date = :date AND (close IS NULL OR close = 0)"
+                        "WHERE trade_date = :date AND (adj_close IS NULL OR adj_close = 0)"
                     ),
                     {"date": date_str},
                 ).scalar()
@@ -349,6 +389,7 @@ class PreScoreGate:
             self.check_exchange_coverage(target_date),
             self.check_date_freshness(target_date),
             self.check_freshness_samples(target_date),
+            self.check_factor_qfq_coverage(target_date),
             self.check_adjust_factor_coverage(target_date),
             self.check_suspension_st_basic(target_date),
             self.check_suspension_completeness(target_date),

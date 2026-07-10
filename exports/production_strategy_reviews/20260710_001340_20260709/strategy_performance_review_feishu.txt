@@ -1,0 +1,35 @@
+【核心精选策略收益评估】
+日期：2026-07-09
+生产外壳：production_governed_vol_position
+选股内核：流动性质量稳健策略（波动仓位）（baseline_full_liquidity_detail_vol_position）
+风控锚：市场风格自适应生产策略（adaptive_market_style） v2.2
+风险档位：adaptive / 当前目标仓位 70%
+实际回测策略：production_governed_vol_position_v1_2b_dynamic_score
+风险总闸版本：v1 / 目标仓位 50.00%
+结论：风险总闸触发：reduce_position，目标仓位 50.00%
+
+最近3个月收益评估：
+- 状态：PASS；区间 2026-04-08~2026-07-09，交易日 63/63
+- 收益 30.23%，年化 192.57%，最大回撤 -11.60%，当前回撤 -7.35%
+- 胜率 58.06%，最差单日 -8.10%，波动率 41.45%，Sharpe 2.80，Calmar 16.59，平均暴露 65.28%
+
+当前回测窗口收益/回撤：
+- 主策略窗口 2025-09-02~2026-07-09（204个交易日）：累计46.17%，年化60.20%，最大回撤-13.12%，期末权益730,851
+- 风控影子v2.2窗口 2025-09-02~2026-07-09（204个交易日）：累计23.78%，年化30.33%，最大回撤-14.50%
+
+当前运行：
+- 候选 5 只，目标仓位合计50.00%；行业：半导体4只、元器件1只
+- 订单 3 笔（BUY 3 / SELL 0），计划金额 100,582
+- 影子盘：可成交 2 / 不可成交 0，均值滑点 362.2 bps；验收 fail / reduce_position
+- 最近影子盘：fail_streak 3，worst_action reduce_position
+- 实盘快照：总权益 500,000，现金 500,000，持仓市值 0，日收益 0.00%
+- 数据提醒：live_positions is empty; live realized strategy trend cannot be judged
+
+Top5：
+- 1. 002371 北方华创 半导体 权重14.63%
+- 2. 002384 东山精密 元器件 权重9.38%
+- 3. 688347 华虹公司 半导体 权重9.99%
+- 4. 688120 华海清科 半导体 权重7.74%
+- 5. 603986 兆易创新 半导体 权重8.26%
+
+报告：/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260710_001340_20260709/strategy_performance_review.md

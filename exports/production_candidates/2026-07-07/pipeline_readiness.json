@@ -1,21 +1,25 @@
 {
-  "status": "READY",
-  "passed": true,
+  "status": "BLOCKED",
+  "passed": false,
   "gate_name": "pipeline_readiness",
   "checks": [
     {
       "check": "market_data_complete",
       "passed": true,
       "severity": "critical",
-      "status": "READY_WITH_WARNING",
+      "status": "READY",
       "failed": []
     },
     {
       "check": "scoring_complete",
-      "passed": true,
+      "passed": false,
       "severity": "critical",
       "status": "BLOCKED",
-      "failed": []
+      "original_status": "BLOCKED",
+      "allowed_failures": [],
+      "failed": [
+        "score_date_matches"
+      ]
     },
     {
       "check": "industry_complete",
@@ -68,11 +72,14 @@
     {
       "check": "order_draft_ready",
       "passed": true,
-      "severity": "critical",
+      "severity": "info",
+      "detail": "emit_orders_disabled",
       "order_count": null
     }
   ],
-  "failed_critical": [],
+  "failed_critical": [
+    "scoring_complete"
+  ],
   "failed_warnings": [],
   "target_date": "2026-07-07",
   "gate_version": "2.0"

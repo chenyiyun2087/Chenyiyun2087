@@ -325,6 +325,8 @@ TASK_HEARTBEAT_INTERVAL_SECONDS = 20
 # the web process is restarted and its child process disappears.
 TASK_STALE_TIMEOUT_SECONDS = 5 * 60
 TASK_RETRY_DELAY_SECONDS = 60
+DATA_READINESS_RETRY_DELAY_SECONDS = 300
+DATA_READINESS_MAX_ATTEMPTS = 24
 TASK_QUEUE_SCAN_INTERVAL_SECONDS = 2
 # Dependencies are evaluated against the same business date.  Keep this small and
 # explicit: scripts which already perform their own freshness checks remain free to
@@ -1744,6 +1746,15 @@ TRANSIENT_FAILURE_MARKERS = (
     "timed out", "timeout", "(1205", "(1213", "(2006", "(2013",
 )
 
+DATA_READINESS_FAILURE_MARKERS = (
+    "qfq 在",
+    "无数据，检查导入或日期对齐",
+    "loading data for 0 stocks",
+    "expected_stocks=0",
+    "adjust_factor_coverage",
+    "prescoregate: blocked",
+)
+
 
 def _classify_task_failure(history_status, exit_code, message):
     """Return a stable error kind and whether an automatic retry is safe."""
@@ -1756,6 +1767,8 @@ def _classify_task_failure(history_status, exit_code, message):
         return "ARGUMENT", False
     if "failed test" in text or "pytest" in text or "assertionerror" in text:
         return "TEST_GATE", False
+    if any(marker.lower() in text for marker in DATA_READINESS_FAILURE_MARKERS):
+        return "DATA_READINESS", True
     if "[verify]" in text and "result=fail" in text:
         return "VERIFICATION", False
     if any(marker in text for marker in TRANSIENT_FAILURE_MARKERS):
@@ -1773,12 +1786,17 @@ def _finish_queued_task(job, history_status, exit_code, message):
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             error_kind, retryable = _classify_task_failure(history_status, exit_code, message)
-            retry = retryable and int(job.get("attempt_count") or 0) < int(job.get("max_attempts") or 2)
+            max_attempts = int(job.get("max_attempts") or 2)
+            retry_delay = TASK_RETRY_DELAY_SECONDS
+            if error_kind == "DATA_READINESS":
+                max_attempts = max(max_attempts, DATA_READINESS_MAX_ATTEMPTS)
+                retry_delay = DATA_READINESS_RETRY_DELAY_SECONDS
+            retry = retryable and int(job.get("attempt_count") or 0) < max_attempts
             if retry:
                 cursor.execute(
                     """UPDATE app_task_queue SET status='PENDING', available_at=DATE_ADD(NOW(), INTERVAL %s SECOND),
                        exit_code=%s, error_kind=%s, message=%s WHERE id=%s""",
-                    (TASK_RETRY_DELAY_SECONDS, exit_code, error_kind, message, job["id"]),
+                    (retry_delay, exit_code, error_kind, message, job["id"]),
                 )
             else:
                 status = "SUCCESS" if history_status == "Success" else "FAILED"

@@ -66,8 +66,8 @@
       "check": "candidate_export_ready",
       "passed": true,
       "severity": "critical",
-      "candidate_count": null,
-      "detail": "candidate_count_not_supplied_pre_export"
+      "candidate_count": 5,
+      "detail": ""
     },
     {
       "check": "order_draft_ready",

@@ -29,6 +29,19 @@ def test_retry_only_allows_transient_failures():
     assert web_app._classify_task_failure("Failed", 1, "Deadlock found (1213)") == ("TRANSIENT", True)
 
 
+def test_retry_allows_data_readiness_failures():
+    assert web_app._classify_task_failure(
+        "Failed",
+        1,
+        "ValueError: qfq 在 2026-07-08 无数据，检查导入或日期对齐。",
+    ) == ("DATA_READINESS", True)
+    assert web_app._classify_task_failure(
+        "Failed",
+        1,
+        "[stdout_tail]\n[Features] Loading data for 0 stocks on 20260709",
+    ) == ("DATA_READINESS", True)
+
+
 def test_runtime_preflight_detects_wrong_interpreter(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime_preflight, "PROJECT_PYTHON", tmp_path / "other-python")
     issues = runtime_preflight.collect_runtime_issues(require_database=False)
