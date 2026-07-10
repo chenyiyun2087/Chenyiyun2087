@@ -41,11 +41,12 @@ RankingFn = Callable[
 class ExperimentSpec:
     """Metadata and ranking function for one alpha experiment."""
 
-    experiment_id: str          # "A0" … "A7"
+    experiment_id: str          # "A0" … "A9"
     description: str
     ranking_fn: RankingFn
     needs_training: bool = False   # True if fn uses train-window data
-    is_available: bool = True      # False for A7 until PR3
+    is_available: bool = True      # False if not yet implemented
+    uses_decay_exit: bool = False  # PR5: True if experiment uses DecayExitRule
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +453,33 @@ def a8_risk_weighted_alpha_v2(
 
 
 # ---------------------------------------------------------------------------
+# A9 — Alpha Decay Exit V2
+# ---------------------------------------------------------------------------
+
+def a9_decay_exit_alpha(
+    scores: pd.DataFrame,
+    prices: pd.DataFrame,
+    train_start: str,
+    train_end: str,
+) -> pd.DataFrame:
+    """Decay-exit alpha v2 — A8 risk weights + alpha decay exit rules.
+
+    Identical to A8 (A7 rankings + risk-adjusted weights) with one addition:
+    the returned DataFrame carries a ``_decay_exit`` attribute flag so the
+    walk-forward engine can attach a ``DecayExitRule`` to the runner.
+
+    The decay exit rule monitors rank_score deterioration during the hold
+    period and overrides the hold gate when alpha has decayed significantly.
+
+    Parameters and return format are identical to all other A* experiments.
+    """
+    ranked = a8_risk_weighted_alpha_v2(scores, prices, train_start, train_end)
+    # Attach decay exit flag (consumed by walk_forward_engine)
+    ranked.attrs["_uses_decay_exit"] = True
+    return ranked
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -515,5 +543,13 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             ranking_fn=a8_risk_weighted_alpha_v2,
             needs_training=True,
             is_available=True,
+        ),
+        "A9": ExperimentSpec(
+            experiment_id="A9",
+            description="Decay-exit alpha v2 — A8 + alpha decay exit rules",
+            ranking_fn=a9_decay_exit_alpha,
+            needs_training=True,
+            is_available=True,
+            uses_decay_exit=True,
         ),
     }
