@@ -565,4 +565,47 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             is_available=True,
             uses_decay_exit=True,
         ),
+        # PR8: TopN experiments
+        "A7-5": ExperimentSpec(
+            experiment_id="A7-5",
+            description="Alpha V3 Top5 — equal weight, 70% exposure",
+            ranking_fn=a7_industry_neutral_alpha_v3,
+            needs_training=True,
+            is_available=True,
+        ),
+        "A7-8": ExperimentSpec(
+            experiment_id="A7-8",
+            description="Alpha V3 Top8 — equal weight, 70% exposure",
+            ranking_fn=a7_industry_neutral_alpha_v3,
+            needs_training=True,
+            is_available=True,
+        ),
+        "A7-10": ExperimentSpec(
+            experiment_id="A7-10",
+            description="Alpha V3 Top10 — equal weight, 70% exposure",
+            ranking_fn=a7_industry_neutral_alpha_v3,
+            needs_training=True,
+            is_available=True,
+        ),
+        "A8-5": ExperimentSpec(
+            experiment_id="A8-5",
+            description="Risk V2 Top5 — risk-weighted, 70% exposure",
+            ranking_fn=a8_risk_weighted_alpha_v2,
+            needs_training=True,
+            is_available=True,
+        ),
+        "A8-8": ExperimentSpec(
+            experiment_id="A8-8",
+            description="Risk V2 Top8 — risk-weighted, 70% exposure",
+            ranking_fn=a8_risk_weighted_alpha_v2,
+            needs_training=True,
+            is_available=True,
+        ),
+        "A8-10": ExperimentSpec(
+            experiment_id="A8-10",
+            description="Risk V2 Top10 — risk-weighted, 70% exposure",
+            ranking_fn=a8_risk_weighted_alpha_v2,
+            needs_training=True,
+            is_available=True,
+        ),
     }
