@@ -35,6 +35,8 @@ releases:
     capital_status: NO_EXTERNAL_SCALE
     approved_principal: 500000
     order_policy: SHADOW
+    walk_forward_passed: false
+    walk_forward_windows_passed: 0
     git_commit_sha: 3f389235e7af85b64d02d708912ab266016acf2d
     config_sha: a2106d3b8ef6d1d1524f2072ce90fb550ef466436bcc2a2ec9d5b12e54ae8ed4
     data_snapshot_sha: 417334bebdc1b53b6a1c8efd735429931613692cddbb2ad73bc0b691869a9ab2
