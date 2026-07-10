@@ -1058,16 +1058,25 @@ class AlphaModel:
                 doc = diagnostics.get(fname)
                 ic_weight = doc.raw_weight if doc else 0.0
                 passes = bh_passes.get(fname, False)
+                p_value = doc.p_value if doc else 1.0
+                prior_w = FIXED_PRIOR_WEIGHTS.get(fname, 0.0)
 
-                if not passes or abs(ic_weight) < 1e-9:
-                    # Fall back to fixed prior if not significant
-                    prior_w = FIXED_PRIOR_WEIGHTS.get(fname, 0.0)
-                    composite_series += z_series * prior_w * 1.0
+                # PR8: Significance shrinkage — higher p-value → lower weight
+                # sig_shrinkage = 1.0 at p=0, decays to near 0 at p=0.20
+                sig_shrinkage = max(0.0, 1.0 - min(p_value, 0.20) / 0.20)
+
+                if not passes:
+                    # BH failed: use significance-shrunken prior as weak regularizer only
+                    effective_w = prior_w * 0.15 * sig_shrinkage  # weak regularization at most
+                elif abs(ic_weight) < 1e-9:
+                    # IC near zero: use prior with significance shrinkage
+                    effective_w = prior_w * sig_shrinkage
                 else:
-                    # Blend IC weight with prior
-                    prior_w = FIXED_PRIOR_WEIGHTS.get(fname, 0.0)
+                    # BH passed + meaningful IC: blend IC weight with prior
                     blended_w = 0.70 * ic_weight + 0.30 * prior_w
-                    composite_series += z_series * blended_w
+                    effective_w = blended_w * (0.70 + 0.30 * sig_shrinkage)
+
+                composite_series += z_series * effective_w
 
             # 7. Standardize composite
             composite_series = CrossSectionalProcessor.standardize(
