@@ -713,3 +713,151 @@ class WalkForwardEngine:
         ).hexdigest()
 
         return manifest
+
+    # ------------------------------------------------------------------
+    # PR6: Promotion evaluation
+    # ------------------------------------------------------------------
+
+    def run_promotion_evaluation(
+        self,
+        all_results: dict[str, list[FoldResult]],
+    ) -> dict[str, Any]:
+        """Run the full PR6 promotion evaluation across all gates.
+
+        Parameters
+        ----------
+        all_results : {experiment_id: [FoldResult, ...]} from run_all().
+
+        Returns
+        -------
+        Dict with keys: decision (PromotionDecision), gate_results (dict).
+        """
+        from scripts.research.promotion_evaluation import (
+            PromotionEvaluator,
+            PromotionReporter,
+        )
+        from scripts.research.walk_forward_metrics import PromotionGate
+
+        # Collect per-experiment metrics
+        def _collect_metrics(exp_id: str) -> dict[str, Any]:
+            metrics: dict[str, Any] = {}
+            results = all_results.get(exp_id, [])
+            for fr in results:
+                if fr.metrics and fr.window_label:
+                    metrics[fr.window_label] = fr.metrics
+            return metrics
+
+        # Collect trade rows for A9
+        a9_trade_rows: list[dict] = []
+        for fr in all_results.get("A9", []):
+            a9_trade_rows.extend(getattr(fr, "trade_rows", []))
+
+        # Build gate_results dict from accumulated gates
+        gate_results: dict[str, Any] = {}
+
+        # 1. ComparisonGate (A0 vs A1/A2/A3)
+        cg_result = self.evaluate_gate(all_results)
+        gate_results["comparison_gate"] = cg_result
+
+        # 2. IndustryNeutralAlphaGate — extracted from A7 FoldResults
+        a7_results = all_results.get("A7", [])
+        ina_evidence = {
+            "all_factors_bh_pass": False,
+            "all_factors_oos_pass": False,
+            "all_factors_stability_ok": False,
+            "factors_bh_pass_count": 0,
+            "factors_oos_pass_count": 0,
+            "factors_total": 6,
+            "passed": False,
+        }
+        if a7_results:
+            factor_reports = []
+            for fr in a7_results:
+                factor_reports.extend(getattr(fr, "factor_reports", []))
+            if factor_reports:
+                bh_count = sum(1 for r in factor_reports if getattr(r, "passed_bh", False))
+                oos_count = sum(1 for r in factor_reports if getattr(r, "passed_oos", False))
+                stab_count = sum(
+                    1 for r in factor_reports
+                    if abs(getattr(r, "industry_stability", 0.0)) < 0.50
+                    and abs(getattr(r, "cap_stability", 0.0)) < 0.50
+                )
+                ina_evidence = {
+                    "all_factors_bh_pass": bh_count >= 6,
+                    "all_factors_oos_pass": oos_count >= 6,
+                    "all_factors_stability_ok": stab_count >= 6,
+                    "factors_bh_pass_count": bh_count,
+                    "factors_oos_pass_count": oos_count,
+                    "factors_total": len(factor_reports),
+                    "passed": bh_count >= 6 and oos_count >= 6 and stab_count >= 6,
+                }
+        gate_results["industry_neutral_alpha_gate"] = type(
+            "GateResult", (), ina_evidence
+        )()
+
+        # 3. RiskPortfolioGate (A8 vs A7)
+        a7_metrics = _collect_metrics("A7")
+        a8_metrics = _collect_metrics("A8")
+        from scripts.research.walk_forward_metrics import RiskPortfolioGate
+        rp_result = RiskPortfolioGate.evaluate(
+            a7_metrics=a7_metrics, a8_metrics=a8_metrics,
+            a7_gate_passed=ina_evidence["passed"],
+        )
+        gate_results["risk_portfolio_gate"] = rp_result
+
+        # 4. DecayExitGate (A9 has decay exits)
+        has_decay = any(
+            isinstance(tr.get("reason", ""), str) and "sell_alpha_decay" in tr["reason"]
+            for tr in a9_trade_rows
+        )
+        gate_results["decay_exit_gate"] = type(
+            "GateResult", (), {"has_decay_exits": has_decay, "passed": has_decay}
+        )()
+
+        # 5. PromotionGate (A9 vs A0 head-to-head)
+        a0_metrics = _collect_metrics("A0")
+        a9_metrics = _collect_metrics("A9")
+        pg_result = PromotionGate.evaluate(
+            a0_metrics=a0_metrics, a9_metrics=a9_metrics, a9_trade_rows=a9_trade_rows,
+        )
+        gate_results["promotion_gate"] = pg_result
+
+        # Build promotion decision
+        evaluator = PromotionEvaluator(all_results=all_results, gate_results=gate_results)
+        decision = evaluator.evaluate()
+
+        return {
+            "decision": decision,
+            "gate_results": gate_results,
+        }
+
+    @staticmethod
+    def export_promotion_report(
+        promotion_output: dict[str, Any],
+        output_dir: Path,
+    ) -> dict[str, Any]:
+        """Export the promotion evaluation report to *output_dir*."""
+        from scripts.research.promotion_evaluation import PromotionReporter
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        decision = promotion_output["decision"]
+
+        # JSON report
+        json_path = output_dir / "promotion_decision.json"
+        json_path.write_text(
+            PromotionReporter.report_json(decision), encoding="utf-8",
+        )
+
+        # Markdown report
+        md_path = output_dir / "promotion_report.md"
+        md_path.write_text(
+            PromotionReporter.report_markdown(decision), encoding="utf-8",
+        )
+
+        return {
+            "json_path": str(json_path),
+            "md_path": str(md_path),
+            "summary": PromotionReporter.report_summary(decision),
+        }

@@ -790,3 +790,100 @@ class RiskPortfolioGate:
             },
             "failure_reasons": result.failure_reasons,
         }
+
+
+# ---------------------------------------------------------------------------
+# Promotion Gate (PR6)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PromotionGateResult:
+    """Gate result for head-to-head A9 vs A0 promotion evaluation."""
+
+    passed: bool
+    windows_passed: int = 0
+    windows_total: int = 3
+    cumulative_return_improved: bool = False
+    sharpe_improved: bool = False
+    drawdown_improved: bool = False
+    calmar_improved: bool = False
+    has_decay_exits: bool = False
+    conditions: dict[str, bool] = field(default_factory=dict)
+    failure_reasons: list[str] = field(default_factory=list)
+
+
+class PromotionGate:
+    """Head-to-head comparison: A9 (full v3) vs A0 (production)."""
+
+    WINDOW_LABELS = ("2025H1", "2025H2", "2026H1")
+
+    @staticmethod
+    def evaluate(
+        a0_metrics: dict[str, Any],
+        a9_metrics: dict[str, Any],
+        a9_trade_rows: list[dict] | None = None,
+    ) -> PromotionGateResult:
+        result = PromotionGateResult(passed=False)
+        windows_a9_wins = 0
+        a0_cum, a9_cum = 0.0, 0.0
+        for window in PromotionGate.WINDOW_LABELS:
+            a0_wm = a0_metrics.get(window)
+            a9_wm = a9_metrics.get(window)
+            if a0_wm is None or a9_wm is None:
+                continue
+            if a9_wm.total_return > a0_wm.total_return:
+                windows_a9_wins += 1
+            a0_cum += a0_wm.total_return
+            a9_cum += a9_wm.total_return
+        result.windows_passed = windows_a9_wins
+        result.cumulative_return_improved = a9_cum > a0_cum
+
+        a0_s = float(np.mean([a0_metrics[w].sharpe_ratio for w in PromotionGate.WINDOW_LABELS if w in a0_metrics])) if a0_metrics else 0.0
+        a9_s = float(np.mean([a9_metrics[w].sharpe_ratio for w in PromotionGate.WINDOW_LABELS if w in a9_metrics])) if a9_metrics else 0.0
+        result.sharpe_improved = a9_s > a0_s
+
+        a0_dd = float(np.mean([a0_metrics[w].max_drawdown for w in PromotionGate.WINDOW_LABELS if w in a0_metrics])) if a0_metrics else 0.0
+        a9_dd = float(np.mean([a9_metrics[w].max_drawdown for w in PromotionGate.WINDOW_LABELS if w in a9_metrics])) if a9_metrics else 0.0
+        result.drawdown_improved = a9_dd > a0_dd
+
+        a0_cal = float(np.mean([a0_metrics[w].calmar_ratio for w in PromotionGate.WINDOW_LABELS if w in a0_metrics])) if a0_metrics else 0.0
+        a9_cal = float(np.mean([a9_metrics[w].calmar_ratio for w in PromotionGate.WINDOW_LABELS if w in a9_metrics])) if a9_metrics else 0.0
+        result.calmar_improved = a9_cal > a0_cal
+
+        result.has_decay_exits = bool(a9_trade_rows and any(
+            isinstance(r.get("reason", ""), str) and "sell_alpha_decay" in r["reason"]
+            for r in a9_trade_rows
+        ))
+
+        result.conditions = {
+            "cumulative_return": result.cumulative_return_improved,
+            "sharpe": result.sharpe_improved,
+            "drawdown": result.drawdown_improved,
+            "calmar": result.calmar_improved,
+            "decay_exits": result.has_decay_exits,
+        }
+        for cond, ok in result.conditions.items():
+            if not ok:
+                result.failure_reasons.append(f"{cond}: failed")
+
+        all_ok = windows_a9_wins >= 2 and all(result.conditions.values())
+        result.passed = all_ok
+        if not result.passed:
+            result.failure_reasons.insert(0,
+                f"FAILED_PROMOTION_GATE: {sum(1 for v in result.conditions.values() if v)}/{len(result.conditions)}")
+        return result
+
+    @staticmethod
+    def gate_summary(result: PromotionGateResult) -> dict[str, Any]:
+        return {
+            "passed": result.passed, "windows_passed": result.windows_passed,
+            "windows_total": result.windows_total,
+            "cumulative_return_improved": result.cumulative_return_improved,
+            "sharpe_improved": result.sharpe_improved,
+            "drawdown_improved": result.drawdown_improved,
+            "calmar_improved": result.calmar_improved,
+            "has_decay_exits": result.has_decay_exits,
+            "conditions": {k: "PASS" if v else "FAIL" for k, v in result.conditions.items()},
+            "failure_reasons": result.failure_reasons,
+        }
