@@ -5,6 +5,10 @@ on:
     types: [labeled]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   full-regression:
     runs-on: ubuntu-latest
