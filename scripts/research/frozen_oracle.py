@@ -45,7 +45,12 @@ class OracleSource(str, Enum):
 
 @dataclass(frozen=True)
 class OracleProvenance:
-    """Immutable record of how an oracle was generated."""
+    """Immutable record of how an oracle was generated.
+
+    PR19: Extended with generator file SHA, command, calendar/corporate-action/
+    lifecycle SHAs, database schema SHA, SQL SHA, record count, and approval
+    fields to make provenance tamper-resistant and auditable.
+    """
     source: OracleSource
     generated_at: str  # ISO timestamp
     git_commit_sha: str
@@ -53,6 +58,18 @@ class OracleProvenance:
     generating_function: str  # fully-qualified function name
     config_sha: str = ""
     data_snapshot_sha: str = ""
+    # ---- PR19: hardened provenance fields ----
+    generator_file_sha: str = ""       # SHA256 of the generator source file
+    generator_command: str = ""        # CLI command used to produce the oracle
+    calendar_sha: str = ""             # SHA of trade calendar snapshot
+    corporate_action_sha: str = ""     # SHA of corporate action data
+    lifecycle_sha: str = ""            # SHA of security lifecycle data
+    database_schema_sha: str = ""      # SHA of DB schema version info
+    sql_sha: str = ""                  # SHA of the SQL query text used
+    record_count: int = 0              # Number of decision records
+    approved_by: str = ""              # Identity of approver
+    approval_sha: str = ""             # SHA of the approval record
+    # ---- legacy ----
     adapter_identity: str = ""  # StrategyIdentity.experiment_id if from adapter
     notes: str = ""
 
@@ -249,9 +266,12 @@ def load_frozen_oracle_from_db(
         candidates = pd.read_sql(candidates_sql, engine, params={
             "sid": strategy_id, "start": start_date, "end": end_date,
         })
-    except Exception:
-        # Fall back to score_rank_daily for research environments
-        candidates = pd.DataFrame()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Oracle DB query FAILED — cannot load candidates for strategy '{strategy_id}' "
+            f"({start_date} to {end_date}). SQL: {candidates_sql.text}. "
+            f"Original error: {exc!r}"
+        ) from exc
 
     # Load exit decisions from production tables
     exits_sql = text("""
@@ -266,8 +286,12 @@ def load_frozen_oracle_from_db(
         exits = pd.read_sql(exits_sql, engine, params={
             "sid": strategy_id, "start": start_date, "end": end_date,
         })
-    except Exception:
-        exits = pd.DataFrame()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Oracle DB query FAILED — cannot load exits for strategy '{strategy_id}' "
+            f"({start_date} to {end_date}). SQL: {exits_sql.text}. "
+            f"Original error: {exc!r}"
+        ) from exc
 
     # Build FrozenDailyDecisions
     decisions: dict[str, FrozenDailyDecision] = {}
@@ -297,10 +321,13 @@ def load_frozen_oracle_from_db(
     provenance = OracleProvenance(
         source=OracleSource.PRODUCTION_DB_EXPORT,
         generated_at=datetime.now(timezone.utc).isoformat(),
-        git_commit_sha="db_export",
+        git_commit_sha=_get_production_git_sha(),
         generating_class="frozen_oracle.load_frozen_oracle_from_db",
         generating_function="load_frozen_oracle_from_db",
         adapter_identity=strategy_id,
+        database_schema_sha=canonical_sha(str(engine.url)),
+        sql_sha=canonical_sha(str(candidates_sql.text) + str(exits_sql.text)),
+        record_count=len(decisions),
     )
 
     dates = sorted(decisions.keys())
@@ -381,6 +408,12 @@ def export_frozen_oracle(
     pd.DataFrame(rows).to_parquet(output_dir / "decisions.parquet", index=False)
 
     # Write provenance
+    generator_file = Path(__file__).resolve()
+    try:
+        generator_file_sha_val = sha256_hex(generator_file.read_bytes())
+    except Exception:
+        generator_file_sha_val = ""
+
     provenance = OracleProvenance(
         source=OracleSource.FROZEN_PRODUCTION_FILE,
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -389,6 +422,9 @@ def export_frozen_oracle(
         generating_function=generating_function,
         config_sha=config_sha,
         data_snapshot_sha=data_snapshot_sha,
+        generator_file_sha=generator_file_sha_val,
+        generator_command=f"export_frozen_oracle(strategy_id={strategy_id}, experiment_id={experiment_id})",
+        record_count=len(frozen),
         adapter_identity=experiment_id,
         notes=f"Frozen {experiment_id} oracle exported from {generating_class}",
     )
@@ -549,6 +585,7 @@ def compare_against_oracle(
 
     passed = (
         n_matched > 0
+        and n_missing == 0  # PR19: all dates must match — no missing allowed
         and max_candidate_diff == 0
         and max_top5_diff == 0
         and max_rank_score_diff <= weight_tolerance
@@ -576,16 +613,25 @@ def compare_against_oracle(
 
 
 def _extract_exits_from_output(rt_output: pd.DataFrame, signal_date: str) -> list[dict[str, Any]]:
-    """Extract exit decisions from runtime output if present."""
+    """Extract exit decisions from runtime output if present.
+
+    PR19: Only returns rows that have at least one non-empty exit field.
+    """
     exits = []
     exit_cols = ["exit_symbol", "exit_date", "exit_reason", "exit_shares", "symbol"]
     available = [c for c in exit_cols if c in rt_output.columns]
     if "exit_date" in available or "exit_reason" in available:
         for _, row in rt_output.iterrows():
             exit_info = {}
+            has_data = False
             for c in available:
-                exit_info[c] = str(row[c]) if pd.notna(row[c]) else ""
-            exits.append(exit_info)
+                val = str(row[c]) if pd.notna(row[c]) else ""
+                exit_info[c] = val
+                # PR19: Track if any exit field actually has data
+                if c in ("exit_symbol", "exit_date", "exit_reason", "exit_shares") and val:
+                    has_data = True
+            if has_data:
+                exits.append(exit_info)  # Only include if actual exit data present
     return exits
 
 
@@ -646,3 +692,215 @@ def canonical_sha(value: Any) -> str:
     return sha256_hex(
         json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()
     )
+
+
+# ---------------------------------------------------------------------------
+# PR19: Production git SHA resolution
+# ---------------------------------------------------------------------------
+
+
+def _get_production_git_sha() -> str:
+    """Resolve the production git commit SHA.
+
+    Tries: 1) git rev-parse HEAD, 2) environment variable,
+    3) falls back to a marker that provenance validation will flag.
+    """
+    import os
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+            cwd=Path(__file__).resolve().parents[2],
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    env_sha = os.environ.get("CHENYIYUN_GIT_SHA", "")
+    if env_sha:
+        return env_sha
+    # Fallback: provenance validation will flag this as insufficient
+    return "UNRESOLVED_GIT_SHA"
+
+
+# ---------------------------------------------------------------------------
+# PR19: Oracle provenance validation
+# ---------------------------------------------------------------------------
+
+
+def validate_oracle_provenance(oracle: FrozenOracleState) -> dict[str, Any]:
+    """Validate that an oracle's provenance is complete and trustworthy.
+
+    Required fields vary by OracleSource:
+      - FROZEN_PRODUCTION_FILE / FROZEN_CHAMPION_FILE:
+          config_sha, data_snapshot_sha, generator_file_sha, git_commit_sha
+      - PRODUCTION_DB_EXPORT:
+          database_schema_sha, sql_sha, git_commit_sha (not "db_export")
+      - APPROVED_LEDGER:
+          approval_sha, approved_by
+
+    Returns dict with:
+      passed: bool
+      errors: list[str] — hard failures that prevent oracle use
+      warnings: list[str] — concerns that don't block use but should be addressed
+    """
+    prov = oracle.provenance
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # Check 1: Self-referential generating class
+    if prov.generating_class.split(".")[-1] in SELF_REFERENTIAL_CLASSES:
+        errors.append(
+            f"Oracle generated by adapter class '{prov.generating_class}' — "
+            f"must be independent production output"
+        )
+
+    # Check 2: Self-referential generating function
+    adapter_methods = {"rank", "build_weights", "rank_as_of", "target_exposure"}
+    fn_short = prov.generating_function.split(".")[-1] if prov.generating_function else ""
+    if fn_short in adapter_methods:
+        errors.append(
+            f"Oracle generated by adapter method '{prov.generating_function}' — "
+            f"must be independent production output"
+        )
+
+    # Check 3: git_commit_sha must be real
+    if prov.git_commit_sha in ("db_export", "unknown", "UNRESOLVED_GIT_SHA", ""):
+        errors.append(
+            f"Oracle git_commit_sha is '{prov.git_commit_sha}' — "
+            f"must be a real commit SHA"
+        )
+
+    # Check 4: Source-specific requirements
+    if prov.source in (OracleSource.FROZEN_PRODUCTION_FILE, OracleSource.FROZEN_CHAMPION_FILE):
+        for field_name, display in [
+            ("config_sha", "config_sha"),
+            ("data_snapshot_sha", "data_snapshot_sha"),
+            ("generator_file_sha", "generator_file_sha"),
+        ]:
+            if not getattr(prov, field_name, ""):
+                errors.append(
+                    f"File-based oracle missing '{display}' — "
+                    f"required for independent verification"
+                )
+
+    if prov.source == OracleSource.PRODUCTION_DB_EXPORT:
+        if not prov.database_schema_sha:
+            warnings.append("DB oracle missing database_schema_sha")
+        if not prov.sql_sha:
+            warnings.append("DB oracle missing sql_sha")
+
+    if prov.source == OracleSource.APPROVED_LEDGER:
+        if not prov.approval_sha:
+            errors.append(
+                "Approved ledger oracle missing 'approval_sha' — "
+                "cannot verify approval"
+            )
+        if not prov.approved_by:
+            errors.append(
+                "Approved ledger oracle missing 'approved_by' — "
+                "cannot verify approver identity"
+            )
+
+    # Check 5: record count should be > 0 for a useful oracle
+    if oracle.n_dates == 0:
+        errors.append("Oracle has zero decision dates — cannot be a valid reference")
+
+    passed = len(errors) == 0
+    return {
+        "passed": passed,
+        "errors": errors,
+        "warnings": warnings,
+        "oracle_source": prov.source.value,
+        "oracle_strategy_id": oracle.strategy_id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# PR19: Enhanced self-referential detection with hash-based checks
+# ---------------------------------------------------------------------------
+
+
+def check_oracle_independence(
+    oracle: FrozenOracleState,
+    runtime_class_name: str = "",
+    runtime_file_sha: str = "",
+    runtime_git_sha: str = "",
+) -> dict[str, Any]:
+    """Comprehensive oracle independence check.
+
+    Combines string-based detection (class/function names) with hash-based
+    checks (file SHA, git commit SHA) to prevent tampering.
+
+    Parameters
+    ----------
+    oracle: The frozen oracle state to check.
+    runtime_class_name: Name of the Runtime class generating test outputs.
+    runtime_file_sha: SHA256 of the runtime source file.
+    runtime_git_sha: Git commit SHA of the runtime code.
+
+    Returns dict with:
+      is_independent: bool — True if oracle is truly independent
+      is_self_referential: bool — True if oracle was generated by adapter code
+      errors: list[str] — hard failures
+      warnings: list[str] — concerns
+    """
+    prov = oracle.provenance
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # --- String-based checks (from detect_self_referential) ---
+    ref_check = detect_self_referential(oracle, runtime_class_name)
+    if ref_check["is_self_referential"]:
+        errors.append(ref_check["reason"])
+
+    # --- Hash-based checks ---
+    # Check 1: generator_file_sha matches runtime_file_sha
+    if prov.generator_file_sha and runtime_file_sha:
+        if prov.generator_file_sha == runtime_file_sha:
+            errors.append(
+                "SELF_REFERENTIAL_HASH: oracle generator_file_sha matches "
+                "runtime_file_sha — same file produced both oracle and test"
+            )
+
+    # Check 2: git commit SHA matches
+    if prov.git_commit_sha and runtime_git_sha:
+        if prov.git_commit_sha == runtime_git_sha:
+            warnings.append(
+                "SAME_GIT_COMMIT: oracle and runtime share git commit "
+                f"'{prov.git_commit_sha[:8]}' — may indicate same codebase"
+            )
+
+    # Check 3: Approved oracle override
+    if prov.approval_sha and prov.approved_by:
+        # An approved oracle is explicitly trusted — downgrade errors to warnings
+        if errors:
+            warnings.append(
+                f"Oracle approved by '{prov.approved_by}' — "
+                f"downgrading {len(errors)} independence errors to warnings"
+            )
+            warnings.extend(errors)
+            errors.clear()
+
+    # Check 4: generator file sha missing (for file-based oracles)
+    if prov.source in (OracleSource.FROZEN_PRODUCTION_FILE, OracleSource.FROZEN_CHAMPION_FILE):
+        if not prov.generator_file_sha:
+            errors.append(
+                "File-based oracle missing 'generator_file_sha' — "
+                "cannot verify file-level independence"
+            )
+
+    is_self_referential = bool(errors)
+    is_independent = not is_self_referential
+
+    return {
+        "is_independent": is_independent,
+        "is_self_referential": is_self_referential,
+        "errors": errors,
+        "warnings": warnings,
+        "oracle_source": prov.source.value,
+        "oracle_class": prov.generating_class,
+        "runtime_class": runtime_class_name,
+    }
