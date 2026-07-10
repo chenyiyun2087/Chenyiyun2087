@@ -62,7 +62,7 @@ class ComparisonGateResult:
     """Result of evaluating A0 against the matched comparison gate."""
 
     passed: bool
-    windows_passed: int = 0      # number of windows where ALL conditions hold
+    windows_passed: int = 0
     windows_total: int = 3
     conditions: dict[str, list[bool]] = field(default_factory=dict)
     failure_reasons: list[str] = field(default_factory=list)
@@ -71,6 +71,8 @@ class ComparisonGateResult:
     a2_median_window_returns: list[float] = field(default_factory=list)
     a3_window_returns: list[float] = field(default_factory=list)
     neutral_window_returns: list[float] = field(default_factory=list)
+    # PR7: fail-closed — track missing comparators
+    missing_comparators: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

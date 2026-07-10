@@ -486,11 +486,24 @@ def a9_decay_exit_alpha(
 def build_experiment_specs() -> dict[str, ExperimentSpec]:
     """Return {experiment_id: ExperimentSpec} for all A0–A7 experiments."""
     return {
+        "P0": ExperimentSpec(
+            experiment_id="P0",
+            description="Exact production strategy (via ProductionStrategyAdapter)",
+            ranking_fn=a0_current_scoring,  # placeholder — engine uses adapter
+            needs_training=False,
+        ),
+        "C0": ExperimentSpec(
+            experiment_id="C0",
+            description="Exact champion strategy (via ChampionStrategyAdapter)",
+            ranking_fn=a0_current_scoring,  # placeholder — engine uses adapter
+            needs_training=False,
+        ),
         "A0": ExperimentSpec(
             experiment_id="A0",
-            description="Current production scoring (score column rank)",
+            description="[DEPRECATED] Simple score column rank — use P0 or C0",
             ranking_fn=a0_current_scoring,
             needs_training=False,
+            is_available=False,
         ),
         "A1": ExperimentSpec(
             experiment_id="A1",

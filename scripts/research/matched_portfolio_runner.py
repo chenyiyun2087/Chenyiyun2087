@@ -96,6 +96,9 @@ class MatchedExperimentSpec:
     t_plus_1: bool = True                # always T+1 execution
     limit_up_down: bool = True           # enforce limit up/down
     suspension_rules: bool = True        # skip suspended stocks
+    # PR7: Exposure separation
+    target_gross_exposure: float = 0.70  # 0.0–1.0, fraction of NAV deployed
+    exposure_mode: str = "fixed"         # "fixed" | "dynamic"
 
 
 @dataclass
@@ -591,8 +594,11 @@ class MatchedPortfolioRunner:
                 symbol = str(row["symbol"]).zfill(6)
                 if symbol in locked_symbols:
                     continue
-                # Determine target shares
-                weight = _safe_float(row.get("effective_weight"), 1.0 / float(top_n))
+                # Determine target shares — use final_portfolio_weight if available (PR7)
+                if "final_portfolio_weight" in row.index:
+                    weight = _safe_float(row.get("final_portfolio_weight"), 1.0 / float(top_n))
+                else:
+                    weight = _safe_float(row.get("effective_weight"), 1.0 / float(top_n))
                 target_value = target_gross_value * weight
                 price_info = {}
                 if symbol in price_day.index:
