@@ -11,9 +11,11 @@ releases:
     lifecycle_status: PRODUCTION
     research_status: FAILED_REVALIDATION
     walk_forward_status: FAILED
-    execution_status: ACTIVE_EXISTING_ONLY
+    execution_status: ACTIVE_FIXED_CAPITAL
     promotion_status: BLOCKED
-    capital_status: NO_SCALE
+    capital_status: NO_EXTERNAL_SCALE
+    approved_principal: 500000
+    order_policy: ACTIVE_FIXED_CAPITAL
     git_commit_sha: 1fcab572927183b8058fbdb98249dfec6862475b
     config_sha: 848a887e5bfb6666c491d07e648e3720c16c91faccdd9fb5c0e21b3b7ada1a9c
     approved_snapshot: current-production-route-no-promotion
@@ -28,16 +30,18 @@ releases:
     lifecycle_status: RESEARCH
     research_status: FAILED_REVALIDATION
     walk_forward_status: FAILED
-    execution_status: BLOCKED_MISSING_IMMUTABLE_SNAPSHOTS
+    execution_status: RESEARCH_ONLY
     promotion_status: BLOCKED
-    capital_status: NO_SCALE
+    capital_status: NO_EXTERNAL_SCALE
+    approved_principal: 500000
+    order_policy: SHADOW
     git_commit_sha: 3f389235e7af85b64d02d708912ab266016acf2d
     config_sha: a2106d3b8ef6d1d1524f2072ce90fb550ef466436bcc2a2ec9d5b12e54ae8ed4
     data_snapshot_sha: 417334bebdc1b53b6a1c8efd735429931613692cddbb2ad73bc0b691869a9ab2
-    calendar_snapshot_sha: NOT_CAPTURED_BLOCKED
-    corporate_action_snapshot_sha: MISSING_BLOCKED
-    lifecycle_snapshot_sha: MISSING_BLOCKED
-    sample_start: "2023-11-30"
+    calendar_snapshot_sha: PENDING_PR1_SNAPSHOT
+    corporate_action_snapshot_sha: PENDING_PR1_SNAPSHOT
+    lifecycle_snapshot_sha: PENDING_PR1_SNAPSHOT
+    sample_start: "2023-01-03"
     sample_end: "2026-06-17"
     actual_trading_days: 615
     cost_model: "commission_and_tax_0.00075_slippage_0"

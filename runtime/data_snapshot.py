@@ -26,6 +26,7 @@ class DataSnapshot:
     trade_cal_hash: str                # SHA-256 of dim_trade_cal snapshot
     corporate_action_hash: str         # SHA-256 of corporate_action_snapshot
     lifecycle_hash: str                # SHA-256 of security_lifecycle_snapshot
+    index_snapshot_hash: str = ""      # SHA-256 of index constituent snapshot
     label_hash: str = ""               # SHA-256 of dwd_stock_label_daily snapshot
     factor_hash: str = ""              # SHA-256 of factor data
     created_at: str = field(default_factory=lambda: date.today().isoformat())
@@ -38,6 +39,7 @@ class DataSnapshot:
             "trade_cal": self.trade_cal_hash,
             "corporate_action": self.corporate_action_hash,
             "lifecycle": self.lifecycle_hash,
+            "index": self.index_snapshot_hash,
             "label": self.label_hash,
             "factor": self.factor_hash,
             "date": self.snapshot_date,
@@ -52,6 +54,7 @@ class DataSnapshot:
             "trade_cal_hash": self.trade_cal_hash,
             "corporate_action_hash": self.corporate_action_hash,
             "lifecycle_hash": self.lifecycle_hash,
+            "index_snapshot_hash": self.index_snapshot_hash,
             "label_hash": self.label_hash,
             "factor_hash": self.factor_hash,
             "fingerprint": self.fingerprint(),
@@ -80,11 +83,18 @@ def freeze_data_snapshot(
     score_table: str = "chenyiyun.score_rank_daily",
     price_table: str = "tushare_stock.dwd_stock_daily_standard",
     trade_cal_table: str = "chenyiyun.dim_trade_cal",
+    corporate_action_hash: str = "PENDING",
+    lifecycle_hash: str = "PENDING",
+    index_snapshot_hash: str = "",
 ) -> DataSnapshot:
     """Create a DataSnapshot by hashing the current state of input tables.
 
     Reads all rows for snapshot_date from each table, computes SHA-256 hashes,
     and returns an immutable DataSnapshot.
+
+    Pass *corporate_action_hash* and *lifecycle_hash* from a pre-built
+    CorporateActionSnapshot (see runtime/corporate_action_snapshot.py)
+    to replace the PENDING placeholders with real hashes.
     """
     import pandas as pd
     from sqlalchemy import text
@@ -105,6 +115,7 @@ def freeze_data_snapshot(
         scores_hash=_hash_table(score_table, "trade_date", snapshot_date),
         prices_hash=_hash_table(price_table, "trade_date", snapshot_date),
         trade_cal_hash=_hash_table(trade_cal_table, "cal_date", snapshot_date),
-        corporate_action_hash="PENDING",   # requires CA snapshot builder
-        lifecycle_hash="PENDING",           # requires lifecycle snapshot builder
+        corporate_action_hash=corporate_action_hash,
+        lifecycle_hash=lifecycle_hash,
+        index_snapshot_hash=index_snapshot_hash,
     )

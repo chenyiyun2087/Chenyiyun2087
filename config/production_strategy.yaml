@@ -143,3 +143,7 @@ production:
     min_appearances: 3
     min_win_rate: 0.75
     bonus_score: 5.0
+  release_order_policy:
+    execution_policy: ACTIVE_FIXED_CAPITAL
+    scale_policy: NO_EXTERNAL_SCALE
+    approved_principal: 500000

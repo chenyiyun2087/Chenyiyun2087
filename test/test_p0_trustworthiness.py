@@ -28,10 +28,11 @@ def test_champion_is_frozen_without_switching_production_route():
     assert champion.release_id == registry.champion_release_id
     assert champion.role == "CHAMPION_BENCHMARK"
     assert champion.promotion_status == "BLOCKED"
-    assert champion.capital_status == "NO_SCALE"
+    assert champion.capital_status == "NO_EXTERNAL_SCALE"
     assert champion.git_commit_sha == "3f389235e7af85b64d02d708912ab266016acf2d"
-    assert champion.corporate_action_snapshot_sha == "MISSING_BLOCKED"
-    assert champion.lifecycle_snapshot_sha == "MISSING_BLOCKED"
+    assert champion.execution_status == "RESEARCH_ONLY"
+    assert champion.order_policy == "SHADOW"
+    assert champion.approved_principal == 500_000.0
 
 
 def test_production_config_rejects_unknown_fields():
@@ -108,6 +109,9 @@ def test_report_provenance_contract_is_complete_and_immutable():
         "calendar_snapshot_sha",
         "corporate_action_snapshot_sha",
         "lifecycle_snapshot_sha",
+        "index_snapshot_sha",
+        "approved_principal",
+        "order_policy",
         "sample_start",
         "sample_end",
         "actual_trading_days",
