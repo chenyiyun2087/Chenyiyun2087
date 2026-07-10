@@ -22,10 +22,14 @@ def constrained_weight_allocation(
     raw_weights: pd.Series | np.ndarray,
     symbols: list[str] | None = None,
     industries: list[str] | None = None,
+    themes: list[str] | None = None,
+    risk_values: pd.Series | np.ndarray | None = None,
     single_cap: float = 0.15,
     industry_cap: float = 0.30,
+    theme_cap: float = 0.40,
+    top2_risk_cap: float = 0.45,
     target_gross_exposure: float = 0.70,
-    max_iterations: int = 10,
+    max_iterations: int = 100,
 ) -> pd.DataFrame:
     """Allocate weights subject to single-stock and industry caps.
 
@@ -51,81 +55,116 @@ def constrained_weight_allocation(
         symbols = [f"S{i}" for i in range(n)]
     if industries is None:
         industries = ["default"] * n
+    if themes is None:
+        themes = ["default"] * n
+    if len(symbols) != n or len(industries) != n or len(themes) != n:
+        raise ValueError("symbols/industries/themes must match raw_weights length")
+    if n == 0:
+        return pd.DataFrame(columns=[
+            "symbol", "industry", "theme", "raw_weight",
+            "stock_relative_weight", "final_portfolio_weight",
+            "cash_weight", "is_capped",
+        ])
 
-    # Step 1: Normalize raw to relative (sum = 1.0)
+    raw = np.where(np.isfinite(raw) & (raw > 0), raw, 0.0)
     total_raw = raw.sum()
-    if total_raw > 1e-12:
-        w = raw / total_raw
-    else:
-        w = np.ones(n) / n
+    final_w = np.zeros(n, dtype=float)
+    remaining = float(target_gross_exposure)
+    active = set(range(n))
+    raw_share = raw.copy()
+    enforce_industry = len(set(industries)) > 1
+    enforce_theme = len(set(themes)) > 1
 
-    # Step 2-3: Iterative water-filling
-    capped_mask = np.zeros(n, dtype=bool)
+    def capacity(i: int, weights: np.ndarray) -> float:
+        ind_used = sum(weights[j] for j in range(n) if industries[j] == industries[i])
+        theme_used = sum(weights[j] for j in range(n) if themes[j] == themes[i])
+        limits = [single_cap - weights[i]]
+        if enforce_industry:
+            limits.append(industry_cap - ind_used)
+        if enforce_theme:
+            limits.append(theme_cap - theme_used)
+        return max(0.0, min(limits))
 
     for _ in range(max_iterations):
-        changed = False
-
-        # Single-stock cap
-        for i in range(n):
-            if capped_mask[i]:
-                continue
-            if w[i] > single_cap:
-                excess = w[i] - single_cap
-                w[i] = single_cap
-                capped_mask[i] = True
-                # Redistribute to uncapped
-                uncapped = ~capped_mask
-                if uncapped.sum() > 0:
-                    w[uncapped] += excess / uncapped.sum()
-                changed = True
-
-        # Industry cap
-        if industry_cap < 1.0 and len(set(industries)) > 1:
-            ind_map: dict[str, list[int]] = {}
-            for i, ind in enumerate(industries):
-                ind_map.setdefault(ind, []).append(i)
-
-            for ind, idxs in ind_map.items():
-                ind_sum = w[idxs].sum()
-                if ind_sum > industry_cap and not all(capped_mask[i] for i in idxs):
-                    scale = industry_cap / ind_sum
-                    for i in idxs:
-                        if not capped_mask[i]:
-                            w[i] *= scale
-                            if w[i] >= single_cap:
-                                w[i] = single_cap
-                                capped_mask[i] = True
-                    changed = True
-
-        if not changed:
+        if remaining <= 1e-10 or not active:
+            break
+        receivers = [i for i in sorted(active) if capacity(i, final_w) > 1e-12]
+        if not receivers:
+            break
+        denom = float(raw_share[receivers].sum())
+        if denom <= 1e-12:
+            proportions = {i: 1.0 / len(receivers) for i in receivers}
+        else:
+            proportions = {i: float(raw_share[i] / denom) for i in receivers}
+        allocated = 0.0
+        for i in receivers:
+            increment = min(remaining * proportions[i], capacity(i, final_w))
+            final_w[i] += increment
+            allocated += increment
+        remaining -= allocated
+        for i in list(active):
+            if capacity(i, final_w) <= 1e-12:
+                active.discard(i)
+        if allocated <= 1e-12:
             break
 
-    # Step 4: Re-normalize — capped stay at cap, active fill remaining budget
-    capped_total = w[capped_mask].sum()
-    remaining = max(0.0, 1.0 - capped_total)
-    active = ~capped_mask
-    if active.sum() > 0 and remaining > 1e-12:
-        active_sum = w[active].sum()
-        if active_sum > 1e-12:
-            w[active] = (w[active] / active_sum) * remaining
-    # If no active stocks, capped_total may be < 1.0 — rest goes to cash
+    # Top-2 risk contribution is an additional hard constraint.  Reduce the
+    # largest contributors and leave the residual as cash; never concentrate it.
+    if risk_values is not None and final_w.sum() > 0:
+        risk = np.asarray(risk_values, dtype=float)
+        if len(risk) != n:
+            raise ValueError("risk_values must match raw_weights length")
+        for _ in range(max_iterations):
+            contributions = np.maximum(risk, 0.0) * final_w
+            total_risk = contributions.sum()
+            if total_risk <= 1e-12:
+                break
+            top2 = np.argsort(contributions)[::-1][:2]
+            top2_risk = contributions[top2].sum()
+            other_risk = total_risk - top2_risk
+            ratio = top2_risk / total_risk
+            if ratio <= top2_risk_cap + 1e-10:
+                break
+            scale = (
+                top2_risk_cap * other_risk
+                / max(top2_risk * (1.0 - top2_risk_cap), 1e-12)
+            )
+            final_w[top2] *= min(scale, 0.999999)
 
-    # Step 5: Scale to target_gross_exposure
-    final_w = w * target_gross_exposure
+    capped_mask = np.array([
+        final_w[i] >= single_cap - 1e-10
+        or (enforce_industry and sum(final_w[j] for j in range(n) if industries[j] == industries[i]) >= industry_cap - 1e-10)
+        or (enforce_theme and sum(final_w[j] for j in range(n) if themes[j] == themes[i]) >= theme_cap - 1e-10)
+        for i in range(n)
+    ])
+    relative_w = final_w / target_gross_exposure if target_gross_exposure > 0 else final_w
     cash_w = 1.0 - final_w.sum()
+    stored_risk = (
+        np.asarray(risk_values, dtype=float)
+        if risk_values is not None
+        else np.zeros(n, dtype=float)
+    )
+    final_risk = np.maximum(stored_risk, 0.0) * final_w
+    risk_total = final_risk.sum()
+    risk_pct = final_risk / risk_total if risk_total > 1e-12 else np.zeros(n)
 
     # Step 6: Build result DataFrame
     result = pd.DataFrame({
         "symbol": symbols,
         "industry": industries,
+        "theme": themes,
         "raw_weight": raw,
-        "stock_relative_weight": w,
+        "stock_relative_weight": relative_w,
         "final_portfolio_weight": final_w,
         "cash_weight": cash_w,
         "is_capped": capped_mask,
+        "risk_value": stored_risk,
+        "risk_contribution_pct": risk_pct,
     })
     result.attrs["single_cap"] = single_cap
     result.attrs["industry_cap"] = industry_cap
+    result.attrs["theme_cap"] = theme_cap
+    result.attrs["top2_risk_cap"] = top2_risk_cap
     result.attrs["target_gross_exposure"] = target_gross_exposure
 
     return result
@@ -140,6 +179,8 @@ def validate_allocation(result: pd.DataFrame) -> dict:
 
     single_cap = result.attrs.get("single_cap", 0.15)
     industry_cap = result.attrs.get("industry_cap", 0.30)
+    theme_cap = result.attrs.get("theme_cap", 0.40)
+    top2_risk_cap = result.attrs.get("top2_risk_cap", 0.45)
     target_exposure = result.attrs.get("target_gross_exposure", 0.70)
 
     # Single-stock cap
@@ -154,15 +195,26 @@ def validate_allocation(result: pd.DataFrame) -> dict:
             if ind_sum > industry_cap + 1e-6:
                 violations.append(f"industry_cap[{ind}]: {ind_sum:.4f} > {industry_cap}")
 
+    if "theme" in result.columns and len(result["theme"].unique()) > 1:
+        for theme, grp in result.groupby("theme"):
+            theme_sum = grp["final_portfolio_weight"].sum()
+            if theme_sum > theme_cap + 1e-6:
+                violations.append(f"theme_cap[{theme}]: {theme_sum:.4f} > {theme_cap}")
+
+    if "risk_contribution_pct" in result.columns:
+        top2_risk = float(result["risk_contribution_pct"].nlargest(2).sum())
+        if top2_risk > top2_risk_cap + 1e-6:
+            violations.append(f"top2_risk: {top2_risk:.4f} > {top2_risk_cap}")
+
     # Exposure
     total_exposure = result["final_portfolio_weight"].sum()
-    if abs(total_exposure - target_exposure) > 1e-6:
-        violations.append(f"exposure: {total_exposure:.6f} != {target_exposure}")
+    if total_exposure > target_exposure + 1e-6:
+        violations.append(f"exposure: {total_exposure:.6f} > {target_exposure}")
 
     # Relative weights sum to 1
     rel_sum = result["stock_relative_weight"].sum()
-    if abs(rel_sum - 1.0) > 1e-6:
-        violations.append(f"relative_sum: {rel_sum:.6f} != 1.0")
+    if rel_sum > 1.0 + 1e-6:
+        violations.append(f"relative_sum: {rel_sum:.6f} > 1.0")
 
     return {
         "passed": len(violations) == 0,

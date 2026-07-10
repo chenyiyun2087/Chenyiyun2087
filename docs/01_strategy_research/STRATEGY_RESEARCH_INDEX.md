@@ -2,6 +2,7 @@
 
 | 主题 | 目录/文件 | 当前状态 | 最新结论 |
 |---|---|---|---|
+| Full Strategy V3 PR16 单一经济路径 | `docs/01_strategy_research/2026-07-10_Full_Strategy_V3_PR16_单一经济路径.md` | PR16验证通过，待合并 | P0/C0 已由显式 runtime 贯通；真实60交易日复制候选、Top5、权重、仓位和退出均为0差异。Alpha/Risk/Exit仍保持研究阻断，待PR17三窗口证据。 |
 | 可信全量池流动性策略 | `docs/tasks/20260512-full-pool-liquidity-strategy.md` | 持续迭代 | 当前生产默认底座为 `production_governed_vol_position`，底层选股引擎为 `baseline_full_liquidity_detail_vol_position`，`adaptive_market_style` 保留为高效率挑战者。 |
 | 生产操作手册 | `docs/production_trusted_strategy_usage.md` | 可用 | 日终候选导出、订单草案、飞书通知和影子盘监控已接入。 |
 | 行业研究 | `docs/01_strategy_research/industry/` | 待迁入 | 半导体、机器人、农业、互联网基金等主题待整理。 |

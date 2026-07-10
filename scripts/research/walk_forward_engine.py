@@ -37,6 +37,8 @@ from scripts.research.walk_forward_metrics import (
     WalkForwardMetrics,
     WindowMetrics,
 )
+from scripts.research.executable_labels import compute_executable_forward_returns
+from scripts.research.strategy_runtime import resolve_runtime
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -345,36 +347,54 @@ class WalkForwardEngine:
             result.error = f"empty_validate_scores:{fold.validate_start}..{fold.validate_end}"
             return result
 
-        # Run ranking function (train on train window, apply to validate)
+        train_scores = scores[
+            (pd.to_datetime(scores["trade_date"], errors="coerce").dt.date >= pd.Timestamp(fold.train_start).date())
+            & (pd.to_datetime(scores["trade_date"], errors="coerce").dt.date <= pd.Timestamp(fold.train_end).date())
+        ].copy()
+        train_prices = prices[
+            (pd.to_datetime(prices["trade_date"], errors="coerce").dt.date >= pd.Timestamp(fold.train_start).date())
+            & (pd.to_datetime(prices["trade_date"], errors="coerce").dt.date <= pd.Timestamp(fold.train_end).date())
+        ].copy()
+
+        # Resolve one explicit runtime, fit it once, then only transform PIT
+        # history for each validation signal date.
         try:
-            if experiment.needs_training:
-                # Train on train window (ranking fn uses train data to fit params)
-                ranked = experiment.ranking_fn(
-                    scores, prices, fold.train_start, fold.train_end
+            runtime = resolve_runtime(experiment)
+            train_labels = (
+                compute_executable_forward_returns(train_prices)
+                if runtime.needs_training
+                else None
+            )
+            runtime_state = runtime.fit(train_scores, train_prices, train_labels)
+            ranked_days: list[pd.DataFrame] = []
+            validation_dates = sorted(validate_scores["trade_date"].dropna().unique())
+            for signal_date in validation_dates:
+                as_of = pd.Timestamp(signal_date).date()
+                history_scores = scores[
+                    pd.to_datetime(scores["trade_date"], errors="coerce").dt.date <= as_of
+                ].copy()
+                history_prices = prices[
+                    pd.to_datetime(prices["trade_date"], errors="coerce").dt.date <= as_of
+                ].copy()
+                day_ranked = runtime.rank_as_of(
+                    runtime_state,
+                    str(as_of),
+                    history_scores,
+                    history_prices,
                 )
-                # Then filter ranked results to validate window
-                ranked = ranked[
-                    (
-                        pd.to_datetime(
-                            ranked["trade_date"], errors="coerce"
-                        ).dt.date
-                        >= pd.Timestamp(fold.validate_start).date()
-                    )
-                    & (
-                        pd.to_datetime(
-                            ranked["trade_date"], errors="coerce"
-                        ).dt.date
-                        <= pd.Timestamp(fold.validate_end).date()
-                    )
-                ]
-            else:
-                # No training needed — apply directly to validate window
-                ranked = experiment.ranking_fn(
-                    validate_scores,
-                    validate_prices,
-                    fold.validate_start,
-                    fold.validate_end,
+                if day_ranked.empty:
+                    raise RuntimeError(f"empty ranking on {as_of}")
+                exposure = runtime.target_exposure(runtime_state, str(as_of))
+                day_weighted = runtime.build_weights(
+                    runtime_state,
+                    day_ranked,
+                    str(as_of),
+                    history_prices,
+                    exposure,
+                    runner_spec.top_n,
                 )
+                ranked_days.append(day_weighted)
+            ranked = pd.concat(ranked_days, ignore_index=True) if ranked_days else pd.DataFrame()
         except NotImplementedError:
             result.error = f"NOT_AVAILABLE:{experiment.experiment_id}"
             return result
@@ -397,7 +417,7 @@ class WalkForwardEngine:
         ]
         # PR13: Attach stateful DecayExitRuleV2 if experiment uses decay exits
         decay_rule = None
-        if experiment.uses_decay_exit:
+        if runtime.uses_decay_exit:
             try:
                 from scripts.research.alpha_decay_exit_v2 import (
                     ExitV2Config,
@@ -565,6 +585,7 @@ class WalkForwardEngine:
                 experiment_id=f"A2_seed_{i}",
                 description=f"Random seed {i}/20",
                 ranking_fn=rfn,
+                runtime_id=f"function:a2_seed_{i}",
                 needs_training=False,
             )
             fr = self.run_fold(fold, spec, scores, prices, runner_spec)

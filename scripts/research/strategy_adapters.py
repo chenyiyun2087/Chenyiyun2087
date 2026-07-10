@@ -91,21 +91,26 @@ class ProductionStrategyAdapter(StrategyAdapter):
         if day_scores.empty:
             return day_scores
 
-        # Try real production call first
-        try:
-            from scripts.research_full_pool_liquidity_strategies import (
-                _select_candidates, build_strategy_specs, filter_strategy_specs,
+        from scripts.research_full_pool_liquidity_strategies import (
+            _select_candidates, build_strategy_specs, filter_strategy_specs,
+        )
+        specs = build_strategy_specs()
+        trusted = {s.name: s for s in filter_strategy_specs(specs, trusted_only=True)}
+        spec = trusted.get(self.SELECTION_STRATEGY)
+        if spec is None:
+            raise RuntimeError(
+                f"production selection spec unavailable: {self.SELECTION_STRATEGY}"
             )
-            specs = build_strategy_specs()
-            trusted = {s.name: s for s in filter_strategy_specs(specs, trusted_only=True)}
-            spec = trusted.get(self.SELECTION_STRATEGY)
-            if spec is not None:
-                return _select_candidates(day_scores, spec, top_n=self.top_n)
-        except (ImportError, Exception):
-            pass
-
-        # Fallback: production-equivalent ranking
-        return _production_equivalent_rank(day_scores, self.top_n)
+        selected = _select_candidates(day_scores, spec, top_n=self.top_n)
+        if selected.empty:
+            raise RuntimeError(f"production selection returned empty on {signal_date}")
+        selected = selected.copy()
+        if "_rank_score" not in selected.columns:
+            raise RuntimeError("production selection omitted _rank_score")
+        selected["rank_score"] = pd.to_numeric(selected["_rank_score"], errors="raise")
+        selected["rank"] = range(1, len(selected) + 1)
+        selected["stock_relative_weight"] = 1.0 / len(selected)
+        return selected
 
     def build_weights(self, selected, prices, signal_date) -> pd.DataFrame:
         """vol_20 inverse-vol weighting (production-equivalent)."""
@@ -219,11 +224,16 @@ def _estimate_vol_for_symbols(selected, prices, signal_date) -> dict[str, float]
     """Estimate annualized vol for selected symbols using only data ≤ signal_date."""
     if prices.empty:
         return {}
-    ps = prices.sort_values(["symbol", "trade_date"])
+    symbols = {str(value) for value in selected["symbol"].astype(str).unique()}
+    cutoff = pd.Timestamp(signal_date).date()
+    trade_dates = pd.to_datetime(prices["trade_date"]).dt.date
+    ps = prices[
+        prices["symbol"].astype(str).isin(symbols) & (trade_dates <= cutoff)
+    ].sort_values(["symbol", "trade_date"]).copy()
     ps["daily_ret"] = ps.groupby("symbol")["adj_close"].pct_change()
     vol_map: dict[str, float] = {}
     for sym in selected["symbol"].unique():
-        sym_data = ps[(ps["symbol"] == sym) & (pd.to_datetime(ps["trade_date"]).dt.date <= pd.Timestamp(signal_date).date())]
+        sym_data = ps[ps["symbol"].astype(str) == str(sym)]
         rets = sym_data["daily_ret"].dropna().tail(20)
         if len(rets) >= 5:
             ann_vol = float(rets.std(ddof=0)) * np.sqrt(252)

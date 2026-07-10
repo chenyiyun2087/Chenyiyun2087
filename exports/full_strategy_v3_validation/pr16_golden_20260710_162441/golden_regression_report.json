@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-07-10T16:25:30.251854+08:00",
+  "status": "PASS",
+  "sessions": 60,
+  "strategies": [
+    "P0",
+    "C0"
+  ],
+  "score_snapshot_sha": "ab60bd85eda747e3ed2fd3c7497aa599d23ea5fcf908f77100b2433c651d2dba",
+  "price_snapshot_sha": "7c9466d1ad8ea754ee0129185425950a418cabf02a139e729f0b2665b05b62d6",
+  "candidate_diff_max": 0,
+  "top5_diff_max": 0,
+  "weight_diff_max": 0.0,
+  "exposure_diff_max": 0.0,
+  "exit_diff_max": 0
+}

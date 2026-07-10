@@ -19,7 +19,11 @@ def collect_runtime_issues(*, require_database: bool = True) -> list[str]:
     if executable != PROJECT_PYTHON:
         issues.append(f"wrong_python:{executable}; expected:{PROJECT_PYTHON}")
     for module in REQUIRED_MODULES:
-        if importlib.util.find_spec(module) is None:
+        try:
+            available = importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            available = False
+        if not available:
             issues.append(f"missing_module:{module}")
     if require_database and not (os.getenv("CHENYIYUN_DB_URL") or os.getenv("CHENYIYUN_DB_PASSWORD")):
         issues.append("missing_database_credentials")

@@ -44,6 +44,7 @@ class ExperimentSpec:
     experiment_id: str          # "A0" … "A9"
     description: str
     ranking_fn: RankingFn
+    runtime_id: str = ""
     needs_training: bool = False   # True if fn uses train-window data
     is_available: bool = True      # False if not yet implemented
     uses_decay_exit: bool = False  # PR5: True if experiment uses DecayExitRule
@@ -489,19 +490,22 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
         "P0": ExperimentSpec(
             experiment_id="P0",
             description="Exact production strategy (via ProductionStrategyAdapter)",
-            ranking_fn=a0_current_scoring,  # placeholder — engine uses adapter
+            ranking_fn=a0_current_scoring,
+            runtime_id="production_exact",
             needs_training=False,
         ),
         "C0": ExperimentSpec(
             experiment_id="C0",
             description="Exact champion strategy (via ChampionStrategyAdapter)",
-            ranking_fn=a0_current_scoring,  # placeholder — engine uses adapter
+            ranking_fn=a0_current_scoring,
+            runtime_id="champion_exact",
             needs_training=False,
         ),
         "A0": ExperimentSpec(
             experiment_id="A0",
             description="[DEPRECATED] Simple score column rank — use P0 or C0",
             ranking_fn=a0_current_scoring,
+            runtime_id="function:a0",
             needs_training=False,
             is_available=False,
         ),
@@ -509,6 +513,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A1",
             description="Equal-weight sensitivity control",
             ranking_fn=a1_equal_weight,
+            runtime_id="function:a1",
             needs_training=False,
         ),
         "A2": ExperimentSpec(
@@ -517,36 +522,42 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             ranking_fn=a2_random_seeded(
                 _RANDOM_SEEDS[0]
             ),  # placeholder; engine uses all 20
+            runtime_id="function:a2",
             needs_training=False,
         ),
         "A3": ExperimentSpec(
             experiment_id="A3",
             description="Reversed scoring (lowest score first)",
             ranking_fn=a3_reversed_scoring,
+            runtime_id="function:a3",
             needs_training=False,
         ),
         "A4": ExperimentSpec(
             experiment_id="A4",
             description="Relative strength (20-day price return vs cross-sectional median)",
             ranking_fn=a4_relative_strength,
+            runtime_id="function:a4",
             needs_training=True,  # train window restricts data
         ),
         "A5": ExperimentSpec(
             experiment_id="A5",
             description="Liquidity quality (avg_amount20 rank)",
             ranking_fn=a5_liquidity_quality,
+            runtime_id="function:a5",
             needs_training=True,
         ),
         "A6": ExperimentSpec(
             experiment_id="A6",
             description="Trend persistence (close vs MA20, MA slope)",
             ranking_fn=a6_trend_persistence,
+            runtime_id="function:a6",
             needs_training=True,
         ),
         "A7": ExperimentSpec(
             experiment_id="A7",
             description="Industry-neutral alpha v3 — 6-factor cross-sectional model",
             ranking_fn=a7_industry_neutral_alpha_v3,
+            runtime_id="alpha_v3",
             needs_training=True,
             is_available=True,
         ),
@@ -554,6 +565,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A8",
             description="Risk-weighted alpha v2 — A7 + risk-adjusted position weights",
             ranking_fn=a8_risk_weighted_alpha_v2,
+            runtime_id="alpha_risk_v2",
             needs_training=True,
             is_available=True,
         ),
@@ -561,6 +573,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A9",
             description="Decay-exit alpha v2 — A8 + alpha decay exit rules",
             ranking_fn=a9_decay_exit_alpha,
+            runtime_id="alpha_risk_exit_v2",
             needs_training=True,
             is_available=True,
             uses_decay_exit=True,
@@ -570,6 +583,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A7-5",
             description="Alpha V3 Top5 — equal weight, 70% exposure",
             ranking_fn=a7_industry_neutral_alpha_v3,
+            runtime_id="alpha_v3",
             needs_training=True,
             is_available=True,
         ),
@@ -577,6 +591,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A7-8",
             description="Alpha V3 Top8 — equal weight, 70% exposure",
             ranking_fn=a7_industry_neutral_alpha_v3,
+            runtime_id="alpha_v3",
             needs_training=True,
             is_available=True,
         ),
@@ -584,6 +599,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A7-10",
             description="Alpha V3 Top10 — equal weight, 70% exposure",
             ranking_fn=a7_industry_neutral_alpha_v3,
+            runtime_id="alpha_v3",
             needs_training=True,
             is_available=True,
         ),
@@ -591,6 +607,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A8-5",
             description="Risk V2 Top5 — risk-weighted, 70% exposure",
             ranking_fn=a8_risk_weighted_alpha_v2,
+            runtime_id="alpha_risk_v2",
             needs_training=True,
             is_available=True,
         ),
@@ -598,6 +615,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A8-8",
             description="Risk V2 Top8 — risk-weighted, 70% exposure",
             ranking_fn=a8_risk_weighted_alpha_v2,
+            runtime_id="alpha_risk_v2",
             needs_training=True,
             is_available=True,
         ),
@@ -605,6 +623,7 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             experiment_id="A8-10",
             description="Risk V2 Top10 — risk-weighted, 70% exposure",
             ranking_fn=a8_risk_weighted_alpha_v2,
+            runtime_id="alpha_risk_v2",
             needs_training=True,
             is_available=True,
         ),

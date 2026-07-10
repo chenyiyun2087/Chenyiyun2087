@@ -1,5 +1,7 @@
 # 回测报告索引
 
+> 2026-07-10 Full Strategy V3 PR16 单一经济路径：真实数据库最近60个完整评分交易日完成 P0/C0 Adapter 与正式路径逐日复制，候选、Top5、权重、总仓位和退出差异均为0；评分/价格快照 SHA 已冻结。Python 3.11 完整回归为 743 passed、11 skipped、0 failed。该结果只证明经济路径复制可信，不代表新策略收益通过；Full Strategy V3 继续 `RESEARCH_ONLY / BLOCKED / NO_SCALE`。证据位于 `exports/full_strategy_v3_validation/pr16_golden_20260710_162441/`，方法说明见 `docs/01_strategy_research/2026-07-10_Full_Strategy_V3_PR16_单一经济路径.md`。
+
 > 2026-07-10 P0 可信度修复：`production_governed_vol_position_v1_2b_dynamic_score` 的 2026-06-18 账户回测被冻结为 Champion 基准（615 个交易日、收益 +57.23%、最大回撤 -25.52%），但公司行为与生命周期不可变快照缺失，状态保持 `FAILED_REVALIDATION / BLOCKED / NO_SCALE`。当前生产路由不变；后续报告禁止静默策略替代，并显式披露窗口覆盖率与 provenance。
 
 > 2026-06-28 系统全策略生产投配回测：以 100 万元、T+1 开盘、单边成本 7.5bp、基础滑点 10bp 重跑至数据库最新完整交易日 2026-06-26，并统一评估 252/126/63 交易日窗口。生产底座全期收益 +19.37%、最大回撤 -24.90%，近一年 +44.66%、近半年 +45.53%、近三个月 +35.57%，100万元基础容量代理通过；但严格账本仍为 `PARTIAL_UNVERIFIED`，公司行动源 fail-closed、证券生命周期快照缺失且工作树不可复现，因此最终结论仍为 `DO_NOT_SCALE`、建议新增风险暴露 0%。详见 `2026-06-28_系统全策略生产投配回测评估.md`，原始回测位于 `exports/signal_research/20260628_133147_468726_trusted_account_backtest/`，汇总位于 `exports/signal_research/20260628_133147_production_all_strategy_review/`。
