@@ -250,6 +250,8 @@ class MatchedPortfolioRunner:
         prev_close = _safe_float(price_info.get("prev_adj_close"), np.nan)
         is_st = _safe_float(price_info.get("is_st"), 0.0)
 
+        if not np.isfinite(prev_close) or prev_close <= 0:
+            return True, "", float(open_price)
         upper, lower = _limit_prices(prev_close, symbol, is_st)
         if side == "BUY" and open_price >= upper:
             return False, "limit_up_block", None
