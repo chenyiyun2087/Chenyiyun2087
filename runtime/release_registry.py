@@ -37,6 +37,8 @@ class ReleaseRecord(BaseModel):
     sample_end: str = ""
     actual_trading_days: int = 0
     cost_model: str = "NOT_FROZEN"
+    approved_principal: float = 0.0
+    order_policy: str = "BLOCKED"
     approved_snapshot: str = ""
     approved_by: str = ""
     approved_at: str = ""

@@ -133,6 +133,31 @@ class RecurringStockBonusConfig(_StrictModel):
     bonus_score: float
 
 
+class ReleaseOrderPolicyConfigModel(_StrictModel):
+    """Order authority policy loaded from production_strategy.yaml."""
+
+    execution_policy: str = "ACTIVE_FIXED_CAPITAL"
+    scale_policy: str = "NO_EXTERNAL_SCALE"
+    approved_principal: float = Field(default=500000, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_policy(self) -> "ReleaseOrderPolicyConfigModel":
+        valid_policies = {
+            "PRODUCTION_APPROVED",
+            "ACTIVE_FIXED_CAPITAL",
+            "ACTIVE_EXISTING_ONLY",
+            "SHADOW",
+            "BLOCKED",
+        }
+        if self.execution_policy not in valid_policies:
+            raise ValueError(
+                f"unknown execution_policy: {self.execution_policy}"
+            )
+        if self.scale_policy not in ("NO_EXTERNAL_SCALE", "APPROVAL_REQUIRED"):
+            raise ValueError(f"unknown scale_policy: {self.scale_policy}")
+        return self
+
+
 class ProductionSettings(_StrictModel):
     release_id: str
     primary_strategy: str
@@ -159,6 +184,7 @@ class ProductionSettings(_StrictModel):
     industry_filter: IndustryFilterConfig
     d1_stop_loss: D1StopLossConfig
     recurring_stock_bonus: RecurringStockBonusConfig
+    release_order_policy: ReleaseOrderPolicyConfigModel = ReleaseOrderPolicyConfigModel()
 
 
 class ProductionConfigFile(_StrictModel):
