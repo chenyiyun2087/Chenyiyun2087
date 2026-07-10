@@ -58,6 +58,8 @@ class EvidenceStatus(str, Enum):
     REPRODUCIBLE = "REPRODUCIBLE"
     NON_REPRODUCIBLE = "NON_REPRODUCIBLE"
     INSUFFICIENT_OOS_COVERAGE = "INSUFFICIENT_OOS_COVERAGE"
+    PRECHECK_ONLY = "PRECHECK_ONLY"
+    EMPTY_RESULTS = "EMPTY_RESULTS"
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -167,7 +169,22 @@ def finalize_manifest(output_dir: Path, manifest: dict[str, Any]) -> dict[str, A
     return manifest
 
 
-def validate_evidence_package(output_dir: Path) -> dict[str, Any]:
+def validate_evidence_package(
+    output_dir: Path,
+    run_semantic: bool = True,
+) -> dict[str, Any]:
+    """Validate an evidence package for structural and semantic integrity.
+
+    Parameters
+    ----------
+    output_dir: Path to the evidence package directory.
+    run_semantic: If True, also run semantic validation (content-level checks).
+                  Set to False for pre-flight/precheck packages.
+
+    Returns
+    -------
+    dict with: passed, errors, manifest, semantic (if run_semantic=True)
+    """
     manifest_path = output_dir / "manifest.json"
     if not manifest_path.is_file():
         return {"passed": False, "errors": ["manifest_missing"]}
@@ -186,4 +203,41 @@ def validate_evidence_package(output_dir: Path) -> dict[str, Any]:
             errors.append(f"evidence_sha_mismatch:{name}")
     if manifest.get("worktree_clean") is not True:
         errors.append("worktree_not_clean_at_run_start")
-    return {"passed": not errors, "errors": errors, "manifest": manifest}
+
+    structural_passed = not errors
+
+    # Semantic validation (content-level checks)
+    semantic_result: dict[str, Any] | None = None
+    if run_semantic:
+        from scripts.research.evidence_semantic import (
+            validate_evidence_semantics,
+            is_precheck_only,
+            SemanticEvidenceStatus,
+        )
+        # Check if this is a precheck package first
+        is_precheck, precheck_reason = is_precheck_only(output_dir)
+        if is_precheck:
+            semantic_result = {
+                "passed": False,
+                "status": SemanticEvidenceStatus.PRECHECK_ONLY.value,
+                "reason": precheck_reason,
+            }
+            errors.append(f"semantic:PRECHECK_ONLY:{precheck_reason}")
+        else:
+            report = validate_evidence_semantics(output_dir)
+            semantic_result = {
+                "passed": report.passed,
+                "status": report.status,
+                "checks": {k: v.get("passed", False) for k, v in report.checks.items()},
+                "errors": report.errors,
+                "warnings": report.warnings,
+            }
+            for err in report.errors:
+                errors.append(f"semantic:{err}")
+
+    return {
+        "passed": structural_passed and (semantic_result.get("passed", True) if semantic_result else True),
+        "errors": errors,
+        "manifest": manifest,
+        "semantic": semantic_result,
+    }

@@ -72,8 +72,11 @@ def constrained_weight_allocation(
     remaining = float(target_gross_exposure)
     active = set(range(n))
     raw_share = raw.copy()
-    enforce_industry = len(set(industries)) > 1
-    enforce_theme = len(set(themes)) > 1
+    # Always enforce industry/theme caps unless all values are placeholder labels
+    # ("default", "unknown"). Single-industry portfolios must still be capped.
+    PLACEHOLDER_LABELS = frozenset({"default", "unknown"})
+    enforce_industry = not all(ind in PLACEHOLDER_LABELS for ind in set(industries))
+    enforce_theme = not all(thm in PLACEHOLDER_LABELS for thm in set(themes))
 
     def capacity(i: int, weights: np.ndarray) -> float:
         ind_used = sum(weights[j] for j in range(n) if industries[j] == industries[i])
