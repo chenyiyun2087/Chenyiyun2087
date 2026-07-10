@@ -54,6 +54,9 @@ DEFAULT_VALIDATE_MONTHS = 6
 DEFAULT_STEP_MONTHS = 6
 DEFAULT_EMBARGO_TRADING_DAYS = 10
 
+# PR13: Hold period experiment variants
+HOLD_PERIOD_VARIANTS = [5, 8, 10, 12, 15]
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -392,20 +395,28 @@ class WalkForwardEngine:
                 <= pd.Timestamp(fold.validate_end).date()
             )
         ]
-        # PR5: Attach DecayExitRule if experiment uses decay exits
+        # PR13: Attach stateful DecayExitRuleV2 if experiment uses decay exits
         decay_rule = None
         if experiment.uses_decay_exit:
             try:
-                from scripts.research.alpha_decay_exit import (
-                    DecayExitConfig,
-                    DecayExitRule,
-                    AlphaDecayTracker,
+                from scripts.research.alpha_decay_exit_v2 import (
+                    ExitV2Config,
+                    DecayExitRuleV2,
+                    StatefulDecayTracker,
                 )
-                decay_config = DecayExitConfig()
-                decay_tracker = AlphaDecayTracker(decay_config)
-                decay_rule = DecayExitRule(decay_config, decay_tracker)
+                exit_config = ExitV2Config()
+                tracker = StatefulDecayTracker(exit_config)
+                decay_rule = DecayExitRuleV2(exit_config, tracker)
             except ImportError:
-                pass
+                try:
+                    from scripts.research.alpha_decay_exit import (
+                        DecayExitConfig, DecayExitRule, AlphaDecayTracker,
+                    )
+                    decay_config = DecayExitConfig()
+                    decay_tracker = AlphaDecayTracker(decay_config)
+                    decay_rule = DecayExitRule(decay_config, decay_tracker)
+                except ImportError:
+                    pass
 
         runner = MatchedPortfolioRunner(
             runner_spec, validate_calendar, decay_exit_rule=decay_rule,
