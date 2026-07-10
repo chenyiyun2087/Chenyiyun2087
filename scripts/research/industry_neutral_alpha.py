@@ -858,6 +858,7 @@ class AlphaModel:
         prices: pd.DataFrame,
         train_start: str,
         train_end: str,
+        executable_labels: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """Compute industry-neutral alpha rankings.
 
@@ -866,6 +867,9 @@ class AlphaModel:
         scores : DataFrame with columns [symbol, trade_date, score, ...].
         prices : DataFrame with columns [symbol, trade_date, adj_close, ...].
         train_start, train_end : Date strings (YYYY-MM-DD) for the train window.
+        executable_labels : Optional pre-computed executable forward returns.
+                           If provided, used for IC estimation.
+                           Columns: [symbol, trade_date, fwd_ret_10d_exec].
 
         Returns
         -------
@@ -884,7 +888,17 @@ class AlphaModel:
         factor_signals = self._compute_all_factors(train_prices)
 
         # 3. Compute forward returns for IC estimation
-        fwd_returns = self._compute_forward_returns(train_prices)
+        # PR11: Use executable labels when available
+        if executable_labels is not None and not executable_labels.empty:
+            fwd_returns = executable_labels.rename(
+                columns={"fwd_ret_10d_exec": "fwd_ret"}
+                if "fwd_ret_10d_exec" in executable_labels.columns
+                else {}
+            )
+            if "fwd_ret" not in fwd_returns.columns and "fwd_ret_10d_exec" in executable_labels.columns:
+                fwd_returns["fwd_ret"] = executable_labels["fwd_ret_10d_exec"]
+        else:
+            fwd_returns = self._compute_forward_returns(train_prices)
 
         # 4. Optimize weights from train-window IC
         raw_diagnostics = self._optimizer.optimize_weights(
