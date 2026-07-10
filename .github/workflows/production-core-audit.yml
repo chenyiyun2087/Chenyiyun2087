@@ -13,11 +13,11 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml
+        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
       - name: Production config consistency
-        run: python -m pytest test/test_production_config_consistency.py -v
-      - name: Scheduler pipeline integrity
-        run: python -m pytest test/test_scheduler_pipeline.py -v
+        run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py -v
+      - name: Runtime and batch pipeline integrity
+        run: python -m pytest test/test_batch_reliability.py -v
       - name: Production config loads correctly
         run: |
           python -c "
@@ -90,7 +90,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install pandas numpy pytest sqlalchemy pymysql
+        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
       - name: Strict ledger tests
         run: python -m pytest test/test_strict_execution_ledger.py test/test_strict_corporate_action_snapshot.py test/test_strict_snapshot_integrity.py test/test_strict_reliability_matrix.py test/test_strict_precommit_cap_and_sizing.py test/test_strict_pit_market_rules.py test/test_replay_strict_execution_ledger.py -v
       - name: No research imports in replay_v2
@@ -117,7 +117,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml
+        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
       - name: Wait for MySQL
         run: |
           for i in $(seq 1 30); do

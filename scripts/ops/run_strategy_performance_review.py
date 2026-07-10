@@ -22,6 +22,8 @@ from scripts.ops.production_config import load_production_config
 from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
 from scripts.ops.feishu_notifier import send_feishu_text_audited, strategy_identity_block
 from scripts.strategy_display import strategy_display_name
+from runtime.provenance import ProvenanceEnvelope
+from runtime.release_registry import get_release
 
 
 PRODUCTION_CONFIG = load_production_config()
@@ -42,6 +44,18 @@ _VOL_STRATEGY_FALLBACKS = [
     "production_governed_vol_position_v1_2b_execution_safe_uplift",
     "baseline_full_liquidity_detail_vol_position",
 ]
+
+
+class StrategyIdentityMismatch(RuntimeError):
+    """Raised when a production report cannot resolve its requested strategy exactly."""
+
+    def __init__(self, requested: str, available: set[str]):
+        self.requested = requested
+        self.available = tuple(sorted(available))
+        super().__init__(
+            f"strategy identity mismatch: requested={requested}; available={sorted(available)}; "
+            "use --allow-substitute-diagnostic only for a non-production diagnostic report"
+        )
 
 
 def _discover_latest_backtest_dir(
@@ -236,25 +250,40 @@ def _load_window_rows(backtest_dir: Path, strategy: str) -> list[dict]:
         raise RuntimeError(f"Strategy {strategy} windows not found in {path}")
     order = {"3m": 0, "6m": 1, "1y": 2, "3y": 3}
     matched["_order"] = matched["window"].map(order).fillna(99)
+    requested_days = {"3m": 63, "6m": 126, "1y": 252, "3y": 756}
+    matched["requested_window"] = matched["window"]
+    matched["requested_window_days"] = matched["window"].map(requested_days)
+    matched["actual_start"] = matched.get("window_start")
+    matched["actual_end"] = matched.get("window_end")
+    matched["actual_trading_days"] = pd.to_numeric(matched.get("trading_days"), errors="coerce")
+    matched["coverage_ratio"] = matched["actual_trading_days"] / matched["requested_window_days"]
+    matched["coverage_status"] = matched["coverage_ratio"].map(
+        lambda value: "INSUFFICIENT_COVERAGE" if pd.notna(value) and float(value) < 0.90 else "PASS"
+    )
     matched = matched.sort_values(["_order", "window"]).drop(columns=["_order"])
     return _records(matched)
 
 
-def _resolve_strategy(backtest_dir: Path, strategy: str, fallbacks: list[str] | None = None) -> str:
-    """Resolve the best available strategy name from the backtest summary.
-
-    If *strategy* is found, return it. Otherwise try each fallback in order.
-    Raises RuntimeError if no match is found.
-    """
+def _resolve_strategy(
+    backtest_dir: Path,
+    strategy: str,
+    fallbacks: list[str] | None = None,
+    *,
+    allow_substitute_diagnostic: bool = False,
+) -> str:
+    """Resolve an exact strategy, or an explicitly authorised diagnostic substitute."""
     path = backtest_dir / "trusted_account_backtest_summary.csv"
     if not path.exists():
         raise RuntimeError(f"Missing backtest summary: {path}")
     frame = pd.read_csv(path)
     available = set(frame["strategy"].astype(str).unique())
-    for candidate in [strategy] + (fallbacks or []):
+    if strategy in available:
+        return strategy
+    if not allow_substitute_diagnostic:
+        raise StrategyIdentityMismatch(strategy, available)
+    for candidate in fallbacks or []:
         if candidate in available:
-            if candidate != strategy:
-                print(f"[review] strategy '{strategy}' not found, using '{candidate}' (fallback)")
+            print(f"[review] diagnostic substitute: requested='{strategy}', resolved='{candidate}'")
             return candidate
     raise RuntimeError(
         f"Strategy '{strategy}' (and fallbacks {fallbacks}) not found in {path}. "
@@ -262,12 +291,26 @@ def _resolve_strategy(backtest_dir: Path, strategy: str, fallbacks: list[str] | 
     )
 
 
-def _load_strategy_block(backtest_dir: Path, strategy: str, required: bool = True, fallbacks: list[str] | None = None) -> dict:
-    resolved = _resolve_strategy(backtest_dir, strategy, fallbacks=fallbacks)
+def _load_strategy_block(
+    backtest_dir: Path,
+    strategy: str,
+    required: bool = True,
+    fallbacks: list[str] | None = None,
+    *,
+    allow_substitute_diagnostic: bool = False,
+) -> dict:
+    resolved = _resolve_strategy(
+        backtest_dir,
+        strategy,
+        fallbacks=fallbacks,
+        allow_substitute_diagnostic=allow_substitute_diagnostic,
+    )
     return {
         "summary": _load_summary_row(backtest_dir, resolved),
         "windows": _load_window_rows(backtest_dir, resolved),
         "resolved_strategy": resolved,
+        "requested_strategy": strategy,
+        "identity_status": "MATCHED" if resolved == strategy else "SUBSTITUTE_DIAGNOSTIC",
     }
 
 
@@ -337,8 +380,9 @@ def compute_rolling_window_metrics(
 
     status = "PASS"
     warnings: list[str] = []
-    if len(window) < int(window_days):
-        status = "INSUFFICIENT"
+    coverage_ratio = len(window) / max(int(window_days), 1)
+    if coverage_ratio < 0.90:
+        status = "INSUFFICIENT_COVERAGE"
         warnings.append(f"only_{len(window)}_trade_days_available_for_{window_days}_day_window")
     if last_date < review_ts:
         status = "STALE"
@@ -372,6 +416,7 @@ def compute_rolling_window_metrics(
         "strategy": strategy,
         "requested_trade_days": int(window_days),
         "actual_trade_days": int(len(window)),
+        "coverage_ratio": float(coverage_ratio),
         "window_start": window["trade_date"].min().strftime("%Y-%m-%d"),
         "window_end": last_date.strftime("%Y-%m-%d"),
         "review_date": review_ts.strftime("%Y-%m-%d"),
@@ -404,7 +449,14 @@ def _load_backtests(args: argparse.Namespace) -> dict:
     review_date = _normalize_date(getattr(args, "date", None)) or getattr(args, "review_date", None)
     review_window_days = int(getattr(args, "review_window_days", DEFAULT_REVIEW_WINDOW_DAYS))
     vol_strategy = getattr(args, "vol_backtest_strategy", None) or DEFAULT_STRATEGY
-    primary = _load_strategy_block(primary_dir, vol_strategy, required=True, fallbacks=_VOL_STRATEGY_FALLBACKS)
+    allow_substitute = bool(getattr(args, "allow_substitute_diagnostic", False))
+    primary = _load_strategy_block(
+        primary_dir,
+        vol_strategy,
+        required=True,
+        fallbacks=_VOL_STRATEGY_FALLBACKS,
+        allow_substitute_diagnostic=allow_substitute,
+    )
     resolved = primary.get("resolved_strategy", vol_strategy)
     if review_date:
         primary["rolling_window_3m"] = _load_rolling_window_metrics(
@@ -413,6 +465,18 @@ def _load_backtests(args: argparse.Namespace) -> dict:
             review_date,
             review_window_days,
         )
+    summary = primary["summary"]
+    provenance = ProvenanceEnvelope.from_release(
+        get_release(resolved),
+        requested_strategy_id=vol_strategy,
+        resolved_strategy_id=resolved,
+        sample_start=str(summary.get("first_date") or ""),
+        sample_end=str(summary.get("last_date") or ""),
+        actual_trading_days=int(summary.get("trading_days") or 0),
+        requested_window_days=review_window_days,
+        identity_status=primary["identity_status"],
+    )
+    primary["provenance"] = provenance.model_dump(mode="json")
     return {
         "source_dirs": {
             "primary_governed": str(primary_dir),
@@ -870,8 +934,10 @@ def _format_feishu(payload: dict) -> str:
     live = payload["current"].get("live") or {}
     snapshot = live.get("snapshot") or {}
     decision = payload["judgement"]
+    diagnostic = payload["params"].get("report_type") == "SUBSTITUTE_DIAGNOSTIC"
+    title = "【替代策略诊断报告｜非生产策略绩效报告】" if diagnostic else "【核心精选策略收益评估】"
     lines = [
-        "【核心精选策略收益评估】",
+        title,
         f"日期：{payload['params']['review_date']}",
         strategy_identity_block(),
         f"实际回测策略：{strategy_display_name(primary_strategy, include_id=True)}",
@@ -929,7 +995,7 @@ def _markdown_table(rows: list[dict], columns: list[tuple[str, str]]) -> list[st
         values = []
         for _, key in columns:
             value = row.get(key)
-            if key in {"total_return", "annualized_return", "max_drawdown", "current_drawdown", "win_rate", "worst_day", "volatility", "avg_gross_exposure", "effective_weight", "target_weight", "weight"}:
+            if key in {"total_return", "annualized_return", "max_drawdown", "current_drawdown", "win_rate", "worst_day", "volatility", "avg_gross_exposure", "effective_weight", "target_weight", "weight", "coverage_ratio"}:
                 values.append(_pct(value))
             elif key in {"final_equity", "planned_amount", "execution_amount"}:
                 values.append(_money(value))
@@ -949,8 +1015,10 @@ def _format_markdown(payload: dict) -> str:
     adaptive_window = _backtest_window_label(adaptive)
     current = payload["current"]
     shadow_history = current.get("shadow_history") or {}
+    diagnostic = payload["params"].get("report_type") == "SUBSTITUTE_DIAGNOSTIC"
+    report_title = "替代策略诊断报告（非生产策略绩效报告）" if diagnostic else "核心精选策略收益评估"
     lines = [
-        f"# 核心精选策略收益评估 - {payload['params']['review_date']}",
+        f"# {report_title} - {payload['params']['review_date']}",
         "",
         "## 结论",
         "",
@@ -965,6 +1033,7 @@ def _format_markdown(payload: dict) -> str:
             f"- 风险档：`{DEFAULT_RISK_PROFILE}`",
             f"- 主策略：`{DEFAULT_STRATEGY}`",
             f"- 实际回测策略：`{primary_strategy}`",
+            f"- 身份状态：`{bt['primary'].get('identity_status')}`",
             f"- TopN：{DEFAULT_TOP_N}；总持仓上限：{DEFAULT_MAX_TOTAL_POSITIONS}；持有期：{DEFAULT_HOLD_DAYS} 个交易日；默认仓位：{_pct(DEFAULT_POSITION_RATIO)}",
             f"- 配置文件：`{PRODUCTION_CONFIG.get('config_path')}`",
             "- 回测口径：T 日信号、T+1 执行、账户级、初始资金 50 万，成本/滑点沿用既有回测导出。",
@@ -988,7 +1057,7 @@ def _format_markdown(payload: dict) -> str:
             "",
         ]
     )
-    lines.extend(_markdown_table(bt["primary"]["windows"], [("窗口", "window"), ("起始", "window_start"), ("结束", "window_end"), ("收益", "total_return"), ("最大回撤", "max_drawdown"), ("平均暴露", "avg_gross_exposure")]))
+    lines.extend(_markdown_table(bt["primary"]["windows"], [("请求窗口", "requested_window"), ("实际起始", "actual_start"), ("实际结束", "actual_end"), ("交易日", "actual_trading_days"), ("覆盖率", "coverage_ratio"), ("覆盖状态", "coverage_status"), ("收益", "total_return"), ("最大回撤", "max_drawdown")]))
     lines.extend(["", "### 策略同窗对照", ""])
     lines.extend(_markdown_table(bt["dual_system_3m_compare"], [("策略", "strategy"), ("收益", "total_return"), ("年化", "annualized_return"), ("最大回撤", "max_drawdown"), ("平均暴露", "avg_gross_exposure"), ("交易数", "trade_count")]))
     lines.extend(["", "## 当前候选与订单", ""])
@@ -1036,6 +1105,7 @@ def run_review(args: argparse.Namespace) -> dict:
     review_date = _normalize_date(args.date) or _latest_trade_date(engine)
     setattr(args, "review_date", review_date)
     backtests = _load_backtests(args)
+    identity_status = str(backtests["primary"].get("identity_status") or "MATCHED")
     candidates, candidate_meta = _load_candidates(engine, review_date)
     candidate_params = _load_candidate_output_params(candidates)
     risk_decision_row = _load_production_risk_decision(engine, review_date)
@@ -1073,7 +1143,9 @@ def run_review(args: argparse.Namespace) -> dict:
             "config_path": str(PRODUCTION_CONFIG["config_path"]),
             "review_window_days": int(getattr(args, "review_window_days", DEFAULT_REVIEW_WINDOW_DAYS)),
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "report_type": identity_status,
         },
+        "provenance": backtests["primary"]["provenance"],
         "backtests": backtests,
         "current": current,
         "judgement": {},
@@ -1126,6 +1198,11 @@ def main() -> None:
     parser.add_argument("--notify-feishu", action="store_true", help="Send a standalone Feishu strategy performance review.")
     parser.add_argument("--historical-reissue", action="store_true", help="Prefix the notification as a historical reissue.")
     parser.add_argument("--review-window-days", type=int, default=DEFAULT_REVIEW_WINDOW_DAYS, help="Recent performance review window in trading days. Defaults to 63.")
+    parser.add_argument(
+        "--allow-substitute-diagnostic",
+        action="store_true",
+        help="Allow a clearly labelled non-production diagnostic report when the requested strategy is absent.",
+    )
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     _resolved = str(_resolve_backtest_default(_BACKTEST_DIR_CACHE))
     parser.add_argument("--vol-backtest-dir", default=_resolved)
@@ -1133,8 +1210,8 @@ def main() -> None:
         "--vol-backtest-strategy",
         default=None,
         help="Override the strategy name to load from the vol backtest summary. "
-             "Defaults to the production primary_strategy; falls back through "
-             f"{_VOL_STRATEGY_FALLBACKS}.",
+             "Defaults to the production primary_strategy and fails closed unless "
+             "--allow-substitute-diagnostic is explicitly supplied.",
     )
     parser.add_argument("--adaptive-v22-backtest-dir", default=_resolved)
     parser.add_argument("--dual-3m-backtest-dir", default=_resolved)

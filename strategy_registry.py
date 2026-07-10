@@ -17,6 +17,8 @@ from pathlib import Path
 
 import yaml
 
+from runtime.release_registry import load_release_registry
+
 logger = logging.getLogger(__name__)
 
 STRATEGY_CARDS_DIR = Path(__file__).resolve().parent / "strategy_cards"
@@ -77,6 +79,7 @@ def load_all_cards() -> dict[str, StrategyCard]:
         logger.warning("strategy_cards/ directory not found")
         return cards
 
+    release_registry = load_release_registry()
     for yaml_file in sorted(STRATEGY_CARDS_DIR.glob("*.yaml")):
         try:
             raw = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
@@ -89,15 +92,19 @@ def load_all_cards() -> dict[str, StrategyCard]:
             logger.error(f"Missing strategy_id in {yaml_file}")
             continue
 
-        status = raw.get("status", "RESEARCH")
+        release = release_registry.releases.get(sid)
+        if release is None:
+            logger.error(f"Strategy '{sid}' is missing from strategy_release_registry.yaml")
+            continue
+        status = release.lifecycle_status
         if status not in VALID_STATUSES:
             logger.error(f"Invalid status '{status}' in {yaml_file}")
             continue
 
         cards[sid] = StrategyCard(
             strategy_id=sid,
-            strategy_version=str(raw.get("strategy_version", "unknown")),
-            release_id=str(raw.get("release_id", "")),
+            strategy_version=release.strategy_version,
+            release_id=release.release_id,
             owner=str(raw.get("owner", "")),
             status=status,
             description=str(raw.get("description", "")),

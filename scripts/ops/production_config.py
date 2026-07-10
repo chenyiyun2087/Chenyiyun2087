@@ -3,12 +3,166 @@ from __future__ import annotations
 import hashlib
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from runtime.release_registry import load_release_registry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = PROJECT_ROOT / "config" / "production_strategy.yaml"
+
+
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+FeatureStatus = Literal["IMPLEMENTED", "RESEARCH_ONLY", "DISABLED"]
+
+
+class ShadowValidationConfig(_StrictModel):
+    max_large_slippage_bps: float
+    max_unfilled_ratio: float
+    max_limit_up_buy_ratio: float
+    max_shadow_theory_gap: float
+    consecutive_bad_days_to_reduce: int
+    consecutive_bad_days_to_defensive: int
+
+
+class ResearchShadowConfig(_StrictModel):
+    enabled: bool
+    strategy: str
+    compare_to: str
+    min_shadow_days: int
+
+
+class LiveCanaryConfig(_StrictModel):
+    enabled: bool
+    execution_mode: Literal["manual_confirmation"]
+    account_total_capital: float = Field(gt=0)
+    max_capital_ratio: float = Field(gt=0, le=0.10)
+    max_capital: float = Field(gt=0)
+    candidate_strategy: str
+    require_release_approval: bool
+
+    @model_validator(mode="after")
+    def validate_cap(self) -> "LiveCanaryConfig":
+        if self.max_capital > self.account_total_capital * self.max_capital_ratio:
+            raise ValueError("live_canary max_capital exceeds ratio cap")
+        return self
+
+
+class RegimeConfig(_StrictModel):
+    target_exposure_range: tuple[float, float]
+    allowed_pools: list[str]
+    attack_budget_cap: float
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "RegimeConfig":
+        lo, hi = self.target_exposure_range
+        if lo < 0 or hi > 1 or lo > hi:
+            raise ValueError("target_exposure_range must be ordered within 0..1")
+        return self
+
+
+class MarketRegimeConfig(_StrictModel):
+    enabled: bool
+    confirmation_days: int
+    min_hold_days: int
+    stress_immediate: bool
+    regimes: dict[str, RegimeConfig]
+
+
+class CandidatePoolConfig(_StrictModel):
+    role: str
+    strategy: str
+    allowed_regimes: list[str]
+    order_lane: str
+    max_budget_share: float = 0.0
+
+
+class PortfolioRiskBudgetConfig(_StrictModel):
+    max_total_exposure: float
+    champion_default_exposure: float
+    max_single_position_weight_pct_nav: float
+    max_single_industry_weight_pct_nav: float
+    max_correlated_theme_weight_pct_nav: float
+    max_daily_new_position_pct_nav: float
+    max_daily_turnover_pct_nav: float
+    max_attack_pool_budget_share: float
+
+
+class ChallengerLaneConfig(_StrictModel):
+    lane: str
+    candidate_pool: str
+    allowed_regimes: list[str]
+    max_budget_share: float
+    require_enabled_shadow_gate: bool
+
+
+class ScoreConfig(_StrictModel):
+    status: FeatureStatus
+    version: str
+    description: str
+
+
+class IndustryFilterConfig(_StrictModel):
+    status: FeatureStatus
+    enabled: bool
+    description: str
+    exclude_industries: list[str]
+    warn_industries: list[str]
+
+
+class D1StopLossConfig(_StrictModel):
+    status: FeatureStatus
+    enabled: bool
+    description: str
+    threshold_3pct: float
+    threshold_5pct: float
+
+
+class RecurringStockBonusConfig(_StrictModel):
+    status: FeatureStatus
+    enabled: bool
+    description: str
+    min_appearances: int
+    min_win_rate: float
+    bonus_score: float
+
+
+class ProductionSettings(_StrictModel):
+    release_id: str
+    primary_strategy: str
+    primary_selection_strategy: str
+    risk_profile: str
+    position_ratio: float
+    top_n: int
+    max_total_positions: int
+    hold_days: int
+    execution_mode: str
+    shadow_risk_strategy: str
+    shadow_version: str
+    research_shadow_candidate: ResearchShadowConfig
+    ashare_supplement_limit: int
+    allow_model_risk_fields: bool
+    defensive_fallback_strategy: str
+    shadow_validation: ShadowValidationConfig
+    live_canary: LiveCanaryConfig
+    market_regime: MarketRegimeConfig
+    candidate_pools: dict[str, CandidatePoolConfig]
+    portfolio_risk_budget: PortfolioRiskBudgetConfig
+    challenger_lanes: dict[str, ChallengerLaneConfig]
+    score_config: ScoreConfig
+    industry_filter: IndustryFilterConfig
+    d1_stop_loss: D1StopLossConfig
+    recurring_stock_bonus: RecurringStockBonusConfig
+
+
+class ProductionConfigFile(_StrictModel):
+    production: ProductionSettings
 
 
 def _require(mapping: dict, key: str):
@@ -241,33 +395,13 @@ def load_production_config() -> dict[str, object]:
         raise FileNotFoundError(f"Missing production config: {CONFIG_PATH}")
     raw_text = CONFIG_PATH.read_text(encoding="utf-8")
     payload = yaml.safe_load(raw_text) or {}
-    production = dict(payload.get("production") or {})
-    config = {
-        "primary_strategy": str(_require(production, "primary_strategy")),
-        "primary_selection_strategy": str(production.get("primary_selection_strategy") or _require(production, "primary_strategy")),
-        "risk_profile": str(_require(production, "risk_profile")),
-        "position_ratio": float(_require(production, "position_ratio")),
-        "top_n": int(_require(production, "top_n")),
-        "max_total_positions": int(_require(production, "max_total_positions")),
-        "hold_days": int(_require(production, "hold_days")),
-        "execution_mode": str(_require(production, "execution_mode")),
-        "shadow_risk_strategy": str(_require(production, "shadow_risk_strategy")),
-        "shadow_version": str(_require(production, "shadow_version")),
-        "ashare_supplement_limit": int(_require(production, "ashare_supplement_limit")),
-        "allow_model_risk_fields": bool(_require(production, "allow_model_risk_fields")),
-        "defensive_fallback_strategy": str(production.get("defensive_fallback_strategy") or "baseline_full_liquidity_detail"),
-        "shadow_validation": _normalize_shadow_validation(production.get("shadow_validation")),
-        "research_shadow_candidate": _normalize_research_shadow_candidate(production.get("research_shadow_candidate")),
-        "live_canary": _normalize_live_canary(production.get("live_canary")),
-        "market_regime": _normalize_market_regime(production.get("market_regime")),
-        "candidate_pools": _normalize_candidate_pools(production.get("candidate_pools")),
-        "portfolio_risk_budget": _normalize_portfolio_risk_budget(production.get("portfolio_risk_budget")),
-        "challenger_lanes": _normalize_challenger_lanes(production.get("challenger_lanes")),
-        "config_path": str(CONFIG_PATH),
-        "config_sha": hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16],
-        # 2026-06-23: industry filter from dispersion diagnosis
-        "industry_filter": production.get("industry_filter") or {},
-    }
+    parsed = ProductionConfigFile.model_validate(payload)
+    config = parsed.production.model_dump(mode="python")
+    config["config_path"] = str(CONFIG_PATH)
+    config["config_sha"] = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16]
+    registry = load_release_registry()
+    if config["release_id"] != registry.active_production_release_id:
+        raise ValueError("production release_id must match active_production_release_id")
     canary = config["live_canary"]
     if canary["candidate_strategy"] != config["primary_strategy"]:
         raise ValueError("live_canary candidate_strategy must match the current primary_strategy")
