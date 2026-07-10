@@ -5,6 +5,10 @@ on:
     types: [labeled]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   full-regression:
     runs-on: ubuntu-latest
@@ -28,7 +32,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml
+        run: pip install flask pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
       - name: Wait for MySQL
         run: |
           for i in $(seq 1 30); do
@@ -50,7 +54,7 @@ jobs:
           ON DUPLICATE KEY UPDATE is_open=VALUES(is_open);
           SQL
       - name: Production core tests
-        run: python -m pytest test/test_production_config_consistency.py test/test_production_health_order_gating.py -v
+        run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py test/test_production_health_order_gating.py -v
       - name: Strict ledger tests
         run: python -m pytest test/test_strict_execution_ledger.py test/test_strict_corporate_action_snapshot.py test/test_strict_snapshot_integrity.py test/test_strict_reliability_matrix.py test/test_strict_precommit_cap_and_sizing.py test/test_strict_pit_market_rules.py test/test_replay_strict_execution_ledger.py -v
       - name: Order v2 integration tests
@@ -122,3 +126,5 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

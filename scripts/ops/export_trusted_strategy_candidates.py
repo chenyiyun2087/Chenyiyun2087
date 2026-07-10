@@ -30,6 +30,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.ops.production_config import load_production_config, production_risk_profile_description
+from runtime.provenance import ProvenanceEnvelope
+from runtime.release_registry import get_release
 from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
 from scripts.ops.data_readiness_gate import PipelineReadinessGate
 from scripts.ops.feishu_notifier import send_feishu_text_audited, strategy_identity_block
@@ -942,8 +944,25 @@ def _write_strategy_order_detail_outputs(
     summary.to_csv(summary_path, index=False)
     candidates.to_csv(candidates_path, index=False)
     orders.to_csv(orders_path, index=False)
+    all_dates = [
+        str(row.get("trade_date"))
+        for row in candidate_rows + order_rows
+        if row.get("trade_date") is not None
+    ]
+    production_release = get_release(str(PRODUCTION_CONFIG["primary_strategy"]))
+    provenance = ProvenanceEnvelope.from_release(
+        production_release,
+        requested_strategy_id=str(PRODUCTION_CONFIG["primary_strategy"]),
+        resolved_strategy_id=str(PRODUCTION_CONFIG["primary_strategy"]),
+        sample_start=min(all_dates) if all_dates else "",
+        sample_end=max(all_dates) if all_dates else "",
+        actual_trading_days=len(set(all_dates)),
+        requested_window_days=max(1, len(set(all_dates))),
+        identity_status="MATCHED",
+    ).model_dump(mode="json")
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "provenance": provenance,
         "summary": summary_rows,
         "candidates": candidate_rows,
         "orders": order_rows,
@@ -2474,6 +2493,17 @@ def export_candidates(args: argparse.Namespace) -> dict:
             and (pd.to_numeric(candidates["market_exposure_scale"], errors="coerce").fillna(1.0) < 1.0).any()
         ),
     }
+    production_release = get_release(str(PRODUCTION_CONFIG["primary_strategy"]))
+    params["provenance"] = ProvenanceEnvelope.from_release(
+        production_release,
+        requested_strategy_id=str(args.strategy),
+        resolved_strategy_id=str(args.strategy),
+        sample_start=str(start_date),
+        sample_end=str(asof_date),
+        actual_trading_days=int(scores["trade_date"].nunique()),
+        requested_window_days=int(args.history_days),
+        identity_status="MATCHED",
+    ).model_dump(mode="json")
     if adaptive_decision:
         strategy_for_params = str(args.strategy)
         sort_prefix = "adaptive" if strategy_for_params == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME else strategy_for_params

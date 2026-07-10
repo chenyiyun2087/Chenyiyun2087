@@ -4,6 +4,8 @@ from __future__ import annotations
 
 
 STRATEGY_DISPLAY_NAMES = {
+    "production_governed_vol_position": "生产治理波动仓位策略",
+    "production_governed_vol_position_v1_2b_dynamic_score": "动态评分 Champion 基准",
     "tiered_liquidity_then_bs_v2": "流动性分层B点进攻策略",
     "tiered_liquidity_then_bs_v2_industry_cap2": "流动性分层B点进攻策略（单行业最多2只）",
     "tiered_liquidity_then_bs_v2_industry_cap1": "流动性分层B点进攻策略（单行业最多1只）",

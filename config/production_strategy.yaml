@@ -1,4 +1,5 @@
 production:
+  release_id: prod-20260623-01
   primary_strategy: production_governed_vol_position
   primary_selection_strategy: baseline_full_liquidity_detail_vol_position
   risk_profile: adaptive
@@ -114,9 +115,11 @@ production:
   # 2026-06-23 新增：基于订单前向表现诊断的优化配置
   # 诊断报告: exports/order_forward_reviews/order_dispersion_diagnosis_*.md
   score_config:
+    status: IMPLEMENTED
     version: v2_dispersion_fix
     description: "降低contraction/breakout权重，提升liquidity/rs权重，修复得分反转"
   industry_filter:
+    status: IMPLEMENTED
     enabled: true
     description: "排除持续负收益行业（基于最近一个月前向一周表现）"
     exclude_industries:
@@ -128,11 +131,13 @@ production:
       - 新型电力     # avg_ret=-12.85% (仅1笔)
       - IT设备       # avg_ret=-20.70% (仅1笔)
   d1_stop_loss:
+    status: RESEARCH_ONLY
     enabled: false
     description: "T+1尾盘止损规则（需代码实现后再启用）"
     threshold_3pct: 0.50   # 首日跌超3%减仓50%
     threshold_5pct: 1.00   # 首日跌超5%清仓
   recurring_stock_bonus:
+    status: RESEARCH_ONLY
     enabled: false
     description: "常胜股加分（需代码实现后再启用）"
     min_appearances: 3

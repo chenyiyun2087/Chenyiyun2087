@@ -2715,22 +2715,43 @@ def _build_window_summary(nav: pd.DataFrame, initial_cash: float) -> pd.DataFram
         return pd.DataFrame()
     end_ts = pd.to_datetime(nav["trade_date"], errors="coerce").max()
     windows = [
-        ("3m", end_ts - pd.DateOffset(months=3)),
-        ("6m", end_ts - pd.DateOffset(months=6)),
-        ("1y", end_ts - pd.DateOffset(years=1)),
-        ("3y", end_ts - pd.DateOffset(years=3)),
+        ("3m", end_ts - pd.DateOffset(months=3), 63),
+        ("6m", end_ts - pd.DateOffset(months=6), 126),
+        ("1y", end_ts - pd.DateOffset(years=1), 252),
+        ("3y", end_ts - pd.DateOffset(years=3), 756),
     ]
     rows: list[dict[str, object]] = []
     for strategy, group in nav.groupby("strategy", sort=False):
-        for window_name, start_ts in windows:
+        for window_name, start_ts, requested_days in windows:
             summary = _summarize_window_nav(group, initial_cash, start_ts)
             if not summary:
                 continue
-            summary.update({"strategy": strategy, "window": window_name})
+            actual_days = int(summary.get("trading_days") or 0)
+            coverage_ratio = actual_days / requested_days
+            summary.update(
+                {
+                    "strategy": strategy,
+                    "window": window_name,
+                    "requested_window": window_name,
+                    "requested_window_days": requested_days,
+                    "actual_start": summary.get("window_start"),
+                    "actual_end": summary.get("window_end"),
+                    "actual_trading_days": actual_days,
+                    "coverage_ratio": coverage_ratio,
+                    "coverage_status": "INSUFFICIENT_COVERAGE" if coverage_ratio < 0.90 else "PASS",
+                }
+            )
             rows.append(summary)
     columns = [
         "strategy",
         "window",
+        "requested_window",
+        "requested_window_days",
+        "actual_start",
+        "actual_end",
+        "actual_trading_days",
+        "coverage_ratio",
+        "coverage_status",
         "window_start",
         "window_end",
         "trading_days",

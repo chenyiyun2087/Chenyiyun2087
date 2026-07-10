@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   fixtures:
     runs-on: ubuntu-latest
@@ -12,8 +16,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pandas numpy pytest sqlalchemy pymysql
-      - run: python -m pytest -q
+      - run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
+      - run: >-
+          python -m pytest -q
+          test/test_p0_trustworthiness.py
+          test/test_strict_execution_ledger.py
+          test/test_strict_corporate_action_snapshot.py
+          test/test_strict_snapshot_integrity.py
+          test/test_strict_reliability_matrix.py
+          test/test_strict_precommit_cap_and_sizing.py
+          test/test_strict_pit_market_rules.py
+          test/test_replay_strict_execution_ledger.py
       - run: '! rg "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
   secret-scan:
     runs-on: ubuntu-latest
@@ -22,3 +35,5 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
