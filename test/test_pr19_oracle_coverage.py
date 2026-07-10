@@ -154,8 +154,13 @@ class TestOracleIndependenceEnhanced:
         assert not result["passed"]
         assert any("config_sha" in e.lower() for e in result["errors"])
 
-    def test_approved_oracle_overrides_independence_errors(self):
-        """Approved oracle with approval_sha should override independence errors."""
+    def test_approved_oracle_does_not_override_self_referential(self):
+        """Approved oracle with approval_sha must NOT override independence errors.
+
+        PR20: Approval documents known bias but does NOT make self-referential
+        data independent. Adapter-generated oracles always fail independence
+        regardless of approval signatures.
+        """
         from scripts.research.frozen_oracle import (
             FrozenOracleState, OracleProvenance, OracleSource,
             check_oracle_independence,
@@ -182,9 +187,19 @@ class TestOracleIndependenceEnhanced:
             oracle,
             runtime_class_name="FrozenAlphaRuntime",
         )
-        # Approved oracles should be marked independent despite adapter class
-        assert result["is_independent"]
-        assert "downgrading" in str(result.get("warnings", [])).lower() or result["is_independent"]
+        # PR20: Approval must NOT override self-referential detection.
+        # An adapter-generated oracle is self-referential regardless of approval.
+        assert not result["is_independent"], (
+            f"Approved adapter oracle must NOT be marked independent: {result}"
+        )
+        assert result["is_self_referential"], (
+            f"Approved adapter oracle must still be self-referential: {result}"
+        )
+        # Approval should be noted as a warning, not a clearing of errors
+        approval_warnings = [w for w in result.get("warnings", []) if "approved" in w.lower()]
+        assert len(approval_warnings) > 0, (
+            f"Approval should generate a warning annotation: {result.get('warnings', [])}"
+        )
 
 
 # ============================================================================

@@ -12,10 +12,18 @@ import pandas as pd
 
 
 FIXED_WINDOWS = (
+    ("2024H1", "2024-01-01", "2024-06-30"),
+    ("2024H2", "2024-07-01", "2024-12-31"),
     ("2025H1", "2025-01-01", "2025-06-30"),
     ("2025H2", "2025-07-01", "2025-12-31"),
     ("2026H1", "2026-01-01", "2026-06-30"),
 )
+
+# PR20: Windows that are still in-progress as of the current date.
+# These windows must NOT be used for promotion statistics.
+INCOMPLETE_WINDOWS = frozenset({
+    "2026H2",  # In progress — ends 2026-12-31
+})
 
 REQUIRED_EVIDENCE_FILES = frozenset({
     "git_state.json",

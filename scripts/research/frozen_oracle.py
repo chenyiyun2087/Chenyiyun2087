@@ -873,16 +873,24 @@ def check_oracle_independence(
                 f"'{prov.git_commit_sha[:8]}' — may indicate same codebase"
             )
 
-    # Check 3: Approved oracle override
+    # Check 3: Approved oracle — documents known bias but does NOT override
+    # self-referential detection. Approval can accept known bias; it cannot
+    # convert a self-referencing oracle into independent data.
     if prov.approval_sha and prov.approved_by:
-        # An approved oracle is explicitly trusted — downgrade errors to warnings
         if errors:
             warnings.append(
                 f"Oracle approved by '{prov.approved_by}' — "
-                f"downgrading {len(errors)} independence errors to warnings"
+                f"approval documents known bias but does NOT make self-referential "
+                f"data independent. {len(errors)} independence errors remain as HARD failures."
             )
-            warnings.extend(errors)
-            errors.clear()
+        else:
+            warnings.append(
+                f"Oracle approved by '{prov.approved_by}' — "
+                f"independence checks passed; approval is supplementary."
+            )
+        # CRITICAL: errors list is NOT cleared — approval never overrides
+        # self-referential detection. An adapter-generated oracle with an
+        # approval signature is still self-referential and must fail.
 
     # Check 4: generator file sha missing (for file-based oracles)
     if prov.source in (OracleSource.FROZEN_PRODUCTION_FILE, OracleSource.FROZEN_CHAMPION_FILE):

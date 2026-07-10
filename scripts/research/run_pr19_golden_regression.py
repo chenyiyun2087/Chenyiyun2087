@@ -73,6 +73,11 @@ def _sha_frame(frame: pd.DataFrame) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _sha_file(path: Path) -> str:
+    """SHA256 of a file's contents."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _get_git_sha() -> str:
     import subprocess
     try:
@@ -308,6 +313,31 @@ def run_golden_regression(
     if provenance_errors:
         print(f"FATAL: Oracle provenance validation failed:\n" + "\n".join(provenance_errors))
 
+    # HARD GATE 3b: Oracle independence (hash-based)
+    # ------------------------------------------------------------------
+    runtime_git_sha = _get_git_sha()
+    runtime_file_sha = _sha_file(PROJECT_ROOT / "scripts" / "research" / "strategy_runtime.py")
+    independence_checks: dict[str, dict[str, Any]] = {}
+    all_independent = True
+
+    for label, oracle in [("P0", p0_oracle), ("C0", c0_oracle)]:
+        ind_result = check_oracle_independence(
+            oracle,
+            runtime_class_name="StrategyRuntime",
+            runtime_file_sha=runtime_file_sha,
+            runtime_git_sha=runtime_git_sha,
+        )
+        independence_checks[label] = ind_result
+        if not ind_result["is_independent"]:
+            all_independent = False
+            print(
+                f"FATAL: {label} oracle independence check FAILED: "
+                f"{'; '.join(ind_result['errors']) if ind_result['errors'] else 'self-referential'}"
+            )
+            if ind_result.get("warnings"):
+                for w in ind_result["warnings"]:
+                    print(f"  WARNING: {w}")
+
     # ------------------------------------------------------------------
     # HARD GATE 4: Oracle date coverage (exact match)
     # ------------------------------------------------------------------
@@ -328,7 +358,8 @@ def run_golden_regression(
     # ------------------------------------------------------------------
     results: dict[str, OracleComparisonResult] = {}
     exit_results: dict[str, dict[str, Any]] = {}
-    runtime_git_sha = _get_git_sha()
+    runtime_empty_dates: dict[str, list[str]] = {}  # PR20: track empty dates per experiment
+    all_dates_complete = True
 
     for experiment_id, oracle in [("P0", p0_oracle), ("C0", c0_oracle)]:
         from scripts.research.strategy_runtime import resolve_runtime
@@ -336,6 +367,7 @@ def run_golden_regression(
         runtime = resolve_runtime(specs[experiment_id])
         state = runtime.fit(scores, prices, None)
         runtime_class = type(runtime).__name__
+        exp_empty: list[str] = []
 
         # Generate runtime outputs for each date
         runtime_outputs: dict[str, pd.DataFrame] = {}
@@ -343,6 +375,7 @@ def run_golden_regression(
             sd = str(signal_date)
             ranked = runtime.rank_as_of(state, sd, scores, prices)
             if ranked.empty:
+                exp_empty.append(sd)
                 continue
             top5 = ranked.head(5).copy()
             weights = runtime.build_weights(
@@ -356,6 +389,14 @@ def run_golden_regression(
             ).fillna(0.0)
             runtime_outputs[sd] = output
 
+        runtime_empty_dates[experiment_id] = exp_empty
+        if exp_empty:
+            all_dates_complete = False
+            print(
+                f"FATAL: {experiment_id} has {len(exp_empty)} empty runtime dates "
+                f"(rank_as_of returned empty): {exp_empty[:5]}..."
+            )
+
         # Compare against oracle
         result = compare_against_oracle(
             oracle, runtime_outputs, top_n=5,
@@ -363,19 +404,61 @@ def run_golden_regression(
         )
         results[experiment_id] = result
 
-        # HARD GATE 5: Exit comparison
+        # HARD GATE 5: Exit golden — extract exit ledger from oracle
+        exit_rows: list[dict[str, Any]] = []
         exit_dates_with_data = 0
         exit_total_symbols = 0
         for sd, frozen in oracle.decisions.items():
             if frozen.exit_decisions:
                 exit_dates_with_data += 1
-                exit_total_symbols += len(frozen.exit_decisions)
+                for exit_rec in frozen.exit_decisions:
+                    exit_total_symbols += 1
+                    exit_rows.append({
+                        "experiment_id": experiment_id,
+                        "signal_date": sd,
+                        "symbol": exit_rec.get("symbol", ""),
+                        "entry_date": exit_rec.get("entry_date", ""),
+                        "exit_date": exit_rec.get("exit_date", sd),
+                        "exit_reason": exit_rec.get("exit_reason", ""),
+                        "exit_shares": exit_rec.get("exit_shares", 0),
+                        "source": "oracle",
+                    })
+
+        # Write oracle exit ledger
+        if exit_rows:
+            pd.DataFrame(exit_rows).to_parquet(
+                output_dir / f"{experiment_id}_oracle_exit_ledger.parquet",
+                index=False,
+            )
 
         exit_results[experiment_id] = {
             "oracle_exit_dates": exit_dates_with_data,
             "oracle_exit_symbols": exit_total_symbols,
             "runtime_exit_diff_count": result.exit_diff_count,
+            "oracle_exit_events": exit_total_symbols,
         }
+
+    # HARD GATE 5b: Exit golden — exit_events must exist
+    exit_gate_passed = True
+    exit_gate_errors: list[str] = []
+    for exp_id in ["P0", "C0"]:
+        ex = exit_results.get(exp_id, {})
+        oracle_exits = ex.get("oracle_exit_events", 0)
+        if oracle_exits == 0:
+            exit_gate_passed = False
+            exit_gate_errors.append(
+                f"EXIT_GATE_{exp_id}: oracle has zero exit events — "
+                f"cannot verify exit logic replication"
+            )
+        # Also check runtime exit diff
+        if ex.get("runtime_exit_diff_count", 0) > 0:
+            exit_gate_passed = False
+            exit_gate_errors.append(
+                f"EXIT_GATE_{exp_id}: {ex['runtime_exit_diff_count']} exit diffs detected"
+            )
+
+    if not exit_gate_passed:
+        print(f"FATAL: Exit golden gate failed: {'; '.join(exit_gate_errors)}")
 
     # ------------------------------------------------------------------
     # Determine final ALL_PASSED with all hard gates
@@ -383,12 +466,15 @@ def run_golden_regression(
     p0_result = results.get("P0")
     c0_result = results.get("C0")
 
-    # PR19: All gates must pass
+    # PR19 + PR20: All gates must pass
     all_passed = bool(
         p0_result and p0_result.passed
         and c0_result and c0_result.passed
         and regime_check["passed"]
         and all_dates_match
+        and all_independent
+        and all_dates_complete
+        and exit_gate_passed
         and not provenance_errors
         and not (p0_result.is_self_referential or c0_result.is_self_referential)
     )
@@ -403,6 +489,20 @@ def run_golden_regression(
         for label, check in date_checks.items():
             if not check["passed"]:
                 failure_reasons.append(f"DATE_COVERAGE_{label}: {check['error']}")
+    if not all_independent:
+        for label, check in independence_checks.items():
+            if not check["is_independent"]:
+                failure_reasons.append(
+                    f"INDEPENDENCE_{label}: {'; '.join(check.get('errors', ['self-referential']))}"
+                )
+    if not all_dates_complete:
+        for exp_id, empty_list in runtime_empty_dates.items():
+            if empty_list:
+                failure_reasons.append(
+                    f"RUNTIME_EMPTY_DATES_{exp_id}: {len(empty_list)} dates returned empty from rank_as_of"
+                )
+    if not exit_gate_passed:
+        failure_reasons.extend(exit_gate_errors)
     if provenance_errors:
         failure_reasons.extend(provenance_errors)
     if p0_result and p0_result.is_self_referential:
@@ -416,7 +516,7 @@ def run_golden_regression(
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "pr_version": "PR19",
+        "pr_version": "PR20",
         "status": "PASS" if all_passed else "FAIL",
         "strategies": ["P0", "C0"],
         "score_snapshot_sha": _sha_frame(scores),
@@ -426,9 +526,21 @@ def run_golden_regression(
         "n_dates": len(dates),
         "regime_coverage": regime_check,
         "oracle_date_coverage": date_checks,
+        "oracle_independence": {
+            "P0": _independence_report(independence_checks.get("P0", {})),
+            "C0": _independence_report(independence_checks.get("C0", {})),
+        },
         "oracle_provenance": {
             "P0": _provenance_report(p0_oracle),
             "C0": _provenance_report(c0_oracle),
+        },
+        "runtime_date_completeness": {
+            exp_id: {
+                "n_empty_dates": len(empty_list),
+                "empty_dates": empty_list[:20],
+                "passed": len(empty_list) == 0,
+            }
+            for exp_id, empty_list in runtime_empty_dates.items()
         },
         "P0": _result_to_dict(p0_result),
         "C0": _result_to_dict(c0_result),
@@ -500,6 +612,19 @@ def _describe_failure(label: str, result: OracleComparisonResult) -> str:
     if result.n_dates_matched == 0:
         parts.append("no_dates_matched")
     return f"{label}: {'; '.join(parts)}"
+
+
+def _independence_report(ind_result: dict[str, Any]) -> dict[str, Any]:
+    """Extract key independence check fields for the report."""
+    return {
+        "is_independent": ind_result.get("is_independent", False),
+        "is_self_referential": ind_result.get("is_self_referential", True),
+        "errors": ind_result.get("errors", []),
+        "warnings": ind_result.get("warnings", []),
+        "oracle_source": ind_result.get("oracle_source", ""),
+        "oracle_class": ind_result.get("oracle_class", ""),
+        "runtime_class": ind_result.get("runtime_class", ""),
+    }
 
 
 def _provenance_report(oracle: FrozenOracleState | None) -> dict[str, Any]:
