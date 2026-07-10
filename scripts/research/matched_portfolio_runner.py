@@ -195,6 +195,7 @@ class MatchedPortfolioRunner:
         spec: MatchedExperimentSpec,
         calendar: list[object],
         initial_cash: float = DEFAULT_INITIAL_CASH,
+        decay_exit_rule: Any | None = None,
     ) -> None:
         self.spec = spec
         self.calendar = sorted(calendar)
@@ -202,6 +203,7 @@ class MatchedPortfolioRunner:
         self._calendar_index: dict[object, int] = {
             day: idx for idx, day in enumerate(self.calendar)
         }
+        self.decay_exit_rule = decay_exit_rule  # PR5: alpha decay exit
 
     # ------------------------------------------------------------------
     # Price / tradability helpers
@@ -496,6 +498,57 @@ class MatchedPortfolioRunner:
                     )
                     if np.isfinite(pos_price) and pos_price > 0:
                         locked_value += float(pos.shares) * pos_price
+
+            # --- PR5: Alpha decay exit — override hold gate for decayed positions ---
+            decay_unlocked: list[str] = []
+            if self.decay_exit_rule is not None and day_scores is not None:
+                day_score_map: dict[str, dict[str, Any]] = {}
+                for _, row in day_scores.iterrows():
+                    sym = str(row["symbol"]).zfill(6)
+                    day_score_map[sym] = {
+                        "rank_score": float(row.get("rank_score", 0.0)),
+                        "rank": int(row.get("rank", 0)),
+                    }
+                for symbol in list(locked_symbols):
+                    score_info = day_score_map.get(symbol, {})
+                    rank_score = score_info.get("rank_score", 0.0)
+                    rank = score_info.get("rank", 0)
+                    pos = account.positions.get(symbol)
+                    holding_days = (
+                        _trade_day_count(self.calendar, pos.entry_date, signal_date)
+                        if pos
+                        else 0
+                    )
+                    should_sell, reason = self.decay_exit_rule.should_exit(
+                        symbol, str(signal_date), rank_score, rank,
+                        position_entry_date=str(pos.entry_date) if pos else None,
+                        holding_days=holding_days,
+                        hold_days_required=int(self.spec.hold_days),
+                    )
+                    if should_sell:
+                        locked_symbols.discard(symbol)
+                        decay_unlocked.append(symbol)
+
+            # --- PR5: Sell decay-unlocked positions (before regular sell) ---
+            for symbol in decay_unlocked:
+                pos = account.positions.get(symbol)
+                if pos is None:
+                    continue
+                price_info = {}
+                if symbol in price_day.index:
+                    price_info = price_day.loc[symbol].to_dict()
+                allowed, t1_reason, exec_price = self._t1_gate(
+                    symbol, "SELL", price_info
+                )
+                if allowed and exec_price is not None:
+                    sell_price = exec_price * (
+                        1.0 - float(self.spec.slippage_rate)
+                    )
+                    self._execute_sell(
+                        account, symbol, int(pos.shares),
+                        sell_price, trade_date, trade_rows,
+                        f"sell_alpha_decay:{t1_reason}" if t1_reason else "sell_alpha_decay",
+                    )
 
             # --- Sell non-target positions ---
             target_symbols: set[str] = {

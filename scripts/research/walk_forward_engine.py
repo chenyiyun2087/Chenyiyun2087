@@ -392,7 +392,24 @@ class WalkForwardEngine:
                 <= pd.Timestamp(fold.validate_end).date()
             )
         ]
-        runner = MatchedPortfolioRunner(runner_spec, validate_calendar)
+        # PR5: Attach DecayExitRule if experiment uses decay exits
+        decay_rule = None
+        if experiment.uses_decay_exit:
+            try:
+                from scripts.research.alpha_decay_exit import (
+                    DecayExitConfig,
+                    DecayExitRule,
+                    AlphaDecayTracker,
+                )
+                decay_config = DecayExitConfig()
+                decay_tracker = AlphaDecayTracker(decay_config)
+                decay_rule = DecayExitRule(decay_config, decay_tracker)
+            except ImportError:
+                pass
+
+        runner = MatchedPortfolioRunner(
+            runner_spec, validate_calendar, decay_exit_rule=decay_rule,
+        )
 
         # Use a generic curve run with the ranked data as input
         curve = runner._run_base_curve(
