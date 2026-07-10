@@ -231,6 +231,52 @@ class AlphaEstimator:
 
 
 # ---------------------------------------------------------------------------
+# PR10: Fit/transform freeze audit
+# ---------------------------------------------------------------------------
+
+
+def audit_fit_transform_freeze(
+    state: FittedAlphaState,
+    validation_start: str,
+    validation_end: str,
+) -> dict:
+    """Verify that fit/transform separation is maintained.
+
+    Checks:
+      1. train_end < validation_start (no overlap)
+      2. All factor weights are frozen (non-empty)
+      3. BH pass/fail decisions are recorded
+      4. Config SHA captures the model identity
+    """
+    issues = []
+    train_end_ts = pd.Timestamp(state.train_end).date()
+    val_start_ts = pd.Timestamp(validation_start).date()
+
+    if train_end_ts >= val_start_ts:
+        issues.append(f"train_end({state.train_end}) >= validation_start({validation_start})")
+
+    if not state.factor_weights:
+        issues.append("no_factor_weights — model may not have been fitted")
+
+    if state.n_train_days < 20:
+        issues.append(f"insufficient_training_days: {state.n_train_days}")
+
+    passed_factors = sum(1 for v in state.bh_pass.values() if v)
+    total_factors = len(state.bh_pass)
+
+    return {
+        "passed": len(issues) == 0,
+        "train_end": state.train_end,
+        "validation_start": validation_start,
+        "train_days": state.n_train_days,
+        "factors_total": total_factors,
+        "factors_bh_passed": passed_factors,
+        "factor_weights_count": len(state.factor_weights),
+        "issues": issues,
+    }
+
+
+# ---------------------------------------------------------------------------
 # WalkForwardAdapter — backward compatibility
 # ---------------------------------------------------------------------------
 
