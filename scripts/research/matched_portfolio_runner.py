@@ -97,8 +97,10 @@ class MatchedExperimentSpec:
     limit_up_down: bool = True           # enforce limit up/down
     suspension_rules: bool = True        # skip suspended stocks
     # PR7: Exposure separation
-    target_gross_exposure: float = 0.70  # 0.0–1.0, fraction of NAV deployed
-    exposure_mode: str = "fixed"         # "fixed" | "dynamic"
+    target_gross_exposure: float = 0.70
+    exposure_mode: str = "fixed"
+    # PR12: TopN variant label
+    top_n_variant: str = ""  # "5" | "8" | "10" — for reporting
 
 
 @dataclass

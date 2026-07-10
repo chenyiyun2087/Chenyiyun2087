@@ -125,6 +125,7 @@ class RiskPortfolioBuilder:
         ranked: pd.DataFrame,
         prices: pd.DataFrame,
         portfolio_nav_history: pd.Series | None = None,
+        pit_vol: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """Replace effective_weight with risk-adjusted weights.
 
@@ -150,13 +151,25 @@ class RiskPortfolioBuilder:
         # Ensure prices are sorted
         prices_sorted = prices.sort_values(["symbol", "trade_date"]).copy()
 
-        # Compute daily returns for volatility estimation
-        prices_sorted["daily_ret"] = prices_sorted.groupby("symbol")[
-            "adj_close"
-        ].pct_change()
+        # PR12: Use pre-computed PIT vol when available
+        vol_map: dict[str, float] = {}
+        if pit_vol is not None and not pit_vol.empty:
+            vol_col = f"pit_vol_{self.config.vol_window}"
+            if vol_col in pit_vol.columns:
+                last_date = pit_vol["trade_date"].max()
+                latest = pit_vol[pit_vol["trade_date"] == last_date]
+                for _, row in latest.iterrows():
+                    v = float(row.get(vol_col, 0))
+                    if v > 0:
+                        vol_map[str(row["symbol"])] = v
+                self._median_vol = float(np.median(list(vol_map.values()))) if vol_map else 0.30
 
-        # Estimate per-symbol volatility
-        vol_map = self.estimate_volatility(prices_sorted)
+        if not vol_map:
+            # Fallback: compute from prices
+            prices_sorted["daily_ret"] = prices_sorted.groupby("symbol")[
+                "adj_close"
+            ].pct_change()
+            vol_map = self.estimate_volatility(prices_sorted)
 
         # Compute drawdown from nav history
         current_drawdown = self._compute_drawdown(portfolio_nav_history)
