@@ -5,9 +5,9 @@ MatchedPortfolioRunner.  The only difference between experiments is the
 *ranking signal* — all other rules (tradable pool, TopN, weights, hold
 period, costs, T+1, limit rules) are shared.
 
-A7 (industry_neutral_alpha_v3) raises NotImplementedError — its interface
-is fully defined so PR3 can drop in the implementation and re-run A0–A7
-with the identical experiment engine.
+A7 (industry_neutral_alpha_v3) is now implemented — a 6-factor
+cross-sectional model with industry neutralization, IC-based weighting,
+and Benjamini-Hochberg correction.
 """
 
 from __future__ import annotations
@@ -380,7 +380,7 @@ def a6_trend_persistence(
 
 
 # ---------------------------------------------------------------------------
-# A7 — Industry Neutral Alpha V3 (NOT_AVAILABLE)
+# A7 — Industry Neutral Alpha V3
 # ---------------------------------------------------------------------------
 
 def a7_industry_neutral_alpha_v3(
@@ -389,17 +389,25 @@ def a7_industry_neutral_alpha_v3(
     train_start: str,
     train_end: str,
 ) -> pd.DataFrame:
-    """Industry-neutral alpha v3 — NOT_AVAILABLE until PR3.
+    """Industry-neutral alpha v3 — full cross-sectional multi-factor model.
 
-    Interface is fully defined: accepts (scores, prices, train_start,
-    train_end) and must return a ranked DataFrame.  PR3 will implement
-    the actual factor model and re-run A0–A7 with the identical engine.
+    Uses AlphaModel.rank() to compute pure stock rankings from six factors
+    (relative_strength, trend_persistence, trend_acceleration,
+    vol_contraction_breakout, liquidity_quality, volume_price_resonance),
+    three penalties (crowding, gap, tail_vol), IC-based weighting with
+    empirical-Bayes shrinkage, and Benjamini-Hochberg multiple testing
+    correction at q=0.10.
+
+    The model is trained on data within [train_start, train_end].  Factor
+    weights are derived from train-window Rank IC — no future leak.
     """
-    raise NotImplementedError(
-        "A7_NOT_AVAILABLE: industry_neutral_alpha_v3 is reserved for PR3. "
-        "Interface: (scores_df, prices_df, train_start, train_end) → "
-        "ranked DataFrame with rank_score column."
-    )
+    from scripts.research.industry_neutral_alpha import AlphaModel
+
+    model = AlphaModel(train_window_days=120)
+    ranked = model.rank(scores, prices, train_start, train_end)
+    if "rank_score" not in ranked.columns:
+        ranked["rank_score"] = ranked.get("alpha", 0.0)
+    return ranked
 
 
 # ---------------------------------------------------------------------------
@@ -455,9 +463,9 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
         ),
         "A7": ExperimentSpec(
             experiment_id="A7",
-            description="Industry-neutral alpha v3 — NOT_AVAILABLE (PR3)",
+            description="Industry-neutral alpha v3 — 6-factor cross-sectional model",
             ranking_fn=a7_industry_neutral_alpha_v3,
             needs_training=True,
-            is_available=False,
+            is_available=True,
         ),
     }

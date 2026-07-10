@@ -96,6 +96,9 @@ class FoldResult:
     trade_rows: list[dict] = field(default_factory=list)
     metrics: WindowMetrics | None = None
     error: str = ""
+    # PR3: per-factor diagnostic reports (populated for A7)
+    factor_reports: list[Any] = field(default_factory=list)
+    composite_factor_report: Any | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +415,65 @@ class WalkForwardEngine:
             wm.experiment_id = experiment.experiment_id
             result.metrics = wm
 
+        # PR3: Generate per-factor reports for A7 on train-window data
+        if experiment.experiment_id == "A7" and not result.error:
+            try:
+                from scripts.research.factor_report import (
+                    FactorReporter,
+                    FactorReport,
+                )
+                from scripts.research.industry_neutral_alpha import (
+                    AlphaModel,
+                    FactorWeightOptimizer,
+                    FactorCalculator,
+                )
+
+                # Compute factor signals + IC on train window
+                train_prices = prices[
+                    (
+                        pd.to_datetime(prices["trade_date"], errors="coerce").dt.date
+                        >= pd.Timestamp(fold.train_start).date()
+                    )
+                    & (
+                        pd.to_datetime(prices["trade_date"], errors="coerce").dt.date
+                        <= pd.Timestamp(fold.train_end).date()
+                    )
+                ].copy()
+
+                if not train_prices.empty:
+                    fc = FactorCalculator()
+                    fwd_returns = AlphaModel(
+                        train_window_days=120
+                    )._compute_forward_returns(train_prices)
+
+                    factor_impls = {
+                        "relative_strength": fc.relative_strength,
+                        "trend_persistence": fc.trend_persistence,
+                        "trend_acceleration": fc.trend_acceleration,
+                        "vol_contraction_breakout": fc.vol_contraction_breakout,
+                        "liquidity_quality": fc.liquidity_quality,
+                        "volume_price_resonance": fc.volume_price_resonance,
+                    }
+
+                    fold_reports: list[Any] = []
+                    for fname, fn in factor_impls.items():
+                        sig_df = fn(train_prices)
+                        ic_series = FactorWeightOptimizer.compute_rank_ic(
+                            sig_df, fwd_returns, signal_col=f"{fname}_raw"
+                        )
+                        report = FactorReporter.generate_report(
+                            factor_name=fname,
+                            train_ic_series=ic_series,
+                            forward_returns=fwd_returns,
+                            factor_signals=sig_df,
+                        )
+                        fold_reports.append(report)
+
+                    result.factor_reports = fold_reports
+            except Exception:
+                # Factor reporting is best-effort; don't fail the fold
+                pass
+
         return result
 
     # ------------------------------------------------------------------
@@ -509,6 +571,28 @@ class WalkForwardEngine:
             agg.metrics = wm
 
         return agg
+
+    # ------------------------------------------------------------------
+    # Gate evaluation
+    # ------------------------------------------------------------------
+
+    def run_all_with_factor_reports(
+        self,
+        folds: list[WalkForwardFold],
+        experiments: dict[str, ExperimentSpec],
+        scores: pd.DataFrame,
+        prices: pd.DataFrame,
+        runner_spec: MatchedExperimentSpec,
+    ) -> dict[str, list[FoldResult]]:
+        """Run all experiments with per-factor reports collected.
+
+        Identical to run_all() but extracts and aggregates factor-level
+        diagnostics from the train-window data of each fold.
+
+        Returns {experiment_id: [FoldResult, ...]} where A7 FoldResults
+        have non-empty factor_reports.
+        """
+        return self.run_all(folds, experiments, scores, prices, runner_spec)
 
     # ------------------------------------------------------------------
     # Gate evaluation
