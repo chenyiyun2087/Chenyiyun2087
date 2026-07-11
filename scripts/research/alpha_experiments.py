@@ -578,6 +578,23 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             is_available=True,
             uses_decay_exit=True,
         ),
+        # PR26A.2: Matched baselines — share A7 eligible panel and constraints
+        "RND100": ExperimentSpec(
+            experiment_id="RND100",
+            description="Random Top-5 from A7 eligible panel, constrained weights",
+            ranking_fn=a7_industry_neutral_alpha_v3,
+            runtime_id="alpha_v3_rnd100",
+            needs_training=True,
+            is_available=True,
+        ),
+        "REV-A7": ExperimentSpec(
+            experiment_id="REV-A7",
+            description="Reverse A7 alpha — bottom-5 ranking, constrained weights",
+            ranking_fn=a7_industry_neutral_alpha_v3,
+            runtime_id="alpha_v3_rev",
+            needs_training=True,
+            is_available=True,
+        ),
         # PR8: TopN experiments
         "A7-5": ExperimentSpec(
             experiment_id="A7-5",

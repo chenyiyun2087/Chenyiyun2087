@@ -1,12 +1,9 @@
-"""Water-filling constrained weight allocation.
+"""Water-filling constrained weight allocation with common portfolio constructor.
 
-Implements the constrained weight allocation algorithm:
-  1. Normalize raw relative weights to sum 1.0
-  2. Truncate single-stock weights exceeding single_cap → redistribute excess
-  3. Truncate industry weights exceeding industry_cap → redistribute excess
-  4. If no legal receiver for excess → keep as cash
-  5. Scale to target_gross_exposure
-  6. Validate all constraints are met
+Core functions:
+  - construct_portfolio : single entry point for A7/RND100/REV-A7/A8
+  - constrained_weight_allocation : water-filling with single/industry/theme caps
+  - validate_allocation : post-hoc constraint audit
 
 Key invariant: never re-normalize across all stocks after capping, as that
 would push capped stocks back above their limits.
@@ -14,8 +11,56 @@ would push capped stocks back above their limits.
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
 import numpy as np
 import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Ordering mode
+# ---------------------------------------------------------------------------
+
+
+class OrderingMode(str, Enum):
+    """How candidates are sorted before Top-N selection and weight allocation."""
+
+    ALPHA_FORWARD = "alpha_forward"      # A7: rank_score descending
+    RANDOM = "random"                     # RND100: shuffled with deterministic seed
+    ALPHA_REVERSE = "alpha_reverse"       # REV-A7: rank_score ascending
+    COVARIANCE_OPTIMAL = "covariance"     # A8: same pool as A7, covariance-optimized weights
+
+
+# ---------------------------------------------------------------------------
+# Portfolio constraints
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PortfolioConstraints:
+    """Immutable constraint set for portfolio construction."""
+
+    single_cap: float = 0.15
+    industry_cap: float = 0.30
+    theme_cap: float = 0.40
+    top2_risk_cap: float = 0.45
+    target_gross_exposure: float = 0.70
+    max_iterations: int = 100
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.single_cap <= 1.0:
+            raise ValueError(f"single_cap must be in (0,1]; got {self.single_cap}")
+        if not 0.0 < self.industry_cap <= 1.0:
+            raise ValueError(f"industry_cap must be in (0,1]; got {self.industry_cap}")
+        if not 0.0 < self.theme_cap <= 1.0:
+            raise ValueError(f"theme_cap must be in (0,1]; got {self.theme_cap}")
+        if not 0.0 < self.target_gross_exposure <= 1.0:
+            raise ValueError(
+                f"target_gross_exposure must be in (0,1]; got {self.target_gross_exposure}"
+            )
 
 
 def constrained_weight_allocation(
@@ -222,4 +267,264 @@ def validate_allocation(result: pd.DataFrame) -> dict:
         "max_single": max_single,
         "total_exposure": total_exposure,
         "relative_sum": rel_sum,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Common portfolio constructor  (single entry point for all strategies)
+# ---------------------------------------------------------------------------
+
+
+def construct_portfolio(
+    eligible_panel: pd.DataFrame,
+    ordering: OrderingMode,
+    target_exposure: float,
+    top_n: int = 5,
+    constraints: PortfolioConstraints | None = None,
+    covariance: np.ndarray | None = None,
+    prev_weights: np.ndarray | None = None,
+    random_seed: str | None = None,
+) -> pd.DataFrame:
+    """Single entry point for A7, RND100, REV-A7, and A8 portfolio construction.
+
+    All strategies share the SAME eligible panel, constraints, and cost model.
+    The ONLY difference is the ordering mode:
+
+      ALPHA_FORWARD      → A7:  sort by rank_score descending
+      RANDOM             → RND100: deterministic shuffle via SHA-256 seed
+      ALPHA_REVERSE      → REV-A7: sort by rank_score ascending
+      COVARIANCE_OPTIMAL → A8:  alpha_forward pool + covariance-optimal weights
+
+    Steps
+    -----
+    1. Order candidates by *ordering* mode.
+    2. Select Top *top_n*.
+    3. If COVARIANCE_OPTIMAL: solve max alpha s.t. w'Σw → replace raw weights.
+    4. Apply water-filling constraints (single ≤ cap, industry ≤ cap, …).
+    5. Remaining exposure stays as cash — never renormalize beyond caps.
+
+    Parameters
+    ----------
+    eligible_panel : DataFrame with at least [symbol, rank_score].
+                     May also have [industry, theme, pit_vol_20, …].
+    ordering : How to sort/transform candidates.
+    target_exposure : Target gross exposure (e.g. 0.70).
+    top_n : Number of positions to select.
+    constraints : Constraint set (uses defaults if None).
+    covariance : Covariance matrix (N×N) — required for COVARIANCE_OPTIMAL mode.
+    prev_weights : Previous period weights (N,) — for turnover constraint.
+    random_seed : Deterministic seed for RANDOM mode.
+
+    Returns
+    -------
+    DataFrame with columns: symbol, industry, theme, rank_score,
+    stock_relative_weight, final_portfolio_weight, cash_weight, is_capped,
+    ordering_mode, risk_contribution_pct.
+    """
+    if eligible_panel.empty:
+        return pd.DataFrame()
+
+    constraints = constraints or PortfolioConstraints()
+    df = eligible_panel.copy()
+
+    # --- Step 1: Order ---
+    if ordering == OrderingMode.ALPHA_FORWARD:
+        df = df.sort_values("rank_score", ascending=False)
+    elif ordering == OrderingMode.ALPHA_REVERSE:
+        df = df.sort_values("rank_score", ascending=True)
+    elif ordering == OrderingMode.RANDOM:
+        seed = random_seed or "rnd100_default"
+        seed_int = int(hashlib.sha256(seed.encode()).hexdigest()[:8], 16) % (2**31)
+        rng = np.random.RandomState(seed_int)
+        df = df.iloc[rng.permutation(len(df))]
+    elif ordering == OrderingMode.COVARIANCE_OPTIMAL:
+        # Start with alpha_forward ordering for candidate selection,
+        # then replace weights with covariance-optimal solution.
+        df = df.sort_values("rank_score", ascending=False)
+    else:
+        raise ValueError(f"Unknown ordering mode: {ordering}")
+
+    # --- Step 2: Top N ---
+    selected = df.head(top_n).copy()
+    if selected.empty:
+        return selected
+
+    n = len(selected)
+
+    # --- Step 3: Covariance-optimal weights (A8 only) ---
+    if ordering == OrderingMode.COVARIANCE_OPTIMAL and covariance is not None:
+        try:
+            alpha = pd.to_numeric(selected["rank_score"], errors="coerce").fillna(0.0).to_numpy()
+            alpha = alpha - alpha.min() + 1e-6  # shift to positive
+            opt_result = _solve_covariance_weights(
+                alpha, covariance, constraints, prev_weights=prev_weights,
+            )
+            raw_weights = opt_result["weights"]
+        except Exception:
+            # Fallback: use alpha/vol raw weights (same as risk_weighted path)
+            vol = pd.to_numeric(
+                selected.get("pit_vol_20", pd.Series(0.30, index=selected.index)),
+                errors="coerce",
+            ).fillna(0.30).clip(lower=0.01).to_numpy()
+            raw_weights = alpha / vol
+    elif ordering == OrderingMode.COVARIANCE_OPTIMAL:
+        # No covariance supplied — use alpha/vol as raw weights (fallback)
+        alpha = pd.to_numeric(selected["rank_score"], errors="coerce").fillna(0.0).to_numpy()
+        alpha = alpha - alpha.min() + 1e-6
+        vol = pd.to_numeric(
+            selected.get("pit_vol_20", pd.Series(0.30, index=selected.index)),
+            errors="coerce",
+        ).fillna(0.30).clip(lower=0.01).to_numpy()
+        raw_weights = alpha / vol
+    else:
+        # A7 / RND100 / REV-A7: use rank_score as raw weight signal
+        raw = pd.to_numeric(selected["rank_score"], errors="coerce").fillna(0.0)
+        raw_weights = raw - raw.min() + 1e-6
+        raw_weights = raw_weights.to_numpy()
+
+    # --- Step 4: Water-filling allocation ---
+    risk_vals = None
+    if "pit_vol_20" in selected.columns:
+        risk_vals = selected["pit_vol_20"].to_numpy()
+    elif "risk_value" in selected.columns:
+        risk_vals = selected["risk_value"].to_numpy()
+
+    allocation = constrained_weight_allocation(
+        raw_weights,
+        symbols=selected["symbol"].astype(str).tolist(),
+        industries=selected.get("industry", pd.Series("unknown", index=selected.index))
+        .astype(str)
+        .tolist(),
+        themes=selected.get("theme", pd.Series("unknown", index=selected.index))
+        .astype(str)
+        .tolist(),
+        risk_values=risk_vals,
+        single_cap=constraints.single_cap,
+        industry_cap=constraints.industry_cap,
+        theme_cap=constraints.theme_cap,
+        top2_risk_cap=constraints.top2_risk_cap,
+        target_gross_exposure=target_exposure,
+        max_iterations=constraints.max_iterations,
+    )
+
+    # --- Step 5: Merge results ---
+    result = selected.merge(
+        allocation[
+            [
+                "symbol", "stock_relative_weight", "final_portfolio_weight",
+                "cash_weight", "is_capped", "risk_contribution_pct",
+            ]
+        ],
+        on="symbol",
+        how="left",
+    )
+    result["ordering_mode"] = ordering.value
+    result["effective_weight"] = result["final_portfolio_weight"]
+    result.attrs["ordering_mode"] = ordering.value
+    result.attrs["constraints"] = constraints
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Covariance-optimal weight solver  (internal)
+# ---------------------------------------------------------------------------
+
+
+def _solve_covariance_weights(
+    alpha: np.ndarray,
+    covariance: np.ndarray,
+    constraints: PortfolioConstraints,
+    prev_weights: np.ndarray | None = None,
+    risk_aversion: float = 1.0,
+) -> dict[str, Any]:
+    """Solve max alpha'w - λ * w'Σw subject to portfolio constraints.
+
+    Uses a simple gradient-projection method suitable for small N (≤ 20).
+    For larger problems a QP solver would be preferred.
+
+    Parameters
+    ----------
+    alpha : Expected return proxies (N,).  Must be non-negative.
+    covariance : Covariance matrix (N, N).  Must be PSD.
+    constraints : Portfolio constraint set.
+    prev_weights : Previous weights (N,) for turnover penalty.
+    risk_aversion : Risk aversion λ.
+
+    Returns
+    -------
+    dict with keys: weights, predicted_alpha, portfolio_variance,
+    top2_risk_contribution, optimization_success.
+    """
+    n = len(alpha)
+    if n == 0:
+        return {
+            "weights": np.zeros(0),
+            "predicted_alpha": 0.0,
+            "portfolio_variance": 0.0,
+            "top2_risk_contribution": 0.0,
+            "optimization_success": False,
+        }
+
+    # Ensure PSD
+    cov = np.asarray(covariance, dtype=float)
+    eigvals = np.linalg.eigvalsh(cov)
+    if eigvals.min() < -1e-10:
+        # Not PSD — apply shrinkage
+        cov = cov + np.eye(n) * max(0.0, -eigvals.min()) * 1.1
+
+    # Initial guess: alpha / diag(Σ)  (inverse-vol heuristic)
+    diag = np.diag(cov).copy()
+    diag = np.where(diag > 1e-12, diag, 1.0)
+    w = alpha / diag
+    w = w / w.sum() * constraints.target_gross_exposure
+
+    # Gradient projection
+    lr = 0.1 / max(np.diag(cov).max(), 1e-6)
+    for iteration in range(constraints.max_iterations):
+        grad = alpha - 2.0 * risk_aversion * (cov @ w)
+        w_new = w + lr * grad
+
+        # Project onto simplex: w ≥ 0, sum(w) ≤ target_exposure
+        w_new = np.maximum(w_new, 0.0)
+        total = w_new.sum()
+        if total > constraints.target_gross_exposure:
+            w_new = w_new / total * constraints.target_gross_exposure
+
+        # Project single-stock cap
+        w_new = np.minimum(w_new, constraints.single_cap)
+
+        # Re-scale to target exposure after capping
+        total = w_new.sum()
+        if total > 0 and total < constraints.target_gross_exposure:
+            # Distribute remaining proportionally to uncapped stocks
+            remaining = constraints.target_gross_exposure - total
+            uncapped = w_new < constraints.single_cap - 1e-10
+            if uncapped.any():
+                uncapped_sum = w_new[uncapped].sum()
+                if uncapped_sum > 1e-12:
+                    w_new[uncapped] += remaining * w_new[uncapped] / uncapped_sum
+
+        # Convergence check
+        delta = np.abs(w_new - w).max()
+        w = w_new
+        if delta < 1e-8:
+            break
+
+    # Compute diagnostics
+    port_var = float(w @ cov @ w)
+    pred_alpha = float(alpha @ w)
+    vols = np.sqrt(np.maximum(np.diag(cov), 1e-12))
+    risk_contrib = w * vols
+    total_risk = risk_contrib.sum()
+    if total_risk > 1e-12:
+        top2_contrib = float(np.sort(risk_contrib / total_risk)[::-1][:2].sum())
+    else:
+        top2_contrib = 0.0
+
+    return {
+        "weights": w,
+        "predicted_alpha": pred_alpha,
+        "portfolio_variance": port_var,
+        "top2_risk_contribution": top2_contrib,
+        "optimization_success": True,
     }

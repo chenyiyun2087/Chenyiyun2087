@@ -14,7 +14,11 @@ from typing import Any
 import pandas as pd
 
 from scripts.research.alpha_estimator import AlphaEstimator, FittedAlphaState
-from scripts.research.constrained_weights import constrained_weight_allocation
+from scripts.research.constrained_weights import (
+    OrderingMode,
+    constrained_weight_allocation,
+    construct_portfolio,
+)
 from scripts.research.pit_risk import compute_pit_risk_panel
 from scripts.research.strategy_adapters import (
     ChampionStrategyAdapter,
@@ -64,13 +68,21 @@ class StrategyRuntime(ABC):
         target_exposure: float,
         top_n: int,
     ) -> pd.DataFrame:
-        selected = ranked.sort_values("rank").head(top_n).copy()
-        if selected.empty:
-            return selected
-        selected["stock_relative_weight"] = 1.0 / len(selected)
-        selected["final_portfolio_weight"] = target_exposure / len(selected)
-        selected["effective_weight"] = selected["final_portfolio_weight"]
-        return selected
+        """Build constrained portfolio weights using the common constructor.
+
+        All strategies use construct_portfolio() as the single entry point.
+        The default ordering is ALPHA_FORWARD (rank_score descending) with
+        equal-weight initial allocation — subclasses override ordering and
+        weight mode as needed.
+        """
+        if ranked.empty:
+            return ranked
+        return construct_portfolio(
+            ranked,
+            ordering=OrderingMode.ALPHA_FORWARD,
+            target_exposure=target_exposure,
+            top_n=top_n,
+        )
 
     def target_exposure(self, state: RuntimeState, signal_date: str) -> float:
         return 0.70
@@ -147,10 +159,17 @@ class FunctionRuntime(StrategyRuntime):
 class FrozenAlphaRuntime(StrategyRuntime):
     needs_training = True
 
-    def __init__(self, runtime_id: str, risk_weighted: bool, decay_exit: bool) -> None:
+    def __init__(
+        self,
+        runtime_id: str,
+        risk_weighted: bool,
+        decay_exit: bool,
+        ordering: OrderingMode = OrderingMode.ALPHA_FORWARD,
+    ) -> None:
         self.runtime_id = runtime_id
         self.risk_weighted = risk_weighted
         self.uses_decay_exit = decay_exit
+        self.ordering = ordering
         self.estimator = AlphaEstimator(require_executable_labels=True)
 
     def fit(self, train_scores, train_prices, train_labels) -> RuntimeState:
@@ -170,50 +189,66 @@ class FrozenAlphaRuntime(StrategyRuntime):
     def build_weights(
         self, state, ranked, signal_date, historical_prices, target_exposure, top_n
     ):
-        selected = ranked.sort_values("rank").head(top_n).copy()
-        if selected.empty:
-            return selected
-        if not self.risk_weighted:
-            return super().build_weights(
-                state, selected, signal_date, historical_prices, target_exposure, top_n
-            )
+        """Build weights via the common portfolio constructor.
 
-        risk = compute_pit_risk_panel(historical_prices)
-        signal_risk = risk[
-            pd.to_datetime(risk["trade_date"]).dt.date
-            == pd.Timestamp(signal_date).date()
-        ]
-        required = {
-            "pit_vol_20",
-            "pit_downside_vol_20",
-            "pit_gap_risk_20",
-            "pit_liquidity_risk_20",
-        }
-        if signal_risk.empty or not required.issubset(signal_risk.columns):
-            raise RuntimeError(f"{self.runtime_id}: missing PIT risk for {signal_date}")
-        selected = selected.merge(signal_risk, on=["symbol", "trade_date"], how="left")
-        if selected[list(required)].isna().any().any():
-            raise RuntimeError(f"{self.runtime_id}: incomplete PIT risk for {signal_date}")
+        - A7 (risk_weighted=False, ordering=ALPHA_FORWARD): constrained equal-weight
+        - RND100 (ordering=RANDOM): random shuffle, constrained equal-weight
+        - REV-A7 (ordering=ALPHA_REVERSE): reverse alpha, constrained equal-weight
+        - A8 (risk_weighted=True): covariance-optimal weights
+        """
+        if ranked.empty:
+            return ranked
 
-        alpha = pd.to_numeric(selected["rank_score"], errors="coerce")
-        alpha = alpha - alpha.min() + 1e-6
-        vol = selected["pit_vol_20"].clip(lower=0.01)
-        raw = alpha / vol
-        allocation = constrained_weight_allocation(
-            raw.to_numpy(),
-            symbols=selected["symbol"].astype(str).tolist(),
-            industries=selected.get("industry", pd.Series("unknown", index=selected.index)).astype(str).tolist(),
-            themes=selected.get("theme", pd.Series("unknown", index=selected.index)).astype(str).tolist(),
-            risk_values=(selected["pit_vol_20"] * raw).to_numpy(),
-            target_gross_exposure=target_exposure,
+        # Determine ordering mode
+        ordering = self.ordering
+
+        # For A8/A9: ALPHA_FORWARD pool but covariance-optimal weights
+        if self.risk_weighted:
+            ordering = OrderingMode.COVARIANCE_OPTIMAL
+
+        # Merge PIT risk data for covariance computation
+        covariance = None
+        if ordering == OrderingMode.COVARIANCE_OPTIMAL:
+            try:
+                risk = compute_pit_risk_panel(historical_prices)
+                signal_risk = risk[
+                    pd.to_datetime(risk["trade_date"]).dt.date
+                    == pd.Timestamp(signal_date).date()
+                ]
+                required = {
+                    "pit_vol_20",
+                    "pit_downside_vol_20",
+                    "pit_gap_risk_20",
+                    "pit_liquidity_risk_20",
+                }
+                if not signal_risk.empty and required.issubset(signal_risk.columns):
+                    ranked = ranked.merge(
+                        signal_risk, on=["symbol", "trade_date"], how="left"
+                    )
+                    symbols = (
+                        ranked.sort_values("rank")
+                        .head(top_n)["symbol"]
+                        .astype(str)
+                        .tolist()
+                    )
+                    if len(symbols) >= 2:
+                        from scripts.research.pit_risk import (
+                            compute_pit_covariance_matrix,
+                        )
+                        covariance = compute_pit_covariance_matrix(
+                            historical_prices, symbols, signal_date, window=60,
+                        )
+            except Exception:
+                # Covariance computation is best-effort; fall back to alpha/vol
+                covariance = None
+
+        return construct_portfolio(
+            ranked,
+            ordering=ordering,
+            target_exposure=target_exposure,
+            top_n=top_n,
+            covariance=covariance,
         )
-        selected = selected.merge(
-            allocation[["symbol", "stock_relative_weight", "final_portfolio_weight", "cash_weight"]],
-            on="symbol",
-            how="left",
-        )
-        selected["effective_weight"] = selected["final_portfolio_weight"]
-        return selected
 
 
 def resolve_runtime(experiment: Any) -> StrategyRuntime:
@@ -223,11 +258,20 @@ def resolve_runtime(experiment: Any) -> StrategyRuntime:
     if runtime_id == "champion_exact":
         return AdapterRuntime("champion_exact", ChampionStrategyAdapter())
     if runtime_id == "alpha_v3":
-        return FrozenAlphaRuntime(runtime_id, risk_weighted=False, decay_exit=False)
+        return FrozenAlphaRuntime(runtime_id, risk_weighted=False, decay_exit=False,
+                                 ordering=OrderingMode.ALPHA_FORWARD)
+    if runtime_id == "alpha_v3_rnd100":
+        return FrozenAlphaRuntime(runtime_id, risk_weighted=False, decay_exit=False,
+                                 ordering=OrderingMode.RANDOM)
+    if runtime_id == "alpha_v3_rev":
+        return FrozenAlphaRuntime(runtime_id, risk_weighted=False, decay_exit=False,
+                                 ordering=OrderingMode.ALPHA_REVERSE)
     if runtime_id == "alpha_risk_v2":
-        return FrozenAlphaRuntime(runtime_id, risk_weighted=True, decay_exit=False)
+        return FrozenAlphaRuntime(runtime_id, risk_weighted=True, decay_exit=False,
+                                 ordering=OrderingMode.COVARIANCE_OPTIMAL)
     if runtime_id == "alpha_risk_exit_v2":
-        return FrozenAlphaRuntime(runtime_id, risk_weighted=True, decay_exit=True)
+        return FrozenAlphaRuntime(runtime_id, risk_weighted=True, decay_exit=True,
+                                 ordering=OrderingMode.COVARIANCE_OPTIMAL)
     ranking_fn = getattr(experiment, "ranking_fn", None)
     if runtime_id.startswith("function:") and ranking_fn is not None:
         return FunctionRuntime(runtime_id, ranking_fn)

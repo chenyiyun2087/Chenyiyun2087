@@ -30,6 +30,13 @@ import numpy as np
 import pandas as pd
 
 from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
+from scripts.research.execution_market_rules import (
+    can_buy_at_open,
+    can_sell_at_open,
+    limit_prices,
+    limit_ratio,
+)
+from scripts.research.calendar_utils import count_trading_days, next_trade_date
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -158,40 +165,23 @@ def _round_lot(shares: float, lot_size: int) -> int:
 
 
 def _trade_day_count(calendar: list[object], start: object | None, end: object) -> int:
-    if start is None or pd.isna(start):
-        return 0
-    start_date = pd.Timestamp(start).date()
-    end_date = pd.Timestamp(end).date()
-    return sum(1 for day in calendar if start_date <= day <= end_date)
+    """Delegate to canonical calendar_utils.count_trading_days."""
+    return count_trading_days(calendar, start, end)
 
 
 def _next_trade_date(calendar: list[object], signal_date: object) -> object | None:
-    ts = pd.Timestamp(signal_date).date()
-    for day in calendar:
-        if day > ts:
-            return day
-    return None
+    """Delegate to canonical calendar_utils.next_trade_date."""
+    return next_trade_date(calendar, signal_date)
 
 
 def _daily_limit_ratio(symbol: str, is_st: float = 0.0) -> float:
-    """Return the applicable daily limit ratio."""
-    if float(is_st) > 0:
-        return 0.05
-    prefix = str(symbol)[:3]
-    if prefix in ("300", "301", "688", "689"):
-        return 0.20
-    if str(symbol)[0] in ("4", "8", "9") and len(str(symbol)) == 6:
-        return 0.30
-    return 0.10
+    """Delegate to canonical execution_market_rules.limit_ratio."""
+    return limit_ratio(symbol, is_st)
 
 
 def _limit_prices(prev_close: float, symbol: str, is_st: float = 0.0) -> tuple[float, float]:
-    """Return (upper_limit, lower_limit) for a stock."""
-    ratio = _daily_limit_ratio(symbol, is_st)
-    tick = 0.01
-    upper = round(prev_close * (1.0 + ratio) / tick) * tick
-    lower = round(prev_close * (1.0 - ratio) / tick) * tick
-    return upper, lower
+    """Delegate to canonical execution_market_rules.limit_prices."""
+    return limit_prices(prev_close, symbol, is_st)
 
 
 # ---------------------------------------------------------------------------
@@ -259,28 +249,44 @@ class MatchedPortfolioRunner:
         side: str,
         price_info: dict[str, Any],
     ) -> tuple[bool, str, float | None]:
-        """T+1 execution gate.  Returns (allowed, reason, execution_price)."""
+        """T+1 execution gate.  Returns (allowed, reason, execution_price).
+
+        Delegates to canonical can_buy_at_open / can_sell_at_open from
+        execution_market_rules.
+
+        Uses *raw_open* (exchange price) for limit checks, but returns
+        *adj_open* as the execution price for P&L accounting.
+        """
         allowed, reason = MatchedPortfolioRunner._is_tradable(symbol, price_info)
         if not allowed:
             return False, reason, None
 
+        # Use raw_open for limit check (what the exchange sees)
+        raw_open = _safe_float(price_info.get("raw_open"), np.nan)
         open_price = _safe_float(price_info.get("adj_open"), np.nan)
-        limit_open = _safe_float(price_info.get("raw_open"), open_price)
+        # If raw_open is not available, fall back to adj_open
+        limit_check_price = raw_open if np.isfinite(raw_open) and raw_open > 0 else open_price
+
         prev_close = _safe_float(
             price_info.get("raw_pre_close", price_info.get("prev_adj_close")),
             np.nan,
         )
         is_st = _safe_float(price_info.get("is_st"), 0.0)
 
-        if not np.isfinite(prev_close) or prev_close <= 0:
-            return False, "missing_prev_close_limit_unknown", None
-        upper, lower = _limit_prices(prev_close, symbol, is_st)
-        if side == "BUY" and limit_open >= upper:
-            return False, "limit_up_block", None
-        if side == "SELL" and limit_open <= lower:
-            return False, "limit_down_block", None
+        if side == "BUY":
+            allowed, reason = can_buy_at_open(
+                limit_check_price, prev_close, symbol, is_st,
+            )
+        else:
+            allowed, reason = can_sell_at_open(
+                limit_check_price, prev_close, symbol, is_st,
+            )
 
-        return True, "", float(open_price)
+        if not allowed:
+            return False, reason, None
+        # Return adj_open for execution price (adjusted for P&L)
+        exec_price = open_price if np.isfinite(open_price) and open_price > 0 else limit_check_price
+        return True, "", float(exec_price)
 
     # ------------------------------------------------------------------
     # Execution primitives
