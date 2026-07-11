@@ -277,118 +277,19 @@ class AlphaEstimator:
         result["rank_score"] = 0.0
         for factor_name in factor_functions:
             raw_col = f"{factor_name}_raw"
-            raw = pd.to_numeric(result[raw_col], errors="coerce").fillna(0.0)
-            processed = CrossSectionalProcessor.standardize(
-                CrossSectionalProcessor.winsorize(raw)
-            ).fillna(0.0)
+            raw = pd.to_numeric(result[raw_col], errors="coerce")
+            # PR26A.3: Preserve NaN — stocks with missing factor values must
+            # not enter the ranking with a default score of zero.
+            valid = raw.notna()
+            standardized = pd.Series(np.nan, index=raw.index, dtype=float)
+            if valid.any():
+                processed = CrossSectionalProcessor.standardize(
+                    CrossSectionalProcessor.winsorize(raw[valid])
+                )
+                standardized[valid] = processed.values
             weight = float(fitted_state.factor_weights.get(factor_name, 0.0))
             sign = int(fitted_state.factor_signs.get(factor_name, 1))
-            result["rank_score"] += processed * weight * sign
-
-        # PR25 Fix 12: Cross-sectional neutralization of the composite alpha.
-        # Previously only Winsorize → Standardize was applied, which leaves
-        # industry beta, size beta, and volatility beta in the alpha signal.
-        # Now we neutralize the composite rank_score against industry dummies,
-        # log market cap, and 20d volatility using OLS residualization.
-        if fitted_state.neutralization_parameters.get("industry", False):
-            # Build a temporary DataFrame for neutralization
-            neutral_df = result[["symbol", "rank_score"]].copy()
-            # Merge industry from prices or scores
-            if "industry" in result.columns:
-                neutral_df["industry"] = result["industry"].astype(str)
-            elif "industry" in pit_prices.columns:
-                pit_day_prices = pit_prices[
-                    pd.to_datetime(pit_prices["trade_date"], errors="coerce").dt.date
-                    == as_of_ts
-                ]
-                if not pit_day_prices.empty:
-                    ind_map = pit_day_prices.set_index("symbol")["industry"].to_dict()
-                    neutral_df["industry"] = neutral_df["symbol"].map(ind_map).fillna("unknown")
-                else:
-                    neutral_df["industry"] = "unknown"
-            else:
-                neutral_df["industry"] = "unknown"
-
-            # PR26A L5 + PR26A.1: Validate required neutralization fields.
-            # PR26A.1: Separate log_circ_mv (already log-transformed) from
-            # circ_mv (raw market cap needing log transform).  Previously
-            # both were mapped to "circ_mv", causing double-log when
-            # cap_vol_neutralize() applied np.log() to an already-logged value.
-            neutral_df["circ_mv"] = np.nan
-            neutral_df["vol20"] = np.nan
-            _is_log_circ_mv = False  # PR26A.1: track whether input is pre-logged
-            pit_day_prices = pit_prices[
-                pd.to_datetime(pit_prices["trade_date"], errors="coerce").dt.date
-                == as_of_ts
-            ]
-
-            if not pit_day_prices.empty:
-                # Market cap: prefer log_circ_mv (pre-logged), fall back to circ_mv (raw)
-                for col in ["log_circ_mv", "circ_mv"]:
-                    if col in pit_day_prices.columns:
-                        col_map = pit_day_prices.set_index("symbol")[col].to_dict()
-                        neutral_df["circ_mv"] = neutral_df["symbol"].map(col_map)
-                        _is_log_circ_mv = (col == "log_circ_mv")  # PR26A.1 flag
-                        break
-
-                # Volatility: prefer pit_vol_20, fall back to vol20
-                for col in ["pit_vol_20", "vol20"]:
-                    if col in pit_day_prices.columns:
-                        col_map = pit_day_prices.set_index("symbol")[col].to_dict()
-                        neutral_df["vol20"] = neutral_df["symbol"].map(col_map)
-                        break
-
-            # PR26A.1: Fail-closed on missing required fields
-            needs_cap_neut = fitted_state.neutralization_parameters.get("log_market_cap", False)
-            needs_vol_neut = fitted_state.neutralization_parameters.get("volatility_20d", False)
-            if needs_cap_neut and neutral_df["circ_mv"].isna().all():
-                raise ValueError(
-                    f"Alpha neutralization FAILED on {as_of_date}: "
-                    f"required market cap field (log_circ_mv or circ_mv) "
-                    f"not found in price data. "
-                    f"Available columns: {sorted(pit_day_prices.columns.tolist())}. "
-                    f"Fold cannot proceed without neutralization data."
-                )
-            if needs_vol_neut and neutral_df["vol20"].isna().all():
-                raise ValueError(
-                    f"Alpha neutralization FAILED on {as_of_date}: "
-                    f"required volatility field (pit_vol_20 or vol20) "
-                    f"not found in price data. "
-                    f"Available columns: {sorted(pit_day_prices.columns.tolist())}. "
-                    f"Fold cannot proceed without neutralization data."
-                )
-
-            # Fill NaN only for symbols not in the price data (not a data quality issue)
-            neutral_df["circ_mv"] = neutral_df["circ_mv"].fillna(1.0)
-            neutral_df["vol20"] = neutral_df["vol20"].fillna(0.0)
-
-            # Fill NaN with defaults only for symbols not in price data
-            if "circ_mv" in neutral_df.columns:
-                neutral_df["circ_mv"] = neutral_df["circ_mv"].fillna(1.0)
-            if "vol20" in neutral_df.columns:
-                neutral_df["vol20"] = neutral_df["vol20"].fillna(0.0)
-
-            # Step 1: Industry neutralize
-            residuals = CrossSectionalProcessor.industry_neutralize(
-                neutral_df, "rank_score", "industry",
-            )
-            neutral_df["rank_score"] = residuals.fillna(0.0)
-
-            # Step 2: Size/vol neutralize
-            if (fitted_state.neutralization_parameters.get("log_market_cap", False) or
-                    fitted_state.neutralization_parameters.get("volatility_20d", False)):
-                residuals = CrossSectionalProcessor.cap_vol_neutralize(
-                    neutral_df, "rank_score",
-                )
-                neutral_df["rank_score"] = residuals.fillna(0.0)
-
-            # Step 3: Residual standardize
-            if fitted_state.neutralization_parameters.get("residual_standardize", True):
-                neutral_df["rank_score"] = CrossSectionalProcessor.standardize(
-                    neutral_df["rank_score"]
-                ).fillna(0.0)
-
-            result["rank_score"] = neutral_df["rank_score"].values
+            result["rank_score"] += standardized.fillna(0.0) * weight * sign
         result["rank"] = result["rank_score"].rank(ascending=False, method="first")
 
         # Ensure required columns

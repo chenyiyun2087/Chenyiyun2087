@@ -286,6 +286,7 @@ def construct_portfolio(
     constraints: PortfolioConstraints | None = None,
     covariance: np.ndarray | None = None,
     prev_weights: np.ndarray | None = None,
+    risk_aversion: float = 1.0,
     random_seed: str | None = None,
 ) -> pd.DataFrame:
     """Single entry point for A7, RND100, REV-A7, and A8 portfolio construction.
@@ -361,24 +362,22 @@ def construct_portfolio(
             alpha = alpha - alpha.min() + 1e-6  # shift to positive
             opt_result = _solve_covariance_weights(
                 alpha, covariance, constraints, prev_weights=prev_weights,
+                risk_aversion=risk_aversion,
             )
             raw_weights = opt_result["weights"]
-        except Exception:
-            # Fallback: use alpha/vol raw weights (same as risk_weighted path)
-            vol = pd.to_numeric(
-                selected.get("pit_vol_20", pd.Series(0.30, index=selected.index)),
-                errors="coerce",
-            ).fillna(0.30).clip(lower=0.01).to_numpy()
-            raw_weights = alpha / vol
+        except Exception as exc:
+            # PR26A.3: Fail-closed — covariance optimization failure must
+            # propagate, not silently degrade to alpha/vol.
+            raise RuntimeError(
+                f"COVARIANCE_FAILED: optimization error: {exc}"
+            ) from exc
     elif ordering == OrderingMode.COVARIANCE_OPTIMAL:
-        # No covariance supplied — use alpha/vol as raw weights (fallback)
-        alpha = pd.to_numeric(selected["rank_score"], errors="coerce").fillna(0.0).to_numpy()
-        alpha = alpha - alpha.min() + 1e-6
-        vol = pd.to_numeric(
-            selected.get("pit_vol_20", pd.Series(0.30, index=selected.index)),
-            errors="coerce",
-        ).fillna(0.30).clip(lower=0.01).to_numpy()
-        raw_weights = alpha / vol
+        # PR26A.3: Fail-closed — COVARIANCE_OPTIMAL mode requires a valid
+        # covariance matrix.  No alpha/vol fallback.
+        raise ValueError(
+            "COVARIANCE_FAILED: COVARIANCE_OPTIMAL mode requires a valid "
+            "covariance matrix.  No covariance was supplied."
+        )
     else:
         # A7 / RND100 / REV-A7: use rank_score as raw weight signal
         raw = pd.to_numeric(selected["rank_score"], errors="coerce").fillna(0.0)
@@ -439,8 +438,9 @@ def _solve_covariance_weights(
     constraints: PortfolioConstraints,
     prev_weights: np.ndarray | None = None,
     risk_aversion: float = 1.0,
+    turnover_penalty: float = 0.0,
 ) -> dict[str, Any]:
-    """Solve max alpha'w - λ * w'Σw subject to portfolio constraints.
+    """Solve max alpha'w - λ * w'Σw - τ * |w - w_prev| subject to constraints.
 
     Uses a simple gradient-projection method suitable for small N (≤ 20).
     For larger problems a QP solver would be preferred.
@@ -452,11 +452,12 @@ def _solve_covariance_weights(
     constraints : Portfolio constraint set.
     prev_weights : Previous weights (N,) for turnover penalty.
     risk_aversion : Risk aversion λ.
+    turnover_penalty : Turnover penalty τ (cost per unit weight change).
 
     Returns
     -------
     dict with keys: weights, predicted_alpha, portfolio_variance,
-    top2_risk_contribution, optimization_success.
+    top2_risk_contribution, estimated_turnover, optimization_success.
     """
     n = len(alpha)
     if n == 0:
@@ -465,6 +466,7 @@ def _solve_covariance_weights(
             "predicted_alpha": 0.0,
             "portfolio_variance": 0.0,
             "top2_risk_contribution": 0.0,
+            "estimated_turnover": 0.0,
             "optimization_success": False,
         }
 
@@ -485,6 +487,10 @@ def _solve_covariance_weights(
     lr = 0.1 / max(np.diag(cov).max(), 1e-6)
     for iteration in range(constraints.max_iterations):
         grad = alpha - 2.0 * risk_aversion * (cov @ w)
+        # PR26A.3: Turnover penalty — L1 subgradient
+        if prev_weights is not None and turnover_penalty > 0:
+            dw = w - prev_weights
+            grad -= turnover_penalty * np.sign(dw)
         w_new = w + lr * grad
 
         # Project onto simplex: w ≥ 0, sum(w) ≤ target_exposure
@@ -516,18 +522,22 @@ def _solve_covariance_weights(
     # Compute diagnostics
     port_var = float(w @ cov @ w)
     pred_alpha = float(alpha @ w)
-    vols = np.sqrt(np.maximum(np.diag(cov), 1e-12))
-    risk_contrib = w * vols
-    total_risk = risk_contrib.sum()
+    # PR26A.3: True marginal risk contribution — RC_i = w_i × (Σw)_i
+    # This accounts for correlations, unlike w_i × vol_i.
+    marginal_risk = cov @ w  # (Σw) — N-vector of marginal contributions
+    risk_contrib = w * marginal_risk  # RC_i = w_i × (Σw)_i
+    total_risk = risk_contrib.sum()  # = w'Σw
     if total_risk > 1e-12:
         top2_contrib = float(np.sort(risk_contrib / total_risk)[::-1][:2].sum())
     else:
         top2_contrib = 0.0
 
+    estimated_turnover = float(np.sum(np.abs(w - prev_weights))) if prev_weights is not None else 0.0
     return {
         "weights": w,
         "predicted_alpha": pred_alpha,
         "portfolio_variance": port_var,
         "top2_risk_contribution": top2_contrib,
+        "estimated_turnover": estimated_turnover,
         "optimization_success": True,
     }

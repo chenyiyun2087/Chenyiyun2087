@@ -227,11 +227,13 @@ class FrozenAlphaRuntime(StrategyRuntime):
         risk_weighted: bool,
         decay_exit: bool,
         ordering: OrderingMode = OrderingMode.ALPHA_FORWARD,
+        risk_aversion: float = 1.0,
     ) -> None:
         self.runtime_id = runtime_id
         self.risk_weighted = risk_weighted
         self.uses_decay_exit = decay_exit
         self.ordering = ordering
+        self.risk_aversion = risk_aversion
         self.estimator = AlphaEstimator(require_executable_labels=True)
         self._exit_rule: DecayExitRuleV2 | None = (
             DecayExitRuleV2(ExitV2Config()) if decay_exit else None
@@ -410,9 +412,13 @@ class FrozenAlphaRuntime(StrategyRuntime):
                         covariance = compute_pit_covariance_matrix(
                             historical_prices, symbols, signal_date, window=60,
                         )
-            except Exception:
-                # Covariance computation is best-effort; fall back to alpha/vol
-                covariance = None
+            except Exception as exc:
+                # PR26A.3: Fail-closed — covariance failure must not silently
+                # degrade to alpha/vol.  Propagate so the caller can record
+                # COVARIANCE_FAILED and exclude this date from A8 results.
+                raise RuntimeError(
+                    f"COVARIANCE_FAILED:{signal_date}:{exc}"
+                ) from exc
 
         return construct_portfolio(
             ranked,
@@ -420,6 +426,7 @@ class FrozenAlphaRuntime(StrategyRuntime):
             target_exposure=target_exposure,
             top_n=top_n,
             covariance=covariance,
+            risk_aversion=self.risk_aversion,
         )
 
 

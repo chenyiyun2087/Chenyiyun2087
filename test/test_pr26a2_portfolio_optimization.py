@@ -562,7 +562,7 @@ class TestSyntheticFold:
         prices, _ = _make_panel(n_symbols=5, n_days=90)
         cal = sorted(prices["trade_date"].unique())
         labels = compute_executable_forward_returns(
-            prices, hold_days=10, calendar=cal,
+            prices, cal, hold_days=10,
         )
         assert "fwd_ret_10d_exec_net" in labels.columns
         assert "entry_gate_reason" in labels.columns
@@ -570,12 +570,11 @@ class TestSyntheticFold:
         # Some labels should be valid
         assert labels["fwd_ret_10d_exec_net"].notna().any()
 
-    def test_executable_labels_still_works_without_calendar(self):
-        """Backward compatibility: no calendar → shift-based fallback."""
+    def test_executable_labels_raises_without_calendar(self):
+        """PR26A.3: calendar is required — shift fallback removed."""
         prices, _ = _make_panel(n_symbols=5, n_days=90)
-        labels = compute_executable_forward_returns(prices, hold_days=10)
-        assert "fwd_ret_10d_exec_net" in labels.columns
-        assert labels["fwd_ret_10d_exec_net"].notna().any()
+        with pytest.raises((TypeError, ValueError)):
+            compute_executable_forward_returns(prices, hold_days=10)
 
     def test_all_experiments_resolve(self):
         """Every experiment spec resolves to a runtime."""

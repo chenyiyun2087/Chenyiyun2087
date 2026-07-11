@@ -162,15 +162,17 @@ class CrossSectionalProcessor:
         if n_valid < 2:
             return CrossSectionalProcessor.standardize(y)
 
-        # One-hot encode industry on valid subset
+        # PR26A.3: One-hot encode with K dummies (no drop_first) so each
+        # industry's coefficient is its own mean.  No intercept column —
+        # this ensures all industries have zero-mean residuals by construction.
         industry_dummies = pd.get_dummies(
-            ind_series[valid_mask], prefix="ind", drop_first=True
+            ind_series[valid_mask], prefix="ind", drop_first=False
         ).astype(float)
 
         if industry_dummies.shape[1] == 0:
             return CrossSectionalProcessor.standardize(y)
 
-        # OLS on valid subset
+        # OLS on valid subset (K dummies, no explicit intercept)
         X = industry_dummies.values
         y_vals = y[valid_mask].values.astype(float)
 

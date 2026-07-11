@@ -690,21 +690,28 @@ def _apply_actions_to_ledger(ledger: ExecutionLedger, actions: list[CorporateAct
     return "CORPORATE_ACTION_COMPLETE" if actions else "NO_ACTION_CONFIRMED"
 
 
-def _strict_t1_execution_gate(symbol: str, side: str, price_info: dict[str, object]) -> tuple[bool, str]:
-    """Validate actual T+1 tradability; signal-day eligibility is insufficient."""
-    if not bool(_safe_float(price_info.get("execution_tradable"), 0.0)):
-        return False, "t1_not_tradable"
+def _canonical_t1_execution_gate(symbol: str, side: str, price_info: dict[str, object]) -> tuple[bool, str]:
+    """PR26A.3: Canonical T+1 execution gate using execution_market_rules.
+
+    Replaces the old _canonical_t1_execution_gate which duplicated limit-up/down
+    logic.  Now delegates to the single canonical can_buy_at_open /
+    can_sell_at_open from execution_market_rules.py.
+    """
+    from scripts.research.execution_market_rules import can_buy_at_open, can_sell_at_open
+
     open_price = _safe_float(price_info.get("adj_open"), np.nan)
-    prev_close = _safe_float(price_info.get("prev_adj_close"), np.nan)
-    if not np.isfinite(open_price) or open_price <= 0 or not np.isfinite(prev_close) or prev_close <= 0:
-        return False, "missing_t1_execution_price"
-    ratio = _daily_limit_ratio(symbol, price_info.get("is_st"))
-    upper, lower = limit_prices(prev_close, symbol, price_info.get("is_st"))
-    if side == "BUY" and open_price >= upper:
-        return False, "limit_block"
-    if side == "SELL" and open_price <= lower:
-        return False, "limit_block"
-    return True, ""
+    prev_close = _safe_float(
+        price_info.get("prev_adj_close", price_info.get("raw_pre_close")), np.nan
+    )
+    is_st = _safe_float(price_info.get("is_st"), 0.0)
+    if not np.isfinite(open_price) or open_price <= 0:
+        return False, "missing_open_price"
+    if not np.isfinite(prev_close) or prev_close <= 0:
+        return False, "missing_prev_close_limit_unknown"
+    if side == "BUY":
+        return can_buy_at_open(open_price, prev_close, symbol, is_st)
+    else:
+        return can_sell_at_open(open_price, prev_close, symbol, is_st)
 
 
 def _ledger_trade_row(order: PrecommitOrder, result: dict[str, object], trade_date: object, reason: str) -> dict[str, object]:
@@ -2475,7 +2482,7 @@ def _rebalance(
             order = PrecommitOrder(symbol, "SELL", planned, budget, planned * budget, planned * budget * trade_cost_rate,
                                    signal_date, execution_date, f"{signal_date}:{symbol}:SELL", cost_rate=float(trade_cost_rate), lot_size=int(lot_size))
             ledger.plan(order)  # type: ignore[union-attr]
-            tradable, reject_reason = _strict_t1_execution_gate(symbol, "SELL", open_prices.get(symbol, {}))
+            tradable, reject_reason = _canonical_t1_execution_gate(symbol, "SELL", open_prices.get(symbol, {}))
             result = ledger.execute(order, sell_price if tradable else None, tradable, trade_cost_rate, reject_reason=reject_reason, lot_size=lot_size)  # type: ignore[union-attr]
             trade = _ledger_trade_row(order, result, execution_date, "strict_t1_execution")
             trade["cost_rate"] = float(trade_cost_rate); trade["lot_size"] = int(lot_size)
@@ -2513,7 +2520,7 @@ def _rebalance(
             order = PrecommitOrder(symbol, "BUY", lot_delta, budget, lot_delta * budget, lot_delta * budget * trade_cost_rate,
                                    signal_date, execution_date, f"{signal_date}:{symbol}:BUY", cost_rate=float(trade_cost_rate), lot_size=int(lot_size))
             ledger.plan(order)  # type: ignore[union-attr]
-            tradable, reject_reason = _strict_t1_execution_gate(symbol, "BUY", open_prices.get(symbol, {}))
+            tradable, reject_reason = _canonical_t1_execution_gate(symbol, "BUY", open_prices.get(symbol, {}))
             result = ledger.execute(order, buy_price if tradable else None, tradable, trade_cost_rate, reject_reason=reject_reason, lot_size=lot_size)  # type: ignore[union-attr]
             trade = _ledger_trade_row(order, result, execution_date, "strict_t1_execution")
             trade["cost_rate"] = float(trade_cost_rate); trade["lot_size"] = int(lot_size)
@@ -2826,7 +2833,7 @@ def _build_strict_execution_snapshot(trades: pd.DataFrame, prices: pd.DataFrame)
         matches = lookup[(lookup["trade_date"] == date) & (lookup["symbol"] == symbol)]
         info = matches.iloc[0].to_dict() if not matches.empty else {}
         raw_info = _raw_execution_price_view({symbol: info}).get(symbol, {})
-        tradable, gate_reason = _strict_t1_execution_gate(symbol, str(order.get("side")), raw_info)
+        tradable, gate_reason = _canonical_t1_execution_gate(symbol, str(order.get("side")), raw_info)
         rows.append({
             "strategy": order.get("strategy"), "order_id": order.get("order_id"), "signal_date": order.get("signal_date"),
             "execution_date": date, "symbol": symbol, "side": order.get("side"),

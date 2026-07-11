@@ -91,7 +91,6 @@ def can_buy_at_open(
     symbol: object,
     is_st: object = 0,
     *,
-    volume: float | None = None,
     is_listed: float | None = None,
     is_suspended: float | None = None,
     list_days: int | None = None,
@@ -100,22 +99,24 @@ def can_buy_at_open(
 
     Returns (allowed: bool, reason: str).
 
+    Uses ONLY information available at open time — no full-day volume,
+    close price, high, or low.  This prevents future-data leakage in
+    training labels and keeps the gate consistent with live execution.
+
     Checks (in order):
       1. Stock must be listed and not suspended.
-      2. Volume must be positive (skip if not provided — caller can pre-filter).
-      3. open_price must be finite and > 0.
-      4. prev_close must be finite and > 0 (needed for limit computation).
-      5. open_price must NOT be at or above the upper limit (涨停).
-      6. Newly listed stocks (list_days < NEW_STOCK_LIMIT_FREE_DAYS) are
+      2. open_price must be finite and > 0.
+      3. prev_close must be finite and > 0 (needed for limit computation).
+      4. open_price must NOT be at or above the upper limit (涨停).
+      5. Newly listed stocks (list_days < NEW_STOCK_LIMIT_FREE_DAYS) are
          exempt from limit checks.
 
     Parameters
     ----------
-    open_price : T+1 adjusted open price.
-    prev_close : T day's closing price (raw, unadjusted for limits).
+    open_price : T+1 adjusted open price (known at open auction).
+    prev_close : Previous trading day's closing price (known at open).
     symbol : Stock code string.
     is_st : ST flag (0 or 1).
-    volume : Raw volume on T+1 (optional; skipped if None).
     is_listed : 1 if listed (optional; skipped if None).
     is_suspended : 1 if suspended (optional; skipped if None).
     list_days : Days since listing (optional; if < NEW_STOCK_LIMIT_FREE_DAYS,
@@ -126,15 +127,13 @@ def can_buy_at_open(
     (allowed: bool, reason: str)
         allowed=True  → can execute.
         allowed=False → reason is a stable key like "limit_up_block",
-                         "suspended_or_zero_volume", "missing_open_price", …
+                         "suspended", "missing_open_price", …
     """
     # --- Tradability pre-checks ---
     if is_listed is not None and not (np.isfinite(float(is_listed)) and float(is_listed) == 1):
         return False, "not_listed"
     if is_suspended is not None and float(is_suspended) != 0:
         return False, "suspended"
-    if volume is not None and float(volume) <= 0:
-        return False, "suspended_or_zero_volume"
 
     # --- Price sanity ---
     op = float(open_price)
@@ -166,7 +165,6 @@ def can_sell_at_open(
     symbol: object,
     is_st: object = 0,
     *,
-    volume: float | None = None,
     is_listed: float | None = None,
     is_suspended: float | None = None,
     list_days: int | None = None,
@@ -175,7 +173,8 @@ def can_sell_at_open(
 
     Returns (allowed: bool, reason: str).
 
-    Same checks as :func:`can_buy_at_open`, but the price gate is:
+    Uses ONLY information available at open time.  Same checks as
+    :func:`can_buy_at_open`, but the price gate is:
       open_price must NOT be at or below the **lower** limit (跌停).
 
     See :func:`can_buy_at_open` for parameter documentation.
@@ -185,8 +184,6 @@ def can_sell_at_open(
         return False, "not_listed"
     if is_suspended is not None and float(is_suspended) != 0:
         return False, "suspended"
-    if volume is not None and float(volume) <= 0:
-        return False, "suspended_or_zero_volume"
 
     # --- Price sanity ---
     op = float(open_price)

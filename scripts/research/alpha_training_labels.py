@@ -45,6 +45,7 @@ def compute_executable_ic(
     prices: pd.DataFrame,
     factor_signal: pd.DataFrame,
     signal_col: str,
+    calendar: list[object],
     hold_days: int = 10,
     cost_rate: float = 0.0015,
 ) -> pd.Series:
@@ -55,6 +56,7 @@ def compute_executable_ic(
     prices : Must have [symbol, trade_date, adj_open, adj_close].
     factor_signal : Must have [symbol, trade_date, signal_col].
     signal_col : Name of the factor value column in factor_signal.
+    calendar : Sorted list of trading day dates.
     hold_days : Holding period for exit price.
     cost_rate : Round-trip cost.
 
@@ -64,7 +66,9 @@ def compute_executable_ic(
     """
     from scripts.research.executable_labels import compute_executable_forward_returns
 
-    labels = compute_executable_forward_returns(prices, hold_days=hold_days, cost_rate=cost_rate)
+    labels = compute_executable_forward_returns(
+        prices, calendar, hold_days=hold_days, cost_rate=cost_rate
+    )
     label_col = f"fwd_ret_{hold_days}d_exec"
 
     if label_col not in labels.columns:

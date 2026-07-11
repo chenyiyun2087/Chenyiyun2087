@@ -729,7 +729,19 @@ class MatchedPortfolioRunner:
     def run_matched_random(
         self, scores: pd.DataFrame, prices: pd.DataFrame,
     ) -> list[CurveResult]:
-        """20 random-seed curves.  Report median + 5%-95% band."""
+        """20 random-seed curves.  Report median + 5%-95% band.
+
+        .. deprecated:: PR26A.3
+            Use ``walk_forward_engine.run_fold()`` with experiment ``RND100``
+            instead — it routes through ``FrozenAlphaRuntime(ordering=RANDOM)``
+            and ``construct_portfolio()`` for true matched-baseline parity.
+        """
+        import warnings
+        warnings.warn(
+            "run_matched_random uses legacy equal-weight path; "
+            "use walk_forward_engine with experiment RND100 for formal results",
+            DeprecationWarning, stacklevel=2,
+        )
         results: list[CurveResult] = []
         for seed in _RANDOM_SEEDS:
             result = self._run_base_curve(
@@ -787,7 +799,19 @@ class MatchedPortfolioRunner:
     def run_matched_reversed(
         self, scores: pd.DataFrame, prices: pd.DataFrame,
     ) -> CurveResult:
-        """Reverse ranking: worst score → top pick."""
+        """Reverse ranking: worst score → top pick.
+
+        .. deprecated:: PR26A.3
+            Use ``walk_forward_engine.run_fold()`` with experiment ``REV-A7``
+            instead — it routes through ``FrozenAlphaRuntime(ordering=ALPHA_REVERSE)``
+            and ``construct_portfolio()`` for true matched-baseline parity.
+        """
+        import warnings
+        warnings.warn(
+            "run_matched_reversed uses legacy equal-weight path; "
+            "use walk_forward_engine with experiment REV-A7 for formal results",
+            DeprecationWarning, stacklevel=2,
+        )
         return self._run_base_curve(
             scores, prices, "matched_reversed",
             rank_fn=self._rank_reversed,
