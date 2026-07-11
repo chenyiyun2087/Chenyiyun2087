@@ -1,4 +1,12 @@
-"""PR9: Stateful alpha decay tracker with position lifecycle management.
+"""PR9 + PR26A L1: Stateful alpha decay tracker with position lifecycle management.
+
+PR26A L1 enhancements:
+  1. Explicit lifecycle fields: base_expiry_day, extended_expiry_day,
+     pending_exit, pending_exit_reason, last_record_date
+  2. get_position_state() exposes full lifecycle for the account loop
+  3. set_extended() is explicitly called by the account loop after
+     winner extension is granted — tracker no longer self-manages
+  4. record() is idempotent per day (last_record_date guard)
 
 Key improvements over PR5 tracker:
   1. Position lifecycle: open_position / record / close_position
@@ -33,6 +41,7 @@ class ExitV2Config:
 
 @dataclass
 class PositionRecord:
+    """PR26A L1: Explicit lifecycle state per holding."""
     symbol: str
     entry_date: str
     entry_score: float
@@ -41,10 +50,16 @@ class PositionRecord:
     exit_date: str = ""
     exit_reason: str = ""
     is_extended: bool = False
+    # PR26A L1: Explicit lifecycle fields
+    base_expiry_day: int = 0        # day_idx of base expiry (entry_day + hold_days)
+    extended_expiry_day: int = 0    # day_idx of extended expiry (0 if not extended)
+    pending_exit: bool = False      # exit order failed, must retry
+    pending_exit_reason: str = ""   # reason from the failed exit attempt
+    last_record_date: str = ""      # prevent duplicate daily recording
 
 
 class StatefulDecayTracker:
-    """Position-lifecycle-aware decay tracker."""
+    """Position-lifecycle-aware decay tracker (PR26A L1 enhanced)."""
 
     def __init__(self, config: ExitV2Config | None = None):
         self.config = config or ExitV2Config()
@@ -53,23 +68,38 @@ class StatefulDecayTracker:
 
     # --- Lifecycle ---
 
-    def open_position(self, symbol: str, entry_date: str, entry_score: float,
-                      entry_rank: int, candidate_count: int):
+    def open_position(
+        self,
+        symbol: str,
+        entry_date: str,
+        entry_score: float,
+        entry_rank: int,
+        candidate_count: int,
+        base_expiry_day: int = 0,
+    ):
         """Open a new position. Clears any old history for this symbol."""
         pct = entry_rank / max(candidate_count, 1)
         self._positions[symbol] = PositionRecord(
             symbol=symbol, entry_date=str(entry_date),
             entry_score=float(entry_score), entry_rank_pct=pct,
+            base_expiry_day=base_expiry_day,
         )
 
     def record(self, symbol: str, signal_date: str, score: float,
                rank: int, candidate_count: int):
-        """Record a signal observation for a held position."""
+        """Record a signal observation for a held position.
+
+        PR26A L1: Idempotent per day — only records once per date.
+        """
         rec = self._positions.get(symbol)
         if rec is None:
             return
+        sd_str = str(signal_date)
+        if rec.last_record_date == sd_str:
+            return  # already recorded today
+        rec.last_record_date = sd_str
         rec.signal_history.append({
-            "date": str(signal_date), "score": float(score),
+            "date": sd_str, "score": float(score),
             "rank_pct": rank / max(candidate_count, 1),
         })
 
@@ -80,6 +110,71 @@ class StatefulDecayTracker:
             rec.exit_date = str(exit_date)
             rec.exit_reason = reason
             self._closed.append(rec)
+
+    # --- PR26A L1: Explicit state management ---
+
+    def get_position_state(self, symbol: str) -> dict[str, Any]:
+        """Return the full lifecycle state for a position.
+
+        The account loop uses this to decide whether to hold, extend,
+        or force-exit.
+        """
+        rec = self._positions.get(symbol)
+        if rec is None:
+            return {
+                "active": False,
+                "is_extended": False,
+                "base_expiry_day": 0,
+                "extended_expiry_day": 0,
+                "pending_exit": False,
+                "pending_exit_reason": "",
+                "entry_date": "",
+                "entry_rank_pct": 0.0,
+                "signal_count": 0,
+            }
+        return {
+            "active": True,
+            "is_extended": rec.is_extended,
+            "base_expiry_day": rec.base_expiry_day,
+            "extended_expiry_day": rec.extended_expiry_day,
+            "pending_exit": rec.pending_exit,
+            "pending_exit_reason": rec.pending_exit_reason,
+            "entry_date": rec.entry_date,
+            "entry_rank_pct": rec.entry_rank_pct,
+            "signal_count": len(rec.signal_history),
+            "last_record_date": rec.last_record_date,
+        }
+
+    def set_extended(self, symbol: str, extended_expiry_day: int) -> bool:
+        """Mark a position as winner-extended.
+
+        Called by the account loop after extension is granted.
+        Returns True if the position existed and was extended.
+        """
+        rec = self._positions.get(symbol)
+        if rec is None:
+            return False
+        rec.is_extended = True
+        rec.extended_expiry_day = extended_expiry_day
+        return True
+
+    def set_pending_exit(self, symbol: str, reason: str) -> bool:
+        """Mark a position as having a pending (failed) exit order."""
+        rec = self._positions.get(symbol)
+        if rec is None:
+            return False
+        rec.pending_exit = True
+        rec.pending_exit_reason = reason
+        return True
+
+    def clear_pending_exit(self, symbol: str) -> bool:
+        """Clear the pending exit flag after successful sell."""
+        rec = self._positions.get(symbol)
+        if rec is None:
+            return False
+        rec.pending_exit = False
+        rec.pending_exit_reason = ""
+        return True
 
     # --- Decay detection ---
 
@@ -112,7 +207,11 @@ class StatefulDecayTracker:
         return {"decayed": len(reasons) > 0, "reasons": reasons}
 
     def should_extend(self, symbol: str) -> bool:
-        """Check if a position qualifies for winner extension."""
+        """Check if a position qualifies for winner extension.
+
+        PR26A L1: Only checks eligibility — the caller (account loop)
+        is responsible for managing extended_expiry_day via set_extended().
+        """
         rec = self._positions.get(symbol)
         if rec is None or rec.is_extended:
             return False

@@ -309,20 +309,58 @@ class AlphaEstimator:
             else:
                 neutral_df["industry"] = "unknown"
 
-            # Compute log market cap and vol20 from price history
-            neutral_df["circ_mv"] = 1.0
-            neutral_df["vol20"] = 0.0
+            # PR26A L5: Validate required neutralization fields exist in price data.
+            # Previously, missing fields were silently filled with defaults
+            # (circ_mv=1.0, vol20=0.0), which degraded neutralization to
+            # approximate de-meaning.  Now we fail closed — missing required
+            # fields block the fold.
+            neutral_df["circ_mv"] = np.nan
+            neutral_df["vol20"] = np.nan
             pit_day_prices = pit_prices[
                 pd.to_datetime(pit_prices["trade_date"], errors="coerce").dt.date
                 == as_of_ts
             ]
+
+            # Map of required field -> purpose
+            _REQUIRED_NEUTRALIZATION_FIELDS: dict[str, str] = {
+                "log_circ_mv": "log market cap neutralization",
+                "circ_mv": "market cap neutralization",
+            }
+            _REQUIRED_VOL_FIELDS: dict[str, str] = {
+                "pit_vol_20": "20d volatility neutralization",
+                "vol20": "20d volatility neutralization",
+            }
+
             if not pit_day_prices.empty:
-                for col, target in [("circ_mv", "circ_mv"), ("vol20", "vol20")]:
-                    if col in pit_day_prices.columns:
-                        col_map = pit_day_prices.set_index("symbol")[col].to_dict()
-                        neutral_df[target] = neutral_df["symbol"].map(col_map).fillna(
-                            1.0 if target == "circ_mv" else 0.0
+                # Try multiple field name variants
+                for field_variants, target in [
+                    (["log_circ_mv", "circ_mv"], "circ_mv"),
+                    (["pit_vol_20", "vol20"], "vol20"),
+                ]:
+                    found = False
+                    for col in field_variants:
+                        if col in pit_day_prices.columns:
+                            col_map = pit_day_prices.set_index("symbol")[col].to_dict()
+                            neutral_df[target] = neutral_df["symbol"].map(col_map)
+                            found = True
+                            break
+                    if not found and (
+                        fitted_state.neutralization_parameters.get("log_market_cap", False)
+                        or fitted_state.neutralization_parameters.get("volatility_20d", False)
+                    ):
+                        raise ValueError(
+                            f"Alpha neutralization FAILED on {as_of_date}: "
+                            f"required field '{field_variants[0]}' ({target}) "
+                            f"not found in price data. "
+                            f"Available columns: {sorted(pit_day_prices.columns.tolist())}. "
+                            f"Fold cannot proceed without neutralization data."
                         )
+
+            # Fill NaN with defaults only for symbols not in price data
+            if "circ_mv" in neutral_df.columns:
+                neutral_df["circ_mv"] = neutral_df["circ_mv"].fillna(1.0)
+            if "vol20" in neutral_df.columns:
+                neutral_df["vol20"] = neutral_df["vol20"].fillna(0.0)
 
             # Step 1: Industry neutralize
             residuals = CrossSectionalProcessor.industry_neutralize(

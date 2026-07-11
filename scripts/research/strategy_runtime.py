@@ -80,7 +80,7 @@ class StrategyRuntime(ABC):
         return False, ""
 
     # ------------------------------------------------------------------
-    # Position lifecycle delegation (PR23)
+    # Position lifecycle delegation (PR23 + PR26A L1)
     # ------------------------------------------------------------------
     # Subclasses with exit rules override these to maintain per-symbol
     # decay state.  Default implementations are no-ops.
@@ -92,6 +92,7 @@ class StrategyRuntime(ABC):
         rank_score: float,
         rank: int,
         candidate_count: int,
+        base_expiry_day: int = 0,  # PR26A L1
     ) -> None:
         """Called when a new position is established."""
 
@@ -119,6 +120,26 @@ class StrategyRuntime(ABC):
     ) -> tuple[bool, int]:
         """Check winner-extension eligibility.  Returns (extend, extra_days)."""
         return False, 0
+
+    # PR26A L1: Explicit lifecycle state for the A9 state machine
+
+    def get_position_state(self, symbol: str) -> dict:
+        """Return full lifecycle state for a held position."""
+        return {"active": False, "is_extended": False,
+                "base_expiry_day": 0, "extended_expiry_day": 0,
+                "pending_exit": False, "pending_exit_reason": ""}
+
+    def set_extended(self, symbol: str, extended_expiry_day: int) -> bool:
+        """Mark a position as winner-extended."""
+        return False
+
+    def set_pending_exit(self, symbol: str, reason: str) -> bool:
+        """Mark a position as having a pending (failed) exit."""
+        return False
+
+    def clear_pending_exit(self, symbol: str) -> bool:
+        """Clear pending exit flag after successful sell."""
+        return False
 
 
 class AdapterRuntime(StrategyRuntime):
@@ -237,7 +258,7 @@ class FrozenAlphaRuntime(StrategyRuntime):
         return False, ""
 
     # ------------------------------------------------------------------
-    # Position lifecycle (PR23) — delegate to exit rule tracker
+    # Position lifecycle (PR23 + PR26A L1) — delegate to exit rule tracker
     # ------------------------------------------------------------------
 
     def open_position(
@@ -247,10 +268,12 @@ class FrozenAlphaRuntime(StrategyRuntime):
         rank_score: float,
         rank: int,
         candidate_count: int,
+        base_expiry_day: int = 0,  # PR26A L1
     ) -> None:
         if self._exit_rule is not None:
             self._exit_rule.tracker.open_position(
                 symbol, entry_date, rank_score, rank, candidate_count,
+                base_expiry_day=base_expiry_day,
             )
 
     def record(
@@ -282,6 +305,30 @@ class FrozenAlphaRuntime(StrategyRuntime):
         if self._exit_rule is not None:
             return self._exit_rule.should_extend(symbol)
         return False, 0
+
+    # PR26A L1: Explicit lifecycle state
+
+    def get_position_state(self, symbol: str) -> dict:
+        if self._exit_rule is not None:
+            return self._exit_rule.tracker.get_position_state(symbol)
+        return {"active": False, "is_extended": False,
+                "base_expiry_day": 0, "extended_expiry_day": 0,
+                "pending_exit": False, "pending_exit_reason": ""}
+
+    def set_extended(self, symbol: str, extended_expiry_day: int) -> bool:
+        if self._exit_rule is not None:
+            return self._exit_rule.tracker.set_extended(symbol, extended_expiry_day)
+        return False
+
+    def set_pending_exit(self, symbol: str, reason: str) -> bool:
+        if self._exit_rule is not None:
+            return self._exit_rule.tracker.set_pending_exit(symbol, reason)
+        return False
+
+    def clear_pending_exit(self, symbol: str) -> bool:
+        if self._exit_rule is not None:
+            return self._exit_rule.tracker.clear_pending_exit(symbol)
+        return False
 
     def rank_as_of(self, state, signal_date, historical_scores, historical_prices):
         if state.alpha_state is None:
