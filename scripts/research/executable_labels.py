@@ -22,6 +22,7 @@ from scripts.research.execution_costs import ExecutionCostModel
 DEFAULT_HOLD_DAYS = 10
 DEFAULT_ROUND_TRIP_COST = 0.0015
 MAX_EXIT_DELAY_DAYS = 5
+DELISTING_HAIRCUT_RATIO = 0.70  # PR24: frozen auditable constant (was hardcoded 0.70)
 
 
 def _is_exit_tradable(
@@ -32,9 +33,9 @@ def _is_exit_tradable(
 
     Returns (tradable, reason).
     """
+    # PR24: Fail-closed — missing metadata is NOT tradable
     if not has_metadata:
-        # No suspension / limit metadata — assume tradable
-        return True, ""
+        return False, "missing_metadata"
 
     is_suspended = float(row.get("is_suspended", 0) or 0)
     if is_suspended != 0:
@@ -72,6 +73,7 @@ def compute_executable_forward_returns(
     cost_rate: float | None = None,
     cost_model: ExecutionCostModel | None = None,
     max_exit_delay: int = MAX_EXIT_DELAY_DAYS,
+    delisting_haircut: float = DELISTING_HAIRCUT_RATIO,
 ) -> pd.DataFrame:
     """Compute execution-aware forward returns with untradable-exit handling.
 
@@ -85,22 +87,29 @@ def compute_executable_forward_returns(
     is delayed up to *max_exit_delay* trading days.  If no tradable exit is
     found the sample is marked *censored* (NaN label).
 
+    PR24: Exit metadata is now per-hold-period (e.g. planned_exit_date_5d,
+    planned_exit_date_10d, planned_exit_date_15d). Canonical 10d fields are
+    preserved for backward compatibility. Tradability checks fail CLOSED
+    when metadata columns are missing (no longer assumes tradable).
+    Delisting haircut is configurable via delisting_haircut parameter.
+
     Parameters
     ----------
     prices : DataFrame with [symbol, trade_date, adj_close, adj_open].
              Must have 'adj_open' column for entry prices.
-             Optionally: is_suspended, is_delisted, is_listed, raw_pre_close,
-             is_st for tradability checks.
+             REQUIRED for tradability: is_suspended, is_listed, is_st,
+             raw_pre_close. Missing columns → fail-closed.
     hold_days : Number of trading days to hold (planned exit horizon).
     cost_rate : Round-trip cost rate (commission + tax + slippage).
     max_exit_delay : Max additional trading days to search for a tradable exit.
+    delisting_haircut : Multiplier applied to last close on delisting (default 0.70).
 
     Returns
     -------
     DataFrame with [symbol, trade_date, fwd_ret_5d_exec_net,
     fwd_ret_10d_exec_net, fwd_ret_15d_exec_net, mfe_10d, mae_10d,
     planned_exit_date, actual_exit_date, exit_delay_days, exit_tradable,
-    censored, exit_reason].
+    censored, exit_reason, plus per-hold-period variants (_5d, _10d, _15d)].
     """
     if prices.empty:
         return pd.DataFrame()
@@ -140,15 +149,19 @@ def compute_executable_forward_returns(
     )
     round_trip_cost = model_round_trip if cost_rate is None else float(cost_rate)
 
-    # --- Exit metadata columns ---
+    # --- Exit metadata columns — PER HOLD PERIOD (PR24) ---
+    for h in [5, 10, 15]:
+        for col in ("planned_exit_date", "actual_exit_date", "exit_reason"):
+            prices_sorted[f"{col}_{h}d"] = None
+        prices_sorted[f"exit_delay_days_{h}d"] = 0
+        prices_sorted[f"exit_tradable_{h}d"] = True
+        prices_sorted[f"censored_{h}d"] = False
+    # Canonical (backward-compatible) fields mirror 10d primary training label
     for col in ("planned_exit_date", "actual_exit_date", "exit_reason"):
         prices_sorted[col] = None
-    for col in ("exit_delay_days",):
-        prices_sorted[col] = 0
-    for col in ("exit_tradable",):
-        prices_sorted[col] = True
-    for col in ("censored",):
-        prices_sorted[col] = False
+    prices_sorted["exit_delay_days"] = 0
+    prices_sorted["exit_tradable"] = True
+    prices_sorted["censored"] = False
 
     # --- Compute executable returns with delayed-exit logic ---
     for h in [5, 10, 15]:
@@ -173,9 +186,13 @@ def compute_executable_forward_returns(
                 planned_exit_pos = pos_idx + h
                 if planned_exit_pos >= n_rows:
                     # No data for planned exit — censored
-                    prices_sorted.at[row_idx, f"planned_exit_date"] = None
-                    prices_sorted.at[row_idx, "censored"] = True
-                    prices_sorted.at[row_idx, "exit_reason"] = "no_data"
+                    prices_sorted.at[row_idx, f"planned_exit_date_{h}d"] = None
+                    prices_sorted.at[row_idx, f"censored_{h}d"] = True
+                    prices_sorted.at[row_idx, f"exit_reason_{h}d"] = "no_data"
+                    if h == 10:
+                        prices_sorted.at[row_idx, "planned_exit_date"] = None
+                        prices_sorted.at[row_idx, "censored"] = True
+                        prices_sorted.at[row_idx, "exit_reason"] = "no_data"
                     continue
 
                 planned_row_idx = row_positions[planned_exit_pos]
@@ -183,7 +200,9 @@ def compute_executable_forward_returns(
                 planned_date = planned_row["trade_date"]
 
                 # Record planned exit date
-                prices_sorted.at[row_idx, f"planned_exit_date"] = planned_date
+                prices_sorted.at[row_idx, f"planned_exit_date_{h}d"] = planned_date
+                if h == 10:
+                    prices_sorted.at[row_idx, "planned_exit_date"] = planned_date
 
                 # Find first tradable exit within delay window
                 actual_exit_pos = planned_exit_pos
@@ -208,7 +227,7 @@ def compute_executable_forward_returns(
                         found = True
                         break
                     if reason == "delisted":
-                        # Delisting: use last close with 30% haircut as exit
+                        # Delisting: use last close with haircut as exit
                         actual_exit_pos = scan_pos
                         actual_row_idx = scan_row_idx
                         exit_delayed = True
@@ -218,37 +237,53 @@ def compute_executable_forward_returns(
 
                 if not found:
                     # Could not find tradable exit — censored
-                    prices_sorted.at[row_idx, "actual_exit_date"] = planned_date
-                    prices_sorted.at[row_idx, "exit_delay_days"] = max_exit_delay
-                    prices_sorted.at[row_idx, "exit_tradable"] = False
-                    prices_sorted.at[row_idx, "censored"] = True
-                    prices_sorted.at[row_idx, "exit_reason"] = "no_tradable_exit"
+                    prices_sorted.at[row_idx, f"actual_exit_date_{h}d"] = planned_date
+                    prices_sorted.at[row_idx, f"exit_delay_days_{h}d"] = max_exit_delay
+                    prices_sorted.at[row_idx, f"exit_tradable_{h}d"] = False
+                    prices_sorted.at[row_idx, f"censored_{h}d"] = True
+                    prices_sorted.at[row_idx, f"exit_reason_{h}d"] = "no_tradable_exit"
+                    if h == 10:
+                        prices_sorted.at[row_idx, "actual_exit_date"] = planned_date
+                        prices_sorted.at[row_idx, "exit_delay_days"] = max_exit_delay
+                        prices_sorted.at[row_idx, "exit_tradable"] = False
+                        prices_sorted.at[row_idx, "censored"] = True
+                        prices_sorted.at[row_idx, "exit_reason"] = "no_tradable_exit"
                     continue
 
                 actual_row = prices_sorted.iloc[actual_row_idx]
                 actual_date = actual_row["trade_date"]
                 exit_px = float(actual_row["adj_close"])
 
-                # Delisting haircut
+                # Delisting haircut (PR24: frozen auditable constant)
                 if exit_reason == "delisted_haircut":
-                    exit_px *= 0.70  # 30% haircut on delisting
+                    exit_px *= DELISTING_HAIRCUT_RATIO
 
                 if exit_px <= 0:
-                    prices_sorted.at[row_idx, "censored"] = True
-                    prices_sorted.at[row_idx, "exit_reason"] = "zero_exit_price"
+                    prices_sorted.at[row_idx, f"censored_{h}d"] = True
+                    prices_sorted.at[row_idx, f"exit_reason_{h}d"] = "zero_exit_price"
+                    if h == 10:
+                        prices_sorted.at[row_idx, "censored"] = True
+                        prices_sorted.at[row_idx, "exit_reason"] = "zero_exit_price"
                     continue
 
                 # Compute return
                 ret = exit_px / entry_px - 1.0 - round_trip_cost
+                delay_val = actual_exit_pos - planned_exit_pos
+                tradable_val = not exit_delayed
 
                 prices_sorted.at[row_idx, col_ret] = ret
                 prices_sorted.at[row_idx, col_net] = ret
-                prices_sorted.at[row_idx, "actual_exit_date"] = actual_date
-                prices_sorted.at[row_idx, "exit_delay_days"] = (
-                    actual_exit_pos - planned_exit_pos
-                )
-                prices_sorted.at[row_idx, "exit_tradable"] = not exit_delayed
-                prices_sorted.at[row_idx, "exit_reason"] = exit_reason
+                # Per-hold-period metadata
+                prices_sorted.at[row_idx, f"actual_exit_date_{h}d"] = actual_date
+                prices_sorted.at[row_idx, f"exit_delay_days_{h}d"] = delay_val
+                prices_sorted.at[row_idx, f"exit_tradable_{h}d"] = tradable_val
+                prices_sorted.at[row_idx, f"exit_reason_{h}d"] = exit_reason
+                # Canonical fields for primary training label (10d)
+                if h == 10:
+                    prices_sorted.at[row_idx, "actual_exit_date"] = actual_date
+                    prices_sorted.at[row_idx, "exit_delay_days"] = delay_val
+                    prices_sorted.at[row_idx, "exit_tradable"] = tradable_val
+                    prices_sorted.at[row_idx, "exit_reason"] = exit_reason
 
     # --- MFE/MAE: max/min cumulative return between entry and actual exit ---
     prices_sorted["mfe_10d"] = np.nan
@@ -273,9 +308,17 @@ def compute_executable_forward_returns(
         "fwd_ret_5d_exec", "fwd_ret_10d_exec", "fwd_ret_15d_exec",
         "fwd_ret_5d_exec_net", "fwd_ret_10d_exec_net", "fwd_ret_15d_exec_net",
         "mfe_10d", "mae_10d", "entry_tradable",
+        # Canonical (backward-compatible) 10d fields
         "planned_exit_date", "actual_exit_date", "exit_delay_days",
         "exit_tradable", "censored", "exit_reason",
     ]
+    # PR24: Per-hold-period exit metadata
+    for h in [5, 10, 15]:
+        result_cols.extend([
+            f"planned_exit_date_{h}d", f"actual_exit_date_{h}d",
+            f"exit_delay_days_{h}d", f"exit_tradable_{h}d",
+            f"censored_{h}d", f"exit_reason_{h}d",
+        ])
     keep_cols = result_cols + ["entry_price"] + [f"exit_price_{h}d" for h in [5, 10, 15]]
     available = [c for c in keep_cols if c in prices_sorted.columns]
     return prices_sorted[available].reset_index(drop=True)

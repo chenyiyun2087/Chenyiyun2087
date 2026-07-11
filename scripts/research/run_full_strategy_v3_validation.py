@@ -220,7 +220,8 @@ def run(output_dir, test_log, precheck_only=False):
     scores_df = add_liquidity_derived_features(scores_df, prices_df)
 
     executor = FoldAccountBacktest(config=FoldBacktestConfig(
-        initial_cash=500_000.0, top_n=TOP_N, hold_days=10, target_gross_exposure=0.70))
+        initial_cash=500_000.0, top_n=TOP_N, hold_days=10, target_gross_exposure=0.70,
+        rnd100_pool_size=30, max_holding_days=20))
 
     executed_experiments = set()
     factor_state_by_fold = {}
@@ -282,8 +283,20 @@ def run(output_dir, test_log, precheck_only=False):
             exp_dir, exp_candidates, exp_weights, exp_exposures,
             exp_nav, exp_trades, exp_exits, exp_rejections, exp_errors)
 
-        # PR23: Full return/risk metrics per experiment
-        exp_metrics = executor.compute_metrics(exp_nav, exp_trades, initial_cash=500_000.0)
+        # PR24: Use stitched metrics when multiple folds exist
+        n_folds = len(set(r.get("window") for r in exp_nav if "window" in r))
+        if n_folds > 1 and exp_nav:
+            stitched_exp_nav = executor.stitch_fold_navs(exp_nav)
+            exp_metrics = executor.compute_metrics(
+                stitched_exp_nav, exp_trades, initial_cash=500_000.0,
+            )
+            if stitched_exp_nav:
+                executor.export_nav_csv(
+                    stitched_exp_nav, exp_dir / "stitched_oos_nav.csv",
+                    {"experiment_id": exp_id},
+                )
+        else:
+            exp_metrics = executor.compute_metrics(exp_nav, exp_trades, initial_cash=500_000.0)
         exp_metrics["experiment_id"] = exp_id
         exp_metrics["total_candidates"] = len(exp_candidates)
         exp_metrics["total_trades"] = len(exp_trades)
@@ -341,7 +354,8 @@ def run(output_dir, test_log, precheck_only=False):
                         sd_key = pd.Timestamp(sd).date()
                         r = a7_runtime.rank_as_of(st, sd_key, scores_df, prices_df)
                         if r is not None and not r.empty:
-                            fold_candidates[sd_key] = r.head(5)
+                            fold_candidates[sd_key] = r.head(
+                                executor.config.rnd100_pool_size)
             a7_candidates_by_fold[wl] = fold_candidates
     for fold in folds:
         if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
@@ -404,7 +418,9 @@ def run(output_dir, test_log, precheck_only=False):
                                 **fold.get("coverage", {})})
     pd.DataFrame(wf_metrics_rows).to_csv(output_dir / "walk_forward_metrics.csv", index=False)
     if all_nav:
-        pd.DataFrame(all_nav).to_csv(output_dir / "stitched_oos_nav.csv", index=False)
+        stitched = executor.stitch_fold_navs(all_nav)
+        if stitched:
+            pd.DataFrame(stitched).to_csv(output_dir / "stitched_oos_nav.csv", index=False)
 
     # Manifest AFTER evidence; semantic validation AFTER manifest
     lock_path = PROJECT_ROOT / "requirements.lock.txt"
