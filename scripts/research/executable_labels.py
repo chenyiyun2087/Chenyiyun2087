@@ -47,10 +47,10 @@ def _is_exit_tradable(
 
 def compute_executable_forward_returns(
     prices: pd.DataFrame,
+    calendar: list[object],
     hold_days: int = DEFAULT_HOLD_DAYS,
     cost_rate: float | None = None,
     cost_model: ExecutionCostModel | None = None,
-    calendar: list[object] | None = None,
 ) -> pd.DataFrame:
     """Compute execution-aware forward returns with entry/exit gate checks.
 
@@ -58,13 +58,16 @@ def compute_executable_forward_returns(
 
       1. entry_row = T+1 row  (next trading day)
       2. entry gate = can_buy_at_open(entry_row) → if rejected, label is NaN
-      3. exit_row  = T+hold_days row  (calendar-based when *calendar* is given,
-                      otherwise shift(-hold_days))
+      3. exit_row  = T+hold_days row (calendar-based via resolve_round_trip_dates)
       4. exit gate  = can_sell_at_open(exit_row) → if rejected, label is NaN
       5. label = exit_price / entry_price - 1 - round_trip_cost
 
     Both entry and exit execute at **open** — this matches the account backtest
     execution convention.
+
+    PR26A.3: *calendar* is now **required**.  The old shift(-hold_days) fallback
+    has been removed — all label generation must use the canonical trading
+    calendar so that exit dates match the account backtest exactly.
 
     Parameters
     ----------
@@ -72,13 +75,11 @@ def compute_executable_forward_returns(
              Must have 'adj_open' column for entry/exit prices.
              May also have: raw_volume, is_listed, is_suspended, is_st,
              raw_pre_close, prev_adj_close, raw_open, list_days.
+    calendar : Sorted list of trading day dates (YYYY-MM-DD str or Timestamp).
+               Required — exit dates are resolved via resolve_round_trip_dates().
     hold_days : Number of trading days to hold (from entry to exit).
     cost_rate : Round-trip cost rate (commission + tax + slippage).
     cost_model : ExecutionCostModel for detailed cost computation.
-    calendar : Optional sorted list of trading day dates (YYYY-MM-DD str or
-               Timestamp).  When provided, exit dates are resolved via
-               resolve_round_trip_dates() instead of shift(-hold_days),
-               ensuring label exit dates match the account backtest.
 
     Returns
     -------
@@ -89,6 +90,12 @@ def compute_executable_forward_returns(
     if prices.empty:
         return pd.DataFrame()
 
+    if calendar is None or len(calendar) == 0:
+        raise ValueError(
+            "Calendar is required for production label generation. "
+            "Pass a sorted list of trading day dates."
+        )
+
     prices_sorted = prices.sort_values(["symbol", "trade_date"]).copy()
     if "adj_open" not in prices_sorted.columns:
         raise ValueError(
@@ -96,6 +103,9 @@ def compute_executable_forward_returns(
         )
 
     # --- Build entry gate data from T+1 row ---
+    # PR26A.3: ALL gate-relevant fields must come from entry_row (T+1), not
+    # signal_row (T).  Shift every column so the loop reads from the same
+    # row as entry_price.
     from scripts.research.execution_market_rules import can_buy_at_open, can_sell_at_open
 
     # PR25 Fix 11: Require ALL metadata columns for fail-closed behavior.
@@ -112,10 +122,16 @@ def compute_executable_forward_returns(
     # Entry price: T+1 open
     prices_sorted["entry_price"] = g["adj_open"].shift(-1)
 
-    # Build per-row gate check for entry
-    # When gate data columns (raw_pre_close, etc.) are available, use the
-    # canonical can_buy_at_open gate.  Otherwise fall back to the old
-    # execution_tradable + entry_price check for backward compatibility.
+    # Shift ALL gate-relevant columns to T+1 row
+    _gate_cols = [
+        "raw_pre_close", "prev_adj_close", "is_st",
+        "is_listed", "is_suspended", "list_days",
+    ]
+    _t1_prefix = "_t1_"
+    for col in _gate_cols:
+        if col in prices_sorted.columns:
+            prices_sorted[f"{_t1_prefix}{col}"] = g[col].shift(-1)
+
     has_gate_data = (
         "raw_pre_close" in prices_sorted.columns
         or "prev_adj_close" in prices_sorted.columns
@@ -132,36 +148,32 @@ def compute_executable_forward_returns(
             continue
 
         if not has_gate_data:
-            # Fallback: old behavior — check execution_tradable column
-            et = row.get("execution_tradable", None)
-            if et is not None:
-                allowed = float(et) == 1
-            else:
-                allowed = True  # no data → allow
-            entry_gate_allowed.append(allowed)
-            entry_gate_reasons.append("" if allowed else "execution_not_tradable")
+            # PR26A.3: Fail-closed — reject when gate metadata is missing.
+            entry_gate_allowed.append(False)
+            entry_gate_reasons.append("missing_gate_metadata")
             continue
 
+        # PR26A.3: Read gate data from T+1 (shifted) columns
         prev_close = float(
-            row.get("raw_pre_close", row.get("prev_adj_close", np.nan))
+            row.get(f"{_t1_prefix}raw_pre_close",
+                    row.get(f"{_t1_prefix}prev_adj_close", np.nan))
         )
-        is_st = float(row.get("is_st", 0))
-        volume = float(row.get("raw_volume", row.get("volume", np.nan)))
-        is_listed_val = row.get("is_listed", None)
+        is_st = float(row.get(f"{_t1_prefix}is_st", 0))
+        is_listed_val = row.get(f"{_t1_prefix}is_listed", None)
         is_listed = (
             float(is_listed_val)
             if is_listed_val is not None
             and not (isinstance(is_listed_val, float) and np.isnan(is_listed_val))
             else None
         )
-        is_suspended_val = row.get("is_suspended", None)
+        is_suspended_val = row.get(f"{_t1_prefix}is_suspended", None)
         is_suspended = (
             float(is_suspended_val)
             if is_suspended_val is not None
             and not (isinstance(is_suspended_val, float) and np.isnan(is_suspended_val))
             else None
         )
-        list_days_val = row.get("list_days", None)
+        list_days_val = row.get(f"{_t1_prefix}list_days", None)
         list_days = (
             int(list_days_val)
             if list_days_val is not None
@@ -170,13 +182,20 @@ def compute_executable_forward_returns(
         )
 
         if not np.isfinite(prev_close) or prev_close <= 0:
-            # No prev_close → can't check limits, but allow if price is valid
-            entry_gate_allowed.append(True)
-            entry_gate_reasons.append("no_prev_close_skip_limit_check")
+            # No prev_close → can't check limits — fail closed
+            entry_gate_allowed.append(False)
+            entry_gate_reasons.append("missing_prev_close_limit_unknown")
+        elif is_listed is not None and not (
+            np.isfinite(float(is_listed)) and float(is_listed) == 1
+        ):
+            entry_gate_allowed.append(False)
+            entry_gate_reasons.append("not_listed")
+        elif is_suspended is not None and float(is_suspended) != 0:
+            entry_gate_allowed.append(False)
+            entry_gate_reasons.append("suspended")
         else:
             allowed, reason = can_buy_at_open(
                 open_px, prev_close, sym, is_st,
-                volume=volume if np.isfinite(volume) else None,
                 is_listed=is_listed,
                 is_suspended=is_suspended,
                 list_days=list_days,
@@ -191,88 +210,143 @@ def compute_executable_forward_returns(
     prices_sorted["entry_tradable"] = prices_sorted["entry_gate_allowed"].astype(int)
 
     # --- Exit price computation ---
-    # When calendar is provided, use resolve_round_trip_dates for precise
-    # exit date matching.  Otherwise fall back to shift(-hold_days).
-    if calendar is not None and len(calendar) > 0:
-        from scripts.research.calendar_utils import resolve_round_trip_dates
+    # PR26A.3: Calendar is required — no shift fallback.
+    # Each horizon (5d/10d/15d) gets its own exit date, exit price, gate
+    # check, and delayed-exit retry loop (Pending Exit parity with account).
+    from scripts.research.calendar_utils import (
+        next_trade_date,
+        resolve_round_trip_dates,
+    )
 
-        cal = sorted(calendar)
-        # Build date → row index map for each symbol
-        date_map: dict[tuple[str, object], int] = {}
-        for pos, (_, row) in enumerate(prices_sorted.iterrows()):
-            sym = str(row["symbol"])
-            td = pd.Timestamp(row["trade_date"]).normalize()
-            date_map[(sym, td)] = pos
+    cal = sorted(calendar)
+    # Build date → row index map for each symbol
+    date_map: dict[tuple[str, object], int] = {}
+    for pos, (_, row) in enumerate(prices_sorted.iterrows()):
+        sym = str(row["symbol"])
+        td = pd.Timestamp(row["trade_date"]).normalize()
+        date_map[(sym, td)] = pos
 
-        cal_set = {pd.Timestamp(d).normalize() for d in cal}
+    _HORIZONS = [(5, "5d"), (10, "10d"), (15, "15d")]
+    exit_data: dict[str, dict[str, list[float | str | int | bool]]] = {}
+    for _hd, _lbl in _HORIZONS:
+        exit_data[_lbl] = {
+            "prices": [],
+            "gate_reasons": [],
+            "planned_dates": [],
+            "actual_dates": [],
+            "delay_days": [],
+            "censored": [],
+        }
 
-        exit_prices_10d: list[float] = []
-        exit_prices_5d: list[float] = []
-        exit_prices_15d: list[float] = []
-        exit_gate_reasons_list: list[str] = []
-        for _, row in prices_sorted.iterrows():
-            sym = str(row["symbol"])
-            td = pd.Timestamp(row["trade_date"]).normalize()
+    MAX_RETRY_DAYS = 30  # max additional days to retry exit before censoring
+
+    for _, row in prices_sorted.iterrows():
+        sym = str(row["symbol"])
+        td = pd.Timestamp(row["trade_date"]).normalize()
+
+        for hold_d, lbl in _HORIZONS:
             try:
-                _entry_d, exit_d = resolve_round_trip_dates(
-                    cal, td, entry_lag=1, hold_days=hold_days
+                _entry_d, planned_exit_d = resolve_round_trip_dates(
+                    cal, td, entry_lag=1, hold_days=hold_d
                 )
             except ValueError:
-                # Not enough calendar days → NaN
-                exit_prices_10d.append(np.nan)
-                exit_prices_5d.append(np.nan)
-                exit_prices_15d.append(np.nan)
-                exit_gate_reasons_list.append("insufficient_calendar")
+                exit_data[lbl]["prices"].append(np.nan)
+                exit_data[lbl]["gate_reasons"].append("insufficient_calendar")
+                exit_data[lbl]["planned_dates"].append("")
+                exit_data[lbl]["actual_dates"].append("")
+                exit_data[lbl]["delay_days"].append(0)
+                exit_data[lbl]["censored"].append(True)
                 continue
 
-            exit_ts = pd.Timestamp(exit_d).normalize()
-            exit_pos = date_map.get((sym, exit_ts))
-            if exit_pos is not None:
-                exit_row = prices_sorted.iloc[exit_pos]
-                exit_open = float(exit_row.get("adj_open", np.nan))
-                if np.isfinite(exit_open) and exit_open > 0:
-                    # Gate check for exit
-                    exit_allowed, exit_reason = can_sell_at_open(
-                        exit_open,
-                        float(exit_row.get("raw_pre_close",
-                               exit_row.get("prev_adj_close", np.nan))),
-                        sym,
-                        float(exit_row.get("is_st", 0)),
-                        volume=float(exit_row.get("raw_volume",
-                                     exit_row.get("volume", np.nan))),
-                    )
-                    exit_gate_reasons_list.append(exit_reason)
-                    if exit_allowed:
-                        exit_prices_10d.append(exit_open)
-                        exit_prices_5d.append(exit_open)
-                        exit_prices_15d.append(exit_open)
-                    else:
-                        exit_prices_10d.append(np.nan)
-                        exit_prices_5d.append(np.nan)
-                        exit_prices_15d.append(np.nan)
-                else:
-                    exit_prices_10d.append(np.nan)
-                    exit_prices_5d.append(np.nan)
-                    exit_prices_15d.append(np.nan)
-                    exit_gate_reasons_list.append("missing_exit_open")
-            else:
-                exit_prices_10d.append(np.nan)
-                exit_prices_5d.append(np.nan)
-                exit_prices_15d.append(np.nan)
-                exit_gate_reasons_list.append("exit_date_not_in_prices")
-    else:
-        # Fallback: shift-based exit (backwards-compatible, calendar-blind)
-        prices_sorted["exit_price_10d"] = g["adj_open"].shift(-hold_days)
-        prices_sorted["exit_price_5d"] = g["adj_open"].shift(-5)
-        prices_sorted["exit_price_15d"] = g["adj_open"].shift(-15)
-        exit_prices_5d = prices_sorted["exit_price_5d"].tolist()
-        exit_prices_10d = prices_sorted["exit_price_10d"].tolist()
-        exit_prices_15d = prices_sorted["exit_price_15d"].tolist()
-        exit_gate_reasons_list = [""] * len(prices_sorted)
+            exit_data[lbl]["planned_dates"].append(str(planned_exit_d))
 
-    prices_sorted["exit_price_5d"] = exit_prices_5d
-    prices_sorted["exit_price_10d"] = exit_prices_10d
-    prices_sorted["exit_price_15d"] = exit_prices_15d
+            # --- Delayed exit (Pending Exit) retry loop ---
+            actual_exit_open = np.nan
+            actual_exit_date = planned_exit_d
+            actual_reason = ""
+            retry_count = 0
+            exit_found = False
+
+            retry_date = planned_exit_d
+            for retry in range(MAX_RETRY_DAYS + 1):
+                retry_ts = pd.Timestamp(retry_date).normalize()
+                retry_pos = date_map.get((sym, retry_ts))
+                if retry_pos is None:
+                    # Date not in price data — try next
+                    retry_date = next_trade_date(cal, retry_date)
+                    if retry_date is None:
+                        break
+                    retry_count += 1
+                    continue
+
+                retry_row = prices_sorted.iloc[retry_pos]
+                retry_open = float(retry_row.get("adj_open", np.nan))
+                if not np.isfinite(retry_open) or retry_open <= 0:
+                    retry_date = next_trade_date(cal, retry_date)
+                    if retry_date is None:
+                        break
+                    retry_count += 1
+                    continue
+
+                retry_prev_close = float(
+                    retry_row.get("raw_pre_close",
+                                  retry_row.get("prev_adj_close", np.nan))
+                )
+                retry_is_st = float(retry_row.get("is_st", 0))
+
+                if not np.isfinite(retry_prev_close) or retry_prev_close <= 0:
+                    retry_date = next_trade_date(cal, retry_date)
+                    if retry_date is None:
+                        break
+                    retry_count += 1
+                    continue
+
+                retry_allowed, retry_reason = can_sell_at_open(
+                    retry_open,
+                    retry_prev_close,
+                    sym,
+                    retry_is_st,
+                )
+                if retry_allowed or retry == 0:
+                    # First attempt: record gate reason regardless
+                    # Subsequent attempts: only stop if allowed
+                    actual_reason = retry_reason
+                    if retry_allowed:
+                        actual_exit_open = retry_open
+                        actual_exit_date = retry_date
+                        exit_found = True
+                    break
+
+                retry_date = next_trade_date(cal, retry_date)
+                if retry_date is None:
+                    break
+                retry_count += 1
+
+            if exit_found:
+                exit_data[lbl]["prices"].append(actual_exit_open)
+                exit_data[lbl]["censored"].append(False)
+            else:
+                exit_data[lbl]["prices"].append(np.nan)
+                exit_data[lbl]["censored"].append(True)
+                actual_reason = actual_reason or "censored_window_end"
+
+            exit_data[lbl]["gate_reasons"].append(actual_reason)
+            exit_data[lbl]["actual_dates"].append(
+                str(actual_exit_date) if exit_found else ""
+            )
+            exit_data[lbl]["delay_days"].append(retry_count if exit_found else -1)
+
+    # Populate columns
+    for _hd, lbl in _HORIZONS:
+        prices_sorted[f"exit_price_{lbl}"] = exit_data[lbl]["prices"]
+        prices_sorted[f"exit_gate_reason_{lbl}"] = exit_data[lbl]["gate_reasons"]
+        prices_sorted[f"planned_exit_date_{lbl}"] = exit_data[lbl]["planned_dates"]
+        prices_sorted[f"actual_exit_date_{lbl}"] = exit_data[lbl]["actual_dates"]
+        prices_sorted[f"exit_delay_days_{lbl}"] = exit_data[lbl]["delay_days"]
+        prices_sorted[f"censored_{lbl}"] = exit_data[lbl]["censored"]
+
+    # Backward-compatible: single exit_gate_reason (uses 10d)
+    exit_gate_reasons_list = exit_data["10d"]["gate_reasons"]
     prices_sorted["exit_gate_reason"] = exit_gate_reasons_list
 
     # --- Forward returns ---
@@ -331,25 +405,33 @@ def compute_executable_forward_returns(
         "mfe_10d", "mae_10d",
         "entry_tradable", "entry_gate_reason", "exit_gate_reason",
     ]
-    # Also keep entry/exit prices for audit
-    keep_cols = (
-        result_cols
-        + ["entry_price"]
-        + [f"exit_price_{h}d" for h in [5, 10, 15]]
-    )
+    # PR26A.3: New delayed-exit / multi-horizon audit columns
+    _audit_cols = ["entry_price"]
+    for h in [5, 10, 15]:
+        lbl = f"{h}d"
+        _audit_cols += [
+            f"exit_price_{lbl}",
+            f"exit_gate_reason_{lbl}",
+            f"planned_exit_date_{lbl}",
+            f"actual_exit_date_{lbl}",
+            f"exit_delay_days_{lbl}",
+            f"censored_{lbl}",
+        ]
+    keep_cols = result_cols + _audit_cols
     available = [c for c in keep_cols if c in prices_sorted.columns]
     return prices_sorted[available].reset_index(drop=True)
 
 
 def compute_forward_returns_grouped(
     prices: pd.DataFrame,
+    calendar: list[object],
     hold_days: int = 10,
     cost_rate: float | None = None,
     calendar: list[object] | None = None,
 ) -> pd.DataFrame:
     """Convenience wrapper: returns only the primary label column + fwd_ret."""
     result = compute_executable_forward_returns(
-        prices, hold_days, cost_rate, calendar=calendar,
+        prices, calendar, hold_days=hold_days, cost_rate=cost_rate,
     )
     keep = ["symbol", "trade_date"]
     for h in [5, 10, 15]:

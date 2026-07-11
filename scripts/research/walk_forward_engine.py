@@ -361,7 +361,7 @@ class WalkForwardEngine:
         try:
             runtime = resolve_runtime(experiment)
             train_labels = (
-                compute_executable_forward_returns(train_prices)
+                compute_executable_forward_returns(train_prices, calendar=self.calendar)
                 if runtime.needs_training
                 else None
             )

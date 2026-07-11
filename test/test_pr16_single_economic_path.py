@@ -20,9 +20,10 @@ from scripts.research.pit_risk import compute_pit_risk_panel
 from scripts.research.strategy_runtime import RuntimeResolutionError, resolve_runtime
 
 
-def _panel(n_symbols: int = 12, n_days: int = 90) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _panel(n_symbols: int = 12, n_days: int = 90) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     rng = np.random.RandomState(20260710)
     dates = pd.bdate_range("2023-01-02", periods=n_days)
+    cal = [d.strftime("%Y-%m-%d") for d in dates]
     prices: list[dict] = []
     scores: list[dict] = []
     for idx in range(n_symbols):
@@ -61,7 +62,7 @@ def _panel(n_symbols: int = 12, n_days: int = 90) -> tuple[pd.DataFrame, pd.Data
                 "industry": f"I{idx % 4}",
                 "theme": f"T{idx % 3}",
             })
-    return pd.DataFrame(prices), pd.DataFrame(scores)
+    return pd.DataFrame(prices), pd.DataFrame(scores), cal
 
 
 def _runner() -> MatchedPortfolioRunner:
@@ -88,16 +89,16 @@ def test_unknown_runtime_fails_closed() -> None:
 
 
 def test_executable_label_is_strict_and_net() -> None:
-    prices, _ = _panel()
-    labels = compute_executable_forward_returns(prices)
+    prices, _, cal = _panel()
+    labels = compute_executable_forward_returns(prices, cal)
     assert "fwd_ret_10d_exec_net" in labels
     assert labels["fwd_ret_10d_exec_net"].notna().any()
     with pytest.raises(ValueError, match="adj_open"):
-        compute_executable_forward_returns(prices.drop(columns="adj_open"))
+        compute_executable_forward_returns(prices.drop(columns="adj_open"), cal)
 
 
 def test_alpha_requires_labels_and_future_perturbation_is_invariant() -> None:
-    prices, scores = _panel()
+    prices, scores, cal = _panel()
     dates = sorted(prices["trade_date"].unique())
     train_end = dates[59]
     signal_date = dates[65]
@@ -109,7 +110,7 @@ def test_alpha_requires_labels_and_future_perturbation_is_invariant() -> None:
     state = estimator.fit(
         train_scores,
         train_prices,
-        compute_executable_forward_returns(train_prices),
+        compute_executable_forward_returns(train_prices, cal),
     )
     base = estimator.transform(state, signal_date, scores, prices).sort_values("symbol")
     changed = prices.copy()
@@ -123,7 +124,7 @@ def test_alpha_requires_labels_and_future_perturbation_is_invariant() -> None:
 
 
 def test_pit_risk_is_per_date_and_future_invariant() -> None:
-    prices, _ = _panel()
+    prices, _, _cal = _panel()
     signal_date = sorted(prices["trade_date"].unique())[60]
     base = compute_pit_risk_panel(prices[prices["trade_date"] <= signal_date])
     changed = prices.copy()
