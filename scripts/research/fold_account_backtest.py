@@ -538,14 +538,22 @@ class FoldAccountBacktest:
                 "INCOMPLETE_LABELS", "UNMATCHED_BASELINE", "COVERAGE_FAILED",
             })
             if result.status not in _TERMINAL_FAILURES:
-                # PR26A L7: Coverage gate — require ≥95% signal date coverage
+                # PR26A.1: Coverage gate — require ≥95% signal date coverage
                 # and zero unclassified errors before setting FITTED.
+                # RANK_WEIGHT_ERROR dates are now counted as FAILURES,
+                # not successes.  Only dates with valid candidates AND
+                # valid weights count toward the numerator.
                 total_dates = len(window_dates)
-                successful_dates = (
-                    result.signal_dates_attempted - result.signal_dates_empty
-                )
+                # Count dates with BOTH candidates and weights (true successes)
+                successful_dates = len(signal_date_candidates)
+                # Count dates where ranking produced candidates but weights failed
+                dates_with_errors = len([
+                    e for e in result.error_rows
+                    if e.get("error_type") == "RANK_WEIGHT_ERROR"
+                ])
                 coverage = successful_dates / max(total_dates, 1)
 
+                # All non-RANK_WEIGHT_ERROR errors are unclassified → block
                 unclassified_errors = [
                     e for e in result.error_rows
                     if e.get("error_type", "") not in {"RANK_WEIGHT_ERROR"}
@@ -556,6 +564,12 @@ class FoldAccountBacktest:
                     result.reason = (
                         f"signal_coverage={coverage:.1%} < 95% "
                         f"({successful_dates}/{total_dates})"
+                    )
+                elif dates_with_errors > 0:
+                    result.status = "COVERAGE_FAILED"
+                    result.reason = (
+                        f"rank_weight_errors={dates_with_errors}: "
+                        f"dates with RANK_WEIGHT_ERROR counted as failures"
                     )
                 elif unclassified_errors:
                     result.status = "COVERAGE_FAILED"
@@ -1269,19 +1283,12 @@ class FoldAccountBacktest:
                 if ranked is not None and not ranked.empty:
                     a7_pool[sd] = ranked.head(self.config.rnd100_pool_size)
         else:
-            # No A7 reference — build basic pool from scores (sorted by rank_score)
-            a7_pool = {}
-            for signal_date in window_dates:
-                sd = _normalize_date(signal_date)
-                day_scores = scores_df[
-                    pd.to_datetime(scores_df["trade_date"]).dt.date == pd.Timestamp(sd).date()
-                ] if hasattr(scores_df, "columns") else pd.DataFrame()
-                if day_scores.empty:
-                    continue
-                # Use rank_score if available, otherwise first column
-                if "rank_score" in day_scores.columns:
-                    day_scores = day_scores.sort_values("rank_score", ascending=False)
-                a7_pool[sd] = day_scores.head(self.config.rnd100_pool_size).copy()
+            # PR26A.1: No A7 reference — HARD FAIL.
+            # RND100 MUST use A7's exact eligible tradable panel.  Falling
+            # back to the full score universe breaks the matched-baseline
+            # contract and inflates the random distribution.
+            # Return empty list → caller treats as UNMATCHED_BASELINE.
+            return []
 
         seed_results: list[dict[str, Any]] = []
         np_random = np.random
@@ -1514,33 +1521,43 @@ class FoldAccountBacktest:
                     state, ranked, sd, prices_df, target_exp, self.config.top_n,
                 )
 
-                # PR25 Fix 9: HARD FAIL if REV Top5 overlaps A7 Top5.
-                # REV must be the inverse of A7 — REV executed Top5 must
-                # equal A7 full eligible pool Bottom5.  Previously only
-                # recorded an error but continued.
+                # PR26A.1: REV Target must STRICTLY EQUAL A7 Eligible Pool Bottom5.
+                # Previously only checked "non-overlap with A7 Top5", which
+                # allowed cases like REV={80,81,82,83,84} when A7 Bottom5
+                # ={96,97,98,99,100}.  Neither overlaps A7 Top5={1,2,3,4,5},
+                # but REV is not the true inverse.
                 rev_top5_symbols = set(topn["symbol"].astype(str).tolist())
-                a7_bottom_n = ranked_original.tail(self.config.top_n)
-                a7_bottom_symbols = set(
+                # Full eligible pool sorted by A7 rank (ascending = best first)
+                ranked_original_sorted = ranked_original.sort_values(
+                    "rank", ascending=True
+                ) if "rank" in ranked_original.columns else ranked_original
+                total_eligible = len(ranked_original_sorted)
+                a7_bottom_n = ranked_original_sorted.tail(self.config.top_n)
+                expected_rev_symbols = set(
                     a7_bottom_n["symbol"].astype(str).tolist()
                 ) if not a7_bottom_n.empty else set()
-                if a7_bottom_symbols and rev_top5_symbols:
-                    overlap = rev_top5_symbols & set(
-                        ranked_original.head(self.config.top_n)["symbol"]
-                        .astype(str).tolist()
-                    )
-                    if overlap:
+
+                if expected_rev_symbols and rev_top5_symbols:
+                    # Strict check: REV Top5 MUST equal A7 Bottom5
+                    if rev_top5_symbols != expected_rev_symbols:
+                        missing_from_rev = expected_rev_symbols - rev_top5_symbols
+                        extra_in_rev = rev_top5_symbols - expected_rev_symbols
                         result.error_rows.append({
                             "error_type": "REV_ASSERTION",
                             "window": window_label,
                             "experiment_id": f"REV_{experiment_id}",
                             "signal_date": str(signal_date),
-                            "detail": f"REV Top5 overlaps A7 Top5: {sorted(overlap)}",
+                            "detail": (
+                                f"REV Top5 != A7 Bottom5: "
+                                f"missing={sorted(missing_from_rev)} "
+                                f"extra={sorted(extra_in_rev)}"
+                            ),
                         })
-                        # PR25 Fix 9: Hard fail — fold is invalid
                         result.status = "UNMATCHED_BASELINE"
                         result.reason = (
-                            f"REV Top5 overlaps A7 Top5 on {signal_date}: "
-                            f"{sorted(overlap)}"
+                            f"REV Top5 != A7 Bottom5 on {signal_date}: "
+                            f"REV={sorted(rev_top5_symbols)} "
+                            f"A7_Bottom5={sorted(expected_rev_symbols)}"
                         )
                         return result
 

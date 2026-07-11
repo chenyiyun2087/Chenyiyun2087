@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.research.execution_costs import ExecutionCostModel
+from scripts.research.execution_gate import can_sell_at_open, can_buy_at_open
 
 DEFAULT_HOLD_DAYS = 10
 DEFAULT_ROUND_TRIP_COST = 0.0015
@@ -29,42 +30,18 @@ def _is_exit_tradable(
     row: pd.Series,
     has_metadata: bool = True,
 ) -> tuple[bool, str]:
-    """Check whether a stock is tradable on a given exit date.
+    """PR26A.1: Delegate to unified execution gate.
 
-    Returns (tradable, reason).
+    Previously used close-based limit-down logic (close price for
+    limit check).  Now uses the same can_sell_at_open() as the
+    account backtest for true label-account parity.
     """
-    # PR24: Fail-closed — missing metadata is NOT tradable
     if not has_metadata:
         return False, "missing_metadata"
-
-    is_suspended = float(row.get("is_suspended", 0) or 0)
-    if is_suspended != 0:
-        return False, "suspended"
-
-    is_delisted = float(row.get("is_delisted", 0) or 0)
-    if is_delisted != 0:
-        return False, "delisted"
-
-    is_listed = float(row.get("is_listed", np.nan) or 1)
-    if pd.notna(is_listed) and is_listed == 0:
-        return False, "not_listed"
-
-    # Limit-down check: close at or below lower limit (-10% for non-ST, -5% for ST)
-    # We approximate: if close is missing and the previous close was at limit-down
-    adj_close = row.get("adj_close", np.nan)
-    if pd.isna(adj_close) or float(adj_close) <= 0:
-        return False, "missing_close"
-
-    # If we have pre_close and limit info, check limit-down
-    prev_close = float(row.get("raw_pre_close", row.get("prev_adj_close", np.nan)) or np.nan)
-    if pd.notna(prev_close) and prev_close > 0:
-        is_st = float(row.get("is_st", 0) or 0)
-        limit_ratio = 0.05 if is_st != 0 else 0.10
-        lower_limit = prev_close * (1.0 - limit_ratio)
-        if float(adj_close) <= lower_limit * 1.001:
-            return False, "limit_down"
-
-    return True, ""
+    # Convert Series row to dict for the unified gate
+    price_info = row.to_dict()
+    allowed, reason, _price = can_sell_at_open(str(row.get("symbol", "")), price_info)
+    return allowed, reason
 
 
 def compute_executable_forward_returns(

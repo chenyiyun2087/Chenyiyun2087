@@ -191,6 +191,11 @@ class CrossSectionalProcessor:
         """Regress on log(circ_mv) + 20d_vol, return residuals.
 
         Removes size and volatility effects from the value column.
+
+        PR26A.1: Detects whether circ_mv is already log-transformed
+        (e.g., values in [-5, 20] range) vs raw market cap (millions+).
+        Previously always applied np.log(), which double-logged values
+        that were already log_circ_mv.
         """
         if df.empty or value_col not in df.columns:
             return pd.Series([], dtype=float, index=df.index)
@@ -198,10 +203,20 @@ class CrossSectionalProcessor:
         y = df[value_col].fillna(0.0).values.astype(float)
         n = len(y)
 
-        # Build regressors: [1, log_circ_mv, vol20]
+        # Build regressors: [1, log_market_cap, vol20]
         X_cols = []
         if "circ_mv" in df.columns:
-            log_mv = np.log(df["circ_mv"].fillna(1.0).clip(lower=1.0).values)
+            mv_vals = df["circ_mv"].fillna(1.0)
+            # PR26A.1: Detect if values are already log-transformed.
+            # Raw market cap: 1e7 to 1e12+.  Log market cap: ~15 to ~28.
+            # Already-logged values (like log_circ_mv) are small, possibly negative.
+            mv_median = float(mv_vals.median())
+            if mv_median < 100.0:
+                # Already log-transformed — use directly
+                log_mv = mv_vals.values.astype(float)
+            else:
+                # Raw market cap — apply log
+                log_mv = np.log(mv_vals.clip(lower=1.0).values)
             X_cols.append(log_mv)
         if "vol20" in df.columns:
             vol20 = df["vol20"].fillna(0.0).values
