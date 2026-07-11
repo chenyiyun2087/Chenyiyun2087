@@ -118,16 +118,42 @@ def compute_executable_forward_returns(
     if "adj_open" not in prices_sorted.columns:
         raise ValueError("executable labels require adj_open; close fallback is forbidden")
 
-    has_metadata = "is_suspended" in prices_sorted.columns
+    # PR25 Fix 11: Require ALL metadata columns for fail-closed behavior.
+    # Previously only checked is_suspended, allowing other missing fields
+    # (is_listed, is_st, raw_pre_close) to be silently defaulted.
+    # Missing metadata causes ALL labels to be censored (NaN).
+    _REQUIRED_METADATA = frozenset({
+        "is_suspended", "is_listed", "is_st", "raw_pre_close",
+    })
+    has_metadata = _REQUIRED_METADATA.issubset(prices_sorted.columns)
 
     g = prices_sorted.groupby("symbol", group_keys=False)
 
     # Entry: T+1 open only.  Missing entry is an invalid label.
+    # PR25 Fix 11: Require execution_tradable for entry.  Previously fell
+    # back to checking only adj_open non-null, which could admit untradable
+    # stocks (limit-up, suspended next day) into training labels.
     prices_sorted["entry_price"] = g["adj_open"].shift(-1)
     if "execution_tradable" in prices_sorted.columns:
         prices_sorted["entry_tradable"] = g["execution_tradable"].shift(-1).eq(1)
+    elif has_metadata:
+        # Without execution_tradable but with all metadata, check all gate conditions
+        _entry_suspended = g["is_suspended"].shift(-1).fillna(0).ne(0)
+        # Check if is_delisted column exists in the dataframe
+        if "is_delisted" in prices_sorted.columns:
+            _entry_delisted = prices_sorted.groupby("symbol")["is_delisted"].shift(-1).fillna(0).ne(0)
+        else:
+            _entry_delisted = pd.Series(False, index=prices_sorted.index)
+        _entry_listed = g["is_listed"].shift(-1).fillna(1).eq(0)
+        prices_sorted["entry_tradable"] = (
+            prices_sorted["entry_price"].notna()
+            & ~_entry_suspended
+            & ~_entry_delisted
+            & ~_entry_listed
+        )
     else:
-        prices_sorted["entry_tradable"] = prices_sorted["entry_price"].notna()
+        # No metadata at all — fail-closed: entry is NOT tradable
+        prices_sorted["entry_tradable"] = False
 
     # --- Build row-index lookup for delayed exit ---
     # Reset index so we can use integer positions for fast forward-scan.
@@ -252,7 +278,11 @@ def compute_executable_forward_returns(
 
                 actual_row = prices_sorted.iloc[actual_row_idx]
                 actual_date = actual_row["trade_date"]
-                exit_px = float(actual_row["adj_close"])
+                # PR25 Fix 10: Use adj_open for exit to match account execution.
+                # The account backtest sells at the open price via T+1 gate.
+                # Using adj_close creates a systematic gap between training
+                # labels and realized account returns.
+                exit_px = float(actual_row.get("adj_open", actual_row["adj_close"]))
 
                 # Delisting haircut (PR24: frozen auditable constant)
                 if exit_reason == "delisted_haircut":

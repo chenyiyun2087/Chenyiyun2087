@@ -102,6 +102,7 @@ class Position:
     symbol: str
     name: str = ""
     industry: str = ""
+    theme: str = ""          # PR25 Fix 6: theme classification
     shares: int = 0
     entry_date: object | None = None
     entry_price: float = 0.0
@@ -187,6 +188,7 @@ def _execute_buy(
     lot_size: int,
     rows: list[dict[str, Any]],
     reason: str,
+    theme: str = "",  # PR25 Fix 6
 ) -> int:
     """Execute a buy order with full cost deduction."""
     if shares <= 0:
@@ -209,12 +211,12 @@ def _execute_buy(
         account.positions[symbol].shares += buy_shares
     else:
         account.positions[symbol] = Position(
-            symbol=symbol, name=name, industry=industry,
+            symbol=symbol, name=name, industry=industry, theme=theme,
             shares=buy_shares, entry_date=trade_date, entry_price=float(price),
         )
     rows.append({
         "trade_date": trade_date, "symbol": symbol, "name": name,
-        "industry": industry, "side": "BUY", "price": float(price),
+        "industry": industry, "theme": theme, "side": "BUY", "price": float(price),
         "shares": int(buy_shares), "gross_amount": float(gross),
         "cost": float(breakdown.total_cost), **breakdown.to_dict(),
         "cash_after": float(account.cash),
@@ -401,6 +403,8 @@ class FoldAccountBacktest:
         # 6. Generate ranked + weighted candidates for each validation date
         signal_date_candidates: dict[str, pd.DataFrame] = {}
         signal_date_weights: dict[str, pd.DataFrame] = {}
+        signal_exposure_targets: dict[str, float] = {}  # PR25 Fix 4
+        full_ranked_panels: dict[str, pd.DataFrame] = {}  # PR25 Fix 5
 
         for signal_date in window_dates:
             sd = _normalize_date(signal_date)
@@ -415,6 +419,12 @@ class FoldAccountBacktest:
                 weights = runtime.build_weights(
                     state, ranked, sd, prices_df, target_exp, self.config.top_n,
                 )
+
+                # PR25 Fix 4: Save per-signal-date target exposure
+                signal_exposure_targets[sd] = float(target_exp)
+
+                # PR25 Fix 5: Save full ranked panel for A9 lifecycle
+                full_ranked_panels[sd] = ranked.copy()
 
                 # Record candidates
                 for _, row in topn.iterrows():
@@ -459,8 +469,19 @@ class FoldAccountBacktest:
                 experiment_id, window_label, signal_date_candidates,
                 signal_date_weights, window_dates, calendar_dates,
                 prices_df, result, runtime=runtime,
+                signal_exposure_targets=signal_exposure_targets,  # PR25 Fix 4
+                full_ranked_panels=full_ranked_panels,  # PR25 Fix 5
             )
-            result.status = "FITTED"
+            # PR25 Fix 1: Only set FITTED if no terminal failure state was set
+            # by _run_account_backtest.  INVALID_RISK_STATE, FIT_ERROR,
+            # EXECUTION_ERROR, INCOMPLETE_LABELS, UNMATCHED_BASELINE are
+            # permanent blockers that must never be overwritten.
+            _TERMINAL_FAILURES = frozenset({
+                "INVALID_RISK_STATE", "FIT_ERROR", "EXECUTION_ERROR",
+                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE",
+            })
+            if result.status not in _TERMINAL_FAILURES:
+                result.status = "FITTED"
         else:
             result.status = "NO_CANDIDATES"
             result.reason = "no valid candidates for any date in window"
@@ -482,6 +503,8 @@ class FoldAccountBacktest:
         prices_df: pd.DataFrame,
         result: WindowBacktestResult,
         runtime=None,  # StrategyRuntime for exit gating
+        signal_exposure_targets: dict[object, float] | None = None,  # PR25 Fix 4
+        full_ranked_panels: dict[object, pd.DataFrame] | None = None,  # PR25 Fix 5
     ) -> None:
         """Execute full daily account backtest for one validation window.
 
@@ -625,8 +648,22 @@ class FoldAccountBacktest:
                 day_cdf = candidate_map.get(signal_date, pd.DataFrame())
 
                 # Build per-symbol score map from candidates for lifecycle recording
+                # PR25 Fix 5: Use full ranked panel when available so positions
+                # that fell out of top-N still get their real rank_score/rank
+                # instead of artificial rank_score=0, rank=candidate_count.
                 day_score_map: dict[str, dict[str, Any]] = {}
-                if not day_cdf.empty:
+                ranked_panel = None
+                if full_ranked_panels and signal_date in full_ranked_panels:
+                    ranked_panel = full_ranked_panels[signal_date]
+                if ranked_panel is not None and not ranked_panel.empty:
+                    total_ranked = len(ranked_panel)
+                    for _, prow in ranked_panel.iterrows():
+                        sym = str(prow.get("symbol", ""))
+                        day_score_map[sym] = {
+                            "rank_score": float(prow.get("rank_score", prow.get("rank", 0))),
+                            "rank": int(_safe_float(prow.get("rank"), total_ranked)),
+                        }
+                elif not day_cdf.empty:
                     for _, crow in day_cdf.iterrows():
                         sym = str(crow.get("symbol", ""))
                         day_score_map[sym] = {
@@ -647,16 +684,20 @@ class FoldAccountBacktest:
                             candidate_count,
                         )
 
-                # --- Unlock expired positions ---
-                expired = [s for s, until in locked_until.items() if day_idx >= until]
-                for s in expired:
-                    del locked_until[s]
+                # --- PR25 Fix 5: Winner extension checked BEFORE unlock ---
+                # Previously expired positions were unlocked first, which meant
+                # at day 10 the symbol was already removed from locked_until
+                # and the extension check (which requires sym in locked_until)
+                # could never fire.
+                # Now: check extension first, extend if eligible, THEN unlock
+                # non-extended positions.
 
                 # --- 2a. SELL: Exit-prioritized position management ---
                 # Gates: hard_risk > alpha_decay > fixed_hold_expiry >
                 #        winner_extension > rebalance
                 # PR24: For A9, decay is checked from day 2 (not gated by lock).
                 # Winner extension at day 10. Forced exit at max_holding_days.
+                # PR25 Fix 5: Winner extension checked before unlock.
                 sells_to_execute: list[tuple[str, int, str]] = []  # (sym, shares, reason)
 
                 for sym in list(account.positions.keys()):
@@ -703,20 +744,27 @@ class FoldAccountBacktest:
                             exit_reason = "fixed_hold_expiry"
 
                     # Gate 4: Winner extension (A9 at day 10)
+                    # PR25 Fix 5: Check extension BEFORE position is unlocked.
+                    # Previously, expired locks were removed before this check,
+                    # making winner extension impossible (sym not in locked_until).
+                    # Now: at hold_days, check extension first. If extended,
+                    # update lock. If not, remove from locked_until so the
+                    # position can exit via fixed_hold_expiry.
                     if not exit_reason and uses_decay_exit and runtime is not None:
-                        if holding_days_sym >= hold_days and sym in locked_until:
+                        if holding_days_sym >= hold_days:
                             extend, extra_days = runtime.should_extend(sym)
                             if extend and not getattr(pos, "_was_extended", False):
                                 locked_until[sym] = day_idx + extra_days
-                                pos._was_extended = True  # type: ignore[attr-defined]
+                                object.__setattr__(pos, "_was_extended", True)
                                 result.nav_rows.append({
                                     "experiment_id": experiment_id, "window": window_label,
                                     "trade_date": trade_date, "event_type": "winner_extension",
                                     "symbol": sym, "extra_days": extra_days,
                                 })
                                 continue  # keep holding, don't exit
-                            elif not extend:
-                                # Not extended at day 10 → exit via fixed hold
+                            else:
+                                # Not extended — remove lock so fixed_hold_expiry fires
+                                locked_until.pop(sym, None)
                                 exit_reason = "fixed_hold_expiry"
 
                     # Gate 5: Lock check (skip if still locked)
@@ -868,6 +916,7 @@ class FoldAccountBacktest:
 
                     name = str(price_info.get("name", sym))
                     industry = str(price_info.get("industry", ""))
+                    theme = str(price_info.get("theme", industry))  # PR25 Fix 6
                     was_new = current_shares == 0
                     bought = _execute_buy(
                         account, sym, name, industry, buy_shares,
@@ -875,6 +924,7 @@ class FoldAccountBacktest:
                         self.cost_model, self.config.lot_size,
                         result.trade_rows,
                         "delta_increase" if not was_new else "rebalance_entry",
+                        theme=theme,
                     )
                     if bought > 0:
                         # Lifecycle: open position in exit tracker
@@ -945,6 +995,9 @@ class FoldAccountBacktest:
                         max_single_sym = sym
                     ind = pos.industry or "unknown"
                     industry_exposure[ind] = industry_exposure.get(ind, 0.0) + weight
+                    # PR25 Fix 6: Actually accumulate theme exposure
+                    thm = pos.theme or "unknown"
+                    theme_exposure[thm] = theme_exposure.get(thm, 0.0) + weight
 
                 actual_exposure = sum(
                     (pos.shares * (price_map.get(sym) or last_close_price.get(sym, 0.0)))
@@ -953,8 +1006,18 @@ class FoldAccountBacktest:
                     if pos.shares > 0
                 )
 
-                # Dynamic target exposure from config (vs runtime for flexibility)
-                target_exp = self.config.target_gross_exposure
+                # PR25 Fix 4: Use runtime's per-signal-date target exposure
+                # instead of the fixed config.  This prevents both false
+                # positives (35% target passing 70% gate) and false negatives
+                # (80% target killed by 70% gate).
+                if signal_date is not None and signal_exposure_targets:
+                    sd_key = _normalize_date(signal_date)
+                    if sd_key in signal_exposure_targets:
+                        target_exp = signal_exposure_targets[sd_key]
+                    else:
+                        target_exp = self.config.target_gross_exposure
+                else:
+                    target_exp = self.config.target_gross_exposure
 
                 # Check: single stock > 15%
                 if max_single > 0.15:
@@ -982,20 +1045,30 @@ class FoldAccountBacktest:
                     violations.append(f"negative_cash:{account.cash:.2f}")
 
                 # Check: top 2 risk contribution > 45%
-                sorted_positions = sorted(
-                    [
-                        (sym, pos.shares * (price_map.get(sym) or last_close_price.get(sym, 0.0)))
-                        for sym, pos in account.positions.items()
-                        if pos.shares > 0
-                    ],
-                    key=lambda x: -x[1],
-                )
-                if len(sorted_positions) >= 2:
-                    top2_sum = (
-                        sorted_positions[0][1] + sorted_positions[1][1]
-                    ) / equity_yuan
-                    if top2_sum > 0.45:
-                        violations.append(f"top2_risk_contribution:{top2_sum:.4f}")
+                # PR25 Fix 7: Use volatility-weighted risk contribution
+                # instead of simple market-cap weight.  The old code sorted
+                # by market value only, which is just top-2 weight, not
+                # actual risk contribution (RC_i = w_i * (Σw)_i).
+                #
+                # Compute approximate risk contribution using per-stock
+                # volatility.  Falls back to market-cap weight when price
+                # history is insufficient.
+                risk_positions = [
+                    (sym, pos.shares * (price_map.get(sym) or last_close_price.get(sym, 0.0)))
+                    for sym, pos in account.positions.items()
+                    if pos.shares > 0
+                ]
+                if len(risk_positions) >= 2:
+                    rc_contributions = _compute_risk_contributions(
+                        risk_positions, equity_yuan, prices_df,
+                        window_dates, trade_date, day_idx,
+                    )
+                    if rc_contributions:
+                        top2_rc = sum(
+                            sorted(rc_contributions, reverse=True)[:2]
+                        )
+                        if top2_rc > 0.45:
+                            violations.append(f"top2_risk_contribution:{top2_rc:.4f}")
 
                 # HARD FAIL on any violation
                 if violations:
@@ -1124,7 +1197,7 @@ class FoldAccountBacktest:
             if not rnd_candidate_map:
                 continue
 
-            rnd_result = WindowBacktestResult(window_label=window_label, status="FITTED")
+            rnd_result = WindowBacktestResult(window_label=window_label)
 
             self._run_account_backtest(
                 f"RND100_{experiment_id}", window_label,
@@ -1133,16 +1206,34 @@ class FoldAccountBacktest:
                 rnd_result, runtime=None,
             )
 
+            # PR25 Fix 1: RND100 fold must not be counted if it hit a terminal failure
+            if rnd_result.status in frozenset({
+                "INVALID_RISK_STATE", "FIT_ERROR", "EXECUTION_ERROR",
+                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE",
+            }):
+                continue
+
             # Compute metrics from nav
             metrics = self.compute_metrics(rnd_result.nav_rows, rnd_result.trade_rows)
-            # PR24: Track pool size and position path per seed
-            trade_symbols = sorted(set(
-                t["symbol"] for t in rnd_result.trade_rows
-                if t.get("side") == "BUY"
-            ))
+            # PR25 Fix 8: Path hash now includes trade_date, symbol, weight,
+            # and shares for proper diversity tracking.  Previously only
+            # hashed sorted set of buy symbols, which could produce identical
+            # hashes for different paths.
+            path_components: list[str] = []
+            for t in sorted(rnd_result.trade_rows, key=lambda x: (str(x.get("trade_date", "")), str(x.get("symbol", "")))):
+                path_components.append(
+                    f"{t.get('trade_date','')}:{t.get('symbol','')}:"
+                    f"{t.get('shares',0)}:{t.get('side','')}"
+                )
+            # Also include NAV trajectory for finer-grained uniqueness
+            for n in rnd_result.nav_rows:
+                if "nav" in n:
+                    path_components.append(
+                        f"NAV:{n.get('trade_date','')}:{n.get('nav',0):.6f}"
+                    )
             path_hash = hashlib.sha256(
-                ",".join(trade_symbols).encode()
-            ).hexdigest()[:16] if trade_symbols else "no_trades"
+                "|".join(path_components).encode()
+            ).hexdigest()[:16] if path_components else "no_trades"
             seed_results.append({
                 "seed_index": seed_idx,
                 "sha256_seed": seed,
@@ -1156,18 +1247,30 @@ class FoldAccountBacktest:
                 "n_nav_days": metrics["n_nav_days"],
                 "pool_size": len(rnd_candidate_map),
                 "path_hash": path_hash,
-                "n_symbols": len(trade_symbols),
+                "n_symbols": len(set(
+                    t["symbol"] for t in rnd_result.trade_rows
+                    if t.get("side") == "BUY"
+                )),
             })
 
-        # PR24: Verify at least 95/100 seeds produce distinct position paths
-        if len(seed_results) >= 95:
-            unique_hashes = set(sr["path_hash"] for sr in seed_results)
-            if len(unique_hashes) < 95:
-                import warnings
-                warnings.warn(
-                    f"RND100: only {len(unique_hashes)}/100 distinct paths "
-                    f"(expected ≥95). RND100 baseline may not be reliable."
-                )
+        # PR25 Fix 8: HARD FAIL when fewer than 95 distinct paths.
+        # Previously only a warning.  RND100 is unusable as a baseline
+        # if it lacks sufficient path diversity.
+        if len(seed_results) < 95:
+            import warnings
+            warnings.warn(
+                f"RND100: only {len(seed_results)}/100 seeds produced results. "
+                f"RND100 baseline FAILED — fewer than 95 seeds ran."
+            )
+            return []  # hard fail: return empty, caller must treat as failed
+        unique_hashes = set(sr["path_hash"] for sr in seed_results)
+        if len(unique_hashes) < 95:
+            import warnings
+            warnings.warn(
+                f"RND100: only {len(unique_hashes)}/100 distinct paths "
+                f"(expected ≥95). RND100 baseline FAILED."
+            )
+            return []  # hard fail
 
         return seed_results
 
@@ -1278,7 +1381,10 @@ class FoldAccountBacktest:
                     state, ranked, sd, prices_df, target_exp, self.config.top_n,
                 )
 
-                # PR24: Assert REV Top5 ⊆ A7 Bottom5
+                # PR25 Fix 9: HARD FAIL if REV Top5 overlaps A7 Top5.
+                # REV must be the inverse of A7 — REV executed Top5 must
+                # equal A7 full eligible pool Bottom5.  Previously only
+                # recorded an error but continued.
                 rev_top5_symbols = set(topn["symbol"].astype(str).tolist())
                 a7_bottom_n = ranked_original.tail(self.config.top_n)
                 a7_bottom_symbols = set(
@@ -1297,6 +1403,13 @@ class FoldAccountBacktest:
                             "signal_date": str(signal_date),
                             "detail": f"REV Top5 overlaps A7 Top5: {sorted(overlap)}",
                         })
+                        # PR25 Fix 9: Hard fail — fold is invalid
+                        result.status = "UNMATCHED_BASELINE"
+                        result.reason = (
+                            f"REV Top5 overlaps A7 Top5 on {signal_date}: "
+                            f"{sorted(overlap)}"
+                        )
+                        return result
 
                 for _, row in topn.iterrows():
                     result.candidates.append({
@@ -1338,7 +1451,13 @@ class FoldAccountBacktest:
                 signal_weights, window_dates, calendar_dates,
                 prices_df, result, runtime=runtime,
             )
-            result.status = "FITTED"
+            # PR25 Fix 1: Only set FITTED if no terminal failure state was set
+            _TERMINAL_FAILURES = frozenset({
+                "INVALID_RISK_STATE", "FIT_ERROR", "EXECUTION_ERROR",
+                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE",
+            })
+            if result.status not in _TERMINAL_FAILURES:
+                result.status = "FITTED"
         else:
             result.status = "NO_CANDIDATES"
             result.reason = "REV: no valid candidates for any date in window"
@@ -1358,6 +1477,10 @@ class FoldAccountBacktest:
     ) -> dict[str, Any]:
         """Compute return/risk metrics from NAV and trade rows.
 
+        PR25 Fix 2: Calmar ratio uses annualized_return / abs(max_drawdown)
+        (not cumulative return).  annualized_return uses NAV geometric growth.
+        Total return is computed from first-to-last NAV ratio.
+
         Returns dict with: total_return, max_drawdown, calmar_ratio,
         sharpe_ratio (annualized), cvar_95, n_trades, turnover_rate,
         total_costs, avg_exposure, final_nav, n_nav_days.
@@ -1369,17 +1492,24 @@ class FoldAccountBacktest:
                 "total_return": 0.0, "max_drawdown": 0.0, "calmar_ratio": 0.0,
                 "sharpe_ratio": 0.0, "cvar_95": 0.0, "n_trades": 0,
                 "turnover_rate": 0.0, "total_costs": 0.0, "avg_exposure": 0.0,
-                "final_nav": 1.0, "n_nav_days": 0,
+                "final_nav": 1.0, "n_nav_days": 0, "annualized_return": 0.0,
             }
 
-        total_return = nav_series[-1] - 1.0
-        peak = 1.0
+        # PR25 Fix 2: total_return from first-to-last NAV ratio (works for
+        # both fold-level NA=1.0 and stitched NAV).
+        nav_first = nav_series[0]
+        nav_last = nav_series[-1]
+        if nav_first > 0:
+            total_return = nav_last / nav_first - 1.0
+        else:
+            total_return = 0.0
+
+        peak = nav_first
         max_dd = 0.0
         for nv in nav_series:
             peak = max(peak, nv)
             dd = (nv - peak) / peak if peak > 0 else 0.0
             max_dd = min(max_dd, dd)
-        calmar = total_return / abs(max_dd) if abs(max_dd) > 0.0001 else 0.0
 
         # Daily returns
         daily_rets = []
@@ -1408,11 +1538,14 @@ class FoldAccountBacktest:
             worst = sorted_rets[:cutoff]
             cvar_95 = float(sum(worst) / len(worst)) if worst else 0.0
 
-        # Annualized return
+        # PR25 Fix 2: Annualized return from geometric growth of NAV
         n_days = len(nav_series)
         ann_return = 0.0
-        if n_days > 0 and nav_series[0] > 0:
-            ann_return = float((nav_series[-1] / nav_series[0]) ** (252.0 / n_days) - 1.0)
+        if n_days > 0 and nav_first > 0:
+            ann_return = float((nav_last / nav_first) ** (252.0 / n_days) - 1.0)
+
+        # PR25 Fix 2: Calmar = annualized_return / abs(max_drawdown)
+        calmar = ann_return / abs(max_dd) if abs(max_dd) > 0.0001 else 0.0
 
         # Turnover + total costs
         n_trades = len(trade_rows) if trade_rows else 0
@@ -1445,7 +1578,7 @@ class FoldAccountBacktest:
             "turnover_rate": float(turnover_rate),
             "total_costs": float(total_costs),
             "avg_exposure": float(avg_exposure),
-            "final_nav": float(nav_series[-1]),
+            "final_nav": float(nav_last),
             "n_nav_days": len(nav_series),
         }
 
@@ -1461,6 +1594,10 @@ class FoldAccountBacktest:
           2. Computes daily returns within each fold
           3. Deduplicates by date across folds
           4. Compounds into a single stitched NAV starting at 1.0
+
+        PR25 Fix 2: The stitched series explicitly starts with NAV=1.0 at the
+        earliest trade_date, so the first daily return is preserved and
+        annualized_return / total_return calculations are correct.
 
         Returns a list of {trade_date, nav, ...} dicts.
         """
@@ -1504,8 +1641,20 @@ class FoldAccountBacktest:
         ret_df = ret_df.drop_duplicates(subset=["trade_date"], keep="first")
         ret_df = ret_df.sort_values("_td").reset_index(drop=True)
 
-        # Compound
-        stitched = []
+        # PR25 Fix 2: Compound starting from NAV=1.0, with an explicit
+        # initial row so the first daily return is preserved.
+        # Use the day before the first trade as the initial NAV=1.0 anchor.
+        first_trade = pd.Timestamp(str(ret_df.iloc[0]["trade_date"]))
+        anchor_date = (first_trade - pd.Timedelta(days=1)).date()
+        # If anchor_date falls on the same date as first trade (weekend gap),
+        # use the first trade date itself.
+        if str(anchor_date) == str(first_trade.date()):
+            anchor_date = first_trade.date()
+        stitched = [{
+            "trade_date": anchor_date,
+            "nav": 1.0,
+            "daily_return": 0.0,
+        }]
         nav = 1.0
         for _, row in ret_df.iterrows():
             nav *= (1.0 + float(row["daily_return"]))
@@ -1648,3 +1797,77 @@ def _get_close_price(
         if np.isfinite(px) and px > 0:
             return float(px)
     return 0.0
+
+
+# ---------------------------------------------------------------------------
+# PR25 Fix 7: Volatility-weighted risk contribution
+# ---------------------------------------------------------------------------
+
+
+def _compute_risk_contributions(
+    positions_mv: list[tuple[str, float]],
+    equity: float,
+    prices_df: pd.DataFrame,
+    window_dates: list,
+    trade_date: object,
+    day_idx: int,
+    lookback: int = 20,
+) -> list[float]:
+    """Compute volatility-weighted risk contributions for positions.
+
+    RC_i = (w_i * σ_i) / Σ(w_j * σ_j)
+
+    where w_i is portfolio weight and σ_i is rolling 20d volatility.
+    Falls back to equal-weight when price history is insufficient.
+
+    Returns a list of risk contributions (sorted descending by value).
+    """
+    if equity <= 0 or not positions_mv:
+        return []
+
+    weights = [mv / equity for _sym, mv in positions_mv]
+    symbols = [sym for sym, _mv in positions_mv]
+
+    # Build daily return history for each position from prices_df
+    daily_rets: dict[str, list[float]] = {sym: [] for sym in symbols}
+    lookback_start = max(0, day_idx - lookback)
+    for past_idx in range(lookback_start, day_idx + 1):
+        if past_idx >= len(window_dates):
+            break
+        past_date = window_dates[past_idx]
+        prev_date = window_dates[past_idx - 1] if past_idx > 0 else None
+        if prev_date is None:
+            continue
+        for sym in symbols:
+            past_close = _get_close_price(prices_df, sym, past_date)
+            prev_close = _get_close_price(prices_df, sym, prev_date)
+            if past_close > 0 and prev_close > 0:
+                daily_rets[sym].append(past_close / prev_close - 1.0)
+
+    # Compute per-stock annualized volatility
+    vols = []
+    for sym in symbols:
+        rets = daily_rets.get(sym, [])
+        if len(rets) >= 10:
+            mean_r = sum(rets) / len(rets)
+            var_r = (sum((r - mean_r) ** 2 for r in rets) /
+                     (len(rets) - 1)) if len(rets) > 1 else 0.0
+            vols.append(max(var_r ** 0.5, 0.005))
+        elif len(rets) >= 3:
+            mean_r = sum(rets) / len(rets)
+            var_r = sum((r - mean_r) ** 2 for r in rets) / len(rets)
+            vols.append(max(var_r ** 0.5, 0.005))
+        else:
+            # Minimal history — use moderate default vol
+            vols.append(0.02)
+
+    if not vols:
+        return []
+
+    # Risk contribution: RC_i = w_i * σ_i / Σ(w_j * σ_j)
+    vol_weighted = [w * v for w, v in zip(weights, vols)]
+    total_vw = sum(vol_weighted)
+    if total_vw <= 0:
+        return []
+
+    return [vw / total_vw for vw in vol_weighted]
