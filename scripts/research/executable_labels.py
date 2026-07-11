@@ -427,6 +427,7 @@ def compute_forward_returns_grouped(
     calendar: list[object],
     hold_days: int = 10,
     cost_rate: float | None = None,
+    calendar: list[object] | None = None,
 ) -> pd.DataFrame:
     """Convenience wrapper: returns only the primary label column + fwd_ret."""
     result = compute_executable_forward_returns(
