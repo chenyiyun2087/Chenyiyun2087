@@ -8,6 +8,7 @@ exception swallowing, empty-file overwrites, and missing account backtests.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import shutil
