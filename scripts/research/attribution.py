@@ -116,7 +116,8 @@ def compute_attribution_from_folds(
     windows: list[str] | None = None,
 ) -> dict[str, AttributionResult]:
     if windows is None:
-        windows = ["2025H1", "2025H2", "2026H1"]
+        from scripts.research.validation_evidence import FIXED_WINDOWS
+        windows = [w[0] for w in FIXED_WINDOWS]
     results: dict[str, AttributionResult] = {}
     for window in windows:
         c0_ret = _window_return(fold_results.get("C0", []), window)

@@ -1,9 +1,9 @@
 """Walk-forward engine for matched alpha experiments.
 
-Generates time-sliced folds (24-month train, 6-month validate, 6-month
+Generates time-sliced folds (24-month train, 3-month validate, 3-month
 step, 10-trading-day embargo), runs each alpha experiment (A0–A7) through
 the MatchedPortfolioRunner for each fold, and aggregates results per fixed
-OOS validation window (2025H1, 2025H2, 2026H1).
+OOS validation window (2024Q1–2026Q2).
 
 Key invariants:
   - No data from past train_end can influence ranking parameters.
@@ -46,14 +46,21 @@ from scripts.research.strategy_runtime import resolve_runtime
 
 # Fixed OOS validation windows — the only windows that matter for the gate.
 FIXED_VALIDATION_WINDOWS: list[tuple[str, str]] = [
-    ("2025-01-01", "2025-06-30"),   # 2025H1
-    ("2025-07-01", "2025-12-31"),   # 2025H2
-    ("2026-01-01", "2026-06-30"),   # 2026H1
+    ("2024-01-01", "2024-03-31"),   # 2024Q1
+    ("2024-04-01", "2024-06-30"),   # 2024Q2
+    ("2024-07-01", "2024-09-30"),   # 2024Q3
+    ("2024-10-01", "2024-12-31"),   # 2024Q4
+    ("2025-01-01", "2025-03-31"),   # 2025Q1
+    ("2025-04-01", "2025-06-30"),   # 2025Q2
+    ("2025-07-01", "2025-09-30"),   # 2025Q3
+    ("2025-10-01", "2025-12-31"),   # 2025Q4
+    ("2026-01-01", "2026-03-31"),   # 2026Q1
+    ("2026-04-01", "2026-06-30"),   # 2026Q2
 ]
 
 DEFAULT_TRAIN_MONTHS = 24
-DEFAULT_VALIDATE_MONTHS = 6
-DEFAULT_STEP_MONTHS = 6
+DEFAULT_VALIDATE_MONTHS = 3
+DEFAULT_STEP_MONTHS = 3
 DEFAULT_EMBARGO_TRADING_DAYS = 10
 
 # PR13: Hold period experiment variants
@@ -152,11 +159,13 @@ def _nth_trading_day(
 def _window_for_date(
     date_str: str,
 ) -> str | None:
-    """Return which fixed OOS window *date_str* falls into."""
+    """Return which fixed OOS window *date_str* falls into (quarterly label)."""
     ts = pd.Timestamp(date_str).date()
     for start, end in FIXED_VALIDATION_WINDOWS:
         if pd.Timestamp(start).date() <= ts <= pd.Timestamp(end).date():
-            return f"{start[:4]}H{1 if start[5:7]=='01' else 2}"
+            fws = pd.Timestamp(start).date()
+            quarter = (fws.month - 1) // 3 + 1
+            return f"{fws.year}Q{quarter}"
     return None
 
 

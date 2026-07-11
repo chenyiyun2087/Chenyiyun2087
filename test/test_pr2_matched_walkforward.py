@@ -332,12 +332,12 @@ def _wm(label: str, total_return: float) -> WindowMetrics:
 
 def test_comparison_gate_a0_beats_all():
     """A0 positive and beats all comparators → PASS."""
-    a0 = {"2025H1": _wm("2025H1", 0.15),
-          "2025H2": _wm("2025H2", 0.10),
-          "2026H1": _wm("2026H1", 0.20)}
-    a1 = {"2025H1": _wm("2025H1", 0.05),
-          "2025H2": _wm("2025H2", 0.02),
-          "2026H1": _wm("2026H1", 0.08)}
+    a0 = {"2025Q1": _wm("2025Q1", 0.15),
+          "2025Q3": _wm("2025Q3", 0.10),
+          "2026Q1": _wm("2026Q1", 0.20)}
+    a1 = {"2025Q1": _wm("2025Q1", 0.05),
+          "2025Q3": _wm("2025Q3", 0.02),
+          "2026Q1": _wm("2026Q1", 0.08)}
     result = ComparisonGate.evaluate(a0, a1, a1, a1, a1)
     assert result.passed
     assert result.windows_passed == 3
@@ -345,12 +345,12 @@ def test_comparison_gate_a0_beats_all():
 
 def test_comparison_gate_a0_fails_when_negative():
     """A0 has negative return in 2/3 windows → FAIL."""
-    a0 = {"2025H1": _wm("2025H1", -0.05),
-          "2025H2": _wm("2025H2", -0.03),
-          "2026H1": _wm("2026H1", 0.20)}
-    a1 = {"2025H1": _wm("2025H1", 0.01),
-          "2025H2": _wm("2025H2", 0.01),
-          "2026H1": _wm("2026H1", 0.01)}
+    a0 = {"2025Q1": _wm("2025Q1", -0.05),
+          "2025Q3": _wm("2025Q3", -0.03),
+          "2026Q1": _wm("2026Q1", 0.20)}
+    a1 = {"2025Q1": _wm("2025Q1", 0.01),
+          "2025Q3": _wm("2025Q3", 0.01),
+          "2026Q1": _wm("2026Q1", 0.01)}
     result = ComparisonGate.evaluate(a0, a1, a1, a1, a1)
     assert not result.passed
     assert result.windows_passed < 2
@@ -358,24 +358,24 @@ def test_comparison_gate_a0_fails_when_negative():
 
 def test_comparison_gate_fails_without_beating_a1():
     """A0 is positive but doesn't beat equal weight → FAIL."""
-    a0 = {"2025H1": _wm("2025H1", 0.02),
-          "2025H2": _wm("2025H2", 0.02),
-          "2026H1": _wm("2026H1", 0.20)}
-    a1 = {"2025H1": _wm("2025H1", 0.05),
-          "2025H2": _wm("2025H2", 0.05),
-          "2026H1": _wm("2026H1", 0.08)}
+    a0 = {"2025Q1": _wm("2025Q1", 0.02),
+          "2025Q3": _wm("2025Q3", 0.02),
+          "2026Q1": _wm("2026Q1", 0.20)}
+    a1 = {"2025Q1": _wm("2025Q1", 0.05),
+          "2025Q3": _wm("2025Q3", 0.05),
+          "2026Q1": _wm("2026Q1", 0.08)}
     result = ComparisonGate.evaluate(a0, a1, a1, a1, a1)
     assert not result.passed
 
 
 def test_gate_records_failure_reasons():
     """A0 fails in 2 of 3 windows → FAILED_REVALIDATION with reasons."""
-    a0 = {"2025H1": _wm("2025H1", -0.05),
-          "2025H2": _wm("2025H2", -0.03),
-          "2026H1": _wm("2026H1", 0.20)}
-    a1 = {"2025H1": _wm("2025H1", 0.01),
-          "2025H2": _wm("2025H2", 0.01),
-          "2026H1": _wm("2026H1", 0.01)}
+    a0 = {"2025Q1": _wm("2025Q1", -0.05),
+          "2025Q3": _wm("2025Q3", -0.03),
+          "2026Q1": _wm("2026Q1", 0.20)}
+    a1 = {"2025Q1": _wm("2025Q1", 0.01),
+          "2025Q3": _wm("2025Q3", 0.01),
+          "2026Q1": _wm("2026Q1", 0.01)}
     result = ComparisonGate.evaluate(a0, a1, a1, a1, a1)
     assert not result.passed
     assert len(result.failure_reasons) > 0

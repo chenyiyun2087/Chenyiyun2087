@@ -581,9 +581,9 @@ class TestEvidenceSemanticValidation:
                 "files": {},
             }),
             "factor_state_by_fold.json": json.dumps({
-                "2025H1": {"status": "NOT_FITTED", "reason": "PR18_matrix_not_run"},
-                "2025H2": {"status": "NOT_FITTED", "reason": "PR18_matrix_not_run"},
-                "2026H1": {"status": "NOT_FITTED", "reason": "PR18_matrix_not_run"},
+                "2025Q1": {"status": "NOT_FITTED", "reason": "PR18_matrix_not_run"},
+                "2025Q3": {"status": "NOT_FITTED", "reason": "PR18_matrix_not_run"},
+                "2026Q1": {"status": "NOT_FITTED", "reason": "PR18_matrix_not_run"},
             }),
             "corporate_action_snapshot.json": json.dumps({
                 "source": "ods_dividend",
@@ -726,9 +726,9 @@ class TestEvidenceSemanticValidation:
 
         # Fix factor states to FITTED
         (evidence_dir / "factor_state_by_fold.json").write_text(json.dumps({
-            "2025H1": {"status": "FITTED"},
-            "2025H2": {"status": "FITTED"},
-            "2026H1": {"status": "FITTED"},
+            "2025Q1": {"status": "FITTED"},
+            "2025Q3": {"status": "FITTED"},
+            "2026Q1": {"status": "FITTED"},
         }))
 
         # Add data to get past EMPTY check (root + per-experiment for PR20)
@@ -765,9 +765,9 @@ class TestEvidenceSemanticValidation:
 
         overrides = {
             "factor_state_by_fold.json": json.dumps({
-                "2025H1": {"status": "FITTED"},
-                "2025H2": {"status": "FITTED"},
-                "2026H1": {"status": "FITTED"},
+                "2025Q1": {"status": "FITTED"},
+                "2025Q3": {"status": "FITTED"},
+                "2026Q1": {"status": "FITTED"},
             }),
             "corporate_action_snapshot.json": json.dumps({
                 "source": "ods_dividend", "summary": {"rows": 1000},
@@ -791,7 +791,7 @@ class TestEvidenceSemanticValidation:
             "accrued_cost": 0.0,               # PR20: required column
         })
         nav.to_parquet(evidence_dir / "daily_nav.parquet")
-        # PR20: Write to per-experiment directories (covers 2025H1 window)
+        # PR20: Write to per-experiment directories (covers 2025Q1 window)
         for exp_id in ["P0", "C0", "A7", "A8", "A9"]:
             nav.to_parquet((evidence_dir / exp_id) / "daily_nav.parquet")
 

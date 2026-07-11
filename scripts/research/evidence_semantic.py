@@ -563,10 +563,12 @@ def validate_daily_decisions_nonempty(
 
 REQUIRED_EXPERIMENTS_FOR_OOS = frozenset({"P0", "C0", "A7", "A8", "A9"})
 FIXED_VALIDATION_WINDOWS = frozenset({
-    "2024H1", "2024H2", "2025H1", "2025H2", "2026H1",
+    "2024Q1", "2024Q2", "2024Q3", "2024Q4",
+    "2025Q1", "2025Q2", "2025Q3", "2025Q4",
+    "2026Q1", "2026Q2",
 })
 # PR20: Windows still in progress — excluded from promotion statistics
-INCOMPLETE_VALIDATION_WINDOWS = frozenset({"2026H2"})
+INCOMPLETE_VALIDATION_WINDOWS = frozenset({"2026Q3", "2026Q4"})
 # PR20: Minimum trading days per window (aligned with PR19 MIN_SESSIONS_PER_WINDOW)
 MIN_TRADING_DAYS_PER_WINDOW = 15
 # PR20: Minimum coverage ratio (actual trading days / official calendar days)
@@ -733,12 +735,18 @@ def _check_experiment_windows(exp_dir: Path) -> set[str]:
 def _get_window_dates(window_label: str) -> tuple | None:
     """Map window label to (start_date, end_date)."""
     mapping = {
-        "2024H1": (pd.Timestamp("2024-01-01").date(), pd.Timestamp("2024-06-30").date()),
-        "2024H2": (pd.Timestamp("2024-07-01").date(), pd.Timestamp("2024-12-31").date()),
-        "2025H1": (pd.Timestamp("2025-01-01").date(), pd.Timestamp("2025-06-30").date()),
-        "2025H2": (pd.Timestamp("2025-07-01").date(), pd.Timestamp("2025-12-31").date()),
-        "2026H1": (pd.Timestamp("2026-01-01").date(), pd.Timestamp("2026-06-30").date()),
-        "2026H2": (pd.Timestamp("2026-07-01").date(), pd.Timestamp("2026-12-31").date()),
+        "2024Q1": (pd.Timestamp("2024-01-01").date(), pd.Timestamp("2024-03-31").date()),
+        "2024Q2": (pd.Timestamp("2024-04-01").date(), pd.Timestamp("2024-06-30").date()),
+        "2024Q3": (pd.Timestamp("2024-07-01").date(), pd.Timestamp("2024-09-30").date()),
+        "2024Q4": (pd.Timestamp("2024-10-01").date(), pd.Timestamp("2024-12-31").date()),
+        "2025Q1": (pd.Timestamp("2025-01-01").date(), pd.Timestamp("2025-03-31").date()),
+        "2025Q2": (pd.Timestamp("2025-04-01").date(), pd.Timestamp("2025-06-30").date()),
+        "2025Q3": (pd.Timestamp("2025-07-01").date(), pd.Timestamp("2025-09-30").date()),
+        "2025Q4": (pd.Timestamp("2025-10-01").date(), pd.Timestamp("2025-12-31").date()),
+        "2026Q1": (pd.Timestamp("2026-01-01").date(), pd.Timestamp("2026-03-31").date()),
+        "2026Q2": (pd.Timestamp("2026-04-01").date(), pd.Timestamp("2026-06-30").date()),
+        "2026Q3": (pd.Timestamp("2026-07-01").date(), pd.Timestamp("2026-09-30").date()),
+        "2026Q4": (pd.Timestamp("2026-10-01").date(), pd.Timestamp("2026-12-31").date()),
     }
     return mapping.get(window_label)
 

@@ -65,6 +65,10 @@ jobs:
         env:
           ORDER_TEST_DB_URL: mysql+pymysql://root:test_password@127.0.0.1:3306/order_test_db
         run: python -m pytest test/test_order_v2_migration_integration.py -v
+      - name: PR26A.5 unit tests (non-database)
+        run: python -m pytest test/test_pr26a4_upgrade.py -v -m "not integration"
+      - name: PR26A.5 quarterly smoke test (database)
+        run: python -m pytest test/test_pr26a4_upgrade.py::TestL10QuarterlySmoke -v -m integration
       - name: Statistical robustness tests
         run: python -c "
           import sys; sys.path.insert(0, '.');

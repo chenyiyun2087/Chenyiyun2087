@@ -278,8 +278,9 @@ class AlphaEstimator:
         for factor_name in factor_functions:
             raw_col = f"{factor_name}_raw"
             raw = pd.to_numeric(result[raw_col], errors="coerce")
-            # PR26A.3: Preserve NaN — stocks with missing factor values must
-            # not enter the ranking with a default score of zero.
+            # PR26A.5: Fail-closed — stocks with missing factor values
+            # accumulate NaN rank_score and are excluded by the
+            # completeness mask below.
             valid = raw.notna()
             standardized = pd.Series(np.nan, index=raw.index, dtype=float)
             if valid.any():
@@ -289,9 +290,18 @@ class AlphaEstimator:
                 standardized[valid] = processed.values
             weight = float(fitted_state.factor_weights.get(factor_name, 0.0))
             sign = int(fitted_state.factor_signs.get(factor_name, 1))
-            result["rank_score"] += standardized.fillna(0.0) * weight * sign
+            # PR26A.5: Only accumulate valid (non-NaN) factor contributions.
+            # Stocks with missing factors retain their partial rank_score
+            # which will be NaN if ANY weighted factor is missing.
+            factor_contribution = standardized * weight * sign
+            result["rank_score"] = (
+                result["rank_score"] + factor_contribution.fillna(0.0)
+            )
+            # Re-NaN stocks that had NaN for THIS factor — they must not enter
+            # the panel with a partial score.
+            result.loc[standardized.isna(), "rank_score"] = np.nan
 
-        # --- Cross-sectional neutralization (restored PR26A.4) ---
+        # --- Cross-sectional neutralization (restored PR26A.4, hardened PR26A.5) ---
         # Neutralize the composite rank_score against industry, market cap,
         # and volatility to remove systematic beta before ranking.
         neutral_params = fitted_state.neutralization_parameters
@@ -312,28 +322,88 @@ class AlphaEstimator:
                 price_meta = price_meta.merge(col_data, on="symbol", how="left")
                 _meta_cols.append(col)
 
+        # PR26A.5: Prevent _x/_y suffix columns from silent merge collisions.
+        # Rename any metadata columns already present in result (from day_scores)
+        # to {col}_score before merging with price_meta, then combine_first.
+        for col in _meta_cols:
+            if col in result.columns:
+                result = result.rename(columns={col: f"{col}_score"})
+
         result = result.merge(price_meta, on="symbol", how="left")
+
+        # PR26A.5: Reject any _x/_y suffix columns — they indicate an unresolved
+        # merge collision that would silently skip neutralization.
+        _x_cols = [c for c in result.columns if c.endswith("_x")]
+        _y_cols = [c for c in result.columns if c.endswith("_y")]
+        if _x_cols or _y_cols:
+            raise RuntimeError(
+                f"ALPHA_NEUTRALIZATION_FAILED:{as_of_date}:"
+                f"merge collision _x={_x_cols} _y={_y_cols}"
+            )
+
+        # PR26A.5: Resolve metadata columns — prefer price's value, fall back
+        # to score's value for stocks where price metadata is missing.
+        for col in _meta_cols:
+            score_col = f"{col}_score"
+            if score_col in result.columns:
+                if col in result.columns:
+                    result[col] = result[col].combine_first(result[score_col])
+                else:
+                    result[col] = result[score_col]
+                result = result.drop(columns=[score_col])
+
+        # PR26A.5: Completeness mask — stocks must have rank_score AND all
+        # required neutralization columns non-null.  Missing any one = exclusion.
+        _required_neutral_cols = []
+        if neutral_params.get("industry", False):
+            _required_neutral_cols.append("industry")
+        if neutral_params.get("log_market_cap", False) or neutral_params.get(
+            "volatility_20d", False
+        ):
+            # cap_vol_neutralize needs circ_mv and vol20
+            if "circ_mv" not in result.columns and "log_circ_mv" in result.columns:
+                result["circ_mv"] = np.exp(result["log_circ_mv"])
+            if "vol20" not in result.columns and "pit_vol_20" in result.columns:
+                result["vol20"] = result["pit_vol_20"]
+            if neutral_params.get("log_market_cap", False):
+                _required_neutral_cols.append("circ_mv")
+            if neutral_params.get("volatility_20d", False):
+                _required_neutral_cols.append("vol20")
+
+        # Only check completeness for columns that actually exist in result.
+        # Missing columns are caught by the fail-closed neutralization steps below.
+        _existing_required = [c for c in set(_required_neutral_cols) if c in result.columns]
+        if _existing_required:
+            required_non_null = ["rank_score"] + _existing_required
+            completeness_mask = result[required_non_null].notna().all(axis=1)
+            incomplete_count = (~completeness_mask).sum()
+            if incomplete_count > 0:
+                result = result[completeness_mask].copy()
+
+        if result.empty:
+            raise RuntimeError(
+                f"ALPHA_NEUTRALIZATION_FAILED:{as_of_date}:"
+                f"no stocks pass completeness mask"
+            )
 
         # Industry neutralization
         if neutral_params.get("industry", False):
             industry_col = "industry"
-            if industry_col in result.columns:
+            if industry_col in result.columns and result[industry_col].notna().any():
                 residuals = CrossSectionalProcessor.industry_neutralize(
                     result, "rank_score", industry_col
                 )
                 result["rank_score"] = residuals  # NaN for missing industry
-            # If industry column missing, skip (no industry data available)
+            else:
+                raise RuntimeError(
+                    f"ALPHA_NEUTRALIZATION_FAILED:{as_of_date}:"
+                    f"industry column missing or all-NaN"
+                )
 
         # Market cap + volatility neutralization
         if neutral_params.get("log_market_cap", False) or neutral_params.get(
             "volatility_20d", False
         ):
-            # CrossSectionalProcessor.cap_vol_neutralize expects circ_mv and vol20
-            # Map from available columns
-            if "circ_mv" not in result.columns and "log_circ_mv" in result.columns:
-                result["circ_mv"] = np.exp(result["log_circ_mv"])
-            if "vol20" not in result.columns and "pit_vol_20" in result.columns:
-                result["vol20"] = result["pit_vol_20"]
             has_cap = "circ_mv" in result.columns
             has_vol = "vol20" in result.columns
             if has_cap and has_vol:
@@ -341,9 +411,22 @@ class AlphaEstimator:
                     residuals = CrossSectionalProcessor.cap_vol_neutralize(
                         result, "rank_score"
                     )
-                    result["rank_score"] = residuals  # NaN for missing data
-                except ValueError:
-                    pass  # Insufficient panel — skip cap/vol neutralization
+                    result["rank_score"] = residuals
+                except ValueError as e:
+                    raise RuntimeError(
+                        f"ALPHA_NEUTRALIZATION_FAILED:{as_of_date}:"
+                        f"cap/vol neutralization failed: {e}"
+                    ) from e
+            elif neutral_params.get("log_market_cap", False) and not has_cap:
+                raise RuntimeError(
+                    f"ALPHA_NEUTRALIZATION_FAILED:{as_of_date}:"
+                    f"log_market_cap neutralization requested but circ_mv missing"
+                )
+            elif neutral_params.get("volatility_20d", False) and not has_vol:
+                raise RuntimeError(
+                    f"ALPHA_NEUTRALIZATION_FAILED:{as_of_date}:"
+                    f"volatility_20d neutralization requested but vol20 missing"
+                )
 
         # Residual standardize
         if neutral_params.get("residual_standardize", False):
@@ -355,9 +438,15 @@ class AlphaEstimator:
                     ).values
                 )
 
-        # PR26A.4: Exclude stocks with NaN rank_score (missing neutralization data)
-        # from the eligible panel — they must not enter the ranking.
+        # PR26A.4/PR26A.5: Exclude stocks with NaN rank_score (missing
+        # neutralization data or factor values) from the eligible panel.
         result = result[result["rank_score"].notna()].copy()
+
+        if result.empty:
+            raise RuntimeError(
+                f"ALPHA_NEUTRALIZATION_FAILED:{as_of_date}:"
+                f"no stocks after NaN rank_score removal"
+            )
 
         result["rank"] = result["rank_score"].rank(ascending=False, method="first")
 

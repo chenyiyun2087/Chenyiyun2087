@@ -1,8 +1,8 @@
 """Walk-forward performance metrics, attribution, and comparison gate.
 
 Computes per-window metrics for each experiment fold and evaluates the
-A0 pass/fail gate against A1–A6 across the three fixed OOS validation
-windows (2025H1, 2025H2, 2026H1).
+A0 pass/fail gate against A1–A6 across the ten fixed OOS validation
+windows (2024Q1–2026Q2).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ REQUIRED_WINDOWS_PASS = 2  # must pass ≥ 2 out of 3
 class WindowMetrics:
     """Performance metrics for a single walk-forward validation window."""
 
-    window_label: str           # "2025H1", "2025H2", "2026H1"
+    window_label: str           # "2024Q1"–"2026Q2"
     experiment_id: str          # "A0", "A1", …
     total_return: float = 0.0
     annualized_return: float = 0.0
@@ -281,7 +281,11 @@ class ComparisonGate:
       5. A0 total_return > matched_neutral
     """
 
-    WINDOW_LABELS = ("2025H1", "2025H2", "2026H1")
+    WINDOW_LABELS = (
+    "2024Q1", "2024Q2", "2024Q3", "2024Q4",
+    "2025Q1", "2025Q2", "2025Q3", "2025Q4",
+    "2026Q1", "2026Q2",
+)
 
     @staticmethod
     def evaluate(
@@ -653,7 +657,11 @@ class RiskPortfolioGate:
       4. A8 max_single_position ≤ max_single_pct (concentration limit obeyed)
     """
 
-    WINDOW_LABELS = ("2025H1", "2025H2", "2026H1")
+    WINDOW_LABELS = (
+    "2024Q1", "2024Q2", "2024Q3", "2024Q4",
+    "2025Q1", "2025Q2", "2025Q3", "2025Q4",
+    "2026Q1", "2026Q2",
+)
     MAX_SINGLE_PCT = 0.25
 
     @staticmethod
@@ -818,7 +826,11 @@ class PromotionGateResult:
 class PromotionGate:
     """Head-to-head comparison: A9 (full v3) vs A0 (production)."""
 
-    WINDOW_LABELS = ("2025H1", "2025H2", "2026H1")
+    WINDOW_LABELS = (
+    "2024Q1", "2024Q2", "2024Q3", "2024Q4",
+    "2025Q1", "2025Q2", "2025Q3", "2025Q4",
+    "2026Q1", "2026Q2",
+)
 
     @staticmethod
     def evaluate(
