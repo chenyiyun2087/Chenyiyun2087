@@ -257,6 +257,7 @@ def can_sell_at_open(
         open_price,
         prev_close,
         symbol,  # PR26A.5: canonical functions normalize internally
+        float(is_st),  # PR26A.6: ST stocks use 5% limit, not 10%
         is_listed=float(is_listed),
         is_suspended=float(is_suspended),
         list_days=float(list_days) if np.isfinite(list_days) else None,

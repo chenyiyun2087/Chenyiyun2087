@@ -548,6 +548,7 @@ class FoldAccountBacktest:
                 signal_exposure_targets=signal_exposure_targets,  # PR25 Fix 4
                 full_ranked_panels=full_ranked_panels,  # PR25 Fix 5
                 ranked_panels_for_weights=defer_weights,  # PR26A.5
+                runtime_state=state,  # PR26A.6: A8 needs fitted state
             )
             # PR25 Fix 1: Only set FITTED if no terminal failure state was set
             # by _run_account_backtest.  INVALID_RISK_STATE, FIT_ERROR,
@@ -618,20 +619,30 @@ class FoldAccountBacktest:
         target_exp: float,
         prices_df: pd.DataFrame,
         current_positions: dict[str, float],
+        pre_trade_equity: float | None = None,
     ):
         """Recompute weights with prev_weights and turnover_penalty from live
-        account state (PR26A.5 — Module 4).
+        account state (PR26A.6 — Module 4).
 
-        prev_weights are derived from current account positions.
-        turnover_penalty uses real costs: commission, stamp duty, slippage.
+        prev_weights are derived from current account positions valued at
+        open prices.  turnover_penalty uses real costs.
         """
-        # Map current positions to weight vector aligned with ranked symbols
-        top_symbols = ranked.head(self.config.top_n)["symbol"].tolist()
-        if current_positions:
-            total_nav = sum(abs(v) for v in current_positions.values()) + self.config.initial_cash
+        # PR26A.6: Build union universe — all current holdings + new candidates
+        all_symbols = list(dict.fromkeys(
+            list(current_positions.keys())
+            + ranked["symbol"].astype(str).tolist()
+        ))
+
+        # PR26A.6: Use actual pre_trade_equity as NAV denominator
+        total_nav = pre_trade_equity or sum(
+            abs(v) for v in current_positions.values()
+        )
+        if total_nav <= 0:
+            prev_weights = None
+        elif current_positions:
             prev_weights = np.array([
-                current_positions.get(str(sym), 0.0) / max(total_nav, 1.0)
-                for sym in top_symbols
+                current_positions.get(sym, 0.0) / total_nav
+                for sym in all_symbols
             ])
         else:
             prev_weights = None
@@ -668,6 +679,7 @@ class FoldAccountBacktest:
         signal_exposure_targets: dict[object, float] | None = None,  # PR25 Fix 4
         full_ranked_panels: dict[object, pd.DataFrame] | None = None,  # PR25 Fix 5
         ranked_panels_for_weights: dict[object, pd.DataFrame] | None = None,  # PR26A.5
+        runtime_state=None,  # PR26A.6: fitted state for A8 weight recomputation
     ) -> None:
         """Execute full daily account backtest for one validation window.
 
@@ -806,13 +818,14 @@ class FoldAccountBacktest:
             max_hold = getattr(self.config, "max_holding_days", 20)
 
             if signal_date is not None:
-                # PR26A.5: For risk-weighted experiments, recompute weights
+                # PR26A.6: For risk-weighted experiments, recompute weights
                 # with current account positions (prev_weights) and real
-                # turnover costs.  This replaces the pre-computed weights
-                # with account-aware weights.
+                # turnover costs.  Uses the passed runtime_state directly
+                # (not getattr(runtime, "last_state")).
                 if (
                     ranked_panels_for_weights is not None
                     and runtime is not None
+                    and runtime_state is not None
                     and signal_date in ranked_panels_for_weights
                 ):
                     try:
@@ -821,17 +834,30 @@ class FoldAccountBacktest:
                             signal_date,
                             self.config.target_gross_exposure,
                         )
-                        current_positions = {
-                            sym: pos.market_value
-                            for sym, pos in account.positions.items()
-                            if pos.shares > 0
-                        }
-                        risk_state = getattr(runtime, "last_state", None)
+                        # PR26A.6: Compute position market values from
+                        # shares * open_price (Position has no market_value).
+                        current_positions = {}
+                        for sym, pos in account.positions.items():
+                            if pos.shares > 0:
+                                px = (
+                                    open_price_map.get(sym)
+                                    or last_open_price.get(sym, 0)
+                                    or pos.entry_price
+                                )
+                                if px > 0:
+                                    current_positions[sym] = pos.shares * px
+
+                        risk_state = (
+                            runtime_state.alpha_state
+                            if hasattr(runtime_state, 'alpha_state')
+                            else runtime_state
+                        )
                         if risk_state is not None and not ranked.empty:
                             acct_weights = self._compute_weights_with_cost_penalty(
                                 runtime, risk_state, ranked,
                                 signal_date, target_exp, prices_df,
                                 current_positions,
+                                pre_trade_equity=pre_trade_equity,
                             )
                             if acct_weights is not None and not acct_weights.empty:
                                 weight_map[signal_date] = acct_weights
@@ -844,10 +870,23 @@ class FoldAccountBacktest:
                                         new_targets[sym] = fw
                                 signal_targets[signal_date] = new_targets
                                 signal_candidate_counts[signal_date] = len(acct_weights)
-                    except Exception:
-                        # Weight recomputation failure is non-fatal — fall
-                        # back to pre-computed weights for this signal date.
-                        pass
+                    except Exception as e:
+                        # PR26A.6: FAIL CLOSED — no silent fallback to
+                        # pre-computed weights.  Record the error and
+                        # mark the fold as failed.
+                        result.error_rows.append({
+                            "error_type": "ACCOUNT_AWARE_WEIGHT_FAILED",
+                            "window": window_label,
+                            "experiment_id": experiment_id,
+                            "signal_date": str(signal_date),
+                            "detail": str(e),
+                            "traceback": traceback.format_exc(),
+                        })
+                        result.status = "ACCOUNT_AWARE_WEIGHT_FAILED"
+                        result.reason = (
+                            f"A8 weight recomputation failed on "
+                            f"{signal_date}: {e}"
+                        )
 
                 targets = signal_targets.get(signal_date, {})
                 candidate_count = signal_candidate_counts.get(signal_date, 0)
@@ -1347,17 +1386,23 @@ class FoldAccountBacktest:
         a7_candidate_map: dict[object, pd.DataFrame] | None = None,
         a7_weight_map: dict[object, pd.DataFrame] | None = None,
         a7_runtime=None,  # A7 runtime for computing candidates (fallback)
+        use_full_panel: bool = False,  # PR26A.6: True=RND-FULL, False=RND-TOP30
     ) -> list[dict[str, Any]]:
         """Run 100 random-seed account backtests for one fold.
 
-        PR23 (Problem 9a): RND100 now uses A7's candidate pool — it shuffles
-        A7's Top-N candidates instead of picking random stocks from the
-        entire score universe.  Weights, exposure, hold period, costs, and
-        T+1 rules are identical to A7.
+        PR26A.6: Two modes —
+          - RND-TOP30 (use_full_panel=False): shuffles A7's Top-30, measures
+            fine-ranking alpha within the top tier.
+          - RND-FULL (use_full_panel=True): shuffles the FULL eligible panel,
+            measures total security-selection alpha.
+
+        Both use the same construct_portfolio(), constraints, costs, hold
+        period, and exit rules.  Only the eligible universe differs.
 
         Each seed runs a full account backtest via _run_account_backtest().
         Returns per-seed metrics.
         """
+        pool_label = "RND-FULL" if use_full_panel else "RND-TOP30"
         window_label = fold.get("window", "unknown")
         validation_start = pd.Timestamp(fold["validation_start"]).date()
         validation_end = pd.Timestamp(fold["validation_end"]).date()
@@ -1392,7 +1437,12 @@ class FoldAccountBacktest:
                 sd = _normalize_date(signal_date)
                 ranked = a7_runtime.rank_as_of(state, sd, scores_df, prices_df)
                 if ranked is not None and not ranked.empty:
-                    a7_pool[sd] = ranked.head(self.config.rnd100_pool_size)
+                    # PR26A.6: RND-FULL uses entire eligible panel;
+                    # RND-TOP30 uses A7's top tier only.
+                    if use_full_panel:
+                        a7_pool[sd] = ranked.copy()
+                    else:
+                        a7_pool[sd] = ranked.head(self.config.rnd100_pool_size)
         else:
             # PR26A.1: No A7 reference — HARD FAIL.
             # RND100 MUST use A7's exact eligible tradable panel.  Falling
@@ -1465,7 +1515,7 @@ class FoldAccountBacktest:
             rnd_result = WindowBacktestResult(window_label=window_label)
 
             self._run_account_backtest(
-                f"RND100_{experiment_id}", window_label,
+                f"{pool_label}_{experiment_id}", window_label,
                 rnd_candidate_map, rnd_weight_map,
                 window_dates, calendar_dates, prices_df,
                 rnd_result, runtime=None,

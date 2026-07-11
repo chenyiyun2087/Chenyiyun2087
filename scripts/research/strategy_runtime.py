@@ -242,10 +242,18 @@ class FrozenAlphaRuntime(StrategyRuntime):
 
     def fit(self, train_scores, train_prices, train_labels) -> RuntimeState:
         state = self.estimator.fit(train_scores, train_prices, train_labels)
+        # PR26A.6: Store fitted state for account-aware weight recomputation
+        self._last_fit_state = state
         # Reset exit rule state per fold
         if self._exit_rule is not None:
             self._exit_rule.reset()
         return RuntimeState(state.train_start, state.train_end, state)
+
+    @property
+    def last_state(self):
+        """PR26A.6: FittedAlphaState for A8 account-aware weight recomputation."""
+        fs = getattr(self, '_last_fit_state', None)
+        return fs.alpha_state if hasattr(fs, 'alpha_state') else fs
 
     def should_exit(
         self,

@@ -141,6 +141,9 @@ def can_buy_at_open(
     is_listed: float | None = None,
     is_suspended: float | None = None,
     list_days: int | None = None,
+    official_upper_limit: float | None = None,  # PR26A.6
+    official_lower_limit: float | None = None,  # PR26A.6
+    limit_free_status: bool = False,            # PR26A.6
 ) -> tuple[bool, str]:
     """Check whether a BUY order can execute at T+1 open.
 
@@ -196,7 +199,12 @@ def can_buy_at_open(
 
     # --- Limit-up check ---
     try:
-        upper, _lower = limit_prices(pc, symbol, is_st)
+        upper, _lower = limit_prices(
+            pc, symbol, is_st,
+            official_upper_limit=official_upper_limit,
+            official_lower_limit=official_lower_limit,
+            limit_free_status=limit_free_status,
+        )
     except ValueError:
         return False, "missing_prev_close_limit_unknown"
 
@@ -215,6 +223,9 @@ def can_sell_at_open(
     is_listed: float | None = None,
     is_suspended: float | None = None,
     list_days: int | None = None,
+    official_upper_limit: float | None = None,  # PR26A.6
+    official_lower_limit: float | None = None,  # PR26A.6
+    limit_free_status: bool = False,            # PR26A.6
 ) -> tuple[bool, str]:
     """Check whether a SELL order can execute at T+1 open.
 
@@ -246,7 +257,12 @@ def can_sell_at_open(
 
     # --- Limit-down check ---
     try:
-        _upper, lower = limit_prices(pc, symbol, is_st)
+        _upper, lower = limit_prices(
+            pc, symbol, is_st,
+            official_upper_limit=official_upper_limit,
+            official_lower_limit=official_lower_limit,
+            limit_free_status=limit_free_status,
+        )
     except ValueError:
         return False, "missing_prev_close_limit_unknown"
 
