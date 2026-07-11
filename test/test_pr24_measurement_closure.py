@@ -309,16 +309,22 @@ class TestMatchedRandom:
         assert "self.config.rnd100_pool_size" in source
 
     def test_rnd100_fallback_uses_ranked_pool(self):
-        """Fallback (no A7 ref) builds pool from score data, not arbitrary shuffle."""
+        """PR24→PR26A.1: No-score-fallback is now a HARD FAIL (UNMATCHED_BASELINE).
+
+        Previously RND100 would fall back to the full score universe when no A7
+        reference was available.  That broke the matched-baseline contract.
+        Now the fallback is removed — return [] → caller treats as failure.
+        """
         import inspect
         from scripts.research.fold_account_backtest import FoldAccountBacktest
         source = inspect.getsource(FoldAccountBacktest.run_rnd100)
-        # The old "fall back to full-score shuffle" comment should be gone
+        # The old "fall back to full-score shuffle" should be gone
         assert "fall back to full-score shuffle" not in source, \
             "PR24: old degraded fallback removed"
-        # New fallback sorts by rank_score if available
-        assert "rank_score" in source, \
-            "PR24: fallback should use rank_score for candidate ordering"
+        # PR26A.1: No A7 reference → return [] (hard fail, UNMATCHED_BASELINE)
+        assert "return []  # hard fail" in source.replace(" ", "") or \
+               "return[]" in source.replace(" ", ""), \
+            "PR26A.1: no-A7-reference must return [] (hard fail)"
 
     def test_rnd100_path_hash_tracked(self):
         """Each RND seed result includes path_hash for uniqueness tracking."""
