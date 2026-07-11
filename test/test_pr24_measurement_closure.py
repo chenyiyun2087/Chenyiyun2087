@@ -166,7 +166,8 @@ class TestFoldNavStitching:
                 f"False large negative return at fold boundary: {dr:.4f}"
 
     def test_single_fold_no_stitch_needed(self):
-        """Single fold: stitched = raw (unchanged)."""
+        """Single fold: stitched NAV starts at 1.0 and compounds correctly.
+        PR25: stitched series now includes initial NAV=1.0 anchor row."""
         from scripts.research.fold_account_backtest import FoldAccountBacktest
 
         nav_rows = [
@@ -176,7 +177,10 @@ class TestFoldNavStitching:
              "cash": 490000.0, "market_value": 35000.0, "total_equity": 525000.0},
         ]
         stitched = FoldAccountBacktest.stitch_fold_navs(nav_rows)
-        assert len(stitched) == 1  # one daily return point
+        # PR25: 2 rows = initial NAV=1.0 anchor + compounded day 3 NAV
+        assert len(stitched) == 2
+        assert stitched[0]["nav"] == 1.0  # anchor
+        assert stitched[1]["nav"] == pytest.approx(1.05, abs=0.001)
 
     def test_stitch_empty_returns_empty(self):
         """Empty nav_rows returns empty list."""

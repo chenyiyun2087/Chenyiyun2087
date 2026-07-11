@@ -418,9 +418,10 @@ def run(output_dir, test_log, precheck_only=False):
                                 **fold.get("coverage", {})})
     pd.DataFrame(wf_metrics_rows).to_csv(output_dir / "walk_forward_metrics.csv", index=False)
     if all_nav:
-        stitched = executor.stitch_fold_navs(all_nav)
-        if stitched:
-            pd.DataFrame(stitched).to_csv(output_dir / "stitched_oos_nav.csv", index=False)
+        # PR25 Fix 3: NO global mixed NAV.  Only per-experiment stitched
+        # NAV files (P0/C0/A7/A8/A9/REV_A7).  Global stitching across
+        # experiments produces meaningless mixed-strategy NAV.
+        pass
 
     # Manifest AFTER evidence; semantic validation AFTER manifest
     lock_path = PROJECT_ROOT / "requirements.lock.txt"
