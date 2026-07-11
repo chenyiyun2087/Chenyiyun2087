@@ -33,10 +33,13 @@ import pandas as pd
 
 from scripts.research.executable_labels import compute_executable_forward_returns
 from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
+from scripts.research.execution_gate import (
+    can_buy_at_open,
+    can_sell_at_open,
+    execution_price_at_open,
+    is_tradable,
+)
 from scripts.research.matched_portfolio_runner import (
-    MatchedPortfolioRunner,
-    _daily_limit_ratio,
-    _limit_prices,
     _next_trade_date,
     _round_lot,
     _safe_float,
@@ -113,6 +116,9 @@ class AccountState:
     """Account state during backtest."""
     cash: float
     positions: dict[str, Position] = field(default_factory=dict)
+    # PR26A L2: Persistent pending exits survive across trading days.
+    # Symbol -> exit_reason.  Prioritized above rebalance and new buys.
+    pending_exits: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -134,6 +140,55 @@ class FoldBacktestConfig:
     t_plus_1: bool = True
     limit_up_down: bool = True
     suspension_rules: bool = True
+
+
+@dataclass(frozen=True)
+class CommonPortfolioConstructor:
+    """PR26A L6: Shared portfolio construction rules for A7/RND100/REV-A7.
+
+    All three experiments MUST use identical Top-N, weight caps, exposure,
+    holding period, costs, and tradability rules.  The ONLY variation is
+    the alpha ordering: A7 = positive, RND100 = random, REV-A7 = reverse.
+    """
+    top_n: int = 5
+    single_cap: float = 0.15
+    industry_cap: float = 0.30
+    theme_cap: float = 0.40
+    target_gross_exposure: float = 0.70
+    hold_days: int = 10
+    commission_rate: float = 0.00075
+    stamp_duty_rate: float = 0.0005
+    transfer_fee_rate: float = 0.00001
+    slippage_rate: float = 0.0
+    impact_rate: float = 0.0
+    t_plus_1: bool = True
+    lot_size: int = 100
+    min_trade_value: float = 500.0
+    max_holding_days: int = 20
+    rnd100_pool_size: int = 30
+
+    def to_fold_config(self) -> FoldBacktestConfig:
+        """Convert to FoldBacktestConfig for account backtest."""
+        return FoldBacktestConfig(
+            top_n=self.top_n,
+            hold_days=self.hold_days,
+            target_gross_exposure=self.target_gross_exposure,
+            commission_rate=self.commission_rate,
+            stamp_duty_rate=self.stamp_duty_rate,
+            transfer_fee_rate=self.transfer_fee_rate,
+            slippage_rate=self.slippage_rate,
+            impact_rate=self.impact_rate,
+            lot_size=self.lot_size,
+            min_trade_value=self.min_trade_value,
+            max_holding_days=self.max_holding_days,
+            rnd100_pool_size=self.rnd100_pool_size,
+            t_plus_1=self.t_plus_1,
+            limit_up_down=True,
+            suspension_rules=True,
+        )
+
+
+_DEFAULT_CONSTRUCTOR = CommonPortfolioConstructor()
 
 
 @dataclass
@@ -266,8 +321,10 @@ def _t1_gate(
     side: str,
     price_info: dict[str, Any],
 ) -> tuple[bool, str, float | None]:
-    """T+1 execution gate using MatchedPortfolioRunner static methods."""
-    return MatchedPortfolioRunner._t1_gate(symbol, side, price_info)
+    """T+1 execution gate using unified execution_gate module."""
+    if side == "SELL":
+        return can_sell_at_open(symbol, price_info)
+    return can_buy_at_open(symbol, price_info)
 
 
 def _is_tradable(
@@ -275,7 +332,7 @@ def _is_tradable(
     price_info: dict[str, Any],
 ) -> tuple[bool, str]:
     """Check if a stock is tradable using T-day metadata."""
-    return MatchedPortfolioRunner._is_tradable(symbol, price_info)
+    return is_tradable(symbol, price_info)
 
 
 # ---------------------------------------------------------------------------
@@ -478,10 +535,36 @@ class FoldAccountBacktest:
             # permanent blockers that must never be overwritten.
             _TERMINAL_FAILURES = frozenset({
                 "INVALID_RISK_STATE", "FIT_ERROR", "EXECUTION_ERROR",
-                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE",
+                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE", "COVERAGE_FAILED",
             })
             if result.status not in _TERMINAL_FAILURES:
-                result.status = "FITTED"
+                # PR26A L7: Coverage gate — require ≥95% signal date coverage
+                # and zero unclassified errors before setting FITTED.
+                total_dates = len(window_dates)
+                successful_dates = (
+                    result.signal_dates_attempted - result.signal_dates_empty
+                )
+                coverage = successful_dates / max(total_dates, 1)
+
+                unclassified_errors = [
+                    e for e in result.error_rows
+                    if e.get("error_type", "") not in {"RANK_WEIGHT_ERROR"}
+                ]
+
+                if coverage < 0.95:
+                    result.status = "COVERAGE_FAILED"
+                    result.reason = (
+                        f"signal_coverage={coverage:.1%} < 95% "
+                        f"({successful_dates}/{total_dates})"
+                    )
+                elif unclassified_errors:
+                    result.status = "COVERAGE_FAILED"
+                    result.reason = (
+                        f"unclassified_errors={len(unclassified_errors)}: "
+                        f"{[e.get('error_type','?') for e in unclassified_errors[:5]]}"
+                    )
+                else:
+                    result.status = "FITTED"
         else:
             result.status = "NO_CANDIDATES"
             result.reason = "no valid candidates for any date in window"
@@ -677,32 +760,49 @@ class FoldAccountBacktest:
                         if pos.shares <= 0:
                             continue
                         score_info = day_score_map.get(sym, {})
+                        # PR26A L0: Use full eligible panel count, not top-N.
+                        # A stock ranked #20 of 100 eligible must get
+                        # rank_pct = 20/100 = 20%, not 20/5 = 400%.
+                        full_count = candidate_count
+                        if full_ranked_panels and signal_date in full_ranked_panels:
+                            full_count = max(len(full_ranked_panels[signal_date]), 1)
                         runtime.record(
                             sym, str(trade_date),
                             float(score_info.get("rank_score", 0.0)),
-                            int(score_info.get("rank", candidate_count)),
-                            candidate_count,
+                            int(score_info.get("rank", full_count)),
+                            full_count,
                         )
 
-                # --- PR25 Fix 5: Winner extension checked BEFORE unlock ---
-                # Previously expired positions were unlocked first, which meant
-                # at day 10 the symbol was already removed from locked_until
-                # and the extension check (which requires sym in locked_until)
-                # could never fire.
-                # Now: check extension first, extend if eligible, THEN unlock
-                # non-extended positions.
-
-                # --- 2a. SELL: Exit-prioritized position management ---
-                # Gates: hard_risk > alpha_decay > fixed_hold_expiry >
-                #        winner_extension > rebalance
-                # PR24: For A9, decay is checked from day 2 (not gated by lock).
-                # Winner extension at day 10. Forced exit at max_holding_days.
-                # PR25 Fix 5: Winner extension checked before unlock.
+                # --- PR26A L1+L2: Unified exit gate with explicit state machine ---
+                # Gates: pending_exit_retry > hard_risk > alpha_decay >
+                #        max_holding_expiry > winner_extension > fixed_hold_expiry >
+                #        rebalance
+                # PR26A L1: Winner extension uses explicit lifecycle state
+                # (base_expiry_day / extended_expiry_day) via get_position_state()
+                # and set_extended().  Extension is NOT lost on day 11.
+                # PR26A L2: Pending exits persist in account.pending_exits
+                # and are retried before all other sells.
                 sells_to_execute: list[tuple[str, int, str]] = []  # (sym, shares, reason)
+
+                # --- L2: Retry pending exits first ---
+                for sym in list(account.pending_exits.keys()):
+                    if sym not in account.positions or account.positions[sym].shares <= 0:
+                        # Position was already sold — clear stale pending
+                        del account.pending_exits[sym]
+                        if runtime is not None:
+                            runtime.clear_pending_exit(sym)
+                        continue
+                    pos = account.positions[sym]
+                    pending_reason = account.pending_exits[sym]
+                    sells_to_execute.append((sym, pos.shares, f"pending_retry:{pending_reason}"))
 
                 for sym in list(account.positions.keys()):
                     pos = account.positions.get(sym)
                     if pos is None or pos.shares <= 0:
+                        continue
+
+                    # Skip if already scheduled for pending retry
+                    if sym in account.pending_exits:
                         continue
 
                     exit_reason = ""
@@ -711,25 +811,29 @@ class FoldAccountBacktest:
                     is_suspended = meta.get("is_suspended", False)
                     is_delisted = meta.get("is_delisted", False)
 
-                    # Gate 0: Maximum holding days (A9: force exit at max_hold)
-                    if uses_decay_exit and holding_days_sym >= max_hold:
-                        exit_reason = "max_holding_expiry"
-
-                    # Gate 1: Hard risk — forced exit regardless of lock
-                    if not exit_reason and is_delisted:
+                    # Gate 0: Hard risk — forced exit regardless of lock
+                    if is_delisted:
                         exit_reason = "hard_exit:delisted"
-                    elif not exit_reason and is_suspended:
+                    elif is_suspended:
                         exit_reason = "hard_exit:suspended"
+
+                    # Gate 1: Maximum holding days (A9: force exit at max_hold)
+                    if not exit_reason and uses_decay_exit and holding_days_sym >= max_hold:
+                        exit_reason = "max_holding_expiry"
 
                     # Gate 2: Decay exit (A9 only — from day 2, NOT gated by lock)
                     if not exit_reason and uses_decay_exit and runtime is not None:
                         score_info = day_score_map.get(sym, {})
+                        # PR26A L0: Use full eligible count for decay check
+                        full_count_decay = candidate_count
+                        if full_ranked_panels and signal_date in full_ranked_panels:
+                            full_count_decay = max(len(full_ranked_panels[signal_date]), 1)
                         should_exit, exit_msg = runtime.should_exit(
                             symbol=sym,
                             trade_date=str(trade_date),
                             rank_score=float(score_info.get("rank_score", 0.0)),
-                            rank=int(score_info.get("rank", candidate_count)),
-                            candidate_count=candidate_count,
+                            rank=int(score_info.get("rank", full_count_decay)),
+                            candidate_count=full_count_decay,
                             holding_days=holding_days_sym,
                             hold_days_required=hold_days,
                             is_suspended=is_suspended,
@@ -744,28 +848,39 @@ class FoldAccountBacktest:
                             exit_reason = "fixed_hold_expiry"
 
                     # Gate 4: Winner extension (A9 at day 10)
-                    # PR25 Fix 5: Check extension BEFORE position is unlocked.
-                    # Previously, expired locks were removed before this check,
-                    # making winner extension impossible (sym not in locked_until).
-                    # Now: at hold_days, check extension first. If extended,
-                    # update lock. If not, remove from locked_until so the
-                    # position can exit via fixed_hold_expiry.
+                    # PR26A L1: Use explicit lifecycle state from tracker.
+                    # Previously, _was_extended was set on the Position object
+                    # but should_extend() returned False when is_extended=True,
+                    # causing positions to exit on day 11 (only 1 extra day).
+                    # Now: get_position_state() tells us the exact expiry,
+                    # and we hold until extended_expiry_day.
                     if not exit_reason and uses_decay_exit and runtime is not None:
                         if holding_days_sym >= hold_days:
-                            extend, extra_days = runtime.should_extend(sym)
-                            if extend and not getattr(pos, "_was_extended", False):
-                                locked_until[sym] = day_idx + extra_days
-                                object.__setattr__(pos, "_was_extended", True)
-                                result.nav_rows.append({
-                                    "experiment_id": experiment_id, "window": window_label,
-                                    "trade_date": trade_date, "event_type": "winner_extension",
-                                    "symbol": sym, "extra_days": extra_days,
-                                })
-                                continue  # keep holding, don't exit
-                            else:
-                                # Not extended — remove lock so fixed_hold_expiry fires
-                                locked_until.pop(sym, None)
-                                exit_reason = "fixed_hold_expiry"
+                            pos_state = runtime.get_position_state(sym)
+                            extended_expiry = pos_state.get("extended_expiry_day", 0)
+
+                            # Case A: Already extended, within window → keep holding
+                            if pos_state.get("is_extended") and day_idx < extended_expiry:
+                                continue  # still within extension window
+
+                            # Case B: Already extended, reached expiry → force exit
+                            if pos_state.get("is_extended") and day_idx >= extended_expiry:
+                                exit_reason = "extended_hold_expiry"
+
+                            # Case C: Not yet extended → check eligibility
+                            elif not pos_state.get("is_extended"):
+                                extend, extra_days = runtime.should_extend(sym)
+                                if extend:
+                                    runtime.set_extended(sym, day_idx + extra_days)
+                                    result.nav_rows.append({
+                                        "experiment_id": experiment_id, "window": window_label,
+                                        "trade_date": trade_date, "event_type": "winner_extension",
+                                        "symbol": sym, "extra_days": extra_days,
+                                        "extended_until_day": day_idx + extra_days,
+                                    })
+                                    continue  # keep holding, don't exit
+                                else:
+                                    exit_reason = "fixed_hold_expiry"
 
                     # Gate 5: Lock check (skip if still locked)
                     if not exit_reason and sym in locked_until:
@@ -780,14 +895,14 @@ class FoldAccountBacktest:
                     # Schedule sell for execution
                     sells_to_execute.append((sym, pos.shares, exit_reason))
 
-                # Track pending exits for failed sells (suspended/limit-down)
-                pending_exits: set[str] = set()
-
                 # Execute sells (may free cash for subsequent buys)
                 for sym, shares, reason in sells_to_execute:
                     price_info = _get_price_info(prices_df, sym, trade_date)
                     if price_info is None:
-                        pending_exits.add(sym)
+                        # PR26A L2: Persist pending exit to account state
+                        account.pending_exits[sym] = reason
+                        if runtime is not None:
+                            runtime.set_pending_exit(sym, reason)
                         continue
                     allowed, reject_reason, exec_price = _t1_gate(sym, "SELL", price_info)
                     if not allowed:
@@ -796,7 +911,10 @@ class FoldAccountBacktest:
                             "trade_date": trade_date, "symbol": sym,
                             "side": "SELL", "reason": reject_reason,
                         })
-                        pending_exits.add(sym)
+                        # PR26A L2: Persist pending exit
+                        account.pending_exits[sym] = reason
+                        if runtime is not None:
+                            runtime.set_pending_exit(sym, reject_reason)
                         continue
                     sold = _execute_sell(
                         account, sym, shares, float(exec_price or 0),
@@ -804,8 +922,10 @@ class FoldAccountBacktest:
                         result.trade_rows, reason,
                     )
                     if sold > 0:
-                        # Lifecycle: close position in exit tracker
+                        # PR26A L2: Clear pending exit on successful sell
+                        account.pending_exits.pop(sym, None)
                         if runtime is not None:
+                            runtime.clear_pending_exit(sym)
                             runtime.close_position(sym, str(trade_date), reason)
                         result.exit_rows.append({
                             "experiment_id": experiment_id, "window": window_label,
@@ -816,7 +936,9 @@ class FoldAccountBacktest:
                         locked_until.pop(sym, None)
                     elif sold == 0 and account.positions.get(sym) is not None:
                         # Partial/zero fill due to gate — keep pending
-                        pending_exits.add(sym)
+                        account.pending_exits[sym] = reason
+                        if runtime is not None:
+                            runtime.set_pending_exit(sym, "partial_fill")
 
                 # --- 2b. BUY: Two-pass delta orders (PR24 Fix 4) ---
                 # Pass 1: Compute all target deltas (NO cash truncation)
@@ -934,11 +1056,16 @@ class FoldAccountBacktest:
                             position_entry_day[sym] = day_idx
                             score_info = day_score_map.get(sym, {})
                             if runtime is not None:
+                                # PR26A L0: Use full eligible panel count
+                                full_count_open = candidate_count
+                                if full_ranked_panels and signal_date in full_ranked_panels:
+                                    full_count_open = max(len(full_ranked_panels[signal_date]), 1)
                                 runtime.open_position(
                                     sym, str(trade_date),
                                     float(score_info.get("rank_score", 0.0)),
-                                    int(score_info.get("rank", candidate_count)),
-                                    candidate_count,
+                                    int(score_info.get("rank", full_count_open)),
+                                    full_count_open,
+                                    base_expiry_day=day_idx + hold_days,  # PR26A L1
                                 )
 
             # ---------------------------------------------------------------
@@ -1045,23 +1172,22 @@ class FoldAccountBacktest:
                     violations.append(f"negative_cash:{account.cash:.2f}")
 
                 # Check: top 2 risk contribution > 45%
-                # PR25 Fix 7: Use volatility-weighted risk contribution
-                # instead of simple market-cap weight.  The old code sorted
-                # by market value only, which is just top-2 weight, not
-                # actual risk contribution (RC_i = w_i * (Σw)_i).
-                #
-                # Compute approximate risk contribution using per-stock
-                # volatility.  Falls back to market-cap weight when price
-                # history is insufficient.
+                # PR26A L4: Use true covariance-based risk contribution
+                # RC_i = w_i * (Σw)_i where Σ is Ledoit-Wolf shrinkage.
+                # Previously used vol-weighted RC_i = w_i * σ_i which
+                # ignores correlations between stocks.  Two highly
+                # correlated stocks (e.g. both CPO) could each have
+                # moderate vol but together drive most portfolio risk.
                 risk_positions = [
                     (sym, pos.shares * (price_map.get(sym) or last_close_price.get(sym, 0.0)))
                     for sym, pos in account.positions.items()
                     if pos.shares > 0
                 ]
                 if len(risk_positions) >= 2:
-                    rc_contributions = _compute_risk_contributions(
+                    from scripts.research.pit_risk import compute_covariance_risk_contributions
+                    rc_contributions = compute_covariance_risk_contributions(
                         risk_positions, equity_yuan, prices_df,
-                        window_dates, trade_date, day_idx,
+                        window_dates, trade_date, lookback=60,
                     )
                     if rc_contributions:
                         top2_rc = sum(
@@ -1189,8 +1315,15 @@ class FoldAccountBacktest:
 
                 topn = a7_df[a7_df["symbol"].isin(top_symbols)].head(self.config.top_n).copy()
                 topn["rank"] = range(1, len(topn) + 1)
-                topn["final_portfolio_weight"] = self.config.target_gross_exposure / max(len(topn), 1)
-                topn["stock_relative_weight"] = 1.0 / max(len(topn), 1)
+                # PR26A L6: Use CommonPortfolioConstructor for equal-weight
+                # allocation.  Same formula as A7 default build_weights.
+                n_selected = max(len(topn), 1)
+                topn["stock_relative_weight"] = 1.0 / n_selected
+                topn["final_portfolio_weight"] = (
+                    _DEFAULT_CONSTRUCTOR.target_gross_exposure / n_selected
+                )
+                topn["effective_weight"] = topn["final_portfolio_weight"]
+                topn["cash_weight"] = 1.0 - _DEFAULT_CONSTRUCTOR.target_gross_exposure
                 rnd_candidate_map[sd_key] = topn
                 rnd_weight_map[sd_key] = topn
 
@@ -1451,13 +1584,30 @@ class FoldAccountBacktest:
                 signal_weights, window_dates, calendar_dates,
                 prices_df, result, runtime=runtime,
             )
-            # PR25 Fix 1: Only set FITTED if no terminal failure state was set
+            # PR25 Fix 1 + PR26A L7: Only set FITTED if no terminal failure
             _TERMINAL_FAILURES = frozenset({
                 "INVALID_RISK_STATE", "FIT_ERROR", "EXECUTION_ERROR",
-                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE",
+                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE", "COVERAGE_FAILED",
             })
             if result.status not in _TERMINAL_FAILURES:
-                result.status = "FITTED"
+                # PR26A L7: Coverage gate for REV
+                total_dates = len(window_dates)
+                successful_dates = (
+                    result.signal_dates_attempted - result.signal_dates_empty
+                )
+                coverage = successful_dates / max(total_dates, 1)
+                unclassified_errors = [
+                    e for e in result.error_rows
+                    if e.get("error_type", "") not in {"RANK_WEIGHT_ERROR", "REV_RANK_ERROR"}
+                ]
+                if coverage < 0.95:
+                    result.status = "COVERAGE_FAILED"
+                    result.reason = f"REV signal_coverage={coverage:.1%} < 95%"
+                elif unclassified_errors:
+                    result.status = "COVERAGE_FAILED"
+                    result.reason = f"REV unclassified_errors={len(unclassified_errors)}"
+                else:
+                    result.status = "FITTED"
         else:
             result.status = "NO_CANDIDATES"
             result.reason = "REV: no valid candidates for any date in window"

@@ -149,7 +149,11 @@ class CrossSectionalProcessor:
             # Not enough industry variation — return standardized y as fallback
             return CrossSectionalProcessor.standardize(y)
 
-        # One-hot encode industry, drop first dummy
+        # One-hot encode industry, drop first dummy + ADD INTERCEPT
+        # PR26A L5: Previous code used K-1 dummies WITHOUT intercept,
+        # which does NOT guarantee residuals are orthogonal to all
+        # industry dummies.  Fix: add intercept column so OLS includes
+        # constant term, making residuals sum to zero within each industry.
         industry_dummies = pd.get_dummies(
             df[industry_col].fillna("unknown"), prefix="ind", drop_first=True
         ).astype(float)
@@ -157,8 +161,11 @@ class CrossSectionalProcessor:
         if industry_dummies.shape[1] == 0:
             return CrossSectionalProcessor.standardize(y)
 
-        # OLS: y = industry_dummies @ beta + residual
-        X = industry_dummies.values
+        # OLS: y = [intercept | industry_dummies] @ beta + residual
+        X = np.column_stack([
+            np.ones(len(industry_dummies)),        # intercept
+            industry_dummies.values,                # K-1 industry dummies
+        ])
         y_vals = y.values.astype(float)
 
         # Normal equation: beta = (X'X)^-1 X'y
