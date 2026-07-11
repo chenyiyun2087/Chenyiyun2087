@@ -140,103 +140,138 @@ class CrossSectionalProcessor:
         """Regress *value_col* on industry dummies, return residuals.
 
         Residuals are orthogonal to industry membership by construction.
+
+        PR26A.2: Stocks with missing/null industry are removed from regression
+        (set to NaN in output).  No fillna("unknown") fallback.
         """
         if df.empty or value_col not in df.columns:
             return pd.Series([], dtype=float, index=df.index)
 
         y = df[value_col].copy()
+
+        # Validate industry completeness
         if industry_col not in df.columns or df[industry_col].nunique() < 2:
             # Not enough industry variation — return standardized y as fallback
             return CrossSectionalProcessor.standardize(y)
 
-        # One-hot encode industry, drop first dummy + ADD INTERCEPT
-        # PR26A L5: Previous code used K-1 dummies WITHOUT intercept,
-        # which does NOT guarantee residuals are orthogonal to all
-        # industry dummies.  Fix: add intercept column so OLS includes
-        # constant term, making residuals sum to zero within each industry.
+        # Remove stocks with missing industry
+        ind_series = df[industry_col]
+        valid_mask = ind_series.notna() & (ind_series.astype(str).str.strip() != "")
+        n_valid = valid_mask.sum()
+
+        if n_valid < 2:
+            return CrossSectionalProcessor.standardize(y)
+
+        # One-hot encode industry on valid subset
         industry_dummies = pd.get_dummies(
-            df[industry_col].fillna("unknown"), prefix="ind", drop_first=True
+            ind_series[valid_mask], prefix="ind", drop_first=True
         ).astype(float)
 
         if industry_dummies.shape[1] == 0:
             return CrossSectionalProcessor.standardize(y)
 
-        # OLS: y = [intercept | industry_dummies] @ beta + residual
-        X = np.column_stack([
-            np.ones(len(industry_dummies)),        # intercept
-            industry_dummies.values,                # K-1 industry dummies
-        ])
-        y_vals = y.values.astype(float)
+        # OLS on valid subset
+        X = industry_dummies.values
+        y_vals = y[valid_mask].values.astype(float)
 
-        # Normal equation: beta = (X'X)^-1 X'y
         try:
             XtX = X.T @ X
             Xty = X.T @ y_vals
             beta = np.linalg.solve(XtX, Xty)
             y_pred = X @ beta
-            residuals = y_vals - y_pred
         except np.linalg.LinAlgError:
-            # Fallback: use pseudo-inverse
             beta = np.linalg.lstsq(X, y_vals, rcond=None)[0]
             y_pred = X @ beta
-            residuals = y_vals - y_pred
 
-        return pd.Series(residuals, index=df.index, dtype=float)
+        # Build full-length residuals (NaN for removed stocks)
+        residuals = pd.Series(np.nan, index=df.index, dtype=float)
+        residuals[valid_mask] = y_vals - y_pred
+
+        return residuals
 
     @staticmethod
     def cap_vol_neutralize(
         df: pd.DataFrame,
         value_col: str,
+        min_panel: int = 10,
     ) -> pd.Series:
         """Regress on log(circ_mv) + 20d_vol, return residuals.
 
         Removes size and volatility effects from the value column.
 
-        PR26A.1: Detects whether circ_mv is already log-transformed
-        (e.g., values in [-5, 20] range) vs raw market cap (millions+).
-        Previously always applied np.log(), which double-logged values
-        that were already log_circ_mv.
+        PR26A.2: Strict completeness check — stocks missing circ_mv or vol20
+        are **removed** from the panel (logged with NaN in output).  If the
+        eligible panel drops below *min_panel*, fail closed with ValueError.
+
+        No fillna(1.0) or fillna(0.0) fallback — incomplete stocks must not
+        enter the ranking.
         """
         if df.empty or value_col not in df.columns:
             return pd.Series([], dtype=float, index=df.index)
 
-        y = df[value_col].fillna(0.0).values.astype(float)
-        n = len(y)
+        n = len(df)
+        y_raw = df[value_col].values.astype(float)
 
-        # Build regressors: [1, log_market_cap, vol20]
+        # ---- Validate completeness ----
+        valid_mask = np.ones(n, dtype=bool)
+        removal_reasons: dict[int, str] = {}
+
+        if "circ_mv" in df.columns:
+            mv = df["circ_mv"].values
+            mv_valid = np.isfinite(mv) & (mv > 0)
+            for idx in np.where(~mv_valid)[0]:
+                removal_reasons.setdefault(idx, "")
+                removal_reasons[idx] += (
+                    f"missing/invalid circ_mv (val={mv[idx]!r}); "
+                )
+            valid_mask &= mv_valid
+
+        if "vol20" in df.columns:
+            vol = df["vol20"].values
+            vol_valid = np.isfinite(vol) & (vol >= 0)
+            for idx in np.where(~vol_valid)[0]:
+                removal_reasons.setdefault(idx, "")
+                removal_reasons[idx] += (
+                    f"missing/invalid vol20 (val={vol[idx]!r}); "
+                )
+            valid_mask &= vol_valid
+
+        n_valid = valid_mask.sum()
+        if n_valid < min_panel:
+            all_reasons = sorted(set(
+                r.strip("; ") for r in removal_reasons.values()
+            ))
+            raise ValueError(
+                f"cap_vol_neutralize: eligible panel {n_valid} < min_panel "
+                f"{min_panel}.  Removal reasons: {all_reasons}"
+            )
+
+        # ---- Build regressors only on valid subset ----
         X_cols = []
         if "circ_mv" in df.columns:
-            mv_vals = df["circ_mv"].fillna(1.0)
-            # PR26A.1: Detect if values are already log-transformed.
-            # Raw market cap: 1e7 to 1e12+.  Log market cap: ~15 to ~28.
-            # Already-logged values (like log_circ_mv) are small, possibly negative.
-            mv_median = float(mv_vals.median())
-            if mv_median < 100.0:
-                # Already log-transformed — use directly
-                log_mv = mv_vals.values.astype(float)
-            else:
-                # Raw market cap — apply log
-                log_mv = np.log(mv_vals.clip(lower=1.0).values)
-            X_cols.append(log_mv)
+            X_cols.append(np.log(df["circ_mv"].values[valid_mask]))
         if "vol20" in df.columns:
-            vol20 = df["vol20"].fillna(0.0).values
-            X_cols.append(vol20)
+            X_cols.append(df["vol20"].values[valid_mask])
 
         if not X_cols:
-            return pd.Series(y, index=df.index, dtype=float)
+            return pd.Series(y_raw, index=df.index, dtype=float)
 
-        X = np.column_stack([np.ones(n)] + X_cols)
+        y_valid = y_raw[valid_mask]
+        n_v = len(y_valid)
+        X = np.column_stack([np.ones(n_v)] + X_cols)
 
         try:
             XtX = X.T @ X
-            Xty = X.T @ y
+            Xty = X.T @ y_valid
             beta = np.linalg.solve(XtX, Xty)
             y_pred = X @ beta
-            residuals = y - y_pred
         except np.linalg.LinAlgError:
-            beta = np.linalg.lstsq(X, y, rcond=None)[0]
+            beta = np.linalg.lstsq(X, y_valid, rcond=None)[0]
             y_pred = X @ beta
-            residuals = y - y_pred
+
+        # Residuals: valid for complete stocks, NaN for removed stocks
+        residuals = np.full(n, np.nan, dtype=float)
+        residuals[valid_mask] = y_valid - y_pred
 
         return pd.Series(residuals, index=df.index, dtype=float)
 

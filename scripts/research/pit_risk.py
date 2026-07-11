@@ -147,166 +147,186 @@ def compute_top2_risk_contribution(
 
 
 # ---------------------------------------------------------------------------
-# PR26A L4: True covariance risk via Ledoit-Wolf shrinkage
+# PIT covariance matrix  (for A8 covariance-optimal portfolio construction)
 # ---------------------------------------------------------------------------
 
 
-def _ledoit_wolf_shrinkage(returns: np.ndarray) -> tuple[np.ndarray, float]:
-    """Compute Ledoit-Wolf shrinkage covariance matrix.
+def compute_pit_covariance_matrix(
+    prices: pd.DataFrame,
+    symbols: list[str],
+    signal_date: str,
+    window: int = 60,
+    shrinkage: str = "ledoit_wolf",
+    min_history: int = 20,
+) -> np.ndarray:
+    """Compute point-in-time covariance matrix for *symbols* as of *signal_date*.
 
-    Sigma = (1 - delta) * S + delta * nu * I
-
-    where S = sample covariance, nu = mean(diag(S)),
-    delta = OAS shrinkage intensity.
+    Uses daily returns from *prices* up to and including *signal_date*.
 
     Parameters
     ----------
-    returns : (T, N) array of demeaned daily returns.
+    prices : DataFrame with [symbol, trade_date, adj_close].
+    symbols : List of stock symbols to include.
+    signal_date : Reference date (YYYY-MM-DD).  Only data ≤ this date is used.
+    window : Rolling window in trading days (default 60).
+    shrinkage : Shrinkage method — "ledoit_wolf" or "sample" or float (constant δ).
+    min_history : Minimum number of overlapping observations required per pair.
 
     Returns
     -------
-    (shrunken_cov: (N, N) array, shrinkage_delta: float)
+    np.ndarray of shape (N, N), ordered by *symbols*.
+
+    Raises
+    ------
+    ValueError : If fewer than *min_history* observations are available.
     """
-    T, N = returns.shape
-    if T < 2 or N < 2:
-        if N == 1:
-            var = float(np.var(returns[:, 0])) if T > 1 else 0.01
-            return np.array([[max(var, 1e-8)]]), 1.0
-        return np.eye(N) * 0.01, 1.0
+    if len(symbols) == 0:
+        return np.zeros((0, 0))
 
-    S = (returns.T @ returns) / (T - 1)
-    diag = np.diag(S).copy()
-    nu = float(np.mean(diag))
-    target = nu * np.eye(N)
-
-    trace_S = float(np.trace(S))
-    S_sq = S @ S
-    trace_S_sq = float(np.trace(S_sq))
-
-    # OAS shrinkage (Chen et al. 2010)
-    if N > 1 and trace_S > 1e-12:
-        rho = trace_S_sq / (trace_S * trace_S)
-        delta = min(1.0, max(0.0,
-            (1.0 - (2.0 / N) * rho) / (T + 1.0 - 2.0 / N)
-        ))
-    else:
-        delta = 1.0
-
-    shrunken = (1.0 - delta) * S + delta * target
-
-    # Ensure PSD
-    eigenvalues = np.linalg.eigvalsh(shrunken)
-    if eigenvalues[0] < 1e-12:
-        shrunken += np.eye(N) * max(1e-8, -eigenvalues[0] + 1e-8)
-
-    return shrunken, delta
-
-
-def compute_pit_covariance(
-    prices: pd.DataFrame,
-    symbols: list[str],
-    trade_date: object,
-    lookback: int = 60,
-    min_periods: int = 20,
-) -> tuple[np.ndarray, list[str]]:
-    """Compute PIT Ledoit-Wolf shrinkage covariance for a set of symbols.
-
-    Only uses data up to and including trade_date.  No future leak.
-
-    Returns (covariance_matrix: (N,N) ndarray, valid_symbols: list[str]).
-    Symbols with insufficient history are excluded.
-    """
-    td = pd.Timestamp(trade_date).date()
-
-    prices_pit = prices[
-        pd.to_datetime(prices["trade_date"], errors="coerce").dt.date <= td
+    # Filter to signal date
+    sig_ts = pd.Timestamp(signal_date)
+    hist = prices[
+        pd.to_datetime(prices["trade_date"]).dt.normalize() <= sig_ts.normalize()
     ].copy()
+    if hist.empty:
+        raise ValueError(f"No price history available for {signal_date}")
 
-    return_series: dict[str, list[float]] = {}
-    for sym in symbols:
-        sym_data = prices_pit[
-            prices_pit["symbol"].astype(str) == str(sym)
-        ].sort_values("trade_date")
-        if len(sym_data) < min_periods:
-            continue
-        closes = sym_data["adj_close"].values
-        rets = []
-        for i in range(1, min(len(closes), lookback + 1)):
-            if closes[-i] > 0 and closes[-i - 1] > 0:
-                rets.append(closes[-i] / closes[-i - 1] - 1.0)
-        if len(rets) >= min_periods:
-            rets.reverse()
-            return_series[sym] = rets
+    # Build return matrix: each column = one symbol's daily returns
+    hist = hist.sort_values(["symbol", "trade_date"])
+    hist["daily_ret"] = hist.groupby("symbol")["adj_close"].pct_change()
 
-    valid_symbols = list(return_series.keys())
-    if len(valid_symbols) < 2:
-        return np.eye(len(valid_symbols)) * 0.01, valid_symbols
-
-    min_len = max(min_periods, min(len(v) for v in return_series.values()))
-    ret_matrix = np.column_stack([
-        np.array(return_series[sym][-min_len:], dtype=float)
-        for sym in valid_symbols
-    ])
-    ret_matrix = ret_matrix - ret_matrix.mean(axis=0)
-    cov, _delta = _ledoit_wolf_shrinkage(ret_matrix)
-    return cov, valid_symbols
-
-
-def compute_covariance_risk_contributions(
-    positions_mv: list[tuple[str, float]],
-    equity: float,
-    prices_df: pd.DataFrame,
-    window_dates: list,
-    trade_date: object,
-    lookback: int = 60,
-) -> list[float]:
-    """Compute true covariance-based risk contributions.
-
-    RC_i = w_i * (Sigma * w)_i / (w^T * Sigma * w)
-
-    Uses Ledoit-Wolf shrinkage covariance of daily returns.
-    Falls back to volatility-weighted when history is insufficient.
-    """
-    if equity <= 0 or len(positions_mv) < 2:
-        if positions_mv:
-            return [1.0]
-        return []
-
-    symbols = [sym for sym, _mv in positions_mv]
-    weights = np.array([mv / equity for _sym, mv in positions_mv], dtype=float)
-
-    cov, valid_symbols = compute_pit_covariance(
-        prices_df, symbols, trade_date, lookback
+    # Pivot to date × symbol matrix of returns
+    ret_pivot = hist.pivot_table(
+        index="trade_date", columns="symbol", values="daily_ret", aggfunc="first"
     )
+    # Ensure we only have the requested symbols, in order
+    available = [s for s in symbols if s in ret_pivot.columns]
+    if len(available) < len(symbols):
+        # Some symbols have no returns — fill with NaN columns
+        for s in symbols:
+            if s not in ret_pivot.columns:
+                ret_pivot[s] = np.nan
+    ret_pivot = ret_pivot[symbols]
 
-    n_orig = len(symbols)
-    if len(valid_symbols) < 2:
-        rc = np.ones(n_orig) / n_orig
-        return list(rc)
+    # Take last *window* rows
+    if len(ret_pivot) > window:
+        ret_pivot = ret_pivot.iloc[-window:]
 
-    sym_to_idx = {s: i for i, s in enumerate(symbols)}
-    valid_indices = [sym_to_idx[s] for s in valid_symbols]
-    sub_w = weights[valid_indices]
+    # Handle missing data: for each pair, use pairwise complete observations
+    ret_vals = ret_pivot.values
+    n = len(symbols)
+    sample_cov = np.zeros((n, n))
+    nobs_matrix = np.zeros((n, n), dtype=int)
 
-    port_var = float(sub_w @ cov @ sub_w)
-    if port_var < 1e-12:
-        rc = np.ones(n_orig) / n_orig
-        return list(rc)
+    for i in range(n):
+        for j in range(i, n):
+            pair_mask = np.isfinite(ret_vals[:, i]) & np.isfinite(ret_vals[:, j])
+            nobs = pair_mask.sum()
+            if nobs < min_history:
+                raise ValueError(
+                    f"Insufficient overlapping observations for pair "
+                    f"({symbols[i]}, {symbols[j]}): {nobs} < {min_history}"
+                )
+            ri = ret_vals[pair_mask, i]
+            rj = ret_vals[pair_mask, j]
+            cov_ij = np.cov(ri, rj, ddof=0)[0, 1]
+            sample_cov[i, j] = cov_ij
+            sample_cov[j, i] = cov_ij
 
-    marginal_risk = cov @ sub_w
-    rc_sub = sub_w * marginal_risk
-    rc_sub = rc_sub / rc_sub.sum()
+    # Apply shrinkage
+    if shrinkage == "sample":
+        return sample_cov
+    elif isinstance(shrinkage, (int, float)):
+        delta = float(shrinkage)
+        target = np.diag(np.diag(sample_cov))
+        return (1.0 - delta) * sample_cov + delta * target
+    elif shrinkage == "ledoit_wolf":
+        return _ledoit_wolf_shrinkage(sample_cov, ret_vals)
+    else:
+        raise ValueError(f"Unknown shrinkage method: {shrinkage}")
 
-    rc = np.zeros(n_orig)
-    for i, orig_idx in enumerate(valid_indices):
-        rc[orig_idx] = float(rc_sub[i])
 
-    excluded = np.where(rc == 0.0)[0]
-    if len(excluded) > 0:
-        rc[excluded] = 0.01 / n_orig
+def _ledoit_wolf_shrinkage(
+    sample_cov: np.ndarray,
+    returns: np.ndarray,
+) -> np.ndarray:
+    """Ledoit-Wolf (2004) shrinkage towards constant-correlation target.
 
-    total_rc = rc.sum()
-    if total_rc > 1e-12:
-        rc = rc / total_rc
+    Simplified implementation for typical portfolio sizes (N ≤ 100).
 
-    return list(rc)
+    Parameters
+    ----------
+    sample_cov : N×N sample covariance matrix.
+    returns : T×N matrix of de-meaned returns (or raw returns; means are
+              computed internally).
+
+    Returns
+    -------
+    Shrunk covariance matrix.
+    """
+    n = sample_cov.shape[0]
+    if n <= 1:
+        return sample_cov
+
+    # De-mean returns using pairwise complete observations
+    T = returns.shape[0]
+    # Use sample means for de-meaning (column-wise, ignoring NaN)
+    means = np.nanmean(returns, axis=0)
+    demeaned = returns - means  # NaN where original was NaN
+
+    # Constant-correlation target
+    vols = np.sqrt(np.diag(sample_cov))
+    vol_outer = np.outer(vols, vols)
+    # Average correlation (excluding diagonal)
+    correlations = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            if i != j and vols[i] > 1e-12 and vols[j] > 1e-12:
+                correlations[i, j] = sample_cov[i, j] / (vols[i] * vols[j])
+    triu = correlations[np.triu_indices(n, k=1)]
+    r_bar = np.mean(triu[np.isfinite(triu)]) if np.any(np.isfinite(triu)) else 0.0
+    r_bar = max(-1.0, min(1.0, r_bar))  # clamp
+
+    # Target: constant-correlation
+    target = vol_outer * r_bar
+    np.fill_diagonal(target, np.diag(sample_cov))
+
+    # Compute shrinkage intensity (simplified LW formula)
+    # π = sum of asymptotic variances of sample covariance entries
+    # ρ = sum of asymptotic covariances between sample and target
+    # δ = π / (π + ρ)  → but this requires higher moments
+    #
+    # Simplified: use oracle approximating shrinkage (OAS) style
+    # δ = (1 - 2/n * tr(S²) + tr²(S)) / ((T+1-2/n)*tr(S²) + (1-T/n)*tr²(S))
+    # For simplicity, use a data-driven heuristic:
+    tr_S2 = np.trace(sample_cov @ sample_cov)
+    tr_S = np.trace(sample_cov)
+    tr_S_sq = tr_S * tr_S
+    # Ledoit-Wolf intensity estimator
+    # pi_hat = sum of squared errors of sample cov entries
+    pi_hat = 0.0
+    for i in range(n):
+        for j in range(n):
+            # Asymptotic variance of cov[i,j]
+            pair_mask = np.isfinite(demeaned[:, i]) & np.isfinite(demeaned[:, j])
+            if pair_mask.sum() < 4:
+                continue
+            x = demeaned[pair_mask, i]
+            y = demeaned[pair_mask, j]
+            # Var(cov_ij) ≈ E[(x*y - cov_ij)²] / T
+            cross = x * y - sample_cov[i, j]
+            pi_hat += np.mean(cross * cross)
+
+    # γ = ||target - sample||_F²
+    diff = target - sample_cov
+    gamma = np.sum(diff * diff)
+
+    delta = pi_hat / max(gamma, 1e-12)
+    delta = max(0.0, min(1.0, delta))
+
+    # If shrinkage intensity is extreme, use a more conservative default
+    if not np.isfinite(delta) or delta > 0.9:
+        delta = 0.5
+
+    shrunk = (1.0 - delta) * sample_cov + delta * target
+    return shrunk
