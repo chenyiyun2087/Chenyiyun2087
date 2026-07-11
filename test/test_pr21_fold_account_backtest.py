@@ -377,7 +377,8 @@ class TestEndToEndSmoke:
     def test_canonical_executable_labels(self, synthetic_prices):
         """PR23: canonical compute_executable_forward_returns produces valid labels."""
         from scripts.research.executable_labels import compute_executable_forward_returns
-        labels = compute_executable_forward_returns(synthetic_prices)
+        cal = sorted(synthetic_prices["trade_date"].drop_duplicates().tolist())
+        labels = compute_executable_forward_returns(synthetic_prices, calendar=cal)
         assert labels is not None
         assert "fwd_ret_10d_exec_net" in labels.columns
         # Old fields MUST NOT be present (PR23 P1)

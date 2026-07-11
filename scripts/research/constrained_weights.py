@@ -288,6 +288,7 @@ def construct_portfolio(
     prev_weights: np.ndarray | None = None,
     risk_aversion: float = 1.0,
     random_seed: str | None = None,
+    turnover_penalty: float = 0.0,
 ) -> pd.DataFrame:
     """Single entry point for A7, RND100, REV-A7, and A8 portfolio construction.
 
@@ -362,7 +363,7 @@ def construct_portfolio(
             alpha = alpha - alpha.min() + 1e-6  # shift to positive
             opt_result = _solve_covariance_weights(
                 alpha, covariance, constraints, prev_weights=prev_weights,
-                risk_aversion=risk_aversion,
+                risk_aversion=risk_aversion, turnover_penalty=turnover_penalty,
             )
             raw_weights = opt_result["weights"]
         except Exception as exc:
@@ -385,8 +386,15 @@ def construct_portfolio(
         raw_weights = raw_weights.to_numpy()
 
     # --- Step 4: Water-filling allocation ---
+    # PR26A.4: When covariance is available (A8 mode), use true marginal risk
+    # contributions RC_i = w_i * (Σw)_i instead of single-stock vol for the
+    # top-2 risk constraint.  This correctly accounts for correlation.
     risk_vals = None
-    if "pit_vol_20" in selected.columns:
+    if ordering == OrderingMode.COVARIANCE_OPTIMAL and covariance is not None:
+        # Compute true marginal risk contributions from covariance
+        marginal_risk = covariance @ raw_weights
+        risk_vals = marginal_risk  # RC_i = w_i * (Σw)_i when multiplied by w_i
+    elif "pit_vol_20" in selected.columns:
         risk_vals = selected["pit_vol_20"].to_numpy()
     elif "risk_value" in selected.columns:
         risk_vals = selected["risk_value"].to_numpy()

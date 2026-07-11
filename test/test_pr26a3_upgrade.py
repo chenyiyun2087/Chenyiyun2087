@@ -87,10 +87,11 @@ class TestL0SingleExecutionPath:
     def test_no_duplicate_limit_logic_in_research(self):
         """Scan research scripts for duplicate limit-up/down gate functions.
 
-        PR26A.3: Two canonical modules are allowed:
-          - execution_market_rules.py  (individual-param API)
-          - execution_gate.py          (dict-based wrapper API)
-        Any other file defining its own gate functions is a violation.
+        PR26A.4: execution_market_rules.py is the SINGLE canonical source of truth.
+        execution_gate.py is a thin dict-based adapter that delegates to
+        execution_market_rules for all gate logic.  Both are allowed to define
+        the gate functions, but execution_gate.py must not contain independent
+        implementations.
         """
         import glob
 
@@ -273,7 +274,12 @@ class TestL3DelayedExitParity:
     """Limit-down streak on planned exit → label retries until tradable."""
 
     def test_delayed_exit_retries_until_tradable(self):
-        """Exit blocked by limit-down → actual exit on next tradable day."""
+        """Exit blocked by limit-down → actual exit on next tradable day.
+
+        PR26A.4: The retry loop MUST advance to the next trading day when
+        the planned exit day is at limit-down.  This test requires exact
+        exit date matching, not permissive "delayed OR censored".
+        """
         cal = _make_trading_calendar("2025-01-02", 40)
 
         symbols = ["000001"]
@@ -287,13 +293,14 @@ class TestL3DelayedExitParity:
         prices.loc[entry_mask, "adj_open"] = 10.0
         prices.loc[entry_mask, "raw_pre_close"] = 9.5
 
-        # Make 5d planned exit day limit-down
-        planned_exit = cal[6]  # entry_lag=1 + hold_days=5 ≈ cal[6]
-        prices.loc[
-            (prices["symbol"] == "000001")
-            & (prices["trade_date"] == planned_exit),
-            "adj_open",
-        ] = 9.0  # limit-down
+        # Make planned exit day (cal[6]) limit-down
+        planned_exit = cal[6]
+        for col in ["adj_open", "raw_open"]:
+            prices.loc[
+                (prices["symbol"] == "000001")
+                & (prices["trade_date"] == planned_exit),
+                col,
+            ] = 9.0  # 10% limit-down from prev_close=10.0
         prices.loc[
             (prices["symbol"] == "000001")
             & (prices["trade_date"] == planned_exit),
@@ -305,13 +312,14 @@ class TestL3DelayedExitParity:
             "is_listed",
         ] = 1
 
-        # Next day: normal open
+        # Next day (cal[7]): normal open → exit should succeed here
         next_day = cal[7]
-        prices.loc[
-            (prices["symbol"] == "000001")
-            & (prices["trade_date"] == next_day),
-            "adj_open",
-        ] = 10.0
+        for col in ["adj_open", "raw_open"]:
+            prices.loc[
+                (prices["symbol"] == "000001")
+                & (prices["trade_date"] == next_day),
+                col,
+            ] = 10.0
         prices.loc[
             (prices["symbol"] == "000001")
             & (prices["trade_date"] == next_day),
@@ -334,15 +342,23 @@ class TestL3DelayedExitParity:
             & (labels["trade_date"] == entry_day)
         ]
 
-        # Should have delayed exit info or be censored
-        if "censored_5d" in labels.columns and not sig_row.empty:
-            censored = sig_row["censored_5d"].iloc[0]
-            delay = sig_row["exit_delay_days_5d"].iloc[0]
-            # Either the exit was delayed (delay >= 1) or censored
-            assert bool(censored) or delay >= 1, (
-                f"Expected delayed exit (delay >= 1) or censored, "
-                f"got delay={delay}, censored={censored}"
-            )
+        assert not sig_row.empty, "Expected a label row for entry_day"
+        censored = bool(sig_row["censored_5d"].iloc[0])
+        delay = int(sig_row["exit_delay_days_5d"].iloc[0])
+        actual_date = str(sig_row["actual_exit_date_5d"].iloc[0])
+
+        # PR26A.4: Must NOT be censored — the retry loop succeeded
+        assert not censored, (
+            f"Expected uncensored exit after retry to {next_day}, got censored"
+        )
+        # Must have delay >= 1 (skipped the limit-down day)
+        assert delay >= 1, (
+            f"Expected exit_delay_days >= 1, got delay={delay}"
+        )
+        # Exit date must equal next_day (not the original planned exit)
+        assert actual_date == str(next_day), (
+            f"Expected actual_exit_date={next_day}, got {actual_date}"
+        )
 
 
 # ===================================================================
@@ -680,11 +696,17 @@ class TestL8RealA8Optimization:
         a8_w = a8_result["final_portfolio_weight"].to_numpy()
         a8_var = float(a8_w @ cov @ a8_w)
 
-        # A8 should allocate less to the correlated pair
-        # Verify variance is reduced or at least not increased
-        assert a8_var <= a7_var * 1.05, (
-            f"A8 variance ({a8_var:.6f}) should not exceed "
-            f"A7 variance ({a7_var:.6f}) by more than 5%"
+        # PR26A.4: A8 must strictly REDUCE portfolio variance relative to A7.
+        # The covariance-optimal allocation should diversify away from the
+        # correlated pair.  Improvement must be at least 5 %.
+        assert a8_var < a7_var, (
+            f"A8 variance ({a8_var:.6f}) must be strictly less than "
+            f"A7 variance ({a7_var:.6f})"
+        )
+        improvement = (a7_var - a8_var) / a7_var if a7_var > 0 else 0.0
+        assert improvement >= 0.05, (
+            f"A8 variance improvement ({improvement:.1%}) should be at least 5 % "
+            f"(A8_var={a8_var:.6f}, A7_var={a7_var:.6f})"
         )
 
     def test_a8_true_risk_contribution_uses_covariance(self):

@@ -1,25 +1,18 @@
-"""Unified execution gate for A-share stocks.
+"""Unified execution gate for A-share stocks — dict-based adapter.
 
-PR26A L3 → PR26A.1: Single canonical implementation shared by account
-backtest, matched portfolio runner, and label computation pipeline.
-
-PR26A.1 fixes:
-  - normalize_symbol(): strip exchange suffixes before board detection
-    so "430001.BJ" correctly maps to 30% BSE limit (was 10% Main Board).
-  - is_tradable_at_open(): only uses pre-open observable data — no
-    day's raw_volume or adj_close (future data at open).
-  - is_tradable_at_close(): separate gate for close-time NAV/audit.
-  - Official limit prices preferred when available in price_info.
-  - Label gates delegate to the same can_buy/can_sell_at_open.
+PR26A L3 → PR26A.1 → PR26A.4:  All core limit/gate logic lives in
+execution_market_rules.py (the single canonical source of truth).
+This module is a thin dict-based wrapper that delegates every
+limit-ratio, limit-price, and buy/sell gate decision to that module.
 
 Gate functions:
   normalize_symbol        — strip exchange suffix, return pure 6-digit code
-  daily_limit_ratio       — board-specific limit
-  limit_prices            — (upper, lower) from prev_close
+  daily_limit_ratio       — delegate to execution_market_rules.limit_ratio
+  limit_prices            — delegate to execution_market_rules.limit_prices
   is_tradable_at_open     — pre-open only: is_listed, is_suspended, has open price
   is_tradable_at_close    — full-day: adds volume, close, delisting checks
-  can_buy_at_open         — is_tradable_at_open + not limit-up at open
-  can_sell_at_open        — is_tradable_at_open + not limit-down at open
+  can_buy_at_open         — delegate to execution_market_rules.can_buy_at_open
+  can_sell_at_open        — delegate to execution_market_rules.can_sell_at_open
   execution_price_at_open — return adj_open as execution price
   can_exit_in_labels      — delegate to can_sell_at_open (unified)
   can_enter_in_labels     — delegate to can_buy_at_open (unified)
@@ -30,6 +23,22 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+
+from scripts.research.execution_market_rules import (
+    can_buy_at_open as _mkt_can_buy_at_open,
+)
+from scripts.research.execution_market_rules import (
+    can_sell_at_open as _mkt_can_sell_at_open,
+)
+from scripts.research.execution_market_rules import (
+    limit_prices as _mkt_limit_prices,
+)
+from scripts.research.execution_market_rules import (
+    limit_ratio as _mkt_limit_ratio,
+)
+from scripts.research.execution_market_rules import (
+    MARKET_RULES_VERSION,  # re-export for convenience
+)
 
 
 # ---------------------------------------------------------------------------
@@ -69,29 +78,11 @@ def normalize_symbol(symbol: str) -> str:
 def daily_limit_ratio(symbol: str, is_st: float = 0.0) -> float:
     """Return the applicable daily limit ratio for a stock.
 
-    +-------+-----------------------------------+
-    | Ratio | Board                             |
-    +-------+-----------------------------------+
-    |  5 %  | ST / *ST                          |
-    | 10 %  | Main Board (60xxxx, 00xxxx)       |
-    | 20 %  | ChiNext (30xxxx), STAR (688/689)  |
-    | 30 %  | BSE (4/8/9xxxxx)                  |
-    +-------+-----------------------------------+
-
-    PR26A.1: Uses normalize_symbol() so "430001.BJ" is correctly
-    detected as BSE (30%) instead of falling to Main Board (10%).
+    PR26A.4: Delegates to execution_market_rules.limit_ratio (the canonical
+    implementation).  Strips exchange suffixes first so "430001.BJ" is
+    correctly detected as BSE (30 %) instead of falling to Main Board (10 %).
     """
-    if float(is_st) > 0:
-        return 0.05
-    code = normalize_symbol(symbol)
-    if len(code) != 6:
-        return 0.10  # unknown → default Main Board
-    prefix3 = code[:3]
-    if prefix3 in ("300", "301", "688", "689"):
-        return 0.20
-    if code[0] in ("4", "8", "9"):
-        return 0.30
-    return 0.10
+    return _mkt_limit_ratio(normalize_symbol(symbol), is_st)
 
 
 def limit_prices(
@@ -103,18 +94,12 @@ def limit_prices(
 ) -> tuple[float, float]:
     """Return (upper_limit, lower_limit).
 
-    Prefers official exchange-provided limit prices when available
-    (avoiding Python round() approximation errors vs exchange tick rules).
-    Falls back to calculation from prev_close and daily_limit_ratio.
+    Prefers official exchange-provided limit prices when available.
+    Falls back to execution_market_rules.limit_prices (canonical).
     """
     if official_upper is not None and official_lower is not None:
         return float(official_upper), float(official_lower)
-
-    ratio = daily_limit_ratio(symbol, is_st)
-    tick = 0.01
-    upper = round(prev_close * (1.0 + ratio) / tick) * tick
-    lower = round(prev_close * (1.0 - ratio) / tick) * tick
-    return upper, lower
+    return _mkt_limit_prices(prev_close, normalize_symbol(symbol), is_st)
 
 
 # ---------------------------------------------------------------------------
@@ -218,35 +203,36 @@ def can_buy_at_open(
 ) -> tuple[bool, str, float | None]:
     """Check if a BUY order can execute at the open.
 
-    Uses ONLY pre-open observable data.  Returns
-    (allowed: bool, reason: str, execution_price: float | None).
+    PR26A.4: Delegates to execution_market_rules.can_buy_at_open (canonical).
+    Returns (allowed: bool, reason: str, execution_price: float | None).
     """
     allowed, reason = is_tradable_at_open(symbol, price_info)
     if not allowed:
         return False, reason, None
 
     open_price = _safe_float(price_info.get("adj_open"), np.nan)
-    limit_open = _safe_float(price_info.get("raw_open"), open_price)
     prev_close = _safe_float(
         price_info.get("raw_pre_close", price_info.get("prev_adj_close")),
         np.nan,
     )
     is_st = _safe_float(price_info.get("is_st"), 0.0)
-
-    if not np.isfinite(prev_close) or prev_close <= 0:
-        return False, "missing_prev_close_limit_unknown", None
-
-    official_upper = price_info.get("official_upper_limit")
-    official_lower = price_info.get("official_lower_limit")
-    upper, _lower = limit_prices(
-        prev_close, symbol, is_st,
-        official_upper=_safe_float(official_upper, np.nan) if official_upper is not None else None,
-        official_lower=_safe_float(official_lower, np.nan) if official_lower is not None else None,
+    is_listed = _safe_float(price_info.get("is_listed"), 1.0)
+    is_suspended = _safe_float(price_info.get("is_suspended"), 0.0)
+    list_days = _safe_float(
+        price_info.get("list_days", price_info.get("days_since_listing")), np.nan
     )
 
-    if limit_open >= upper:
-        return False, "limit_up_block", None
-
+    mkt_allowed, mkt_reason = _mkt_can_buy_at_open(
+        open_price,
+        prev_close,
+        normalize_symbol(symbol),
+        float(is_st),
+        is_listed=float(is_listed),
+        is_suspended=float(is_suspended),
+        list_days=float(list_days) if np.isfinite(list_days) else None,
+    )
+    if not mkt_allowed:
+        return False, mkt_reason, None
     return True, "", float(open_price)
 
 
@@ -256,35 +242,36 @@ def can_sell_at_open(
 ) -> tuple[bool, str, float | None]:
     """Check if a SELL order can execute at the open.
 
-    Uses ONLY pre-open observable data.  Returns
-    (allowed: bool, reason: str, execution_price: float | None).
+    PR26A.4: Delegates to execution_market_rules.can_sell_at_open (canonical).
+    Returns (allowed: bool, reason: str, execution_price: float | None).
     """
     allowed, reason = is_tradable_at_open(symbol, price_info)
     if not allowed:
         return False, reason, None
 
     open_price = _safe_float(price_info.get("adj_open"), np.nan)
-    limit_open = _safe_float(price_info.get("raw_open"), open_price)
     prev_close = _safe_float(
         price_info.get("raw_pre_close", price_info.get("prev_adj_close")),
         np.nan,
     )
     is_st = _safe_float(price_info.get("is_st"), 0.0)
-
-    if not np.isfinite(prev_close) or prev_close <= 0:
-        return False, "missing_prev_close_limit_unknown", None
-
-    official_upper = price_info.get("official_upper_limit")
-    official_lower = price_info.get("official_lower_limit")
-    _upper, lower = limit_prices(
-        prev_close, symbol, is_st,
-        official_upper=_safe_float(official_upper, np.nan) if official_upper is not None else None,
-        official_lower=_safe_float(official_lower, np.nan) if official_lower is not None else None,
+    is_listed = _safe_float(price_info.get("is_listed"), 1.0)
+    is_suspended = _safe_float(price_info.get("is_suspended"), 0.0)
+    list_days = _safe_float(
+        price_info.get("list_days", price_info.get("days_since_listing")), np.nan
     )
 
-    if limit_open <= lower:
-        return False, "limit_down_block", None
-
+    mkt_allowed, mkt_reason = _mkt_can_sell_at_open(
+        open_price,
+        prev_close,
+        normalize_symbol(symbol),
+        float(is_st),
+        is_listed=float(is_listed),
+        is_suspended=float(is_suspended),
+        list_days=float(list_days) if np.isfinite(list_days) else None,
+    )
+    if not mkt_allowed:
+        return False, mkt_reason, None
     return True, "", float(open_price)
 
 

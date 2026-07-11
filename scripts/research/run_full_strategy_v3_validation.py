@@ -160,7 +160,7 @@ def run(output_dir, test_log, precheck_only=False):
         "files": {str(p.relative_to(PROJECT_ROOT)): sha256_file(p) for p in config_files},
         "fixed_windows": [f.get("window") for f in folds],
         "train_months": 24, "embargo_trading_days": 10,
-        "validation_months": 6, "step_months": 6,
+        "validation_months": 3, "step_months": 3,  # PR26A.4: quarterly windows
     }
     config_sha = canonical_sha(config_snapshot)
     data_snapshot["fold_coverage"] = folds
@@ -211,6 +211,9 @@ def run(output_dir, test_log, precheck_only=False):
         add_liquidity_derived_features, load_prices, load_scores)
 
     specs = build_experiment_specs()
+    # PR26A.4: Core experiments.  RND100 and REV-A7 are run separately
+    # via executor.run_rnd100() / executor.run_rev() for matched-baseline
+    # analysis with proper seed/alpha-reversal handling.
     RUN_EXPERIMENTS = ["P0", "C0", "A7", "A8", "A9"]
     TOP_N = 5
 
@@ -348,7 +351,9 @@ def run(output_dir, test_log, precheck_only=False):
                     pd.Timestamp(fold["train_end"]).date())
                 if not train_s.empty and not train_p.empty:
                     from scripts.research.executable_labels import compute_executable_forward_returns
-                    tl = compute_executable_forward_returns(train_p)
+                    tl = compute_executable_forward_returns(
+                        train_p, calendar=calendar_dates
+                    )
                     st = a7_runtime.fit(train_s, train_p, tl)
                     for sd in wdates:
                         sd_key = pd.Timestamp(sd).date()

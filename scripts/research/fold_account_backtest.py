@@ -429,7 +429,9 @@ class FoldAccountBacktest:
 
         # 3. Compute executable labels for training (single canonical path)
         if labels_df is None and runtime.needs_training:
-            labels_df = compute_executable_forward_returns(train_prices)
+            labels_df = compute_executable_forward_returns(
+                train_prices, calendar=calendar_dates
+            )
 
         # 4. Per-fold training — fit on THIS fold's training data ONLY
         try:
@@ -1275,7 +1277,9 @@ class FoldAccountBacktest:
             if train_scores.empty:
                 return []
             from scripts.research.executable_labels import compute_executable_forward_returns
-            train_labels = compute_executable_forward_returns(train_prices)
+            train_labels = compute_executable_forward_returns(
+                train_prices, calendar=calendar_dates
+            )
             state = a7_runtime.fit(train_scores, train_prices, train_labels)
             for signal_date in window_dates:
                 sd = _normalize_date(signal_date)
@@ -1457,7 +1461,9 @@ class FoldAccountBacktest:
         train_labels = None
         if getattr(runtime, "needs_training", False):
             from scripts.research.executable_labels import compute_executable_forward_returns
-            train_labels = compute_executable_forward_returns(train_prices)
+            train_labels = compute_executable_forward_returns(
+                train_prices, calendar=calendar_dates
+            )
 
         try:
             state = runtime.fit(train_scores, train_prices, train_labels)
