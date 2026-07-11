@@ -362,6 +362,12 @@ class AlphaEstimator:
             neutral_df["circ_mv"] = neutral_df["circ_mv"].fillna(1.0)
             neutral_df["vol20"] = neutral_df["vol20"].fillna(0.0)
 
+            # Fill NaN with defaults only for symbols not in price data
+            if "circ_mv" in neutral_df.columns:
+                neutral_df["circ_mv"] = neutral_df["circ_mv"].fillna(1.0)
+            if "vol20" in neutral_df.columns:
+                neutral_df["vol20"] = neutral_df["vol20"].fillna(0.0)
+
             # Step 1: Industry neutralize
             residuals = CrossSectionalProcessor.industry_neutralize(
                 neutral_df, "rank_score", "industry",
