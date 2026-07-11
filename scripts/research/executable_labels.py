@@ -5,8 +5,11 @@ Replaces simple close-to-close returns with execution-aware labels:
   exit = T+hold_days close (executable exit price)
   label = exit/entry - 1 - round_trip_cost
 
-Also provides MFE (maximum favorable excursion) and MAE (maximum adverse
+Also provides MFE (maximum favourable excursion) and MAE (maximum adverse
 excursion) for risk-aware training.
+
+PR23: Adds untradable-exit handling — suspension delays, limit-down delays,
+delisting haircuts, and censored samples.
 """
 
 from __future__ import annotations
@@ -18,6 +21,49 @@ from scripts.research.execution_costs import ExecutionCostModel
 
 DEFAULT_HOLD_DAYS = 10
 DEFAULT_ROUND_TRIP_COST = 0.0015
+MAX_EXIT_DELAY_DAYS = 5
+
+
+def _is_exit_tradable(
+    row: pd.Series,
+    has_metadata: bool = True,
+) -> tuple[bool, str]:
+    """Check whether a stock is tradable on a given exit date.
+
+    Returns (tradable, reason).
+    """
+    if not has_metadata:
+        # No suspension / limit metadata — assume tradable
+        return True, ""
+
+    is_suspended = float(row.get("is_suspended", 0) or 0)
+    if is_suspended != 0:
+        return False, "suspended"
+
+    is_delisted = float(row.get("is_delisted", 0) or 0)
+    if is_delisted != 0:
+        return False, "delisted"
+
+    is_listed = float(row.get("is_listed", np.nan) or 1)
+    if pd.notna(is_listed) and is_listed == 0:
+        return False, "not_listed"
+
+    # Limit-down check: close at or below lower limit (-10% for non-ST, -5% for ST)
+    # We approximate: if close is missing and the previous close was at limit-down
+    adj_close = row.get("adj_close", np.nan)
+    if pd.isna(adj_close) or float(adj_close) <= 0:
+        return False, "missing_close"
+
+    # If we have pre_close and limit info, check limit-down
+    prev_close = float(row.get("raw_pre_close", row.get("prev_adj_close", np.nan)) or np.nan)
+    if pd.notna(prev_close) and prev_close > 0:
+        is_st = float(row.get("is_st", 0) or 0)
+        limit_ratio = 0.05 if is_st != 0 else 0.10
+        lower_limit = prev_close * (1.0 - limit_ratio)
+        if float(adj_close) <= lower_limit * 1.001:
+            return False, "limit_down"
+
+    return True, ""
 
 
 def compute_executable_forward_returns(
@@ -25,25 +71,36 @@ def compute_executable_forward_returns(
     hold_days: int = DEFAULT_HOLD_DAYS,
     cost_rate: float | None = None,
     cost_model: ExecutionCostModel | None = None,
+    max_exit_delay: int = MAX_EXIT_DELAY_DAYS,
 ) -> pd.DataFrame:
-    """Compute execution-aware forward returns.
+    """Compute execution-aware forward returns with untradable-exit handling.
 
     Per-symbol, grouped computation:
-      entry_price[t] = open[t+1]        (T+1 executable)
-      exit_price[t]  = close[t+hold_days]
-      fwd_ret[t]     = exit_price/entry_price - 1 - cost_rate
+      entry_price[t] = open[t+1]                     (T+1 executable)
+      planned exit  = close[t+hold_days]
+      actual exit   = first tradable close at or after planned exit
+      fwd_ret[t]    = actual_exit/entry_price - 1 - cost_rate
+
+    If the planned exit date is suspended / limit-down / delisted, the exit
+    is delayed up to *max_exit_delay* trading days.  If no tradable exit is
+    found the sample is marked *censored* (NaN label).
 
     Parameters
     ----------
     prices : DataFrame with [symbol, trade_date, adj_close, adj_open].
              Must have 'adj_open' column for entry prices.
-    hold_days : Number of trading days to hold.
+             Optionally: is_suspended, is_delisted, is_listed, raw_pre_close,
+             is_st for tradability checks.
+    hold_days : Number of trading days to hold (planned exit horizon).
     cost_rate : Round-trip cost rate (commission + tax + slippage).
+    max_exit_delay : Max additional trading days to search for a tradable exit.
 
     Returns
     -------
-    DataFrame with [symbol, trade_date, fwd_ret_5d_exec, fwd_ret_10d_exec,
-    fwd_ret_15d_exec, mfe_10d, mae_10d].
+    DataFrame with [symbol, trade_date, fwd_ret_5d_exec_net,
+    fwd_ret_10d_exec_net, fwd_ret_15d_exec_net, mfe_10d, mae_10d,
+    planned_exit_date, actual_exit_date, exit_delay_days, exit_tradable,
+    censored, exit_reason].
     """
     if prices.empty:
         return pd.DataFrame()
@@ -51,6 +108,8 @@ def compute_executable_forward_returns(
     prices_sorted = prices.sort_values(["symbol", "trade_date"]).copy()
     if "adj_open" not in prices_sorted.columns:
         raise ValueError("executable labels require adj_open; close fallback is forbidden")
+
+    has_metadata = "is_suspended" in prices_sorted.columns
 
     g = prices_sorted.groupby("symbol", group_keys=False)
 
@@ -61,10 +120,16 @@ def compute_executable_forward_returns(
     else:
         prices_sorted["entry_tradable"] = prices_sorted["entry_price"].notna()
 
-    # Exit prices at various horizons
-    for h in [5, 10, 15]:
-        prices_sorted[f"exit_price_{h}d"] = g["adj_close"].shift(-h)
+    # --- Build row-index lookup for delayed exit ---
+    # Reset index so we can use integer positions for fast forward-scan.
+    prices_sorted = prices_sorted.reset_index(drop=True)
+    # Build a per-symbol list of row positions for O(1) forward-scan.
+    sym_row_indices: dict[str, list[int]] = {}
+    for i, (_, row) in enumerate(prices_sorted.iterrows()):
+        sym = str(row["symbol"])
+        sym_row_indices.setdefault(sym, []).append(i)
 
+    # --- Round-trip cost ---
     model = cost_model or ExecutionCostModel()
     model_round_trip = (
         2 * model.commission_rate
@@ -75,24 +140,120 @@ def compute_executable_forward_returns(
     )
     round_trip_cost = model_round_trip if cost_rate is None else float(cost_rate)
 
-    # Executable forward returns
-    for h in [5, 10, 15]:
-        ext = prices_sorted[f"exit_price_{h}d"]
-        ent = prices_sorted["entry_price"]
-        prices_sorted[f"fwd_ret_{h}d_exec"] = (
-            ext.fillna(0.0) / ent.fillna(1.0).clip(lower=0.01) - 1.0 - round_trip_cost
-        )
-        # Mark as NaN if either price is missing
-        prices_sorted.loc[
-            ext.isna() | ent.isna() | (ent <= 0) | ~prices_sorted["entry_tradable"],
-            f"fwd_ret_{h}d_exec",
-        ] = np.nan
-        prices_sorted[f"fwd_ret_{h}d_exec_net"] = prices_sorted[f"fwd_ret_{h}d_exec"]
+    # --- Exit metadata columns ---
+    for col in ("planned_exit_date", "actual_exit_date", "exit_reason"):
+        prices_sorted[col] = None
+    for col in ("exit_delay_days",):
+        prices_sorted[col] = 0
+    for col in ("exit_tradable",):
+        prices_sorted[col] = True
+    for col in ("censored",):
+        prices_sorted[col] = False
 
-    # MFE/MAE: max/min cumulative return between entry and exit
+    # --- Compute executable returns with delayed-exit logic ---
+    for h in [5, 10, 15]:
+        col_ret = f"fwd_ret_{h}d_exec"
+        col_net = f"fwd_ret_{h}d_exec_net"
+
+        prices_sorted[col_ret] = np.nan
+        prices_sorted[col_net] = np.nan
+
+        for sym, row_positions in sym_row_indices.items():
+            n_rows = len(row_positions)
+            for pos_idx, row_idx in enumerate(row_positions):
+                row = prices_sorted.iloc[row_idx]
+                entry_px = row["entry_price"]
+                entry_tradable_flag = row.get("entry_tradable", True)
+
+                # Invalid entry → NaN label
+                if pd.isna(entry_px) or entry_px <= 0 or not entry_tradable_flag:
+                    continue
+
+                # Planned exit: row at position pos_idx + h
+                planned_exit_pos = pos_idx + h
+                if planned_exit_pos >= n_rows:
+                    # No data for planned exit — censored
+                    prices_sorted.at[row_idx, f"planned_exit_date"] = None
+                    prices_sorted.at[row_idx, "censored"] = True
+                    prices_sorted.at[row_idx, "exit_reason"] = "no_data"
+                    continue
+
+                planned_row_idx = row_positions[planned_exit_pos]
+                planned_row = prices_sorted.iloc[planned_row_idx]
+                planned_date = planned_row["trade_date"]
+
+                # Record planned exit date
+                prices_sorted.at[row_idx, f"planned_exit_date"] = planned_date
+
+                # Find first tradable exit within delay window
+                actual_exit_pos = planned_exit_pos
+                actual_row_idx = planned_row_idx
+                exit_delayed = False
+                exit_reason = ""
+                found = False
+
+                for delay in range(max_exit_delay + 1):
+                    scan_pos = planned_exit_pos + delay
+                    if scan_pos >= n_rows:
+                        break
+                    scan_row_idx = row_positions[scan_pos]
+                    scan_row = prices_sorted.iloc[scan_row_idx]
+                    tradable, reason = _is_exit_tradable(scan_row, has_metadata)
+                    if tradable:
+                        actual_exit_pos = scan_pos
+                        actual_row_idx = scan_row_idx
+                        if delay > 0:
+                            exit_delayed = True
+                            exit_reason = f"delayed_{delay}d"
+                        found = True
+                        break
+                    if reason == "delisted":
+                        # Delisting: use last close with 30% haircut as exit
+                        actual_exit_pos = scan_pos
+                        actual_row_idx = scan_row_idx
+                        exit_delayed = True
+                        exit_reason = "delisted_haircut"
+                        found = True
+                        break
+
+                if not found:
+                    # Could not find tradable exit — censored
+                    prices_sorted.at[row_idx, "actual_exit_date"] = planned_date
+                    prices_sorted.at[row_idx, "exit_delay_days"] = max_exit_delay
+                    prices_sorted.at[row_idx, "exit_tradable"] = False
+                    prices_sorted.at[row_idx, "censored"] = True
+                    prices_sorted.at[row_idx, "exit_reason"] = "no_tradable_exit"
+                    continue
+
+                actual_row = prices_sorted.iloc[actual_row_idx]
+                actual_date = actual_row["trade_date"]
+                exit_px = float(actual_row["adj_close"])
+
+                # Delisting haircut
+                if exit_reason == "delisted_haircut":
+                    exit_px *= 0.70  # 30% haircut on delisting
+
+                if exit_px <= 0:
+                    prices_sorted.at[row_idx, "censored"] = True
+                    prices_sorted.at[row_idx, "exit_reason"] = "zero_exit_price"
+                    continue
+
+                # Compute return
+                ret = exit_px / entry_px - 1.0 - round_trip_cost
+
+                prices_sorted.at[row_idx, col_ret] = ret
+                prices_sorted.at[row_idx, col_net] = ret
+                prices_sorted.at[row_idx, "actual_exit_date"] = actual_date
+                prices_sorted.at[row_idx, "exit_delay_days"] = (
+                    actual_exit_pos - planned_exit_pos
+                )
+                prices_sorted.at[row_idx, "exit_tradable"] = not exit_delayed
+                prices_sorted.at[row_idx, "exit_reason"] = exit_reason
+
+    # --- MFE/MAE: max/min cumulative return between entry and actual exit ---
     prices_sorted["mfe_10d"] = np.nan
     prices_sorted["mae_10d"] = np.nan
-    for symbol, grp in g:
+    for symbol, grp in prices_sorted.groupby("symbol", sort=False):
         close_vals = grp["adj_close"].values
         entry_vals = grp["entry_price"].values
         for i in range(len(grp) - 10):
@@ -102,22 +263,19 @@ def compute_executable_forward_returns(
             if len(window) < 2:
                 continue
             rets = window / entry_vals[i] - 1.0
-            idx = prices_sorted.index[
-                (prices_sorted["symbol"] == symbol)
-                & (prices_sorted["trade_date"] == grp["trade_date"].iloc[i])
-            ]
-            if len(idx) > 0:
-                prices_sorted.loc[idx[0], "mfe_10d"] = float(np.max(rets))
-                prices_sorted.loc[idx[0], "mae_10d"] = float(np.min(rets))
+            idx = grp.index[i]
+            prices_sorted.loc[idx, "mfe_10d"] = float(np.max(rets))
+            prices_sorted.loc[idx, "mae_10d"] = float(np.min(rets))
 
-    # Cleanup internal columns
+    # --- Cleanup ---
     result_cols = [
         "symbol", "trade_date",
         "fwd_ret_5d_exec", "fwd_ret_10d_exec", "fwd_ret_15d_exec",
         "fwd_ret_5d_exec_net", "fwd_ret_10d_exec_net", "fwd_ret_15d_exec_net",
         "mfe_10d", "mae_10d", "entry_tradable",
+        "planned_exit_date", "actual_exit_date", "exit_delay_days",
+        "exit_tradable", "censored", "exit_reason",
     ]
-    # Also keep entry/exit for audit
     keep_cols = result_cols + ["entry_price"] + [f"exit_price_{h}d" for h in [5, 10, 15]]
     available = [c for c in keep_cols if c in prices_sorted.columns]
     return prices_sorted[available].reset_index(drop=True)

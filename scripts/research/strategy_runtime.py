@@ -79,6 +79,47 @@ class StrategyRuntime(ABC):
     def should_exit(self, *_: Any, **__: Any) -> tuple[bool, str]:
         return False, ""
 
+    # ------------------------------------------------------------------
+    # Position lifecycle delegation (PR23)
+    # ------------------------------------------------------------------
+    # Subclasses with exit rules override these to maintain per-symbol
+    # decay state.  Default implementations are no-ops.
+
+    def open_position(
+        self,
+        symbol: str,
+        entry_date: str,
+        rank_score: float,
+        rank: int,
+        candidate_count: int,
+    ) -> None:
+        """Called when a new position is established."""
+
+    def record(
+        self,
+        symbol: str,
+        signal_date: str,
+        score: float,
+        rank: int,
+        candidate_count: int,
+    ) -> None:
+        """Called daily to record signal observations for a held position."""
+
+    def close_position(
+        self,
+        symbol: str,
+        exit_date: str,
+        reason: str = "",
+    ) -> None:
+        """Called when a position is fully closed."""
+
+    def should_extend(
+        self,
+        symbol: str,
+    ) -> tuple[bool, int]:
+        """Check winner-extension eligibility.  Returns (extend, extra_days)."""
+        return False, 0
+
 
 class AdapterRuntime(StrategyRuntime):
     def __init__(self, runtime_id: str, adapter: Any) -> None:
@@ -194,6 +235,53 @@ class FrozenAlphaRuntime(StrategyRuntime):
 
         # Default: no exit
         return False, ""
+
+    # ------------------------------------------------------------------
+    # Position lifecycle (PR23) — delegate to exit rule tracker
+    # ------------------------------------------------------------------
+
+    def open_position(
+        self,
+        symbol: str,
+        entry_date: str,
+        rank_score: float,
+        rank: int,
+        candidate_count: int,
+    ) -> None:
+        if self._exit_rule is not None:
+            self._exit_rule.tracker.open_position(
+                symbol, entry_date, rank_score, rank, candidate_count,
+            )
+
+    def record(
+        self,
+        symbol: str,
+        signal_date: str,
+        score: float,
+        rank: int,
+        candidate_count: int,
+    ) -> None:
+        if self._exit_rule is not None:
+            self._exit_rule.tracker.record(
+                symbol, signal_date, score, rank, candidate_count,
+            )
+
+    def close_position(
+        self,
+        symbol: str,
+        exit_date: str,
+        reason: str = "",
+    ) -> None:
+        if self._exit_rule is not None:
+            self._exit_rule.tracker.close_position(symbol, exit_date, reason)
+
+    def should_extend(
+        self,
+        symbol: str,
+    ) -> tuple[bool, int]:
+        if self._exit_rule is not None:
+            return self._exit_rule.should_extend(symbol)
+        return False, 0
 
     def rank_as_of(self, state, signal_date, historical_scores, historical_prices):
         if state.alpha_state is None:

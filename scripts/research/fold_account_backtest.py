@@ -401,7 +401,7 @@ class FoldAccountBacktest:
         signal_date_weights: dict[str, pd.DataFrame] = {}
 
         for signal_date in window_dates:
-            sd = str(signal_date)
+            sd = _normalize_date(signal_date)
             result.signal_dates_attempted += 1
             try:
                 ranked = runtime.rank_as_of(state, sd, scores_df, prices_df)
@@ -473,8 +473,8 @@ class FoldAccountBacktest:
         self,
         experiment_id: str,
         window_label: str,
-        candidate_map: dict[str, pd.DataFrame],
-        weight_map: dict[str, pd.DataFrame],
+        candidate_map: dict[object, pd.DataFrame],
+        weight_map: dict[object, pd.DataFrame],
         window_dates: list,
         calendar_dates: list,
         prices_df: pd.DataFrame,
@@ -483,151 +483,158 @@ class FoldAccountBacktest:
     ) -> None:
         """Execute full daily account backtest for one validation window.
 
+        PR23: Correct execution timeline (Problem 4), delta orders (P5),
+        position invariants (P6), exit lifecycle (P7), holding-period
+        contracts (P8).
+
         For each trade_date in the window:
-          - Execute pending orders at T+1 open (sells → buys)
-          - Post-execution MTM at close prices
-          - Record NAV after execution
-          - Check exit gates: hard risk > alpha decay > hold expiry > rebalance
-          - Track rejections for orders blocked by limit/suspension
+          1. Pre-trade equity at OPEN prices (no lookahead)
+          2. Execute SELL orders first (delta decreases + exits)
+          3. Execute BUY orders (delta increases + new entries)
+          4. Lifecycle: open_position() / record() / close_position()
+          5. Post-execution MTM at close prices
+          6. Record NAV
+          7. Enforce position invariants
         """
         account = AccountState(cash=float(self.config.initial_cash))
-        locked_until: dict[str, int] = {}  # symbol -> trade_date_idx when lock expires
+        locked_until: dict[str, int] = {}  # symbol -> day_idx when lock expires
         exec_to_signal: dict[object, object] = {}
-        signal_to_exec: dict[object, object] = {}
 
-        # Build T+1 mappings
-        prev_exec_date = None
+        # Build T+1 mappings (dates already normalized to datetime.date)
         for d in window_dates:
-            signal_date = d
             if self.config.t_plus_1:
-                exec_date = _next_trade_date(calendar_dates, signal_date)
+                exec_date = _next_trade_date(calendar_dates, d)
             else:
-                exec_date = signal_date
+                exec_date = d
             if exec_date is not None:
-                signal_to_exec[signal_date] = exec_date
                 if exec_date not in exec_to_signal:
-                    exec_to_signal[exec_date] = signal_date
-            prev_exec_date = exec_date
+                    exec_to_signal[exec_date] = d
 
         # Pre-index prices by trade_date for O(1) lookup
         prices_by_date: dict[object, pd.DataFrame] = {}
-        prices_grouped = prices_df.groupby("trade_date") if hasattr(prices_df, "groupby") else None
+        prices_grouped = (
+            prices_df.groupby("trade_date") if hasattr(prices_df, "groupby") else None
+        )
         if prices_grouped is not None:
             for trade_date, group in prices_grouped:
                 prices_by_date[trade_date] = group.set_index("symbol")
 
-        # Pre-compute target positions per signal date
+        # Pre-compute target positions per signal date (date-normalized keys)
         signal_targets: dict[object, dict[str, float]] = {}
+        signal_candidate_counts: dict[object, int] = {}
         for sd in window_dates:
-            if sd in candidate_map and sd in weight_map:
+            sd_key = _normalize_date(sd)
+            if sd_key in candidate_map and sd_key in weight_map:
                 targets: dict[str, float] = {}
-                wdf = weight_map[sd]
+                wdf = weight_map[sd_key]
                 for _, row in wdf.iterrows():
                     sym = str(row["symbol"])
                     targets[sym] = float(row.get("final_portfolio_weight", 0))
-                signal_targets[sd] = targets
+                signal_targets[sd_key] = targets
+                cdf = candidate_map.get(sd_key, pd.DataFrame())
+                signal_candidate_counts[sd_key] = len(cdf)
 
         hold_days = self.config.hold_days
+        uses_decay_exit = getattr(runtime, "uses_decay_exit", False)
 
-        # Track last known close price per symbol for valuation fallback
+        # Track last known close/open per symbol for valuation fallback
         last_close_price: dict[str, float] = {}
-        # Track entry day_index per symbol for holding days calculation
+        last_open_price: dict[str, float] = {}
+        # Track entry day_idx per symbol for holding-days calculation
         position_entry_day: dict[str, int] = {}
 
         for day_idx, trade_date in enumerate(window_dates):
-            # --- MTM with fail-closed price valuation ---
-            price_map: dict[str, float] = {}
-            # Extra metadata from price_df for tradability checks
+            # ---------------------------------------------------------------
+            # Step 1: Pre-trade equity at OPEN prices (Problem 4 fix)
+            # ---------------------------------------------------------------
+            open_price_map: dict[str, float] = {}
+            price_map: dict[str, float] = {}         # close prices for NAV
             price_meta_map: dict[str, dict[str, Any]] = {}
             td_key = trade_date
             if td_key in prices_by_date:
                 price_df = prices_by_date[td_key]
                 for sym in price_df.index:
                     row = price_df.loc[sym]
+                    open_px = _safe_float(
+                        row.get("adj_open") if hasattr(row, "get") else None, np.nan,
+                    )
                     close_px = _safe_float(
                         row.get("adj_close") if hasattr(row, "get") else None, np.nan,
                     )
+                    if np.isfinite(open_px) and open_px > 0:
+                        open_price_map[str(sym)] = float(open_px)
                     if np.isfinite(close_px) and close_px > 0:
                         price_map[str(sym)] = float(close_px)
-                    price_meta_map[str(sym)] = {
+                    price_meta_map[str(sym)] = ({
                         "is_suspended": bool(_safe_float(row.get("is_suspended", row.get("suspend_type")), 0)),
                         "is_delisted": bool(_safe_float(row.get("is_delisted"), 0)),
-                    } if hasattr(row, "get") else {}
+                        "rank_score": _safe_float(row.get("rank_score"), 0.0),
+                        "rank": int(_safe_float(row.get("rank"), 999)),
+                    } if hasattr(row, "get") else {})
 
-            # Update last_close_price for positions with valid prices
+            # Update last known prices
             for sym in account.positions:
                 if sym in price_map:
                     last_close_price[sym] = price_map[sym]
+                if sym in open_price_map:
+                    last_open_price[sym] = open_price_map[sym]
 
-            market_value = 0.0
+            # Pre-trade equity using OPEN prices (correct timing)
+            pre_trade_equity = account.cash
             valuation_warnings: list[dict[str, Any]] = []
             for sym, pos in account.positions.items():
                 if pos.shares <= 0:
                     continue
-                close_px = price_map.get(sym)
-                meta = price_meta_map.get(sym, {})
-
-                if close_px is not None and close_px > 0:
-                    market_value += pos.shares * close_px
+                open_px = open_price_map.get(sym)
+                if open_px is not None and open_px > 0:
+                    pre_trade_equity += pos.shares * open_px
+                elif sym in last_open_price and last_open_price[sym] > 0:
+                    # Suspended — use last known
+                    pre_trade_equity += pos.shares * last_open_price[sym]
+                    valuation_warnings.append({
+                        "trade_date": trade_date, "symbol": sym,
+                        "fallback_reason": "suspended_open_fallback",
+                        "fallback_price": last_open_price[sym],
+                        "shares": pos.shares,
+                    })
                 elif sym in last_close_price and last_close_price[sym] > 0:
-                    # Fallback: suspended or delisted — use last known close price
-                    fallback_px = last_close_price[sym]
-                    market_value += pos.shares * fallback_px
-                    reason = "suspended" if meta.get("is_suspended") else (
-                        "delisted" if meta.get("is_delisted") else "missing_close"
-                    )
-                    valuation_warnings.append({
-                        "trade_date": trade_date,
-                        "symbol": sym,
-                        "fallback_reason": reason,
-                        "fallback_price": fallback_px,
-                        "shares": pos.shares,
-                    })
-                elif meta.get("is_delisted"):
-                    # Delisted with no prior price — use last known or zero
-                    # This is a terminal event; record as disposal at last known
-                    if sym in last_close_price and last_close_price[sym] > 0:
-                        market_value += pos.shares * last_close_price[sym]
-                    valuation_warnings.append({
-                        "trade_date": trade_date,
-                        "symbol": sym,
-                        "fallback_reason": "delisted_no_price",
-                        "fallback_price": last_close_price.get(sym, 0.0),
-                        "shares": pos.shares,
-                    })
-                else:
-                    # Fail Closed: truly missing data with no fallback
-                    raise RuntimeError(
-                        f"ValuationError: no close price for {sym} on {trade_date} "
-                        f"(position {pos.shares} shares); fail-closed"
-                    )
+                    pre_trade_equity += pos.shares * last_close_price[sym]
 
             # Log valuation warnings
-            if valuation_warnings:
-                for w in valuation_warnings:
-                    result.nav_rows.append({
-                        "experiment_id": experiment_id,
-                        "window": window_label,
-                        "trade_date": trade_date,
-                        "event_type": "valuation_warning",
-                        **w,
-                    })
+            for w in valuation_warnings:
+                result.nav_rows.append({
+                    "experiment_id": experiment_id, "window": window_label,
+                    "trade_date": trade_date, "event_type": "valuation_warning", **w,
+                })
 
-            # Compute pre-trade equity (before any execution today)
-            pre_trade_equity = account.cash + market_value
-
-            # --- Execute pending orders (T+1 open) ---
+            # ---------------------------------------------------------------
+            # Step 2: Execute orders (SELLS first, then BUYS)
+            # ---------------------------------------------------------------
             signal_date = exec_to_signal.get(trade_date)
             if signal_date is not None:
                 targets = signal_targets.get(signal_date, {})
+                candidate_count = signal_candidate_counts.get(signal_date, 0)
+                day_cdf = candidate_map.get(signal_date, pd.DataFrame())
+
+                # Build per-symbol score map from candidates for lifecycle recording
+                day_score_map: dict[str, dict[str, Any]] = {}
+                if not day_cdf.empty:
+                    for _, crow in day_cdf.iterrows():
+                        sym = str(crow.get("symbol", ""))
+                        day_score_map[sym] = {
+                            "rank_score": float(crow.get("rank_score", crow.get("rank", 0))),
+                            "rank": int(_safe_float(crow.get("rank"), candidate_count)),
+                        }
 
                 # --- Unlock expired positions ---
                 expired = [s for s, until in locked_until.items() if day_idx >= until]
                 for s in expired:
                     del locked_until[s]
 
-                # --- Exit-prioritized position management ---
-                # Priority: hard_risk > alpha_decay > hold_expiry > rebalance
+                # --- 2a. SELL: Exit-prioritized position management ---
+                # Gates: hard_risk > alpha_decay > fixed_hold_expiry > rebalance
+                sells_to_execute: list[tuple[str, int, str]] = []  # (sym, shares, reason)
+
                 for sym in list(account.positions.keys()):
                     pos = account.positions.get(sym)
                     if pos is None or pos.shares <= 0:
@@ -645,72 +652,81 @@ class FoldAccountBacktest:
                     elif is_suspended:
                         exit_reason = "hard_exit:suspended"
 
-                    # Gate 2: Alpha decay exit (if not already force-exited)
-                    if not exit_reason and runtime is not None and sym not in locked_until:
-                        should_exit, exit_msg = runtime.should_exit(
-                            symbol=sym,
-                            trade_date=str(trade_date),
-                            holding_days=holding_days_sym,
-                            hold_days_required=hold_days,
-                            is_suspended=is_suspended,
-                            is_delisted=is_delisted,
-                        )
-                        if should_exit:
-                            exit_reason = f"alpha_decay:{exit_msg}"
+                    # Gate 2: Decay exit (A9 only; requires unlocked)
+                    if not exit_reason and uses_decay_exit and runtime is not None:
+                        if sym not in locked_until:
+                            score_info = day_score_map.get(sym, {})
+                            should_exit, exit_msg = runtime.should_exit(
+                                symbol=sym,
+                                trade_date=str(trade_date),
+                                rank_score=float(score_info.get("rank_score", 0.0)),
+                                rank=int(score_info.get("rank", candidate_count)),
+                                candidate_count=candidate_count,
+                                holding_days=holding_days_sym,
+                                hold_days_required=hold_days,
+                                is_suspended=is_suspended,
+                                is_delisted=is_delisted,
+                            )
+                            if should_exit:
+                                exit_reason = f"alpha_decay:{exit_msg}"
 
-                    # Gate 3: Lock check (skip if still locked and no hard exit)
+                    # Gate 3: Fixed-hold exit (A7/A8: always exit after hold_days)
+                    if not exit_reason and not uses_decay_exit and sym not in locked_until:
+                        if holding_days_sym >= hold_days:
+                            exit_reason = "fixed_hold_expiry"
+
+                    # Gate 4: Lock check (skip if still locked)
                     if not exit_reason and sym in locked_until:
                         continue
 
-                    # Gate 4: Rebalance — non-target with expired hold
+                    # Gate 5: Rebalance — non-target (if still no reason)
                     if not exit_reason:
                         if sym in targets and targets[sym] > 0:
-                            continue  # still a target, keep
+                            continue  # still a target
                         exit_reason = "rebalance_exit"
 
-                    # --- Execute the exit ---
+                    # Schedule sell for execution
+                    sells_to_execute.append((sym, pos.shares, exit_reason))
+
+                # Execute sells (may free cash for subsequent buys)
+                for sym, shares, reason in sells_to_execute:
                     price_info = _get_price_info(prices_df, sym, trade_date)
                     if price_info is None:
                         continue
-
                     allowed, reject_reason, exec_price = _t1_gate(sym, "SELL", price_info)
                     if not allowed:
                         result.rejection_rows.append({
-                            "experiment_id": experiment_id,
-                            "window": window_label,
-                            "trade_date": trade_date,
-                            "symbol": sym,
-                            "side": "SELL",
-                            "reason": reject_reason,
+                            "experiment_id": experiment_id, "window": window_label,
+                            "trade_date": trade_date, "symbol": sym,
+                            "side": "SELL", "reason": reject_reason,
                         })
                         continue
-
-                    _execute_sell(
-                        account, sym, pos.shares, float(exec_price or 0),
+                    sold = _execute_sell(
+                        account, sym, shares, float(exec_price or 0),
                         trade_date, self.cost_model, self.config.lot_size,
-                        result.trade_rows, exit_reason,
+                        result.trade_rows, reason,
                     )
-                    # Record exit
-                    result.exit_rows.append({
-                        "experiment_id": experiment_id,
-                        "window": window_label,
-                        "trade_date": trade_date,
-                        "symbol": sym,
-                        "exit_reason": exit_reason,
-                        "exit_shares": pos.shares,
-                    })
-                    # Clean up entry tracking
-                    position_entry_day.pop(sym, None)
-                    if sym in locked_until:
-                        del locked_until[sym]
+                    if sold > 0:
+                        # Lifecycle: close position in exit tracker (P7)
+                        if runtime is not None:
+                            runtime.close_position(sym, str(trade_date), reason)
+                        result.exit_rows.append({
+                            "experiment_id": experiment_id, "window": window_label,
+                            "trade_date": trade_date, "symbol": sym,
+                            "exit_reason": reason, "exit_shares": sold,
+                        })
+                        position_entry_day.pop(sym, None)
+                        locked_until.pop(sym, None)
 
-                # --- Buy new targets using weight-based sizing ---
-                # target_value = pre_trade_equity × final_portfolio_weight
-                for sym, weight in sorted(targets.items(), key=lambda x: -x[1]):
+                # --- 2b. BUY: Delta-order sizing (Problem 5 fix) ---
+                # target_value = pre_trade_equity * final_portfolio_weight
+                # target_shares = round_lot(target_value / exec_price)
+                # delta = target_shares - current_shares
+                # Execute all deltas (positive → buy, negative → sell)
+                buy_targets = sorted(targets.items(), key=lambda x: -x[1])
+                for sym, weight in buy_targets:
                     if weight <= 0:
                         continue
-                    if sym in account.positions and account.positions[sym].shares > 0:
-                        continue  # already held
 
                     price_info = _get_price_info(prices_df, sym, trade_date)
                     if price_info is None:
@@ -719,33 +735,82 @@ class FoldAccountBacktest:
                     allowed, reject_reason, exec_price = _t1_gate(sym, "BUY", price_info)
                     if not allowed:
                         result.rejection_rows.append({
-                            "experiment_id": experiment_id,
-                            "window": window_label,
-                            "trade_date": trade_date,
-                            "symbol": sym,
-                            "side": "BUY",
-                            "reason": reject_reason,
+                            "experiment_id": experiment_id, "window": window_label,
+                            "trade_date": trade_date, "symbol": sym,
+                            "side": "BUY", "reason": reject_reason,
                         })
                         continue
 
                     target_value = pre_trade_equity * weight
                     budget = min(target_value, account.cash * 0.95)
-                    target_shares = int(budget / float(exec_price or 1))
-                    name = str(price_info.get("name", sym))
-                    industry = str(price_info.get("industry", ""))
+                    target_shares_raw = int(budget / float(exec_price or 1))
+                    target_shares = _round_lot(target_shares_raw, self.config.lot_size)
 
-                    bought = _execute_buy(
-                        account, sym, name, industry, target_shares,
-                        float(exec_price or 0), trade_date,
-                        self.cost_model, self.config.lot_size,
-                        result.trade_rows, "rebalance_entry",
+                    current_shares = (
+                        account.positions[sym].shares
+                        if sym in account.positions else 0
                     )
-                    if bought > 0:
-                        locked_until[sym] = day_idx + hold_days
-                        if sym not in position_entry_day:
-                            position_entry_day[sym] = day_idx
+                    delta = target_shares - current_shares
 
-            # --- Post-execution MTM: recalculate equity after trades ---
+                    if delta == 0:
+                        continue  # already at target
+
+                    if delta < 0:
+                        # Need to sell some
+                        sell_shares = min(abs(delta), current_shares)
+                        allowed_sell, _, sell_exec_price = _t1_gate(sym, "SELL", price_info)
+                        if allowed_sell and sell_exec_price:
+                            sold = _execute_sell(
+                                account, sym, sell_shares, float(sell_exec_price),
+                                trade_date, self.cost_model, self.config.lot_size,
+                                result.trade_rows, "delta_decrease",
+                            )
+                            if sold > 0 and runtime is not None and account.positions.get(sym) is None:
+                                runtime.close_position(sym, str(trade_date), "delta_decrease")
+                    else:
+                        # Need to buy more
+                        name = str(price_info.get("name", sym))
+                        industry = str(price_info.get("industry", ""))
+                        was_new = current_shares == 0
+                        bought = _execute_buy(
+                            account, sym, name, industry, delta,
+                            float(exec_price or 0), trade_date,
+                            self.cost_model, self.config.lot_size,
+                            result.trade_rows,
+                            "delta_increase" if not was_new else "rebalance_entry",
+                        )
+                        if bought > 0:
+                            # Lifecycle: open position in exit tracker (P7)
+                            if was_new:
+                                locked_until[sym] = day_idx + hold_days
+                                position_entry_day[sym] = day_idx
+                                score_info = day_score_map.get(sym, {})
+                                if runtime is not None:
+                                    runtime.open_position(
+                                        sym, str(trade_date),
+                                        float(score_info.get("rank_score", 0.0)),
+                                        int(score_info.get("rank", candidate_count)),
+                                        candidate_count,
+                                    )
+
+            # ---------------------------------------------------------------
+            # Step 3: Daily lifecycle recording for all held positions (P7)
+            # ---------------------------------------------------------------
+            if runtime is not None and uses_decay_exit:
+                for sym, pos in account.positions.items():
+                    if pos.shares <= 0:
+                        continue
+                    score_info = day_score_map.get(sym, {}) if signal_date else {}
+                    runtime.record(
+                        sym, str(trade_date),
+                        float(score_info.get("rank_score", 0.0)),
+                        int(score_info.get("rank", candidate_count if signal_date else 0)),
+                        candidate_count if signal_date else 0,
+                    )
+
+            # ---------------------------------------------------------------
+            # Step 4: Post-execution MTM at close prices → NAV
+            # ---------------------------------------------------------------
             post_market_value = 0.0
             for sym, pos in account.positions.items():
                 if pos.shares <= 0:
@@ -759,10 +824,9 @@ class FoldAccountBacktest:
             equity_yuan = account.cash + post_market_value
             nav = equity_yuan / self.config.initial_cash
 
-            # --- Record NAV (after execution, at close) ---
+            # --- Record NAV ---
             result.nav_rows.append({
-                "experiment_id": experiment_id,
-                "window": window_label,
+                "experiment_id": experiment_id, "window": window_label,
                 "trade_date": trade_date,
                 "cash": float(account.cash),
                 "market_value": float(post_market_value),
@@ -770,6 +834,60 @@ class FoldAccountBacktest:
                 "nav": float(nav),
                 "position_count": len([p for p in account.positions.values() if p.shares > 0]),
             })
+
+            # ---------------------------------------------------------------
+            # Step 5: Position invariant enforcement (Problem 6 fix)
+            # ---------------------------------------------------------------
+            if equity_yuan > 0:
+                max_single = 0.0
+                max_single_sym = ""
+                industry_exposure: dict[str, float] = {}
+                for sym, pos in account.positions.items():
+                    if pos.shares <= 0:
+                        continue
+                    close_px = price_map.get(sym)
+                    if close_px is None or close_px <= 0:
+                        close_px = last_close_price.get(sym, 0.0)
+                    weight = (pos.shares * close_px) / equity_yuan
+                    if weight > max_single:
+                        max_single = weight
+                        max_single_sym = sym
+                    ind = pos.industry or "unknown"
+                    industry_exposure[ind] = industry_exposure.get(ind, 0.0) + weight
+
+                actual_exposure = sum(
+                    (pos.shares * (price_map.get(sym) or last_close_price.get(sym, 0.0)))
+                    / equity_yuan
+                    for sym, pos in account.positions.items()
+                    if pos.shares > 0
+                )
+
+                # Record violations as nav_row events
+                if max_single > 0.15:
+                    result.nav_rows.append({
+                        "experiment_id": experiment_id, "window": window_label,
+                        "trade_date": trade_date, "event_type": "invariant_violation",
+                        "violation": f"single_stock_overweight:{max_single_sym}:{max_single:.4f}",
+                    })
+                for ind, exp in industry_exposure.items():
+                    if exp > 0.30:
+                        result.nav_rows.append({
+                            "experiment_id": experiment_id, "window": window_label,
+                            "trade_date": trade_date, "event_type": "invariant_violation",
+                            "violation": f"industry_overweight:{ind}:{exp:.4f}",
+                        })
+                if actual_exposure > self.config.target_gross_exposure + 0.02:
+                    result.nav_rows.append({
+                        "experiment_id": experiment_id, "window": window_label,
+                        "trade_date": trade_date, "event_type": "invariant_violation",
+                        "violation": f"exposure_over_target:{actual_exposure:.4f}",
+                    })
+                if account.cash < -1.0:  # 1 yuan tolerance for rounding
+                    result.nav_rows.append({
+                        "experiment_id": experiment_id, "window": window_label,
+                        "trade_date": trade_date, "event_type": "invariant_violation",
+                        "violation": f"negative_cash:{account.cash:.2f}",
+                    })
 
     # ------------------------------------------------------------------
     # RND100: 100 random seed backtests
@@ -782,11 +900,18 @@ class FoldAccountBacktest:
         scores_df: pd.DataFrame,
         prices_df: pd.DataFrame,
         calendar_dates: list,
+        a7_candidate_map: dict[object, pd.DataFrame] | None = None,
+        a7_weight_map: dict[object, pd.DataFrame] | None = None,
+        a7_runtime=None,  # A7 runtime for computing candidates (fallback)
     ) -> list[dict[str, Any]]:
         """Run 100 random-seed account backtests for one fold.
 
-        Each seed runs a full account backtest via _run_account_backtest()
-        with randomly shuffled candidate ranking (same execution path as A7).
+        PR23 (Problem 9a): RND100 now uses A7's candidate pool — it shuffles
+        A7's Top-N candidates instead of picking random stocks from the
+        entire score universe.  Weights, exposure, hold period, costs, and
+        T+1 rules are identical to A7.
+
+        Each seed runs a full account backtest via _run_account_backtest().
         Returns per-seed metrics.
         """
         window_label = fold.get("window", "unknown")
@@ -799,6 +924,33 @@ class FoldAccountBacktest:
         if len(window_dates) < 5:
             return []
 
+        # --- Resolve A7 candidate pool ---
+        # Prefer pre-computed A7 candidate map; fall back to computing on the fly.
+        if a7_candidate_map is not None:
+            a7_pool = {
+                _normalize_date(k): v for k, v in a7_candidate_map.items()
+            }
+        elif a7_runtime is not None:
+            # Compute A7 candidates on-the-fly
+            a7_pool = {}
+            train_start = pd.Timestamp(fold["train_start"]).date()
+            train_end = pd.Timestamp(fold["train_end"]).date()
+            train_scores = _slice_by_date(scores_df, train_start, train_end)
+            train_prices = _slice_by_date(prices_df, train_start, train_end)
+            if train_scores.empty:
+                return []
+            from scripts.research.executable_labels import compute_executable_forward_returns
+            train_labels = compute_executable_forward_returns(train_prices)
+            state = a7_runtime.fit(train_scores, train_prices, train_labels)
+            for signal_date in window_dates:
+                sd = _normalize_date(signal_date)
+                ranked = a7_runtime.rank_as_of(state, sd, scores_df, prices_df)
+                if ranked is not None and not ranked.empty:
+                    a7_pool[sd] = ranked.head(self.config.top_n)
+        else:
+            # No A7 reference — fall back to full-score shuffle (degraded, log warning)
+            a7_pool = {}
+
         seed_results: list[dict[str, Any]] = []
         np_random = np.random
 
@@ -807,71 +959,60 @@ class FoldAccountBacktest:
             seed_int = int(hashlib.sha256(seed.encode()).hexdigest()[:16], 16) % (2 ** 31)
             rng = np_random.RandomState(seed_int)
 
-            # Build random-ranked candidate/weight maps
-            rnd_candidate_map: dict[str, pd.DataFrame] = {}
-            rnd_weight_map: dict[str, pd.DataFrame] = {}
-            for trade_date in window_dates:
-                sd = str(trade_date)
-                day_scores = scores_df[
-                    pd.to_datetime(scores_df["trade_date"]).dt.date == pd.Timestamp(trade_date).date()
-                ] if hasattr(scores_df, "columns") else pd.DataFrame()
-                if day_scores.empty:
-                    continue
+            # Build random-shuffled candidate/weight maps from A7 pool
+            rnd_candidate_map: dict[object, pd.DataFrame] = {}
+            rnd_weight_map: dict[object, pd.DataFrame] = {}
+            for sd in window_dates:
+                sd_key = _normalize_date(sd)
+                if sd_key in a7_pool:
+                    a7_df = a7_pool[sd_key].copy()
+                else:
+                    # Degraded fallback: pick from all scores
+                    day_scores = scores_df[
+                        pd.to_datetime(scores_df["trade_date"]).dt.date == pd.Timestamp(sd).date()
+                    ] if hasattr(scores_df, "columns") else pd.DataFrame()
+                    if day_scores.empty:
+                        continue
+                    a7_df = day_scores.head(self.config.top_n * 3).copy()
 
-                symbols = day_scores["symbol"].unique().tolist()
+                symbols = a7_df["symbol"].unique().tolist()
                 rng.shuffle(symbols)
                 top_symbols = symbols[:self.config.top_n]
                 if not top_symbols:
                     continue
 
-                topn = day_scores[day_scores["symbol"].isin(top_symbols)].head(self.config.top_n).copy()
+                topn = a7_df[a7_df["symbol"].isin(top_symbols)].head(self.config.top_n).copy()
                 topn["rank"] = range(1, len(topn) + 1)
-                topn["final_portfolio_weight"] = self.config.target_gross_exposure / len(topn)
-                topn["stock_relative_weight"] = 1.0 / len(topn)
-                rnd_candidate_map[sd] = topn
-                rnd_weight_map[sd] = topn
+                topn["final_portfolio_weight"] = self.config.target_gross_exposure / max(len(topn), 1)
+                topn["stock_relative_weight"] = 1.0 / max(len(topn), 1)
+                rnd_candidate_map[sd_key] = topn
+                rnd_weight_map[sd_key] = topn
 
             if not rnd_candidate_map:
                 continue
 
-            # Run identical account backtest path as A7
-            rnd_result = WindowBacktestResult(
-                window_label=window_label,
-                status="FITTED",
-            )
-            rnd_result.experiment_id = f"RND100_{experiment_id}_seed{seed_idx}"
+            rnd_result = WindowBacktestResult(window_label=window_label, status="FITTED")
 
             self._run_account_backtest(
                 f"RND100_{experiment_id}", window_label,
                 rnd_candidate_map, rnd_weight_map,
                 window_dates, calendar_dates, prices_df,
-                rnd_result, runtime=None,  # No alpha runtime for RND
+                rnd_result, runtime=None,
             )
 
             # Compute metrics from nav
-            nav_series = [r["nav"] for r in rnd_result.nav_rows
-                          if r.get("event_type") != "valuation_warning"]
-            if not nav_series:
-                nav_series = [1.0]
-            total_return = (nav_series[-1] - 1.0) if nav_series else 0.0
-            peak = 1.0
-            max_dd = 0.0
-            for nv in nav_series:
-                peak = max(peak, nv)
-                dd = (nv - peak) / peak if peak > 0 else 0.0
-                max_dd = min(max_dd, dd)
-            calmar = total_return / abs(max_dd) if abs(max_dd) > 0 else 0.0
-
+            metrics = self.compute_metrics(rnd_result.nav_rows, rnd_result.trade_rows)
             seed_results.append({
                 "seed_index": seed_idx,
                 "sha256_seed": seed,
                 "is_random_sort": True,
-                "total_return": float(total_return),
-                "max_drawdown": float(max_dd),
-                "calmar_ratio": float(calmar),
-                "final_nav": float(nav_series[-1]),
-                "n_trades": len(rnd_result.trade_rows),
-                "n_nav_days": len(nav_series),
+                "total_return": metrics["total_return"],
+                "max_drawdown": metrics["max_drawdown"],
+                "calmar_ratio": metrics["calmar_ratio"],
+                "sharpe_ratio": metrics["sharpe_ratio"],
+                "final_nav": metrics["final_nav"],
+                "n_trades": metrics["n_trades"],
+                "n_nav_days": metrics["n_nav_days"],
             })
 
         return seed_results
@@ -883,7 +1024,7 @@ class FoldAccountBacktest:
     def run_rev(
         self,
         experiment_id: str,
-        runtime,  # StrategyRuntime
+        runtime,  # StrategyRuntime — MUST be A7 runtime (P9b fix)
         fold: dict[str, Any],
         scores_df: pd.DataFrame,
         prices_df: pd.DataFrame,
@@ -891,8 +1032,12 @@ class FoldAccountBacktest:
     ) -> WindowBacktestResult:
         """Run reversed-alpha account backtest for one fold.
 
-        Uses the runtime's ranking but reverses the order (lowest score
-        ranks first). Runs full account backtest.
+        PR23 (Problem 9b): REV uses A7's runtime, candidate pool, weights,
+        and trading rules.  The ONLY variation is that A7's rank_score is
+        negated (lowest alpha ranks first).  This tests whether the alpha
+        factor has directional predictive power.
+
+        The caller MUST pass the A7 runtime, not P0.
         """
         window_label = fold.get("window", "unknown")
         result = WindowBacktestResult(window_label=window_label)
@@ -902,7 +1047,7 @@ class FoldAccountBacktest:
         validation_start = pd.Timestamp(fold["validation_start"]).date()
         validation_end = pd.Timestamp(fold["validation_end"]).date()
 
-        # Fit on this fold's training data
+        # Fit A7 runtime on this fold's training data WITH executable labels
         train_scores = _slice_by_date(scores_df, train_start, train_end)
         train_prices = _slice_by_date(prices_df, train_start, train_end)
 
@@ -911,8 +1056,14 @@ class FoldAccountBacktest:
             result.reason = "empty training scores for REV"
             return result
 
+        # Compute canonical executable labels for A7 training
+        train_labels = None
+        if getattr(runtime, "needs_training", False):
+            from scripts.research.executable_labels import compute_executable_forward_returns
+            train_labels = compute_executable_forward_returns(train_prices)
+
         try:
-            state = runtime.fit(train_scores, train_prices, None)
+            state = runtime.fit(train_scores, train_prices, train_labels)
         except Exception as e:
             result.status = "FAILED"
             result.reason = f"REV fit_error: {e}"
@@ -939,7 +1090,7 @@ class FoldAccountBacktest:
         signal_weights: dict[str, pd.DataFrame] = {}
 
         for signal_date in window_dates:
-            sd = str(signal_date)
+            sd = _normalize_date(signal_date)
             result.signal_dates_attempted += 1
             try:
                 ranked = runtime.rank_as_of(state, sd, scores_df, prices_df)
@@ -1024,14 +1175,18 @@ class FoldAccountBacktest:
         """Compute return/risk metrics from NAV and trade rows.
 
         Returns dict with: total_return, max_drawdown, calmar_ratio,
-        sharpe_ratio (annualized), n_trades, turnover_rate, final_nav.
+        sharpe_ratio (annualized), cvar_95, n_trades, turnover_rate,
+        total_costs, avg_exposure, final_nav, n_nav_days.
         """
         nav_series = [r["nav"] for r in nav_rows
-                      if r.get("event_type") != "valuation_warning"]
+                      if "nav" in r]
         if not nav_series:
-            return {"total_return": 0.0, "max_drawdown": 0.0, "calmar_ratio": 0.0,
-                    "sharpe_ratio": 0.0, "n_trades": 0, "turnover_rate": 0.0,
-                    "final_nav": 1.0, "n_nav_days": 0}
+            return {
+                "total_return": 0.0, "max_drawdown": 0.0, "calmar_ratio": 0.0,
+                "sharpe_ratio": 0.0, "cvar_95": 0.0, "n_trades": 0,
+                "turnover_rate": 0.0, "total_costs": 0.0, "avg_exposure": 0.0,
+                "final_nav": 1.0, "n_nav_days": 0,
+            }
 
         total_return = nav_series[-1] - 1.0
         peak = 1.0
@@ -1042,13 +1197,15 @@ class FoldAccountBacktest:
             max_dd = min(max_dd, dd)
         calmar = total_return / abs(max_dd) if abs(max_dd) > 0.0001 else 0.0
 
-        # Sharpe: daily returns, annualize with sqrt(252)
+        # Daily returns
         daily_rets = []
         for i in range(1, len(nav_series)):
             prev = nav_series[i - 1]
             curr = nav_series[i]
             if prev > 0:
                 daily_rets.append((curr / prev) - 1.0)
+
+        # Sharpe: daily returns, annualize with sqrt(252)
         sharpe = 0.0
         if daily_rets and len(daily_rets) >= 5:
             from numpy import sqrt as _np_sqrt
@@ -1059,8 +1216,23 @@ class FoldAccountBacktest:
             )
             sharpe = (ret_mean / ret_std * _np_sqrt(252)) if ret_std > 0 else 0.0
 
-        # Turnover: total trade gross / average equity
+        # CVaR 95: average of worst 5% daily returns
+        cvar_95 = 0.0
+        if daily_rets:
+            sorted_rets = sorted(daily_rets)
+            cutoff = max(1, len(sorted_rets) // 20)
+            worst = sorted_rets[:cutoff]
+            cvar_95 = float(sum(worst) / len(worst)) if worst else 0.0
+
+        # Annualized return
+        n_days = len(nav_series)
+        ann_return = 0.0
+        if n_days > 0 and nav_series[0] > 0:
+            ann_return = float((nav_series[-1] / nav_series[0]) ** (252.0 / n_days) - 1.0)
+
+        # Turnover + total costs
         n_trades = len(trade_rows) if trade_rows else 0
+        total_costs = sum(float(t.get("cost", 0)) for t in (trade_rows or []))
         turnover_rate = 0.0
         if trade_rows and initial_cash > 0:
             total_gross = sum(abs(float(t.get("gross_amount", 0))) for t in trade_rows)
@@ -1068,13 +1240,27 @@ class FoldAccountBacktest:
             avg_equity = avg_nav * initial_cash
             turnover_rate = total_gross / avg_equity if avg_equity > 0 else 0.0
 
+        # Average exposure
+        avg_exposure = 0.0
+        exposures = [
+            r.get("market_value", 0.0) / r.get("total_equity", initial_cash)
+            for r in nav_rows
+            if r.get("total_equity", 0) > 0 and "nav" in r
+        ]
+        if exposures:
+            avg_exposure = float(sum(exposures) / len(exposures))
+
         return {
             "total_return": float(total_return),
             "max_drawdown": float(abs(max_dd)),
             "calmar_ratio": float(calmar),
             "sharpe_ratio": float(sharpe),
+            "cvar_95": float(cvar_95),
+            "annualized_return": float(ann_return),
             "n_trades": int(n_trades),
             "turnover_rate": float(turnover_rate),
+            "total_costs": float(total_costs),
+            "avg_exposure": float(avg_exposure),
             "final_nav": float(nav_series[-1]),
             "n_nav_days": len(nav_series),
         }
@@ -1135,6 +1321,24 @@ class FoldAccountBacktest:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _normalize_date(d: object) -> "datetime":
+    """Convert str / Timestamp / date to datetime.date.
+
+    All calendar / score / price / signal / execution dates entering the
+    executor MUST become datetime.date internally.  Strings, pd.Timestamp,
+    and datetime.date are accepted; everything else raises TypeError.
+    """
+    from datetime import date as _date, datetime as _datetime
+
+    if isinstance(d, _date) and not isinstance(d, _datetime):
+        return d
+    if isinstance(d, (_datetime, pd.Timestamp)):
+        return d.date()
+    if isinstance(d, str):
+        return pd.Timestamp(d).date()
+    raise TypeError(f"cannot normalize date: {type(d).__name__} {d!r}")
 
 
 def _slice_by_date(
