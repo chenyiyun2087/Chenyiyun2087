@@ -20,6 +20,10 @@ jobs:
         run: pip install flask pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
       - name: Production config consistency
         run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py -v
+      - name: PR18 Independent Oracle and Evidence Semantic tests
+        run: python -m pytest test/test_pr18_independent_oracle.py -v
+      - name: PR19 Oracle Coverage and Evidence Gates
+        run: python -m pytest test/test_pr19_oracle_coverage.py -v
       - name: Runtime and batch pipeline integrity
         run: python -m pytest test/test_batch_reliability.py -v
       - name: Production config loads correctly

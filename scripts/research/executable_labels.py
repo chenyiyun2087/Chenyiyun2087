@@ -19,9 +19,30 @@ import numpy as np
 import pandas as pd
 
 from scripts.research.execution_costs import ExecutionCostModel
+from scripts.research.execution_gate import can_sell_at_open, can_buy_at_open
 
 DEFAULT_HOLD_DAYS = 10
 DEFAULT_ROUND_TRIP_COST = 0.0015
+MAX_EXIT_DELAY_DAYS = 5
+DELISTING_HAIRCUT_RATIO = 0.70  # PR24: frozen auditable constant (was hardcoded 0.70)
+
+
+def _is_exit_tradable(
+    row: pd.Series,
+    has_metadata: bool = True,
+) -> tuple[bool, str]:
+    """PR26A.1: Delegate to unified execution gate.
+
+    Previously used close-based limit-down logic (close price for
+    limit check).  Now uses the same can_sell_at_open() as the
+    account backtest for true label-account parity.
+    """
+    if not has_metadata:
+        return False, "missing_metadata"
+    # Convert Series row to dict for the unified gate
+    price_info = row.to_dict()
+    allowed, reason, _price = can_sell_at_open(str(row.get("symbol", "")), price_info)
+    return allowed, reason
 
 
 def compute_executable_forward_returns(
@@ -76,6 +97,15 @@ def compute_executable_forward_returns(
 
     # --- Build entry gate data from T+1 row ---
     from scripts.research.execution_market_rules import can_buy_at_open, can_sell_at_open
+
+    # PR25 Fix 11: Require ALL metadata columns for fail-closed behavior.
+    # Previously only checked is_suspended, allowing other missing fields
+    # (is_listed, is_st, raw_pre_close) to be silently defaulted.
+    # Missing metadata causes ALL labels to be censored (NaN).
+    _REQUIRED_METADATA = frozenset({
+        "is_suspended", "is_listed", "is_st", "raw_pre_close",
+    })
+    has_metadata = _REQUIRED_METADATA.issubset(prices_sorted.columns)
 
     g = prices_sorted.groupby("symbol", group_keys=False)
 
@@ -275,7 +305,7 @@ def compute_executable_forward_returns(
     # --- MFE / MAE ---
     prices_sorted["mfe_10d"] = np.nan
     prices_sorted["mae_10d"] = np.nan
-    for symbol, grp in g:
+    for symbol, grp in prices_sorted.groupby("symbol", sort=False):
         close_vals = grp["adj_close"].values
         entry_vals = grp["entry_price"].values
         for i in range(len(grp) - hold_days - 1):

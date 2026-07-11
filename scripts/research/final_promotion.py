@@ -44,15 +44,43 @@ class FinalPromotionReport:
 
 
 def stitch_oos_nav(fold_results: list[Any]) -> pd.Series:
-    """Stitch OOS NAV across all validation windows into one continuous series."""
-    all_navs: list[dict] = []
+    """Stitch OOS NAV by compounding fold returns across boundaries.
+
+    Each fold may restart at NAV=1.  Direct concatenation would create an
+    artificial boundary jump, so each fold is converted to returns first.
+    """
+    stitched_rows: list[dict] = []
+    running_nav = 1.0
+    seen_dates: set[str] = set()
     for fr in sorted(fold_results, key=lambda f: getattr(f, "fold_index", 0)):
-        for row in getattr(fr, "nav_rows", []):
-            all_navs.append({"trade_date": row.get("trade_date"), "nav": row.get("nav", 1.0)})
-    if not all_navs:
+        frame = pd.DataFrame(getattr(fr, "nav_rows", []))
+        if frame.empty or not {"trade_date", "nav"}.issubset(frame.columns):
+            continue
+        frame = frame[["trade_date", "nav"]].dropna().drop_duplicates("trade_date").sort_values("trade_date")
+        if len(frame) < 2:
+            continue
+        if not stitched_rows:
+            base_date = str(frame.iloc[0]["trade_date"])
+            stitched_rows.append({"trade_date": base_date, "nav": running_nav})
+            seen_dates.add(base_date)
+        returns = pd.to_numeric(frame["nav"], errors="coerce").pct_change()
+        for idx in range(1, len(frame)):
+            trade_date = str(frame.iloc[idx]["trade_date"])
+            if trade_date in seen_dates:
+                raise ValueError(f"overlapping OOS trade date: {trade_date}")
+            daily_return = float(returns.iloc[idx])
+            if not np.isfinite(daily_return):
+                raise ValueError(f"invalid OOS return on {trade_date}")
+            running_nav *= 1.0 + daily_return
+            stitched_rows.append({"trade_date": trade_date, "nav": running_nav})
+            seen_dates.add(trade_date)
+    if not stitched_rows:
         return pd.Series([], dtype=float)
-    df = pd.DataFrame(all_navs).drop_duplicates("trade_date").sort_values("trade_date")
-    return pd.Series(df["nav"].values, dtype=float)
+    return pd.Series(
+        [row["nav"] for row in stitched_rows],
+        index=pd.to_datetime([row["trade_date"] for row in stitched_rows]),
+        dtype=float,
+    )
 
 
 def compute_stitched_metrics(nav: pd.Series) -> StitchedOOSResult:
