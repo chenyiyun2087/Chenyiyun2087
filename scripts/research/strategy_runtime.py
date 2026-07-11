@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 
 from scripts.research.alpha_estimator import AlphaEstimator, FittedAlphaState
+from scripts.research.alpha_decay_exit_v2 import DecayExitRuleV2, ExitV2Config
 from scripts.research.constrained_weights import constrained_weight_allocation
 from scripts.research.pit_risk import compute_pit_risk_panel
 from scripts.research.strategy_adapters import (
@@ -152,10 +153,47 @@ class FrozenAlphaRuntime(StrategyRuntime):
         self.risk_weighted = risk_weighted
         self.uses_decay_exit = decay_exit
         self.estimator = AlphaEstimator(require_executable_labels=True)
+        self._exit_rule: DecayExitRuleV2 | None = (
+            DecayExitRuleV2(ExitV2Config()) if decay_exit else None
+        )
 
     def fit(self, train_scores, train_prices, train_labels) -> RuntimeState:
         state = self.estimator.fit(train_scores, train_prices, train_labels)
+        # Reset exit rule state per fold
+        if self._exit_rule is not None:
+            self._exit_rule.reset()
         return RuntimeState(state.train_start, state.train_end, state)
+
+    def should_exit(
+        self,
+        symbol: str,
+        trade_date: str,
+        rank_score: float = 0.0,
+        rank: int = 999,
+        candidate_count: int = 0,
+        holding_days: int = 0,
+        hold_days_required: int = 10,
+        is_suspended: bool = False,
+        is_delisted: bool = False,
+    ) -> tuple[bool, str]:
+        """Priority-ordered exit gate: hard risk > alpha decay > hold expiry."""
+        # Hard risk: forced exit regardless of alpha state
+        if is_delisted:
+            return True, "hard_exit:delisted"
+        if is_suspended:
+            return True, "hard_exit:suspended"
+
+        # Alpha decay exit
+        if self._exit_rule is not None:
+            should, reason = self._exit_rule.should_exit(
+                symbol, trade_date, rank_score, rank,
+                candidate_count, holding_days, hold_days_required,
+            )
+            if should:
+                return True, reason
+
+        # Default: no exit
+        return False, ""
 
     def rank_as_of(self, state, signal_date, historical_scores, historical_prices):
         if state.alpha_state is None:
