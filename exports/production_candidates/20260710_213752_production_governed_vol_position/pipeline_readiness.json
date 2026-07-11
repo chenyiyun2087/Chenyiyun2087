@@ -1,0 +1,81 @@
+{
+  "status": "READY",
+  "passed": true,
+  "gate_name": "pipeline_readiness",
+  "checks": [
+    {
+      "check": "market_data_complete",
+      "passed": true,
+      "severity": "critical",
+      "status": "READY",
+      "failed": []
+    },
+    {
+      "check": "scoring_complete",
+      "passed": true,
+      "severity": "critical",
+      "status": "READY",
+      "original_status": "BLOCKED",
+      "allowed_failures": [],
+      "failed": []
+    },
+    {
+      "check": "industry_complete",
+      "passed": true,
+      "severity": "critical",
+      "detail": {
+        "check": "industry_null_rate",
+        "date": "20260710",
+        "total_rows": 5163,
+        "null_count": 0,
+        "null_rate": 0.0,
+        "threshold": 0.02,
+        "passed": true,
+        "severity": "warning"
+      }
+    },
+    {
+      "check": "bs_signal_complete",
+      "date": "20260710",
+      "total_rows": 5163,
+      "fields": {
+        "bs_score_v2": {
+          "null_count": 0,
+          "null_rate": 0.0,
+          "passed": true
+        },
+        "bs_consensus_score": {
+          "null_count": 0,
+          "null_rate": 0.0,
+          "passed": true
+        }
+      },
+      "passed": true,
+      "severity": "critical"
+    },
+    {
+      "check": "health_monitor_ready",
+      "passed": true,
+      "severity": "info",
+      "as_of_date": "2026-06-25",
+      "overall_grade": "YELLOW"
+    },
+    {
+      "check": "candidate_export_ready",
+      "passed": true,
+      "severity": "critical",
+      "candidate_count": 5,
+      "detail": ""
+    },
+    {
+      "check": "order_draft_ready",
+      "passed": true,
+      "severity": "critical",
+      "order_count": null
+    }
+  ],
+  "failed_critical": [],
+  "failed_warnings": [],
+  "target_date": "2026-07-10",
+  "gate_version": "2.0"
+}

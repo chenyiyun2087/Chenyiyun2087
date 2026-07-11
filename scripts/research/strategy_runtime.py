@@ -19,6 +19,7 @@ from scripts.research.constrained_weights import (
     constrained_weight_allocation,
     construct_portfolio,
 )
+from scripts.research.alpha_decay_exit_v2 import DecayExitRuleV2, ExitV2Config
 from scripts.research.pit_risk import compute_pit_risk_panel
 from scripts.research.strategy_adapters import (
     ChampionStrategyAdapter,

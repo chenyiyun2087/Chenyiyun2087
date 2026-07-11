@@ -85,7 +85,13 @@ class TestL0SingleExecutionPath:
     """Verify no duplicate limit-up/down logic outside execution_market_rules."""
 
     def test_no_duplicate_limit_logic_in_research(self):
-        """Scan research scripts for duplicate limit-up/down gate functions."""
+        """Scan research scripts for duplicate limit-up/down gate functions.
+
+        PR26A.3: Two canonical modules are allowed:
+          - execution_market_rules.py  (individual-param API)
+          - execution_gate.py          (dict-based wrapper API)
+        Any other file defining its own gate functions is a violation.
+        """
         import glob
 
         research_dir = os.path.join(
@@ -96,37 +102,39 @@ class TestL0SingleExecutionPath:
         )
         research_dir = os.path.abspath(research_dir)
 
-        # Only these files may contain can_buy_at_open / can_sell_at_open
-        # definitions
-        canonical_file = os.path.join(research_dir, "execution_market_rules.py")
+        # Canonical gate modules (allowed to define gate functions)
+        _canonical = {
+            "execution_market_rules.py",
+            "execution_gate.py",
+        }
 
         for pyfile in glob.glob(os.path.join(research_dir, "*.py")):
-            if os.path.basename(pyfile) == os.path.basename(canonical_file):
+            basename = os.path.basename(pyfile)
+            if basename in _canonical:
                 continue
-            if os.path.basename(pyfile).startswith("test_"):
+            if basename.startswith("test_"):
                 continue
             with open(pyfile, "r") as f:
                 content = f.read()
-            # No file should define its own limit_prices or limit_ratio
             if "def limit_prices(" in content:
                 pytest.fail(
                     f"{pyfile} defines its own limit_prices() — "
-                    f"must use execution_market_rules.limit_prices"
+                    f"must use a canonical gate module"
                 )
             if "def limit_ratio(" in content:
                 pytest.fail(
                     f"{pyfile} defines its own limit_ratio() — "
-                    f"must use execution_market_rules.limit_ratio"
+                    f"must use a canonical gate module"
                 )
             if "def can_buy_at_open(" in content:
                 pytest.fail(
                     f"{pyfile} defines its own can_buy_at_open() — "
-                    f"must use execution_market_rules.can_buy_at_open"
+                    f"must use a canonical gate module"
                 )
             if "def can_sell_at_open(" in content:
                 pytest.fail(
                     f"{pyfile} defines its own can_sell_at_open() — "
-                    f"must use execution_market_rules.can_sell_at_open"
+                    f"must use a canonical gate module"
                 )
 
     def test_canonical_gate_no_volume_param(self):
