@@ -31,6 +31,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from scripts.research.constrained_weights import (
+    PortfolioConstraints,
+    construct_portfolio,
+    OrderingMode,
+)
 from scripts.research.executable_labels import compute_executable_forward_returns
 from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
 from scripts.research.execution_gate import (
@@ -513,8 +518,13 @@ class FoldAccountBacktest:
 
             except Exception as e:
                 # Record error, do NOT silently continue
+                error_type = "RANK_WEIGHT_ERROR"
+                # PR26A.5: Detect alpha neutralization failures for precise
+                # coverage tracking and diagnostics.
+                if "ALPHA_NEUTRALIZATION_FAILED" in str(e):
+                    error_type = "ALPHA_NEUTRALIZATION_FAILED"
                 result.error_rows.append({
-                    "error_type": "RANK_WEIGHT_ERROR",
+                    "error_type": error_type,
                     "window": window_label,
                     "experiment_id": experiment_id,
                     "signal_date": str(signal_date),
@@ -524,12 +534,20 @@ class FoldAccountBacktest:
 
         # 7. Run account backtest on validation period
         if signal_date_candidates:
+            # PR26A.5: For risk-weighted (A8) experiments, pass ranked panels
+            # for account-aware weight recomputation with prev_weights.
+            defer_weights = (
+                full_ranked_panels
+                if getattr(runtime, "risk_weighted", False)
+                else None
+            )
             self._run_account_backtest(
                 experiment_id, window_label, signal_date_candidates,
                 signal_date_weights, window_dates, calendar_dates,
                 prices_df, result, runtime=runtime,
                 signal_exposure_targets=signal_exposure_targets,  # PR25 Fix 4
                 full_ranked_panels=full_ranked_panels,  # PR25 Fix 5
+                ranked_panels_for_weights=defer_weights,  # PR26A.5
             )
             # PR25 Fix 1: Only set FITTED if no terminal failure state was set
             # by _run_account_backtest.  INVALID_RISK_STATE, FIT_ERROR,
@@ -588,6 +606,51 @@ class FoldAccountBacktest:
         return result
 
     # ------------------------------------------------------------------
+    # PR26A.5: Account-aware weight computation for A8 cost optimization
+    # ------------------------------------------------------------------
+
+    def _compute_weights_with_cost_penalty(
+        self,
+        runtime,
+        state,
+        ranked: pd.DataFrame,
+        signal_date: str,
+        target_exp: float,
+        prices_df: pd.DataFrame,
+        current_positions: dict[str, float],
+    ):
+        """Recompute weights with prev_weights and turnover_penalty from live
+        account state (PR26A.5 — Module 4).
+
+        prev_weights are derived from current account positions.
+        turnover_penalty uses real costs: commission, stamp duty, slippage.
+        """
+        # Map current positions to weight vector aligned with ranked symbols
+        top_symbols = ranked.head(self.config.top_n)["symbol"].tolist()
+        if current_positions:
+            total_nav = sum(abs(v) for v in current_positions.values()) + self.config.initial_cash
+            prev_weights = np.array([
+                current_positions.get(str(sym), 0.0) / max(total_nav, 1.0)
+                for sym in top_symbols
+            ])
+        else:
+            prev_weights = None
+
+        # Turnover penalty = round-trip cost rate from real cost model
+        turnover_penalty = (
+            self.config.commission_rate * 2      # buy + sell commission
+            + self.config.stamp_duty_rate         # sell stamp duty
+            + self.config.slippage_rate           # bid-ask + impact
+        )
+
+        return runtime.build_weights(
+            state, ranked, signal_date, prices_df, target_exp,
+            self.config.top_n,
+            prev_weights=prev_weights,
+            turnover_penalty=turnover_penalty,
+        )
+
+    # ------------------------------------------------------------------
     # Daily account backtest loop
     # ------------------------------------------------------------------
 
@@ -604,6 +667,7 @@ class FoldAccountBacktest:
         runtime=None,  # StrategyRuntime for exit gating
         signal_exposure_targets: dict[object, float] | None = None,  # PR25 Fix 4
         full_ranked_panels: dict[object, pd.DataFrame] | None = None,  # PR25 Fix 5
+        ranked_panels_for_weights: dict[object, pd.DataFrame] | None = None,  # PR26A.5
     ) -> None:
         """Execute full daily account backtest for one validation window.
 
@@ -742,6 +806,49 @@ class FoldAccountBacktest:
             max_hold = getattr(self.config, "max_holding_days", 20)
 
             if signal_date is not None:
+                # PR26A.5: For risk-weighted experiments, recompute weights
+                # with current account positions (prev_weights) and real
+                # turnover costs.  This replaces the pre-computed weights
+                # with account-aware weights.
+                if (
+                    ranked_panels_for_weights is not None
+                    and runtime is not None
+                    and signal_date in ranked_panels_for_weights
+                ):
+                    try:
+                        ranked = ranked_panels_for_weights[signal_date]
+                        target_exp = signal_exposure_targets.get(
+                            signal_date,
+                            self.config.target_gross_exposure,
+                        )
+                        current_positions = {
+                            sym: pos.market_value
+                            for sym, pos in account.positions.items()
+                            if pos.shares > 0
+                        }
+                        risk_state = getattr(runtime, "last_state", None)
+                        if risk_state is not None and not ranked.empty:
+                            acct_weights = self._compute_weights_with_cost_penalty(
+                                runtime, risk_state, ranked,
+                                signal_date, target_exp, prices_df,
+                                current_positions,
+                            )
+                            if acct_weights is not None and not acct_weights.empty:
+                                weight_map[signal_date] = acct_weights
+                                # Rebuild targets from new weights
+                                new_targets: dict[str, float] = {}
+                                for _, wrow in acct_weights.iterrows():
+                                    sym = str(wrow.get("symbol", ""))
+                                    fw = float(wrow.get("final_portfolio_weight", 0))
+                                    if sym and fw > 0:
+                                        new_targets[sym] = fw
+                                signal_targets[signal_date] = new_targets
+                                signal_candidate_counts[signal_date] = len(acct_weights)
+                    except Exception:
+                        # Weight recomputation failure is non-fatal — fall
+                        # back to pre-computed weights for this signal date.
+                        pass
+
                 targets = signal_targets.get(signal_date, {})
                 candidate_count = signal_candidate_counts.get(signal_date, 0)
                 day_cdf = candidate_map.get(signal_date, pd.DataFrame())
@@ -1319,24 +1426,38 @@ class FoldAccountBacktest:
                 if len(pool_symbols) < min_required:
                     continue  # insufficient pool for this date
 
-                rng.shuffle(pool_symbols)
-                top_symbols = pool_symbols[:self.config.top_n]
-                if not top_symbols:
+                # PR26A.5: Permute alpha scores deterministically and use
+                # A7's construct_portfolio() for matched baseline — same
+                # constraints, same allocation, ONLY difference is alpha order.
+                permuted = a7_df.copy()
+                perm_indices = rng.permutation(len(permuted))
+                permuted["rank_score"] = permuted["rank_score"].iloc[perm_indices].values
+
+                # PR26A.5: Shared constraints matching A7's PortfolioConstraints
+                _rnd_constraints = PortfolioConstraints(
+                    single_cap=0.15,
+                    industry_cap=0.30,
+                    theme_cap=0.40,
+                    top2_risk_cap=0.45,
+                    target_gross_exposure=_DEFAULT_CONSTRUCTOR.target_gross_exposure,
+                )
+
+                try:
+                    portfolio = construct_portfolio(
+                        permuted,
+                        ordering=OrderingMode.ALPHA_FORWARD,
+                        target_exposure=_DEFAULT_CONSTRUCTOR.target_gross_exposure,
+                        top_n=self.config.top_n,
+                        constraints=_rnd_constraints,
+                    )
+                except Exception:
                     continue
 
-                topn = a7_df[a7_df["symbol"].isin(top_symbols)].head(self.config.top_n).copy()
-                topn["rank"] = range(1, len(topn) + 1)
-                # PR26A L6: Use CommonPortfolioConstructor for equal-weight
-                # allocation.  Same formula as A7 default build_weights.
-                n_selected = max(len(topn), 1)
-                topn["stock_relative_weight"] = 1.0 / n_selected
-                topn["final_portfolio_weight"] = (
-                    _DEFAULT_CONSTRUCTOR.target_gross_exposure / n_selected
-                )
-                topn["effective_weight"] = topn["final_portfolio_weight"]
-                topn["cash_weight"] = 1.0 - _DEFAULT_CONSTRUCTOR.target_gross_exposure
-                rnd_candidate_map[sd_key] = topn
-                rnd_weight_map[sd_key] = topn
+                if portfolio.empty:
+                    continue
+
+                rnd_candidate_map[sd_key] = portfolio.head(self.config.top_n).copy()
+                rnd_weight_map[sd_key] = portfolio
 
             if not rnd_candidate_map:
                 continue
@@ -1613,19 +1734,44 @@ class FoldAccountBacktest:
                 "INCOMPLETE_LABELS", "UNMATCHED_BASELINE", "COVERAGE_FAILED",
             })
             if result.status not in _TERMINAL_FAILURES:
-                # PR26A L7: Coverage gate for REV
+                # PR26A.5 L8: Coverage gate for REV — REV_RANK_ERROR dates
+                # MUST reduce coverage and block FITTED status.
                 total_dates = len(window_dates)
-                successful_dates = (
-                    result.signal_dates_attempted - result.signal_dates_empty
+                # Only dates with BOTH valid candidates AND valid weights count
+                successful_dates = len(signal_candidates)
+                # Count REV_RANK_ERROR and RANK_WEIGHT_ERROR dates as failures
+                rev_error_dates = sum(
+                    1 for e in result.error_rows
+                    if e.get("error_type") == "REV_RANK_ERROR"
                 )
-                coverage = successful_dates / max(total_dates, 1)
+                weight_error_dates = sum(
+                    1 for e in result.error_rows
+                    if e.get("error_type") == "RANK_WEIGHT_ERROR"
+                )
+                effective_successful = max(
+                    0, successful_dates - rev_error_dates - weight_error_dates
+                )
+                coverage = effective_successful / max(total_dates, 1)
                 unclassified_errors = [
                     e for e in result.error_rows
                     if e.get("error_type", "") not in {"RANK_WEIGHT_ERROR", "REV_RANK_ERROR"}
                 ]
                 if coverage < 0.95:
                     result.status = "COVERAGE_FAILED"
-                    result.reason = f"REV signal_coverage={coverage:.1%} < 95%"
+                    result.reason = (
+                        f"REV signal_coverage={coverage:.1%} < 95% "
+                        f"(effective={effective_successful}/{total_dates}, "
+                        f"rev_errors={rev_error_dates}, "
+                        f"weight_errors={weight_error_dates})"
+                    )
+                elif rev_error_dates > 0:
+                    # PR26A.5: REV errors must not silently pass — even if
+                    # coverage >= 95%, any REV error blocks FITTED.
+                    result.status = "COVERAGE_FAILED"
+                    result.reason = (
+                        f"REV has {rev_error_dates} rank errors "
+                        f"(effective_successful={effective_successful}/{total_dates})"
+                    )
                 elif unclassified_errors:
                     result.status = "COVERAGE_FAILED"
                     result.reason = f"REV unclassified_errors={len(unclassified_errors)}"

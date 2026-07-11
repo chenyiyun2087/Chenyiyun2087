@@ -22,6 +22,29 @@ NEW_STOCK_LIMIT_FREE_DAYS = 5
 
 
 # ---------------------------------------------------------------------------
+# Symbol normalization
+# ---------------------------------------------------------------------------
+
+
+def normalize_symbol(symbol: object) -> str:
+    """Strip exchange suffix and zero-pad to 6-digit stock code.
+
+    >>> normalize_symbol("600000.SH")
+    '600000'
+    >>> normalize_symbol("430001.BJ")
+    '430001'
+    >>> normalize_symbol("1")
+    '000001'
+    """
+    s = str(symbol).strip().upper()
+    for suffix in (".SH", ".SZ", ".BJ"):
+        if s.endswith(suffix):
+            s = s[: -len(suffix)]
+            break
+    return s.zfill(6)
+
+
+# ---------------------------------------------------------------------------
 # Daily limit ratio helpers
 # ---------------------------------------------------------------------------
 
@@ -34,8 +57,11 @@ def limit_ratio(symbol: object, is_st: object) -> float:
       - ChiNext (300xxx, 301xxx) & STAR Market (688xxx, 689xxx): 20 %
       - BSE (4xxxxx, 8xxxxx, 9xxxxx): 30 %
       - Main board (other): 10 %
+
+    The *symbol* is normalized internally via :func:`normalize_symbol`,
+    so callers may pass raw symbols with or without exchange suffixes.
     """
-    code = str(symbol).zfill(6)
+    code = normalize_symbol(symbol)
     if bool(float(is_st or 0)):
         return 0.05
     if code.startswith(("300", "301", "688", "689")):
@@ -50,15 +76,24 @@ def limit_prices(
     symbol: object,
     is_st: object,
     price_tick: float = DEFAULT_PRICE_TICK,
+    *,
+    official_upper_limit: float | None = None,
+    official_lower_limit: float | None = None,
+    limit_free_status: bool = False,
 ) -> tuple[float, float]:
     """Return (upper_limit, lower_limit) for a stock given its previous close.
 
     Parameters
     ----------
     prev_close : Previous trading day's closing price.  Must be finite and > 0.
-    symbol : Stock symbol (used to determine limit ratio).
+    symbol : Stock symbol (used to determine limit ratio).  Normalized internally.
     is_st : ST flag (0 or 1).
     price_tick : Minimum price tick (default 0.01 for A-shares).
+    official_upper_limit : If provided together with *official_lower_limit*,
+        returned directly (exchange-official limit price, rounded to tick).
+    official_lower_limit : See *official_upper_limit*.
+    limit_free_status : If True, the stock has no price limits (e.g. newly
+        listed).  Returns (+inf, -inf) bounded by price_tick rounding.
 
     Returns
     -------
@@ -68,6 +103,18 @@ def limit_prices(
     ------
     ValueError : If *prev_close* is NaN, Inf, zero, or negative.
     """
+    # Limit-free stocks have no price bounds (PR26A.5).
+    # Checked BEFORE official limits — limit-free status is absolute.
+    if limit_free_status:
+        return (float("inf"), float("-inf"))
+
+    # Official limit prices take precedence over computed values (PR26A.5).
+    if official_upper_limit is not None and official_lower_limit is not None:
+        tick = float(price_tick or DEFAULT_PRICE_TICK)
+        upper = round(float(official_upper_limit) / tick) * tick
+        lower = round(float(official_lower_limit) / tick) * tick
+        return (upper, lower)
+
     pc = float(prev_close)
     if not np.isfinite(pc) or pc <= 0.0:
         raise ValueError(

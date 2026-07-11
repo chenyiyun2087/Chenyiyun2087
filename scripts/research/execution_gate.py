@@ -1,12 +1,15 @@
 """Unified execution gate for A-share stocks — dict-based adapter.
 
-PR26A L3 → PR26A.1 → PR26A.4:  All core limit/gate logic lives in
+PR26A L3 → PR26A.1 → PR26A.4 → PR26A.5:  All core limit/gate logic lives in
 execution_market_rules.py (the single canonical source of truth).
 This module is a thin dict-based wrapper that delegates every
 limit-ratio, limit-price, and buy/sell gate decision to that module.
 
+Canonical functions in execution_market_rules.py now normalize symbols
+internally (PR26A.5), so callers pass raw symbols with or without
+exchange suffixes.
+
 Gate functions:
-  normalize_symbol        — strip exchange suffix, return pure 6-digit code
   daily_limit_ratio       — delegate to execution_market_rules.limit_ratio
   limit_prices            — delegate to execution_market_rules.limit_prices
   is_tradable_at_open     — pre-open only: is_listed, is_suspended, has open price
@@ -37,6 +40,9 @@ from scripts.research.execution_market_rules import (
     limit_ratio as _mkt_limit_ratio,
 )
 from scripts.research.execution_market_rules import (
+    normalize_symbol,  # PR26A.5: canonical normalization lives here
+)
+from scripts.research.execution_market_rules import (
     MARKET_RULES_VERSION,  # re-export for convenience
 )
 
@@ -54,22 +60,6 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def normalize_symbol(symbol: str) -> str:
-    """Strip exchange suffix, return pure 6-digit stock code.
-
-    "430001.BJ" → "430001"
-    "600000.SH" → "600000"
-    "000001.SZ" → "000001"
-    """
-    s = str(symbol).strip()
-    # Strip known exchange suffixes
-    for suffix in (".SH", ".SZ", ".BJ", ".sh", ".sz", ".bj"):
-        if s.upper().endswith(suffix):
-            s = s[: -len(suffix)]
-            break
-    return s
-
-
 # ---------------------------------------------------------------------------
 # Board-specific daily limit ratios
 # ---------------------------------------------------------------------------
@@ -78,11 +68,11 @@ def normalize_symbol(symbol: str) -> str:
 def daily_limit_ratio(symbol: str, is_st: float = 0.0) -> float:
     """Return the applicable daily limit ratio for a stock.
 
-    PR26A.4: Delegates to execution_market_rules.limit_ratio (the canonical
-    implementation).  Strips exchange suffixes first so "430001.BJ" is
-    correctly detected as BSE (30 %) instead of falling to Main Board (10 %).
+    PR26A.5: Delegates to execution_market_rules.limit_ratio which normalizes
+    symbols internally.  Callers may pass raw symbols with or without exchange
+    suffixes.
     """
-    return _mkt_limit_ratio(normalize_symbol(symbol), is_st)
+    return _mkt_limit_ratio(symbol, is_st)
 
 
 def limit_prices(
@@ -95,11 +85,12 @@ def limit_prices(
     """Return (upper_limit, lower_limit).
 
     Prefers official exchange-provided limit prices when available.
-    Falls back to execution_market_rules.limit_prices (canonical).
+    Falls back to execution_market_rules.limit_prices (canonical) which
+    normalizes symbols internally (PR26A.5).
     """
     if official_upper is not None and official_lower is not None:
         return float(official_upper), float(official_lower)
-    return _mkt_limit_prices(prev_close, normalize_symbol(symbol), is_st)
+    return _mkt_limit_prices(prev_close, symbol, is_st)
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +216,7 @@ def can_buy_at_open(
     mkt_allowed, mkt_reason = _mkt_can_buy_at_open(
         open_price,
         prev_close,
-        normalize_symbol(symbol),
+        symbol,  # PR26A.5: canonical functions normalize internally
         float(is_st),
         is_listed=float(is_listed),
         is_suspended=float(is_suspended),
@@ -242,7 +233,8 @@ def can_sell_at_open(
 ) -> tuple[bool, str, float | None]:
     """Check if a SELL order can execute at the open.
 
-    PR26A.4: Delegates to execution_market_rules.can_sell_at_open (canonical).
+    PR26A.5: Delegates to execution_market_rules.can_sell_at_open (canonical)
+    which normalizes symbols internally.
     Returns (allowed: bool, reason: str, execution_price: float | None).
     """
     allowed, reason = is_tradable_at_open(symbol, price_info)
@@ -264,8 +256,7 @@ def can_sell_at_open(
     mkt_allowed, mkt_reason = _mkt_can_sell_at_open(
         open_price,
         prev_close,
-        normalize_symbol(symbol),
-        float(is_st),
+        symbol,  # PR26A.5: canonical functions normalize internally
         is_listed=float(is_listed),
         is_suspended=float(is_suspended),
         list_days=float(list_days) if np.isfinite(list_days) else None,

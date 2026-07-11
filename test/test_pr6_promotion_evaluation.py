@@ -19,7 +19,7 @@ from scripts.research.walk_forward_metrics import (
 
 def _make_metrics(total_return=0.10, sharpe=0.5, max_dd=-0.10, calmar=0.8):
     return WindowMetrics(
-        window_label="2025H1", experiment_id="test",
+        window_label="2025Q1", experiment_id="test",
         total_return=total_return, sharpe_ratio=sharpe,
         max_drawdown=max_dd, calmar_ratio=calmar,
     )
@@ -130,14 +130,14 @@ class TestGateAggregation:
     def test_a9_beats_a0_on_all_metrics(self):
         """PromotionGate should pass when A9 dominates A0."""
         a0 = {
-            "2025H1": _make_metrics(total_return=0.10, sharpe=0.5, max_dd=-0.15, calmar=0.6),
-            "2025H2": _make_metrics(total_return=0.08, sharpe=0.4, max_dd=-0.12, calmar=0.5),
-            "2026H1": _make_metrics(total_return=0.12, sharpe=0.6, max_dd=-0.18, calmar=0.7),
+            "2025Q1": _make_metrics(total_return=0.10, sharpe=0.5, max_dd=-0.15, calmar=0.6),
+            "2025Q3": _make_metrics(total_return=0.08, sharpe=0.4, max_dd=-0.12, calmar=0.5),
+            "2026Q1": _make_metrics(total_return=0.12, sharpe=0.6, max_dd=-0.18, calmar=0.7),
         }
         a9 = {
-            "2025H1": _make_metrics(total_return=0.15, sharpe=0.8, max_dd=-0.08, calmar=1.2),
-            "2025H2": _make_metrics(total_return=0.12, sharpe=0.7, max_dd=-0.06, calmar=1.0),
-            "2026H1": _make_metrics(total_return=0.18, sharpe=0.9, max_dd=-0.10, calmar=1.5),
+            "2025Q1": _make_metrics(total_return=0.15, sharpe=0.8, max_dd=-0.08, calmar=1.2),
+            "2025Q3": _make_metrics(total_return=0.12, sharpe=0.7, max_dd=-0.06, calmar=1.0),
+            "2026Q1": _make_metrics(total_return=0.18, sharpe=0.9, max_dd=-0.10, calmar=1.5),
         }
         trades = [{"reason": "sell_alpha_decay:rank_drop"}]
         result = PromotionGate.evaluate(a0_metrics=a0, a9_metrics=a9, a9_trade_rows=trades)
@@ -151,14 +151,14 @@ class TestGateAggregation:
     def test_promotion_requires_2_of_3_windows(self):
         """A9 must win return in ≥2/3 windows."""
         a0 = {
-            "2025H1": _make_metrics(total_return=0.10),
-            "2025H2": _make_metrics(total_return=0.15),
-            "2026H1": _make_metrics(total_return=0.20),
+            "2025Q1": _make_metrics(total_return=0.10),
+            "2025Q3": _make_metrics(total_return=0.15),
+            "2026Q1": _make_metrics(total_return=0.20),
         }
         a9 = {
-            "2025H1": _make_metrics(total_return=0.12),
-            "2025H2": _make_metrics(total_return=0.10),
-            "2026H1": _make_metrics(total_return=0.18),
+            "2025Q1": _make_metrics(total_return=0.12),
+            "2025Q3": _make_metrics(total_return=0.10),
+            "2026Q1": _make_metrics(total_return=0.18),
         }
         trades = [{"reason": "sell_alpha_decay:rank_drop"}]
         result = PromotionGate.evaluate(a0_metrics=a0, a9_metrics=a9, a9_trade_rows=trades)
@@ -228,14 +228,14 @@ class TestEdgeCases:
 
     def test_missing_a0_or_a9_no_promotion(self):
         """PromotionGate with missing metrics should fail gracefully."""
-        a0 = {"2025H1": _make_metrics(total_return=0.10)}
+        a0 = {"2025Q1": _make_metrics(total_return=0.10)}
         result = PromotionGate.evaluate(a0_metrics=a0, a9_metrics={})
         assert result.passed is False
 
     def test_partial_window_data(self):
         """Only 1 window available → can't pass ≥2 windows."""
-        a0 = {"2025H1": _make_metrics(total_return=0.10)}
-        a9 = {"2025H1": _make_metrics(total_return=0.12)}
+        a0 = {"2025Q1": _make_metrics(total_return=0.10)}
+        a9 = {"2025Q1": _make_metrics(total_return=0.12)}
         trades = [{"reason": "sell_alpha_decay:rank_drop"}]
         result = PromotionGate.evaluate(a0_metrics=a0, a9_metrics=a9, a9_trade_rows=trades)
         assert result.windows_passed == 1

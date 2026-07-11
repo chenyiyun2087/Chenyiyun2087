@@ -216,8 +216,8 @@ class TestDateCompleteness:
             REQUIRED_DATE_RANGES, MIN_SESSIONS_PER_WINDOW,
         )
         windows = {r[0] for r in REQUIRED_DATE_RANGES}
-        assert "2024H1" in windows, "2024H1 must be in required windows"
-        assert "2024H2" in windows, "2024H2 must be in required windows"
+        assert "2024Q1" in windows, "2024Q1 must be in required windows"
+        assert "2024Q2" in windows, "2024Q2 must be in required windows"
         assert MIN_SESSIONS_PER_WINDOW >= 15
 
 
@@ -411,11 +411,14 @@ class TestFlatEvidenceAbolished:
         )
 
     def test_fixed_windows_include_2024(self):
-        """FIXED_WINDOWS must include 2024H1 and 2024H2."""
+        """FIXED_WINDOWS must include 2024Q1 and 2024Q2."""
         from scripts.research.validation_evidence import FIXED_WINDOWS
         windows = {w[0] for w in FIXED_WINDOWS}
-        assert "2024H1" in windows, "2024H1 must be in FIXED_WINDOWS"
-        assert "2024H2" in windows, "2024H2 must be in FIXED_WINDOWS"
+        assert "2024Q1" in windows, "2024Q1 must be in FIXED_WINDOWS"
+        assert "2024Q2" in windows, "2024Q2 must be in FIXED_WINDOWS"
+        assert len(FIXED_WINDOWS) == 10, (
+            f"FIXED_WINDOWS must have 10 quarterly entries, got {len(FIXED_WINDOWS)}"
+        )
 
 
 # ============================================================================

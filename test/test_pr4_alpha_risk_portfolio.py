@@ -480,30 +480,30 @@ class TestRiskPortfolioGate:
     def test_gate_passes_when_a8_improves(self):
         """Gate should pass when A8 beats A7 on all metrics."""
         a7_metrics = {
-            "2025H1": WindowMetrics(
-                window_label="2025H1", experiment_id="A7",
+            "2025Q1": WindowMetrics(
+                window_label="2025Q1", experiment_id="A7",
                 total_return=0.10, max_drawdown=-0.15, ann_volatility=0.25,
             ),
-            "2025H2": WindowMetrics(
-                window_label="2025H2", experiment_id="A7",
+            "2025Q3": WindowMetrics(
+                window_label="2025Q3", experiment_id="A7",
                 total_return=0.08, max_drawdown=-0.12, ann_volatility=0.23,
             ),
-            "2026H1": WindowMetrics(
-                window_label="2026H1", experiment_id="A7",
+            "2026Q1": WindowMetrics(
+                window_label="2026Q1", experiment_id="A7",
                 total_return=0.12, max_drawdown=-0.18, ann_volatility=0.27,
             ),
         }
         a8_metrics = {
-            "2025H1": WindowMetrics(
-                window_label="2025H1", experiment_id="A8",
+            "2025Q1": WindowMetrics(
+                window_label="2025Q1", experiment_id="A8",
                 total_return=0.12, max_drawdown=-0.10, ann_volatility=0.20,
             ),
-            "2025H2": WindowMetrics(
-                window_label="2025H2", experiment_id="A8",
+            "2025Q3": WindowMetrics(
+                window_label="2025Q3", experiment_id="A8",
                 total_return=0.10, max_drawdown=-0.08, ann_volatility=0.18,
             ),
-            "2026H1": WindowMetrics(
-                window_label="2026H1", experiment_id="A8",
+            "2026Q1": WindowMetrics(
+                window_label="2026Q1", experiment_id="A8",
                 total_return=0.14, max_drawdown=-0.12, ann_volatility=0.22,
             ),
         }
@@ -521,8 +521,8 @@ class TestRiskPortfolioGate:
 
     def test_gate_fails_when_concentration_exceeded(self):
         """Gate should fail when max single position exceeds cap."""
-        a7 = {"2025H1": WindowMetrics(window_label="2025H1", experiment_id="A7", total_return=0.10, max_drawdown=-0.15, ann_volatility=0.25)}
-        a8 = {"2025H1": WindowMetrics(window_label="2025H1", experiment_id="A8", total_return=0.12, max_drawdown=-0.10, ann_volatility=0.20)}
+        a7 = {"2025Q1": WindowMetrics(window_label="2025Q1", experiment_id="A7", total_return=0.10, max_drawdown=-0.15, ann_volatility=0.25)}
+        a8 = {"2025Q1": WindowMetrics(window_label="2025Q1", experiment_id="A8", total_return=0.12, max_drawdown=-0.10, ann_volatility=0.20)}
         result = RiskPortfolioGate.evaluate(
             a7_metrics=a7, a8_metrics=a8,
             a7_gate_passed=True, a8_max_single_weight=0.40,

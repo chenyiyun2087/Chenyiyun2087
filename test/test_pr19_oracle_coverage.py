@@ -297,11 +297,11 @@ class TestCoverageInvariants:
         """Missing market regime windows must fail."""
         from scripts.research.run_pr19_golden_regression import check_regime_coverage_hard
 
-        # Only 2026H1 dates — missing 2024 and 2025
-        dates = list(pd.date_range("2026-01-02", "2026-06-30", freq="B"))
+        # Only 2026Q1 dates — missing 2024 and 2025
+        dates = list(pd.date_range("2026-01-02", "2026-03-31", freq="B"))
         result = check_regime_coverage_hard(dates)
         assert not result["passed"]
-        assert result["windows"]["2024H1"]["n_dates"] < 15
+        assert result["windows"]["2024Q1"]["n_dates"] < 15
 
     def test_p0_exists_c0_missing(self):
         """P0 oracle present but C0 oracle missing should fail validation."""
