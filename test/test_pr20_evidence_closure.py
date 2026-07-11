@@ -432,9 +432,9 @@ class TestRealExecutor:
         assert callable(run)
 
     def test_write_empty_parquets_still_available(self):
-        """Schema writer still available as fallback."""
-        from scripts.research.run_full_strategy_v3_validation import _write_empty_parquets
-        assert callable(_write_empty_parquets)
+        """Schema writer still available as fallback (PR21: renamed to _write_empty_parquets_precheck)."""
+        from scripts.research.run_full_strategy_v3_validation import _write_empty_parquets_precheck
+        assert callable(_write_empty_parquets_precheck)
 
     def test_executor_imports_experiment_specs(self):
         """Executor must import experiment specs for real execution."""
