@@ -562,7 +562,7 @@ class TestSyntheticFold:
         prices, _ = _make_panel(n_symbols=5, n_days=90)
         cal = sorted(prices["trade_date"].unique())
         labels = compute_executable_forward_returns(
-            prices, cal, hold_days=10,
+            prices, calendar=cal, hold_days=10,
         )
         assert "fwd_ret_10d_exec_net" in labels.columns
         assert "entry_gate_reason" in labels.columns

@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.research.execution_costs import ExecutionCostModel
-from scripts.research.execution_gate import can_sell_at_open, can_buy_at_open
+from scripts.research.execution_market_rules import can_buy_at_open, can_sell_at_open
 
 DEFAULT_HOLD_DAYS = 10
 DEFAULT_ROUND_TRIP_COST = 0.0015
@@ -31,18 +31,29 @@ def _is_exit_tradable(
     row: pd.Series,
     has_metadata: bool = True,
 ) -> tuple[bool, str]:
-    """PR26A.1: Delegate to unified execution gate.
+    """PR26A.4: Delegate to execution_market_rules (canonical).
 
-    Previously used close-based limit-down logic (close price for
-    limit check).  Now uses the same can_sell_at_open() as the
-    account backtest for true label-account parity.
+    Uses the same can_sell_at_open() individual-param API as
+    compute_executable_forward_returns for true label-account parity.
     """
     if not has_metadata:
         return False, "missing_metadata"
-    # Convert Series row to dict for the unified gate
-    price_info = row.to_dict()
-    allowed, reason, _price = can_sell_at_open(str(row.get("symbol", "")), price_info)
-    return allowed, reason
+    sym = str(row.get("symbol", ""))
+    open_price = float(row.get("adj_open", np.nan))
+    prev_close = float(row.get("raw_pre_close", row.get("prev_adj_close", np.nan)))
+    is_st = float(row.get("is_st", 0))
+    is_listed = float(row.get("is_listed", 1))
+    is_suspended = float(row.get("is_suspended", 0))
+    list_days = float(row.get("list_days", row.get("days_since_listing", np.nan)))
+    return can_sell_at_open(
+        open_price,
+        prev_close,
+        sym,
+        is_st,
+        is_listed=is_listed,
+        is_suspended=is_suspended,
+        list_days=list_days if np.isfinite(list_days) else None,
+    )
 
 
 def compute_executable_forward_returns(
@@ -106,8 +117,6 @@ def compute_executable_forward_returns(
     # PR26A.3: ALL gate-relevant fields must come from entry_row (T+1), not
     # signal_row (T).  Shift every column so the loop reads from the same
     # row as entry_price.
-    from scripts.research.execution_market_rules import can_buy_at_open, can_sell_at_open
-
     # PR25 Fix 11: Require ALL metadata columns for fail-closed behavior.
     # Previously only checked is_suspended, allowing other missing fields
     # (is_listed, is_st, raw_pre_close) to be silently defaulted.
@@ -307,15 +316,16 @@ def compute_executable_forward_returns(
                     sym,
                     retry_is_st,
                 )
-                if retry_allowed or retry == 0:
-                    # First attempt: record gate reason regardless
-                    # Subsequent attempts: only stop if allowed
+                if retry_allowed:
+                    actual_exit_open = retry_open
+                    actual_exit_date = retry_date
+                    exit_found = True
                     actual_reason = retry_reason
-                    if retry_allowed:
-                        actual_exit_open = retry_open
-                        actual_exit_date = retry_date
-                        exit_found = True
                     break
+                # First attempt when gate rejects: record reason, continue
+                # retrying subsequent trading days (matching account backtest).
+                if retry == 0:
+                    actual_reason = retry_reason
 
                 retry_date = next_trade_date(cal, retry_date)
                 if retry_date is None:

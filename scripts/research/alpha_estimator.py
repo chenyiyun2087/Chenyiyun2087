@@ -290,6 +290,75 @@ class AlphaEstimator:
             weight = float(fitted_state.factor_weights.get(factor_name, 0.0))
             sign = int(fitted_state.factor_signs.get(factor_name, 1))
             result["rank_score"] += standardized.fillna(0.0) * weight * sign
+
+        # --- Cross-sectional neutralization (restored PR26A.4) ---
+        # Neutralize the composite rank_score against industry, market cap,
+        # and volatility to remove systematic beta before ranking.
+        neutral_params = fitted_state.neutralization_parameters
+
+        # Merge PIT metadata from prices for the signal date
+        price_meta = pit_prices[
+            pd.to_datetime(pit_prices["trade_date"], errors="coerce").dt.date
+            == as_of_ts
+        ][["symbol"]].drop_duplicates(subset="symbol")
+
+        _meta_cols = []
+        for col in ["industry", "circ_mv", "log_circ_mv", "vol20", "pit_vol_20"]:
+            if col in pit_prices.columns:
+                col_data = pit_prices[
+                    pd.to_datetime(pit_prices["trade_date"], errors="coerce").dt.date
+                    == as_of_ts
+                ][["symbol", col]].drop_duplicates(subset="symbol")
+                price_meta = price_meta.merge(col_data, on="symbol", how="left")
+                _meta_cols.append(col)
+
+        result = result.merge(price_meta, on="symbol", how="left")
+
+        # Industry neutralization
+        if neutral_params.get("industry", False):
+            industry_col = "industry"
+            if industry_col in result.columns:
+                residuals = CrossSectionalProcessor.industry_neutralize(
+                    result, "rank_score", industry_col
+                )
+                result["rank_score"] = residuals  # NaN for missing industry
+            # If industry column missing, skip (no industry data available)
+
+        # Market cap + volatility neutralization
+        if neutral_params.get("log_market_cap", False) or neutral_params.get(
+            "volatility_20d", False
+        ):
+            # CrossSectionalProcessor.cap_vol_neutralize expects circ_mv and vol20
+            # Map from available columns
+            if "circ_mv" not in result.columns and "log_circ_mv" in result.columns:
+                result["circ_mv"] = np.exp(result["log_circ_mv"])
+            if "vol20" not in result.columns and "pit_vol_20" in result.columns:
+                result["vol20"] = result["pit_vol_20"]
+            has_cap = "circ_mv" in result.columns
+            has_vol = "vol20" in result.columns
+            if has_cap and has_vol:
+                try:
+                    residuals = CrossSectionalProcessor.cap_vol_neutralize(
+                        result, "rank_score"
+                    )
+                    result["rank_score"] = residuals  # NaN for missing data
+                except ValueError:
+                    pass  # Insufficient panel — skip cap/vol neutralization
+
+        # Residual standardize
+        if neutral_params.get("residual_standardize", False):
+            valid_neutral = result["rank_score"].notna()
+            if valid_neutral.any():
+                result.loc[valid_neutral, "rank_score"] = (
+                    CrossSectionalProcessor.standardize(
+                        result.loc[valid_neutral, "rank_score"]
+                    ).values
+                )
+
+        # PR26A.4: Exclude stocks with NaN rank_score (missing neutralization data)
+        # from the eligible panel — they must not enter the ranking.
+        result = result[result["rank_score"].notna()].copy()
+
         result["rank"] = result["rank_score"].rank(ascending=False, method="first")
 
         # Ensure required columns

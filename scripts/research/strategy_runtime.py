@@ -362,7 +362,8 @@ class FrozenAlphaRuntime(StrategyRuntime):
         )
 
     def build_weights(
-        self, state, ranked, signal_date, historical_prices, target_exposure, top_n
+        self, state, ranked, signal_date, historical_prices, target_exposure, top_n,
+        prev_weights=None, turnover_penalty=0.0,
     ):
         """Build weights via the common portfolio constructor.
 
@@ -370,6 +371,10 @@ class FrozenAlphaRuntime(StrategyRuntime):
         - RND100 (ordering=RANDOM): random shuffle, constrained equal-weight
         - REV-A7 (ordering=ALPHA_REVERSE): reverse alpha, constrained equal-weight
         - A8 (risk_weighted=True): covariance-optimal weights
+
+        PR26A.4: prev_weights and turnover_penalty enable real-cost-aware
+        optimization for A8.  prev_weights should come from the account's
+        current portfolio state; turnover_penalty defaults to 0.0 (no penalty).
         """
         if ranked.empty:
             return ranked
@@ -428,6 +433,8 @@ class FrozenAlphaRuntime(StrategyRuntime):
             top_n=top_n,
             covariance=covariance,
             risk_aversion=self.risk_aversion,
+            prev_weights=prev_weights,
+            turnover_penalty=turnover_penalty,
         )
 
 
