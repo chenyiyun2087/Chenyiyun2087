@@ -370,13 +370,14 @@ class TestEndToEndSmoke:
         sig = inspect.signature(run)
         assert "precheck_only" in sig.parameters
 
-    def test_build_executable_labels(self, synthetic_prices):
-        """_build_executable_labels produces valid label DataFrame."""
-        from scripts.research.run_full_strategy_v3_validation import _build_executable_labels
-        labels = _build_executable_labels(
-            synthetic_prices, "2024-01-02", "2024-01-31")
+    def test_canonical_executable_labels(self, synthetic_prices):
+        """PR23: canonical compute_executable_forward_returns produces valid labels."""
+        from scripts.research.executable_labels import compute_executable_forward_returns
+        labels = compute_executable_forward_returns(synthetic_prices)
         assert labels is not None
-        assert "fwd_ret_5d" in labels.columns
-        assert "fwd_ret_10d" in labels.columns
-        assert "fwd_ret_20d" in labels.columns
+        assert "fwd_ret_10d_exec_net" in labels.columns
+        # Old fields MUST NOT be present (PR23 P1)
+        assert "fwd_ret_5d" not in labels.columns
+        assert "fwd_ret_10d" not in labels.columns
+        assert "fwd_ret_20d" not in labels.columns
         assert len(labels) > 0

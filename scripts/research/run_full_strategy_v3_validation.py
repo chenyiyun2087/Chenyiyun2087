@@ -31,6 +31,7 @@ from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.research.fold_account_backtest import (
     FoldAccountBacktest,
     FoldBacktestConfig,
+    _slice_by_date,
 )
 from scripts.research.validation_evidence import (
     EvidenceStatus,
@@ -112,41 +113,6 @@ def _write_empty_parquets_precheck(output_dir):
     }
     for name, columns in schemas.items():
         pd.DataFrame(columns=columns).to_parquet(output_dir / name, index=False)
-
-
-def _build_executable_labels(prices_df, train_start, train_end):
-    """PR21: Build executable forward-return labels from training prices."""
-    try:
-        start = pd.Timestamp(train_start).date()
-        end = pd.Timestamp(train_end).date()
-        date_col = "trade_date"
-        price_dates = pd.to_datetime(prices_df[date_col]).dt.date
-        mask = (price_dates >= start) & (price_dates <= end)
-        prices_subset = prices_df[mask].copy()
-        if prices_subset.empty:
-            return None
-        labels_rows = []
-        for symbol, group in prices_subset.groupby("symbol"):
-            group = group.sort_values(date_col)
-            close_col = "adj_close" if "adj_close" in group.columns else "close"
-            if close_col not in group.columns:
-                continue
-            close_prices = group[close_col].values
-            dates = group[date_col].values
-            for i in range(len(group)):
-                current_close = float(close_prices[i])
-                if current_close <= 0:
-                    continue
-                fwd5 = float(close_prices[i + 5]) / current_close - 1.0 if i + 5 < len(group) else np.nan
-                fwd10 = float(close_prices[i + 10]) / current_close - 1.0 if i + 10 < len(group) else np.nan
-                fwd20 = float(close_prices[i + 20]) / current_close - 1.0 if i + 20 < len(group) else np.nan
-                labels_rows.append({
-                    "trade_date": pd.Timestamp(dates[i]).date(), "symbol": str(symbol),
-                    "fwd_ret_5d": fwd5, "fwd_ret_10d": fwd10, "fwd_ret_20d": fwd20,
-                })
-        return pd.DataFrame(labels_rows) if labels_rows else None
-    except Exception:
-        return None
 
 
 def _write_experiment_evidence(exp_dir, candidates, weights, exposures, nav_rows,
@@ -282,16 +248,13 @@ def run(output_dir, test_log, precheck_only=False):
                     "status": "SKIPPED", "reason": f"window_status: {fold.get('status')}"}
                 continue
 
-            train_start = pd.Timestamp(fold["train_start"]).date()
-            train_end = pd.Timestamp(fold["train_end"]).date()
-            train_labels = None
-            if getattr(runtime, "needs_training", False):
-                train_labels = _build_executable_labels(prices_df, train_start, train_end)
-
+            # PR23: Canonical label path only — never pass labels_df to executor.
+            # The executor calls compute_executable_forward_returns() internally
+            # when labels_df is None and runtime.needs_training is True.
             window_result = executor.execute(
                 experiment_id=exp_id, runtime=runtime, fold=fold,
                 scores_df=scores_df, prices_df=prices_df,
-                calendar_dates=calendar_dates, labels_df=train_labels)
+                calendar_dates=calendar_dates, labels_df=None)
 
             factor_state_by_fold[exp_id][window_label] = {
                 "status": window_result.status, "reason": window_result.reason,
@@ -318,14 +281,25 @@ def run(output_dir, test_log, precheck_only=False):
         _write_experiment_evidence(
             exp_dir, exp_candidates, exp_weights, exp_exposures,
             exp_nav, exp_trades, exp_exits, exp_rejections, exp_errors)
-        _json(exp_dir / "metrics.json", {
-            "experiment_id": exp_id,
-            "total_candidates": len(exp_candidates), "total_trades": len(exp_trades),
-            "total_nav_days": len(exp_nav), "total_exits": len(exp_exits),
-            "total_execution_errors": len(exp_errors),
-            "fold_statuses": {w: factor_state_by_fold[exp_id][w]["status"]
-                              for w in factor_state_by_fold[exp_id]},
-        })
+
+        # PR23: Full return/risk metrics per experiment
+        exp_metrics = executor.compute_metrics(exp_nav, exp_trades, initial_cash=500_000.0)
+        exp_metrics["experiment_id"] = exp_id
+        exp_metrics["total_candidates"] = len(exp_candidates)
+        exp_metrics["total_trades"] = len(exp_trades)
+        exp_metrics["total_nav_days"] = len(exp_nav)
+        exp_metrics["total_exits"] = len(exp_exits)
+        exp_metrics["total_execution_errors"] = len(exp_errors)
+        exp_metrics["fold_statuses"] = {
+            w: factor_state_by_fold[exp_id][w]["status"]
+            for w in factor_state_by_fold[exp_id]
+        }
+        _json(exp_dir / "metrics.json", exp_metrics)
+
+        # PR23: Per-experiment independent NAV CSV
+        if exp_nav:
+            executor.export_nav_csv(exp_nav, exp_dir / "nav.csv",
+                                    {"experiment_id": exp_id})
 
         all_candidates.extend(exp_candidates)
         all_weights.extend(exp_weights)
@@ -335,37 +309,81 @@ def run(output_dir, test_log, precheck_only=False):
         all_rejections.extend(exp_rejections)
         all_errors.extend(exp_errors)
 
-    # RND100: 100 seeds with full account backtest
+    # RND100: 100 seeds with full account backtest, MATCHED to A7 (PR23 P9a)
     rnd_results = []
+    a7_spec = specs.get("A7")
+    a7_runtime = resolve_runtime(a7_spec) if a7_spec else None
+    # Collect A7 candidate/weight maps across all folds for RND100 matching
+    a7_candidates_by_fold: dict[str, dict[object, pd.DataFrame]] = {}
     for fold in folds:
         if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
             continue
+        wl = fold.get("window", "unknown")
+        if wl in factor_state_by_fold.get("A7", {}):
+            # Rebuild A7 candidate map for this fold
+            fold_candidates: dict[object, pd.DataFrame] = {}
+            validation_start = pd.Timestamp(fold["validation_start"]).date()
+            validation_end = pd.Timestamp(fold["validation_end"]).date()
+            wdates = [d for d in calendar_dates
+                      if validation_start <= pd.Timestamp(d).date() <= validation_end]
+            if a7_runtime is not None:
+                train_s = _slice_by_date(scores_df,
+                    pd.Timestamp(fold["train_start"]).date(),
+                    pd.Timestamp(fold["train_end"]).date())
+                train_p = _slice_by_date(prices_df,
+                    pd.Timestamp(fold["train_start"]).date(),
+                    pd.Timestamp(fold["train_end"]).date())
+                if not train_s.empty and not train_p.empty:
+                    from scripts.research.executable_labels import compute_executable_forward_returns
+                    tl = compute_executable_forward_returns(train_p)
+                    st = a7_runtime.fit(train_s, train_p, tl)
+                    for sd in wdates:
+                        sd_key = pd.Timestamp(sd).date()
+                        r = a7_runtime.rank_as_of(st, sd_key, scores_df, prices_df)
+                        if r is not None and not r.empty:
+                            fold_candidates[sd_key] = r.head(5)
+            a7_candidates_by_fold[wl] = fold_candidates
+    for fold in folds:
+        if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
+            continue
+        wl = fold.get("window", "unknown")
+        a7_cmap = a7_candidates_by_fold.get(wl, {})
         for sr in executor.run_rnd100(
             experiment_id="RND", fold=fold, scores_df=scores_df,
-            prices_df=prices_df, calendar_dates=calendar_dates):
-            sr["window"] = fold.get("window", "unknown")
+            prices_df=prices_df, calendar_dates=calendar_dates,
+            a7_candidate_map=a7_cmap, a7_runtime=a7_runtime):
+            sr["window"] = wl
             rnd_results.append(sr)
     if rnd_results:
         pd.DataFrame(rnd_results).to_csv(output_dir / "random_seed_results.csv", index=False)
 
-    # REV: full reversed-alpha backtest
+    # REV: full reversed-alpha backtest using A7 runtime (PR23 P9b)
     rev_dir = output_dir / "REV"
     rev_dir.mkdir(parents=True, exist_ok=True)
-    rev_candidates, rev_nav, rev_trades, rev_errors = [], [], [], []
-    if "P0" in specs:
-        p0_runtime = resolve_runtime(specs["P0"])
+    rev_candidates, rev_weights, rev_nav, rev_trades, rev_errors = [], [], [], [], []
+    if a7_runtime is not None:
         for fold in folds:
             if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
                 continue
             rev_result = executor.run_rev(
-                experiment_id="P0", runtime=p0_runtime, fold=fold,
+                experiment_id="A7", runtime=a7_runtime, fold=fold,
                 scores_df=scores_df, prices_df=prices_df, calendar_dates=calendar_dates)
             rev_candidates.extend(rev_result.candidates)
+            rev_weights.extend(rev_result.weights)
             rev_nav.extend(rev_result.nav_rows)
             rev_trades.extend(rev_result.trade_rows)
             rev_errors.extend(rev_result.error_rows)
-    _write_experiment_evidence(
-        rev_dir, rev_candidates, [], [], rev_nav, rev_trades, [], [], rev_errors)
+        # Write REV evidence with full metrics
+        _write_experiment_evidence(
+            rev_dir, rev_candidates, rev_weights, [], rev_nav, rev_trades, [], [], rev_errors)
+        rev_metrics = executor.compute_metrics(rev_nav, rev_trades, initial_cash=500_000.0)
+        rev_metrics["experiment_id"] = "REV_A7"
+        _json(rev_dir / "metrics.json", rev_metrics)
+        if rev_nav:
+            executor.export_nav_csv(rev_nav, rev_dir / "nav.csv", {"experiment_id": "REV_A7"})
+    else:
+        _write_experiment_evidence(
+            rev_dir, [], [], [], [], [], [], [], rev_errors)
 
     # Source completeness: COMPUTED from actual data
     corporate = _compute_source_completeness(
