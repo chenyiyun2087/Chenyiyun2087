@@ -137,10 +137,11 @@ class DecayExitRuleV2:
     def should_exit(self, symbol: str, trade_date: str, rank_score: float,
                     rank: int, candidate_count: int, holding_days: int = 0,
                     hold_days_required: int = 10) -> tuple[bool, str]:
+        # PR24: record() is called separately by the account loop (once per day).
+        # should_exit() only READS from the tracker — no side effects.
         if holding_days < self.config.min_confirm_signals:
             return (False, "")
 
-        self.tracker.record(symbol, trade_date, rank_score, rank, candidate_count)
         result = self.tracker.check_decay(symbol)
 
         if result["decayed"]:
