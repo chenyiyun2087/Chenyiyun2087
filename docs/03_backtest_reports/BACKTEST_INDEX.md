@@ -1,5 +1,7 @@
 # 回测报告索引
 
+> 2026-07-12 最近 26 个 PR（#147–#172）升级评估：研究与验证基础设施显著升级，但没有在最终提交上形成可晋级的完整季度经济证据；GitHub `production-core`、`strict-ledger` 与 fixtures 仍为红灯，本地复现为生产核心 133 passed / 8 failed、strict ledger 67 passed / 2 failed，正式 V3 runner 又因缺少只读数据库凭据未进入实验。结论维持 `NO-GO / RESEARCH_ONLY / NO_SCALE`，当前生产路由不变。即使全部阻塞在 2026-07-13 前关闭，影子 20 个交易日也要到 2026-08-07 收盘，10% Canary 最早 2026-08-10；后续每级至少 60 个交易日且不得跳级。详见 `2026-07-12_Full_Strategy_V3_PR147-172_升级评估.md`。
+
 > 2026-07-10 Full Strategy V3 PR16 单一经济路径：真实数据库最近60个完整评分交易日完成 P0/C0 Adapter 与正式路径逐日复制，候选、Top5、权重、总仓位和退出差异均为0；评分/价格快照 SHA 已冻结。Python 3.11 完整回归为 743 passed、11 skipped、0 failed。该结果只证明经济路径复制可信，不代表新策略收益通过；Full Strategy V3 继续 `RESEARCH_ONLY / BLOCKED / NO_SCALE`。证据位于 `exports/full_strategy_v3_validation/pr16_golden_20260710_162441/`，方法说明见 `docs/01_strategy_research/2026-07-10_Full_Strategy_V3_PR16_单一经济路径.md`。
 
 > 2026-07-10 P0 可信度修复：`production_governed_vol_position_v1_2b_dynamic_score` 的 2026-06-18 账户回测被冻结为 Champion 基准（615 个交易日、收益 +57.23%、最大回撤 -25.52%），但公司行为与生命周期不可变快照缺失，状态保持 `FAILED_REVALIDATION / BLOCKED / NO_SCALE`。当前生产路由不变；后续报告禁止静默策略替代，并显式披露窗口覆盖率与 provenance。
