@@ -47,6 +47,8 @@ REQUIRED_EVIDENCE_FILES = frozenset({
     "factor_state_by_fold.json",
     "walk_forward_metrics.csv",
     "test_log.txt",
+    "manifest.json",
+    "evidence_verification.json",
 })
 
 # PR26A.8: Evidence Contract V2 — per-strategy subdirectories.
