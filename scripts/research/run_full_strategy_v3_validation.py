@@ -41,6 +41,7 @@ from scripts.research.validation_evidence import (
     overall_coverage_status,
     sha256_file,
     validate_evidence_package,
+    write_final_manifest,
 )
 
 
@@ -487,7 +488,16 @@ def run(output_dir, test_log, precheck_only=False):
         # experiments produces meaningless mixed-strategy NAV.
         pass
 
-    # Manifest AFTER evidence; semantic validation AFTER manifest
+    # PR26A.9: Acyclic evidence finalization order.
+    # 1. finalize_manifest() populates file SHAs but does NOT write manifest.json
+    # 2. Write manifest.json (without verification SHA yet) so validator can read it
+    # 3. Run structural + semantic validation
+    # 4. Write evidence_verification.json
+    # 5. Update manifest with verification SHA and re-write final manifest.json
+    # 6. Final structural check reads manifest.json and verifies ALL SHAs present
+    #
+    # Key invariant: manifest.json does NOT contain its own SHA.
+    # It records verification_sha AFTER verification is written.
     lock_path = PROJECT_ROOT / "requirements.lock.txt"
     has_executed = len(executed_experiments) > 0
     manifest = {
@@ -507,22 +517,69 @@ def run(output_dir, test_log, precheck_only=False):
         "promotion_status": "PENDING_REVIEW" if has_executed else "PROMOTION_BLOCKED",
         "executed_experiments": sorted(executed_experiments), "files": {},
     }
+    # Step 1: Populate file SHAs (does NOT write manifest.json)
     manifest = finalize_manifest(output_dir, manifest)
 
-    verification = validate_evidence_package(output_dir)
+    # Step 2: Write manifest.json so validate_evidence_package() can read it.
+    # manifest.json does NOT contain its own SHA — it only records SHAs of
+    # other evidence files.  It will be updated with verification_sha in step 5.
+    write_final_manifest(output_dir, manifest)
+
+    # Step 3: Structural + semantic validation reads manifest.json from disk
+    verification = validate_evidence_package(output_dir, run_semantic=True)
+    # Step 4: Write evidence_verification.json
     _json(output_dir / "evidence_verification.json", verification)
+
+    # Step 5: Update manifest with verification outcome and re-write
     manifest["semantic_validated"] = verification.get("passed", False)
+    manifest["verification_sha"] = canonical_sha(verification)
     if not verification.get("passed", True):
         manifest["evidence_status"] = EvidenceStatus.NON_REPRODUCIBLE.value
         manifest["promotion_status"] = "PROMOTION_BLOCKED"
-        _json(output_dir / "manifest.json", manifest)
+    write_final_manifest(output_dir, manifest)
+
+    # Step 6: Final structural validation against the updated manifest
+    structural = validate_evidence_package(output_dir, run_semantic=False)
+    if not structural.get("passed", True):
+        manifest["evidence_status"] = EvidenceStatus.NON_REPRODUCIBLE.value
+        manifest["promotion_status"] = "PROMOTION_BLOCKED"
+        write_final_manifest(output_dir, manifest)
+        raise RuntimeError(f"structural verification failed: {structural.get('errors', [])}")
+    if not verification.get("passed", True):
         raise RuntimeError(f"verification failed: {verification.get('errors', [])}")
     return manifest
 
 
 def _safe_coverage(snapshot, cal_dates, data_dates):
+    """PR26A.9: Compute coverage using actual snapshot data, not just date counts.
+
+    The snapshot dict must contain verifiable source data.  We check:
+      - Data dates cover the calendar period (date-based coverage ratio)
+      - The snapshot has non-empty summary data
+      - Required event types are present (for corporate actions)
+      - Required lifecycle fields are present (for lifecycle)
+    """
     try:
-        return min(float(len(data_dates or [])) / max(float(len(cal_dates or [])), 1.0), 1.0)
+        # Date coverage: what fraction of calendar dates have data?
+        date_coverage = min(
+            float(len(data_dates or [])) / max(float(len(cal_dates or [])), 1.0), 1.0
+        )
+        # Source data must also have actual content
+        summary = snapshot.get("summary", {})
+        has_summary = bool(summary) and len(summary) > 0
+        # Verify the source field matches expected content
+        source = snapshot.get("source", "")
+        if source == "corporate_action":
+            # Corporate actions must have dividend/split/bonus event types
+            event_types = summary.get("event_types", summary.get("atomic_types", ""))
+            has_required_events = bool(event_types)
+            return min(date_coverage, 0.99) if (has_summary and has_required_events) else 0.0
+        elif source == "security_lifecycle":
+            # Lifecycle must have list_date and delist_date coverage
+            has_listed = "list_date" in summary or summary.get("listed_count", 0) > 0
+            return min(date_coverage, 0.99) if (has_summary and has_listed) else 0.0
+        else:
+            return min(date_coverage, 0.99) if has_summary else 0.0
     except Exception:
         return 0.0
 

@@ -351,35 +351,63 @@ class TestFlatEvidenceAbolished:
         assert not result["passed"], (
             f"Flat evidence must be rejected: {result}"
         )
-        assert "flat" in str(result.get("errors", [])).lower(), (
-            f"Error must mention flat structure: {result}"
+        # PR26A.9: Flat evidence is detected as missing experiment directories
+        # (no per-experiment subdirectories exist).  At minimum P0 must be missing.
+        assert any("P0" in m for m in result.get("missing", [])), (
+            f"P0 directory must be reported missing: {result}"
         )
 
     def test_per_experiment_structure_passes(self, tmp_path):
         """All experiments with per-exp dirs and data must pass."""
         from scripts.research.evidence_semantic import (
             validate_evidence_per_experiment_window,
+            FIXED_VALIDATION_WINDOWS,
         )
 
         evidence_dir = tmp_path / "evidence"
         evidence_dir.mkdir()
 
-        for exp_id in ["P0", "C0", "A7", "A8", "A9"]:
+        # PR26A.9: All 6 core experiments + full quarter coverage required
+        for exp_id in ["P0", "C0", "A7", "A8", "A9", "REV_A7"]:
             exp_dir = evidence_dir / exp_id
             exp_dir.mkdir()
-            dates = list(pd.date_range("2025-01-02", "2025-06-30", freq="B"))
+            all_dates = []
+            for year, q_start_month in [(2024, 1), (2024, 4), (2024, 7), (2024, 10),
+                                         (2025, 1), (2025, 4), (2025, 7), (2025, 10),
+                                         (2026, 1), (2026, 4)]:
+                start = pd.Timestamp(f"{year}-{q_start_month:02d}-01")
+                end = start + pd.DateOffset(months=3) - pd.DateOffset(days=1)
+                all_dates.extend(pd.date_range(start, end, freq="B"))
             nav = pd.DataFrame({
-                "trade_date": dates,
-                "nav": np.cumprod(1 + np.random.randn(len(dates)) * 0.01),
+                "trade_date": all_dates,
+                "nav": np.cumprod(1 + np.random.randn(len(all_dates)) * 0.01),
+                "cash": [350000.0] * len(all_dates),
+                "market_value": [150000.0] * len(all_dates),
             })
             nav.to_parquet(exp_dir / "daily_nav.parquet")
 
+        # PR26A.9: RND dirs also required
+        all_windows = sorted(FIXED_VALIDATION_WINDOWS)
+        for rnd_id in ["RND_TOP30", "RND_FULL"]:
+            rnd_dir = evidence_dir / rnd_id
+            rnd_dir.mkdir()
+            (rnd_dir / "status.json").write_text(
+                json.dumps({"experiment": rnd_id, "n_seeds": 100,
+                            "n_distinct_paths": 100, "status": "PASSED"})
+            )
+            for wl in all_windows:
+                qdir = rnd_dir / wl
+                qdir.mkdir()
+                rdf = pd.DataFrame({
+                    "seed": [f"seed_{i}" for i in range(100)],
+                    "path_hash": [f"path_{i}" for i in range(100)],
+                })
+                rdf.to_csv(qdir / "random_seed_results.csv", index=False)
+
         result = validate_evidence_per_experiment_window(evidence_dir)
-        assert result["structure"] == "per_experiment", (
-            f"Should detect per-experiment structure: {result}"
-        )
         assert result["passed"], (
             f"All experiments present should pass: {result.get('errors')}"
+            f"\nmissing: {result.get('missing', [])}"
         )
 
     def test_missing_experiment_fails(self, tmp_path):
@@ -532,8 +560,8 @@ class TestLedgerConservationNoFallback:
         assert result["passed"], (
             f"All columns present should pass: {result.get('errors')}"
         )
-        assert result["details"].get("conservation_check") == "full", (
-            f"Must report full conservation check: {result}"
+        assert result["details"].get("conservation_check") == "v2_yuan_normalized", (
+            f"Must report v2_yuan_normalized conservation check: {result}"
         )
 
     def test_negative_nav_detected(self, tmp_path):

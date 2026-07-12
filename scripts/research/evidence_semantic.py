@@ -612,7 +612,10 @@ REQUIRED_EXPERIMENTS_FOR_OOS = frozenset({
 })
 RND_EXPERIMENTS = frozenset({"RND_TOP30", "RND_FULL"})
 CARTESIAN_WINDOW_COUNT = 10  # 2024Q1–2026Q2
-MIN_TRADING_DAYS_PER_WINDOW = 15
+# PR26A.9: Full quarter coverage — a typical quarter has ~55-65 trading days.
+# 15 days is insufficient to represent a complete quarter.
+MIN_TRADING_DAYS_PER_WINDOW = 55
+MIN_COVERAGE_RATIO = 0.99  # NAV dates must cover ≥99% of calendar trading days
 MIN_RND_SEEDS_PER_WINDOW = 95
 
 
@@ -637,7 +640,7 @@ def validate_evidence_per_experiment_window(output_dir: Path) -> dict[str, Any]:
     errors: list[str] = []
     missing: list[str] = []
     experiments_covered: dict[str, dict[str, int]] = {}
-    all_windows = {item[0] for item in FIXED_VALIDATION_WINDOWS}
+    all_windows = set(FIXED_VALIDATION_WINDOWS)  # PR26A.9: fixed from {item[0] for item in ...}
 
     # --- Core strategies: Cartesian gate ---
     for exp_id in sorted(REQUIRED_EXPERIMENTS_FOR_OOS):
@@ -668,44 +671,126 @@ def validate_evidence_per_experiment_window(output_dir: Path) -> dict[str, Any]:
             experiments_covered[exp_id] = {}
             continue
 
-        nav_dates = {pd.Timestamp(d).date() for d in nav[nav_date_col] if pd.notna(d)}
+        nav_dates_list = sorted({pd.Timestamp(d).date() for d in nav[nav_date_col] if pd.notna(d)})
+        nav_dates = set(nav_dates_list)
         window_days: dict[str, int] = {}
         for wl in sorted(all_windows):
             wd = _get_window_dates(wl)
             if wd:
                 start, end = wd
+                # PR26A.9: Compute calendar trading days in this quarter
+                # from the NAV's own date range as a proxy for calendar coverage.
+                # The full calendar is not available here, so we check that
+                # NAV spans the quarter's boundaries.
+                quarter_cal_days = sum(
+                    1 for d in pd.date_range(start, end, freq="B")
+                    if d.date() >= start and d.date() <= end
+                )
                 matches = {d for d in nav_dates if start <= d <= end}
-                window_days[wl] = len(matches)
-                if len(matches) < MIN_TRADING_DAYS_PER_WINDOW:
+                matches_list = sorted(matches)
+                n_matches = len(matches)
+                window_days[wl] = n_matches
+                # Check 1: minimum trading days
+                if n_matches < MIN_TRADING_DAYS_PER_WINDOW:
                     missing.append(
-                        f"{exp_id}x{wl}: only {len(matches)} trading days "
+                        f"{exp_id}x{wl}: only {n_matches} trading days "
                         f"(need >={MIN_TRADING_DAYS_PER_WINDOW})"
                     )
+                # Check 2: calendar coverage ratio
+                if quarter_cal_days > 0:
+                    coverage = n_matches / quarter_cal_days
+                    if coverage < MIN_COVERAGE_RATIO:
+                        missing.append(
+                            f"{exp_id}x{wl}: coverage {coverage:.2%} "
+                            f"(need >={MIN_COVERAGE_RATIO:.0%})"
+                        )
+                # Check 3: first NAV date must be near quarter start
+                if n_matches > 0:
+                    quarter_start_buffer = pd.Timestamp(start) + pd.DateOffset(days=5)
+                    if matches_list[0] > quarter_start_buffer.date():
+                        missing.append(
+                            f"{exp_id}x{wl}: first NAV date {matches_list[0]} "
+                            f"is after {quarter_start_buffer.date()} (quarter start {start})"
+                        )
+                    # Check 4: last NAV date must be near quarter end
+                    quarter_end_buffer = pd.Timestamp(end) - pd.DateOffset(days=3)
+                    if matches_list[-1] < quarter_end_buffer.date():
+                        missing.append(
+                            f"{exp_id}x{wl}: last NAV date {matches_list[-1]} "
+                            f"is before {quarter_end_buffer.date()} (quarter end {end})"
+                        )
         experiments_covered[exp_id] = window_days
 
-    # --- RND experiments: seed count ---
+    # --- RND experiments: per-quarter seed count ---
+    # PR26A.9: RND must be validated per-quarter, not globally.
+    # Each quarter independently requires ≥95 seeds and ≥95 distinct paths.
+    # Prefer per-quarter CSV structure: RND_FULL/2024Q1/random_seed_results.csv
+    # Fall back to flat CSV with window column filtering.
     for rnd_id in sorted(RND_EXPERIMENTS):
         rnd_dir = output_dir / rnd_id
         if not rnd_dir.is_dir():
             missing.append(f"{rnd_id}: directory not found")
             continue
 
-        csv_path = rnd_dir / "random_seed_results.csv"
-        if csv_path.is_file():
-            try:
-                rdf = pd.read_csv(csv_path)
-                n_seeds = len(rdf)
-                n_paths = len(set(rdf["path_hash"])) if "path_hash" in rdf.columns else n_seeds
-                if n_seeds < MIN_RND_SEEDS_PER_WINDOW or n_paths < MIN_RND_SEEDS_PER_WINDOW:
-                    missing.append(
-                        f"{rnd_id}: only {n_seeds} seeds / {n_paths} paths "
-                        f"(need >={MIN_RND_SEEDS_PER_WINDOW})"
-                    )
-            except Exception:
-                missing.append(f"{rnd_id}: random_seed_results.csv unreadable")
-        else:
-            missing.append(f"{rnd_id}: random_seed_results.csv missing")
+        # PR26A.9: Try per-quarter structure first
+        per_quarter_ok = True
+        for wl in sorted(all_windows):
+            qcsv = rnd_dir / wl / "random_seed_results.csv"
+            if qcsv.is_file():
+                try:
+                    qdf = pd.read_csv(qcsv)
+                    n_seeds = len(qdf)
+                    n_paths = len(set(qdf["path_hash"])) if "path_hash" in qdf.columns else n_seeds
+                    if n_seeds < MIN_RND_SEEDS_PER_WINDOW:
+                        missing.append(
+                            f"{rnd_id}x{wl}: only {n_seeds} seeds "
+                            f"(need >={MIN_RND_SEEDS_PER_WINDOW})"
+                        )
+                        per_quarter_ok = False
+                    if n_paths < MIN_RND_SEEDS_PER_WINDOW:
+                        missing.append(
+                            f"{rnd_id}x{wl}: only {n_paths} paths "
+                            f"(need >={MIN_RND_SEEDS_PER_WINDOW})"
+                        )
+                        per_quarter_ok = False
+                except Exception:
+                    missing.append(f"{rnd_id}x{wl}: random_seed_results.csv unreadable")
+                    per_quarter_ok = False
+            else:
+                missing.append(f"{rnd_id}x{wl}: random_seed_results.csv missing")
+                per_quarter_ok = False
 
+        # Fall back to flat CSV (deprecated but supported with warning)
+        if not per_quarter_ok:
+            csv_path = rnd_dir / "random_seed_results.csv"
+            if csv_path.is_file():
+                try:
+                    rdf = pd.read_csv(csv_path)
+                    # PR26A.9: Filter by window if column exists
+                    if "window" in rdf.columns:
+                        for wl in sorted(all_windows):
+                            wdf = rdf[rdf["window"] == wl]
+                            n_seeds = len(wdf)
+                            n_paths = len(set(wdf["path_hash"])) if "path_hash" in wdf.columns else n_seeds
+                            if n_seeds < MIN_RND_SEEDS_PER_WINDOW:
+                                # Only report if not already captured by per-quarter check
+                                gap_key = f"{rnd_id}x{wl}: flat_csv only {n_seeds} seeds"
+                                if gap_key not in missing:
+                                    missing.append(gap_key)
+                    else:
+                        # No window column — global check only (backward compat)
+                        n_seeds = len(rdf)
+                        n_paths = len(set(rdf["path_hash"])) if "path_hash" in rdf.columns else n_seeds
+                        if n_seeds < MIN_RND_SEEDS_PER_WINDOW or n_paths < MIN_RND_SEEDS_PER_WINDOW:
+                            missing.append(
+                                f"{rnd_id} (flat): only {n_seeds} seeds / {n_paths} paths "
+                                f"(need >={MIN_RND_SEEDS_PER_WINDOW}) — "
+                                f"WARNING: flat CSV without per-quarter structure is deprecated"
+                            )
+                except Exception:
+                    missing.append(f"{rnd_id}: random_seed_results.csv unreadable")
+
+        # status.json check
         status_path = rnd_dir / "status.json"
         if status_path.is_file():
             try:
