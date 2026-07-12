@@ -229,6 +229,9 @@ class WindowBacktestResult:
     error_rows: list[dict[str, Any]] = field(default_factory=list)
     signal_dates_attempted: int = 0
     signal_dates_empty: int = 0
+    # PR26A.7: A8 optimizer diagnostic ledger — records per-signal-date
+    # optimization inputs, outputs, and status for audit and reproducibility.
+    a8_optimizer_ledger: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -550,13 +553,14 @@ class FoldAccountBacktest:
                 ranked_panels_for_weights=defer_weights,  # PR26A.5
                 runtime_state=state,  # PR26A.6: A8 needs fitted state
             )
-            # PR25 Fix 1: Only set FITTED if no terminal failure state was set
-            # by _run_account_backtest.  INVALID_RISK_STATE, FIT_ERROR,
-            # EXECUTION_ERROR, INCOMPLETE_LABELS, UNMATCHED_BASELINE are
-            # permanent blockers that must never be overwritten.
+            # PR26A.7: Terminal failures — ACCOUNT_AWARE_WEIGHT_FAILED,
+            # COVARIANCE_FAILED, and OPTIMIZER_DIMENSION_FAILED are now
+            # permanent blockers alongside the original set.
             _TERMINAL_FAILURES = frozenset({
                 "INVALID_RISK_STATE", "FIT_ERROR", "EXECUTION_ERROR",
                 "INCOMPLETE_LABELS", "UNMATCHED_BASELINE", "COVERAGE_FAILED",
+                "ACCOUNT_AWARE_WEIGHT_FAILED", "COVARIANCE_FAILED",
+                "OPTIMIZER_DIMENSION_FAILED",
             })
             if result.status not in _TERMINAL_FAILURES:
                 # PR26A.1: Coverage gate — require ≥95% signal date coverage
@@ -622,10 +626,12 @@ class FoldAccountBacktest:
         pre_trade_equity: float | None = None,
     ):
         """Recompute weights with prev_weights and turnover_penalty from live
-        account state (PR26A.6 — Module 4).
+        account state (PR26A.6 — Module 4, PR26A.7 — symbol-aligned).
 
         prev_weights are derived from current account positions valued at
-        open prices.  turnover_penalty uses real costs.
+        open prices and returned as a dict {symbol: weight} so that
+        construct_portfolio can align them to the selected top-N symbols.
+        turnover_penalty uses real costs.
         """
         # PR26A.6: Build union universe — all current holdings + new candidates
         all_symbols = list(dict.fromkeys(
@@ -638,14 +644,18 @@ class FoldAccountBacktest:
             abs(v) for v in current_positions.values()
         )
         if total_nav <= 0:
-            prev_weights = None
+            prev_weights_by_symbol = None
         elif current_positions:
-            prev_weights = np.array([
-                current_positions.get(sym, 0.0) / total_nav
+            # PR26A.7: Return dict {symbol: weight} so construct_portfolio
+            # can align dimensions to the selected top-N symbols.  Symbols
+            # that fall out of the top-N get zero target weight in the
+            # optimizer but their exit costs are captured in turnover.
+            prev_weights_by_symbol = {
+                sym: current_positions.get(sym, 0.0) / total_nav
                 for sym in all_symbols
-            ])
+            }
         else:
-            prev_weights = None
+            prev_weights_by_symbol = None
 
         # Turnover penalty = round-trip cost rate from real cost model
         turnover_penalty = (
@@ -657,7 +667,7 @@ class FoldAccountBacktest:
         return runtime.build_weights(
             state, ranked, signal_date, prices_df, target_exp,
             self.config.top_n,
-            prev_weights=prev_weights,
+            prev_weights=prev_weights_by_symbol,
             turnover_penalty=turnover_penalty,
         )
 
@@ -870,10 +880,31 @@ class FoldAccountBacktest:
                                         new_targets[sym] = fw
                                 signal_targets[signal_date] = new_targets
                                 signal_candidate_counts[signal_date] = len(acct_weights)
+
+                                # PR26A.7: Record optimizer diagnostic ledger
+                                result.a8_optimizer_ledger.append({
+                                    "signal_date": str(signal_date),
+                                    "experiment_id": experiment_id,
+                                    "window": window_label,
+                                    "pre_trade_equity": pre_trade_equity,
+                                    "actual_cash": account.cash,
+                                    "current_positions_count": len(current_positions),
+                                    "current_symbols": sorted(current_positions.keys()),
+                                    "optimization_symbols": sorted(
+                                        acct_weights["symbol"].astype(str).tolist()
+                                    ),
+                                    "target_weights": {
+                                        str(r["symbol"]): float(r["final_portfolio_weight"])
+                                        for _, r in acct_weights.iterrows()
+                                    },
+                                    "account_aware_used": True,
+                                    "fallback_used": False,
+                                    "optimization_status": "success",
+                                })
                     except Exception as e:
-                        # PR26A.6: FAIL CLOSED — no silent fallback to
-                        # pre-computed weights.  Record the error and
-                        # mark the fold as failed.
+                        # PR26A.7: FAIL CLOSED — no silent fallback to
+                        # pre-computed weights.  Stop the fold immediately:
+                        # no trades today, no subsequent NAV, no fallback.
                         result.error_rows.append({
                             "error_type": "ACCOUNT_AWARE_WEIGHT_FAILED",
                             "window": window_label,
@@ -887,6 +918,7 @@ class FoldAccountBacktest:
                             f"A8 weight recomputation failed on "
                             f"{signal_date}: {e}"
                         )
+                        continue  # PR26A.7: skip order execution for this signal_date
 
                 targets = signal_targets.get(signal_date, {})
                 candidate_count = signal_candidate_counts.get(signal_date, 0)
@@ -1521,10 +1553,12 @@ class FoldAccountBacktest:
                 rnd_result, runtime=None,
             )
 
-            # PR25 Fix 1: RND100 fold must not be counted if it hit a terminal failure
+            # PR26A.7: RND100 fold must not be counted if it hit a terminal failure
             if rnd_result.status in frozenset({
                 "INVALID_RISK_STATE", "FIT_ERROR", "EXECUTION_ERROR",
-                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE",
+                "INCOMPLETE_LABELS", "UNMATCHED_BASELINE", "COVERAGE_FAILED",
+                "ACCOUNT_AWARE_WEIGHT_FAILED", "COVARIANCE_FAILED",
+                "OPTIMIZER_DIMENSION_FAILED",
             }):
                 continue
 
@@ -1778,10 +1812,14 @@ class FoldAccountBacktest:
                 signal_weights, window_dates, calendar_dates,
                 prices_df, result, runtime=runtime,
             )
-            # PR25 Fix 1 + PR26A L7: Only set FITTED if no terminal failure
+            # PR26A.7: Terminal failures — ACCOUNT_AWARE_WEIGHT_FAILED,
+            # COVARIANCE_FAILED, and OPTIMIZER_DIMENSION_FAILED are now
+            # permanent blockers alongside the original set.
             _TERMINAL_FAILURES = frozenset({
                 "INVALID_RISK_STATE", "FIT_ERROR", "EXECUTION_ERROR",
                 "INCOMPLETE_LABELS", "UNMATCHED_BASELINE", "COVERAGE_FAILED",
+                "ACCOUNT_AWARE_WEIGHT_FAILED", "COVARIANCE_FAILED",
+                "OPTIMIZER_DIMENSION_FAILED",
             })
             if result.status not in _TERMINAL_FAILURES:
                 # PR26A.5 L8: Coverage gate for REV — REV_RANK_ERROR dates

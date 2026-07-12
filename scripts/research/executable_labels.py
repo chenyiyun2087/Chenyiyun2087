@@ -31,10 +31,11 @@ def _is_exit_tradable(
     row: pd.Series,
     has_metadata: bool = True,
 ) -> tuple[bool, str]:
-    """PR26A.4: Delegate to execution_market_rules (canonical).
+    """PR26A.7: Delegate to execution_market_rules (canonical).
 
     Uses the same can_sell_at_open() individual-param API as
     compute_executable_forward_returns for true label-account parity.
+    Passes official exchange-provided limit prices when available.
     """
     if not has_metadata:
         return False, "missing_metadata"
@@ -45,6 +46,27 @@ def _is_exit_tradable(
     is_listed = float(row.get("is_listed", 1))
     is_suspended = float(row.get("is_suspended", 0))
     list_days = float(row.get("list_days", row.get("days_since_listing", np.nan)))
+    _off_upper = row.get("official_upper_limit", None)
+    _off_lower = row.get("official_lower_limit", None)
+    _limit_free = row.get("limit_free_status", None)
+    off_upper = (
+        float(_off_upper)
+        if _off_upper is not None
+        and not (isinstance(_off_upper, float) and np.isnan(_off_upper))
+        else None
+    )
+    off_lower = (
+        float(_off_lower)
+        if _off_lower is not None
+        and not (isinstance(_off_lower, float) and np.isnan(_off_lower))
+        else None
+    )
+    limit_free = (
+        bool(_limit_free)
+        if _limit_free is not None
+        and not (isinstance(_limit_free, float) and np.isnan(_limit_free))
+        else False
+    )
     return can_sell_at_open(
         open_price,
         prev_close,
@@ -53,6 +75,9 @@ def _is_exit_tradable(
         is_listed=is_listed,
         is_suspended=is_suspended,
         list_days=list_days if np.isfinite(list_days) else None,
+        official_upper_limit=off_upper,
+        official_lower_limit=off_lower,
+        limit_free_status=limit_free,
     )
 
 
@@ -132,9 +157,12 @@ def compute_executable_forward_returns(
     prices_sorted["entry_price"] = g["adj_open"].shift(-1)
 
     # Shift ALL gate-relevant columns to T+1 row
+    # PR26A.7: Include official exchange-provided limit prices for true
+    # parity between training labels, account gate, and matched baselines.
     _gate_cols = [
         "raw_pre_close", "prev_adj_close", "is_st",
         "is_listed", "is_suspended", "list_days",
+        "official_upper_limit", "official_lower_limit", "limit_free_status",
     ]
     _t1_prefix = "_t1_"
     for col in _gate_cols:
@@ -203,11 +231,37 @@ def compute_executable_forward_returns(
             entry_gate_allowed.append(False)
             entry_gate_reasons.append("suspended")
         else:
+            # PR26A.7: Extract official exchange-provided limit prices
+            # from T+1 shifted columns for true gate-label parity.
+            _off_upper_val = row.get(f"{_t1_prefix}official_upper_limit", None)
+            _off_lower_val = row.get(f"{_t1_prefix}official_lower_limit", None)
+            _limit_free_val = row.get(f"{_t1_prefix}limit_free_status", None)
+            _off_upper = (
+                float(_off_upper_val)
+                if _off_upper_val is not None
+                and not (isinstance(_off_upper_val, float) and np.isnan(_off_upper_val))
+                else None
+            )
+            _off_lower = (
+                float(_off_lower_val)
+                if _off_lower_val is not None
+                and not (isinstance(_off_lower_val, float) and np.isnan(_off_lower_val))
+                else None
+            )
+            _limit_free = (
+                bool(_limit_free_val)
+                if _limit_free_val is not None
+                and not (isinstance(_limit_free_val, float) and np.isnan(_limit_free_val))
+                else False
+            )
             allowed, reason = can_buy_at_open(
                 open_px, prev_close, sym, is_st,
                 is_listed=is_listed,
                 is_suspended=is_suspended,
                 list_days=list_days,
+                official_upper_limit=_off_upper,
+                official_lower_limit=_off_lower,
+                limit_free_status=_limit_free,
             )
             entry_gate_allowed.append(allowed)
             entry_gate_reasons.append(reason)
@@ -303,6 +357,30 @@ def compute_executable_forward_returns(
                 )
                 retry_is_st = float(retry_row.get("is_st", 0))
 
+                # PR26A.7: Extract official exchange-provided limit prices
+                # from the exit row for true gate-label parity.
+                _retry_off_upper = retry_row.get("official_upper_limit", None)
+                _retry_off_lower = retry_row.get("official_lower_limit", None)
+                _retry_limit_free = retry_row.get("limit_free_status", None)
+                retry_off_upper = (
+                    float(_retry_off_upper)
+                    if _retry_off_upper is not None
+                    and not (isinstance(_retry_off_upper, float) and np.isnan(_retry_off_upper))
+                    else None
+                )
+                retry_off_lower = (
+                    float(_retry_off_lower)
+                    if _retry_off_lower is not None
+                    and not (isinstance(_retry_off_lower, float) and np.isnan(_retry_off_lower))
+                    else None
+                )
+                retry_limit_free = (
+                    bool(_retry_limit_free)
+                    if _retry_limit_free is not None
+                    and not (isinstance(_retry_limit_free, float) and np.isnan(_retry_limit_free))
+                    else False
+                )
+
                 if not np.isfinite(retry_prev_close) or retry_prev_close <= 0:
                     retry_date = next_trade_date(cal, retry_date)
                     if retry_date is None:
@@ -315,6 +393,9 @@ def compute_executable_forward_returns(
                     retry_prev_close,
                     sym,
                     retry_is_st,
+                    official_upper_limit=retry_off_upper,
+                    official_lower_limit=retry_off_lower,
+                    limit_free_status=retry_limit_free,
                 )
                 if retry_allowed:
                     actual_exit_open = retry_open

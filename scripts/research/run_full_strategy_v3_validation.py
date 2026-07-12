@@ -242,6 +242,7 @@ def run(output_dir, test_log, precheck_only=False):
         exp_candidates, exp_weights, exp_exposures = [], [], []
         exp_nav, exp_trades, exp_exits = [], [], []
         exp_rejections, exp_errors = [], []
+        exp_optimizer_ledger = []  # PR26A.7: A8 optimizer diagnostic ledger
         factor_state_by_fold[exp_id] = {}
 
         # PR21: PER-FOLD training - each fold gets independent fit
@@ -281,10 +282,16 @@ def run(output_dir, test_log, precheck_only=False):
                 exp_exits.extend(window_result.exit_rows)
                 exp_rejections.extend(window_result.rejection_rows)
                 exp_errors.extend(window_result.error_rows)
+                exp_optimizer_ledger.extend(window_result.a8_optimizer_ledger)
 
         _write_experiment_evidence(
             exp_dir, exp_candidates, exp_weights, exp_exposures,
             exp_nav, exp_trades, exp_exits, exp_rejections, exp_errors)
+
+        # PR26A.7: Export A8 optimizer diagnostic ledger when present
+        if exp_optimizer_ledger:
+            pd.DataFrame(exp_optimizer_ledger).to_parquet(
+                exp_dir / "a8_optimizer_ledger.parquet", index=False)
 
         # PR24: Use stitched metrics when multiple folds exist
         n_folds = len(set(r.get("window") for r in exp_nav if "window" in r))
@@ -325,12 +332,17 @@ def run(output_dir, test_log, precheck_only=False):
         all_rejections.extend(exp_rejections)
         all_errors.extend(exp_errors)
 
-    # RND100: 100 seeds with full account backtest, MATCHED to A7 (PR23 P9a)
-    rnd_results = []
+    # RND100: PR26A.7 — Dual baselines: RND-TOP30 (fine-ranking alpha)
+    # and RND-FULL (total security-selection alpha).  Both use the same
+    # construct_portfolio, constraints, costs, hold period, and exit rules.
     a7_spec = specs.get("A7")
     a7_runtime = resolve_runtime(a7_spec) if a7_spec else None
     # Collect A7 candidate/weight maps across all folds for RND100 matching
+    # PR26A.7: Build TWO candidate maps — TOP30 (truncated) and FULL (complete
+    # eligible panel).  RND-TOP30 measures fine-ranking alpha within the top
+    # tier; RND-FULL measures total security-selection alpha.
     a7_candidates_by_fold: dict[str, dict[object, pd.DataFrame]] = {}
+    a7_candidates_full_by_fold: dict[str, dict[object, pd.DataFrame]] = {}
     for fold in folds:
         if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
             continue
@@ -338,6 +350,7 @@ def run(output_dir, test_log, precheck_only=False):
         if wl in factor_state_by_fold.get("A7", {}):
             # Rebuild A7 candidate map for this fold
             fold_candidates: dict[object, pd.DataFrame] = {}
+            fold_candidates_full: dict[object, pd.DataFrame] = {}
             validation_start = pd.Timestamp(fold["validation_start"]).date()
             validation_end = pd.Timestamp(fold["validation_end"]).date()
             wdates = [d for d in calendar_dates
@@ -359,22 +372,53 @@ def run(output_dir, test_log, precheck_only=False):
                         sd_key = pd.Timestamp(sd).date()
                         r = a7_runtime.rank_as_of(st, sd_key, scores_df, prices_df)
                         if r is not None and not r.empty:
+                            # TOP30: truncated to pool_size for fine-ranking baseline
                             fold_candidates[sd_key] = r.head(
                                 executor.config.rnd100_pool_size)
+                            # FULL: complete eligible panel for selection baseline
+                            fold_candidates_full[sd_key] = r.copy()
             a7_candidates_by_fold[wl] = fold_candidates
+            a7_candidates_full_by_fold[wl] = fold_candidates_full
+
+    # --- RND-TOP30: fine-ranking alpha within top tier ---
+    rnd_top30_dir = output_dir / "RND_TOP30"
+    rnd_top30_dir.mkdir(parents=True, exist_ok=True)
+    rnd_top30_results: list[dict[str, Any]] = []
     for fold in folds:
         if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
             continue
         wl = fold.get("window", "unknown")
         a7_cmap = a7_candidates_by_fold.get(wl, {})
         for sr in executor.run_rnd100(
-            experiment_id="RND", fold=fold, scores_df=scores_df,
+            experiment_id="RND_TOP30", fold=fold, scores_df=scores_df,
             prices_df=prices_df, calendar_dates=calendar_dates,
-            a7_candidate_map=a7_cmap, a7_runtime=a7_runtime):
+            a7_candidate_map=a7_cmap, a7_runtime=a7_runtime,
+            use_full_panel=False):
             sr["window"] = wl
-            rnd_results.append(sr)
-    if rnd_results:
-        pd.DataFrame(rnd_results).to_csv(output_dir / "random_seed_results.csv", index=False)
+            rnd_top30_results.append(sr)
+    if rnd_top30_results:
+        pd.DataFrame(rnd_top30_results).to_csv(
+            rnd_top30_dir / "random_seed_results.csv", index=False)
+
+    # --- RND-FULL: total security-selection alpha ---
+    rnd_full_dir = output_dir / "RND_FULL"
+    rnd_full_dir.mkdir(parents=True, exist_ok=True)
+    rnd_full_results: list[dict[str, Any]] = []
+    for fold in folds:
+        if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
+            continue
+        wl = fold.get("window", "unknown")
+        a7_full_cmap = a7_candidates_full_by_fold.get(wl, {})
+        for sr in executor.run_rnd100(
+            experiment_id="RND_FULL", fold=fold, scores_df=scores_df,
+            prices_df=prices_df, calendar_dates=calendar_dates,
+            a7_candidate_map=a7_full_cmap, a7_runtime=a7_runtime,
+            use_full_panel=True):
+            sr["window"] = wl
+            rnd_full_results.append(sr)
+    if rnd_full_results:
+        pd.DataFrame(rnd_full_results).to_csv(
+            rnd_full_dir / "random_seed_results.csv", index=False)
 
     # REV: full reversed-alpha backtest using A7 runtime (PR23 P9b)
     rev_dir = output_dir / "REV"
