@@ -205,19 +205,41 @@ def finalize_manifest(output_dir: Path, manifest: dict[str, Any]) -> dict[str, A
         if fpath.is_file():
             manifest["files"][name] = sha256_file(fpath)
 
+    # PR26A.10: RND experiments that need recursive quarter-level hashing
+    _RND_QUARTER_DIRS = frozenset({"RND_TOP30", "RND_FULL"})
+
     # Strategy subdirectories
     for dir_name, required_files in sorted(REQUIRED_STRATEGY_DIRS.items()):
         strat_dir = output_dir / dir_name
         if not strat_dir.is_dir():
             manifest.setdefault("missing_strategy_dirs", []).append(dir_name)
             continue
-        for fname in sorted(required_files):
-            fpath = strat_dir / fname
-            rel_path = f"{dir_name}/{fname}"
-            if fpath.is_file():
-                manifest["files"][rel_path] = sha256_file(fpath)
-            else:
-                manifest.setdefault("missing_strategy_files", []).append(rel_path)
+        # PR26A.10: For RND experiments, recursively hash quarter subdirectories
+        if dir_name in _RND_QUARTER_DIRS:
+            for fpath in sorted(strat_dir.rglob("*")):
+                if fpath.is_file():
+                    rel_path = str(fpath.relative_to(output_dir))
+                    manifest["files"][rel_path] = sha256_file(fpath)
+                    # Also add the flat path for backward compat with
+                    # REQUIRED_STRATEGY_DIRS checks
+                    flat_rel = f"{dir_name}/{fpath.name}"
+                    if flat_rel not in manifest["files"]:
+                        manifest["files"][flat_rel] = sha256_file(fpath)
+            # Also check the flat required files exist
+            for fname in sorted(required_files):
+                fpath = strat_dir / fname
+                if not fpath.is_file():
+                    manifest.setdefault("missing_strategy_files", []).append(
+                        f"{dir_name}/{fname}"
+                    )
+        else:
+            for fname in sorted(required_files):
+                fpath = strat_dir / fname
+                rel_path = f"{dir_name}/{fname}"
+                if fpath.is_file():
+                    manifest["files"][rel_path] = sha256_file(fpath)
+                else:
+                    manifest.setdefault("missing_strategy_files", []).append(rel_path)
 
     if manifest.get("missing_strategy_dirs") or manifest.get("missing_strategy_files"):
         manifest["evidence_status"] = EvidenceStatus.NON_REPRODUCIBLE.value
@@ -228,19 +250,32 @@ def finalize_manifest(output_dir: Path, manifest: dict[str, Any]) -> dict[str, A
     return manifest
 
 
-def write_final_manifest(output_dir: Path, manifest: dict[str, Any]) -> Path:
-    """PR26A.9: Write the final manifest.json AFTER all evidence and verification.
+def write_final_manifest(
+    output_dir: Path,
+    manifest: dict[str, Any],
+    verification_path: Path | None = None,
+) -> Path:
+    """PR26A.10 Evidence Contract V4: Write the final manifest.json ONCE at end.
 
     This must be the LAST step in the evidence finalization pipeline:
       1. Generate immutable evidence files
-      2. Run semantic verification
-      3. Write evidence_verification.json
-      4. Call write_final_manifest() to write manifest.json
+      2. Build manifest payload in memory (finalize_manifest)
+      3. Run semantic + structural validation (against in-memory manifest)
+      4. Write evidence_verification.json
+      5. Compute SHA256 of evidence_verification.json file itself
+      6. Call write_final_manifest() ONCE to write manifest.json
 
     The manifest itself is NOT re-hashed after writing — it records SHAs of
     all other evidence files but does not record its own SHA (which would be
     a circular dependency).
+
+    If verification_path is provided, the manifest records
+    verification_file_sha = sha256_file(verification_path) so the actual
+    evidence_verification.json file on disk is bound to the manifest.
+    Tampering with the verification file after finalization is detectable.
     """
+    if verification_path is not None and verification_path.is_file():
+        manifest["verification_file_sha"] = sha256_file(verification_path)
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
@@ -252,6 +287,7 @@ def write_final_manifest(output_dir: Path, manifest: dict[str, Any]) -> Path:
 def validate_evidence_package(
     output_dir: Path,
     run_semantic: bool = True,
+    manifest_dict: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate an evidence package for structural and semantic integrity.
 
@@ -260,15 +296,22 @@ def validate_evidence_package(
     output_dir: Path to the evidence package directory.
     run_semantic: If True, also run semantic validation (content-level checks).
                   Set to False for pre-flight/precheck packages.
+    manifest_dict: Optional pre-built manifest dict.  When provided, this is
+                   used instead of reading manifest.json from disk.  This
+                   enables the acyclic finalization flow where manifest.json
+                   is only written once at the very end.
 
     Returns
     -------
     dict with: passed, errors, manifest, semantic (if run_semantic=True)
     """
-    manifest_path = output_dir / "manifest.json"
-    if not manifest_path.is_file():
-        return {"passed": False, "errors": ["manifest_missing"]}
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest_dict is not None:
+        manifest = manifest_dict
+    else:
+        manifest_path = output_dir / "manifest.json"
+        if not manifest_path.is_file():
+            return {"passed": False, "errors": ["manifest_missing"]}
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     errors: list[str] = []
     for field in sorted(REQUIRED_MANIFEST_FIELDS):
         if field not in manifest or manifest[field] in (None, ""):
@@ -303,6 +346,14 @@ def validate_evidence_package(
                 errors.append(f"strategy_sha_missing:{rel_path}")
             elif expected != sha256_file(fpath):
                 errors.append(f"strategy_sha_mismatch:{rel_path}")
+    # PR26A.10: verification_file_sha — bind evidence_verification.json to manifest
+    verification_path = output_dir / "evidence_verification.json"
+    verif_file_sha = manifest.get("verification_file_sha")
+    if verif_file_sha is not None:
+        if not verification_path.is_file():
+            errors.append("verification_file_missing:evidence_verification.json")
+        elif verif_file_sha != sha256_file(verification_path):
+            errors.append("verification_file_sha_mismatch:evidence_verification.json may have been tampered")
     if manifest.get("worktree_clean") is not True:
         errors.append("worktree_not_clean_at_run_start")
 
@@ -343,3 +394,19 @@ def validate_evidence_package(
         "manifest": manifest,
         "semantic": semantic_result,
     }
+
+
+def validate_evidence_package_from_dict(
+    output_dir: Path,
+    manifest: dict[str, Any],
+    run_semantic: bool = True,
+) -> dict[str, Any]:
+    """PR26A.10: Validate evidence using an in-memory manifest dict.
+
+    This is the preferred entry point for the acyclic finalization flow.
+    The caller builds the manifest in memory, runs validation against it,
+    writes evidence_verification.json, then calls write_final_manifest()
+    ONCE at the end.  manifest.json is never read during this flow, so
+    the order is truly acyclic.
+    """
+    return validate_evidence_package(output_dir, run_semantic=run_semantic, manifest_dict=manifest)

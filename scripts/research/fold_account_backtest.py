@@ -909,12 +909,27 @@ class FoldAccountBacktest:
                                 exposure_after = float(
                                     acct_weights["final_portfolio_weight"].sum()
                                 )
-                                # Extract post-optimization diagnostics from attrs
-                                if hasattr(acct_weights, 'attrs'):
+                                # PR26A.10: Compute diagnostics from FINAL weights
+                                # (after water-filling), not from raw optimizer
+                                # weights stored in attrs.
+                                final_w_vec = acct_weights[
+                                    "final_portfolio_weight"].to_numpy()
+                                # Build alpha vector aligned to acct_weights symbols
+                                alpha_vec_final = np.array([
+                                    alpha_map.get(s, 0.0)
+                                    for s in acct_weights["symbol"].astype(str)
+                                ], dtype=float)
+                                alpha_after = float(alpha_vec_final @ final_w_vec)
+                                # Recompute variance from final weights if
+                                # covariance is available
+                                if cov_matrix is not None:
+                                    cov_np = np.array(cov_matrix, dtype=float)
+                                    # Align covariance to acct_weights symbols
+                                    variance_after = float(
+                                        final_w_vec @ cov_np @ final_w_vec)
+                                elif hasattr(acct_weights, 'attrs'):
                                     variance_after = acct_weights.attrs.get(
                                         'portfolio_variance')
-                                    alpha_after = acct_weights.attrs.get(
-                                        'predicted_alpha', 0.0)
                                 # Compute pre-optimization alpha from ranked panel
                                 if not ranked.empty and "rank_score" in ranked.columns:
                                     alpha_map = dict(zip(
