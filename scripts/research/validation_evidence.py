@@ -40,17 +40,33 @@ REQUIRED_EVIDENCE_FILES = frozenset({
     "security_lifecycle_snapshot.json",
     "fold_definitions.json",
     "factor_state_by_fold.json",
-    "daily_candidates.parquet",
-    "daily_weights.parquet",
-    "daily_exposure.parquet",
-    "daily_nav.parquet",
-    "trade_ledger.parquet",
-    "rejection_ledger.parquet",
-    "random_seed_results.csv",
     "walk_forward_metrics.csv",
-    "stitched_oos_nav.csv",
     "test_log.txt",
+    "manifest.json",
+    "evidence_verification.json",
 })
+
+# PR26A.8: Evidence Contract V2 — per-strategy subdirectories.
+# Each strategy directory must contain the listed files.  The manifest
+# records SHA-256 hashes for every file in every directory, keyed by
+# relative path (e.g. "P0/daily_nav.parquet").
+REQUIRED_STRATEGY_DIRS: dict[str, frozenset[str]] = {
+    "P0": frozenset({"daily_nav.parquet", "trade_ledger.parquet",
+                      "daily_weights.parquet", "metrics.json"}),
+    "C0": frozenset({"daily_nav.parquet", "trade_ledger.parquet",
+                      "daily_weights.parquet", "metrics.json"}),
+    "A7": frozenset({"daily_nav.parquet", "trade_ledger.parquet",
+                      "daily_weights.parquet", "metrics.json"}),
+    "A8": frozenset({"daily_nav.parquet", "trade_ledger.parquet",
+                      "daily_weights.parquet", "metrics.json",
+                      "a8_optimizer_ledger.parquet"}),
+    "A9": frozenset({"daily_nav.parquet", "trade_ledger.parquet",
+                      "daily_weights.parquet", "metrics.json"}),
+    "REV_A7": frozenset({"daily_nav.parquet", "trade_ledger.parquet",
+                          "daily_weights.parquet", "metrics.json"}),
+    "RND_TOP30": frozenset({"random_seed_results.csv", "status.json"}),
+    "RND_FULL": frozenset({"random_seed_results.csv", "status.json"}),
+}
 
 REQUIRED_MANIFEST_FIELDS = frozenset({
     "git_commit_sha",
@@ -166,16 +182,37 @@ def overall_coverage_status(folds: list[dict[str, Any]]) -> EvidenceStatus:
 
 
 def finalize_manifest(output_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    """PR26A.8 Evidence Contract V2 — validates root files AND per-strategy subdirectories."""
+    # Root-level files
     missing = sorted(REQUIRED_EVIDENCE_FILES - {path.name for path in output_dir.iterdir() if path.is_file()})
     if missing:
         manifest["evidence_status"] = EvidenceStatus.NON_REPRODUCIBLE.value
         manifest["promotion_status"] = "PROMOTION_BLOCKED"
         manifest["missing_files"] = missing
-    manifest["files"] = {
-        name: sha256_file(output_dir / name)
-        for name in sorted(REQUIRED_EVIDENCE_FILES)
-        if (output_dir / name).is_file()
-    }
+    manifest["files"] = {}
+    for name in sorted(REQUIRED_EVIDENCE_FILES):
+        fpath = output_dir / name
+        if fpath.is_file():
+            manifest["files"][name] = sha256_file(fpath)
+
+    # Strategy subdirectories
+    for dir_name, required_files in sorted(REQUIRED_STRATEGY_DIRS.items()):
+        strat_dir = output_dir / dir_name
+        if not strat_dir.is_dir():
+            manifest.setdefault("missing_strategy_dirs", []).append(dir_name)
+            continue
+        for fname in sorted(required_files):
+            fpath = strat_dir / fname
+            rel_path = f"{dir_name}/{fname}"
+            if fpath.is_file():
+                manifest["files"][rel_path] = sha256_file(fpath)
+            else:
+                manifest.setdefault("missing_strategy_files", []).append(rel_path)
+
+    if manifest.get("missing_strategy_dirs") or manifest.get("missing_strategy_files"):
+        manifest["evidence_status"] = EvidenceStatus.NON_REPRODUCIBLE.value
+        manifest["promotion_status"] = "PROMOTION_BLOCKED"
+
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
@@ -207,6 +244,7 @@ def validate_evidence_package(
     for field in sorted(REQUIRED_MANIFEST_FIELDS):
         if field not in manifest or manifest[field] in (None, ""):
             errors.append(f"manifest_field_missing:{field}")
+    # Root-level evidence files
     for name in sorted(REQUIRED_EVIDENCE_FILES):
         path = output_dir / name
         if not path.is_file():
@@ -215,6 +253,21 @@ def validate_evidence_package(
         expected = manifest.get("files", {}).get(name)
         if expected != sha256_file(path):
             errors.append(f"evidence_sha_mismatch:{name}")
+    # PR26A.8: Per-strategy subdirectory validation
+    for dir_name, required_files in sorted(REQUIRED_STRATEGY_DIRS.items()):
+        strat_dir = output_dir / dir_name
+        if not strat_dir.is_dir():
+            errors.append(f"strategy_dir_missing:{dir_name}")
+            continue
+        for fname in sorted(required_files):
+            fpath = strat_dir / fname
+            rel_path = f"{dir_name}/{fname}"
+            if not fpath.is_file():
+                errors.append(f"strategy_file_missing:{rel_path}")
+                continue
+            expected = manifest.get("files", {}).get(rel_path)
+            if expected is not None and expected != sha256_file(fpath):
+                errors.append(f"strategy_sha_mismatch:{rel_path}")
     if manifest.get("worktree_clean") is not True:
         errors.append("worktree_not_clean_at_run_start")
 

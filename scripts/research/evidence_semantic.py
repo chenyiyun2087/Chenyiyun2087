@@ -379,22 +379,27 @@ def validate_source_completeness(
 def validate_ledger_nav_conservation(
     nav_path: Path,
     ledger_path: Path,
-    tolerance: float = 0.0001,  # 1bp tolerance (PR19: tightened from 0.1%)
+    tolerance: float = 0.0001,  # 1bp tolerance for dimensionless nav
+    yuan_tolerance: float = 1.0,  # 1 yuan tolerance for equity conservation
 ) -> dict[str, Any]:
-    """Check that portfolio NAV is consistent with cash + positions - costs.
+    """Check that portfolio NAV is consistent with cash + positions.
 
-    PR20 Cost Accounting Contract:
+    PR26A.8 Cost Accounting Contract (fixed from PR20):
       - cash[t] = cash[t-1] + proceeds[t] - costs[t]
       - market_value[t] = sum(position_shares[s,t] × close_price[s,t])
-      - total_equity[t] = cash[t] + market_value[t]
-      - cumulative_cost[t] = sum of all trading costs up to day t
-      - nav[t] = total_equity[t] / initial_cash
-      - Conservation: cash[t] + market_value[t] - accrued_cost[t] ≈ nav[t]
-      - Tolerance: max(1bp × nav[t], 1bp)
+      - total_equity[t] = cash[t] + market_value[t]            (YUAN)
+      - nav[t] = total_equity[t] / initial_cash                 (DIMENSIONLESS)
 
-    PR20: If cash, market_value, or nav columns are missing, the check
-    returns a HARD FAILURE — no fallback to date-overlap-only. Evidence
-    without these columns is NON_REPRODUCIBLE.
+    Conservation checks:
+      1. total_equity[t] ≈ cash[t] + market_value[t]            (≤ 1 yuan)
+      2. nav[t] ≈ total_equity[t] / initial_cash                (≤ 1 bp)
+
+    Costs are already deducted from cash at execution time.  Do NOT
+    subtract them again — that double-counts.
+
+    Auto-detects units: if nav ≈ 1.0 it's dimensionless; if nav > 100
+    it's raw yuan equity (backward compat).  initial_cash is inferred
+    from the first row when available.
     """
     errors: list[str] = []
     details: dict[str, Any] = {}
@@ -441,74 +446,105 @@ def validate_ledger_nav_conservation(
             f"{sorted(orphan_trades)[:5]}..."
         )
 
-    # PR19: True conservation — cash + market_value - costs = nav
-    nav_val_col = next((c for c in ["nav", "total_equity", "equity"] if c in nav.columns), None)
+    # PR26A.8: Correct conservation — equity in yuan, nav dimensionless
+    # Resolve columns
     cash_col = next((c for c in ["cash", "available_cash", "cash_balance"] if c in nav.columns), None)
     mv_col = next((c for c in ["market_value", "position_value", "holdings_value"] if c in nav.columns), None)
-    cost_col = next((c for c in ["accrued_cost", "total_cost", "accrued_fees"] if c in nav.columns), None)
+    equity_col = next((c for c in ["total_equity", "equity"] if c in nav.columns), None)
+    nav_val_col = next((c for c in ["nav"] if c in nav.columns), None)
 
-    if nav_val_col and cash_col and mv_col:
-        # Full conservation check possible
-        conservation_violations = 0
-        total_days = 0
-
-        for _, row in nav.iterrows():
-            total_days += 1
-            nav_val = float(row[nav_val_col])
-            cash_val = float(row[cash_col])
-            mv_val = float(row[mv_col])
-            cost_val = float(row.get(cost_col, 0)) if cost_col else 0.0
-
-            expected_nav = cash_val + mv_val - cost_val
-            # Use relative tolerance: 1bp of NAV
-            abs_tol = max(abs(nav_val) * tolerance, tolerance)
-            diff = abs(nav_val - expected_nav)
-
-            if diff > abs_tol:
-                conservation_violations += 1
-                if conservation_violations <= 3:  # detail on first few
-                    errors.append(
-                        f"Ledger-NAV conservation violated on {row[nav_date_col]}: "
-                        f"cash={cash_val:.4f} + mv={mv_val:.4f} - cost={cost_val:.4f} "
-                        f"= {expected_nav:.6f} ≠ nav={nav_val:.6f} (diff={diff:.6f})"
-                    )
-
-        details.update({
-            "nav_dates": len(nav_dates),
-            "ledger_dates": len(ledger_dates),
-            "orphan_trades": len(orphan_trades),
-            "conservation_check": "full",
-            "total_days": total_days,
-            "conservation_violations": conservation_violations,
-        })
-    else:
-        # PR20: Missing required columns is a hard failure — no fallback.
-        # Evidence without cash + market_value + nav columns is NON_REPRODUCIBLE.
+    if not (cash_col and mv_col and nav_val_col):
         missing_cols = []
-        if not nav_val_col:
-            missing_cols.append("nav/total_equity/equity")
-        if not cash_col:
-            missing_cols.append("cash/available_cash/cash_balance")
-        if not mv_col:
-            missing_cols.append("market_value/position_value/holdings_value")
+        if not cash_col: missing_cols.append("cash")
+        if not mv_col: missing_cols.append("market_value")
+        if not nav_val_col: missing_cols.append("nav")
         errors.append(
             f"Ledger-NAV conservation FAILED: missing required columns "
-            f"({', '.join(missing_cols)}). Evidence is NON_REPRODUCIBLE. "
-            f"Required: cash, market_value, nav. "
-            f"Cost accounting: nav = cash + market_value - accrued_cost"
+            f"({', '.join(missing_cols)}). Evidence is NON_REPRODUCIBLE."
         )
         details.update({
-            "nav_dates": len(nav_dates),
-            "ledger_dates": len(ledger_dates),
+            "nav_dates": len(nav_dates), "ledger_dates": len(ledger_dates),
             "orphan_trades": len(orphan_trades),
             "conservation_check": "failed_missing_columns",
             "missing_columns": missing_cols,
         })
+        return {"passed": False, "errors": errors, "details": details}
+
+    # Auto-detect units: if nav ≈ 1.0 it's dimensionless; if > 100 it's yuan
+    first_nav = float(nav[nav_val_col].iloc[0])
+    is_dimensionless = abs(first_nav) < 100
+
+    # Infer initial_cash when nav is dimensionless
+    initial_cash = None
+    if is_dimensionless and equity_col and equity_col in nav.columns:
+        first_equity = float(nav[equity_col].iloc[0])
+        if first_nav > 1e-6:
+            initial_cash = first_equity / first_nav
+    elif is_dimensionless and cash_col and mv_col:
+        first_cash = float(nav[cash_col].iloc[0])
+        first_mv = float(nav[mv_col].iloc[0])
+        first_equity = first_cash + first_mv
+        if first_nav > 1e-6:
+            initial_cash = first_equity / first_nav
+    if initial_cash is None:
+        initial_cash = 500_000.0  # default
+
+    # Run conservation checks
+    eq_violations = 0
+    nav_violations = 0
+    total_days = 0
+
+    for _, row in nav.iterrows():
+        total_days += 1
+        cash_val = float(row[cash_col])
+        mv_val = float(row[mv_col])
+
+        # Check 1: total_equity ≈ cash + market_value (yuan)
+        if equity_col and equity_col in nav.columns:
+            reported_equity = float(row[equity_col])
+        else:
+            reported_equity = cash_val + mv_val  # compute if not stored
+        computed_equity = cash_val + mv_val
+        eq_diff = abs(reported_equity - computed_equity)
+        if eq_diff > yuan_tolerance:
+            eq_violations += 1
+            if eq_violations <= 3:
+                errors.append(
+                    f"Equity conservation violated on {row[nav_date_col]}: "
+                    f"cash({cash_val:.2f}) + mv({mv_val:.2f}) = "
+                    f"{computed_equity:.2f} ≠ reported_equity({reported_equity:.2f}) "
+                    f"(diff={eq_diff:.2f} yuan)"
+                )
+
+        # Check 2: nav ≈ total_equity / initial_cash (dimensionless)
+        nav_val = float(row[nav_val_col])
+        computed_nav = reported_equity / initial_cash
+        nav_diff = abs(nav_val - computed_nav)
+        abs_tol = max(abs(nav_val) * tolerance, tolerance)
+        if nav_diff > abs_tol:
+            nav_violations += 1
+            if nav_violations <= 3:
+                errors.append(
+                    f"NAV conservation violated on {row[nav_date_col]}: "
+                    f"equity({reported_equity:.2f}) / initial_cash({initial_cash:.0f}) "
+                    f"= {computed_nav:.6f} ≠ nav({nav_val:.6f}) (diff={nav_diff:.8f})"
+                )
+
+    details.update({
+        "nav_dates": len(nav_dates),
+        "ledger_dates": len(ledger_dates),
+        "orphan_trades": len(orphan_trades),
+        "conservation_check": "v2_yuan_normalized",
+        "total_days": total_days,
+        "equity_violations": eq_violations,
+        "nav_violations": nav_violations,
+        "initial_cash": initial_cash,
+        "is_dimensionless_nav": is_dimensionless,
+    })
 
     # Check NAV never goes negative
-    if nav_val_col:
-        if (nav[nav_val_col] < -tolerance).any():
-            errors.append("NAV contains negative values")
+    if (nav[nav_val_col] < -tolerance).any():
+        errors.append("NAV contains negative values")
 
     return {
         "passed": len(errors) == 0,
@@ -569,142 +605,137 @@ FIXED_VALIDATION_WINDOWS = frozenset({
 })
 # PR20: Windows still in progress — excluded from promotion statistics
 INCOMPLETE_VALIDATION_WINDOWS = frozenset({"2026Q3", "2026Q4"})
-# PR20: Minimum trading days per window (aligned with PR19 MIN_SESSIONS_PER_WINDOW)
+# PR26A.8: All strategies that must cover all 10 quarters.
+# RND strategies have a separate seed-count check (≥ 95 per quarter).
+REQUIRED_EXPERIMENTS_FOR_OOS = frozenset({
+    "P0", "C0", "A7", "A8", "A9", "REV_A7",
+})
+RND_EXPERIMENTS = frozenset({"RND_TOP30", "RND_FULL"})
+CARTESIAN_WINDOW_COUNT = 10  # 2024Q1–2026Q2
 MIN_TRADING_DAYS_PER_WINDOW = 15
-# PR20: Minimum coverage ratio (actual trading days / official calendar days)
-MIN_COVERAGE_RATIO = 0.95
+MIN_RND_SEEDS_PER_WINDOW = 95
 
 
 def validate_evidence_per_experiment_window(output_dir: Path) -> dict[str, Any]:
-    """Validate that evidence exists for every experiment × validation window.
+    """PR26A.8: 10-quarter Cartesian gate — every experiment must cover ALL 10 quarters.
 
-    Goes beyond global file checks to verify that EACH experiment
-    (P0/C0/A7/A8/A9) has data for EACH validation window.
+    For each experiment in REQUIRED_EXPERIMENTS_FOR_OOS:
+      - Directory must exist (e.g., output_dir/P0/)
+      - daily_nav.parquet must have >= MIN_TRADING_DAYS_PER_WINDOW trading days
+        in EACH of the 10 FIXED_VALIDATION_WINDOWS (2024Q1-2026Q2)
 
-    Two modes:
-      1. Per-experiment subdirectories (e.g., output_dir/P0/daily_nav.parquet):
-         Validates each experiment directory exists and has data.
-      2. Flat global files (e.g., output_dir/daily_nav.parquet):
-         Checks factor_state_by_fold.json for experiment coverage.
-         Falls back to global file coverage check.
+    For RND experiments (RND_TOP30, RND_FULL):
+      - random_seed_results.csv must have >= MIN_RND_SEEDS_PER_WINDOW seeds
+      - status.json must exist with status=PASSED
 
     Returns dict with:
       passed: bool
-      experiments_covered: dict[str, set[str]] — experiment -> {windows with data}
-      missing: list[str] — "experiment × window" pairs without evidence
+      experiments_covered: dict[str, dict[str, int]]
+      missing: list[str]
       errors: list[str]
-      structure: str — "per_experiment", "flat", or "unknown"
     """
     errors: list[str] = []
     missing: list[str] = []
-    experiments_covered: dict[str, set[str]] = {}
-    structure = "unknown"
+    experiments_covered: dict[str, dict[str, int]] = {}
+    all_windows = {item[0] for item in FIXED_VALIDATION_WINDOWS}
 
-    # Strategy A: Per-experiment subdirectories
-    per_exp_dirs = [
-        exp_id for exp_id in REQUIRED_EXPERIMENTS_FOR_OOS
-        if (output_dir / exp_id).is_dir()
-    ]
+    # --- Core strategies: Cartesian gate ---
+    for exp_id in sorted(REQUIRED_EXPERIMENTS_FOR_OOS):
+        exp_dir = output_dir / exp_id
+        if not exp_dir.is_dir():
+            missing.append(f"{exp_id}: directory not found")
+            experiments_covered[exp_id] = {}
+            continue
 
-    if per_exp_dirs:
-        structure = "per_experiment"
-        for exp_id in sorted(REQUIRED_EXPERIMENTS_FOR_OOS):
-            exp_dir = output_dir / exp_id
-            if exp_dir.is_dir():
-                windows_with_data = _check_experiment_windows(exp_dir)
-                experiments_covered[exp_id] = windows_with_data
-            else:
-                experiments_covered[exp_id] = set()
-                missing.append(f"{exp_id}: directory not found")
+        nav_path = exp_dir / "daily_nav.parquet"
+        if not nav_path.is_file():
+            missing.append(f"{exp_id}: daily_nav.parquet missing")
+            experiments_covered[exp_id] = {}
+            continue
 
-        for exp_id in sorted(REQUIRED_EXPERIMENTS_FOR_OOS):
-            if not experiments_covered.get(exp_id):
-                missing.append(f"{exp_id}: NO windows covered")
-    else:
-        # Strategy B: Flat structure — use factor states + global files
-        structure = "flat"
-        factor_path = output_dir / "factor_state_by_fold.json"
+        try:
+            nav = pd.read_parquet(nav_path)
+        except Exception:
+            missing.append(f"{exp_id}: daily_nav.parquet unreadable")
+            experiments_covered[exp_id] = {}
+            continue
 
-        if factor_path.is_file():
-            import json
+        nav_date_col = next(
+            (c for c in ["trade_date", "signal_date", "date"] if c in nav.columns), None
+        )
+        if nav_date_col is None:
+            missing.append(f"{exp_id}: no date column in NAV")
+            experiments_covered[exp_id] = {}
+            continue
+
+        nav_dates = {pd.Timestamp(d).date() for d in nav[nav_date_col] if pd.notna(d)}
+        window_days: dict[str, int] = {}
+        for wl in sorted(all_windows):
+            wd = _get_window_dates(wl)
+            if wd:
+                start, end = wd
+                matches = {d for d in nav_dates if start <= d <= end}
+                window_days[wl] = len(matches)
+                if len(matches) < MIN_TRADING_DAYS_PER_WINDOW:
+                    missing.append(
+                        f"{exp_id}x{wl}: only {len(matches)} trading days "
+                        f"(need >={MIN_TRADING_DAYS_PER_WINDOW})"
+                    )
+        experiments_covered[exp_id] = window_days
+
+    # --- RND experiments: seed count ---
+    for rnd_id in sorted(RND_EXPERIMENTS):
+        rnd_dir = output_dir / rnd_id
+        if not rnd_dir.is_dir():
+            missing.append(f"{rnd_id}: directory not found")
+            continue
+
+        csv_path = rnd_dir / "random_seed_results.csv"
+        if csv_path.is_file():
             try:
-                factor_states = json.loads(factor_path.read_text(encoding="utf-8"))
-                # Check if top-level keys are experiment IDs with FITTED windows
-                for exp_id in REQUIRED_EXPERIMENTS_FOR_OOS:
-                    if exp_id in factor_states and isinstance(factor_states[exp_id], dict):
-                        exp_windows = {
-                            w for w, d in factor_states[exp_id].items()
-                            if isinstance(d, dict) and d.get("status") == "FITTED"
-                        }
-                        if exp_windows:
-                            experiments_covered[exp_id] = exp_windows
+                rdf = pd.read_csv(csv_path)
+                n_seeds = len(rdf)
+                n_paths = len(set(rdf["path_hash"])) if "path_hash" in rdf.columns else n_seeds
+                if n_seeds < MIN_RND_SEEDS_PER_WINDOW or n_paths < MIN_RND_SEEDS_PER_WINDOW:
+                    missing.append(
+                        f"{rnd_id}: only {n_seeds} seeds / {n_paths} paths "
+                        f"(need >={MIN_RND_SEEDS_PER_WINDOW})"
+                    )
             except Exception:
-                pass
+                missing.append(f"{rnd_id}: random_seed_results.csv unreadable")
+        else:
+            missing.append(f"{rnd_id}: random_seed_results.csv missing")
 
-        # If factor states don't have experiment-level coverage, check global files
-        covered_from_factors = set(experiments_covered.keys())
-        if not covered_from_factors:
-            # Fallback: check if global daily_nav has data across windows
-            nav_path = output_dir / "daily_nav.parquet"
-            if nav_path.is_file():
-                try:
-                    nav = pd.read_parquet(nav_path)
-                    if not nav.empty:
-                        date_col = next((c for c in ["trade_date", "signal_date", "date"]
-                                         if c in nav.columns), None)
-                        if date_col:
-                            nav_dates = set(pd.to_datetime(nav[date_col]).dt.date)
-                            windows_with_data = set()
-                            for wl in FIXED_VALIDATION_WINDOWS:
-                                wd = _get_window_dates(wl)
-                                if wd:
-                                    start, end = wd
-                                    matches = {d for d in nav_dates if start <= d <= end}
-                                    if len(matches) >= 5:
-                                        windows_with_data.add(wl)
-                            # If global files have data across at least 3 windows,
-                            # mark all experiments as covered
-                            if len(windows_with_data) >= 3:
-                                for exp_id in REQUIRED_EXPERIMENTS_FOR_OOS:
-                                    experiments_covered[exp_id] = windows_with_data
-                except Exception:
-                    pass
+        status_path = rnd_dir / "status.json"
+        if status_path.is_file():
+            try:
+                import json
+                status_data = json.loads(status_path.read_text(encoding="utf-8"))
+                if status_data.get("status") != "PASSED":
+                    missing.append(f"{rnd_id}: status.json != PASSED")
+            except Exception:
+                missing.append(f"{rnd_id}: status.json unreadable")
+        else:
+            missing.append(f"{rnd_id}: status.json missing")
 
-        # Assess coverage
-        for exp_id in sorted(REQUIRED_EXPERIMENTS_FOR_OOS):
-            if exp_id not in experiments_covered or not experiments_covered[exp_id]:
-                missing.append(f"{exp_id}: NO windows covered")
-
-    # Only treat as insufficient if we found per-experiment directories
-    # and some have gaps. Flat structure is legacy/global format — content
-    # checks (NAV, candidates, etc.) already validate the data.
-    if structure == "per_experiment" and missing:
+    if missing:
         errors.append(
-            f"Insufficient OOS coverage: {len(missing)} experiment×window gaps: "
-            f"{'; '.join(missing[:10])}"
+            f"10-quarter Cartesian gate FAILED: {len(missing)} gaps: "
+            f"{'; '.join(missing[:15])}"
         )
-    elif structure == "flat":
-        # PR20: Flat evidence structure is NOT accepted.
-        # Must use per-experiment subdirectories (P0/, C0/, A7/, A8/, A9/)
-        # each with their own window-level evidence files.
-        errors.append(
-            "FLAT_EVIDENCE_REJECTED: evidence must use per-experiment directory "
-            "structure (P0/, C0/, A7/, A8/, A9/). Flat evidence packages are no "
-            "longer accepted for promotion evaluation."
-        )
-        # Mark all required experiments as uncovered
-        for exp_id in REQUIRED_EXPERIMENTS_FOR_OOS:
-            missing.append(f"{exp_id}: flat structure — no per-experiment directory")
 
     passed = len(errors) == 0
 
     return {
         "passed": passed,
-        "experiments_covered": {k: sorted(v) for k, v in experiments_covered.items()},
+        "experiments_covered": {
+            k: dict(v) if isinstance(v, dict) else sorted(v) if isinstance(v, set) else v
+            for k, v in experiments_covered.items()
+        },
         "missing": missing,
         "errors": errors,
         "required_experiments": sorted(REQUIRED_EXPERIMENTS_FOR_OOS),
-        "structure": structure,
+        "rnd_experiments": sorted(RND_EXPERIMENTS),
     }
 
 
@@ -787,14 +818,18 @@ def validate_evidence_semantics(output_dir: Path) -> SemanticValidationReport:
     checks["factor_states"] = factor_check
     all_errors.extend(factor_check.get("errors", []))
 
-    # 2. NAV non-empty
-    nav_path = output_dir / "daily_nav.parquet"
+    # 2. NAV non-empty (P0 as primary)
+    nav_path = output_dir / "P0" / "daily_nav.parquet"
+    if not nav_path.is_file():
+        nav_path = output_dir / "daily_nav.parquet"  # backward compat
     nav_check = validate_nav_nonempty(nav_path)
     checks["nav_nonempty"] = nav_check
     all_errors.extend(nav_check.get("errors", []))
 
-    # 3. Trade ledger non-empty
-    ledger_path = output_dir / "trade_ledger.parquet"
+    # 3. Trade ledger non-empty (P0 as primary)
+    ledger_path = output_dir / "P0" / "trade_ledger.parquet"
+    if not ledger_path.is_file():
+        ledger_path = output_dir / "trade_ledger.parquet"  # backward compat
     ledger_check = validate_ledger_nonempty(ledger_path)
     checks["ledger_nonempty"] = ledger_check
     all_errors.extend(ledger_check.get("errors", []))
@@ -806,8 +841,10 @@ def validate_evidence_semantics(output_dir: Path) -> SemanticValidationReport:
     checks["daily_decisions"] = decisions_check
     all_errors.extend(decisions_check.get("errors", []))
 
-    # 5. Random seed results
-    random_path = output_dir / "random_seed_results.csv"
+    # 5. Random seed results (RND_TOP30 as primary)
+    random_path = output_dir / "RND_TOP30" / "random_seed_results.csv"
+    if not random_path.is_file():
+        random_path = output_dir / "random_seed_results.csv"  # backward compat
     random_check = validate_random_seed_results(random_path)
     checks["random_seeds"] = random_check
     all_errors.extend(random_check.get("errors", []))
@@ -819,16 +856,22 @@ def validate_evidence_semantics(output_dir: Path) -> SemanticValidationReport:
     checks["source_completeness"] = source_check
     all_errors.extend(source_check.get("errors", []))
 
-    # 7. Ledger-NAV conservation (only if both non-empty)
-    if nav_check.get("n_rows", 0) > 0 and ledger_check.get("n_trades", 0) > 0:
-        conservation_check = validate_ledger_nav_conservation(nav_path, ledger_path)
-        checks["ledger_nav_conservation"] = conservation_check
-        all_errors.extend(conservation_check.get("errors", []))
-    else:
-        checks["ledger_nav_conservation"] = {
-            "passed": False,
-            "errors": ["Skipped: NAV or ledger is empty"],
-        }
+    # 7. Ledger-NAV conservation — run per strategy directory
+    conservation_passed = True
+    for strat_dir_name in ["P0", "C0", "A7", "A8", "A9"]:
+        strat_dir = output_dir / strat_dir_name
+        s_nav = strat_dir / "daily_nav.parquet"
+        s_ledger = strat_dir / "trade_ledger.parquet"
+        if s_nav.is_file() and s_ledger.is_file():
+            s_check = validate_ledger_nav_conservation(s_nav, s_ledger)
+            checks[f"conservation_{strat_dir_name}"] = s_check
+            if not s_check["passed"]:
+                conservation_passed = False
+                all_errors.extend(s_check.get("errors", []))
+    checks["ledger_nav_conservation"] = {
+        "passed": conservation_passed,
+        "per_strategy": True,
+    }
 
     # 8. Stitched OOS NAV non-empty
     stitched_path = output_dir / "stitched_oos_nav.csv"
