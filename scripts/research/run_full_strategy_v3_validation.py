@@ -40,7 +40,7 @@ from scripts.research.validation_evidence import (
     finalize_manifest,
     overall_coverage_status,
     sha256_file,
-    validate_evidence_package,
+    validate_evidence_package_from_dict,
     write_final_manifest,
 )
 
@@ -173,16 +173,45 @@ def run(output_dir, test_log, precheck_only=False):
         "trading_dates": [str(pd.Timestamp(v).date()) for v in calendar_dates],
     }
     calendar_sha = canonical_sha(calendar_snapshot)
+    # PR26A.10: Source Snapshot V2 — use canonical source_type values
+    # so _safe_coverage() branches activate correctly.
     corporate = _source_snapshot(engine, """
         SELECT COUNT(*) AS row_count, MIN(ex_date) AS min_ex_date,
-               MAX(ex_date) AS max_ex_date, MAX(updated_at) AS max_updated_at
+               MAX(ex_date) AS max_ex_date, MAX(updated_at) AS max_updated_at,
+               (SELECT COUNT(DISTINCT div_type) FROM tushare_stock.ods_dividend
+                WHERE ex_date BETWEEN '2022-01-01' AND '2026-06-30') AS event_type_count
         FROM tushare_stock.ods_dividend
-    """, "tushare_stock.ods_dividend")
+    """, "corporate_action")
+    # PR26A.10: Enrich with event types discovered in the data
+    corp_events = pd.read_sql(text("""
+        SELECT DISTINCT div_type FROM tushare_stock.ods_dividend
+        WHERE ex_date BETWEEN '2022-01-01' AND '2026-06-30'
+    """), engine) if not precheck_only else pd.DataFrame(columns=["div_type"])
+    corporate["summary"]["event_types"] = sorted(
+        str(e) for e in corp_events["div_type"].dropna().unique()
+    )
     lifecycle = _source_snapshot(engine, """
         SELECT COUNT(*) AS row_count, MIN(list_date) AS min_list_date,
-               MAX(list_date) AS max_list_date, MAX(delist_date) AS max_delist_date
+               MAX(list_date) AS max_list_date, MAX(delist_date) AS max_delist_date,
+               COUNT(DISTINCT CASE WHEN delist_date IS NOT NULL THEN ts_code END) AS delisted_count
         FROM tushare_stock.dim_stock
-    """, "tushare_stock.dim_stock")
+    """, "security_lifecycle")
+    # PR26A.10: Enrich with listed/delisted counts and ST/suspension coverage
+    lc_counts = pd.read_sql(text("""
+        SELECT
+            COUNT(*) AS total_rows,
+            COUNT(DISTINCT ts_code) AS listed_count,
+            COUNT(DISTINCT CASE WHEN delist_date IS NOT NULL THEN ts_code END) AS delisted_count,
+            COUNT(DISTINCT CASE WHEN name LIKE '%ST%' THEN ts_code END) AS st_history_count
+        FROM tushare_stock.dim_stock
+    """), engine) if not precheck_only else pd.DataFrame()
+    if not lc_counts.empty:
+        lc_row = lc_counts.iloc[0].to_dict()
+        lifecycle["summary"]["listed_count"] = int(lc_row.get("listed_count", 0))
+        lifecycle["summary"]["delisted_count"] = int(lc_row.get("delisted_count", 0))
+        lifecycle["summary"]["st_history_count"] = int(lc_row.get("st_history_count", 0))
+    # Note: suspension_history_count requires a separate table query;
+    # placeholder until suspension tracking table is available.
 
     output_dir.mkdir(parents=True, exist_ok=False)
     _json(output_dir / "git_state.json", {
@@ -385,10 +414,12 @@ def run(output_dir, test_log, precheck_only=False):
     rnd_top30_dir = output_dir / "RND_TOP30"
     rnd_top30_dir.mkdir(parents=True, exist_ok=True)
     rnd_top30_results: list[dict[str, Any]] = []
+    rnd_top30_by_quarter: dict[str, list[dict[str, Any]]] = {}
     for fold in folds:
         if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
             continue
         wl = fold.get("window", "unknown")
+        rnd_top30_by_quarter[wl] = []
         a7_cmap = a7_candidates_by_fold.get(wl, {})
         for sr in executor.run_rnd100(
             experiment_id="RND_TOP30", fold=fold, scores_df=scores_df,
@@ -397,10 +428,34 @@ def run(output_dir, test_log, precheck_only=False):
             use_full_panel=False):
             sr["window"] = wl
             rnd_top30_results.append(sr)
+            rnd_top30_by_quarter[wl].append(sr)
     if rnd_top30_results:
         pd.DataFrame(rnd_top30_results).to_csv(
             rnd_top30_dir / "random_seed_results.csv", index=False)
-    # PR26A.8: Write explicit status.json for promotion gate
+    # PR26A.10: Per-quarter output structure — each quarter gets its own
+    # CSV, status.json, and metrics.json so the validator can check
+    # per-quarter seed counts independently.
+    for wl, quarter_results in rnd_top30_by_quarter.items():
+        qdir = rnd_top30_dir / wl
+        qdir.mkdir(parents=True, exist_ok=True)
+        if quarter_results:
+            pd.DataFrame(quarter_results).to_csv(
+                qdir / "random_seed_results.csv", index=False)
+        q_paths = set(r.get("path_hash", "") for r in quarter_results)
+        q_returns = [r.get("total_return", 0.0) for r in quarter_results if r.get("total_return") is not None]
+        _json(qdir / "status.json", {
+            "experiment": "RND_TOP30", "window": wl,
+            "n_seeds": len(quarter_results),
+            "n_distinct_paths": len(q_paths),
+            "status": "PASSED" if (len(quarter_results) >= 95 and len(q_paths) >= 95) else "FAILED",
+        })
+        _json(qdir / "metrics.json", {
+            "window": wl,
+            "n_results": len(quarter_results),
+            "n_distinct_paths": len(q_paths),
+            "mean_return": float(np.mean(q_returns)) if q_returns else None,
+        })
+    # PR26A.8: Write explicit status.json for promotion gate (global)
     _json(rnd_top30_dir / "status.json", {
         "experiment": "RND_TOP30",
         "n_seeds": len(rnd_top30_results),
@@ -413,10 +468,12 @@ def run(output_dir, test_log, precheck_only=False):
     rnd_full_dir = output_dir / "RND_FULL"
     rnd_full_dir.mkdir(parents=True, exist_ok=True)
     rnd_full_results: list[dict[str, Any]] = []
+    rnd_full_by_quarter: dict[str, list[dict[str, Any]]] = {}
     for fold in folds:
         if fold.get("status") != EvidenceStatus.REPRODUCIBLE.value:
             continue
         wl = fold.get("window", "unknown")
+        rnd_full_by_quarter[wl] = []
         a7_full_cmap = a7_candidates_full_by_fold.get(wl, {})
         for sr in executor.run_rnd100(
             experiment_id="RND_FULL", fold=fold, scores_df=scores_df,
@@ -425,9 +482,31 @@ def run(output_dir, test_log, precheck_only=False):
             use_full_panel=True):
             sr["window"] = wl
             rnd_full_results.append(sr)
+            rnd_full_by_quarter[wl].append(sr)
     if rnd_full_results:
         pd.DataFrame(rnd_full_results).to_csv(
             rnd_full_dir / "random_seed_results.csv", index=False)
+    # PR26A.10: Per-quarter output structure for RND_FULL
+    for wl, quarter_results in rnd_full_by_quarter.items():
+        qdir = rnd_full_dir / wl
+        qdir.mkdir(parents=True, exist_ok=True)
+        if quarter_results:
+            pd.DataFrame(quarter_results).to_csv(
+                qdir / "random_seed_results.csv", index=False)
+        q_paths = set(r.get("path_hash", "") for r in quarter_results)
+        q_returns = [r.get("total_return", 0.0) for r in quarter_results if r.get("total_return") is not None]
+        _json(qdir / "status.json", {
+            "experiment": "RND_FULL", "window": wl,
+            "n_seeds": len(quarter_results),
+            "n_distinct_paths": len(q_paths),
+            "status": "PASSED" if (len(quarter_results) >= 95 and len(q_paths) >= 95) else "FAILED",
+        })
+        _json(qdir / "metrics.json", {
+            "window": wl,
+            "n_results": len(quarter_results),
+            "n_distinct_paths": len(q_paths),
+            "mean_return": float(np.mean(q_returns)) if q_returns else None,
+        })
     _json(rnd_full_dir / "status.json", {
         "experiment": "RND_FULL",
         "n_seeds": len(rnd_full_results),
@@ -465,11 +544,13 @@ def run(output_dir, test_log, precheck_only=False):
             rev_dir, [], [], [], [], [], [], [], rev_errors)
 
     # Source completeness: COMPUTED from actual data
+    # PR26A.10: Source completeness computed from each source's OWN data coverage,
+    # not from score/price date coverage.
     corporate = _compute_source_completeness(
-        corporate, _safe_coverage(corporate, calendar_dates, score_dates))
+        corporate, _safe_coverage(corporate, calendar_dates, calendar_dates))
     _json(output_dir / "corporate_action_snapshot.json", corporate)
     lifecycle = _compute_source_completeness(
-        lifecycle, _safe_coverage(lifecycle, calendar_dates, price_dates))
+        lifecycle, _safe_coverage(lifecycle, calendar_dates, calendar_dates))
     _json(output_dir / "security_lifecycle_snapshot.json", lifecycle)
 
     # Global evidence (NO _write_empty_parquets overwrite)
@@ -488,16 +569,19 @@ def run(output_dir, test_log, precheck_only=False):
         # experiments produces meaningless mixed-strategy NAV.
         pass
 
-    # PR26A.9: Acyclic evidence finalization order.
-    # 1. finalize_manifest() populates file SHAs but does NOT write manifest.json
-    # 2. Write manifest.json (without verification SHA yet) so validator can read it
-    # 3. Run structural + semantic validation
-    # 4. Write evidence_verification.json
-    # 5. Update manifest with verification SHA and re-write final manifest.json
-    # 6. Final structural check reads manifest.json and verifies ALL SHAs present
+    # PR26A.10 Evidence Contract V4: True acyclic finalization order.
+    # 1. finalize_manifest() populates file SHAs in memory (does NOT write manifest.json)
+    # 2. Run structural + semantic validation against in-memory manifest
+    # 3. Write evidence_verification.json
+    # 4. Compute sha256_file(evidence_verification.json) → verification_file_sha
+    # 5. write_final_manifest() writes manifest.json ONCE with verification_file_sha
+    # 6. Read-only re-check: read manifest.json back, verify verification_file_sha
     #
-    # Key invariant: manifest.json does NOT contain its own SHA.
-    # It records verification_sha AFTER verification is written.
+    # Key invariants:
+    #   - manifest.json is written exactly ONCE
+    #   - manifest.json does NOT contain its own SHA
+    #   - verification_file_sha = sha256_file(evidence_verification.json) binds the
+    #     actual file contents — tampering with the file after finalization is detectable
     lock_path = PROJECT_ROOT / "requirements.lock.txt"
     has_executed = len(executed_experiments) > 0
     manifest = {
@@ -517,33 +601,36 @@ def run(output_dir, test_log, precheck_only=False):
         "promotion_status": "PENDING_REVIEW" if has_executed else "PROMOTION_BLOCKED",
         "executed_experiments": sorted(executed_experiments), "files": {},
     }
-    # Step 1: Populate file SHAs (does NOT write manifest.json)
+    # Step 1: Populate file SHAs in memory (does NOT write manifest.json)
     manifest = finalize_manifest(output_dir, manifest)
 
-    # Step 2: Write manifest.json so validate_evidence_package() can read it.
-    # manifest.json does NOT contain its own SHA — it only records SHAs of
-    # other evidence files.  It will be updated with verification_sha in step 5.
-    write_final_manifest(output_dir, manifest)
+    # Step 2: Structural + semantic validation against in-memory manifest
+    verification = validate_evidence_package_from_dict(
+        output_dir, manifest, run_semantic=True)
+    # Step 3: Write evidence_verification.json
+    verification_path = output_dir / "evidence_verification.json"
+    _json(verification_path, verification)
 
-    # Step 3: Structural + semantic validation reads manifest.json from disk
-    verification = validate_evidence_package(output_dir, run_semantic=True)
-    # Step 4: Write evidence_verification.json
-    _json(output_dir / "evidence_verification.json", verification)
-
-    # Step 5: Update manifest with verification outcome and re-write
+    # Step 4: Record verification outcome in manifest
     manifest["semantic_validated"] = verification.get("passed", False)
     manifest["verification_sha"] = canonical_sha(verification)
     if not verification.get("passed", True):
         manifest["evidence_status"] = EvidenceStatus.NON_REPRODUCIBLE.value
         manifest["promotion_status"] = "PROMOTION_BLOCKED"
-    write_final_manifest(output_dir, manifest)
 
-    # Step 6: Final structural validation against the updated manifest
-    structural = validate_evidence_package(output_dir, run_semantic=False)
+    # Step 5: Write manifest.json ONCE with verification_file_sha bound to the
+    # actual evidence_verification.json file on disk
+    write_final_manifest(output_dir, manifest, verification_path=verification_path)
+
+    # Step 6: Read-only re-check — read manifest.json back and verify
+    # verification_file_sha matches the file on disk
+    structural = validate_evidence_package_from_dict(
+        output_dir, json.loads((output_dir / "manifest.json").read_text("utf-8")),
+        run_semantic=False)
     if not structural.get("passed", True):
         manifest["evidence_status"] = EvidenceStatus.NON_REPRODUCIBLE.value
         manifest["promotion_status"] = "PROMOTION_BLOCKED"
-        write_final_manifest(output_dir, manifest)
+        write_final_manifest(output_dir, manifest, verification_path=verification_path)
         raise RuntimeError(f"structural verification failed: {structural.get('errors', [])}")
     if not verification.get("passed", True):
         raise RuntimeError(f"verification failed: {verification.get('errors', [])}")

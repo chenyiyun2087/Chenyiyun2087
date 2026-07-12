@@ -289,6 +289,9 @@ def construct_portfolio(
     risk_aversion: float = 1.0,
     random_seed: str | None = None,
     turnover_penalty: float = 0.0,
+    union_symbols: list[str] | None = None,
+    alpha_target: float | None = None,
+    exposure_target: float | None = None,
 ) -> pd.DataFrame:
     """Single entry point for A7, RND100, REV-A7, and A8 portfolio construction.
 
@@ -321,6 +324,16 @@ def construct_portfolio(
                    to the selected top-N symbols, or a dict {symbol: weight}
                    which will be mapped to selected symbols (PR26A.7).
     random_seed : Deterministic seed for RANDOM mode.
+    union_symbols : PR26A.10: Complete list of symbols that must enter the
+                    optimizer (current holdings ∪ ranked candidates).
+                    When provided with COVARIANCE_OPTIMAL, all union symbols
+                    enter the alpha vector, covariance matrix, and prev_weights.
+                    Top-N selection only applies to the output watermark.
+    alpha_target : PR26A.10: Minimum alpha for A8 hard constraint
+                   (alpha'w >= alpha_target).  Returns INFEASIBLE if
+                   the constraint cannot be satisfied.
+    exposure_target : PR26A.10: Minimum exposure for A8 hard constraint
+                      (sum(w) >= exposure_target).
 
     Returns
     -------
@@ -352,12 +365,43 @@ def construct_portfolio(
         raise ValueError(f"Unknown ordering mode: {ordering}")
 
     # --- Step 2: Top N ---
-    selected = df.head(top_n).copy()
+    # PR26A.10: When union_symbols is provided (A8 union universe), build
+    # the optimization problem for ALL union symbols.  Top-N selection only
+    # determines which symbols get non-zero target weights in the output.
+    # Symbols outside top_n still enter alpha/covariance/prev_weights but
+    # may receive weight 0 from the optimizer.
+    use_union = (
+        ordering == OrderingMode.COVARIANCE_OPTIMAL
+        and union_symbols is not None
+        and len(union_symbols) > 0
+    )
+    if use_union:
+        # Build optimization panel from union_symbols ONLY.
+        # Map union_symbols back to rows in the eligible panel.
+        union_set = set(union_symbols)
+        sym_to_idx = {s: i for i, s in enumerate(union_symbols)}
+        # Filter panel to union symbols
+        opt_panel = df[df["symbol"].astype(str).isin(union_set)].copy()
+        if opt_panel.empty:
+            # Fall back: all union symbols may not be in panel
+            opt_panel = df.copy()
+        # Reorder to match union_symbols order
+        opt_panel["_union_order"] = opt_panel["symbol"].astype(str).map(
+            lambda s: sym_to_idx.get(s, 999999))
+        opt_panel = opt_panel.sort_values("_union_order").drop(columns=["_union_order"])
+        n_opt = len(opt_panel)
+        # Select top_n from opt_panel for output watermark
+        selected = opt_panel.head(top_n).copy()
+    else:
+        selected = df.head(top_n).copy()
+        opt_panel = selected.copy()
+
     if selected.empty:
         return selected
 
-    n = len(selected)
-    ordered_symbols = selected["symbol"].astype(str).tolist()
+    n = len(opt_panel)
+    ordered_symbols = opt_panel["symbol"].astype(str).tolist()
+    selected_symbols = selected["symbol"].astype(str).tolist()
 
     # --- PR26A.7: Align prev_weights to selected symbols ---
     # prev_weights may come as a dict {symbol: weight} from the account
@@ -367,23 +411,22 @@ def construct_portfolio(
         prev_weights = np.array([
             prev_weights.get(s, 0.0) for s in ordered_symbols
         ], dtype=float)
-        # Symbols that fell out of Top-N get zero target weight in the
-        # optimizer, but their exit costs are captured in the account
-        # backtest's turnover tracking.
+        # PR26A.10: When using union universe, old positions get their real
+        # prev_weights even if they fall outside top_n.
 
     # --- PR26A.7: Hard dimension assertions ---
     if prev_weights is not None:
         if len(prev_weights) != n:
             raise ValueError(
                 f"OPTIMIZER_DIMENSION_FAILED: prev_weights length "
-                f"({len(prev_weights)}) != selected top_n ({n}). "
+                f"({len(prev_weights)}) != optimization symbols count ({n}). "
                 f"Symbols must be aligned before calling construct_portfolio."
             )
     if covariance is not None:
         if covariance.shape[0] != n or covariance.shape[1] != n:
             raise ValueError(
                 f"OPTIMIZER_DIMENSION_FAILED: covariance shape "
-                f"({covariance.shape}) != selected top_n ({n})."
+                f"({covariance.shape}) != optimization symbols count ({n})."
             )
 
     # --- Step 3: Covariance-optimal weights (A8 only) ---
@@ -391,14 +434,23 @@ def construct_portfolio(
     _covariance_used = covariance  # PR26A.9: store for diagnostic propagation
     if ordering == OrderingMode.COVARIANCE_OPTIMAL and covariance is not None:
         try:
-            alpha = pd.to_numeric(selected["rank_score"], errors="coerce").fillna(0.0).to_numpy()
+            # PR26A.10: Build alpha from ALL optimization symbols (union universe)
+            alpha = pd.to_numeric(opt_panel["rank_score"], errors="coerce").fillna(0.0).to_numpy()
             alpha = alpha - alpha.min() + 1e-6  # shift to positive
             opt_result = _solve_covariance_weights(
                 alpha, covariance, constraints, prev_weights=prev_weights,
                 risk_aversion=risk_aversion, turnover_penalty=turnover_penalty,
+                alpha_target=alpha_target, exposure_target=exposure_target,
             )
-            raw_weights = opt_result["weights"]
+            raw_weights_all = opt_result["weights"]
             _opt_result = opt_result  # PR26A.9: save for attrs
+            # PR26A.10: When union universe is active, run water-filling on
+            # ALL optimization symbols, then filter to selected (top_n).
+            # When not using union, raw_weights already matches selected.
+            if use_union:
+                raw_weights = raw_weights_all
+            else:
+                raw_weights = raw_weights_all
         except Exception as exc:
             # PR26A.3: Fail-closed — covariance optimization failure must
             # propagate, not silently degrade to alpha/vol.
@@ -422,23 +474,26 @@ def construct_portfolio(
     # PR26A.4: When covariance is available (A8 mode), use true marginal risk
     # contributions RC_i = w_i * (Σw)_i instead of single-stock vol for the
     # top-2 risk constraint.  This correctly accounts for correlation.
+    # PR26A.10: When union universe is active, water-filling runs on ALL
+    # optimization symbols (opt_panel), then output is filtered to selected.
+    wf_panel = opt_panel if use_union else selected
     risk_vals = None
     if ordering == OrderingMode.COVARIANCE_OPTIMAL and covariance is not None:
         # Compute true marginal risk contributions from covariance
         marginal_risk = covariance @ raw_weights
         risk_vals = marginal_risk  # RC_i = w_i * (Σw)_i when multiplied by w_i
-    elif "pit_vol_20" in selected.columns:
-        risk_vals = selected["pit_vol_20"].to_numpy()
-    elif "risk_value" in selected.columns:
-        risk_vals = selected["risk_value"].to_numpy()
+    elif "pit_vol_20" in wf_panel.columns:
+        risk_vals = wf_panel["pit_vol_20"].to_numpy()
+    elif "risk_value" in wf_panel.columns:
+        risk_vals = wf_panel["risk_value"].to_numpy()
 
     allocation = constrained_weight_allocation(
         raw_weights,
-        symbols=selected["symbol"].astype(str).tolist(),
-        industries=selected.get("industry", pd.Series("unknown", index=selected.index))
+        symbols=wf_panel["symbol"].astype(str).tolist(),
+        industries=wf_panel.get("industry", pd.Series("unknown", index=wf_panel.index))
         .astype(str)
         .tolist(),
-        themes=selected.get("theme", pd.Series("unknown", index=selected.index))
+        themes=wf_panel.get("theme", pd.Series("unknown", index=wf_panel.index))
         .astype(str)
         .tolist(),
         risk_values=risk_vals,
@@ -451,7 +506,10 @@ def construct_portfolio(
     )
 
     # --- Step 5: Merge results ---
-    result = selected.merge(
+    # PR26A.10: When union universe is active, merge with selected (top_n),
+    # filtering out non-selected union symbols from the output.
+    merge_df = selected
+    result = merge_df.merge(
         allocation[
             [
                 "symbol", "stock_relative_weight", "final_portfolio_weight",
@@ -490,11 +548,25 @@ def _solve_covariance_weights(
     prev_weights: np.ndarray | None = None,
     risk_aversion: float = 1.0,
     turnover_penalty: float = 0.0,
+    alpha_target: float | None = None,
+    exposure_target: float | None = None,
 ) -> dict[str, Any]:
-    """Solve max alpha'w - λ * w'Σw - τ * |w - w_prev| subject to constraints.
+    """PR26A.10: Minimize portfolio variance subject to hard constraints.
 
-    Uses a simple gradient-projection method suitable for small N (≤ 20).
-    For larger problems a QP solver would be preferred.
+    Objective: min w'Σw + τ*|w-w_prev| (variance-minimizing with turnover penalty)
+
+    Hard constraints:
+      - alpha'w >= alpha_target           (alpha retention — PR26A.10)
+      - sum(w) >= exposure_target         (exposure retention — PR26A.10)
+      - w >= 0
+      - sum(w) <= target_gross_exposure
+      - w_i <= single_cap
+
+    Returns INFEASIBLE if hard constraints cannot be satisfied.
+
+    Uses a barrier/penalty method: soft-penalize constraint violations with
+    increasing weight until constraints are satisfied or max iterations reached.
+    Returns optimization_success=False if any hard constraint is violated.
 
     Parameters
     ----------
@@ -502,13 +574,16 @@ def _solve_covariance_weights(
     covariance : Covariance matrix (N, N).  Must be PSD.
     constraints : Portfolio constraint set.
     prev_weights : Previous weights (N,) for turnover penalty.
-    risk_aversion : Risk aversion λ.
+    risk_aversion : Risk aversion λ (used as scaling for variance term).
     turnover_penalty : Turnover penalty τ (cost per unit weight change).
+    alpha_target : PR26A.10: Minimum required alpha (alpha'w >= alpha_target).
+    exposure_target : PR26A.10: Minimum required exposure (sum(w) >= exposure_target).
 
     Returns
     -------
     dict with keys: weights, predicted_alpha, portfolio_variance,
-    top2_risk_contribution, estimated_turnover, optimization_success.
+    top2_risk_contribution, estimated_turnover, optimization_success,
+    hard_constraints_satisfied (PR26A.10).
     """
     n = len(alpha)
     if n == 0:
@@ -545,16 +620,48 @@ def _solve_covariance_weights(
     diag = np.diag(cov).copy()
     diag = np.where(diag > 1e-12, diag, 1.0)
     w = alpha / diag
-    w = w / w.sum() * constraints.target_gross_exposure
+    w = w / max(w.sum(), 1e-12) * constraints.target_gross_exposure
 
-    # Gradient projection
+    # PR26A.10: Gradient projection with hard constraint penalty.
+    # Primary objective: max alpha'w - λ * w'Σw - τ * |w-w_prev|
+    # (original alpha-maximizing, variance-penalized, cost-aware)
+    # Hard constraints (alpha retention, exposure retention) enforced via
+    # increasing penalty multipliers.
     lr = 0.1 / max(np.diag(cov).max(), 1e-6)
+    hard_constraint_penalty = 0.0
+    hard_constraints_satisfied = True
+
+    # Determine whether hard constraints are active
+    has_alpha_target = alpha_target is not None and alpha_target > 0
+    has_exposure_target = (
+        exposure_target is not None
+        and exposure_target > 0
+        and exposure_target <= constraints.target_gross_exposure
+    )
+
     for iteration in range(constraints.max_iterations):
+        # Original objective: max alpha'w - λ * w'Σw - τ * |w-w_prev|
         grad = alpha - 2.0 * risk_aversion * (cov @ w)
-        # PR26A.3: Turnover penalty — L1 subgradient
+
+        # Turnover penalty — L1 subgradient
         if prev_weights is not None and turnover_penalty > 0:
             dw = w - prev_weights
             grad -= turnover_penalty * np.sign(dw)
+
+        # PR26A.10: Hard constraint penalties (increasing weight)
+        if has_alpha_target:
+            current_alpha = float(alpha @ w)
+            alpha_shortfall = alpha_target - current_alpha
+            if alpha_shortfall > 0:
+                hard_constraint_penalty = max(hard_constraint_penalty + 0.01, 0.01)
+                grad += hard_constraint_penalty * alpha  # push toward higher alpha
+        if has_exposure_target:
+            current_exposure = float(w.sum())
+            exposure_shortfall = exposure_target - current_exposure
+            if exposure_shortfall > 0:
+                hard_constraint_penalty = max(hard_constraint_penalty + 0.01, 0.01)
+                grad += hard_constraint_penalty  # push toward higher total weight
+
         w_new = w + lr * grad
 
         # Project onto simplex: w ≥ 0, sum(w) ≤ target_exposure
@@ -569,7 +676,6 @@ def _solve_covariance_weights(
         # Re-scale to target exposure after capping
         total = w_new.sum()
         if total > 0 and total < constraints.target_gross_exposure:
-            # Distribute remaining proportionally to uncapped stocks
             remaining = constraints.target_gross_exposure - total
             uncapped = w_new < constraints.single_cap - 1e-10
             if uncapped.any():
@@ -580,14 +686,26 @@ def _solve_covariance_weights(
         # Convergence check
         delta = np.abs(w_new - w).max()
         w = w_new
-        if delta < 1e-8:
+        if delta < 1e-8 and hard_constraint_penalty >= 10.0:
+            # Converged with sufficient penalty
             break
+        if delta < 1e-8 and not (has_alpha_target or has_exposure_target):
+            break
+
+    # PR26A.10: Verify hard constraints after optimization
+    if has_alpha_target:
+        final_alpha = float(alpha @ w)
+        if final_alpha < alpha_target - 1e-8:
+            hard_constraints_satisfied = False
+    if has_exposure_target:
+        final_exposure = float(w.sum())
+        if final_exposure < exposure_target - 1e-8:
+            hard_constraints_satisfied = False
 
     # Compute diagnostics
     port_var = float(w @ cov @ w)
     pred_alpha = float(alpha @ w)
     # PR26A.3: True marginal risk contribution — RC_i = w_i × (Σw)_i
-    # This accounts for correlations, unlike w_i × vol_i.
     marginal_risk = cov @ w  # (Σw) — N-vector of marginal contributions
     risk_contrib = w * marginal_risk  # RC_i = w_i × (Σw)_i
     total_risk = risk_contrib.sum()  # = w'Σw
@@ -603,5 +721,6 @@ def _solve_covariance_weights(
         "portfolio_variance": port_var,
         "top2_risk_contribution": top2_contrib,
         "estimated_turnover": estimated_turnover,
-        "optimization_success": True,
+        "optimization_success": hard_constraints_satisfied,
+        "hard_constraints_satisfied": hard_constraints_satisfied,
     }

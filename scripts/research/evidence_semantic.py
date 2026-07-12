@@ -678,14 +678,12 @@ def validate_evidence_per_experiment_window(output_dir: Path) -> dict[str, Any]:
             wd = _get_window_dates(wl)
             if wd:
                 start, end = wd
-                # PR26A.9: Compute calendar trading days in this quarter
-                # from the NAV's own date range as a proxy for calendar coverage.
-                # The full calendar is not available here, so we check that
-                # NAV spans the quarter's boundaries.
-                quarter_cal_days = sum(
-                    1 for d in pd.date_range(start, end, freq="B")
-                    if d.date() >= start and d.date() <= end
-                )
+                # PR26A.10: Compute calendar trading days from the frozen
+                # SSE calendar (calendar_snapshot.json), not from freq="B".
+                # freq="B" counts weekends as "trading days" and misses
+                # Chinese holidays like Spring Festival, National Day, etc.
+                sse_trading_days = _get_sse_trading_days(output_dir, wl)
+                quarter_cal_days = len(sse_trading_days)
                 matches = {d for d in nav_dates if start <= d <= end}
                 matches_list = sorted(matches)
                 n_matches = len(matches)
@@ -865,6 +863,58 @@ def _get_window_dates(window_label: str) -> tuple | None:
         "2026Q4": (pd.Timestamp("2026-10-01").date(), pd.Timestamp("2026-12-31").date()),
     }
     return mapping.get(window_label)
+
+
+def _get_sse_trading_days(
+    output_dir: Path,
+    window_label: str,
+) -> set:
+    """PR26A.10: Get actual SSE trading days for a quarter from calendar_snapshot.json.
+
+    Reads the frozen calendar_snapshot.json from the evidence package and
+    returns the set of dates within the given quarter.  Falls back to
+    pd.date_range(freq="B") when calendar_snapshot.json is not available
+    (e.g., in test packages that don't include a full calendar).
+    """
+    calendar_path = output_dir / "calendar_snapshot.json"
+    if not calendar_path.is_file():
+        wd = _get_window_dates(window_label)
+        if wd:
+            start, end = wd
+            return set(
+                d.date() for d in pd.date_range(start, end, freq="B")
+            )
+        return set()
+
+    import json as _json_mod
+    try:
+        cal_data = _json_mod.loads(calendar_path.read_text(encoding="utf-8"))
+    except Exception:
+        wd = _get_window_dates(window_label)
+        if wd:
+            start, end = wd
+            return set(
+                d.date() for d in pd.date_range(start, end, freq="B")
+            )
+        return set()
+
+    # Extract trading dates from calendar snapshot
+    trading_dates_raw = cal_data.get("trading_dates", cal_data.get("trading_days", []))
+    wd = _get_window_dates(window_label)
+    if not wd or not trading_dates_raw:
+        if wd:
+            start, end = wd
+            return set(
+                d.date() for d in pd.date_range(start, end, freq="B")
+            )
+        return set()
+
+    start, end = wd
+    return {
+        pd.Timestamp(d).date()
+        for d in trading_dates_raw
+        if start <= pd.Timestamp(d).date() <= end
+    }
 
 
 # ---------------------------------------------------------------------------
