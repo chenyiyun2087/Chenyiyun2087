@@ -657,11 +657,16 @@ class FoldAccountBacktest:
         else:
             prev_weights_by_symbol = None
 
-        # Turnover penalty = round-trip cost rate from real cost model
+        # PR26A.9: Full cost model — all 5 components from ExecutionCostModel.
+        # Turnover penalty = round-trip cost rate:
+        #   buy:  commission + transfer_fee + slippage + impact
+        #   sell: commission + stamp_duty + transfer_fee + slippage + impact
         turnover_penalty = (
-            self.config.commission_rate * 2      # buy + sell commission
-            + self.config.stamp_duty_rate         # sell stamp duty
-            + self.config.slippage_rate           # bid-ask + impact
+            self.config.commission_rate * 2       # buy + sell commission
+            + self.config.stamp_duty_rate          # sell stamp duty
+            + self.config.transfer_fee_rate * 2    # buy + sell transfer fee
+            + self.config.slippage_rate * 2        # buy + sell slippage
+            + self.config.impact_rate * 2          # buy + sell market impact
         )
 
         return runtime.build_weights(
@@ -881,17 +886,115 @@ class FoldAccountBacktest:
                                 signal_targets[signal_date] = new_targets
                                 signal_candidate_counts[signal_date] = len(acct_weights)
 
-                                # PR26A.8: Record optimizer diagnostic ledger with
+                                # PR26A.9: Record optimizer diagnostic ledger with
                                 # full pre/post optimization diagnostics.
                                 opt_symbols = sorted(
                                     acct_weights["symbol"].astype(str).tolist()
                                 )
-                                # Compute risk before/after for auditability
-                                risk_before = None
-                                risk_after = None
+                                # --- Pre-optimization diagnostics ---
+                                # Compute risk_before from current portfolio weights
+                                prev_w_list = [
+                                    current_positions.get(s, 0.0) / max(pre_trade_equity, 1.0)
+                                    for s in opt_symbols
+                                ]
+                                prev_w = np.array(prev_w_list, dtype=float)
+                                # Build pre-optimization alpha from ranked scores
+                                alpha_before = 0.0
+                                alpha_after = 0.0
+                                variance_before = None
+                                variance_after = None
+                                cvar_before = None
+                                cvar_after = None
+                                exposure_before = float(prev_w.sum())
+                                exposure_after = float(
+                                    acct_weights["final_portfolio_weight"].sum()
+                                )
+                                # Extract post-optimization diagnostics from attrs
                                 if hasattr(acct_weights, 'attrs'):
-                                    risk_after = acct_weights.attrs.get(
+                                    variance_after = acct_weights.attrs.get(
                                         'portfolio_variance')
+                                    alpha_after = acct_weights.attrs.get(
+                                        'predicted_alpha', 0.0)
+                                # Compute pre-optimization alpha from ranked panel
+                                if not ranked.empty and "rank_score" in ranked.columns:
+                                    alpha_map = dict(zip(
+                                        ranked["symbol"].astype(str),
+                                        pd.to_numeric(ranked["rank_score"], errors="coerce").fillna(0.0)
+                                    ))
+                                    alpha_vec = np.array([
+                                        alpha_map.get(s, 0.0) for s in opt_symbols
+                                    ], dtype=float)
+                                    alpha_before = float(alpha_vec @ prev_w)
+                                    if alpha_after == 0.0:
+                                        alpha_after = float(alpha_vec @ acct_weights[
+                                            "final_portfolio_weight"].to_numpy())
+                                # Compute pre-optimization variance from covariance
+                                # stored in acct_weights attrs
+                                cov_matrix = None
+                                if hasattr(acct_weights, 'attrs'):
+                                    cov_matrix = acct_weights.attrs.get('covariance_matrix')
+                                if cov_matrix is not None and prev_w.sum() > 0:
+                                    # PR26A.9: covariance stored as list-of-lists in attrs
+                                    cov_np = np.array(cov_matrix, dtype=float)
+                                    variance_before = float(prev_w @ cov_np @ prev_w)
+                                    # Approximate CVaR from variance (normal assumption)
+                                    from scipy.stats import norm as _norm
+                                    z_95 = _norm.ppf(0.95)
+                                    if variance_before is not None and variance_before > 0:
+                                        cvar_before = float(
+                                            _norm.pdf(z_95) / 0.05 * np.sqrt(variance_before)
+                                        )
+                                    if variance_after is not None and variance_after > 0:
+                                        cvar_after = float(
+                                            _norm.pdf(z_95) / 0.05 * np.sqrt(variance_after)
+                                        )
+                                # Alpha retention ratio
+                                alpha_retention = (
+                                    alpha_after / alpha_before
+                                    if alpha_before > 1e-12 else None
+                                )
+                                # Variance improvement
+                                variance_improvement = (
+                                    (variance_before - variance_after) / variance_before
+                                    if (variance_before is not None
+                                        and variance_before > 1e-12
+                                        and variance_after is not None)
+                                    else None
+                                )
+                                # Predicted turnover from weight changes
+                                predicted_turnover = float(np.sum(np.abs(
+                                    acct_weights["final_portfolio_weight"].to_numpy() - prev_w
+                                )))
+                                # Predicted cost with full cost model
+                                exited_symbols = sorted(
+                                    set(current_positions.keys()) - set(opt_symbols)
+                                )
+                                predicted_exit_cost = sum(
+                                    current_positions.get(s, 0.0) * (
+                                        self.config.commission_rate
+                                        + self.config.stamp_duty_rate
+                                        + self.config.transfer_fee_rate
+                                        + self.config.slippage_rate
+                                        + self.config.impact_rate
+                                    )
+                                    for s in exited_symbols
+                                )
+                                # Top2 risk contribution
+                                top2_risk_before = None
+                                top2_risk_after = None
+                                if hasattr(acct_weights, 'attrs'):
+                                    top2_risk_after = acct_weights.attrs.get(
+                                        'top2_risk_contribution')
+                                if cov_matrix is not None and prev_w.sum() > 0:
+                                    cov_np2 = np.array(cov_matrix, dtype=float)
+                                    marginal = cov_np2 @ prev_w
+                                    risk_contrib = prev_w * marginal
+                                    total_risk = risk_contrib.sum()
+                                    if total_risk > 1e-12:
+                                        top2_risk_before = float(
+                                            np.sort(risk_contrib / total_risk)[::-1][:2].sum()
+                                        )
+
                                 result.a8_optimizer_ledger.append({
                                     "signal_date": str(signal_date),
                                     "experiment_id": experiment_id,
@@ -910,21 +1013,22 @@ class FoldAccountBacktest:
                                         str(r["symbol"]): float(r["final_portfolio_weight"])
                                         for _, r in acct_weights.iterrows()
                                     },
-                                    "optimization_risk_before": risk_before,
-                                    "optimization_risk_after": risk_after,
-                                    # PR26A.8: Track old positions exiting the
-                                    # optimization universe and their estimated costs
-                                    "exited_symbols": sorted(
-                                        set(current_positions.keys()) - set(opt_symbols)
-                                    ),
-                                    "predicted_exit_cost": sum(
-                                        current_positions.get(s, 0.0) * (
-                                            self.config.commission_rate
-                                            + self.config.stamp_duty_rate
-                                            + self.config.slippage_rate
-                                        )
-                                        for s in set(current_positions.keys()) - set(opt_symbols)
-                                    ),
+                                    # PR26A.9: Full risk/alpha diagnostics
+                                    "alpha_before": alpha_before,
+                                    "alpha_after": alpha_after,
+                                    "alpha_retention_ratio": alpha_retention,
+                                    "variance_before": variance_before,
+                                    "variance_after": variance_after,
+                                    "variance_improvement": variance_improvement,
+                                    "cvar_before": cvar_before,
+                                    "cvar_after": cvar_after,
+                                    "top2_risk_before": top2_risk_before,
+                                    "top2_risk_after": top2_risk_after,
+                                    "exposure_before": exposure_before,
+                                    "exposure_after": exposure_after,
+                                    "predicted_turnover": predicted_turnover,
+                                    "predicted_exit_cost": predicted_exit_cost,
+                                    "exited_symbols": exited_symbols,
                                     "account_aware_used": True,
                                     "fallback_used": False,
                                     "optimization_status": "success",

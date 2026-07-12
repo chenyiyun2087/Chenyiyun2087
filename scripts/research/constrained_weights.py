@@ -387,6 +387,8 @@ def construct_portfolio(
             )
 
     # --- Step 3: Covariance-optimal weights (A8 only) ---
+    _opt_result = None  # PR26A.9: store for diagnostic propagation
+    _covariance_used = covariance  # PR26A.9: store for diagnostic propagation
     if ordering == OrderingMode.COVARIANCE_OPTIMAL and covariance is not None:
         try:
             alpha = pd.to_numeric(selected["rank_score"], errors="coerce").fillna(0.0).to_numpy()
@@ -396,6 +398,7 @@ def construct_portfolio(
                 risk_aversion=risk_aversion, turnover_penalty=turnover_penalty,
             )
             raw_weights = opt_result["weights"]
+            _opt_result = opt_result  # PR26A.9: save for attrs
         except Exception as exc:
             # PR26A.3: Fail-closed — covariance optimization failure must
             # propagate, not silently degrade to alpha/vol.
@@ -462,6 +465,16 @@ def construct_portfolio(
     result["effective_weight"] = result["final_portfolio_weight"]
     result.attrs["ordering_mode"] = ordering.value
     result.attrs["constraints"] = constraints
+    # PR26A.9: Propagate optimizer diagnostics for A8 ledger
+    if _opt_result is not None:
+        result.attrs["portfolio_variance"] = _opt_result.get("portfolio_variance")
+        result.attrs["predicted_alpha"] = _opt_result.get("predicted_alpha")
+        result.attrs["top2_risk_contribution"] = _opt_result.get("top2_risk_contribution")
+        result.attrs["estimated_turnover"] = _opt_result.get("estimated_turnover")
+        result.attrs["optimization_success"] = _opt_result.get("optimization_success", False)
+    if _covariance_used is not None:
+        # Store as list-of-lists to avoid pandas attrs comparison issues
+        result.attrs["covariance_matrix"] = _covariance_used.tolist()
     return result
 
 
