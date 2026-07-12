@@ -399,6 +399,14 @@ def run(output_dir, test_log, precheck_only=False):
     if rnd_top30_results:
         pd.DataFrame(rnd_top30_results).to_csv(
             rnd_top30_dir / "random_seed_results.csv", index=False)
+    # PR26A.8: Write explicit status.json for promotion gate
+    _json(rnd_top30_dir / "status.json", {
+        "experiment": "RND_TOP30",
+        "n_seeds": len(rnd_top30_results),
+        "n_distinct_paths": len(set(r.get("path_hash", "") for r in rnd_top30_results)),
+        "status": "PASSED" if (len(rnd_top30_results) >= 95 and len(set(
+            r.get("path_hash", "") for r in rnd_top30_results)) >= 95) else "FAILED",
+    })
 
     # --- RND-FULL: total security-selection alpha ---
     rnd_full_dir = output_dir / "RND_FULL"
@@ -419,9 +427,16 @@ def run(output_dir, test_log, precheck_only=False):
     if rnd_full_results:
         pd.DataFrame(rnd_full_results).to_csv(
             rnd_full_dir / "random_seed_results.csv", index=False)
+    _json(rnd_full_dir / "status.json", {
+        "experiment": "RND_FULL",
+        "n_seeds": len(rnd_full_results),
+        "n_distinct_paths": len(set(r.get("path_hash", "") for r in rnd_full_results)),
+        "status": "PASSED" if (len(rnd_full_results) >= 95 and len(set(
+            r.get("path_hash", "") for r in rnd_full_results)) >= 95) else "FAILED",
+    })
 
-    # REV: full reversed-alpha backtest using A7 runtime (PR23 P9b)
-    rev_dir = output_dir / "REV"
+    # REV_A7: full reversed-alpha backtest using A7 runtime (PR23 P9b)
+    rev_dir = output_dir / "REV_A7"
     rev_dir.mkdir(parents=True, exist_ok=True)
     rev_candidates, rev_weights, rev_nav, rev_trades, rev_errors = [], [], [], [], []
     if a7_runtime is not None:

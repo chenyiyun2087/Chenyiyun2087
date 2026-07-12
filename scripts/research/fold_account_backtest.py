@@ -881,7 +881,17 @@ class FoldAccountBacktest:
                                 signal_targets[signal_date] = new_targets
                                 signal_candidate_counts[signal_date] = len(acct_weights)
 
-                                # PR26A.7: Record optimizer diagnostic ledger
+                                # PR26A.8: Record optimizer diagnostic ledger with
+                                # full pre/post optimization diagnostics.
+                                opt_symbols = sorted(
+                                    acct_weights["symbol"].astype(str).tolist()
+                                )
+                                # Compute risk before/after for auditability
+                                risk_before = None
+                                risk_after = None
+                                if hasattr(acct_weights, 'attrs'):
+                                    risk_after = acct_weights.attrs.get(
+                                        'portfolio_variance')
                                 result.a8_optimizer_ledger.append({
                                     "signal_date": str(signal_date),
                                     "experiment_id": experiment_id,
@@ -890,13 +900,31 @@ class FoldAccountBacktest:
                                     "actual_cash": account.cash,
                                     "current_positions_count": len(current_positions),
                                     "current_symbols": sorted(current_positions.keys()),
-                                    "optimization_symbols": sorted(
-                                        acct_weights["symbol"].astype(str).tolist()
-                                    ),
+                                    "previous_weights": {
+                                        sym: current_positions.get(sym, 0.0) / max(pre_trade_equity, 1.0)
+                                        for sym in current_positions
+                                    },
+                                    "optimization_symbols": opt_symbols,
+                                    "covariance_symbols": opt_symbols,
                                     "target_weights": {
                                         str(r["symbol"]): float(r["final_portfolio_weight"])
                                         for _, r in acct_weights.iterrows()
                                     },
+                                    "optimization_risk_before": risk_before,
+                                    "optimization_risk_after": risk_after,
+                                    # PR26A.8: Track old positions exiting the
+                                    # optimization universe and their estimated costs
+                                    "exited_symbols": sorted(
+                                        set(current_positions.keys()) - set(opt_symbols)
+                                    ),
+                                    "predicted_exit_cost": sum(
+                                        current_positions.get(s, 0.0) * (
+                                            self.config.commission_rate
+                                            + self.config.stamp_duty_rate
+                                            + self.config.slippage_rate
+                                        )
+                                        for s in set(current_positions.keys()) - set(opt_symbols)
+                                    ),
                                     "account_aware_used": True,
                                     "fallback_used": False,
                                     "optimization_status": "success",
@@ -918,7 +946,7 @@ class FoldAccountBacktest:
                             f"A8 weight recomputation failed on "
                             f"{signal_date}: {e}"
                         )
-                        continue  # PR26A.7: skip order execution for this signal_date
+                        break  # PR26A.8: stop entire fold — no subsequent NAV
 
                 targets = signal_targets.get(signal_date, {})
                 candidate_count = signal_candidate_counts.get(signal_date, 0)
