@@ -285,7 +285,7 @@ def construct_portfolio(
     top_n: int = 5,
     constraints: PortfolioConstraints | None = None,
     covariance: np.ndarray | None = None,
-    prev_weights: np.ndarray | None = None,
+    prev_weights: np.ndarray | dict[str, float] | None = None,
     risk_aversion: float = 1.0,
     random_seed: str | None = None,
     turnover_penalty: float = 0.0,
@@ -317,7 +317,9 @@ def construct_portfolio(
     top_n : Number of positions to select.
     constraints : Constraint set (uses defaults if None).
     covariance : Covariance matrix (N×N) — required for COVARIANCE_OPTIMAL mode.
-    prev_weights : Previous period weights (N,) — for turnover constraint.
+    prev_weights : Previous period weights — either a numpy array (N,) aligned
+                   to the selected top-N symbols, or a dict {symbol: weight}
+                   which will be mapped to selected symbols (PR26A.7).
     random_seed : Deterministic seed for RANDOM mode.
 
     Returns
@@ -355,6 +357,34 @@ def construct_portfolio(
         return selected
 
     n = len(selected)
+    ordered_symbols = selected["symbol"].astype(str).tolist()
+
+    # --- PR26A.7: Align prev_weights to selected symbols ---
+    # prev_weights may come as a dict {symbol: weight} from the account
+    # backtest.  Map it to the ordered_symbols list so dimensions match
+    # the covariance matrix and alpha vector.
+    if isinstance(prev_weights, dict):
+        prev_weights = np.array([
+            prev_weights.get(s, 0.0) for s in ordered_symbols
+        ], dtype=float)
+        # Symbols that fell out of Top-N get zero target weight in the
+        # optimizer, but their exit costs are captured in the account
+        # backtest's turnover tracking.
+
+    # --- PR26A.7: Hard dimension assertions ---
+    if prev_weights is not None:
+        if len(prev_weights) != n:
+            raise ValueError(
+                f"OPTIMIZER_DIMENSION_FAILED: prev_weights length "
+                f"({len(prev_weights)}) != selected top_n ({n}). "
+                f"Symbols must be aligned before calling construct_portfolio."
+            )
+    if covariance is not None:
+        if covariance.shape[0] != n or covariance.shape[1] != n:
+            raise ValueError(
+                f"OPTIMIZER_DIMENSION_FAILED: covariance shape "
+                f"({covariance.shape}) != selected top_n ({n})."
+            )
 
     # --- Step 3: Covariance-optimal weights (A8 only) ---
     if ordering == OrderingMode.COVARIANCE_OPTIMAL and covariance is not None:
@@ -478,8 +508,21 @@ def _solve_covariance_weights(
             "optimization_success": False,
         }
 
-    # Ensure PSD
+    # PR26A.7: Hard dimension contract — all inputs must be aligned to the
+    # same ordered symbol list before reaching this solver.
+    if prev_weights is not None and len(prev_weights) != n:
+        raise ValueError(
+            f"OPTIMIZER_DIMENSION_FAILED: prev_weights length "
+            f"({len(prev_weights)}) != alpha length ({n})"
+        )
     cov = np.asarray(covariance, dtype=float)
+    if cov.shape[0] != n or cov.shape[1] != n:
+        raise ValueError(
+            f"OPTIMIZER_DIMENSION_FAILED: covariance shape "
+            f"({cov.shape}) != alpha length ({n})"
+        )
+
+    # Ensure PSD
     eigvals = np.linalg.eigvalsh(cov)
     if eigvals.min() < -1e-10:
         # Not PSD — apply shrinkage

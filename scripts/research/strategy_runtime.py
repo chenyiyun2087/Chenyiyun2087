@@ -383,6 +383,9 @@ class FrozenAlphaRuntime(StrategyRuntime):
         PR26A.4: prev_weights and turnover_penalty enable real-cost-aware
         optimization for A8.  prev_weights should come from the account's
         current portfolio state; turnover_penalty defaults to 0.0 (no penalty).
+
+        PR26A.7: prev_weights accepts a dict {symbol: weight} which
+        construct_portfolio aligns to selected top-N symbols.
         """
         if ranked.empty:
             return ranked

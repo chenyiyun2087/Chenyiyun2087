@@ -1369,7 +1369,7 @@ class TestL7OfficialPriceParity:
         assert allowed, "limit_free_status should allow any price"
 
     def test_gate_and_label_agree_with_official(self):
-        """Account gate and label gate produce same result with official limits."""
+        """PR26A.7: Account gate and label gate agree when official limits used."""
         from scripts.research.execution_market_rules import (
             can_buy_at_open as label_buy,
         )
@@ -1385,21 +1385,22 @@ class TestL7OfficialPriceParity:
         )
         assert label_allowed
 
-        # Gate path: dict-based wrapper — official limits passed through
-        # price_info (if wiring is correct)
+        # Gate path: dict-based wrapper with official limits in price_info
         price_info = {
             "adj_open": 11.03, "raw_open": 11.03,
             "raw_pre_close": 10.00, "prev_adj_close": 10.00,
             "is_st": 0, "is_listed": 1, "is_suspended": 0,
+            "official_upper_limit": 11.05,
+            "official_lower_limit": 9.00,
+            "limit_free_status": False,
         }
         gate_allowed, gate_reason, _ = gate_buy("600000", price_info)
-        # Without official limits in gate wrapper, computed 11.00 blocks this.
-        # PR26A.6 note: gate wrapper doesn't yet extract official limits from
-        # price_info — this test documents the parity expectation.
-        # For now, gate uses computed limits (11.00) → blocked at 11.03.
-        # When official limits are wired into gate wrapper, this should agree.
-        if not gate_allowed:
-            assert "limit_up" in gate_reason.lower()
+        # PR26A.7: Gate wrapper now extracts and passes official limits.
+        # Both paths should agree.
+        assert gate_allowed == label_allowed, (
+            f"Parity violation: label={label_allowed}, "
+            f"gate={gate_allowed} ({gate_reason})"
+        )
 
 
 # ============================================================================

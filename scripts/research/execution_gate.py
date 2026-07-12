@@ -213,6 +213,17 @@ def can_buy_at_open(
         price_info.get("list_days", price_info.get("days_since_listing")), np.nan
     )
 
+    # PR26A.7: Extract official exchange-provided limit prices from price_info.
+    # When available, these override the computed 10%/5% limits for true parity
+    # between account gate, training labels, and matched-baseline runners.
+    official_upper = _safe_float(
+        price_info.get("official_upper_limit"), np.nan
+    )
+    official_lower = _safe_float(
+        price_info.get("official_lower_limit"), np.nan
+    )
+    limit_free = bool(price_info.get("limit_free_status", False))
+
     mkt_allowed, mkt_reason = _mkt_can_buy_at_open(
         open_price,
         prev_close,
@@ -221,6 +232,9 @@ def can_buy_at_open(
         is_listed=float(is_listed),
         is_suspended=float(is_suspended),
         list_days=float(list_days) if np.isfinite(list_days) else None,
+        official_upper_limit=float(official_upper) if np.isfinite(official_upper) else None,
+        official_lower_limit=float(official_lower) if np.isfinite(official_lower) else None,
+        limit_free_status=limit_free,
     )
     if not mkt_allowed:
         return False, mkt_reason, None
@@ -253,6 +267,15 @@ def can_sell_at_open(
         price_info.get("list_days", price_info.get("days_since_listing")), np.nan
     )
 
+    # PR26A.7: Extract official exchange-provided limit prices from price_info.
+    official_upper = _safe_float(
+        price_info.get("official_upper_limit"), np.nan
+    )
+    official_lower = _safe_float(
+        price_info.get("official_lower_limit"), np.nan
+    )
+    limit_free = bool(price_info.get("limit_free_status", False))
+
     mkt_allowed, mkt_reason = _mkt_can_sell_at_open(
         open_price,
         prev_close,
@@ -261,6 +284,9 @@ def can_sell_at_open(
         is_listed=float(is_listed),
         is_suspended=float(is_suspended),
         list_days=float(list_days) if np.isfinite(list_days) else None,
+        official_upper_limit=float(official_upper) if np.isfinite(official_upper) else None,
+        official_lower_limit=float(official_lower) if np.isfinite(official_lower) else None,
+        limit_free_status=limit_free,
     )
     if not mkt_allowed:
         return False, mkt_reason, None
