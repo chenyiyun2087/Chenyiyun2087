@@ -10,7 +10,7 @@ DATADIR="/Volumes/extension/mysql"
 LOG_FILE="/tmp/mysql_boot.log"
 
 # IMPORTANT: Put err/pid/socket on local writable path (not external volume)
-MYSQL_ERR_LOG="/tmp/mysql_external.err"
+MYSQL_ERR_LOG="/Users/Shared/mysql_external.err"
 MYSQL_PID_FILE="/tmp/mysql_external.pid"
 MYSQL_SOCKET="/tmp/mysql_external.sock"
 MYSQL_RUN_USER="_mysql"
@@ -28,6 +28,19 @@ echo "$(date): Starting MySQL boot wrapper" >> "$LOG_FILE"
 echo "$(date): DATADIR=$DATADIR" >> "$LOG_FILE"
 echo "$(date): LOG=$MYSQL_ERR_LOG PID=$MYSQL_PID_FILE SOCK=$MYSQL_SOCKET" >> "$LOG_FILE"
 
+# This wrapper is intended for the system LaunchDaemon.  A user LaunchAgent
+# with KeepAlive would otherwise fail and respawn forever, filling the error
+# log while the real server continues to run.
+MYSQL_RUN_UID="$(id -u "$MYSQL_RUN_USER" 2>/dev/null || true)"
+if [ -z "$MYSQL_RUN_UID" ]; then
+  echo "$(date): ERROR: user $MYSQL_RUN_USER not found." >> "$LOG_FILE"
+  exit 1
+fi
+if [ "$CURRENT_UID" -ne 0 ] && [ "$CURRENT_UID" -ne "$MYSQL_RUN_UID" ]; then
+  echo "$(date): ERROR: run this wrapper as root or $MYSQL_RUN_USER; refusing restart loop." >> "$LOG_FILE"
+  exit 78
+fi
+
 # Wait until external data directory appears
 while [ ! -d "$DATADIR" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     echo "$(date): Waiting for $DATADIR to be mounted... ($RETRY_COUNT/$MAX_RETRIES)" >> "$LOG_FILE"
@@ -41,11 +54,20 @@ if [ ! -d "$DATADIR" ]; then
 fi
 
 echo "$(date): Volume found. Ensuring permissions..." >> "$LOG_FILE"
-if [ "$CURRENT_UID" -eq 0 ]; then
-  chown -R "$MYSQL_RUN_USER":staff "$DATADIR" >> "$LOG_FILE" 2>&1 || true
+
+# Never start a second server against the same InnoDB data directory.  Do this
+# before touching pid/socket files: they may belong to a healthy manual or
+# system-managed instance.  Avoid recursive chown on a 200+ GB warehouse.
+if pgrep -f "[/]mysqld.*--datadir=$DATADIR([[:space:]]|$)" >/dev/null 2>&1; then
+  echo "$(date): MySQL already owns $DATADIR; startup skipped." >> "$LOG_FILE"
+  exit 0
 fi
 
-# Clean stale local pid/socket/log (safe to ignore errors)
+if [ "$CURRENT_UID" -eq 0 ]; then
+  chown "$MYSQL_RUN_USER":staff "$DATADIR" >> "$LOG_FILE" 2>&1 || true
+fi
+
+# Only stale files may be removed after confirming no server owns the datadir.
 rm -f "$MYSQL_PID_FILE" "$MYSQL_SOCKET" >> "$LOG_FILE" 2>&1
 
 # Ensure error log is writable by the MySQL run user
@@ -64,19 +86,17 @@ for f in "$DATADIR"/*.pid; do
     rm -f "$f" >> "$LOG_FILE" 2>&1 || true
 done
 
-MYSQLD_CMD="$MYSQLD_SAFE --datadir=\"$DATADIR\" --log-error=\"$MYSQL_ERR_LOG\" --pid-file=\"$MYSQL_PID_FILE\" --socket=\"$MYSQL_SOCKET\" --user=\"$MYSQL_RUN_USER\""
-echo "$(date): CMD=$MYSQLD_CMD (run as $MYSQL_RUN_USER)" >> "$LOG_FILE"
-
-MYSQL_RUN_UID="$(id -u "$MYSQL_RUN_USER" 2>/dev/null || true)"
-
-if [ -z "$MYSQL_RUN_UID" ]; then
-  echo "$(date): ERROR: user $MYSQL_RUN_USER not found." >> "$LOG_FILE"
-  exit 1
-fi
+echo "$(date): Starting $MYSQLD_SAFE (run as $MYSQL_RUN_USER)" >> "$LOG_FILE"
 
 if [ "$CURRENT_UID" -eq 0 ]; then
   # Run directly as root; mysqld_safe will drop to --user=_mysql internally.
-  exec /bin/sh -c "$MYSQLD_CMD" >> "$LOG_FILE" 2>&1
+  exec "$MYSQLD_SAFE" \
+    --datadir="$DATADIR" \
+    --log-error="$MYSQL_ERR_LOG" \
+    --pid-file="$MYSQL_PID_FILE" \
+    --socket="$MYSQL_SOCKET" \
+    --user="$MYSQL_RUN_USER" \
+    >> "$LOG_FILE" 2>&1
 elif [ "$CURRENT_UID" -eq "$MYSQL_RUN_UID" ]; then
   # Already running as mysql user.
   exec $MYSQLD_SAFE \

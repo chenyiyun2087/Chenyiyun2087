@@ -14,12 +14,16 @@ from scripts.research.final_promotion import (
 
 def _make_fold_results(n_folds=3, n_days=30):
     folds = []
+    all_dates = pd.date_range("2023-01-02", periods=n_folds * n_days, freq="B")
     for fi in range(n_folds):
         nav_rows = []
         nav = 1.0
         for d in range(n_days):
             nav *= (1 + np.random.RandomState(fi * 100 + d).normal(0.001, 0.01))
-            nav_rows.append({"trade_date": f"2023-0{fi+1}-{d+1:02d}", "nav": nav})
+            nav_rows.append({
+                "trade_date": all_dates[fi * n_days + d].strftime("%Y-%m-%d"),
+                "nav": nav,
+            })
         fr = type("FR", (), {
             "fold_index": fi, "nav_rows": nav_rows,
             "window_label": f"202{fi+3}H1", "metrics": None, "trade_rows": [],

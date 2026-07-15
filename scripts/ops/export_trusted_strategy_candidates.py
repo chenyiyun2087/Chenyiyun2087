@@ -34,7 +34,7 @@ from runtime.provenance import ProvenanceEnvelope
 from runtime.release_registry import get_release
 from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
 from scripts.ops.data_readiness_gate import PipelineReadinessGate
-from scripts.ops.feishu_notifier import send_feishu_text_audited, strategy_identity_block
+from scripts.ops.feishu_notifier import strategy_identity_block
 from scripts.ops.market_regime import build_market_regime_decision
 from scripts.strategy_display import strategy_display_name
 from scripts.research_trusted_strategy_account_backtest import (
@@ -792,6 +792,152 @@ def _format_order_notification(
                     )
     lines.extend(["", f"候选报告：{files.get('markdown') or '-'}"])
     return "\n".join(lines)
+
+
+def _publish_order_notification_event(
+    engine,
+    *,
+    args: argparse.Namespace,
+    asof_date: str,
+    execution_date: str,
+    strategy: str,
+    candidates: pd.DataFrame,
+    orders: pd.DataFrame,
+    files: dict[str, str] | None,
+    risk_governor: dict[str, object] | None,
+    persistence_status: str,
+    blocked_reason: str | None = None,
+):
+    """Publish one typed order event after persistence state is known."""
+    from scripts.ops.feishu_notifier import NotificationEvent, publish_notification
+
+    candidates = candidates if candidates is not None else pd.DataFrame()
+    orders = orders if orders is not None else pd.DataFrame()
+    files = files or {}
+    risk_governor = risk_governor or {}
+    release_id = str(getattr(args, "release_id", None) or PRODUCTION_CONFIG.get("release_id") or "unreleased")
+    account_id = "default"
+
+    if blocked_reason or persistence_status == "BLOCKED":
+        event_type, severity, title = "strategy_orders_blocked", "ERROR", "策略订单已阻断"
+    elif orders.empty:
+        event_type, severity, title = "strategy_orders_no_rebalance", "INFO", "策略无需调仓"
+    elif persistence_status == "DB_WRITTEN":
+        event_type, severity, title = "strategy_orders_ready", "SUCCESS", "T+1策略订单草案已生成"
+    else:
+        event_type, severity, title = "strategy_orders_blocked", "WARNING", "策略订单未进入正式账本"
+        blocked_reason = blocked_reason or "订单仅生成本地文件，未成功写入正式订单账本。"
+    if getattr(args, "historical_reissue", False):
+        title = f"历史补发：{title}"
+
+    buy_orders = orders[orders["side"].eq("BUY")] if not orders.empty and "side" in orders else pd.DataFrame()
+    sell_orders = orders[orders["side"].eq("SELL")] if not orders.empty and "side" in orders else pd.DataFrame()
+
+    def _notional(frame):
+        if frame.empty:
+            return 0.0
+        share_values = (
+            frame["allocated_shares"] if "allocated_shares" in frame
+            else frame["delta_shares"] if "delta_shares" in frame
+            else pd.Series(0.0, index=frame.index)
+        )
+        price_values = frame["price"] if "price" in frame else pd.Series(0.0, index=frame.index)
+        shares = pd.to_numeric(share_values, errors="coerce").fillna(0).abs()
+        prices = pd.to_numeric(price_values, errors="coerce").fillna(0)
+        return float((shares * prices).sum())
+
+    industry_summary = "-"
+    concentration_warning = ""
+    if not candidates.empty and {"industry", "effective_weight"}.issubset(candidates.columns):
+        weights = candidates.assign(
+            _weight=pd.to_numeric(candidates["effective_weight"], errors="coerce").fillna(0.0),
+            _industry=candidates["industry"].fillna("未知行业").replace("", "未知行业"),
+        ).groupby("_industry")["_weight"].sum().sort_values(ascending=False)
+        industry_summary = "；".join(f"{name} {weight:.1%}" for name, weight in weights.head(3).items()) or "-"
+        industry_limit = float(
+            dict(PRODUCTION_CONFIG.get("portfolio_risk_budget") or {}).get(
+                "max_single_industry_weight_pct_nav", 40
+            )
+        ) / 100.0
+        if not weights.empty and float(weights.iloc[0]) > industry_limit:
+            concentration_warning = (
+                f"行业集中度超限：{weights.index[0]} {float(weights.iloc[0]):.1%} > {industry_limit:.1%}。"
+            )
+
+    order_lines = []
+    for row in orders.head(10).to_dict("records") if not orders.empty else []:
+        current_shares = int(float(row.get("current_shares") or 0))
+        target_shares = int(float(row.get("target_shares") or 0))
+        delta_shares = int(float(row.get("delta_shares") or 0))
+        price = float(row.get("price") or 0)
+        current_weight = float(row.get("current_weight") or 0)
+        target_weight = float(row.get("target_weight") or 0)
+        estimated = abs(delta_shares) * price
+        order_status = str(row.get("order_status") or row.get("status") or "DRAFT")
+        reason = row.get("reason") or row.get("status_reason") or ""
+        order_lines.append(
+            f"{row.get('side')} {row.get('ts_code')} {row.get('stock_name') or ''}："
+            f"{current_shares}→{target_shares}股（Δ{delta_shares:+d}），"
+            f"权重{current_weight:.1%}→{target_weight:.1%}，参考价{price:.2f}，"
+            f"预计{estimated:,.0f}元，状态={order_status}"
+            + (f"；原因={reason}" if reason else "")
+        )
+    if not order_lines:
+        order_lines.append("无订单变更。")
+
+    governor_reasons = [str(item) for item in list(risk_governor.get("reasons") or [])[:5]]
+    details = []
+    if blocked_reason:
+        details.append(f"阻断原因：{blocked_reason}")
+    if concentration_warning:
+        details.append(concentration_warning)
+    if governor_reasons:
+        details.append("风险原因：" + " / ".join(governor_reasons))
+    details.extend(order_lines)
+    details.append("本地订单草案，不自动提交券商；必须人工复核后执行。")
+
+    job_id = str(os.getenv("CHENYIYUN_TASK_JOB_ID") or "").strip()
+    attempt = str(os.getenv("CHENYIYUN_TASK_ATTEMPT") or "0").strip()
+    event_prefix = f"task:{job_id}:{attempt}" if job_id else f"orders:{release_id}:{execution_date}"
+    event_id = f"{event_prefix}:{event_type}"
+    if len(event_id) > 64:
+        event_id = f"orders:{hashlib.sha256(event_id.encode('utf-8')).hexdigest()[:48]}"
+    dedupe_key = f"{event_type}:{account_id}:{strategy}:{release_id}:{execution_date}"
+    if len(dedupe_key) > 150:
+        dedupe_key = f"{event_type}:{hashlib.sha256(dedupe_key.encode('utf-8')).hexdigest()}"
+    event = NotificationEvent(
+        event_type=event_type,
+        business_date=asof_date.replace("-", ""),
+        title=title,
+        severity=severity,
+        task_name="trusted_strategy_candidates",
+        run_id=f"task:{job_id}" if job_id else f"orders:{release_id}"[:64],
+        event_id=event_id,
+        dedupe_key=dedupe_key,
+        facts={
+            "信号日": asof_date,
+            "T+1执行日": execution_date,
+            "账户": account_id,
+            "生产策略": str(PRODUCTION_CONFIG.get("primary_strategy") or strategy),
+            "选股内核": strategy,
+            "Release": release_id,
+            "配置版本": str(PRODUCTION_CONFIG.get("config_sha") or "-"),
+            "持久化状态": persistence_status,
+            "健康状态": getattr(args, "health_grade", "UNKNOWN"),
+            "风险决策": risk_governor.get("risk_decision") or "-",
+            "目标仓位": f"{float(risk_governor.get('target_position_ratio') or 0):.0%}",
+            "允许买入": "是" if risk_governor.get("allow_new_buys", True) else "否",
+            "人工确认": "是" if getattr(args, "manual_confirmation", False) else "否",
+            "候选/订单": f"{len(candidates)} / {len(orders)}（BUY {len(buy_orders)} / SELL {len(sell_orders)}）",
+            "买入/卖出额": f"{_notional(buy_orders):,.0f} / {_notional(sell_orders):,.0f} 元",
+            "行业集中": industry_summary,
+        },
+        details=tuple(details),
+        artifact_paths=tuple(
+            str(path) for path in (files.get("markdown"), files.get("csv"), files.get("orders_csv")) if path
+        ),
+    )
+    return publish_notification(engine, event)
 
 
 def _write_strategy_order_detail_outputs(
@@ -2568,6 +2714,8 @@ def export_candidates(args: argparse.Namespace) -> dict:
         raise RuntimeError(f"Pipeline readiness blocked order draft generation: {failed}")
     files = _write_outputs(out_dir, candidates, factor_weights, market_env, params, warnings)
     db_write: dict[str, object] = {}
+    orders = pd.DataFrame()
+    order_block_reason: str | None = None
     canary_orders = pd.DataFrame()
     canary_total_equity: float | None = None
     canary_order_path: Path | None = None
@@ -2625,6 +2773,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 f"Order generation ABORTED."
             )
             warnings.append(msg)
+            order_block_reason = msg
             print(f"[ERROR] {msg}", file=sys.stderr)
             (out_dir / "ORDER_GENERATION_BLOCKED.txt").write_text(
                 msg + "\nUntradable: " + str(untradable), encoding="utf-8"
@@ -2995,71 +3144,43 @@ def export_candidates(args: argparse.Namespace) -> dict:
         detail_files = _write_strategy_order_detail_outputs(out_dir, strategy_order_details)
         db_write["strategy_order_detail_files"] = detail_files
         if args.notify_feishu:
-            content = _format_order_notification(
+            event_files = {**files, "orders_csv": str(order_path)}
+            delivery = _publish_order_notification_event(
+                engine,
+                args=args,
                 asof_date=asof_date,
-                strategy=spec.name,
+                execution_date=_next_trading_day(engine, asof_date),
+                strategy=str(getattr(args, "strategy", None) or spec.name),
                 candidates=candidates,
                 orders=orders,
-                files=files,
-                total_equity_used=total_equity,
-                risk_profile=str(args.risk_profile),
-                risk_profile_description=str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
-                strategy_order_details=strategy_order_details,
-                health_grade=getattr(args, "health_grade", "UNKNOWN"),
-                health_date=getattr(args, "health_date", ""),
-                manual_confirmation_required=getattr(args, "manual_confirmation", False),
-                canary_orders=canary_orders,
-                canary_total_equity=canary_total_equity,
-                canary_orders_path=str(canary_order_path) if canary_order_path else None,
+                files=event_files,
+                risk_governor=risk_governor,
+                persistence_status=(
+                    "DB_WRITTEN" if args.write_db and "orders_written_v2" in db_write else "CSV_ONLY"
+                ),
             )
-            if getattr(args, "historical_reissue", False):
-                content = "【历史补发】\n" + content
-            ok, reason = send_feishu_text_audited(
-                engine,
-                content,
-                business_date=asof_date.replace("-", ""),
-                notification_type="trusted_strategy_candidates",
-                task_name="trusted_strategy_candidates",
-                dedupe_key=f"trusted_strategy_candidates:{asof_date.replace('-', '')}",
-            )
-            db_write["feishu_notify"] = reason
-            if not ok:
-                print(f"[WARN] Feishu notification queued for retry: {reason}")
+            db_write["feishu_notify"] = delivery.reason
+            if not delivery.ok:
+                print(f"[WARN] Feishu notification queued for retry: {delivery.reason}")
     # Candidate selection is a production business event even when order emission
     # is intentionally disabled (for example, a historical repair).
     if args.notify_feishu and "feishu_notify" not in db_write:
-        notification_total_equity = (
-            float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine)
-        )
-        content = _format_order_notification(
+        delivery = _publish_order_notification_event(
+            engine,
+            args=args,
             asof_date=asof_date,
-            strategy=spec.name,
+            execution_date=_next_trading_day(engine, asof_date),
+            strategy=str(getattr(args, "strategy", None) or spec.name),
             candidates=candidates,
-            orders=pd.DataFrame(),
+            orders=orders,
             files=files,
-            total_equity_used=notification_total_equity,
-            risk_profile=str(args.risk_profile),
-            risk_profile_description=str(RISK_PROFILE_DEFAULTS[str(args.risk_profile)]["description"]),
-            strategy_order_details={},
-            health_grade=getattr(args, "health_grade", "UNKNOWN"),
-            health_date=getattr(args, "health_date", ""),
-            manual_confirmation_required=getattr(args, "manual_confirmation", False),
-            canary_orders=canary_orders,
-            canary_total_equity=canary_total_equity,
-            canary_orders_path=str(canary_order_path) if canary_order_path else None,
+            risk_governor=risk_governor,
+            persistence_status="BLOCKED" if order_block_reason else "CSV_ONLY",
+            blocked_reason=order_block_reason,
         )
-        if getattr(args, "historical_reissue", False):
-            content = "【历史补发】\n" + content
-        ok, reason = send_feishu_text_audited(
-            engine, content,
-            business_date=asof_date.replace("-", ""),
-            notification_type="trusted_strategy_candidates",
-            task_name="trusted_strategy_candidates",
-            dedupe_key=f"trusted_strategy_candidates:{asof_date.replace('-', '')}",
-        )
-        db_write["feishu_notify"] = reason
-        if not ok:
-            print(f"[WARN] Feishu notification queued for retry: {reason}")
+        db_write["feishu_notify"] = delivery.reason
+        if not delivery.ok:
+            print(f"[WARN] Feishu notification queued for retry: {delivery.reason}")
 
     return {
         "params": params,
@@ -3147,7 +3268,34 @@ def main() -> None:
     )
     if args.ashare_supplement_limit is None:
         args.ashare_supplement_limit = int(PRODUCTION_CONFIG["ashare_supplement_limit"])
-    print(json.dumps(export_candidates(args), ensure_ascii=False, indent=2, default=str))
+    try:
+        result = export_candidates(args)
+    except Exception as exc:
+        if args.notify_feishu:
+            try:
+                blocked_engine = create_engine(build_sqlalchemy_url())
+                blocked_date = _normalize_date(args.date) or datetime.now().strftime("%Y-%m-%d")
+                try:
+                    blocked_execution_date = _next_trading_day(blocked_engine, blocked_date)
+                except Exception:
+                    blocked_execution_date = "待确认"
+                _publish_order_notification_event(
+                    blocked_engine,
+                    args=args,
+                    asof_date=blocked_date,
+                    execution_date=blocked_execution_date,
+                    strategy=str(args.strategy or PRODUCTION_CONFIG.get("primary_selection_strategy") or "unknown"),
+                    candidates=pd.DataFrame(),
+                    orders=pd.DataFrame(),
+                    files={},
+                    risk_governor={},
+                    persistence_status="BLOCKED",
+                    blocked_reason=str(exc),
+                )
+            except Exception as notify_exc:
+                print(f"[WARN] Failed to publish blocked order notification: {notify_exc}", file=sys.stderr)
+        raise
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
 if __name__ == "__main__":

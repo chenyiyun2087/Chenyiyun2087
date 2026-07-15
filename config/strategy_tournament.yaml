@@ -1,0 +1,54 @@
+schema_version: "1.0"
+
+tournament:
+  baseline_strategy: production_governed_vol_position
+  oos_start: "2024-01-01"
+  full_history_start: "2013-01-01"
+  initial_cash: 500000
+  top_n: 5
+  max_total_positions: 5
+  execution_mode: strict_t1_open_precommit
+  base_cost_rate: 0.00075
+  base_slippage_bps: 10
+  stress_cost_rate: 0.0030
+  stress_slippage_bps: 50
+  capacities: [100000, 500000, 1500000, 3000000, 5000000, 10000000]
+
+  hard_gates:
+    min_net_oos_annualized_return: 0.20
+    max_oos_drawdown_abs: 0.20
+    min_positive_quarter_ratio: 0.55
+    min_dsr_confidence: 0.90
+    max_pbo: 0.25
+    min_corporate_action_coverage: 1.00
+    max_t_plus_one_violations: 0
+    min_stress_annualized_return: 0.00
+    max_single_position_weight: 0.20
+    max_single_industry_weight: 0.40
+    max_correlated_theme_weight: 0.55
+    max_single_order_adv_ratio: 0.01
+
+  shadow_release:
+    disabled_shadow_days: 20
+    enabled_shadow_days: 60
+    min_completed_round_trips: 30
+    max_reconciliation_errors: 0
+    max_incremental_hard_block_days: 0
+    max_execution_proxy_missing_days: 0
+    approval_count: 1
+    canary_max_capital: 100000
+    canary_execution_mode: manual_confirmation
+
+  composite_candidates:
+    market_exposure_governor_v1:
+      candidate_type: composite
+      underlying_releases: [production_governed_vol_position]
+      complexity_rank: 2
+    meta_allocator_v1:
+      candidate_type: composite
+      underlying_releases:
+        - production_governed_vol_position
+        - tiered_liquidity_then_bs_v2
+        - adaptive_market_style
+      complexity_rank: 3
+

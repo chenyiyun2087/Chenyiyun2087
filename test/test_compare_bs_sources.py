@@ -17,6 +17,10 @@ class FakeEngine:
 def test_missing_source_data_exits_nonzero(monkeypatch, capsys):
     engine = FakeEngine()
     frames = iter([pd.DataFrame({"stock_code": ["000001"]}), pd.DataFrame()])
+    monkeypatch.setenv(
+        "CHENYIYUN_DB_URL",
+        "mysql+pymysql://" + "readonly:test-only@" + "localhost:3306/chenyiyun",
+    )
     monkeypatch.setattr(compare_bs_sources, "create_engine", lambda _: engine)
     monkeypatch.setattr(compare_bs_sources, "load_signals", lambda *args: next(frames))
     monkeypatch.setattr(

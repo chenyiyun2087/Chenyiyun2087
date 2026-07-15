@@ -132,6 +132,7 @@ def test_task_command_includes_notify_and_review_window():
 
     assert "--notify-feishu" in parts
     assert "--review-window-days" in parts
+    assert "--allow-substitute-diagnostic" in parts
     assert "63" in parts
     assert parts[-2:] == ["--date", "20260624"]
 

@@ -137,10 +137,9 @@ def runner_spec() -> MatchedExperimentSpec:
 
 
 def test_fixed_validation_windows():
-    assert len(FIXED_VALIDATION_WINDOWS) == 3
-    assert FIXED_VALIDATION_WINDOWS[0] == ("2025-01-01", "2025-06-30")
-    assert FIXED_VALIDATION_WINDOWS[1] == ("2025-07-01", "2025-12-31")
-    assert FIXED_VALIDATION_WINDOWS[2] == ("2026-01-01", "2026-06-30")
+    assert len(FIXED_VALIDATION_WINDOWS) == 10
+    assert FIXED_VALIDATION_WINDOWS[0] == ("2024-01-01", "2024-03-31")
+    assert FIXED_VALIDATION_WINDOWS[-1] == ("2026-04-01", "2026-06-30")
 
 
 def test_folds_generated(sample_calendar):

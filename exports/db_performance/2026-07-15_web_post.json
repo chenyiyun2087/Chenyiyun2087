@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-07-15T12:45:49.504784+08:00",
+  "base_url": "http://127.0.0.1:5001",
+  "results": [
+    {
+      "endpoint": "/sina/scores?per_page=50",
+      "samples": 10,
+      "p50_ms": 53.13,
+      "p95_ms": 91.964,
+      "max_ms": 91.964,
+      "mean_ms": 57.113,
+      "response_bytes": 147830
+    },
+    {
+      "endpoint": "/sina/scores/all?per_page=50",
+      "samples": 10,
+      "p50_ms": 42.113,
+      "p95_ms": 45.311,
+      "max_ms": 45.311,
+      "mean_ms": 42.235,
+      "response_bytes": 150343
+    },
+    {
+      "endpoint": "/sina/self_selected?per_page=50",
+      "samples": 10,
+      "p50_ms": 49.058,
+      "p95_ms": 50.339,
+      "max_ms": 50.339,
+      "mean_ms": 46.697,
+      "response_bytes": 147759
+    }
+  ]
+}

@@ -278,6 +278,12 @@ class AlphaEstimator:
         for factor_name in factor_functions:
             raw_col = f"{factor_name}_raw"
             raw = pd.to_numeric(result[raw_col], errors="coerce")
+            weight = float(fitted_state.factor_weights.get(factor_name, 0.0))
+            # Factors outside the fitted state are inactive.  Requiring their
+            # values would turn a sparse, frozen model into a different model
+            # at transform time and can incorrectly empty the PIT universe.
+            if abs(weight) <= 1e-12:
+                continue
             # PR26A.5: Fail-closed — stocks with missing factor values
             # accumulate NaN rank_score and are excluded by the
             # completeness mask below.
@@ -288,7 +294,6 @@ class AlphaEstimator:
                     CrossSectionalProcessor.winsorize(raw[valid])
                 )
                 standardized[valid] = processed.values
-            weight = float(fitted_state.factor_weights.get(factor_name, 0.0))
             sign = int(fitted_state.factor_signs.get(factor_name, 1))
             # PR26A.5: Only accumulate valid (non-NaN) factor contributions.
             # Stocks with missing factors retain their partial rank_score
@@ -305,6 +310,29 @@ class AlphaEstimator:
         # Neutralize the composite rank_score against industry, market cap,
         # and volatility to remove systematic beta before ranking.
         neutral_params = fitted_state.neutralization_parameters
+
+        # Derive the requested volatility exposure from the PIT price history
+        # when callers provide raw prices but no pre-computed risk panel.  The
+        # slice above is already capped at ``as_of_date``, so this cannot read
+        # future observations.  Keep a minimum-history requirement so a thin
+        # panel still fails closed during the completeness check below.
+        if (
+            neutral_params.get("volatility_20d", False)
+            and "vol20" not in pit_prices.columns
+            and "pit_vol_20" not in pit_prices.columns
+            and "adj_close" in pit_prices.columns
+        ):
+            pit_prices = pit_prices.sort_values(["symbol", "trade_date"]).copy()
+            pit_prices["_pit_daily_return"] = pit_prices.groupby(
+                "symbol", sort=False
+            )["adj_close"].pct_change(fill_method=None)
+            pit_prices["pit_vol_20"] = pit_prices.groupby(
+                "symbol", sort=False
+            )["_pit_daily_return"].transform(
+                lambda values: values.rolling(20, min_periods=10).std(ddof=0)
+                * np.sqrt(252.0)
+            )
+            pit_prices = pit_prices.drop(columns=["_pit_daily_return"])
 
         # Merge PIT metadata from prices for the signal date
         price_meta = pit_prices[

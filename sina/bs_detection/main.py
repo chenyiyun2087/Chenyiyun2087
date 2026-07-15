@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from BSpointChecker import main as capture_main
 from SinaBSDetector import batch_process_images, get_base_dir
 import pymysql
+from scoreRank.core.db_config import require_pymysql_config
 
 
 logging.basicConfig(
@@ -272,11 +273,6 @@ def parse_args():
     parser.add_argument("--base-dir", help="截图/检测基础目录，默认使用 SinaAppBS")
     parser.add_argument("--archive-days", type=int, help="归档天数阈值，0表示不归档")
     parser.add_argument("--stock-codes", help="指定股票代码列表，逗号分隔")
-    parser.add_argument("--mysql-host", default="localhost", help="MySQL主机地址")
-    parser.add_argument("--mysql-port", type=int, default=3306, help="MySQL端口")
-    parser.add_argument("--mysql-user", default="root", help="MySQL用户名")
-    parser.add_argument("--mysql-password", default="19871019", help="MySQL密码")
-    parser.add_argument("--mysql-db", default="chenyiyun", help="MySQL数据库名")
     return parser.parse_args()
 
 
@@ -301,15 +297,8 @@ if __name__ == "__main__":
     if args.stock_codes:
         overrides["stock_codes"] = [code.strip() for code in args.stock_codes.split(",") if code.strip()]
 
-    overrides["mysql_config"] = {
-        "host": args.mysql_host,
-        "port": args.mysql_port,
-        "user": args.mysql_user,
-        "password": args.mysql_password or "",
-        "database": args.mysql_db,
-        "charset": "utf8mb4",
-        "autocommit": True,
-    }
+    overrides["mysql_config"] = require_pymysql_config(dict_cursor=False)
+    overrides["mysql_config"]["autocommit"] = True
     raise SystemExit(
         run_pipeline(
             config_name=config_name,

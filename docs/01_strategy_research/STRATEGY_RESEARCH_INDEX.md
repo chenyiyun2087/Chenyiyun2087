@@ -2,6 +2,8 @@
 
 | 主题 | 目录/文件 | 当前状态 | 最新结论 |
 |---|---|---|---|
+| 三个月冠军策略轮动 | `docs/01_strategy_research/2026-07-13_三个月冠军策略轮动研究实施.md` | v1.1研究实现，数据源阻断 | 63日冠军、126日确认、财报季加严、失效/成本/置信度保护及顺序晋级状态机；数据库凭证、严格账本或真实影子证据缺失时 fail closed。 |
+| 全策略统一赛马与生产门禁 | `docs/01_strategy_research/2026-07-12_全策略统一赛马与生产门禁.md` | 已实现，正式证据阻断 | 单策略与组合使用同一 fail-closed 赛马契约；无人通过 20%净年化、20%回撤、统计、账本、成本和容量硬门槛时不晋级。 |
 | Full Strategy V3 PR16 单一经济路径 | `docs/01_strategy_research/2026-07-10_Full_Strategy_V3_PR16_单一经济路径.md` | PR16验证通过，待合并 | P0/C0 已由显式 runtime 贯通；真实60交易日复制候选、Top5、权重、仓位和退出均为0差异。Alpha/Risk/Exit仍保持研究阻断，待PR17三窗口证据。 |
 | 可信全量池流动性策略 | `docs/tasks/20260512-full-pool-liquidity-strategy.md` | 持续迭代 | 当前生产默认底座为 `production_governed_vol_position`，底层选股引擎为 `baseline_full_liquidity_detail_vol_position`，`adaptive_market_style` 保留为高效率挑战者。 |
 | 生产操作手册 | `docs/production_trusted_strategy_usage.md` | 可用 | 日终候选导出、订单草案、飞书通知和影子盘监控已接入。 |

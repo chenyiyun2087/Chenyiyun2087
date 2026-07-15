@@ -9,7 +9,9 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import pymysql
 import pytesseract
+from scoreRank.core.db_config import require_pymysql_config
 
 try:
     from .SinaLatestBSShow import print_latest_buy_signals
@@ -56,7 +58,9 @@ CREATE TABLE IF NOT EXISTS bs_detection_results (
     process_time VARCHAR(32),
     image_path TEXT,
     created_at DATETIME NOT NULL,
-    UNIQUE KEY uniq_bs_detection (batch_name, batch_date, stock_code)
+    UNIQUE KEY uniq_bs_detection (batch_name, batch_date, stock_code),
+    KEY idx_bs_batch_stock (batch_date, stock_code),
+    KEY idx_bs_stock_state (stock_code, batch_date, has_buy_signal, has_sell_signal)
 );
 """
 MYSQL_INSERT_SQL = """
@@ -100,8 +104,6 @@ def normalize_stock_codes(stock_codes):
 
 
 def init_mysql_db(mysql_config):
-    import pymysql
-
     base_config = {k: v for k, v in mysql_config.items() if k != "database"}
     database = mysql_config.get("database")
     if not database:
@@ -534,13 +536,7 @@ def batch_process_images(
     print(f"平均每个文件: {processing_time / len(image_files):.2f} 秒")
 
     if mysql_config is None:
-        mysql_config = {
-            "host": "localhost",
-            "user": "root",
-            "password": "19871019",
-            "database": "chenyiyun",
-            "charset": "utf8mb4",
-        }
+        mysql_config = require_pymysql_config(dict_cursor=False)
 
     # 保存结果到Excel
     deduped_results = deduplicate_results(DETECTION_RESULTS)

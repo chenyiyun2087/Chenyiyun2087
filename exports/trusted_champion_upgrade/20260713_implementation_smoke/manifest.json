@@ -1,0 +1,10 @@
+{
+  "strategy_id": "trusted_champion_rotation_v1",
+  "generated_at": "2026-07-13T04:08:10.633814+00:00",
+  "files": {
+    "data_source_status.json": "264ee6a3cc0810d33b021b9f3722402a18d812b325469eca3d7f29586abc14d0"
+  },
+  "production_mutation_enabled": false,
+  "order_generation_enabled": false,
+  "broker_api_enabled": false
+}

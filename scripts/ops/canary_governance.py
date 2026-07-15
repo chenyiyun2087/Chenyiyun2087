@@ -23,7 +23,7 @@ class CanaryDecision:
 def evaluate_canary_eligibility(
     canary: dict[str, Any], *, strict_ledger_passed: bool,
     enabled_shadow_passed: bool, shadow_real_trading_days: int,
-    completed_round_trips: int, health_grade: str,
+    disabled_shadow_real_trading_days: int, completed_round_trips: int, health_grade: str,
     release_approved: bool,
 ) -> CanaryDecision:
     """Evaluate the L2→L3 manual-canary gate without making external writes."""
@@ -39,8 +39,12 @@ def evaluate_canary_eligibility(
         reasons.append("invalid_canary_capital_limit")
     if not strict_ledger_passed:
         reasons.append("strict_ledger_not_verified")
-    if not enabled_shadow_passed or shadow_real_trading_days < 20:
+    if disabled_shadow_real_trading_days < 20:
+        reasons.append("disabled_shadow_not_ready")
+    if not enabled_shadow_passed or shadow_real_trading_days < 60:
         reasons.append("enabled_shadow_not_ready")
+    if completed_round_trips < 30:
+        reasons.append("shadow_round_trips_insufficient")
     if health_grade.upper() != "GREEN":
         reasons.append("strategy_health_not_green")
     if bool(canary.get("require_release_approval", True)) and not release_approved:
@@ -56,6 +60,7 @@ def evaluate_canary_eligibility(
         evidence={
             "strict_ledger_passed": strict_ledger_passed,
             "enabled_shadow_passed": enabled_shadow_passed,
+            "disabled_shadow_real_trading_days": disabled_shadow_real_trading_days,
             "shadow_real_trading_days": shadow_real_trading_days,
             "completed_round_trips": completed_round_trips,
             "health_grade": health_grade.upper(),

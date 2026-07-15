@@ -7,7 +7,7 @@
 | RESEARCH | Backtest, parameter study, attribution | None | None |
 | SHADOW_DISABLED | Daily simulation, no orders | None | Strategy owner |
 | SHADOW_ENABLED | Full simulation with execution proxy | None | Strategy owner |
-| CANARY | Small real capital | 5-10% target | Strategy owner + risk officer |
+| CANARY | Small real capital | 5-10% target | Strategy owner（单人留痕审批，机器硬门槛不可覆盖） |
 | SCALED | Staged capital increase | 25/50/100% | Strategy owner + risk officer + compliance |
 | PRODUCTION | Full production | 100% target | Full approval chain |
 
@@ -33,13 +33,13 @@
 - [ ] Manual approval recorded
 
 ### SHADOW_ENABLED → CANARY
-- [ ] 60 real trading days of enabled shadow
+- [ ] 60 real trading days of enabled shadow（在前述 20 日 disabled shadow 完成之后单独计时）
 - [ ] 30+ completed round trips
 - [ ] 0 reconciliation errors
 - [ ] Realized slippage ≤ model P95 for 95%+ of fills
 - [ ] No risk governor false negatives
 - [ ] Canary drawdown within OOS 95% CI
-- [ ] Manual approval recorded
+- [ ] Strategy owner approval recorded once against the immutable evidence package
 
 ### CANARY → SCALED (10% → 25% → 50% → 100%)
 - [ ] 60 days at current stage

@@ -100,9 +100,8 @@ def main() -> None:
     )
 
     # Initialize Controller
-    mysql_config = config.get("mysql")
     try:
-        controller = DataController(mysql_config=mysql_config)
+        controller = DataController()
     except Exception as e:
         logger.error("Controller Init Failed: %s", e)
         sys.exit(1)

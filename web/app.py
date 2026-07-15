@@ -4,6 +4,7 @@ import os
 import pymysql
 import json
 import csv
+import hashlib
 from pathlib import Path
 from datetime import datetime, timedelta, date
 from decimal import Decimal, InvalidOperation
@@ -72,6 +73,10 @@ app.secret_key = os.getenv("CHENYIYUN_WEB_SECRET_KEY", os.urandom(32))
 
 # Database Configuration
 DB_CONFIG = build_pymysql_config()
+
+# Production startup performs schema migration once. Existing request-level
+# compatibility calls then become no-ops, avoiding repeated SHOW/DDL/upserts.
+_WEB_SCHEMA_INITIALIZED = False
 
 DEFAULT_CHENYIYUN_SELECTED_SETTINGS = {
     "stock_count": 10,
@@ -581,6 +586,8 @@ def _fmt_num(v, ndigits=4):
 
 
 def _ensure_task_management_schema(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS app_task_status (
@@ -780,6 +787,8 @@ def _default_notification_channels():
 
 
 def _ensure_notification_channel_schema(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS app_notification_channel (
@@ -1222,7 +1231,10 @@ def _get_batch_monitor_data(business_date):
     }
     feishu_summary = {
         "ok": sum(str(row.get("status") or "").lower() == "ok" for row in feishu_deliveries),
-        "failed": sum(str(row.get("status") or "").lower() in {"failed", "no_webhook"} for row in feishu_deliveries),
+        "failed": sum(
+            str(row.get("status") or "").lower() in {"failed", "no_webhook", "dead", "notification_failed"}
+            for row in feishu_deliveries
+        ),
     }
     return {
         "rows": rows,
@@ -1695,6 +1707,70 @@ def _dependency_state(cursor, task_name, business_date):
     return "READY", ""
 
 
+def _send_task_blocked_notification(job, reason):
+    try:
+        from sqlalchemy import create_engine
+        from scripts.ops.feishu_notifier import NotificationEvent, publish_notification
+
+        queue_id = int(job.get("id") or 0)
+        attempt = int(job.get("attempt_count") or 0)
+        event = NotificationEvent(
+            event_type="task_blocked",
+            business_date=str(job.get("business_date") or datetime.now().strftime("%Y%m%d")),
+            title="任务被上游失败阻断",
+            severity="WARNING",
+            task_name=str(job.get("task_name") or ""),
+            run_id=f"task:{queue_id}",
+            event_id=f"task:{queue_id}:{attempt}:task_blocked",
+            dedupe_key=f"task_blocked:{queue_id}",
+            facts={
+                "任务": TASKS.get(job.get("task_name"), {}).get("name") or job.get("task_name"),
+                "任务ID": job.get("task_name"),
+                "队列ID": queue_id,
+                "触发方式": job.get("trigger_type") or "-",
+                "失败阶段": "上游依赖",
+                "状态": "BLOCKED",
+            },
+            details=(str(reason or "上游任务失败。"), "先修复并补跑上游任务，再重新执行当前任务。"),
+            actions=_task_notification_action(queue_id),
+        )
+        publish_notification(create_engine(build_sqlalchemy_url()), event)
+    except Exception as exc:
+        print(f"Task blocked notification error ({job.get('task_name')}): {exc}")
+
+
+def _send_scheduler_enqueue_failure(task_name, business_date, reason):
+    try:
+        from sqlalchemy import create_engine
+        from scripts.ops.feishu_notifier import NotificationEvent, publish_notification
+
+        raw_run_id = f"scheduler:{task_name}:{business_date}"
+        run_id = (
+            raw_run_id if len(raw_run_id) <= 64
+            else f"scheduler:{hashlib.sha256(raw_run_id.encode('utf-8')).hexdigest()[:48]}"
+        )
+        event = NotificationEvent(
+            event_type="task_failed",
+            business_date=business_date,
+            title="定时任务入队失败",
+            severity="ERROR",
+            task_name=task_name,
+            run_id=run_id,
+            event_id=f"{run_id}:failed"[:64],
+            dedupe_key=f"scheduler_enqueue_failed:{task_name}:{business_date}",
+            facts={
+                "任务": TASKS.get(task_name, {}).get("name") or task_name,
+                "任务ID": task_name,
+                "失败阶段": "调度入队",
+                "错误分类": "SCHEDULER_ENQUEUE",
+            },
+            details=(str(reason or "未知入队错误"), "检查任务队列表和数据库连接后人工补跑。"),
+        )
+        publish_notification(create_engine(build_sqlalchemy_url()), event)
+    except Exception as exc:
+        print(f"Scheduler failure notification error ({task_name}): {exc}")
+
+
 def _claim_next_queued_task():
     """Atomically claim one ready job. Waiting jobs remain visible as PENDING."""
     conn = None
@@ -1718,7 +1794,9 @@ def _claim_next_queued_task():
                            active_dedupe_key=NULL WHERE id=%s""",
                         (dep_message, job["id"]),
                     )
-                    continue
+                    conn.commit()
+                    _send_task_blocked_notification(job, dep_message)
+                    return None
                 cursor.execute(
                     """UPDATE app_task_queue SET status='RUNNING', started_at=NOW(),
                        attempt_count=attempt_count+1, message='running' WHERE id=%s""",
@@ -1779,8 +1857,21 @@ def _classify_task_failure(history_status, exit_code, message):
 
 
 def _finish_queued_task(job, history_status, exit_code, message):
-    """Finish a claimed job, scheduling exactly one automatic retry when needed."""
+    """Finish a claimed job and return notification-relevant terminal metadata."""
     conn = None
+    result = {
+        "queue_id": int(job.get("id") or 0),
+        "attempt": int(job.get("attempt_count") or 0),
+        "max_attempts": int(job.get("max_attempts") or 2),
+        "exit_code": exit_code,
+        "error_kind": None,
+        "retryable": False,
+        "will_retry": False,
+        "retry_delay_seconds": None,
+        "next_retry_at": None,
+        "final_status": "SUCCESS" if history_status == "Success" else "FAILED",
+        "recovered": history_status == "Success" and int(job.get("attempt_count") or 0) > 1,
+    }
     try:
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
@@ -1792,6 +1883,19 @@ def _finish_queued_task(job, history_status, exit_code, message):
                 max_attempts = max(max_attempts, DATA_READINESS_MAX_ATTEMPTS)
                 retry_delay = DATA_READINESS_RETRY_DELAY_SECONDS
             retry = retryable and int(job.get("attempt_count") or 0) < max_attempts
+            result.update(
+                {
+                    "max_attempts": max_attempts,
+                    "error_kind": error_kind,
+                    "retryable": bool(retryable),
+                    "will_retry": bool(retry),
+                    "retry_delay_seconds": retry_delay if retry else None,
+                    "next_retry_at": (
+                        datetime.now() + timedelta(seconds=retry_delay)
+                    ).isoformat(timespec="seconds") if retry else None,
+                    "final_status": "RETRYING" if retry else result["final_status"],
+                }
+            )
             if retry:
                 cursor.execute(
                     """UPDATE app_task_queue SET status='PENDING', available_at=DATE_ADD(NOW(), INTERVAL %s SECOND),
@@ -1810,9 +1914,11 @@ def _finish_queued_task(job, history_status, exit_code, message):
         if conn:
             conn.rollback()
         print(f"Failed to finish queued task {job.get('id')}: {e}")
+        result.update({"final_status": "FAILED", "error_kind": "QUEUE_FINALIZE", "will_retry": False})
     finally:
         if conn:
             conn.close()
+    return result
 
 
 def _read_text_tail(file_path, max_chars):
@@ -2937,197 +3043,218 @@ def _build_task_completion_notification(task_name, trigger_type, started_at, fin
     return "\n".join(lines)
 
 
-def _build_channel_payload(channel_key, content):
-    text = str(content or "")
-    if channel_key == "feishu":
-        return {"msg_type": "text", "content": {"text": text}}
-    if channel_key == "wechat":
-        return {"msgtype": "markdown", "markdown": {"content": text}}
-    if channel_key == "dingtalk":
-        return {"msgtype": "markdown", "markdown": {"title": "任务完成通知", "text": text}}
-    return {"text": text, "content": text}
-
-
-def _is_webhook_response_ok(status_code, body):
-    if status_code < 200 or status_code >= 300:
-        return False, f"http_status={status_code}"
-    try:
-        parsed = json.loads(body) if body else {}
-    except Exception:
-        return True, "http_ok"
-    if not isinstance(parsed, dict):
-        return True, "http_ok"
-    errcode = parsed.get("errcode")
-    code = parsed.get("code")
-    status_code_field = parsed.get("StatusCode")
-    if errcode not in (None, 0, "0"):
-        return False, f"errcode={errcode}"
-    if code not in (None, 0, "0"):
-        return False, f"code={code}"
-    if status_code_field not in (None, 0, "0"):
-        return False, f"StatusCode={status_code_field}"
-    return True, "ok"
-
-
-def _post_channel_webhook(channel_key, webhook_url, content):
-    payload = _build_channel_payload(channel_key, content)
-    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        webhook_url,
-        data=raw,
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            status = int(resp.getcode() or 0)
-            body = resp.read().decode("utf-8", errors="ignore")
-            ok, reason = _is_webhook_response_ok(status, body)
-            return ok, reason
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="ignore") if hasattr(e, "read") else str(e)
-        return False, f"http_error={e.code}; body={body[:200]}"
-    except Exception as e:
-        return False, f"exception={e}"
-
-
-def _record_notification_delivery(cursor, *, business_date, notification_type, task_name, channel_key, status, reason, dedupe_key=None):
-    cursor.execute(
-        """
-        INSERT INTO app_notification_delivery
-            (business_date, notification_type, task_name, channel_key, status, reason, dedupe_key)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            business_date,
-            notification_type,
-            task_name,
-            channel_key,
-            status,
-            str(reason or "")[:2000],
-            dedupe_key,
-        ),
-    )
-
-
-def _dispatch_task_notification(content, *, business_date=None, notification_type="task_completion", task_name=None, dedupe_key=None):
+def _has_successful_business_notification(task_name, business_date, event_id_prefix=None):
     conn = pymysql.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
-            channels = _load_notification_channels_from_cursor(cursor)
-
-            enabled_channels = [
-                row for row in channels
-                if int(row.get("enabled") or 0) == 1 and _normalize_webhook_url(row.get("webhook_url"))
-            ]
-            if not enabled_channels:
-                _record_notification_delivery(
-                    cursor,
-                    business_date=business_date or datetime.now().strftime("%Y%m%d"),
-                    notification_type=notification_type,
-                    task_name=task_name,
-                    channel_key="all",
-                    status="no_webhook",
-                    reason="no enabled webhook channels configured",
-                    dedupe_key=dedupe_key,
+            if event_id_prefix:
+                try:
+                    cursor.execute(
+                        """SELECT 1 FROM app_notification_delivery
+                           WHERE business_date=%s AND task_name=%s AND status='ok'
+                             AND notification_type NOT LIKE 'task_%%'
+                             AND event_id LIKE %s
+                           LIMIT 1""",
+                        (business_date, task_name, f"{event_id_prefix}:%"),
+                    )
+                except Exception:
+                    return False
+            else:
+                cursor.execute(
+                    """SELECT 1 FROM app_notification_delivery
+                       WHERE business_date=%s AND task_name=%s AND status='ok'
+                         AND notification_type <> 'task_completion'
+                       LIMIT 1""",
+                    (business_date, task_name),
                 )
-                conn.commit()
-                from sqlalchemy import create_engine
-                from scripts.ops.feishu_notifier import enqueue_notification_retry
-                enqueue_notification_retry(
-                    create_engine(build_sqlalchemy_url()), content,
-                    business_date=business_date or datetime.now().strftime("%Y%m%d"),
-                    notification_type=notification_type, task_name=task_name,
-                    dedupe_key=dedupe_key or f"{notification_type}:{task_name}:{business_date}",
-                    reason="no enabled webhook channels configured",
-                )
-                print("Task notification skipped: no enabled webhook channels configured.")
-                return
-
-            success_cnt = 0
-            fail_logs = []
-            for row in enabled_channels:
-                channel_key = row.get("channel_key")
-                webhook_url = _normalize_webhook_url(row.get("webhook_url"))
-                if not webhook_url:
-                    continue
-                ok, reason = _post_channel_webhook(channel_key, webhook_url, content)
-                _record_notification_delivery(
-                    cursor,
-                    business_date=business_date or datetime.now().strftime("%Y%m%d"),
-                    notification_type=notification_type,
-                    task_name=task_name,
-                    channel_key=channel_key,
-                    status="ok" if ok else "failed",
-                    reason=reason,
-                    dedupe_key=dedupe_key,
-                )
-                if ok:
-                    success_cnt += 1
-                else:
-                    fail_logs.append(f"{channel_key}:{reason}")
-                    if channel_key == "feishu":
-                        from sqlalchemy import create_engine
-                        from scripts.ops.feishu_notifier import enqueue_notification_retry
-                        enqueue_notification_retry(
-                            create_engine(build_sqlalchemy_url()), content,
-                            business_date=business_date or datetime.now().strftime("%Y%m%d"),
-                            notification_type=notification_type, task_name=task_name,
-                            dedupe_key=dedupe_key or f"{notification_type}:{task_name}:{business_date}",
-                            reason=reason,
-                        )
-            conn.commit()
-        print(
-            f"Task notification dispatched: success={success_cnt}/{len(enabled_channels)}"
-            + (f"; failures={' | '.join(fail_logs)}" if fail_logs else "")
-        )
-    finally:
-        conn.close()
-
-
-def _has_successful_business_notification(task_name, business_date):
-    conn = pymysql.connect(**DB_CONFIG)
-    try:
-        with conn.cursor() as cursor:
-            _ensure_task_management_schema(cursor)
-            cursor.execute(
-                """SELECT 1 FROM app_notification_delivery
-                   WHERE business_date=%s AND task_name=%s AND status='ok'
-                     AND notification_type <> 'task_completion'
-                   LIMIT 1""",
-                (business_date, task_name),
-            )
             return cursor.fetchone() is not None
     finally:
         conn.close()
 
 
-def _send_task_completion_notification(task_name, history_status, trigger_type, started_at, finished_at,
-                                       run_options=None, message=None):
+def _task_notification_action(queue_id):
+    base_url = str(os.getenv("CHENYIYUN_WEB_BASE_URL") or "").strip().rstrip("/")
+    if not base_url or not queue_id:
+        return ()
+    return (f"查看任务详情|{base_url}/admin/job/{int(queue_id)}",)
+
+
+def _task_failure_stage(error_kind):
+    if error_kind == "VERIFICATION":
+        return "结果验证"
+    if error_kind == "DEPENDENCY":
+        return "运行依赖"
+    if error_kind in {"ARGUMENT", "TEST_GATE"}:
+        return "启动/质量门禁"
+    if error_kind == "QUEUE_FINALIZE":
+        return "队列终态写入"
+    return "任务进程"
+
+
+def _task_recommended_action(error_kind, will_retry=False):
+    if will_retry:
+        return "系统已安排自动重试；请关注后续恢复或最终失败通知。"
+    return {
+        "DATA_READINESS": "检查当日数据完整性与上游任务状态后人工补跑。",
+        "VERIFICATION": "检查产物验证结果，修复数据或输出契约后补跑。",
+        "DEPENDENCY": "修复缺失依赖或运行环境后重新执行。",
+        "ARGUMENT": "检查任务参数和脚本命令行契约。",
+        "TEST_GATE": "修复质量门禁失败后再补跑。",
+        "TRANSIENT": "检查数据库和网络状态后人工重试。",
+    }.get(error_kind, "查看错误摘要和任务历史，确认根因后人工重试。")
+
+
+def _render_task_event_text(event):
+    lines = [event.title, f"业务日：{event.business_date}", f"事件：{event.event_type}"]
+    lines.extend(f"{key}：{value}" for key, value in event.facts.items())
+    lines.extend(str(item) for item in event.details)
+    return "\n".join(lines)
+
+
+def _dispatch_non_feishu_task_event(engine, event):
+    """Keep existing WeChat/DingTalk/custom delivery while Feishu uses cards."""
+    conn = pymysql.connect(**DB_CONFIG)
     try:
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            channels = _load_notification_channels_from_cursor(cursor)
+        content = _render_task_event_text(event)
+        from scripts.ops.feishu_notifier import record_notification_delivery
+        for row in channels:
+            channel_key = str(row.get("channel_key") or "")
+            if channel_key == "feishu" or int(row.get("enabled") or 0) != 1:
+                continue
+            webhook_url = _normalize_webhook_url(row.get("webhook_url"))
+            if not webhook_url:
+                continue
+            if channel_key == "wechat":
+                payload = {"msgtype": "markdown", "markdown": {"content": content}}
+            elif channel_key == "dingtalk":
+                payload = {"msgtype": "markdown", "markdown": {"title": event.title, "text": content}}
+            else:
+                payload = {"text": content, "content": content}
+            request_obj = urllib.request.Request(
+                webhook_url,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request_obj, timeout=12) as response:
+                    status_code = int(response.getcode() or 0)
+                    response_body = response.read().decode("utf-8", errors="ignore")
+                ok = 200 <= status_code < 300
+                reason = "ok" if ok else f"http_status={status_code}"
+                if ok and response_body:
+                    try:
+                        parsed = json.loads(response_body)
+                    except Exception:
+                        parsed = {}
+                    if isinstance(parsed, dict):
+                        for field in ("errcode", "code", "StatusCode"):
+                            if parsed.get(field) not in (None, 0, "0"):
+                                ok, reason = False, f"{field}={parsed.get(field)}"
+                                break
+            except urllib.error.HTTPError as exc:
+                ok, reason = False, f"http_error={exc.code}"
+            except Exception as exc:
+                ok, reason = False, f"exception={exc}"
+            record_notification_delivery(
+                engine,
+                business_date=event.business_date,
+                notification_type=event.event_type,
+                task_name=event.task_name,
+                channel_key=channel_key,
+                status="ok" if ok else "failed",
+                reason=reason,
+                dedupe_key=event.dedupe_key,
+                event_id=event.event_id,
+                run_id=event.run_id,
+            )
+    finally:
+        conn.close()
+
+
+def _send_task_completion_notification(task_name, history_status, trigger_type, started_at, finished_at,
+                                       run_options=None, message=None, queue_job=None,
+                                       finish_result=None):
+    try:
+        finish_result = dict(finish_result or {})
         business_date = _queue_business_date(run_options)
-        # A rich, audited business notification is also the completion notice.
-        if history_status == "Success" and _has_successful_business_notification(task_name, business_date):
+        queue_id = int(finish_result.get("queue_id") or (queue_job or {}).get("id") or 0)
+        attempt = int(finish_result.get("attempt") or (queue_job or {}).get("attempt_count") or 1)
+        max_attempts = int(finish_result.get("max_attempts") or (queue_job or {}).get("max_attempts") or 1)
+        will_retry = bool(finish_result.get("will_retry"))
+        recovered = bool(finish_result.get("recovered"))
+        error_kind = str(finish_result.get("error_kind") or "UNKNOWN")
+
+        # Normal success is deliberately silent. A success after one or more
+        # failed attempts is the only successful task event sent to Feishu.
+        if history_status == "Success" and not recovered:
             return
-        content = _build_task_completion_notification(
-            task_name=task_name,
-            trigger_type=trigger_type,
-            started_at=started_at,
-            finished_at=finished_at,
-            run_options=run_options,
-            history_status=history_status,
-            message=message,
+
+        event_type = "task_recovered" if recovered else ("task_retrying" if will_retry else "task_failed")
+        severity = "SUCCESS" if recovered else ("WARNING" if will_retry else "ERROR")
+        title = {
+            "task_recovered": "任务已恢复",
+            "task_retrying": "任务失败，正在重试",
+            "task_failed": "任务执行失败",
+        }[event_type]
+        if not queue_id:
+            queue_id = int(started_at.timestamp()) if isinstance(started_at, datetime) else 0
+        event_prefix = f"task:{queue_id}:{attempt}"
+
+        # A strategy-order blocked card already contains the task failure and
+        # remediation context; do not send a second generic failure card.
+        if event_type != "task_recovered" and _has_successful_business_notification(
+            task_name, business_date, event_id_prefix=event_prefix
+        ):
+            return
+
+        from sqlalchemy import create_engine
+        from scripts.ops.feishu_notifier import NotificationEvent, publish_notification
+
+        duration = (
+            max(0, int((finished_at - started_at).total_seconds()))
+            if isinstance(started_at, datetime) and isinstance(finished_at, datetime)
+            else "-"
         )
-        if not content:
-            return
-        _dispatch_task_notification(
-            content,
+        details = []
+        if recovered:
+            details.append("此前失败的同一队列任务已在后续尝试中成功完成。")
+        else:
+            details.extend([
+                _task_recommended_action(error_kind, will_retry=will_retry),
+                str(message or "无错误摘要。")[-1800:],
+            ])
+        event = NotificationEvent(
+            event_type=event_type,
             business_date=business_date,
-            notification_type="task_completion",
+            title=title,
+            severity=severity,
             task_name=task_name,
-            dedupe_key=f"task_completion:{task_name}:{business_date}",
+            run_id=f"task:{queue_id}",
+            event_id=f"{event_prefix}:{event_type}",
+            dedupe_key=f"{event_type}:{queue_id}:{attempt}",
+            facts={
+                "任务": TASKS.get(task_name, {}).get("name") or task_name,
+                "任务ID": task_name,
+                "队列ID": queue_id,
+                "触发方式": trigger_type or "-",
+                "失败阶段": "已恢复" if recovered else _task_failure_stage(error_kind),
+                "错误分类": "-" if recovered else error_kind,
+                "退出码": "-" if recovered else finish_result.get("exit_code", "-"),
+                "尝试次数": f"{attempt}/{max_attempts}",
+                "下次重试": finish_result.get("next_retry_at") or "-",
+                "耗时": f"{duration} 秒" if duration != "-" else "-",
+            },
+            details=tuple(details),
+            actions=_task_notification_action(queue_id),
         )
+        notification_engine = create_engine(build_sqlalchemy_url())
+        publish_notification(notification_engine, event)
+        _dispatch_non_feishu_task_event(notification_engine, event)
     except Exception as e:
         print(f"Task notification error ({task_name}): {e}")
 
@@ -3158,7 +3285,9 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
         if not project_python.exists():
             raise RuntimeError(f"project Python is missing: {project_python}")
         cmd = [str(project_python), str(script_abs_path)] + script_parts[1:]
-        env = _build_task_subprocess_env(task_name, project_root)
+        env = _build_task_subprocess_env(
+            task_name, project_root, queue_job=queue_job, run_options=run_options
+        )
 
         with tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stdout.log") as out_fh, \
                 tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stderr.log") as err_fh:
@@ -3238,8 +3367,11 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
             message=message,
             business_date=_queue_business_date(run_options),
         )
+        finish_result = None
         if queue_job is not None:
-            _finish_queued_task(queue_job, history_status, exit_code, message or history_status)
+            finish_result = _finish_queued_task(
+                queue_job, history_status, exit_code, message or history_status
+            )
         _send_task_completion_notification(
             task_name=task_name,
             history_status=history_status,
@@ -3248,13 +3380,20 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
             finished_at=finished_at,
             run_options=run_options,
             message=message,
+            queue_job=queue_job,
+            finish_result=finish_result,
         )
         _mark_task_lock_finished(task_name, lock_status, message or lock_status)
 
 
-def _build_task_subprocess_env(task_name, project_root):
-    _ = task_name
-    return build_direct_network_env(os.environ, pythonpath_prefix=str(project_root))
+def _build_task_subprocess_env(task_name, project_root, queue_job=None, run_options=None):
+    env = build_direct_network_env(os.environ, pythonpath_prefix=str(project_root))
+    env["CHENYIYUN_TASK_NAME"] = str(task_name)
+    env["CHENYIYUN_TASK_BUSINESS_DATE"] = _queue_business_date(run_options)
+    if queue_job:
+        env["CHENYIYUN_TASK_JOB_ID"] = str(queue_job.get("id") or "")
+        env["CHENYIYUN_TASK_ATTEMPT"] = str(queue_job.get("attempt_count") or 0)
+    return env
 
 
 def _trigger_task_execution(task_name, trigger_type="manual", run_options=None, scheduled_for=None):
@@ -3430,7 +3569,11 @@ def _build_task_script_parts(task_name, run_options=None):
             args.extend(['--date', datestr])
         return [script, *args]
     if task_name == 'trusted_strategy_performance_review':
-        args = ['--review-window-days', '63']
+        # The nightly backtest intentionally excludes the snapshot-dependent
+        # production strategy.  Opt in to the reviewer's explicitly labelled
+        # non-production fallback instead of making this scheduled task fail
+        # on every fresh nightly backtest directory.
+        args = ['--review-window-days', '63', '--allow-substitute-diagnostic']
         if not historical_safe or historical_reissue:
             args.append('--notify-feishu')
         if datestr:
@@ -3551,6 +3694,8 @@ def close_db(error):
 
 
 def _ensure_chenyiyun_selected_settings_table(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS chenyiyun_selected_settings (
@@ -3773,11 +3918,55 @@ def _enrich_bs_score_rows(rows):
     return rows
 
 
+SCORE_PAGE_COLUMNS = (
+    "trade_date", "symbol", "name", "score", "base_score", "penalty",
+    "s_trend", "s_breakout", "s_volume", "s_rs", "s_contraction", "s_liquidity",
+    "pool_type", "is_limit_up", "close_price", "buy_point_close", "price_change_ratio",
+    "opt_score", "claude_score", "bs_score", "bs_entry_score", "bs_score_label",
+    "bs_score_v2", "bs_score_v2_label", "bs_research_score", "bs_research_label",
+    "bs_research_reason", "bs_gate_score", "bs_gate_pass", "bs_gate_label", "bs_gate_reason",
+    "bs_model_prob", "bs_model_expected_mdd", "bs_model_risk_score", "bs_model_rank_score",
+    "bs_model_version", "bs_consensus_score", "bs_consensus_label", "bs_consensus_reason",
+    "market_hs300_ret_20", "market_regime", "pattern_score", "pattern_sentiment",
+    "pattern_risk_level", "pattern_pass_count", "pattern_candidate_count", "top_pattern_ids",
+    "top_pattern_names", "ashare_signal_keys", "pattern_diagnosis",
+)
+
+
+def _score_page_select(alias=""):
+    prefix = f"{alias}." if alias else ""
+    return ", ".join(f"{prefix}`{column}`" for column in SCORE_PAGE_COLUMNS)
+
+
+def _score_page_order(sort_by, order, alias="", candidate_default=False):
+    prefix = f"{alias}." if alias else ""
+    sortable = {
+        "bs_consensus_score", "bs_model_rank_score", "bs_model_prob", "bs_model_risk_score",
+        "bs_research_score", "bs_score_v2", "bs_score", "score", "opt_score", "claude_score",
+        "s_liquidity", "pattern_score",
+    }
+    if sort_by in sortable:
+        return f"ORDER BY {prefix}`{sort_by}` {order}, {prefix}`symbol` ASC"
+    if candidate_default:
+        return (
+            f"ORDER BY CASE {prefix}`pool_type` WHEN 'TRADE' THEN 1 WHEN 'WATCH' THEN 2 ELSE 3 END, "
+            f"{prefix}`bs_consensus_score` DESC, {prefix}`bs_research_score` DESC, "
+            f"{prefix}`bs_score_v2` DESC, {prefix}`bs_score` DESC, {prefix}`score` DESC, "
+            f"{prefix}`symbol` ASC"
+        )
+    return (
+        f"ORDER BY {prefix}`bs_research_score` DESC, {prefix}`bs_score_v2` DESC, "
+        f"{prefix}`score` DESC, {prefix}`symbol` ASC"
+    )
+
+
 def _pool_sort_rank(row):
     return {'TRADE': 1, 'WATCH': 2}.get(row.get('pool_type'), 3)
 
 
 def _ensure_score_rank_daily_score_columns(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute("SHOW COLUMNS FROM score_rank_daily")
     existing = {row["Field"] for row in cursor.fetchall()}
     additions = {
@@ -4065,6 +4254,8 @@ def adjust_positions():
 
 
 def _ensure_live_asset_tables(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS live_positions (
@@ -4620,37 +4811,19 @@ def sina_scores():
                 params.append(min_opt_score)
                 
             where_stmt = " WHERE " + " AND ".join(where_clauses)
-            
+            pagination, offset = get_pagination(
+                cursor, "score_rank_daily", page, per_page, where_stmt, tuple(params)
+            )
+            order_stmt = _score_page_order(sort_by, order, candidate_default=True)
             sql = f"""
-            SELECT 
-                *, 
-                COALESCE(opt_score, 0) as opt_score,
-                COALESCE(claude_score, 0) as claude_score 
-            FROM score_rank_daily 
+            SELECT {_score_page_select()}
+            FROM score_rank_daily
             {where_stmt}
+            {order_stmt}
+            LIMIT %s OFFSET %s
             """
-            
-            cursor.execute(sql, tuple(params))
-            all_scores = _enrich_bs_score_rows(cursor.fetchall())
-
-            reverse = order == 'DESC'
-            if sort_by in {'bs_consensus_score', 'bs_model_rank_score', 'bs_model_prob', 'bs_model_risk_score', 'bs_research_score', 'bs_score_v2', 'bs_score', 'score', 'opt_score', 'claude_score', 's_liquidity', 'pattern_score'}:
-                all_scores.sort(key=lambda row: _safe_sort_float(row, sort_by), reverse=reverse)
-            else:
-                all_scores.sort(
-                    key=lambda row: (
-                        _pool_sort_rank(row),
-                        -_safe_sort_float(row, 'bs_consensus_score'),
-                        -_safe_sort_float(row, 'bs_research_score'),
-                        -_safe_sort_float(row, 'bs_score_v2'),
-                        -_safe_sort_float(row, 'bs_score'),
-                        -_safe_sort_float(row, 'score'),
-                    )
-                )
-
-            pagination = get_memory_pagination(len(all_scores), page, per_page)
-            offset = (pagination['page'] - 1) * per_page
-            scores = all_scores[offset: offset + per_page]
+            cursor.execute(sql, tuple(params + [per_page, offset]))
+            scores = _enrich_bs_score_rows(cursor.fetchall())
 
     return render_template('scores.html', 
                            scores=scores, 
@@ -4753,33 +4926,7 @@ def sina_all_scores():
                 
             where_stmt = " WHERE " + " AND ".join(where_clauses)
             
-            # Build ORDER BY
-            if sort_by == 'score':
-                order_stmt = f"ORDER BY srd.score {order}"
-            elif sort_by == 'opt_score':
-                order_stmt = f"ORDER BY srd.opt_score {order}"
-            elif sort_by == 'claude_score':
-                order_stmt = f"ORDER BY srd.claude_score {order}"
-            elif sort_by == 's_liquidity':
-                order_stmt = f"ORDER BY srd.s_liquidity {order}"
-            elif sort_by == 'bs_score':
-                order_stmt = f"ORDER BY srd.bs_score {order}"
-            elif sort_by == 'bs_score_v2':
-                order_stmt = f"ORDER BY srd.bs_score_v2 {order}"
-            elif sort_by == 'bs_research_score':
-                order_stmt = f"ORDER BY srd.bs_research_score {order}"
-            elif sort_by == 'bs_consensus_score':
-                order_stmt = f"ORDER BY srd.bs_consensus_score {order}"
-            elif sort_by == 'bs_model_rank_score':
-                order_stmt = f"ORDER BY srd.bs_model_rank_score {order}"
-            elif sort_by == 'bs_model_prob':
-                order_stmt = f"ORDER BY srd.bs_model_prob {order}"
-            elif sort_by == 'bs_model_risk_score':
-                order_stmt = f"ORDER BY srd.bs_model_risk_score {order}"
-            elif sort_by == 'pattern_score':
-                order_stmt = f"ORDER BY srd.pattern_score {order}"
-            else:
-                order_stmt = "ORDER BY srd.bs_research_score DESC, srd.bs_score_v2 DESC, srd.score DESC"
+            order_stmt = _score_page_order(sort_by, order, alias="srd")
 
             join_stmt = ""
             if pool_id != 'all':
@@ -4804,10 +4951,7 @@ def sina_all_scores():
                 pagination, offset = get_pagination(cursor, "score_rank_daily srd", page, per_page, where_stmt, tuple(params))
 
             sql = f"""
-            SELECT 
-                srd.*, 
-                COALESCE(srd.opt_score, 0) as opt_score,
-                COALESCE(srd.claude_score, 0) as claude_score 
+            SELECT {_score_page_select('srd')}
             FROM score_rank_daily srd
             {join_stmt}
             {where_stmt}
@@ -4874,39 +5018,11 @@ def sina_self_selected():
             
             pagination, offset = get_pagination(cursor, "score_rank_daily", page, per_page, where_stmt, tuple(params))
             
-            if sort_by == 'score':
-                order_stmt = f"ORDER BY score {order}"
-            elif sort_by == 'opt_score':
-                order_stmt = f"ORDER BY opt_score {order}"
-            elif sort_by == 'claude_score':
-                order_stmt = f"ORDER BY claude_score {order}"
-            elif sort_by == 's_liquidity':
-                order_stmt = f"ORDER BY s_liquidity {order}"
-            elif sort_by == 'bs_score':
-                order_stmt = f"ORDER BY bs_score {order}"
-            elif sort_by == 'bs_score_v2':
-                order_stmt = f"ORDER BY bs_score_v2 {order}"
-            elif sort_by == 'bs_research_score':
-                order_stmt = f"ORDER BY bs_research_score {order}"
-            elif sort_by == 'bs_consensus_score':
-                order_stmt = f"ORDER BY bs_consensus_score {order}"
-            elif sort_by == 'bs_model_rank_score':
-                order_stmt = f"ORDER BY bs_model_rank_score {order}"
-            elif sort_by == 'bs_model_prob':
-                order_stmt = f"ORDER BY bs_model_prob {order}"
-            elif sort_by == 'bs_model_risk_score':
-                order_stmt = f"ORDER BY bs_model_risk_score {order}"
-            elif sort_by == 'pattern_score':
-                order_stmt = f"ORDER BY pattern_score {order}"
-            else:
-                order_stmt = "ORDER BY bs_research_score DESC, bs_score_v2 DESC, score DESC"
+            order_stmt = _score_page_order(sort_by, order)
 
             sql = f"""
-            SELECT 
-                *, 
-                COALESCE(opt_score, 0) as opt_score,
-                COALESCE(claude_score, 0) as claude_score 
-            FROM score_rank_daily 
+            SELECT {_score_page_select()}
+            FROM score_rank_daily
             {where_stmt}
             {order_stmt}
             LIMIT %s OFFSET %s
@@ -5728,6 +5844,8 @@ def _coerce_to_date(raw_value):
 
 
 def _ensure_m7_sell_signal_table(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS m7_sell_signals (
@@ -5780,6 +5898,8 @@ def _ensure_m7_sell_signal_table(cursor):
 
 
 def _ensure_live_positions_m7_columns(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute("SHOW TABLES LIKE 'live_positions'")
     if cursor.fetchone() is None:
         return
@@ -6641,6 +6761,8 @@ def stock_pool_items():
 
 
 def _ensure_stock_pool_schema(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS stock_pools (
@@ -6675,6 +6797,8 @@ def _ensure_stock_pool_schema(cursor):
 
 
 def _ensure_seed_pools(cursor):
+    if _WEB_SCHEMA_INITIALIZED:
+        return
     cursor.execute(
         """
         INSERT INTO stock_pools (pool_key, pool_name, source_type, is_system, is_editable)
@@ -7453,6 +7577,9 @@ def _run_scheduled_tasks_loop():
                     print(f"Scheduled task deduped: {task_name} (job={job['id']})")
                 else:
                     print(f"Scheduled task enqueue failed: {task_name} ({reason})")
+                    _send_scheduler_enqueue_failure(
+                        task_name, now.strftime("%Y%m%d"), reason
+                    )
 
             time.sleep(20)
         except Exception as e:
@@ -7487,6 +7614,22 @@ def _run_notification_outbox_loop():
         time.sleep(20)
 
 
+def _initialize_web_schema(cursor):
+    """Run idempotent Web schema migrations once during process startup."""
+    global _WEB_SCHEMA_INITIALIZED
+    if _WEB_SCHEMA_INITIALIZED:
+        return
+    _ensure_task_management_schema(cursor)
+    _ensure_chenyiyun_selected_settings_table(cursor)
+    _ensure_score_rank_daily_score_columns(cursor)
+    _ensure_live_asset_tables(cursor)
+    _ensure_m7_sell_signal_table(cursor)
+    _ensure_live_positions_m7_columns(cursor)
+    _ensure_stock_pool_schema(cursor)
+    _ensure_seed_pools(cursor)
+    _WEB_SCHEMA_INITIALIZED = True
+
+
 def _run_web_startup_preflight(*, strict=False):
     from scripts.ops.runtime_preflight import collect_runtime_issues
 
@@ -7514,6 +7657,8 @@ def _run_web_startup_preflight(*, strict=False):
     try:
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cursor:
+            _initialize_web_schema(cursor)
+            conn.commit()
             cursor.execute("SELECT 1")
             cursor.execute("SHOW TABLES LIKE 'app_notification_channel'")
             if not cursor.fetchone():

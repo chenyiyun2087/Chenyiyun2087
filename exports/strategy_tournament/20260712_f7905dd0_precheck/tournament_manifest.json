@@ -1,0 +1,317 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-12T14:49:10.197362+00:00",
+  "as_of": "2026-07-12",
+  "git_commit_sha": "f7905dd0bdeb593235d8d2d868052a099e0252d6",
+  "worktree_clean": false,
+  "config_path": "/Volumes/extension/projects/Chenyiyun2087/config/strategy_tournament.yaml",
+  "config_sha": "2a9470178519571b007516b5df3280f0034e0e26e029006c01d0c9f36778fe51",
+  "evidence_status": "PRECHECK_ONLY",
+  "promotion_status": "PROMOTION_BLOCKED",
+  "winner_strategy_id": null,
+  "baseline_strategy_id": "production_governed_vol_position",
+  "database_environment": null,
+  "read_only": true,
+  "orders_generated": false,
+  "broker_accessed": false,
+  "rollback_release_id": "prod-20260623-01",
+  "approval": {
+    "required_count": 1,
+    "records": []
+  },
+  "shadow_release": {
+    "disabled_shadow_days": 20,
+    "enabled_shadow_days": 60,
+    "min_completed_round_trips": 30,
+    "max_reconciliation_errors": 0,
+    "max_incremental_hard_block_days": 0,
+    "max_execution_proxy_missing_days": 0,
+    "approval_count": 1,
+    "canary_max_capital": 100000,
+    "canary_execution_mode": "manual_confirmation"
+  },
+  "candidates": [
+    {
+      "strategy_id": "adaptive_market_style",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "shadow-20260623-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "alpha_decay_exit_v2",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "exit-rule-20260710-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "alpha_risk_portfolio_v2",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "portfolio-constructor-20260710-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "ashare_auto_shadow",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "shadow-20260623-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "ashare_hybrid_conservative_shadow",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "shadow-20260623-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "ashare_trend_breakout_shadow",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "shadow-20260623-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "baseline_full_liquidity_detail_vol_position",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "prod-20260623-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "dual_system_adaptive_route",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "shadow-20260623-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "full_strategy_v3",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "promotion-target-20260710-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "industry_neutral_alpha_v3",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "alpha-challenger-20260710-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "market_exposure_governor_v1",
+      "source_dir": "",
+      "candidate_type": "composite",
+      "underlying_releases": [
+        "production_governed_vol_position"
+      ],
+      "complexity_rank": 2,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "meta_allocator_v1",
+      "source_dir": "",
+      "candidate_type": "composite",
+      "underlying_releases": [
+        "production_governed_vol_position",
+        "tiered_liquidity_then_bs_v2",
+        "adaptive_market_style"
+      ],
+      "complexity_rank": 3,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "production_governed_vol_position",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "prod-20260623-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "champion-v1-2b-dynamic-score-20260618"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "production_governed_vol_position_v1_2b_execution_safe_uplift",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "research-v1-2b-execution-safe-uplift-20260619"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "repair_reversal_shadow",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "research-20260624-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    },
+    {
+      "strategy_id": "tiered_liquidity_then_bs_v2",
+      "source_dir": "",
+      "candidate_type": "single",
+      "underlying_releases": [
+        "shadow-20260623-01"
+      ],
+      "complexity_rank": 1,
+      "metrics": {},
+      "gates": {},
+      "blockers": [
+        "missing_explicit_source"
+      ],
+      "eligible": false,
+      "rank": null
+    }
+  ],
+  "manifest_sha": "b0cd8883b19e8769565b71aead111cf1db5277b15b4b75f245475fd0354bcf68",
+  "artifacts": {
+    "strategy_ranking.csv": "8880b0765c525b1d6256f692c1eb3d26c72a12427ec1c0859260a8caa67fbf14",
+    "gate_results.csv": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "quarterly_metrics.csv": "72f30bdb37ff6b109c37795043cd83e2db6a7532842a3fd9682f4a3e693b2328",
+    "input_hashes.json": "273a389e2060dd44e1e851e854e169144066f53ac1ec17da85bac711df0dd21d",
+    "tournament_report.md": "2a7e08ba8c51d0b974b4a90aace74dca19d091852a67a18a6feb2635a0408a30"
+  }
+}

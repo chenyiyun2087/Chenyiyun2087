@@ -538,6 +538,7 @@ def validate_ledger_nav_conservation(
         "total_days": total_days,
         "equity_violations": eq_violations,
         "nav_violations": nav_violations,
+        "conservation_violations": eq_violations + nav_violations,
         "initial_cash": initial_cash,
         "is_dimensionless_nav": is_dimensionless,
     })
@@ -811,6 +812,7 @@ def validate_evidence_per_experiment_window(output_dir: Path) -> dict[str, Any]:
 
     return {
         "passed": passed,
+        "structure": "per_experiment",
         "experiments_covered": {
             k: dict(v) if isinstance(v, dict) else sorted(v) if isinstance(v, set) else v
             for k, v in experiments_covered.items()

@@ -20,8 +20,7 @@ from sqlalchemy import create_engine, text
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-TUSHARE_DB = "mysql+pymysql://root:19871019@localhost:3306/tushare_stock?charset=utf8mb4"
-CHENYIYUN_DB = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
+from scoreRank.core.db_config import require_sqlalchemy_url
 
 
 def to_ts_code(code: str) -> str:
@@ -176,8 +175,8 @@ def main():
     if not args.date and not args.start:
         parser.error('Must specify --date or --start/--end')
 
-    engine_ts = create_engine(TUSHARE_DB)
-    engine_cy = create_engine(CHENYIYUN_DB)
+    engine_ts = create_engine(require_sqlalchemy_url(database="tushare_stock"))
+    engine_cy = create_engine(require_sqlalchemy_url(database="chenyiyun"))
 
     stock_codes = get_self_selected(engine_cy)
     print(f"[ADC] Self-selected pool: {len(stock_codes)} stocks")

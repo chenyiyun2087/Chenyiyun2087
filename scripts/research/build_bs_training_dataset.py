@@ -20,10 +20,9 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
+from scoreRank.core.db_config import require_sqlalchemy_url
 
 # --- Config ---
-CHENYIYUN_DB = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
-TUSHARE_DB = "mysql+pymysql://root:19871019@localhost:3306/tushare_stock?charset=utf8mb4"
 
 # QFQ (前复权) columns from ods_stk_factor to use as features
 PRICE_COLS = [
@@ -454,8 +453,8 @@ def build_dataset(
     val_end: str = "20260531",
 ):
     """Main pipeline: load labels + factors, engineer features, split, save."""
-    engine_cy = create_engine(CHENYIYUN_DB)
-    engine_ts = create_engine(TUSHARE_DB)
+    engine_cy = create_engine(require_sqlalchemy_url(database="chenyiyun"))
+    engine_ts = create_engine(require_sqlalchemy_url(database="tushare_stock"))
 
     # 1. Load labels
     labels = load_labels(engine_cy)

@@ -65,7 +65,8 @@ def build_audit(config: dict[str, Any]) -> dict[str, Any]:
     canary = dict(config["live_canary"])
     decision = evaluate_canary_eligibility(
         canary, strict_ledger_passed=False, enabled_shadow_passed=False,
-        shadow_real_trading_days=0, completed_round_trips=0,
+        disabled_shadow_real_trading_days=0, shadow_real_trading_days=0,
+        completed_round_trips=0,
         health_grade="UNKNOWN", release_approved=False,
     )
     return {
@@ -88,7 +89,8 @@ def build_audit(config: dict[str, Any]) -> dict[str, Any]:
         "strategy_inventory": strategy_inventory(config),
         "canary_decision_without_runtime_evidence": decision_payload(decision),
         "required_evidence": [
-            "strict ledger VERIFIED", "enabled shadow >= 20 real trading days",
+            "strict ledger VERIFIED", "disabled shadow >= 20 real trading days",
+            "enabled shadow >= 60 real trading days and >= 30 completed round trips",
             "GREEN daily health", "recorded release approval", "manual broker fill reconciliation",
         ],
     }

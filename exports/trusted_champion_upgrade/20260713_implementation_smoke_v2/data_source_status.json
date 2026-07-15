@@ -1,0 +1,13 @@
+{
+  "status": "BLOCKED_DATA_SOURCE",
+  "stage": "BLOCKED",
+  "blocked_stage": "RESEARCH_BACKTEST",
+  "database_source_verified": false,
+  "start_date": "2013-01-01",
+  "end_date": null,
+  "read_only": true,
+  "credentials_persisted": false,
+  "blockers": [
+    "CHENYIYUN_DB_URL_UNSET"
+  ]
+}

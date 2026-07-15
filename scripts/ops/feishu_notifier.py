@@ -8,9 +8,14 @@ strategy identity block for consistent governor/selection strategy display.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import re
 import ssl
-from typing import TYPE_CHECKING, Optional
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 from urllib import error, request
 
 if TYPE_CHECKING:
@@ -18,6 +23,48 @@ if TYPE_CHECKING:
 
 from scripts.ops.production_config import load_production_config
 from scripts.strategy_display import strategy_display_name
+
+
+@dataclass(frozen=True)
+class NotificationEvent:
+    """Channel-neutral notification event used by production jobs."""
+
+    event_type: str
+    business_date: str
+    title: str
+    dedupe_key: str
+    severity: str = "INFO"
+    task_name: str | None = None
+    run_id: str | None = None
+    event_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    facts: Mapping[str, Any] = field(default_factory=dict)
+    details: tuple[str, ...] = ()
+    actions: tuple[str, ...] = ()
+    artifact_paths: tuple[str, ...] = ()
+    occurred_at: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self) -> None:
+        if not str(self.event_type or "").strip():
+            raise ValueError("event_type is required")
+        if not str(self.business_date or "").strip():
+            raise ValueError("business_date is required")
+        if not str(self.title or "").strip():
+            raise ValueError("title is required")
+        if not str(self.dedupe_key or "").strip():
+            raise ValueError("dedupe_key is required")
+
+
+@dataclass(frozen=True)
+class DeliveryResult:
+    """Result returned by the unified publisher."""
+
+    ok: bool
+    status: str
+    reason: str
+    event_id: str
+    channel_key: str = "feishu"
+    deduped: bool = False
+    queued: bool = False
 
 
 def _get_text_sql():
@@ -135,8 +182,116 @@ def send_feishu_text(webhook_url: str, content: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def _send_feishu_payload(webhook_url: str, payload: Mapping[str, Any]) -> tuple[bool, str]:
+    """Send a pre-rendered Feishu payload with the same strict TLS policy."""
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = request.Request(
+        webhook_url,
+        data=raw,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=12) as resp:
+            status = int(resp.getcode() or 0)
+            body = resp.read().decode("utf-8", errors="ignore")
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else str(exc)
+        return False, f"http_error={exc.code}; body={body[:200]}"
+    except error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return False, "TLS_CERTIFICATE_ERROR: certificate verification failed; refusing insecure fallback"
+        return False, f"url_error={exc}"
+    except Exception as exc:
+        return False, f"exception={exc}"
+
+    if status < 200 or status >= 300:
+        return False, f"http_status={status}; body={body[:200]}"
+    try:
+        parsed = json.loads(body) if body else {}
+    except Exception:
+        return True, "http_ok"
+    if isinstance(parsed, dict):
+        for key in ("errcode", "code", "StatusCode"):
+            if parsed.get(key) not in (None, 0, "0"):
+                return False, f"{key}={parsed.get(key)}; body={body[:200]}"
+    return True, "ok"
+
+
+def build_feishu_interactive_payload(event: NotificationEvent) -> dict[str, Any]:
+    """Render a typed event as a Feishu interactive card payload."""
+    severity = str(event.severity or "INFO").upper()
+    template = {
+        "INFO": "blue", "SUCCESS": "green", "WARNING": "orange",
+        "YELLOW": "orange", "ERROR": "red", "RED": "red", "CRITICAL": "red",
+    }.get(severity, "blue")
+    lines = [
+        f"**业务日：** {event.business_date}",
+        f"**事件类型：** {event.event_type}",
+        f"**严重程度：** {severity}",
+    ]
+    if event.task_name:
+        lines.append(f"**任务：** {event.task_name}")
+    if event.run_id:
+        lines.append(f"**运行ID：** {event.run_id}")
+    lines.append(f"**事件ID：** {event.event_id}")
+    for key, value in event.facts.items():
+        lines.append(f"**{key}：** {value}")
+    if event.details:
+        lines.extend(["", "**详情**", *[f"- {item}" for item in event.details]])
+    action_buttons = []
+    action_notes = []
+    for item in event.actions:
+        label, separator, target = str(item).partition("|")
+        if separator and target.startswith(("http://", "https://")):
+            action_buttons.append({
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": label[:40]},
+                "type": "primary",
+                "url": target,
+            })
+        else:
+            action_notes.append(str(item))
+    if action_notes:
+        lines.extend(["", "**建议动作**", *[f"- {item}" for item in action_notes]])
+    if event.artifact_paths:
+        lines.extend(["", "**产物/日志**", *[f"- `{item}`" for item in event.artifact_paths]])
+    lines.extend(["", f"发生时间：{event.occurred_at.isoformat(timespec='seconds')}"])
+    elements: list[dict[str, Any]] = [
+        {"tag": "markdown", "content": "\n".join(lines)},
+    ]
+    if action_buttons:
+        elements.append({"tag": "action", "actions": action_buttons[:3]})
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": template,
+                "title": {"tag": "plain_text", "content": event.title},
+            },
+            "body": {"elements": elements},
+        },
+    }
+
+
+def _is_permanent_delivery_failure(reason: str) -> bool:
+    """400/401/403/404-style configuration errors are not retryable.
+
+    408 and 429 remain retryable because they normally represent transient
+    timeout/rate-limit conditions rather than a bad webhook configuration.
+    """
+    match = re.search(r"(?:http_error|http_status)=(\d{3})", str(reason or ""))
+    if not match:
+        return False
+    status = int(match.group(1))
+    return 400 <= status < 500 and status not in {408, 429}
+
+
 def ensure_notification_delivery_table(engine: "Engine") -> None:
-    """Create the notification delivery audit table if it does not exist."""
+    """Create/migrate notification audit and outbox tables idempotently."""
     text_fn = _get_text_sql()
     with engine.begin() as conn:
         conn.execute(
@@ -151,9 +306,15 @@ def ensure_notification_delivery_table(engine: "Engine") -> None:
                     status VARCHAR(32) NOT NULL,
                     reason TEXT NULL,
                     dedupe_key VARCHAR(160) NULL,
+                    event_id VARCHAR(64) NULL,
+                    run_id VARCHAR(64) NULL,
+                    content_hash CHAR(64) NULL,
+                    attempt_count INT NOT NULL DEFAULT 1,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     KEY idx_notification_delivery_date (business_date, task_name, notification_type),
-                    KEY idx_notification_delivery_dedupe (dedupe_key)
+                    KEY idx_notification_delivery_dedupe (dedupe_key),
+                    UNIQUE KEY uniq_notification_delivery_channel_dedupe (channel_key, dedupe_key)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
@@ -168,25 +329,121 @@ def ensure_notification_delivery_table(engine: "Engine") -> None:
                     task_name VARCHAR(64) NULL,
                     channel_key VARCHAR(32) NOT NULL DEFAULT 'feishu',
                     content MEDIUMTEXT NOT NULL,
+                    payload_json MEDIUMTEXT NULL,
                     dedupe_key VARCHAR(160) NOT NULL,
                     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
                     retry_count INT NOT NULL DEFAULT 0,
                     max_retries INT NOT NULL DEFAULT 3,
                     next_retry_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     last_error TEXT NULL,
+                    claimed_by VARCHAR(64) NULL,
+                    claimed_at DATETIME NULL,
+                    lease_until DATETIME NULL,
+                    event_id VARCHAR(64) NULL,
+                    run_id VARCHAR(64) NULL,
+                    content_hash CHAR(64) NULL,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY uniq_notification_outbox_dedupe (dedupe_key),
+                    UNIQUE KEY uniq_notification_outbox_channel_dedupe (channel_key, dedupe_key),
                     KEY idx_notification_outbox_ready (status, next_retry_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
         )
+    # Existing installations predate typed events and lease-based claims. MySQL
+    # does not consistently support ADD COLUMN IF NOT EXISTS across supported
+    # versions, so inspect first and apply only missing migrations.
+    with engine.connect() as conn:
+        delivery_columns = {
+            str(row[0]) for row in conn.execute(text_fn(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='chenyiyun' AND table_name='app_notification_delivery'"
+            )).fetchall()
+        }
+        outbox_columns = {
+            str(row[0]) for row in conn.execute(text_fn(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='chenyiyun' AND table_name='app_notification_outbox'"
+            )).fetchall()
+        }
+        delivery_indexes = {
+            str(row[0]) for row in conn.execute(text_fn(
+                "SELECT DISTINCT index_name FROM information_schema.statistics "
+                "WHERE table_schema='chenyiyun' AND table_name='app_notification_delivery'"
+            )).fetchall()
+        }
+        outbox_indexes = {
+            str(row[0]) for row in conn.execute(text_fn(
+                "SELECT DISTINCT index_name FROM information_schema.statistics "
+                "WHERE table_schema='chenyiyun' AND table_name='app_notification_outbox'"
+            )).fetchall()
+        }
+    delivery_alters = {
+        "event_id": "ADD COLUMN event_id VARCHAR(64) NULL AFTER dedupe_key",
+        "run_id": "ADD COLUMN run_id VARCHAR(64) NULL AFTER event_id",
+        "content_hash": "ADD COLUMN content_hash CHAR(64) NULL AFTER run_id",
+        "attempt_count": "ADD COLUMN attempt_count INT NOT NULL DEFAULT 1 AFTER content_hash",
+        "updated_at": "ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at",
+    }
+    outbox_alters = {
+        "payload_json": "ADD COLUMN payload_json MEDIUMTEXT NULL AFTER content",
+        "claimed_by": "ADD COLUMN claimed_by VARCHAR(64) NULL AFTER last_error",
+        "claimed_at": "ADD COLUMN claimed_at DATETIME NULL AFTER claimed_by",
+        "lease_until": "ADD COLUMN lease_until DATETIME NULL AFTER claimed_at",
+        "event_id": "ADD COLUMN event_id VARCHAR(64) NULL AFTER lease_until",
+        "run_id": "ADD COLUMN run_id VARCHAR(64) NULL AFTER event_id",
+        "content_hash": "ADD COLUMN content_hash CHAR(64) NULL AFTER run_id",
+    }
+    def execute_migration(conn, sql: str) -> None:
+        try:
+            conn.execute(text_fn(sql))
+        except Exception as exc:
+            # Multiple Web workers may enter this idempotent migration at the
+            # same time. Only duplicate/missing-object DDL races are benign.
+            detail = str(exc).lower()
+            code = getattr(getattr(exc, "orig", None), "args", (None,))[0]
+            if code in {1060, 1061, 1091} or any(marker in detail for marker in (
+                "duplicate column", "duplicate key name", "check that column/key exists",
+            )):
+                return
+            raise
+
+    with engine.begin() as conn:
+        for column, ddl in delivery_alters.items():
+            if column not in delivery_columns:
+                execute_migration(conn, f"ALTER TABLE chenyiyun.app_notification_delivery {ddl}")
+        for column, ddl in outbox_alters.items():
+            if column not in outbox_columns:
+                execute_migration(conn, f"ALTER TABLE chenyiyun.app_notification_outbox {ddl}")
+        if "uniq_notification_delivery_channel_dedupe" not in delivery_indexes:
+            # Preserve the latest audit state before enforcing idempotence.
+            conn.execute(text_fn(
+                "DELETE older FROM chenyiyun.app_notification_delivery older "
+                "JOIN chenyiyun.app_notification_delivery newer "
+                "ON newer.channel_key=older.channel_key AND newer.dedupe_key=older.dedupe_key "
+                "AND newer.id>older.id WHERE older.dedupe_key IS NOT NULL"
+            ))
+            execute_migration(conn,
+                "ALTER TABLE chenyiyun.app_notification_delivery "
+                "ADD UNIQUE KEY uniq_notification_delivery_channel_dedupe (channel_key,dedupe_key)"
+            )
+        if "uniq_notification_outbox_dedupe" in outbox_indexes:
+            execute_migration(conn,
+                "ALTER TABLE chenyiyun.app_notification_outbox DROP INDEX uniq_notification_outbox_dedupe"
+            )
+        if "uniq_notification_outbox_channel_dedupe" not in outbox_indexes:
+            execute_migration(conn,
+                "ALTER TABLE chenyiyun.app_notification_outbox "
+                "ADD UNIQUE KEY uniq_notification_outbox_channel_dedupe (channel_key,dedupe_key)"
+            )
 
 
 def enqueue_notification_retry(
     engine: "Engine", content: str, *, business_date: str, notification_type: str,
     task_name: str | None, dedupe_key: str, reason: str,
+    channel_key: str = "feishu", payload: Mapping[str, Any] | None = None,
+    event_id: str | None = None, run_id: str | None = None,
+    content_hash: str | None = None, dead_letter: bool = False,
 ) -> None:
     """Persist a failed delivery without changing the business task result."""
     ensure_notification_delivery_table(engine)
@@ -195,52 +452,88 @@ def enqueue_notification_retry(
         conn.execute(
             text_fn(
                 """INSERT INTO chenyiyun.app_notification_outbox
-                   (business_date,notification_type,task_name,content,dedupe_key,status,
-                    retry_count,max_retries,next_retry_at,last_error)
-                   VALUES (:business_date,:notification_type,:task_name,:content,:dedupe_key,
-                           'PENDING',0,3,DATE_ADD(NOW(), INTERVAL 1 MINUTE),:reason)
+                   (business_date,notification_type,task_name,channel_key,content,payload_json,
+                    dedupe_key,status,retry_count,max_retries,next_retry_at,last_error,event_id,run_id,content_hash)
+                   VALUES (:business_date,:notification_type,:task_name,:channel_key,:content,:payload_json,
+                           :dedupe_key,:status,0,3,DATE_ADD(NOW(), INTERVAL 1 MINUTE),:reason,:event_id,:run_id,:content_hash)
                    ON DUPLICATE KEY UPDATE
                      content=IF(status='SENT',content,VALUES(content)),
+                     payload_json=IF(status='SENT',payload_json,VALUES(payload_json)),
                      last_error=IF(status='SENT',last_error,VALUES(last_error)),
-                     status=IF(status='SENT','SENT','PENDING')"""
+                     event_id=IF(status='SENT',event_id,VALUES(event_id)),
+                     run_id=IF(status='SENT',run_id,VALUES(run_id)),
+                     content_hash=IF(status='SENT',content_hash,VALUES(content_hash)),
+                     status=IF(status='SENT','SENT',VALUES(status)),
+                     claimed_by=NULL,claimed_at=NULL,lease_until=NULL"""
             ),
             {
                 "business_date": business_date,
                 "notification_type": notification_type,
                 "task_name": task_name,
+                "channel_key": channel_key,
                 "content": content,
+                "payload_json": json.dumps(payload, ensure_ascii=False) if payload is not None else None,
                 "dedupe_key": dedupe_key,
                 "reason": str(reason or "")[:2000],
+                "event_id": event_id,
+                "run_id": run_id,
+                "content_hash": content_hash,
+                "status": "NOTIFICATION_FAILED" if dead_letter else "PENDING",
             },
         )
 
 
-def process_notification_outbox(engine: "Engine", limit: int = 10) -> dict[str, int]:
-    """Retry due Feishu messages. Delays are 1, 5 and 15 minutes."""
+def process_notification_outbox(
+    engine: "Engine", limit: int = 10, *, worker_id: str | None = None, lease_seconds: int = 60,
+) -> dict[str, int]:
+    """Claim and retry due messages without allowing concurrent double-send."""
     ensure_notification_delivery_table(engine)
     text_fn = _get_text_sql()
-    with engine.connect() as conn:
+    worker_id = worker_id or f"notify-{uuid.uuid4().hex[:16]}"
+    with engine.begin() as conn:
+        conn.execute(text_fn(
+            "UPDATE chenyiyun.app_notification_outbox SET status='PENDING',claimed_by=NULL,"
+            "claimed_at=NULL,lease_until=NULL WHERE status='SENDING' AND lease_until<NOW()"
+        ))
         rows = list(conn.execute(
             text_fn(
-                """SELECT id,business_date,notification_type,task_name,content,dedupe_key,retry_count,max_retries
+                """SELECT id,business_date,notification_type,task_name,channel_key,content,payload_json,
+                          dedupe_key,retry_count,max_retries,event_id,run_id,content_hash
                    FROM chenyiyun.app_notification_outbox
                    WHERE status='PENDING' AND next_retry_at<=NOW()
-                   ORDER BY next_retry_at,id LIMIT :limit"""
+                   ORDER BY next_retry_at,id LIMIT :limit FOR UPDATE SKIP LOCKED"""
             ), {"limit": int(limit)}
         ).mappings())
-    result = {"sent": 0, "failed": 0, "pending": 0}
-    webhook = load_feishu_webhook(engine)
+        ids = [int(row["id"]) for row in rows]
+        for row_id in ids:
+            conn.execute(text_fn(
+                "UPDATE chenyiyun.app_notification_outbox SET status='SENDING',claimed_by=:worker_id,"
+                "claimed_at=NOW(),lease_until=DATE_ADD(NOW(),INTERVAL :lease SECOND) "
+                "WHERE id=:id AND status='PENDING'"
+            ), {"worker_id": worker_id, "lease": int(lease_seconds), "id": row_id})
+
+    result = {"sent": 0, "failed": 0, "pending": 0, "claimed": len(rows)}
     for row in rows:
-        ok, reason = send_feishu_text(webhook, row["content"]) if webhook else (False, "no_webhook")
+        webhook = load_feishu_webhook(engine)
+        if not webhook:
+            ok, reason = False, "no_webhook"
+        elif row.get("payload_json"):
+            try:
+                ok, reason = _send_feishu_payload(webhook, json.loads(row["payload_json"]))
+            except Exception as exc:
+                ok, reason = False, f"invalid_payload={exc}"
+        else:
+            ok, reason = send_feishu_text(webhook, row["content"])
         record_notification_delivery(
             engine, business_date=row["business_date"], notification_type=row["notification_type"],
-            task_name=row["task_name"], channel_key="feishu", status="ok" if ok else "failed",
-            reason=reason, dedupe_key=row["dedupe_key"],
+            task_name=row["task_name"], channel_key=row["channel_key"], status="ok" if ok else "failed",
+            reason=reason, dedupe_key=row["dedupe_key"], event_id=row.get("event_id"),
+            run_id=row.get("run_id"), content_hash=row.get("content_hash"),
         )
         retry_count = int(row["retry_count"] or 0) + 1
         if ok:
             status, result_key = "SENT", "sent"
-        elif retry_count >= int(row["max_retries"] or 3):
+        elif _is_permanent_delivery_failure(reason) or retry_count >= int(row["max_retries"] or 3):
             status, result_key = "NOTIFICATION_FAILED", "failed"
         else:
             status, result_key = "PENDING", "pending"
@@ -251,11 +544,12 @@ def process_notification_outbox(engine: "Engine", limit: int = 10) -> dict[str, 
                 text_fn(
                     """UPDATE chenyiyun.app_notification_outbox
                        SET status=:status,retry_count=:retry_count,last_error=:reason,
-                           next_retry_at=DATE_ADD(NOW(), INTERVAL :delay MINUTE)
-                       WHERE id=:id"""
+                           next_retry_at=DATE_ADD(NOW(), INTERVAL :delay MINUTE),
+                           claimed_by=NULL,claimed_at=NULL,lease_until=NULL
+                       WHERE id=:id AND claimed_by=:worker_id"""
                 ),
                 {"status": status, "retry_count": retry_count, "reason": reason,
-                 "delay": delay_minutes, "id": row["id"]},
+                 "delay": delay_minutes, "id": row["id"], "worker_id": worker_id},
             )
     return result
 
@@ -270,8 +564,11 @@ def record_notification_delivery(
     status: str,
     reason: str,
     dedupe_key: str | None = None,
+    event_id: str | None = None,
+    run_id: str | None = None,
+    content_hash: str | None = None,
 ) -> None:
-    """Persist one notification delivery attempt."""
+    """Persist the latest state for one channel/idempotency key."""
     ensure_notification_delivery_table(engine)
     text_fn = _get_text_sql()
     with engine.begin() as conn:
@@ -279,8 +576,15 @@ def record_notification_delivery(
             text_fn(
                 """
                 INSERT INTO chenyiyun.app_notification_delivery
-                    (business_date, notification_type, task_name, channel_key, status, reason, dedupe_key)
-                VALUES (:business_date, :notification_type, :task_name, :channel_key, :status, :reason, :dedupe_key)
+                    (business_date, notification_type, task_name, channel_key, status, reason,
+                     dedupe_key, event_id, run_id, content_hash)
+                VALUES (:business_date, :notification_type, :task_name, :channel_key, :status, :reason,
+                        :dedupe_key, :event_id, :run_id, :content_hash)
+                ON DUPLICATE KEY UPDATE
+                    business_date=VALUES(business_date),notification_type=VALUES(notification_type),
+                    task_name=VALUES(task_name),status=VALUES(status),reason=VALUES(reason),
+                    event_id=COALESCE(VALUES(event_id),event_id),run_id=COALESCE(VALUES(run_id),run_id),
+                    content_hash=COALESCE(VALUES(content_hash),content_hash),attempt_count=attempt_count+1
                 """
             ),
             {
@@ -291,8 +595,128 @@ def record_notification_delivery(
                 "status": str(status or "unknown"),
                 "reason": str(reason or "")[:2000],
                 "dedupe_key": dedupe_key,
+                "event_id": event_id,
+                "run_id": run_id,
+                "content_hash": content_hash,
             },
         )
+
+
+def _already_delivered(engine: "Engine", channel_key: str, dedupe_key: str) -> bool:
+    text_fn = _get_text_sql()
+    with engine.connect() as conn:
+        return bool(conn.execute(text_fn(
+            "SELECT 1 FROM chenyiyun.app_notification_delivery "
+            "WHERE channel_key=:channel_key AND dedupe_key=:dedupe_key AND status='ok' LIMIT 1"
+        ), {"channel_key": channel_key, "dedupe_key": dedupe_key}).scalar())
+
+
+def _reserve_delivery(
+    engine: "Engine", event: NotificationEvent, channel_key: str, content_hash: str,
+) -> bool:
+    """Atomically reserve a channel/dedupe pair before making an HTTP call."""
+    text_fn = _get_text_sql()
+    with engine.begin() as conn:
+        result = conn.execute(text_fn(
+            "INSERT IGNORE INTO chenyiyun.app_notification_delivery "
+            "(business_date,notification_type,task_name,channel_key,status,reason,dedupe_key,event_id,"
+            "run_id,content_hash,attempt_count) "
+            "VALUES (:business_date,:notification_type,:task_name,:channel_key,'sending','reserved',"
+            ":dedupe_key,:event_id,:run_id,:content_hash,0)"
+        ), {
+            "business_date": event.business_date,
+            "notification_type": event.event_type,
+            "task_name": event.task_name,
+            "channel_key": channel_key,
+            "dedupe_key": event.dedupe_key,
+            "event_id": event.event_id,
+            "run_id": event.run_id,
+            "content_hash": content_hash,
+        })
+        if int(result.rowcount or 0) == 1:
+            return True
+        # A process can die after reserving but before sending/enqueueing. Allow
+        # a later publisher to recover only an abandoned reservation.
+        recovered = conn.execute(text_fn(
+            "UPDATE chenyiyun.app_notification_delivery SET event_id=:event_id,run_id=:run_id,"
+            "content_hash=:content_hash,reason='reservation_recovered',"
+            "updated_at=NOW() WHERE channel_key=:channel_key AND dedupe_key=:dedupe_key "
+            "AND status='sending' AND updated_at<DATE_SUB(NOW(),INTERVAL 2 MINUTE)"
+        ), {
+            "event_id": event.event_id,
+            "run_id": event.run_id,
+            "content_hash": content_hash,
+            "channel_key": channel_key,
+            "dedupe_key": event.dedupe_key,
+        })
+        return int(recovered.rowcount or 0) == 1
+
+
+def publish_notification(
+    engine: "Engine", event: NotificationEvent, *, channel_key: str = "feishu",
+) -> DeliveryResult:
+    """Publish a typed notification with audit, idempotence and durable retry."""
+    if channel_key != "feishu":
+        raise ValueError(f"unsupported channel: {channel_key}")
+    ensure_notification_delivery_table(engine)
+    payload = build_feishu_interactive_payload(event)
+    payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    content_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    if _already_delivered(engine, channel_key, event.dedupe_key):
+        return DeliveryResult(
+            True, "DEDUPED", "deduped_already_delivered", event.event_id,
+            channel_key=channel_key, deduped=True,
+        )
+    if not _reserve_delivery(engine, event, channel_key, content_hash):
+        # Another publisher reserved or queued this exact event between the
+        # delivered check and our insert. It owns delivery from this point.
+        return DeliveryResult(
+            False, "IN_PROGRESS", "deduped_delivery_in_progress", event.event_id,
+            channel_key=channel_key, deduped=True, queued=True,
+        )
+
+    content = str(payload["card"]["body"]["elements"][0]["content"])
+    webhook = load_feishu_webhook(engine)
+    ok, reason = _send_feishu_payload(webhook, payload) if webhook else (False, "no_webhook")
+    status = "ok" if ok else (
+        "notification_failed" if _is_permanent_delivery_failure(reason) else "failed"
+    )
+    record_notification_delivery(
+        engine,
+        business_date=event.business_date,
+        notification_type=event.event_type,
+        task_name=event.task_name,
+        channel_key=channel_key,
+        status=status,
+        reason=reason,
+        dedupe_key=event.dedupe_key,
+        event_id=event.event_id,
+        run_id=event.run_id,
+        content_hash=content_hash,
+    )
+    if ok:
+        return DeliveryResult(True, "SENT", reason, event.event_id, channel_key=channel_key)
+
+    dead = _is_permanent_delivery_failure(reason)
+    enqueue_notification_retry(
+        engine,
+        content,
+        business_date=event.business_date,
+        notification_type=event.event_type,
+        task_name=event.task_name,
+        dedupe_key=event.dedupe_key,
+        reason=reason,
+        channel_key=channel_key,
+        payload=payload,
+        event_id=event.event_id,
+        run_id=event.run_id,
+        content_hash=content_hash,
+        dead_letter=dead,
+    )
+    return DeliveryResult(
+        False, "NOTIFICATION_FAILED" if dead else "QUEUED", reason, event.event_id,
+        channel_key=channel_key, queued=not dead,
+    )
 
 
 def send_feishu_text_audited(
@@ -314,7 +738,7 @@ def send_feishu_text_audited(
             delivered = conn.execute(
                 text_fn(
                     """SELECT 1 FROM chenyiyun.app_notification_delivery
-                       WHERE dedupe_key=:dedupe_key AND status='ok' LIMIT 1"""
+                       WHERE channel_key='feishu' AND dedupe_key=:dedupe_key AND status='ok' LIMIT 1"""
                 ), {"dedupe_key": effective_dedupe_key}
             ).scalar()
     if delivered:
@@ -353,6 +777,7 @@ def send_feishu_text_audited(
         enqueue_notification_retry(
             engine, content, business_date=business_date, notification_type=notification_type,
             task_name=task_name, dedupe_key=effective_dedupe_key, reason=reason,
+            dead_letter=_is_permanent_delivery_failure(reason),
         )
     return ok, reason
 

@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from test.v4_evidence_fixture import write_v4_cartesian_evidence
+
 # Ensure project root on path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 import sys
@@ -716,7 +718,8 @@ class TestEvidenceSemanticValidation:
 
         report = validate_evidence_semantics(evidence_dir)
         assert not report.passed
-        assert report.status == SemanticEvidenceStatus.NOT_FITTED.value
+        assert report.status == SemanticEvidenceStatus.INSUFFICIENT_OOS_COVERAGE.value
+        assert not report.checks["factor_states"]["passed"]
 
     def test_source_incomplete_fails_semantic(self, tmp_path):
         """source_complete=False should fail semantic validation."""
@@ -754,7 +757,8 @@ class TestEvidenceSemanticValidation:
         # source_complete is still False (default)
         report = validate_evidence_semantics(evidence_dir)
         assert not report.passed
-        assert report.status == SemanticEvidenceStatus.SOURCE_INCOMPLETE.value
+        assert report.status == SemanticEvidenceStatus.INSUFFICIENT_OOS_COVERAGE.value
+        assert not report.checks["source_completeness"]["passed"]
 
     def test_all_valid_passes_semantic(self, tmp_path):
         """Fully valid evidence package should pass.
@@ -779,6 +783,7 @@ class TestEvidenceSemanticValidation:
             }),
         }
         evidence_dir = self._make_minimal_evidence_dir(tmp_path, **overrides)
+        write_v4_cartesian_evidence(evidence_dir, include_semantic_files=True)
 
         # Add valid data to root
         dates = list(pd.date_range("2025-01-02", "2025-06-30", freq="B"))
@@ -791,10 +796,6 @@ class TestEvidenceSemanticValidation:
             "accrued_cost": 0.0,               # PR20: required column
         })
         nav.to_parquet(evidence_dir / "daily_nav.parquet")
-        # PR20: Write to per-experiment directories (covers 2025Q1 window)
-        for exp_id in ["P0", "C0", "A7", "A8", "A9"]:
-            nav.to_parquet((evidence_dir / exp_id) / "daily_nav.parquet")
-
         candidates = pd.DataFrame({
             "trade_date": np.repeat(dates[:30], 5),
             "symbol": [f"{i:06d}" for i in range(150)],
@@ -921,31 +922,37 @@ class TestAntiLeakageMutation:
             train_start="2026-01-02",
             train_end="2026-03-31",
             n_train_days=60,
+            neutralization_parameters={
+                "industry": False,
+                "log_market_cap": False,
+                "volatility_20d": False,
+                "residual_standardize": False,
+            },
         )
 
         # Create proper price data with trade_date column
-        dates_a = list(pd.date_range("2026-01-02", periods=10, freq="B"))
-        dates_b = list(pd.date_range("2026-01-02", periods=10, freq="B"))
+        dates_a = list(pd.date_range("2025-10-01", periods=80, freq="B"))
+        dates_b = list(pd.date_range("2025-10-01", periods=80, freq="B"))
         prices = pd.DataFrame({
-            "symbol": ["A"] * 10 + ["B"] * 10,
+            "symbol": ["A"] * 80 + ["B"] * 80,
             "trade_date": dates_a + dates_b,
             "adj_close": (
-                list(np.cumprod(1 + np.random.randn(10) * 0.02))
-                + list(np.cumprod(1 + np.random.randn(10) * 0.02))
+                list(np.cumprod(1 + np.random.randn(80) * 0.02))
+                + list(np.cumprod(1 + np.random.randn(80) * 0.02))
             ),
         })
 
         # Create scores with trade_date for the signal date
+        signal_date = dates_a[50].date().isoformat()
         scores = pd.DataFrame({
             "symbol": ["A", "B"],
-            "trade_date": [pd.Timestamp("2026-01-10")] * 2,
+            "trade_date": [pd.Timestamp(signal_date)] * 2,
             "score": [80.0, 75.0],
             "opt_score": [6.0, 5.0],
             "claude_score": [70.0, 65.0],
         })
 
         # Signal date is mid-range
-        signal_date = "2026-01-10"
         result = estimator.transform(state, signal_date, scores, prices)
 
         # Result should only contain rows for the signal date

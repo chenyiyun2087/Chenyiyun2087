@@ -3,17 +3,7 @@ import os
 from datetime import datetime
 
 import pymysql
-
-
-DEFAULT_MYSQL_CONFIG = {
-    "host": "localhost",
-    "port": 3306,
-    "user": "root",
-    "password": "19871019",
-    "database": "chenyiyun",
-    "charset": "utf8mb4",
-    "autocommit": True,
-}
+from scoreRank.core.db_config import require_pymysql_config
 
 
 def fetch_latest_buy_signals(mysql_config):
@@ -75,23 +65,11 @@ def print_latest_buy_signals(mysql_config):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="显示最近一次出现买点的股票")
-    parser.add_argument("--mysql-host", default=DEFAULT_MYSQL_CONFIG["host"], help="MySQL主机地址")
-    parser.add_argument("--mysql-port", type=int, default=DEFAULT_MYSQL_CONFIG["port"], help="MySQL端口")
-    parser.add_argument("--mysql-user", default=DEFAULT_MYSQL_CONFIG["user"], help="MySQL用户名")
-    parser.add_argument("--mysql-password", default=DEFAULT_MYSQL_CONFIG["password"], help="MySQL密码")
-    parser.add_argument("--mysql-db", default=DEFAULT_MYSQL_CONFIG["database"], help="MySQL数据库名")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    mysql_config = {
-        "host": args.mysql_host,
-        "port": args.mysql_port,
-        "user": args.mysql_user,
-        "password": args.mysql_password or "",
-        "database": args.mysql_db,
-        "charset": "utf8mb4",
-        "autocommit": True,
-    }
+    parse_args()
+    mysql_config = require_pymysql_config(dict_cursor=False)
+    mysql_config["autocommit"] = True
     print_latest_buy_signals(mysql_config)

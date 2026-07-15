@@ -10,6 +10,7 @@ from typing import Iterable, List, Optional
 
 import pymysql
 from project_network import configure_chrome_direct_options, enforce_direct_network
+from scoreRank.core.db_config import require_pymysql_config
 
 enforce_direct_network()
 
@@ -32,14 +33,6 @@ class BatchResult:
     snapshot: DuokongSnapshot | None = None
     error: str | None = None
     duration_seconds: float = 0.0
-
-DEFAULT_MYSQL_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "19871019",
-    "database": "chenyiyun",
-    "charset": "utf8mb4",
-}
 
 MYSQL_CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS em_duokong_sentiment (
@@ -225,7 +218,7 @@ class DataController:
     """东方财富多空情绪数据控制器。集成了 Selenium 扫描与数据库操作。"""
 
     def __init__(self, mysql_config: Optional[dict] = None) -> None:
-        self.mysql_config = mysql_config or DEFAULT_MYSQL_CONFIG
+        self.mysql_config = mysql_config or require_pymysql_config(dict_cursor=False)
 
     def scan_sentiment(
         self,

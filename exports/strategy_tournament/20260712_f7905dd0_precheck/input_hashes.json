@@ -1,0 +1,19 @@
+{
+  "adaptive_market_style": {},
+  "alpha_decay_exit_v2": {},
+  "alpha_risk_portfolio_v2": {},
+  "ashare_auto_shadow": {},
+  "ashare_hybrid_conservative_shadow": {},
+  "ashare_trend_breakout_shadow": {},
+  "baseline_full_liquidity_detail_vol_position": {},
+  "dual_system_adaptive_route": {},
+  "full_strategy_v3": {},
+  "industry_neutral_alpha_v3": {},
+  "market_exposure_governor_v1": {},
+  "meta_allocator_v1": {},
+  "production_governed_vol_position": {},
+  "production_governed_vol_position_v1_2b_dynamic_score": {},
+  "production_governed_vol_position_v1_2b_execution_safe_uplift": {},
+  "repair_reversal_shadow": {},
+  "tiered_liquidity_then_bs_v2": {}
+}

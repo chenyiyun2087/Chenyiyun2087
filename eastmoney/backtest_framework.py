@@ -18,21 +18,17 @@ plt.rcParams['axes.unicode_minus'] = False
 
 import pymysql
 from sqlalchemy import create_engine
+from scoreRank.core.db_config import build_pymysql_config, require_sqlalchemy_url
 
 class DataInterface:
     """数据接口类 - 对接真实数据库 (MySQL)"""
     
     def __init__(self):
-        # 数据库配置 (复用 data_controller 的配置)
-        self.db_config = {
-            "host": "localhost",
-            "user": "root",
-            "password": "19871019",
-            "database": "chenyiyun",  # 默认连 chenyiyun，其他库显式指定
-            "charset": "utf8mb4",
-        }
-        self.engine_str = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
-        self.ts_engine_str = "mysql+pymysql://root:19871019@localhost:3306/tushare_stock?charset=utf8mb4"
+        # 安全敏感入口只接受显式 URL；同一账户访问两个逻辑库。
+        require_sqlalchemy_url(database="chenyiyun")
+        self.db_config = build_pymysql_config(dict_cursor=False)
+        self.engine_str = require_sqlalchemy_url(database="chenyiyun")
+        self.ts_engine_str = require_sqlalchemy_url(database="tushare_stock")
     
     def get_stock_basic_info(self, stock_code):
         """获取股票基本信息 (从 chenyiyun.a_share_stock_list)"""

@@ -15,7 +15,6 @@ Dimensions analyzed:
 
 from __future__ import annotations
 
-import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -28,7 +27,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-os.environ.setdefault("CHENYIYUN_DB_PASSWORD", "19871019")
 from scoreRank.core.db_config import build_sqlalchemy_url
 
 TODAY = date.today()

@@ -1,0 +1,35 @@
+【替代策略诊断报告｜非生产策略绩效报告】
+日期：2026-07-14
+生产外壳：生产治理波动仓位策略（production_governed_vol_position）
+选股内核：流动性质量稳健策略（波动仓位）（baseline_full_liquidity_detail_vol_position）
+风控锚：市场风格自适应生产策略（adaptive_market_style） v2.2
+风险档位：adaptive / 当前目标仓位 70%
+实际回测策略：动态评分 Champion 基准（production_governed_vol_position_v1_2b_dynamic_score）
+风险总闸版本：v1 / 目标仓位 50.00%
+结论：风险总闸触发：defensive_only，目标仓位 50.00%
+
+最近3个月收益评估：
+- 状态：PASS；区间 2026-04-13~2026-07-14，交易日 63/63
+- 收益 28.69%，年化 178.78%，最大回撤 -11.91%，当前回撤 -10.84%
+- 胜率 58.06%，最差单日 -8.10%，波动率 42.02%，Sharpe 2.65，Calmar 15.01，平均暴露 65.17%
+
+当前回测窗口收益/回撤：
+- 主策略窗口 2025-09-02~2026-07-14（207个交易日）：累计40.67%，年化51.80%，最大回撤-13.12%，期末权益703,327
+- 风控影子v2.2窗口 2025-09-02~2026-07-14（207个交易日）：累计17.38%，年化21.65%，最大回撤-14.54%
+
+当前运行：
+- 候选 5 只，目标仓位合计50.00%；行业：半导体5只
+- 订单 0 笔（BUY 0 / SELL 0），计划金额 0
+- 影子盘：可成交 3 / 不可成交 0，均值滑点 -243.1 bps；验收 pass / none
+- 最近影子盘：fail_streak 0，worst_action reduce_position
+- 实盘快照：总权益 500,000，现金 500,000，持仓市值 0，日收益 0.00%
+- 数据提醒：live_positions is empty; live realized strategy trend cannot be judged
+
+Top5：
+- 1. 688120 华海清科 半导体 权重10.22%
+- 2. 688347 华虹公司 半导体 权重9.91%
+- 3. 002371 北方华创 半导体 权重9.51%
+- 4. 002156 通富微电 半导体 权重10.09%
+- 5. 002185 华天科技 半导体 权重10.27%
+
+报告：/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260715_012613_20260714/strategy_performance_review.md

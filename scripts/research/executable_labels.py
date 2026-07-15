@@ -435,6 +435,17 @@ def compute_executable_forward_returns(
         prices_sorted[f"actual_exit_date_{lbl}"] = exit_data[lbl]["actual_dates"]
         prices_sorted[f"exit_delay_days_{lbl}"] = exit_data[lbl]["delay_days"]
         prices_sorted[f"censored_{lbl}"] = exit_data[lbl]["censored"]
+        prices_sorted[f"exit_tradable_{lbl}"] = ~pd.Series(
+            exit_data[lbl]["censored"], index=prices_sorted.index, dtype=bool
+        )
+        prices_sorted[f"exit_reason_{lbl}"] = exit_data[lbl]["gate_reasons"]
+
+    # Canonical 10-day aliases remain part of the public label contract.
+    for base in (
+        "planned_exit_date", "actual_exit_date", "exit_delay_days",
+        "exit_tradable", "censored", "exit_reason",
+    ):
+        prices_sorted[base] = prices_sorted[f"{base}_10d"]
 
     # Backward-compatible: single exit_gate_reason (uses 10d)
     exit_gate_reasons_list = exit_data["10d"]["gate_reasons"]
@@ -506,8 +517,14 @@ def compute_executable_forward_returns(
             f"planned_exit_date_{lbl}",
             f"actual_exit_date_{lbl}",
             f"exit_delay_days_{lbl}",
+            f"exit_tradable_{lbl}",
             f"censored_{lbl}",
+            f"exit_reason_{lbl}",
         ]
+    _audit_cols += [
+        "planned_exit_date", "actual_exit_date", "exit_delay_days",
+        "exit_tradable", "censored", "exit_reason",
+    ]
     keep_cols = result_cols + _audit_cols
     available = [c for c in keep_cols if c in prices_sorted.columns]
     return prices_sorted[available].reset_index(drop=True)

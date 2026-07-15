@@ -66,14 +66,17 @@ score_rank_daily 完整性校验
 ## 5. 常用命令
 
 ```bash
+# 只使用轮换后的非特权只读账户；不要在命令行或仓库中写口令
+export CHENYIYUN_DB_URL='由安全凭据存储注入的完整只读URL'
+export CHENYIYUN_DB_READ_ONLY=1
+
 # 评分
-CHENYIYUN_DB_PASSWORD=你的密码 python3 -m scoreRank.cli.run_daily --date YYYY-MM-DD --force
+python3 -m scoreRank.cli.run_daily --date YYYY-MM-DD --force
 
 # 行业回填
-CHENYIYUN_DB_PASSWORD=你的密码 python3 scripts/backfill_score_rank_daily_industry.py --execute
+python3 scripts/backfill_score_rank_daily_industry.py --execute
 
 # 账户级可信策略回测
-CHENYIYUN_DB_PASSWORD=你的密码 \
 python3 scripts/research/run_production_governed_vol_position_backtest.py \
   --start-date 2025-06-03 \
   --end-date 2026-05-29 \
@@ -82,6 +85,19 @@ python3 scripts/research/run_production_governed_vol_position_backtest.py \
   --hold-days 10 \
   --max-total-positions 5 \
   --trade-cost-rate 0.00075
+
+# 统一赛马预检：无需数据库，不产生晋级结论
+python3 scripts/research/run_production_strategy_tournament.py \
+  --as-of YYYY-MM-DD \
+  --output-dir exports/strategy_tournament/precheck_YYYYMMDD \
+  --precheck-only
+
+# 正式赛马：工作区必须 clean，每个策略必须显式绑定同身份证据目录
+python3 scripts/research/run_production_strategy_tournament.py \
+  --as-of YYYY-MM-DD \
+  --output-dir exports/strategy_tournament/formal_YYYYMMDD \
+  --source production_governed_vol_position=/absolute/evidence/P0 \
+  --source full_strategy_v3=/absolute/evidence/A9
 ```
 
 ## 6. 未来函数红线

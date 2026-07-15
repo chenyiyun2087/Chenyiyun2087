@@ -162,6 +162,11 @@ def constrained_weight_allocation(
         risk = np.asarray(risk_values, dtype=float)
         if len(risk) != n:
             raise ValueError("risk_values must match raw_weights length")
+        # Leave a small numerical safety margin.  Covariance-mode risk values
+        # are marginal contributions evaluated at the optimizer's raw weights;
+        # water-filling then changes those weights, so targeting the exact cap
+        # can leave a few basis points of floating-point/linearisation drift.
+        effective_top2_cap = max(0.0, top2_risk_cap - 1e-3)
         for _ in range(max_iterations):
             contributions = np.maximum(risk, 0.0) * final_w
             total_risk = contributions.sum()
@@ -171,11 +176,11 @@ def constrained_weight_allocation(
             top2_risk = contributions[top2].sum()
             other_risk = total_risk - top2_risk
             ratio = top2_risk / total_risk
-            if ratio <= top2_risk_cap + 1e-10:
+            if ratio <= effective_top2_cap + 1e-10:
                 break
             scale = (
-                top2_risk_cap * other_risk
-                / max(top2_risk * (1.0 - top2_risk_cap), 1e-12)
+                effective_top2_cap * other_risk
+                / max(top2_risk * (1.0 - effective_top2_cap), 1e-12)
             )
             final_w[top2] *= min(scale, 0.999999)
 

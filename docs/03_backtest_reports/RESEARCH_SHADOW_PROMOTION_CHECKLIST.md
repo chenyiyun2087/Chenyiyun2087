@@ -55,7 +55,8 @@ This checklist gates any move from manual research shadow to enabled shadow or c
 
 ## Canary Requirements
 
-- Enabled shadow has passed for 20 real trading days.
+- Disabled shadow has first passed for 20 real trading days.
+- Enabled shadow has then passed for 60 additional real trading days and at least 30 completed round trips.
 - Recovery event count is at least 5 during enabled shadow.
 - No degraded execution quality.
 - No 3 consecutive days of negative shadow theory gap.

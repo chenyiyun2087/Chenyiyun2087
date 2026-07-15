@@ -8,16 +8,7 @@ import logging
 from datetime import datetime
 
 import pymysql
-
-# 默认数据库配置 (与项目一致)
-DEFAULT_DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "19871019",
-    "database": "chenyiyun",
-    "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor
-}
+from scoreRank.core.db_config import require_pymysql_config
 
 def check_status(target_date: str, db_config: dict = None):
     """
@@ -26,7 +17,7 @@ def check_status(target_date: str, db_config: dict = None):
     :return: dict 状态信息
     """
     if db_config is None:
-        db_config = DEFAULT_DB_CONFIG
+        db_config = require_pymysql_config(dict_cursor=True)
 
     try:
         conn = pymysql.connect(**db_config)

@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from test.v4_evidence_fixture import write_v4_cartesian_evidence
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 import sys
 if str(PROJECT_ROOT) not in sys.path:
@@ -688,25 +690,13 @@ class TestPerExperimentWindowEvidence:
         assert "A9" in str(result["missing"])
 
     def test_all_experiments_present_passes(self, tmp_path):
-        """All experiments with all windows should pass."""
+        """All V4 experiments with all ten quarters should pass."""
         from scripts.research.evidence_semantic import validate_evidence_per_experiment_window
 
         evidence_dir = tmp_path / "evidence"
         evidence_dir.mkdir()
 
-        for exp_id in ["P0", "C0", "A7", "A8", "A9"]:
-            exp_dir = evidence_dir / exp_id
-            exp_dir.mkdir()
-            # Data across multiple windows
-            dates = (
-                list(pd.date_range("2025-01-02", "2025-06-30", freq="B"))
-                + list(pd.date_range("2026-01-02", "2026-03-31", freq="B"))
-            )
-            nav = pd.DataFrame({
-                "trade_date": dates,
-                "nav": np.cumprod(1 + np.random.randn(len(dates)) * 0.01),
-            })
-            nav.to_parquet(exp_dir / "daily_nav.parquet")
+        write_v4_cartesian_evidence(evidence_dir)
 
         result = validate_evidence_per_experiment_window(evidence_dir)
         assert result["structure"] == "per_experiment"
@@ -776,7 +766,7 @@ class TestPR19GoldenRegressionSmoke:
         from scripts.research.run_pr19_golden_regression import (
             REQUIRED_DATE_RANGES, MIN_SESSIONS_PER_WINDOW, MIN_TOTAL_SESSIONS,
         )
-        assert len(REQUIRED_DATE_RANGES) == 5
+        assert len(REQUIRED_DATE_RANGES) == 10
         assert MIN_SESSIONS_PER_WINDOW >= 15
         assert MIN_TOTAL_SESSIONS >= 180
 

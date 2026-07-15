@@ -23,9 +23,8 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from scoreRank.core.bs_point_infer import BSPointInferrer
+from scoreRank.core.db_config import require_sqlalchemy_url
 from sqlalchemy import create_engine, text
-
-CHENYIYUN_DB = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
 
 
 def get_trade_calendar(engine, start_date: str, end_date: str) -> list:
@@ -72,7 +71,7 @@ def main():
     if args.date:
         dates = [args.date]
     else:
-        engine = create_engine(CHENYIYUN_DB)
+        engine = create_engine(require_sqlalchemy_url(database="chenyiyun"))
         dates = get_trade_calendar(engine, args.start, args.end or datetime.now().strftime("%Y%m%d"))
         engine.dispose()
         print(f"[CLI] Processing {len(dates)} trading days: {dates[0]} ~ {dates[-1]}")

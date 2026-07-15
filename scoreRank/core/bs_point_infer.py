@@ -19,8 +19,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-# Config
-TUSHARE_DB = "mysql+pymysql://root:19871019@localhost:3306/tushare_stock?charset=utf8mb4"
+from scoreRank.core.db_config import require_sqlalchemy_url
 
 # QFQ (前复权) factor columns needed for inference
 PRICE_COLS = [
@@ -141,7 +140,9 @@ class BSPointInferrer:
 
     def _get_engine(self):
         if self.engine is None:
-            self.engine = create_engine(TUSHARE_DB)
+            self.engine = create_engine(
+                require_sqlalchemy_url(database="tushare_stock")
+            )
         return self.engine
 
     def _stock_code_to_ts_code(self, code: str) -> str:
@@ -562,7 +563,7 @@ class BSPointInferrer:
                    chenyiyun_url: str = None):
         """Write predictions to chenyiyun.bs_detection_results."""
         if chenyiyun_url is None:
-            chenyiyun_url = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
+            chenyiyun_url = require_sqlalchemy_url(database="chenyiyun")
 
         engine = create_engine(chenyiyun_url)
 

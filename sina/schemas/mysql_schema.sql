@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS bs_detection_results (
     process_time VARCHAR(32),
     image_path TEXT,
     created_at DATETIME NOT NULL,
-    UNIQUE KEY uniq_bs_detection (batch_name, batch_date, stock_code)
+    UNIQUE KEY uniq_bs_detection (batch_name, batch_date, stock_code),
+    KEY idx_bs_batch_stock (batch_date, stock_code),
+    KEY idx_bs_stock_state (stock_code, batch_date, has_buy_signal, has_sell_signal)
 );
 
 -- 批量插入（防重机制：重复时更新内容）

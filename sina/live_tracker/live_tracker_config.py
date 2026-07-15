@@ -5,6 +5,8 @@ Live Trading Tracker Configuration
 
 from typing import Dict, TypedDict
 
+from scoreRank.core.db_config import require_sqlalchemy_url
+
 
 class LiveTrackerConfig(TypedDict, total=False):
     # 数据库配置
@@ -29,9 +31,6 @@ class LiveTrackerConfig(TypedDict, total=False):
 
 
 LIVE_CONFIG: LiveTrackerConfig = {
-    # 数据库配置（复用现有配置）
-    "db_url": "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4",
-    
     # 账户配置
     "initial_capital": 700_000.0,  # 初始资金70万
     "commission": 0.0015,           # 手续费0.15%（含印花税）
@@ -55,8 +54,8 @@ LIVE_CONFIG: LiveTrackerConfig = {
 
 
 def get_db_url() -> str:
-    """获取数据库连接URL"""
-    return LIVE_CONFIG["db_url"]
+    """获取显式环境配置的数据库连接 URL。"""
+    return require_sqlalchemy_url(database="chenyiyun")
 
 
 def get_initial_capital() -> float:

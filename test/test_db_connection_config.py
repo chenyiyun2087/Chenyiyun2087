@@ -1,4 +1,10 @@
-from scoreRank.core.db_config import build_pymysql_config, build_sqlalchemy_url
+import pytest
+
+from scoreRank.core.db_config import (
+    build_pymysql_config,
+    build_sqlalchemy_url,
+    require_sqlalchemy_url,
+)
 from scripts.ops.check_db_connection import mask_sqlalchemy_url
 
 
@@ -34,3 +40,22 @@ def test_mask_sqlalchemy_url_hides_password():
 
     assert "secret" not in masked
     assert "user:***@" in masked
+
+
+def test_explicit_url_can_select_logical_database(monkeypatch):
+    monkeypatch.setenv(
+        "CHENYIYUN_DB_URL",
+        "mysql+pymysql://readonly:secret@db.internal:3306/chenyiyun?charset=utf8mb4",
+    )
+    url = build_sqlalchemy_url(database="tushare_stock")
+    assert "readonly:secret@db.internal:3306/tushare_stock" in url
+
+    config = build_pymysql_config(dict_cursor=False)
+    assert config["user"] == "readonly"
+    assert config["password"] == "secret"
+
+
+def test_required_url_fails_closed_without_explicit_url(monkeypatch):
+    monkeypatch.delenv("CHENYIYUN_DB_URL", raising=False)
+    with pytest.raises(RuntimeError, match="CHENYIYUN_DB_URL"):
+        require_sqlalchemy_url()

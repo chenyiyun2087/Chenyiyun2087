@@ -1,0 +1,14 @@
+{
+  "status": "BLOCKED",
+  "blocked_stage": "RESEARCH_BACKTEST",
+  "blockers": [
+    "DIRTY_WORKTREE",
+    "CHENYIYUN_DB_URL_UNSET"
+  ],
+  "git": {
+    "commit": "f7905dd0bdeb593235d8d2d868052a099e0252d6",
+    "clean": false
+  },
+  "production_modified": false,
+  "orders_generated": false
+}

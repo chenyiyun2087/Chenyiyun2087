@@ -273,7 +273,10 @@ def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: p
     ]
     try:
         sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True).strip()
-        dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=PROJECT_ROOT, text=True).strip())
+        dirty = bool(subprocess.check_output(
+            ["git", "status", "--porcelain", "--", ".", ":(exclude)exports/**", ":(exclude)reports/**"],
+            cwd=PROJECT_ROOT, text=True,
+        ).strip())
     except (OSError, subprocess.CalledProcessError):
         sha, dirty = "UNKNOWN", True
     data_payload = {
@@ -306,9 +309,52 @@ def _report_provenance(args: argparse.Namespace, scores: pd.DataFrame, prices: p
         },
         "ledger_schema_version": LEDGER_SCHEMA_VERSION,
         "strict_sizing_version": STRICT_SIZING_VERSION,
-        # The runner may use the ledger, but this remains PARTIAL until the
-        # corporate-action coverage data set is independently reconciled.
         "ledger_implementation_status": "PARTIAL_UNVERIFIED",
+    }
+
+
+def _derive_strict_evidence_status(
+    *, required: bool, actions_by_date: dict[object, list[CorporateAction]],
+    corporate_snapshot_hash: str | None, lifecycle_snapshot_hash: str | None,
+    nav: pd.DataFrame, trades: pd.DataFrame, reproducibility_status: str,
+) -> dict[str, object]:
+    """Derive evidence status from immutable inputs and observed ledger output."""
+    actions = [action for values in actions_by_date.values() for action in values]
+    ca_coverage = (
+        float(sum(bool(action.source_complete) for action in actions) / len(actions))
+        if actions else (1.0 if corporate_snapshot_hash else 0.0)
+    )
+    lifecycle_coverage = 1.0 if lifecycle_snapshot_hash else 0.0
+    t1_violations = 0
+    if not trades.empty and {"signal_date", "trade_date"} <= set(trades.columns):
+        signal = pd.to_datetime(trades["signal_date"], errors="coerce")
+        execution = pd.to_datetime(trades["trade_date"], errors="coerce")
+        t1_violations = int((signal.isna() | execution.isna() | execution.le(signal)).sum())
+    elif required:
+        t1_violations = 1
+    reconciliation_column = "ledger_reconciliation_error_bps"
+    if reconciliation_column in nav.columns:
+        reconciliation = pd.to_numeric(nav[reconciliation_column], errors="coerce")
+        order_errors = int(reconciliation.abs().gt(1e-6).sum())
+    else:
+        order_errors = 1 if required else 0
+    verified = bool(
+        required and corporate_snapshot_hash and lifecycle_snapshot_hash
+        and ca_coverage >= 1.0 and lifecycle_coverage >= 1.0
+        and t1_violations == 0 and order_errors == 0
+        and reproducibility_status == "REPRODUCIBLE"
+    )
+    return {
+        "ledger_implementation_status": "VERIFIED" if verified else "PARTIAL_UNVERIFIED",
+        "strict_ledger_status": "VERIFIED" if verified else "PARTIAL_UNVERIFIED",
+        "corporate_action_coverage": ca_coverage,
+        "corporate_action_coverage_status": "RECONCILED" if ca_coverage >= 1.0 else "INCOMPLETE",
+        "lifecycle_session_coverage": lifecycle_coverage,
+        "t_plus_1_fill_violations": t1_violations,
+        "order_conservation_errors": order_errors,
+        "formal_evidence_required": bool(required),
+        "strict_evidence_derived": True,
+        "strict_evidence_derivation_version": "trusted_account_evidence_v1",
     }
 
 
@@ -698,6 +744,11 @@ def _canonical_t1_execution_gate(symbol: str, side: str, price_info: dict[str, o
     can_sell_at_open from execution_market_rules.py.
     """
     from scripts.research.execution_market_rules import can_buy_at_open, can_sell_at_open
+
+    if "execution_tradable" in price_info and not bool(
+        _safe_float(price_info.get("execution_tradable"), 0.0)
+    ):
+        return False, "t1_not_tradable"
 
     open_price = _safe_float(price_info.get("adj_open"), np.nan)
     prev_close = _safe_float(
@@ -2865,7 +2916,19 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     _validate_strict_execution_arguments(args)
     requested_strategies = set(_parse_strategies(args.strategies))
     raw_ledger_strategies = {"production_governed_vol_position", "production_governed_vol_position_v1_2b_gate_tuned", PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME}
-    requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies)
+    champion_evidence_strategies = {
+        "baseline_full_liquidity_detail_vol_position",
+        "baseline_full_liquidity_detail_market_gate",
+        "baseline_full_liquidity",
+        "tiered_liquidity_then_bs_v2",
+        ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+    }
+    formal_evidence_required = bool(getattr(args, "require_verified_evidence", False))
+    requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies) or formal_evidence_required
+    if formal_evidence_required and not champion_evidence_strategies <= requested_strategies:
+        raise ValueError("formal champion evidence requires all four leaf strategies and adaptive_market_style")
+    if formal_evidence_required and not all((getattr(args, "scores_snapshot", None), getattr(args, "prices_snapshot", None))):
+        raise ValueError("formal champion evidence requires immutable score and price snapshots")
     if requires_frozen_inputs and not all((args.corporate_action_snapshot, args.corporate_action_manifest, args.security_lifecycle_snapshot, args.security_lifecycle_manifest)):
         raise ValueError("raw-ledger research requires verified corporate-action and lifecycle snapshots")
     ashare_weight_config = _resolve_ashare_weight_config(
@@ -2875,16 +2938,24 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     )
     ashare_target_cache_dir = getattr(args, "ashare_target_cache_dir", None) or ASHARE_ROUTE_CACHE_ROOT
     engine = create_engine(build_sqlalchemy_url())
-    scores = load_scores(
-        engine,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        min_pool_size=args.min_pool_size,
-    )
+    if getattr(args, "scores_snapshot", None):
+        scores = pd.read_csv(args.scores_snapshot)
+        scores["trade_date"] = pd.to_datetime(scores["trade_date"], errors="coerce").dt.date
+    else:
+        scores = load_scores(
+            engine,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            min_pool_size=args.min_pool_size,
+        )
     if scores.empty:
         raise RuntimeError("No score rows loaded after filters.")
 
-    prices = load_prices(engine, scores["trade_date"].min(), scores["trade_date"].max(), args.hold_days)
+    if getattr(args, "prices_snapshot", None):
+        prices = pd.read_csv(args.prices_snapshot)
+        prices["trade_date"] = pd.to_datetime(prices["trade_date"], errors="coerce").dt.date
+    else:
+        prices = load_prices(engine, scores["trade_date"].min(), scores["trade_date"].max(), args.hold_days)
     if prices.empty:
         raise RuntimeError("No price rows loaded.")
     max_signal_date = max(scores["trade_date"].dropna())
@@ -2929,7 +3000,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "security_lifecycle_snapshot_sha256": lifecycle_snapshot_hash,
         "security_lifecycle_manifest": lifecycle_manifest_provenance,
         "market_rules_version": MARKET_RULES_VERSION,
-        "ledger_implementation_status": "PARTIAL_UNVERIFIED",
+        "input_snapshot_hashes": {
+            "scores": _sha256_file(Path(args.scores_snapshot)) if getattr(args, "scores_snapshot", None) else None,
+            "prices": _sha256_file(Path(args.prices_snapshot)) if getattr(args, "prices_snapshot", None) else None,
+        },
     })
     specs = _strategy_specs(_parse_strategies(args.strategies))
     trusted_by_name = {spec.name: spec for spec in filter_strategy_specs(build_strategy_specs(), trusted_only=True)}
@@ -3011,10 +3085,14 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
 
     for spec in specs:
         account = AccountState(cash=float(args.initial_cash))
-        strict_ledger = ExecutionLedger(cash=float(args.initial_cash)) if (
-            spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME
-            and args.execution_mode == STRICT_MODE
-        ) else None
+        use_strict_ledger = bool(
+            args.execution_mode == STRICT_MODE
+            and (
+                spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME
+                or (formal_evidence_required and spec.name in champion_evidence_strategies)
+            )
+        )
+        strict_ledger = ExecutionLedger(cash=float(args.initial_cash)) if use_strict_ledger else None
         strict_previous_factors: dict[str, float] = {}
         strict_ledger_price_rows: list[dict] = []
         nav_rows: list[dict] = []
@@ -3033,10 +3111,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
 
         for trade_date in sim_calendar:
             raw_price_lookup = _price_lookup_for_day(prices, price_day_indices, trade_date, price_lookup_columns)
-            strict_raw_execution = (
-                spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME
-                and args.execution_mode == STRICT_MODE
-            )
+            strict_raw_execution = use_strict_ledger
             price_lookup = _raw_execution_price_view(raw_price_lookup) if strict_raw_execution else raw_price_lookup
             meta = None
             corporate_action_status = "NO_ACTION_CONFIRMED"
@@ -3857,6 +3932,15 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     ledger_prices = pd.concat(all_ledger_prices, ignore_index=True) if all_ledger_prices else pd.DataFrame()
     trades = _annotate_strict_risk_events(trades, prices)
     execution_snapshot = _build_strict_execution_snapshot(trades, prices)
+    provenance.update(_derive_strict_evidence_status(
+        required=formal_evidence_required,
+        actions_by_date=corporate_actions_by_date,
+        corporate_snapshot_hash=corporate_action_snapshot_hash,
+        lifecycle_snapshot_hash=lifecycle_snapshot_hash,
+        nav=nav,
+        trades=trades,
+        reproducibility_status=str(provenance.get("reproducibility_status") or "NON_REPRODUCIBLE"),
+    ))
     summary = pd.DataFrame(summary_rows).sort_values("total_return", ascending=False)
     window_summary = _build_window_summary(nav, float(args.initial_cash))
 
@@ -3998,6 +4082,9 @@ def main() -> None:
     parser.add_argument("--output-dir", default=None, help="Optional isolated output directory; it must not already exist.")
     parser.add_argument("--execution-mode", default=STRICT_MODE, choices=EXECUTION_MODES)
     parser.add_argument("--allow-daily-proxy-approximation", action="store_true")
+    parser.add_argument("--require-verified-evidence", action="store_true", help="Require frozen corporate-action/lifecycle inputs and derive strict evidence for the five champion accounts.")
+    parser.add_argument("--scores-snapshot", default=None, help="Immutable score CSV consumed instead of querying scores during the run.")
+    parser.add_argument("--prices-snapshot", default=None, help="Immutable price CSV consumed instead of querying prices during the run.")
     parser.add_argument("--corporate-action-snapshot", default=None, help="Immutable strict corporate-action CSV generated by build_strict_corporate_action_snapshot.py")
     parser.add_argument("--corporate-action-manifest", default=None)
     parser.add_argument("--security-lifecycle-snapshot", default=None)

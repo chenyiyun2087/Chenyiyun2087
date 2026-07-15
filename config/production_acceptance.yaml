@@ -118,6 +118,8 @@ acceptance:
   # L1→L2: Shadow
   # -----------------------------------------------------------------------
   enabled_shadow:
+    # Entry to SHADOW_ENABLED requires a completed disabled-shadow lane.
+    lane: "SHADOW_DISABLED_TO_ENABLED"
     min_real_trading_days: 20
     min_recovery_event_days: 5
     min_cumulative_recovery_events: 30
@@ -133,6 +135,9 @@ acceptance:
   # L2→L3: Canary
   # -----------------------------------------------------------------------
   canary:
+    # Canary requires an additional 60 enabled-shadow days after the
+    # 20-day disabled-shadow lane; the two windows are not interchangeable.
+    lane: "SHADOW_ENABLED_TO_CANARY"
     max_capital_ratio: 0.10                              # 5-10% of target capital
     min_real_trading_days: 60
     min_completed_round_trips: 30

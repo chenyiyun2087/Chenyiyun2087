@@ -166,6 +166,12 @@ class CorporateActionSnapshotBuilder:
             symbol = str(row["ts_code"]).split(".")[0].zfill(6)
             ex_date = pd.Timestamp(row["ex_date"]).date()
             source_id = f"{symbol}-{ex_date.isoformat()}"
+            announcement_date = _safe_date(row.get("ann_date"))
+            source_complete = bool(announcement_date)
+            as_of_timestamp = (
+                f"{announcement_date}T15:00:00+08:00"
+                if announcement_date else f"{ex_date.isoformat()}T00:00:00+08:00"
+            )
 
             cash = _safe_float(row.get("cash_div_tax"), 0.0)
             stock = _safe_float(row.get("stk_div"), 0.0)
@@ -180,16 +186,16 @@ class CorporateActionSnapshotBuilder:
                     "action_type": "dividend_cash",
                     "effective_date": ex_date,
                     "source_event_id": f"{source_id}:dividend_cash",
-                    "as_of_timestamp": f"{ex_date.isoformat()}T00:00:00+08:00",
+                    "as_of_timestamp": as_of_timestamp,
                     "cash_per_share": cash / 10.0,
                     "stock_ratio": 0.0,
                     "rights_ratio": 0.0,
                     "rights_price": None,
                     "split_ratio": 0.0,
                     "settlement_price": None,
-                    "source_complete": True,
-                    "source_reason": "",
-                    "announcement_date": _safe_date(row.get("ann_date")),
+                    "source_complete": source_complete,
+                    "source_reason": "" if source_complete else "missing_announcement_date",
+                    "announcement_date": announcement_date,
                     "ex_date": ex_date,
                 })
             if stock_total > 0 and base > 0:
@@ -198,16 +204,16 @@ class CorporateActionSnapshotBuilder:
                     "action_type": "stock_bonus",
                     "effective_date": ex_date,
                     "source_event_id": f"{source_id}:stock_bonus",
-                    "as_of_timestamp": f"{ex_date.isoformat()}T00:00:00+08:00",
+                    "as_of_timestamp": as_of_timestamp,
                     "cash_per_share": 0.0,
                     "stock_ratio": stock_total / base,
                     "rights_ratio": 0.0,
                     "rights_price": None,
                     "split_ratio": 0.0,
                     "settlement_price": None,
-                    "source_complete": True,
-                    "source_reason": "",
-                    "announcement_date": _safe_date(row.get("ann_date")),
+                    "source_complete": source_complete,
+                    "source_reason": "" if source_complete else "missing_announcement_date",
+                    "announcement_date": announcement_date,
                     "ex_date": ex_date,
                 })
 

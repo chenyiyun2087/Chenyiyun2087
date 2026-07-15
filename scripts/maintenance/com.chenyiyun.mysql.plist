@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.chenyiyun.mysql</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/chenyiyun/PycharmProjects/Chenyiyun2087/scripts/ops/mysql_boot_wrapper.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/mysql_boot_launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/mysql_boot_launchd.err.log</string>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>
+

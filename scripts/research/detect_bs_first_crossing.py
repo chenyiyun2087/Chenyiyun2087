@@ -19,8 +19,7 @@ import sys
 import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
-
-CHENYIYUN_DB = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
+from scoreRank.core.db_config import require_sqlalchemy_url
 
 
 def load_predictions(engine, batch_name: str, start: str, end: str) -> pd.DataFrame:
@@ -161,7 +160,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    engine = create_engine(CHENYIYUN_DB)
+    engine = create_engine(require_sqlalchemy_url(database="chenyiyun"))
 
     # Load data
     df = load_predictions(engine, args.batch_name, args.start, args.end)

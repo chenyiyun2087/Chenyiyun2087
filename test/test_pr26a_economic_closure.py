@@ -386,9 +386,9 @@ class TestL4CovarianceRisk:
         T, N = 100, 5
         returns = np.random.randn(T, N) * 0.02
 
-        cov, delta = _ledoit_wolf_shrinkage(returns)
+        sample_cov = np.cov(returns, rowvar=False, ddof=0)
+        cov = _ledoit_wolf_shrinkage(sample_cov, returns)
         assert cov.shape == (N, N)
-        assert 0 <= delta <= 1
         # Should be PSD
         eigenvalues = np.linalg.eigvalsh(cov)
         assert np.all(eigenvalues >= -1e-10)
@@ -407,7 +407,8 @@ class TestL4CovarianceRisk:
             np.random.randn(T) * 0.02,            # stock 3: independent
         ])
 
-        cov, _delta = _ledoit_wolf_shrinkage(returns)
+        sample_cov = np.cov(returns, rowvar=False, ddof=0)
+        cov = _ledoit_wolf_shrinkage(sample_cov, returns)
 
         # Covariance between stock 1 and 2 should be high
         assert cov[0, 1] > cov[0, 2] * 2  # corr(1,2) >> corr(1,3)
@@ -443,7 +444,7 @@ class TestL4CovarianceRisk:
 
     def test_pit_covariance_no_future_leak(self):
         """verify compute_pit_covariance doesn't use future data."""
-        from scripts.research.pit_risk import compute_pit_covariance
+        from scripts.research.pit_risk import compute_pit_covariance_matrix
 
         np.random.seed(42)
         dates = pd.date_range("2024-01-01", "2024-06-30", freq="B")
@@ -460,11 +461,10 @@ class TestL4CovarianceRisk:
 
         # Compute covariance as of a mid-point date
         mid_date = dates[len(dates) // 2]
-        cov, valid = compute_pit_covariance(
-            prices, symbols, mid_date, lookback=30, min_periods=10,
+        cov = compute_pit_covariance_matrix(
+            prices, symbols, str(mid_date.date()), window=30, min_history=10,
         )
-        assert len(valid) >= 2
-        assert cov.shape == (len(valid), len(valid))
+        assert cov.shape == (len(symbols), len(symbols))
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +518,7 @@ class TestL5NeutralizationFailClosed:
         assert abs(residuals.mean()) < 0.1
 
     def test_missing_neutralization_fields_raises(self):
-        """Missing required neutralization fields should raise ValueError."""
+        """Missing required neutralization fields should fail closed."""
         from scripts.research.alpha_estimator import AlphaEstimator, FittedAlphaState
 
         estimator = AlphaEstimator()
@@ -547,8 +547,10 @@ class TestL5NeutralizationFailClosed:
             "score": [80.0, 70.0, 60.0],
         })
 
-        # Should raise ValueError when neutralization is requested but fields missing
-        with pytest.raises(ValueError, match="neutralization|required field"):
+        with pytest.raises(
+            RuntimeError,
+            match="ALPHA_NEUTRALIZATION_FAILED|neutralization",
+        ):
             estimator.transform(state, "2024-01-15", scores, prices)
 
 

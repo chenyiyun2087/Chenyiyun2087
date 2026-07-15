@@ -4,11 +4,12 @@ def main():
     import numpy as np
     from sqlalchemy import create_engine
     from scoreRank.core.config import CONFIG
+    from scoreRank.core.db_config import require_sqlalchemy_url
     from scoreRank.core.db_io import fetch_bars_batch
     from scoreRank.core.scorer import build_features_from_qfq
     from datetime import datetime, timedelta
 
-    engine = create_engine('mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4')
+    engine = create_engine(require_sqlalchemy_url(database="chenyiyun"))
     asof_date = datetime.strptime("2026-02-13", "%Y-%m-%d").date()
     start_date = (asof_date - timedelta(days=CONFIG["lookback_days"] * 2)).strftime("%Y-%m-%d")
     end_date = asof_date.strftime("%Y-%m-%d")

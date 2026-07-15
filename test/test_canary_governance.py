@@ -16,7 +16,8 @@ def _canary(**changes):
 def test_canary_is_fail_closed_until_all_evidence_is_green():
     result = evaluate_canary_eligibility(
         _canary(), strict_ledger_passed=False, enabled_shadow_passed=True,
-        shadow_real_trading_days=20, completed_round_trips=0,
+        disabled_shadow_real_trading_days=20, shadow_real_trading_days=60,
+        completed_round_trips=30,
         health_grade="GREEN", release_approved=True,
     )
     assert not result.eligible
@@ -28,12 +29,27 @@ def test_canary_is_fail_closed_until_all_evidence_is_green():
 def test_canary_allows_only_manual_approved_capital_with_complete_evidence():
     result = evaluate_canary_eligibility(
         _canary(), strict_ledger_passed=True, enabled_shadow_passed=True,
-        shadow_real_trading_days=20, completed_round_trips=30,
+        disabled_shadow_real_trading_days=20, shadow_real_trading_days=60,
+        completed_round_trips=30,
         health_grade="GREEN", release_approved=True,
     )
     assert result.eligible
     assert result.allow_new_buys
     assert result.max_capital == 100_000
+
+
+def test_canary_blocks_until_both_shadow_lanes_and_round_trips_complete():
+    result = evaluate_canary_eligibility(
+        _canary(), strict_ledger_passed=True, enabled_shadow_passed=True,
+        disabled_shadow_real_trading_days=19, shadow_real_trading_days=59,
+        completed_round_trips=29, health_grade="GREEN", release_approved=True,
+    )
+    assert not result.eligible
+    assert set(result.reasons) >= {
+        "disabled_shadow_not_ready",
+        "enabled_shadow_not_ready",
+        "shadow_round_trips_insufficient",
+    }
 
 
 def test_strategy_audit_keeps_only_production_strategy_as_live_candidate():

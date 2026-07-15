@@ -198,8 +198,8 @@ class WalkForwardEngine:
     ) -> list[WalkForwardFold]:
         """Generate walk-forward folds from *start_date* to *end_date*.
 
-        Each fold: 24m train → 10d embargo → 6m validate.
-        Steps forward by 6 months per fold.
+        Each fold: 24m train → 10d embargo → 3m validate.
+        Steps forward by 3 months per fold.
         """
         folds: list[WalkForwardFold] = []
         fold_idx = 0
@@ -221,6 +221,12 @@ class WalkForwardEngine:
                 train_end,
                 self.config.embargo_trading_days,
             ) if self.calendar else _month_offset(train_end, 0)
+
+            # ``_nth_trading_day`` returns the final known calendar date when
+            # the requested embargo extends beyond available data.  Treat that
+            # as exhaustion, not as a fold whose validation precedes training.
+            if pd.Timestamp(validate_start).date() <= pd.Timestamp(train_end).date():
+                break
 
             # If using calendar-based embargo, validate_start should be after
             # the Nth trading day past train_end

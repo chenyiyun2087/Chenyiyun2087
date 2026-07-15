@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install flask pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
+        run: pip install -r requirements-ci.lock.txt
       - name: Wait for MySQL
         run: |
           for i in $(seq 1 30); do
@@ -70,63 +70,68 @@ jobs:
       - name: PR26A.5 quarterly smoke test (database)
         run: python -m pytest test/test_pr26a4_upgrade.py::TestL10QuarterlySmoke -v -m integration
       - name: Statistical robustness tests
-        run: python -c "
-          import sys; sys.path.insert(0, '.');
-          from scripts.research.statistical_robustness import analyze_strategy_robustness;
-          import random; rng = random.Random(42);
-          synth = [rng.gauss(0.001, 0.02) for _ in range(252)];
-          report = analyze_strategy_robustness(synth, strategy_name='ci_test', n_trials=5);
-          assert report.n_days == 252;
-          assert report.sharpe_ratio > 0;
-          print(f'OK: SR={report.sharpe_ratio:.2f} DSR_conf={report.deflated_sharpe_confidence:.2f} PBO={report.pbo:.2f}');
-        "
+        run: |
+          python - <<'PY'
+          import random
+          from scripts.research.statistical_robustness import analyze_strategy_robustness
+          rng = random.Random(42)
+          synth = [rng.gauss(0.001, 0.02) for _ in range(252)]
+          report = analyze_strategy_robustness(synth, strategy_name="ci_test", n_trials=5)
+          assert report.n_days == 252
+          assert report.sharpe_ratio > 0
+          print(f"OK: SR={report.sharpe_ratio:.2f} DSR_conf={report.deflated_sharpe_confidence:.2f} PBO={report.pbo:.2f}")
+          PY
       - name: Circuit breaker tests
-        run: python -c "
-          import sys; sys.path.insert(0, '.');
-          from runtime.circuit_breakers import evaluate_circuit_breakers, CircuitState;
-          r = evaluate_circuit_breakers([1.0]*10, [0.001]*10, consecutive_data_delays=3);
-          assert r.state == CircuitState.FREEZE_BUY;
-          r2 = evaluate_circuit_breakers([1.0]+[0.65**(i/100) for i in range(1,100)], [-0.004]*100);
-          assert r2.state == CircuitState.HARD_STOP;
-          print('OK: circuit breakers (data_delay + hard_stop)');
-        "
+        run: |
+          python - <<'PY'
+          from runtime.circuit_breakers import evaluate_circuit_breakers, CircuitState
+          r = evaluate_circuit_breakers([1.0] * 10, [0.001] * 10, consecutive_data_delays=3)
+          assert r.state == CircuitState.FREEZE_BUY
+          r2 = evaluate_circuit_breakers([1.0] + [0.65 ** (i / 100) for i in range(1, 100)], [-0.004] * 100)
+          assert r2.state == CircuitState.HARD_STOP
+          print("OK: circuit breakers (data_delay + hard_stop)")
+          PY
       - name: Factor attribution tests
-        run: python -c "
-          import sys; sys.path.insert(0, '.');
-          from scripts.research.factor_attribution import analyze_factor_attribution, compute_beta;
-          import random; rng = random.Random(42);
-          strat = [rng.gauss(0.001, 0.02) for _ in range(252)];
-          mkt = [rng.gauss(0.0008, 0.015) for _ in range(252)];
-          report = analyze_factor_attribution(strat, {'market_beta': mkt}, strategy_name='ci');
-          assert 'market_beta' in report.factor_exposures;
-          print(f'OK: market_beta={report.factor_exposures[\"market_beta\"]:.3f} alpha={report.alpha_annualized:.4f}');
-        "
+        run: |
+          python - <<'PY'
+          import random
+          from scripts.research.factor_attribution import analyze_factor_attribution
+          rng = random.Random(42)
+          strat = [rng.gauss(0.001, 0.02) for _ in range(252)]
+          mkt = [rng.gauss(0.0008, 0.015) for _ in range(252)]
+          report = analyze_factor_attribution(strat, {"market_beta": mkt}, strategy_name="ci")
+          assert "market_beta" in report.factor_exposures
+          print(f"OK: market_beta={report.factor_exposures['market_beta']:.3f} alpha={report.alpha_annualized:.4f}")
+          PY
       - name: Order state machine tests
-        run: python -c "
-          import sys; sys.path.insert(0, '.');
-          from runtime.order_state_machine import is_valid_transition, is_terminal, validate_transition;
-          assert is_valid_transition('planned', 'submitted');
-          assert not is_valid_transition('filled', 'planned');
-          assert is_terminal('filled');
-          try: validate_transition('filled', 'planned', 'test');
-          except ValueError: pass
-          else: raise AssertionError('Should have raised ValueError');
-          print('OK: state machine transitions correct');
-        "
+        run: |
+          python - <<'PY'
+          from runtime.order_state_machine import is_valid_transition, is_terminal, validate_transition
+          assert is_valid_transition("planned", "submitted")
+          assert not is_valid_transition("filled", "planned")
+          assert is_terminal("filled")
+          try:
+              validate_transition("filled", "planned", "test")
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("Should have raised ValueError")
+          print("OK: state machine transitions correct")
+          PY
       - name: No plaintext passwords
         run: '! grep -E "root:.*@" scheduler.py'
       - name: No duplicated Feishu functions
         run: '! grep -rn "def _load_feishu_webhook\|def _send_feishu_text" scripts/ops/'
       - name: Runtime module integrity
-        run: python -c "
-          import sys; sys.path.insert(0, '.');
-          from runtime import ReleaseManifest, freeze_production_release, generate_targets;
-          from runtime.circuit_breakers import evaluate_circuit_breakers;
-          from runtime.ledger_runtime import LedgerState, compute_rounding_tolerance;
-          from runtime.order_state_machine import describe_state_machine;
-          from runtime.data_snapshot import DataSnapshot;
-          print('OK: all runtime modules load');
-        "
+        run: |
+          python - <<'PY'
+          from runtime import ReleaseManifest, freeze_production_release, generate_targets
+          from runtime.circuit_breakers import evaluate_circuit_breakers
+          from runtime.ledger_runtime import LedgerState, compute_rounding_tolerance
+          from runtime.order_state_machine import describe_state_machine
+          from runtime.data_snapshot import DataSnapshot
+          print("OK: all runtime modules load")
+          PY
   secret-scan:
     runs-on: ubuntu-latest
     steps:
@@ -136,3 +141,5 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reject hard-coded database password defaults
+        run: python scripts/ops/check_no_hardcoded_db_credentials.py

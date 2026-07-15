@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, render_template, request
+from scoreRank.core.db_config import require_pymysql_config
 
 
 app = Flask(__name__)
@@ -10,23 +11,7 @@ CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 
 
 def load_mysql_config():
-    config_name = os.environ.get("SINA_CONFIG", "config_1.json")
-    config_path = os.path.join(CONFIG_DIR, config_name)
-    mysql_config = {}
-    if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as file_handle:
-            config_data = json.load(file_handle)
-        mysql_config = config_data.get("mysql", {})
-
-    mysql_config = {
-        "host": os.environ.get("MYSQL_HOST", mysql_config.get("host", "localhost")),
-        "port": int(os.environ.get("MYSQL_PORT", mysql_config.get("port", 3306))),
-        "user": os.environ.get("MYSQL_USER", mysql_config.get("user", "root")),
-        "password": os.environ.get("MYSQL_PASSWORD", mysql_config.get("password", "")),
-        "database": os.environ.get("MYSQL_DB", mysql_config.get("database", "chenyiyun")),
-        "charset": "utf8mb4",
-    }
-    return mysql_config
+    return require_pymysql_config(dict_cursor=False)
 
 
 def fetch_signals(days):

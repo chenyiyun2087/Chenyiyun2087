@@ -3,6 +3,7 @@ import argparse
 import pandas as pd
 
 from scripts.ops import export_trusted_strategy_candidates as export_candidates_mod
+from scripts.ops import feishu_notifier
 from scripts.ops.export_trusted_strategy_candidates import (
     _apply_risk_profile_defaults,
     _build_canary_orders,
@@ -228,6 +229,81 @@ def test_rebalance_orders_freeze_buy_keeps_sells_only():
     assert not orders.empty
     assert set(orders["side"]) == {"SELL"}
     assert orders.iloc[0]["ts_code"] == "000002"
+
+
+def test_typed_order_notifications_cover_ready_no_rebalance_and_blocked(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        feishu_notifier,
+        "publish_notification",
+        lambda _engine, event: events.append(event) or feishu_notifier.DeliveryResult(
+            True, "SENT", "ok", event.event_id
+        ),
+    )
+    args = argparse.Namespace(
+        release_id="release-1", health_grade="YELLOW", manual_confirmation=True,
+        historical_reissue=False,
+    )
+    candidates = pd.DataFrame([
+        {"industry": "半导体", "effective_weight": 0.5, "symbol": "000001", "name": "A"},
+    ])
+    orders = pd.DataFrame([
+        {
+            "side": "BUY", "ts_code": "000001", "stock_name": "A",
+            "current_shares": 0, "target_shares": 1000, "delta_shares": 1000,
+            "allocated_shares": 1000, "target_weight": 0.2, "price": 10.0,
+        },
+    ])
+    governor = {
+        "risk_decision": "reduce_position", "target_position_ratio": 0.5,
+        "allow_new_buys": True, "reasons": ["shadow_validation_reduce"],
+    }
+
+    for persistence, frame, reason in (
+        ("DB_WRITTEN", orders, None),
+        ("DB_WRITTEN", pd.DataFrame(), None),
+        ("BLOCKED", pd.DataFrame(), "pipeline readiness failed"),
+    ):
+        export_candidates_mod._publish_order_notification_event(
+            object(), args=args, asof_date="2026-07-15", execution_date="2026-07-16",
+            strategy="baseline_full_liquidity_detail_vol_position",
+            candidates=candidates, orders=frame, files={"markdown": "/tmp/report.md"},
+            risk_governor=governor, persistence_status=persistence, blocked_reason=reason,
+        )
+
+    assert [event.event_type for event in events] == [
+        "strategy_orders_ready", "strategy_orders_no_rebalance", "strategy_orders_blocked",
+    ]
+    assert events[0].facts["T+1执行日"] == "2026-07-16"
+    assert events[0].facts["人工确认"] == "是"
+    assert any("行业集中度超限" in item for item in events[0].details)
+    assert events[0].details[-1].startswith("本地订单草案")
+    assert "pipeline readiness failed" in events[2].details[0]
+
+
+def test_order_notification_dedupe_includes_release(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        feishu_notifier,
+        "publish_notification",
+        lambda _engine, event: events.append(event) or feishu_notifier.DeliveryResult(
+            True, "SENT", "ok", event.event_id
+        ),
+    )
+    common = dict(
+        engine=object(), asof_date="2026-07-15", execution_date="2026-07-16",
+        strategy="baseline", candidates=pd.DataFrame(), orders=pd.DataFrame(), files={},
+        risk_governor={}, persistence_status="DB_WRITTEN",
+    )
+    for release in ("release-a", "release-b"):
+        export_candidates_mod._publish_order_notification_event(
+            args=argparse.Namespace(
+                release_id=release, health_grade="GREEN", manual_confirmation=False,
+                historical_reissue=False,
+            ),
+            **common,
+        )
+    assert events[0].dedupe_key != events[1].dedupe_key
 
 
 def test_production_default_strategy_is_not_model_risk():

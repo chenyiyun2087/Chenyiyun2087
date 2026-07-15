@@ -55,6 +55,7 @@ class TestExitRuleV2:
     def test_exit_with_decay_reason(self):
         r = DecayExitRuleV2(ExitV2Config(min_confirm_signals=1))
         r.tracker.open_position("S1", "2023-01-05", 2.0, 5, 100)
+        r.tracker.record("S1", "2023-01-06", 0.3, 50, 100)
         should, reason = r.should_exit("S1", "2023-01-06", 0.3, 50, 100, holding_days=2)
         assert should is True
         assert "sell_alpha_decay_v2" in reason

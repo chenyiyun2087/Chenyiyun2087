@@ -1,0 +1,47 @@
+# MySQL performance baseline
+
+Generated: 2026-07-15T12:37:55.610571+08:00
+
+- Version: `9.5.0`
+- Account: `root@localhost`
+- Buffer-pool hit ratio: `0.99807345`
+- Disk temporary-table ratio: `5.954e-05`
+
+## Largest tables
+
+| Schema | Table | Rows (estimate) | Total MB | Data MB | Index MB |
+|---|---|---:|---:|---:|---:|
+| tushare_stock | ods_stk_factor | 11971232 | 31287.00 | 30944.0 | 343.0 |
+| tushare_stock | ods_plate_raw | 42987639 | 19084.67 | 13628.94 | 5455.73 |
+| tushare_stock | ads_strategy_feature_snapshot_di | 250158 | 14379.94 | 14350.33 | 29.61 |
+| tushare_stock | ads_strategy_stock_debug_di | 186769 | 13361.22 | 13312.0 | 49.22 |
+| tushare_stock | dwd_plate_stock_moneyflow_map_di | 18708167 | 8608.34 | 5690.95 | 2917.39 |
+| tushare_stock | ads_stock_score_daily | 11984318 | 7715.41 | 6800.03 | 915.38 |
+| tushare_stock | dwd_plate_member_snapshot_di | 23351207 | 7270.25 | 3769.94 | 3500.31 |
+| tushare_stock | ads_stock_factor_snapshot_di | 1052189 | 7154.69 | 7113.48 | 41.2 |
+| tushare_stock | ods_daily_basic | 17329591 | 3677.00 | 3163.0 | 514.0 |
+| tushare_stock | dwd_daily_basic | 17178064 | 3632.00 | 3118.0 | 514.0 |
+| tushare_stock | dwd_stk_factor_qfq | 10982059 | 3420.00 | 2941.0 | 479.0 |
+| tushare_stock | ods_moneyflow | 13194802 | 3307.89 | 3054.0 | 253.89 |
+| tushare_stock | dwd_daily | 17633613 | 2820.00 | 2293.0 | 527.0 |
+| tushare_stock | ods_daily | 17633613 | 2820.00 | 2293.0 | 527.0 |
+| chenyiyun | score_rank_daily | 4046166 | 2639.95 | 2405.48 | 234.47 |
+| tushare_stock | dws_trend_breakout_score | 9262260 | 1900.42 | 1173.0 | 727.42 |
+| tushare_stock | dwd_moneyflow | 11177974 | 1743.94 | 1523.0 | 220.94 |
+| tushare_stock | dws_tech_pattern | 11612698 | 1697.98 | 1327.98 | 370.0 |
+| tushare_stock | dwd_stock_daily_standard | 10610070 | 1554.97 | 1151.0 | 403.97 |
+| tushare_stock | dws_fama_size_score | 10005767 | 1516.98 | 818.98 | 698.0 |
+| tushare_stock | dws_price_adj_daily | 12072356 | 1506.98 | 1137.0 | 369.98 |
+| tushare_stock | dws_fama_value_score | 9354928 | 1462.00 | 1161.0 | 301.0 |
+| tushare_stock | dwd_adj_factor | 18287635 | 1453.00 | 915.0 | 538.0 |
+| tushare_stock | ods_adj_factor | 17829045 | 1453.00 | 915.0 | 538.0 |
+| tushare_stock | dws_capital_flow | 11296337 | 1419.95 | 974.98 | 444.97 |
+| tushare_stock | ods_cyq_perf | 8981360 | 1354.80 | 1178.0 | 176.8 |
+| tushare_stock | dwd_stock_label_daily | 8386758 | 1275.00 | 666.0 | 609.0 |
+| tushare_stock | ads_features_stock_daily | 7152214 | 1255.00 | 972.0 | 283.0 |
+| tushare_stock | ads_stock_plate_context_wide_di | 1322312 | 1246.95 | 935.45 | 311.5 |
+| tushare_stock | dws_fina_pit_daily | 8480867 | 1213.00 | 677.0 | 536.0 |
+
+## Notes
+
+- Full JSON contains query digests, index inventory, I/O hotspots and candidate plans.

@@ -241,24 +241,35 @@ def test_batch_operations_page_renders_monitor(monkeypatch):
 
 def test_generic_completion_notification_covers_failures_and_manual_runs(monkeypatch):
     sent = []
-    monkeypatch.setattr(web_app, "_has_successful_business_notification", lambda *_: False)
-    monkeypatch.setattr(web_app, "_dispatch_task_notification", lambda content, **kwargs: sent.append((content, kwargs)))
+    monkeypatch.setattr(web_app, "_dispatch_non_feishu_task_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_app, "_has_successful_business_notification", lambda *_, **__: False)
+    monkeypatch.setattr(
+        feishu_notifier, "publish_notification",
+        lambda _engine, event: sent.append(event),
+    )
     from datetime import datetime, timedelta
     started = datetime(2026, 6, 29, 21, 0, 0)
     web_app._send_task_completion_notification(
         "sina_score", "Failed", "manual", started, started + timedelta(seconds=12),
         run_options={"datestr": "20260629"}, message="verification failed",
+        queue_job={"id": 42, "attempt_count": 1, "max_attempts": 2},
+        finish_result={
+            "queue_id": 42, "attempt": 1, "max_attempts": 2,
+            "error_kind": "VERIFICATION", "will_retry": False, "exit_code": 1,
+        },
     )
     assert len(sent) == 1
-    assert "状态：Failed" in sent[0][0]
-    assert "触发方式：manual" in sent[0][0]
-    assert sent[0][1]["task_name"] == "sina_score"
+    assert sent[0].event_type == "task_failed"
+    assert sent[0].severity == "ERROR"
+    assert sent[0].facts["触发方式"] == "manual"
+    assert sent[0].task_name == "sina_score"
 
 
 def test_rich_business_notification_suppresses_generic_duplicate(monkeypatch):
     sent = []
-    monkeypatch.setattr(web_app, "_has_successful_business_notification", lambda *_: True)
-    monkeypatch.setattr(web_app, "_dispatch_task_notification", lambda *args, **kwargs: sent.append(1))
+    monkeypatch.setattr(web_app, "_dispatch_non_feishu_task_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_app, "_has_successful_business_notification", lambda *_, **__: True)
+    monkeypatch.setattr(feishu_notifier, "publish_notification", lambda *args, **kwargs: sent.append(1))
     from datetime import datetime
     now = datetime(2026, 6, 29, 21, 35, 0)
     web_app._send_task_completion_notification(
@@ -266,6 +277,79 @@ def test_rich_business_notification_suppresses_generic_duplicate(monkeypatch):
         run_options={"datestr": "20260629"},
     )
     assert sent == []
+
+
+def test_task_retry_and_recovery_notifications(monkeypatch):
+    sent = []
+    monkeypatch.setattr(web_app, "_dispatch_non_feishu_task_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_app, "_has_successful_business_notification", lambda *_, **__: False)
+    monkeypatch.setattr(feishu_notifier, "publish_notification", lambda _engine, event: sent.append(event))
+    from datetime import datetime, timedelta
+    started = datetime(2026, 7, 15, 21, 0, 0)
+
+    web_app._send_task_completion_notification(
+        "sina_score", "Failed", "schedule", started, started + timedelta(seconds=5),
+        run_options={"datestr": "20260715"},
+        queue_job={"id": 51, "attempt_count": 1, "max_attempts": 2},
+        finish_result={
+            "queue_id": 51, "attempt": 1, "max_attempts": 2, "error_kind": "TRANSIENT",
+            "will_retry": True, "next_retry_at": "2026-07-15T21:01:05", "exit_code": -1,
+        },
+    )
+    web_app._send_task_completion_notification(
+        "sina_score", "Success", "schedule", started, started + timedelta(seconds=20),
+        run_options={"datestr": "20260715"},
+        queue_job={"id": 51, "attempt_count": 2, "max_attempts": 2},
+        finish_result={
+            "queue_id": 51, "attempt": 2, "max_attempts": 2,
+            "recovered": True, "will_retry": False, "exit_code": 0,
+        },
+    )
+
+    assert [event.event_type for event in sent] == ["task_retrying", "task_recovered"]
+    assert sent[0].severity == "WARNING"
+    assert sent[1].severity == "SUCCESS"
+
+
+def test_normal_task_success_is_silent(monkeypatch):
+    sent = []
+    monkeypatch.setattr(web_app, "_dispatch_non_feishu_task_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(feishu_notifier, "publish_notification", lambda *args, **kwargs: sent.append(1))
+    now = datetime(2026, 7, 15, 21, 0, 0)
+    web_app._send_task_completion_notification(
+        "sina_score", "Success", "schedule", now, now,
+        run_options={"datestr": "20260715"},
+        queue_job={"id": 52, "attempt_count": 1, "max_attempts": 2},
+        finish_result={"queue_id": 52, "attempt": 1, "recovered": False},
+    )
+    assert sent == []
+
+
+def test_dependency_block_publishes_warning_card(monkeypatch):
+    sent = []
+    monkeypatch.setattr(feishu_notifier, "publish_notification", lambda _engine, event: sent.append(event))
+    web_app._send_task_blocked_notification(
+        {
+            "id": 77, "attempt_count": 0, "task_name": "trusted_strategy_candidates",
+            "business_date": "20260715", "trigger_type": "schedule",
+        },
+        "前序任务失败：sina_bs_consensus",
+    )
+    assert len(sent) == 1
+    assert sent[0].event_type == "task_blocked"
+    assert sent[0].severity == "WARNING"
+    assert sent[0].dedupe_key == "task_blocked:77"
+
+
+def test_task_subprocess_env_exposes_job_identity():
+    env = web_app._build_task_subprocess_env(
+        "trusted_strategy_candidates", Path.cwd(),
+        queue_job={"id": 88, "attempt_count": 2},
+        run_options={"datestr": "20260715"},
+    )
+    assert env["CHENYIYUN_TASK_JOB_ID"] == "88"
+    assert env["CHENYIYUN_TASK_ATTEMPT"] == "2"
+    assert env["CHENYIYUN_TASK_BUSINESS_DATE"] == "20260715"
 
 
 def test_daily_batch_audit_classifies_missing_and_non_trading_skip():

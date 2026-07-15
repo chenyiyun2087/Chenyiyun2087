@@ -147,6 +147,7 @@ def evaluate_factor_effectiveness(
 def generate_factor_report(
     prices: pd.DataFrame,
     factor_signals: dict[str, pd.DataFrame],
+    calendar: list[object],
     hold_days: int = 10,
 ) -> dict[str, FactorEffectiveness]:
     """Evaluate all factors under executable labels.
@@ -159,6 +160,8 @@ def generate_factor_report(
         if raw_col not in sig_df.columns:
             results[fname] = FactorEffectiveness(factor_name=fname, recommendation="DROP")
             continue
-        ic = compute_executable_ic(prices, sig_df, raw_col, hold_days=hold_days)
+        ic = compute_executable_ic(
+            prices, sig_df, raw_col, calendar=calendar, hold_days=hold_days
+        )
         results[fname] = evaluate_factor_effectiveness(fname, ic)
     return results

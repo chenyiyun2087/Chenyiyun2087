@@ -1,0 +1,7 @@
+title = "Chenyiyun2087 secret scanning rules"
+
+[[rules]]
+id = "hardcoded-chenyiyun-db-password"
+description = "Hard-coded CHENYIYUN_DB_PASSWORD default"
+regex = '''CHENYIYUN_DB_PASSWORD["']?\s*,\s*["'][^"'${}\s]{6,}["']'''
+keywords = ["CHENYIYUN_DB_PASSWORD"]

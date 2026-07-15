@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pandas numpy pytest sqlalchemy pymysql pyyaml pydantic
+      - run: pip install -r requirements-ci.lock.txt
       - run: >-
           python -m pytest -q
           test/test_p0_trustworthiness.py
@@ -38,3 +38,5 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reject hard-coded database password defaults
+        run: python scripts/ops/check_no_hardcoded_db_credentials.py

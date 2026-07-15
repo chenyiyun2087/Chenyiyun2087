@@ -641,13 +641,17 @@ class CYYToPostgreSQL:
 
 def main():
     """主函数 - 处理CYY文件到PostgreSQL"""
-    # 数据库配置
+    import os
+
+    password = os.getenv("CYY_POSTGRES_PASSWORD", "")
+    if not password:
+        raise RuntimeError("missing required database credential: CYY_POSTGRES_PASSWORD")
     db_config = {
-        'host': 'localhost',
-        'port': 5432,
-        'user': 'postgres',
-        'password': '19871019',  # 请修改为实际密码
-        'database': 'cyy_data'
+        'host': os.getenv('CYY_POSTGRES_HOST', 'localhost'),
+        'port': int(os.getenv('CYY_POSTGRES_PORT', '5432')),
+        'user': os.getenv('CYY_POSTGRES_USER', 'postgres'),
+        'password': password,
+        'database': os.getenv('CYY_POSTGRES_DB', 'cyy_data'),
     }
     
     # 创建处理器实例

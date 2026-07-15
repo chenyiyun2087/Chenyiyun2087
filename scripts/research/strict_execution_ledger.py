@@ -167,7 +167,11 @@ class ExecutionLedger:
     ) -> dict:
         planned = max(0, int(order.planned_shares))
         if reject_reason or not tradable or fill_price is None or fill_price <= 0:
-            status = REJECTED_LIMIT_BLOCK if reject_reason == "limit_block" else REJECTED_T1_NOT_TRADABLE
+            status = (
+                REJECTED_LIMIT_BLOCK
+                if reject_reason in {"limit_block", "limit_up_block", "limit_down_block"}
+                else REJECTED_T1_NOT_TRADABLE
+            )
             reason = reject_reason or "t1_not_tradable"
             result = {"order_status": status, "filled_shares": 0, "filled_price": None, "filled_notional": 0.0,
                       "fee": 0.0, "reject_reason": reason, "remaining_shares": planned}

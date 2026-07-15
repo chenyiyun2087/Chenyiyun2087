@@ -36,8 +36,9 @@ class TestM1RegressionNoDB(unittest.TestCase):
 
     def test_sina_picture_task_forces_direct_network(self):
         self.assertIn('from project_network import build_direct_network_env, enforce_direct_network', self.web_app)
-        self.assertIn('def _build_task_subprocess_env(task_name, project_root):', self.web_app)
-        self.assertIn('return build_direct_network_env(os.environ, pythonpath_prefix=str(project_root))', self.web_app)
+        self.assertIn('def _build_task_subprocess_env(task_name, project_root, queue_job=None, run_options=None):', self.web_app)
+        self.assertIn('env = build_direct_network_env(os.environ, pythonpath_prefix=str(project_root))', self.web_app)
+        self.assertIn('env["CHENYIYUN_TASK_JOB_ID"]', self.web_app)
 
 
 if __name__ == '__main__':

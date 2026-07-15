@@ -86,7 +86,7 @@ def test_precommit_keeps_planned_share_count_when_open_differs():
     assert trades[0]["filled_price"] is None
     assert trades[0]["filled_shares"] == 0
     assert trades[0]["order_status"] == "REJECTED_LIMIT_BLOCK"
-    assert trades[0]["reject_reason"] == "limit_block"
+    assert trades[0]["reject_reason"] == "limit_up_block"
     assert np.isclose(account.cash, 100_000.0)
 
 

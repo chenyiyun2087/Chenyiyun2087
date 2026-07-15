@@ -17,8 +17,7 @@ from collections import defaultdict
 
 import pandas as pd
 from sqlalchemy import create_engine, text
-
-CHENYIYUN_DB = "mysql+pymysql://root:19871019@localhost:3306/chenyiyun?charset=utf8mb4"
+from scoreRank.core.db_config import require_sqlalchemy_url
 
 
 def load_signals(engine, batch_name: str, start: str, end: str) -> pd.DataFrame:
@@ -106,7 +105,7 @@ def main():
     parser.add_argument("--end", required=True)
     args = parser.parse_args()
 
-    engine = create_engine(CHENYIYUN_DB)
+    engine = create_engine(require_sqlalchemy_url(database="chenyiyun"))
 
     df_a = load_signals(engine, args.batch_a, args.start, args.end)
     df_b = load_signals(engine, args.batch_b, args.start, args.end)
