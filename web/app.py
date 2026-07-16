@@ -74,6 +74,23 @@ app.secret_key = os.getenv("CHENYIYUN_WEB_SECRET_KEY", os.urandom(32))
 # Database Configuration
 DB_CONFIG = build_pymysql_config()
 
+BS_SOURCE_OPTIONS = {
+    "config_1": {
+        "label": "OCR截图识别",
+        "scope": "自选截图池（通常约430–435只）",
+    },
+    "ml_detect_v3": {
+        "label": "ML全量检测",
+        "scope": "全量A股（用于与OCR结果对比）",
+    },
+}
+DEFAULT_BS_SOURCE = "config_1"
+
+
+def _resolve_bs_source(value):
+    source = str(value or DEFAULT_BS_SOURCE).strip()
+    return source if source in BS_SOURCE_OPTIONS else DEFAULT_BS_SOURCE
+
 # Production startup performs schema migration once. Existing request-level
 # compatibility calls then become no-ops, avoiding repeated SHOW/DDL/upserts.
 _WEB_SCHEMA_INITIALIZED = False
@@ -2052,7 +2069,10 @@ def _verify_sina_score_result(started_at, finished_at, run_options=None):
                 )
                 stat = cursor.fetchone() or {}
 
-                cursor.execute("SELECT MAX(batch_date) AS d FROM bs_detection_results")
+                cursor.execute(
+                    "SELECT MAX(batch_date) AS d FROM bs_detection_results WHERE batch_name=%s",
+                    ("ml_detect_v3",),
+                )
                 latest_bs_row = cursor.fetchone() or {}
                 latest_bs_date = latest_bs_row.get("d")
                 latest_bs_datestr = _db_value_to_datestr(latest_bs_date)
@@ -2768,7 +2788,10 @@ def _build_sina_analyse_notification(cursor, run_options=None):
     if datestr:
         target_date = datetime.strptime(datestr, "%Y%m%d").date()
     else:
-        cursor.execute("SELECT MAX(batch_date) AS d FROM bs_detection_results")
+        cursor.execute(
+            "SELECT MAX(batch_date) AS d FROM bs_detection_results WHERE batch_name=%s",
+            (DEFAULT_BS_SOURCE,),
+        )
         target_date = (cursor.fetchone() or {}).get("d")
 
     if target_date is None:
@@ -2783,9 +2806,9 @@ def _build_sina_analyse_notification(cursor, run_options=None):
             SUM(CASE WHEN has_buy_signal = 1 AND has_sell_signal = 1 THEN 1 ELSE 0 END) AS dual_cnt,
             MAX(created_at) AS updated_at
         FROM bs_detection_results
-        WHERE batch_date = %s
+        WHERE batch_date = %s AND batch_name = %s
         """,
-        (target_date,),
+        (target_date, DEFAULT_BS_SOURCE),
     )
     stats = cursor.fetchone() or {}
 
@@ -2793,11 +2816,11 @@ def _build_sina_analyse_notification(cursor, run_options=None):
         """
         SELECT stock_code
         FROM bs_detection_results
-        WHERE batch_date = %s AND has_buy_signal = 1
+        WHERE batch_date = %s AND batch_name = %s AND has_buy_signal = 1
         ORDER BY stock_code ASC
         LIMIT 8
         """,
-        (target_date,),
+        (target_date, DEFAULT_BS_SOURCE),
     )
     buy_codes = [str(r.get("stock_code") or "").zfill(6) for r in cursor.fetchall() if r.get("stock_code")]
 
@@ -2805,11 +2828,11 @@ def _build_sina_analyse_notification(cursor, run_options=None):
         """
         SELECT stock_code
         FROM bs_detection_results
-        WHERE batch_date = %s AND has_sell_signal = 1
+        WHERE batch_date = %s AND batch_name = %s AND has_sell_signal = 1
         ORDER BY stock_code ASC
         LIMIT 8
         """,
-        (target_date,),
+        (target_date, DEFAULT_BS_SOURCE),
     )
     sell_codes = [str(r.get("stock_code") or "").zfill(6) for r in cursor.fetchall() if r.get("stock_code")]
 
@@ -5148,6 +5171,8 @@ def sina_monitor():
     active_tab = request.args.get('tab', 'latest_b') # Default to 'latest_b'
     page = request.args.get('page', 1, type=int)
     per_page = 50
+    bs_source = _resolve_bs_source(request.args.get('source'))
+    bs_source_meta = BS_SOURCE_OPTIONS[bs_source]
     
     # 1. 默认查询日期（参数或今天）
     date_param = request.args.get('date')
@@ -5178,19 +5203,22 @@ def sina_monitor():
                 SUM(has_sell_signal) as sell_count,
                 MAX(created_at) as last_update
             FROM bs_detection_results 
-            WHERE batch_date = %s
+            WHERE batch_date = %s AND batch_name = %s
         """
-        cursor.execute(sql_stats, (query_date,))
+        cursor.execute(sql_stats, (query_date, bs_source))
         daily_stats = cursor.fetchone()
 
         # Find latest date if current query has no data
-        cursor.execute("SELECT MAX(batch_date) as last_date FROM bs_detection_results")
+        cursor.execute(
+            "SELECT MAX(batch_date) as last_date FROM bs_detection_results WHERE batch_name = %s",
+            (bs_source,),
+        )
         res = cursor.fetchone()
         last_completed_date = res['last_date'] if res else None
 
         if active_tab == 'summary':
-            where_stmt = "WHERE batch_date = %s AND (has_buy_signal=1 OR has_sell_signal=1)"
-            params = (query_date,)
+            where_stmt = "WHERE batch_date = %s AND batch_name = %s AND (has_buy_signal=1 OR has_sell_signal=1)"
+            params = (query_date, bs_source)
             pagination, offset = get_pagination(cursor, "bs_detection_results", page, per_page, where_stmt, params)
             
             sql_details = f"""
@@ -5201,7 +5229,7 @@ def sina_monitor():
                 ORDER BY t1.stock_code
                 LIMIT %s OFFSET %s
             """
-            cursor.execute(sql_details, (query_date, per_page, offset))
+            cursor.execute(sql_details, (query_date, bs_source, per_page, offset))
             signals = cursor.fetchall()
 
         elif active_tab == 'latest_b':
@@ -5216,15 +5244,19 @@ def sina_monitor():
                             MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
                             MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
                         FROM bs_detection_results
+                        WHERE batch_name = %s
                         GROUP BY stock_code
                     ) AS summary
                         ON latest_buy.stock_code = summary.stock_code
                         AND latest_buy.batch_date = summary.latest_buy_date
+                        AND latest_buy.batch_name = %s
                     WHERE latest_buy.has_buy_signal = 1
                       AND (summary.latest_sell_date IS NULL OR summary.latest_buy_date > summary.latest_sell_date)
                 )
             """
-            pagination, offset = get_pagination(cursor, f"{subquery} as sub", page, per_page)
+            pagination, offset = get_pagination(
+                cursor, f"{subquery} as sub", page, per_page, params=(bs_source, bs_source)
+            )
 
             sql_holding = f"""
                 SELECT sub.*, t_name.stock_name
@@ -5233,7 +5265,7 @@ def sina_monitor():
                 ORDER BY sub.batch_date DESC, sub.stock_code ASC
                 LIMIT %s OFFSET %s
             """
-            cursor.execute(sql_holding, (per_page, offset))
+            cursor.execute(sql_holding, (bs_source, bs_source, per_page, offset))
             signals = cursor.fetchall()
 
         elif active_tab == 'stats':
@@ -5245,112 +5277,20 @@ def sina_monitor():
                        SUM(has_buy_signal) as buy_count,
                        SUM(has_sell_signal) as sell_count
                 FROM bs_detection_results
+                WHERE batch_name = %s
                 GROUP BY batch_date
                 ORDER BY batch_date DESC
                 LIMIT %s
             """
-            cursor.execute(sql_history, (days,))
+            cursor.execute(sql_history, (bs_source, days))
             chart_data = cursor.fetchall()[::-1] # Order chronologically for chart
 
         elif active_tab == 'signal_stats':
             where_stmt = ""
             params = []
             if query_date:
-                where_stmt = "WHERE batch_date <= %s"
-                params = [query_date]
-
-            sub_table = f"""
-                (
-                    SELECT
-                        batch_date,
-                        COUNT(*) AS total,
-                        SUM(has_buy_signal) AS buy_count,
-                        SUM(has_sell_signal) AS sell_count,
-                        MAX(created_at) AS last_update
-                    FROM bs_detection_results
-                    {where_stmt}
-                    GROUP BY batch_date
-                )
-            """
-            pagination, offset = get_pagination(cursor, f"{sub_table} as t", page, per_page, "", tuple(params) if params else None)
-
-            sql_stats_rows = f"""
-                SELECT *
-                FROM {sub_table} AS t
-                ORDER BY batch_date DESC
-                LIMIT %s OFFSET %s
-            """
-            cursor.execute(sql_stats_rows, tuple(params + [per_page, offset]))
-            signal_stats_rows = cursor.fetchall()
-
-        elif active_tab == 'signal_stats':
-            where_stmt = ""
-            params = []
-            if query_date:
-                where_stmt = "WHERE batch_date <= %s"
-                params = [query_date]
-
-            sub_table = f"""
-                (
-                    SELECT
-                        batch_date,
-                        COUNT(*) AS total,
-                        SUM(has_buy_signal) AS buy_count,
-                        SUM(has_sell_signal) AS sell_count,
-                        MAX(created_at) AS last_update
-                    FROM bs_detection_results
-                    {where_stmt}
-                    GROUP BY batch_date
-                )
-            """
-            pagination, offset = get_pagination(cursor, f"{sub_table} as t", page, per_page, "", tuple(params) if params else None)
-
-            sql_stats_rows = f"""
-                SELECT *
-                FROM {sub_table} AS t
-                ORDER BY batch_date DESC
-                LIMIT %s OFFSET %s
-            """
-            cursor.execute(sql_stats_rows, tuple(params + [per_page, offset]))
-            signal_stats_rows = cursor.fetchall()
-
-        elif active_tab == 'signal_stats':
-            where_stmt = ""
-            params = []
-            if query_date:
-                where_stmt = "WHERE batch_date <= %s"
-                params = [query_date]
-
-            sub_table = f"""
-                (
-                    SELECT
-                        batch_date,
-                        COUNT(*) AS total,
-                        SUM(has_buy_signal) AS buy_count,
-                        SUM(has_sell_signal) AS sell_count,
-                        MAX(created_at) AS last_update
-                    FROM bs_detection_results
-                    {where_stmt}
-                    GROUP BY batch_date
-                )
-            """
-            pagination, offset = get_pagination(cursor, f"{sub_table} as t", page, per_page, "", tuple(params) if params else None)
-
-            sql_stats_rows = f"""
-                SELECT *
-                FROM {sub_table} AS t
-                ORDER BY batch_date DESC
-                LIMIT %s OFFSET %s
-            """
-            cursor.execute(sql_stats_rows, tuple(params + [per_page, offset]))
-            signal_stats_rows = cursor.fetchall()
-
-        elif active_tab == 'signal_stats':
-            where_stmt = ""
-            params = []
-            if query_date:
-                where_stmt = "WHERE batch_date <= %s"
-                params = [query_date]
+                where_stmt = "WHERE batch_date <= %s AND batch_name = %s"
+                params = [query_date, bs_source]
 
             sub_table = f"""
                 (
@@ -5386,12 +5326,16 @@ def sina_monitor():
                            chart_data=chart_data,
                            last_completed_date=last_completed_date,
                            signal_stats_rows=signal_stats_rows,
+                           bs_source=bs_source,
+                           bs_source_meta=bs_source_meta,
+                           bs_source_options=BS_SOURCE_OPTIONS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 
 @app.route('/api/signal_stats')
 def api_signal_stats():
     conn = get_db()
+    bs_source = _resolve_bs_source(request.args.get('source'))
     with conn.cursor() as cursor:
         sql = """
             SELECT 
@@ -5401,11 +5345,12 @@ def api_signal_stats():
                 SUM(has_sell_signal) AS sell_count,
                 MAX(created_at) AS last_update
             FROM bs_detection_results
+            WHERE batch_name = %s
             GROUP BY batch_date
             ORDER BY batch_date DESC
             LIMIT 30
         """
-        cursor.execute(sql)
+        cursor.execute(sql, (bs_source,))
         rows = cursor.fetchall()
         
         # Sort back to chronological order (Ascending batch_date) for Chart.js
@@ -6861,7 +6806,10 @@ def _sync_recent_buy_pool(cursor):
     if cursor.fetchone() is None:
         return
 
-    cursor.execute("SELECT MAX(batch_date) AS d FROM bs_detection_results")
+    cursor.execute(
+        "SELECT MAX(batch_date) AS d FROM bs_detection_results WHERE batch_name = %s",
+        (DEFAULT_BS_SOURCE,),
+    )
     latest_date = (cursor.fetchone() or {}).get('d')
     if not latest_date:
         return
@@ -6876,17 +6824,18 @@ def _sync_recent_buy_pool(cursor):
                 MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
                 MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
             FROM bs_detection_results
-            WHERE batch_date <= %s
+            WHERE batch_date <= %s AND batch_name = %s
             GROUP BY stock_code
         ) AS summary
             ON latest_buy.stock_code = summary.stock_code
             AND latest_buy.batch_date = summary.latest_buy_date
+            AND latest_buy.batch_name = %s
         LEFT JOIN a_share_stock_list a ON latest_buy.stock_code = a.stock_code COLLATE utf8mb4_general_ci
         WHERE latest_buy.has_buy_signal = 1
           AND (summary.latest_sell_date IS NULL
                OR summary.latest_buy_date > summary.latest_sell_date)
         """,
-        (latest_date,),
+        (latest_date, DEFAULT_BS_SOURCE, DEFAULT_BS_SOURCE),
     )
     rows = cursor.fetchall()
     symbols = {str(r.get('symbol') or '').zfill(6) for r in rows if r.get('symbol')}

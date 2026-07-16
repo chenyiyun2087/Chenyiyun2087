@@ -51,13 +51,13 @@ def fetch_signals(days):
     query = (
         "SELECT batch_date, stock_code, has_buy_signal, has_sell_signal "
         "FROM bs_detection_results "
-        "WHERE batch_date BETWEEN %s AND %s "
+        "WHERE batch_date BETWEEN %s AND %s AND batch_name = %s "
         "ORDER BY batch_date, stock_code"
     )
 
     with pymysql.connect(**mysql_config) as conn:
         with conn.cursor() as cursor:
-            cursor.execute(query, (start_str, end_str))
+            cursor.execute(query, (start_str, end_str, "config_1"))
             rows = cursor.fetchall()
 
     dates = []

@@ -3,23 +3,43 @@
 {% block page_title %}B/S监控{% endblock %}
 {% block content %}
 
+<form method="get" class="panel form-inline"
+    style="display: flex; gap: 12px; align-items: center; padding: 10px; margin-bottom: 12px;">
+    <input type="hidden" name="tab" value="{{ active_tab }}">
+    {% if active_tab in ['summary', 'signal_stats'] %}
+    <input type="hidden" name="date" value="{{ query_date }}">
+    {% endif %}
+    <label for="bs-source" style="font-size: 11px; font-weight: 700;">数据源 / 显示范围</label>
+    <select id="bs-source" name="source" onchange="this.form.submit()"
+        style="font-family: inherit; font-size: 11px; padding: 4px 8px;">
+        {% for source_key, source_meta in bs_source_options.items() %}
+        <option value="{{ source_key }}" {% if source_key == bs_source %}selected{% endif %}>
+            {{ source_meta.label }} — {{ source_meta.scope }}
+        </option>
+        {% endfor %}
+    </select>
+    <span class="muted" style="font-size: 11px; opacity: 0.7;">
+        当前：{{ bs_source_meta.label }} / {{ bs_source_meta.scope }} / batch_name={{ bs_source }}
+    </span>
+</form>
+
 <!-- Tab Navigation -->
 <div class="tabs" style="margin-bottom: 20px; display: flex; gap: 5px; border-bottom: 1px solid #000;">
-    <a href="{{ url_for('sina_monitor', tab='latest_b') }}"
+    <a href="{{ url_for('sina_monitor', tab='latest_b', source=bs_source) }}"
         class="tab-btn {% if active_tab == 'latest_b' %}active{% endif %}"
         style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'latest_b' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'latest_b' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         B点股票（最新）
     </a>
-    <a href="{{ url_for('sina_monitor', tab='summary', date=query_date) }}"
+    <a href="{{ url_for('sina_monitor', tab='summary', date=query_date, source=bs_source) }}"
         class="tab-btn {% if active_tab == 'summary' %}active{% endif %}"
         style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'summary' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'summary' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         当日汇总
     </a>
-    <a href="{{ url_for('sina_monitor', tab='stats') }}" class="tab-btn {% if active_tab == 'stats' %}active{% endif %}"
+    <a href="{{ url_for('sina_monitor', tab='stats', source=bs_source) }}" class="tab-btn {% if active_tab == 'stats' %}active{% endif %}"
         style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         信号趋势
     </a>
-    <a href="{{ url_for('sina_monitor', tab='signal_stats', date=query_date) }}"
+    <a href="{{ url_for('sina_monitor', tab='signal_stats', date=query_date, source=bs_source) }}"
         class="tab-btn {% if active_tab == 'signal_stats' %}active{% endif %}"
         style="padding: 10px 20px; text-decoration: none; color: #000; border: {% if active_tab == 'signal_stats' %}2px{% else %}1px{% endif %} solid #000; border-bottom: none; font-weight: {% if active_tab == 'signal_stats' %}800{% else %}600{% endif %}; font-size: 13px; background: transparent;">
         统计列表
@@ -30,6 +50,7 @@
 <!-- Summary Tab Content -->
 <form method="get" class="form-inline panel" style="display: flex; gap: 15px; align-items: center; padding: 10px;">
     <input type="hidden" name="tab" value="summary">
+    <input type="hidden" name="source" value="{{ bs_source }}">
     <label style="font-size: 11px;">查询日期</label>
     <input type="date" name="date" value="{{ query_date_iso if query_date_iso else '' }}"
         style="font-family: inherit; font-size: 11px; padding: 4px;">
@@ -148,7 +169,7 @@
         const ctx = document.getElementById('signalChart')?.getContext('2d');
         if (!ctx) return;
 
-        fetch('/api/signal_stats')
+        fetch('/api/signal_stats?source={{ bs_source }}')
             .then(response => response.json())
             .then(data => {
                 const labels = data.map(d => d.batch_date);

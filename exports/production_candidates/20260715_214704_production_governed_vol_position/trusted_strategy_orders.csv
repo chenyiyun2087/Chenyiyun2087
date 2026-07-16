@@ -1,0 +1,5 @@
+trade_date,ts_code,stock_name,side,price,current_shares,target_shares,delta_shares,allocated_shares,current_weight,target_weight,delta_weight,order_status,submitted_at,filled_shares,filled_price,status_reason,note
+2026-07-15,002156,通富微电,BUY,78.71,0,500,500,500,0.0,0.08939372763263997,0.08939372763263997,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-07-15,002384,东山精密,BUY,262.49,0,100,100,100,0.0,0.07025472720555621,0.07025472720555621,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-07-15,300759,康龙化成,BUY,40.3,0,1600,1600,1600,0.0,0.1335315135853257,0.1335315135853257,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5
+2026-07-15,603501,豪威集团,BUY,111.12,0,600,600,600,0.0,0.13929422827162105,0.13929422827162105,planned,,,,,trusted_strategy:production_governed_vol_position; hold_gate=10d; max_positions=5

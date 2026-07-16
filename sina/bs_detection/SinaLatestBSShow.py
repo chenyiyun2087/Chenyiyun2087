@@ -6,7 +6,7 @@ import pymysql
 from scoreRank.core.db_config import require_pymysql_config
 
 
-def fetch_latest_buy_signals(mysql_config):
+def fetch_latest_buy_signals(mysql_config, batch_name="config_1"):
     query = """
         SELECT
             latest_buy.stock_code,
@@ -20,10 +20,12 @@ def fetch_latest_buy_signals(mysql_config):
                 MAX(CASE WHEN has_buy_signal = 1 THEN batch_date END) AS latest_buy_date,
                 MAX(CASE WHEN has_sell_signal = 1 THEN batch_date END) AS latest_sell_date
             FROM bs_detection_results
+            WHERE batch_name = %s
             GROUP BY stock_code
         ) AS summary
             ON latest_buy.stock_code = summary.stock_code
             AND latest_buy.batch_date = summary.latest_buy_date
+            AND latest_buy.batch_name = %s
         WHERE latest_buy.has_buy_signal = 1
           AND (summary.latest_sell_date IS NULL
                OR summary.latest_buy_date > summary.latest_sell_date)
@@ -32,7 +34,7 @@ def fetch_latest_buy_signals(mysql_config):
 
     with pymysql.connect(**mysql_config) as conn:
         with conn.cursor(pymysql.cursors.DictCursor) as cursor:
-            cursor.execute(query)
+            cursor.execute(query, (batch_name, batch_name))
             return cursor.fetchall()
 
 
