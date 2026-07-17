@@ -2622,15 +2622,28 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "SELECT COUNT(*) AS rows_cnt FROM ads_candle_diag_daily WHERE trade_date = %s",
+                    """SELECT
+                           COUNT(*) AS rows_cnt,
+                           COALESCE(SUM(s.market = '北交所'), 0) AS bj_rows,
+                           (SELECT COUNT(*) FROM tushare_stock.dim_stock) AS expected_rows,
+                           (SELECT COUNT(*) FROM tushare_stock.dim_stock WHERE market = '北交所') AS expected_bj_rows
+                       FROM ads_candle_diag_daily c
+                       LEFT JOIN tushare_stock.dim_stock s ON s.symbol = c.symbol
+                       WHERE c.trade_date = %s""",
                     (date_iso,),
                 )
                 row = cursor.fetchone() or {}
         finally:
             conn.close()
         rows_cnt = int(row.get("rows_cnt") or 0)
-        ok = rows_cnt > 0
-        return ok, [f"result={'PASS' if ok else 'FAIL'}; task=candle_diag_scan; business_date={target_datestr}; rows={rows_cnt}"]
+        bj_rows = int(row.get("bj_rows") or 0)
+        expected_rows = int(row.get("expected_rows") or 0)
+        expected_bj_rows = int(row.get("expected_bj_rows") or 0)
+        ok = rows_cnt == expected_rows and bj_rows == expected_bj_rows and expected_rows > 0
+        return ok, [
+            f"result={'PASS' if ok else 'FAIL'}; task=candle_diag_scan; business_date={target_datestr}; "
+            f"rows={rows_cnt}; expected_rows={expected_rows}; bj_rows={bj_rows}; expected_bj_rows={expected_bj_rows}"
+        ]
     except Exception as e:
         return False, [f"result=FAIL; verifier_error={e}"]
 

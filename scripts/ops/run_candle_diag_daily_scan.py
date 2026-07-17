@@ -112,6 +112,30 @@ def _delete_today(engine, trade_date: str) -> int:
     return result.rowcount
 
 
+def _validate_scan_report(report, trade_date: str, top_n: int | None = None) -> None:
+    """在替换已有结果前验证扫描完整性和数据日期。"""
+    if int(report.failed or 0) != 0:
+        raise RuntimeError(
+            f"扫描存在 {int(report.failed)} 只失败股票，保留目标日旧数据。"
+        )
+    expected_rows = min(int(report.total or 0), int(top_n)) if top_n else int(report.total or 0)
+    actual_rows = len(report.results or [])
+    if expected_rows <= 0 or actual_rows != expected_rows:
+        raise RuntimeError(
+            f"扫描结果不完整：expected={expected_rows}, actual={actual_rows}，保留目标日旧数据。"
+        )
+    observed_dates = {
+        str(item.get("date") or "")[:10]
+        for item in report.results
+        if str(item.get("date") or "").strip()
+    }
+    if not observed_dates or max(observed_dates) != trade_date or any(value > trade_date for value in observed_dates):
+        raise RuntimeError(
+            f"扫描数据日期超出目标日或全市场未到目标日：target={trade_date}, observed={sorted(observed_dates)}，"
+            "保留目标日旧数据。"
+        )
+
+
 def run_daily_scan(
     engine,
     trade_date: str,
@@ -135,11 +159,6 @@ def run_daily_scan(
     if skip_existing and existing > 0:
         print(f"⏭️  当日已有 {existing} 条记录，跳过扫描")
         return {"scanned": 0, "failed": 0, "written": 0, "seconds": 0.0, "skipped": True}
-
-    # 清除旧数据（重跑时覆盖）
-    if existing > 0:
-        deleted = _delete_today(engine, trade_date)
-        print(f"🗑️  已删除 {deleted} 条旧记录")
 
     # 动态导入 ashare-candle-diag
     try:
@@ -170,9 +189,7 @@ def run_daily_scan(
 
     elapsed = time.time() - t0
     print(f"  扫描完成: 成功 {report.scanned} / 失败 {report.failed} / 共 {report.total}")
-    if not report.results:
-        print("⚠️  无诊断结果，请检查数据源是否可用")
-        return {"scanned": report.scanned, "failed": report.failed, "written": 0, "seconds": elapsed}
+    _validate_scan_report(report, trade_date, top_n=top_n)
 
     # 构建写入行
     rows = []
@@ -232,7 +249,14 @@ def run_daily_scan(
             extra=VALUES(extra), create_time=CURRENT_TIMESTAMP
     """)
 
+    # 扫描和完整性验证都通过后才替换数据；删除与写入使用同一事务。
     with engine.begin() as conn:
+        if existing > 0:
+            deleted = conn.execute(
+                text("DELETE FROM ads_candle_diag_daily WHERE trade_date = :d"),
+                {"d": trade_date},
+            ).rowcount
+            print(f"🗑️  已在事务中删除 {deleted} 条旧记录")
         for i in range(0, len(rows), batch_size):
             batch = rows[i:i + batch_size]
             conn.execute(insert_sql, batch)
