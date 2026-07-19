@@ -27,6 +27,8 @@ import pandas as pd
 import yaml
 from sqlalchemy.engine import make_url
 
+from runtime.contracts import ReleaseIdentity
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "strategy_tournament.yaml"
@@ -266,6 +268,23 @@ def _load_candidate(
     if str(contract.get("strategy_id")) != strategy_id:
         result.blockers.append("strategy_identity_mismatch")
         return result, pd.DataFrame()
+    try:
+        identity = ReleaseIdentity.model_validate(contract.get("release_identity"))
+    except Exception as exc:
+        result.blockers.append(f"incomplete_release_identity:{type(exc).__name__}")
+        return result, pd.DataFrame()
+    if identity.strategy_id != strategy_id:
+        result.blockers.append("release_identity_strategy_mismatch")
+        return result, pd.DataFrame()
+    if abs(identity.initial_capital - float(tournament["initial_cash"])) > 0.005:
+        result.blockers.append("release_identity_initial_capital_mismatch")
+        return result, pd.DataFrame()
+    required_experiments = set(tournament.get("required_experiments") or [])
+    actual_experiments = set(contract.get("experiments") or [])
+    missing_experiments = sorted(required_experiments - actual_experiments)
+    if missing_experiments:
+        result.blockers.append("missing_matched_experiments:" + ",".join(missing_experiments))
+        return result, pd.DataFrame()
     nav_path, nav = _locate_nav(source)
     nav = _filter_exact_strategy(nav, strategy_id)
     if nav_path is None or nav.empty:
@@ -285,6 +304,10 @@ def _load_candidate(
         "max_single_position_weight", "max_single_industry_weight",
         "max_correlated_theme_weight", "max_single_order_adv_ratio",
         "turnover", "total_cost", "strict_ledger_status", "evidence_status",
+        "dual_ledger_status", "worst_20d_return", "cost_after_alpha",
+        "top5_trade_profit_dependency", "market_regime_count",
+        "random_baseline_passed", "reverse_baseline_passed",
+        "quarterly_random_baseline_passed", "factor_ablation_status",
         "full_history_start", "data_complete_through", "capacity_100k_pass",
         "capacity_500k_pass", "trade_day_coverage",
     ):
@@ -312,6 +335,10 @@ def _gate_candidate(
         "max_single_industry_weight", "max_correlated_theme_weight",
         "max_single_order_adv_ratio", "full_history_start", "data_complete_through",
         "capacity_100k_pass", "capacity_500k_pass", "trade_day_coverage",
+        "dual_ledger_status", "worst_20d_return", "cost_after_alpha",
+        "top5_trade_profit_dependency", "market_regime_count",
+        "random_baseline_passed", "reverse_baseline_passed",
+        "quarterly_random_baseline_passed", "factor_ablation_status",
     )
     missing = [key for key in required if metrics.get(key) is None]
     if missing:
@@ -325,6 +352,7 @@ def _gate_candidate(
     result.gates = {
         "reproducible_evidence": metrics.get("evidence_status") == "REPRODUCIBLE",
         "strict_ledger_verified": metrics.get("strict_ledger_status") == "VERIFIED",
+        "dual_ledger_verified": metrics.get("dual_ledger_status") == "VERIFIED",
         "full_history_coverage": bool(full_history_ok),
         "matched_data_end": bool(evidence_end_matches),
         "trade_day_coverage": float(metrics["trade_day_coverage"]) >= 0.98,
@@ -343,6 +371,19 @@ def _gate_candidate(
         "industry": float(metrics["max_single_industry_weight"]) <= float(gates["max_single_industry_weight"]),
         "theme": float(metrics["max_correlated_theme_weight"]) <= float(gates["max_correlated_theme_weight"]),
         "adv": float(metrics["max_single_order_adv_ratio"]) <= float(gates["max_single_order_adv_ratio"]),
+        "cost_after_alpha": (
+            float(metrics["cost_after_alpha"]) > 0
+            if bool(gates.get("require_positive_cost_after_alpha", True)) else True
+        ),
+        "top5_trade_dependency": float(metrics["top5_trade_profit_dependency"]) <= float(gates["max_top5_trade_profit_dependency"]),
+        "market_regimes": int(metrics["market_regime_count"]) >= int(gates["min_market_regime_count"]),
+        "random_baseline": bool(metrics["random_baseline_passed"]),
+        "reverse_baseline": bool(metrics["reverse_baseline_passed"]),
+        "quarterly_random_baseline": bool(metrics["quarterly_random_baseline_passed"]),
+        "factor_ablation": (
+            str(metrics["factor_ablation_status"]) == "COMPLETE"
+            if bool(gates.get("require_factor_ablation_complete", True)) else True
+        ),
     }
     if result.strategy_id == tournament["baseline_strategy"]:
         result.gates["return_above_baseline"] = False
@@ -378,7 +419,7 @@ def _baseline_reference_valid(result: CandidateResult | None) -> bool:
     if result is None or any(blocker.startswith("missing_contract_fields") for blocker in result.blockers):
         return False
     required = {
-        "reproducible_evidence", "strict_ledger_verified", "full_history_coverage",
+        "reproducible_evidence", "strict_ledger_verified", "dual_ledger_verified", "full_history_coverage",
         "matched_data_end", "trade_day_coverage", "dsr", "pbo",
         "corporate_actions", "t_plus_one", "capacity_100k", "capacity_500k",
     }

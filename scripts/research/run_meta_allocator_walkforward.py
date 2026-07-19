@@ -132,8 +132,8 @@ class PositionSizingConfig:
     health_multiplier_max: float = 1.50
     diversification_multiplier_min: float = 0.60
     diversification_multiplier_max: float = 1.00
-    max_single_stock_pct: float = 0.25
-    max_industry_pct: float = 0.40
+    max_single_stock_pct: float = 0.18
+    max_industry_pct: float = 0.35
     max_total_positions: int = 5
 
 
@@ -269,8 +269,8 @@ def load_meta_allocator_config(path: str | Path = None) -> MetaAllocatorConfig:
         health_multiplier_max=float(ps.get("health_multiplier_max", 1.50)),
         diversification_multiplier_min=float(ps.get("diversification_multiplier_min", 0.60)),
         diversification_multiplier_max=float(ps.get("diversification_multiplier_max", 1.00)),
-        max_single_stock_pct=float(ps.get("max_single_stock_pct", 0.25)),
-        max_industry_pct=float(ps.get("max_industry_pct", 0.40)),
+        max_single_stock_pct=float(ps.get("max_single_stock_pct", 0.18)),
+        max_industry_pct=float(ps.get("max_industry_pct", 0.35)),
         max_total_positions=int(ps.get("max_total_positions", 5)),
     )
 
@@ -926,7 +926,7 @@ class BudgetAllocator:
                          existing_positions: dict,
                          total_position_ratio: float,
                          max_total_positions: int = 5,
-                         max_single_stock_pct: float = 0.25) -> pd.DataFrame:
+                         max_single_stock_pct: float = 0.18) -> pd.DataFrame:
         """
         Merge candidates from multiple strategies into unified target weights.
         Same stock from multiple strategies → merged to single weight.

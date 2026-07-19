@@ -393,11 +393,11 @@ class TestDynamicExposureInvariants:
             "PR24: must set INVALID_RISK_STATE on invariant violation"
 
     def test_single_stock_check_exists(self):
-        """Single stock > 15% check exists in source."""
+        """Single stock > canonical 18% NAV check exists in source."""
         import inspect
         from scripts.research.fold_account_backtest import FoldAccountBacktest
         source = inspect.getsource(FoldAccountBacktest._run_account_backtest)
-        assert "max_single > 0.15" in source or "max_single > 0.15" in source
+        assert "max_single > 0.18" in source
 
     def test_top2_risk_check_exists(self):
         """Top2 risk contribution > 45% check exists."""

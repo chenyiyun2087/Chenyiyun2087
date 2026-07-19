@@ -1,8 +1,13 @@
 # Runtime Topology
 
-## Single production scheduler
+## Control plane and worker
 
-**Primary entry point:** `web/app.py` (Flask built-in task system)
+**Control plane:** `web/app.py` displays status, validates operator requests and
+persists queue rows.
+
+**Execution plane:** `scripts/ops/task_queue_worker.py` owns the database lease;
+`scripts/ops/task_worker_service.py` owns subprocess execution, heartbeat and
+failure classification. Web restarts do not execute queued business tasks.
 
 The web console scheduler is the ONLY production scheduler. The legacy
 `scheduler.py` is **disabled for production** — it remains available for
@@ -17,6 +22,9 @@ Every task execution is recorded with:
 - trigger_type (scheduled / manual)
 - target_date
 - idempotency_key = (task_name, target_date, trigger_type)
+- run_id
+- release_id (required for strategy tasks)
+- evidence_manifest_sha (required before evidence-producing tasks are promoted)
 
 Re-running a task for the same (name, date, trigger) within the same day
 MUST be a no-op — the task lock table prevents concurrent execution and
@@ -56,6 +64,10 @@ Step 11: Live tracker sync
 | State | Meaning | Permitted actions |
 |-------|---------|-------------------|
 | GREEN | All checks normal | Full candidate export + order drafts |
-| YELLOW | Warnings present | Orders require manual confirmation |
+| YELLOW | Warnings present | Manual review only; no automatic submission exists |
 | RED | Critical failure | No new BUY orders; sell + maintain only |
 | BLOCKED | Data gate failed | Pipeline aborted before candidate export |
+
+Portfolio or reconciliation failures set `FREEZE_NEW_BUYS`; unreconciled
+orders/fills set `HALT_NEW_ORDERS`. Neither state can be downgraded to a report
+warning.

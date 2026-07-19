@@ -117,5 +117,5 @@ class TestRiskPortfolioPIT:
 
     def test_tighter_default_caps(self):
         config = RiskPortfolioConfig()
-        assert config.max_single_pct == 0.15
-        assert config.max_industry_pct == 0.30
+        assert config.max_single_pct == 0.18
+        assert config.max_industry_pct == 0.35

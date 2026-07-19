@@ -2,7 +2,16 @@ name: full-regression-ci
 
 on:
   pull_request:
-    types: [labeled]
+    paths:
+      - 'runtime/**'
+      - 'scripts/ops/**'
+      - 'scripts/research/**'
+      - 'config/**'
+      - 'strategy_cards/**'
+      - 'web/**'
+      - 'test/**'
+      - 'requirements*.txt'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
@@ -12,7 +21,6 @@ permissions:
 jobs:
   full-regression:
     runs-on: ubuntu-latest
-    if: ${{ github.event.label.name == 'run-full-regression' || github.event_name == 'workflow_dispatch' }}
     services:
       mysql:
         image: mysql:8.0

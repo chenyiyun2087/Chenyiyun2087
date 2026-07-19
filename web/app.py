@@ -687,6 +687,9 @@ def _ensure_task_management_schema(cursor):
             attempt_count INT NOT NULL DEFAULT 0,
             max_attempts INT NOT NULL DEFAULT 2,
             run_options TEXT NULL,
+            run_id VARCHAR(128) NULL,
+            release_id VARCHAR(128) NULL,
+            evidence_manifest_sha CHAR(64) NULL,
             active_dedupe_key VARCHAR(160) NULL,
             error_kind VARCHAR(32) NULL,
             message TEXT NULL,
@@ -706,6 +709,9 @@ def _ensure_task_management_schema(cursor):
         'attempt_count': "INT NOT NULL DEFAULT 0 AFTER exit_code",
         'max_attempts': "INT NOT NULL DEFAULT 2 AFTER attempt_count",
         'run_options': "TEXT NULL AFTER max_attempts",
+        'run_id': "VARCHAR(128) NULL AFTER run_options",
+        'release_id': "VARCHAR(128) NULL AFTER run_id",
+        'evidence_manifest_sha': "CHAR(64) NULL AFTER release_id",
         'active_dedupe_key': "VARCHAR(160) NULL AFTER run_options",
         'error_kind': "VARCHAR(32) NULL AFTER active_dedupe_key",
     }
@@ -1678,6 +1684,18 @@ def _enqueue_task(task_name, trigger_type="manual", run_options=None, scheduled_
                 conn.commit()
                 return existing, False, None
             job_id = cursor.lastrowid
+            release_id = str((run_options or {}).get("release_id") or "")
+            if not release_id and str(task_name).startswith("trusted_strategy_"):
+                release_id = (
+                    f"{TRUSTED_PRODUCTION_STRATEGY}_{business_date}_"
+                    f"{TRUSTED_PRODUCTION_CONFIG['config_sha']}"
+                )
+            release_id = release_id or "UNASSIGNED_BLOCKED"
+            run_id = f"task:{job_id}:{task_name}:{business_date}"
+            cursor.execute(
+                "UPDATE app_task_queue SET run_id=%s,release_id=%s WHERE id=%s",
+                (run_id[:128], release_id[:128], job_id),
+            )
             cursor.execute("SELECT * FROM app_task_queue WHERE id = %s", (job_id,))
             job = cursor.fetchone()
         conn.commit()
@@ -1853,24 +1871,8 @@ DATA_READINESS_FAILURE_MARKERS = (
 
 def _classify_task_failure(history_status, exit_code, message):
     """Return a stable error kind and whether an automatic retry is safe."""
-    text = str(message or "").lower()
-    if history_status == "Success":
-        return None, False
-    if "modulenotfounderror" in text or "missing_module" in text:
-        return "DEPENDENCY", False
-    if "usage:" in text or "unrecognized arguments" in text or int(exit_code or 0) == 2:
-        return "ARGUMENT", False
-    if "failed test" in text or "pytest" in text or "assertionerror" in text:
-        return "TEST_GATE", False
-    if any(marker.lower() in text for marker in DATA_READINESS_FAILURE_MARKERS):
-        return "DATA_READINESS", True
-    if "[verify]" in text and "result=fail" in text:
-        return "VERIFICATION", False
-    if any(marker in text for marker in TRANSIENT_FAILURE_MARKERS):
-        return "TRANSIENT", True
-    if int(exit_code or 0) < 0:
-        return "PROCESS", True
-    return str(history_status or "FAILED").upper(), False
+    from scripts.ops.task_worker_service import classify_task_failure
+    return classify_task_failure(history_status, exit_code, message)
 
 
 def _finish_queued_task(job, history_status, exit_code, message):
@@ -1921,10 +1923,19 @@ def _finish_queued_task(job, history_status, exit_code, message):
                 )
             else:
                 status = "SUCCESS" if history_status == "Success" else "FAILED"
+                evidence_manifest_sha = None
+                if status == "SUCCESS":
+                    from scripts.ops.task_worker_service import record_task_evidence
+                    evidence_manifest_sha = record_task_evidence(
+                        job, history_status=history_status,
+                        exit_code=exit_code, message=message,
+                    )
                 cursor.execute(
                     """UPDATE app_task_queue SET status=%s, finished_at=NOW(), exit_code=%s,
-                       error_kind=%s, message=%s, active_dedupe_key=NULL WHERE id=%s""",
-                    (status, exit_code, None if status == "SUCCESS" else error_kind, message, job["id"]),
+                       error_kind=%s, message=%s, evidence_manifest_sha=%s,
+                       active_dedupe_key=NULL WHERE id=%s""",
+                    (status, exit_code, None if status == "SUCCESS" else error_kind,
+                     message, evidence_manifest_sha, job["id"]),
                 )
         conn.commit()
     except Exception as e:
@@ -3216,6 +3227,13 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
                                        run_options=None, message=None, queue_job=None,
                                        finish_result=None):
     try:
+        normalized_history_status = str(history_status or "").strip().upper()
+        # Scheduler skips are expected control-flow, never task failures.  Keep
+        # this guard at the notification boundary so a future caller cannot
+        # turn NON_TRADING_DAY/SCHEDULE_DAY skips into false Feishu alerts.
+        if normalized_history_status.startswith("SKIPPED_"):
+            return
+
         finish_result = dict(finish_result or {})
         business_date = _queue_business_date(run_options)
         queue_id = int(finish_result.get("queue_id") or (queue_job or {}).get("id") or 0)
@@ -3227,7 +3245,7 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
 
         # Normal success is deliberately silent. A success after one or more
         # failed attempts is the only successful task event sent to Feishu.
-        if history_status == "Success" and not recovered:
+        if normalized_history_status == "SUCCESS" and not recovered:
             return
 
         event_type = "task_recovered" if recovered else ("task_retrying" if will_retry else "task_failed")
@@ -3325,28 +3343,17 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
             task_name, project_root, queue_job=queue_job, run_options=run_options
         )
 
-        with tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stdout.log") as out_fh, \
-                tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix=f"{task_name}_", suffix=".stderr.log") as err_fh:
-            stdout_path = out_fh.name
-            stderr_path = err_fh.name
-            process = subprocess.Popen(
-                cmd,
-                stdout=out_fh,
-                stderr=err_fh,
-                cwd=str(project_root),
-                env=env,
-            )
-
-            while True:
-                try:
-                    process.wait(timeout=TASK_HEARTBEAT_INTERVAL_SECONDS)
-                    break
-                except subprocess.TimeoutExpired:
-                    _touch_task_lock_heartbeat(task_name)
-
-        exit_code = int(process.returncode or 0)
-        stdout = _read_text_tail(stdout_path, max_chars=4000)
-        stderr = _read_text_tail(stderr_path, max_chars=2400)
+        from scripts.ops.task_worker_service import execute_subprocess
+        process_result = execute_subprocess(
+            cmd,
+            cwd=project_root,
+            env=env,
+            heartbeat=lambda: _touch_task_lock_heartbeat(task_name),
+            heartbeat_interval_seconds=TASK_HEARTBEAT_INTERVAL_SECONDS,
+        )
+        exit_code = process_result.exit_code
+        stdout = process_result.stdout
+        stderr = process_result.stderr
         if exit_code == 0:
             verify_finished_at = datetime.now()
             verify_ok, verify_lines = _run_task_result_verification(
@@ -3427,8 +3434,17 @@ def _build_task_subprocess_env(task_name, project_root, queue_job=None, run_opti
     env["CHENYIYUN_TASK_NAME"] = str(task_name)
     env["CHENYIYUN_TASK_BUSINESS_DATE"] = _queue_business_date(run_options)
     if queue_job:
+        from scripts.ops.task_worker_service import build_task_identity
+        identity_job = {
+            **dict(queue_job),
+            "task_name": queue_job.get("task_name") or task_name,
+            "business_date": queue_job.get("business_date") or _queue_business_date(run_options),
+        }
+        identity = build_task_identity(identity_job, run_options)
         env["CHENYIYUN_TASK_JOB_ID"] = str(queue_job.get("id") or "")
         env["CHENYIYUN_TASK_ATTEMPT"] = str(queue_job.get("attempt_count") or 0)
+        env["CHENYIYUN_RUN_ID"] = identity.run_id
+        env["CHENYIYUN_RELEASE_ID"] = identity.release_id
     return env
 
 
@@ -7487,8 +7503,16 @@ def _run_scheduled_tasks_loop():
         try:
             now = datetime.now()
             is_trade_day = _is_trading_day(now.date())
+            # The production batch is a trading-day pipeline.  Stop at the
+            # scheduler boundary on weekends, exchange holidays, missing
+            # calendar rows, or calendar lookup failures.  In particular, do
+            # not manufacture one success/skip history row (and completion
+            # notification) per task: those records make a closed day look
+            # like a batch execution in the operations console.
+            if not is_trade_day:
+                time.sleep(20)
+                continue
             due_tasks = []
-            skipped_non_trade_tasks = []
             skipped_schedule_tasks = []
             with TASKS_LOCK:
                 for task_name, task in TASKS.items():
@@ -7513,14 +7537,7 @@ def _run_scheduled_tasks_loop():
                     if day_of_week is not None and now.weekday() != int(day_of_week):
                         skipped_schedule_tasks.append((task_name, scheduled_for))
                         continue
-                    if task.get('trading_day_only', True) and not is_trade_day:
-                        skipped_non_trade_tasks.append((task_name, scheduled_for))
-                    else:
-                        due_tasks.append(task_name)
-
-            for task_name, scheduled_for in skipped_non_trade_tasks:
-                _mark_scheduled_non_trading_success(task_name, scheduled_for)
-                print(f"Scheduled task success-skip (non-trading day): {task_name}")
+                    due_tasks.append(task_name)
 
             for task_name, scheduled_for in skipped_schedule_tasks:
                 _mark_scheduled_skip_success(task_name, scheduled_for, "SCHEDULE_DAY")

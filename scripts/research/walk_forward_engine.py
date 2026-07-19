@@ -1,7 +1,7 @@
 """Walk-forward engine for matched alpha experiments.
 
-Generates time-sliced folds (24-month train, 3-month validate, 3-month
-step, 10-trading-day embargo), runs each alpha experiment (A0–A7) through
+Generates time-sliced folds (12-month train, 3-month validate, 3-month test,
+3-month step, 10-day purge and 5-day embargo), runs each alpha experiment (A0–A8) through
 the MatchedPortfolioRunner for each fold, and aggregates results per fixed
 OOS validation window (2024Q1–2026Q2).
 
@@ -58,10 +58,12 @@ FIXED_VALIDATION_WINDOWS: list[tuple[str, str]] = [
     ("2026-04-01", "2026-06-30"),   # 2026Q2
 ]
 
-DEFAULT_TRAIN_MONTHS = 24
+DEFAULT_TRAIN_MONTHS = 12
 DEFAULT_VALIDATE_MONTHS = 3
+DEFAULT_TEST_MONTHS = 3
 DEFAULT_STEP_MONTHS = 3
-DEFAULT_EMBARGO_TRADING_DAYS = 10
+DEFAULT_PURGE_TRADING_DAYS = 10
+DEFAULT_EMBARGO_TRADING_DAYS = 5
 
 # PR13: Hold period experiment variants
 HOLD_PERIOD_VARIANTS = [5, 8, 10, 12, 15]
@@ -76,7 +78,9 @@ HOLD_PERIOD_VARIANTS = [5, 8, 10, 12, 15]
 class WalkForwardConfig:
     train_months: int = DEFAULT_TRAIN_MONTHS
     validate_months: int = DEFAULT_VALIDATE_MONTHS
+    test_months: int = DEFAULT_TEST_MONTHS
     step_months: int = DEFAULT_STEP_MONTHS
+    purge_trading_days: int = DEFAULT_PURGE_TRADING_DAYS
     embargo_trading_days: int = DEFAULT_EMBARGO_TRADING_DAYS
     fixed_validation_windows: list[tuple[str, str]] = field(
         default_factory=lambda: list(FIXED_VALIDATION_WINDOWS)
@@ -92,6 +96,10 @@ class WalkForwardFold:
     train_end: str
     validate_start: str
     validate_end: str
+    test_start: str
+    test_end: str
+    purge_start: str
+    purge_end: str
     embargo_start: str         # train_end + 1d
     embargo_end: str           # validate_start - 1d
     config_sha: str = ""       # SHA of frozen config for this fold
@@ -156,6 +164,14 @@ def _nth_trading_day(
     return str(pd.Timestamp(calendar[-1]).date()) if calendar else after_date
 
 
+def _previous_trading_day(calendar: list[object], before_date: str, n: int) -> str:
+    before = pd.Timestamp(before_date).date()
+    eligible = [pd.Timestamp(day).date() for day in sorted(calendar) if pd.Timestamp(day).date() < before]
+    if len(eligible) < n:
+        return str(eligible[0]) if eligible else before_date
+    return str(eligible[-n])
+
+
 def _window_for_date(
     date_str: str,
 ) -> str | None:
@@ -198,7 +214,7 @@ class WalkForwardEngine:
     ) -> list[WalkForwardFold]:
         """Generate walk-forward folds from *start_date* to *end_date*.
 
-        Each fold: 24m train → 10d embargo → 3m validate.
+        Each fold: 12m train → 10d purge + 5d embargo → 3m validate → 3m test.
         Steps forward by 3 months per fold.
         """
         folds: list[WalkForwardFold] = []
@@ -208,24 +224,33 @@ class WalkForwardEngine:
         while True:
             train_start = cursor
             try:
-                train_end = _month_offset(train_start, self.config.train_months)
+                nominal_train_end = _month_offset(train_start, self.config.train_months)
+                train_end = (
+                    _previous_trading_day(self.calendar, nominal_train_end, self.config.purge_trading_days)
+                    if self.calendar else str(pd.Timestamp(nominal_train_end).date() - timedelta(days=self.config.purge_trading_days))
+                )
+                purge_start = str(pd.Timestamp(train_end).date() + timedelta(days=1))
+                purge_end = nominal_train_end
             except OverflowError:
                 break
 
             # Embargo
             embargo_start = str(
-                pd.Timestamp(train_end).date() + timedelta(days=1)
+                pd.Timestamp(nominal_train_end).date() + timedelta(days=1)
             )
             validate_start = _nth_trading_day(
                 self.calendar,
-                train_end,
+                nominal_train_end,
                 self.config.embargo_trading_days,
-            ) if self.calendar else _month_offset(train_end, 0)
+            ) if self.calendar else str(
+                pd.Timestamp(nominal_train_end).date()
+                + timedelta(days=self.config.embargo_trading_days)
+            )
 
             # ``_nth_trading_day`` returns the final known calendar date when
             # the requested embargo extends beyond available data.  Treat that
             # as exhaustion, not as a fold whose validation precedes training.
-            if pd.Timestamp(validate_start).date() <= pd.Timestamp(train_end).date():
+            if pd.Timestamp(validate_start).date() <= pd.Timestamp(nominal_train_end).date():
                 break
 
             # If using calendar-based embargo, validate_start should be after
@@ -240,27 +265,30 @@ class WalkForwardEngine:
             validate_end = _month_offset(
                 validate_start, self.config.validate_months
             )
+            test_start = _nth_trading_day(self.calendar, validate_end, 1) if self.calendar else validate_end
+            test_end = _month_offset(test_start, self.config.test_months)
 
             # Stop if validate_end exceeds available data
-            if end_date and validate_end > end_date:
+            if end_date and test_end > end_date:
                 break
 
             # Safety: don't produce folds with years > 9999
             try:
                 pd.Timestamp(validate_end)
+                pd.Timestamp(test_end)
                 pd.Timestamp(train_end)
             except (ValueError, pd.errors.OutOfBoundsDatetime):
                 break
 
             # Stop if we've gone past the last fixed window
             last_window_end = FIXED_VALIDATION_WINDOWS[-1][1]
-            if validate_end > last_window_end:
+            if test_end > last_window_end:
                 break
 
             # Only include fold if validate period overlaps with a fixed window
             fold_window = None
-            vs = pd.Timestamp(validate_start).date()
-            ve = pd.Timestamp(validate_end).date()
+            vs = pd.Timestamp(test_start).date()
+            ve = pd.Timestamp(test_end).date()
             for ws, we in FIXED_VALIDATION_WINDOWS:
                 fws = pd.Timestamp(ws).date()
                 fwe = pd.Timestamp(we).date()
@@ -279,8 +307,13 @@ class WalkForwardEngine:
                         "fold": fold_idx,
                         "train_start": train_start,
                         "train_end": train_end,
+                        "purge_start": purge_start,
+                        "purge_end": purge_end,
                         "validate_start": validate_start,
                         "validate_end": validate_end,
+                        "test_start": test_start,
+                        "test_end": test_end,
+                        "purge_days": self.config.purge_trading_days,
                         "embargo_days": self.config.embargo_trading_days,
                     },
                     sort_keys=True,
@@ -294,6 +327,10 @@ class WalkForwardEngine:
                     train_end=train_end,
                     validate_start=validate_start,
                     validate_end=validate_end,
+                    test_start=test_start,
+                    test_end=test_end,
+                    purge_start=purge_start,
+                    purge_end=purge_end,
                     embargo_start=embargo_start,
                     embargo_end=embargo_end,
                     config_sha=config_sha,
@@ -331,35 +368,36 @@ class WalkForwardEngine:
             experiment_id=experiment.experiment_id,
             fold_index=fold.fold_index,
             window_label=(
-                _window_for_date(fold.validate_start) or ""
+                _window_for_date(fold.test_start) or ""
             ),
         )
 
-        # Slice scores and prices to the validate window
+        # Validation is reserved for model/parameter selection.  Economic
+        # metrics are computed only on the untouched test window.
         validate_scores = scores[
             (
                 pd.to_datetime(scores["trade_date"], errors="coerce").dt.date
-                >= pd.Timestamp(fold.validate_start).date()
+                >= pd.Timestamp(fold.test_start).date()
             )
             & (
                 pd.to_datetime(scores["trade_date"], errors="coerce").dt.date
-                <= pd.Timestamp(fold.validate_end).date()
+                <= pd.Timestamp(fold.test_end).date()
             )
         ].copy()
 
         validate_prices = prices[
             (
                 pd.to_datetime(prices["trade_date"], errors="coerce").dt.date
-                >= pd.Timestamp(fold.validate_start).date()
+                >= pd.Timestamp(fold.test_start).date()
             )
             & (
                 pd.to_datetime(prices["trade_date"], errors="coerce").dt.date
-                <= pd.Timestamp(fold.validate_end).date()
+                <= pd.Timestamp(fold.test_end).date()
             )
         ].copy()
 
         if validate_scores.empty:
-            result.error = f"empty_validate_scores:{fold.validate_start}..{fold.validate_end}"
+            result.error = f"empty_test_scores:{fold.test_start}..{fold.test_end}"
             return result
 
         train_scores = scores[
@@ -425,9 +463,9 @@ class WalkForwardEngine:
         validate_calendar = [
             d for d in self.calendar
             if (
-                pd.Timestamp(fold.validate_start).date()
+                pd.Timestamp(fold.test_start).date()
                 <= pd.Timestamp(d).date()
-                <= pd.Timestamp(fold.validate_end).date()
+                <= pd.Timestamp(fold.test_end).date()
             )
         ]
         # PR13: Attach stateful DecayExitRuleV2 if experiment uses decay exits
@@ -610,7 +648,7 @@ class WalkForwardEngine:
         agg = FoldResult(
             experiment_id="A2",
             fold_index=fold.fold_index,
-            window_label=_window_for_date(fold.validate_start) or "",
+            window_label=_window_for_date(fold.test_start) or "",
         )
 
         if seed_results and seed_results[0].nav_rows:

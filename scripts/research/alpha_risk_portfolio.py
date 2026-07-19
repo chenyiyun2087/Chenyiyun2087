@@ -55,8 +55,8 @@ class RiskPortfolioConfig:
 
     vol_window: int = 20
     score_power: float = 0.5
-    max_single_pct: float = 0.15
-    max_industry_pct: float = 0.30
+    max_single_pct: float = 0.18
+    max_industry_pct: float = 0.35
     min_weight: float = 0.01
     dd_warn: float = 0.12
     dd_reduce: float = 0.18

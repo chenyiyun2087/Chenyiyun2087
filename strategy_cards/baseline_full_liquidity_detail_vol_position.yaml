@@ -16,13 +16,13 @@ description: >
   结合 AShare 信号增强与双系统加权。风控锚为 adaptive_market_style v2.2。
 
 signal_time: T_15_30
-execution_time: T+1_OPEN
+execution_time: T+1_0925_PRECHECK_OPEN_0931_0935_VWAP
 universe: ashare_full_liquid_pool_v1
 holding_days: 10
 max_positions: 5
 
 cost_model: cn_stock_v2
-slippage_model: open_participation_v1
+slippage_model: ashare_open_auction_v1
 risk_budget:
   target_exposure: 0.70
   max_single_name: 0.18

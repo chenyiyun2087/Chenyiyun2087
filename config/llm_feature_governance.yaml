@@ -1,0 +1,24 @@
+schema_version: "1.0"
+production_ranking_enabled: false
+allowed_roles:
+  - EXPLANATION
+  - ANOMALY_FLAG
+  - MATERIAL_EVENT_VETO
+  - SHADOW_FEATURE
+required_replay_fields:
+  - model_id
+  - model_version
+  - prompt_sha
+  - input_schema_sha
+  - input_sha
+  - response_sha
+  - requested_at
+  - completed_at
+  - fallback_status
+promotion_requirements:
+  fixed_model_version: true
+  fixed_prompt_sha: true
+  archived_requests_and_responses: true
+  deterministic_failure_fallback: true
+  drift_monitoring: true
+  matched_walk_forward_pass: true

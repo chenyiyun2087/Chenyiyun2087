@@ -25,6 +25,10 @@ class ProvenanceEnvelope(BaseModel):
     calendar_snapshot_sha: str
     corporate_action_snapshot_sha: str
     lifecycle_snapshot_sha: str
+    cost_model_id: str
+    execution_model_id: str
+    initial_capital: float
+    run_id: str
     index_snapshot_sha: str = ""
     approved_principal: float = 0.0
     order_policy: str = "BLOCKED"
@@ -58,6 +62,7 @@ class ProvenanceEnvelope(BaseModel):
         requested_window_days: int,
         identity_status: IdentityStatus,
         index_snapshot_sha: str = "",
+        run_id: str = "",
     ) -> "ProvenanceEnvelope":
         return cls(
             requested_strategy_id=requested_strategy_id,
@@ -70,6 +75,10 @@ class ProvenanceEnvelope(BaseModel):
             calendar_snapshot_sha=release.calendar_snapshot_sha,
             corporate_action_snapshot_sha=release.corporate_action_snapshot_sha,
             lifecycle_snapshot_sha=release.lifecycle_snapshot_sha,
+            cost_model_id=release.cost_model_id,
+            execution_model_id=release.execution_model_id,
+            initial_capital=release.initial_capital,
+            run_id=run_id or f"{release.release_id}:{sample_end}",
             index_snapshot_sha=index_snapshot_sha,
             approved_principal=release.approved_principal,
             order_policy=release.order_policy,

@@ -35,6 +35,8 @@ PROTECTED_STATUSES: frozenset[str] = frozenset({
     "rejected",
     "superseded",
     "expired",
+    "manual_submitted",
+    "partial_fill",
 })
 
 
@@ -59,6 +61,20 @@ DDL_V2_COLUMNS: list[tuple[str, str]] = [
     ("health_grade", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN health_grade VARCHAR(16) DEFAULT NULL"),
     ("health_substatus", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN health_substatus VARCHAR(16) DEFAULT NULL"),
     ("config_sha", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN config_sha VARCHAR(32) DEFAULT NULL"),
+    ("run_id", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN run_id VARCHAR(128) DEFAULT NULL COMMENT 'Immutable strategy run'"),
+    ("strategy_version", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN strategy_version VARCHAR(64) DEFAULT NULL"),
+    ("data_snapshot_sha", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN data_snapshot_sha CHAR(64) DEFAULT NULL"),
+    ("calendar_snapshot_sha", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN calendar_snapshot_sha CHAR(64) DEFAULT NULL"),
+    ("corporate_action_snapshot_sha", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN corporate_action_snapshot_sha CHAR(64) DEFAULT NULL"),
+    ("lifecycle_snapshot_sha", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN lifecycle_snapshot_sha CHAR(64) DEFAULT NULL"),
+    ("cost_model_id", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN cost_model_id VARCHAR(64) DEFAULT NULL"),
+    ("execution_model_id", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN execution_model_id VARCHAR(64) DEFAULT NULL"),
+    ("initial_capital", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN initial_capital DECIMAL(20,2) DEFAULT NULL"),
+    ("decision_timestamp", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN decision_timestamp DATETIME DEFAULT NULL"),
+    ("market_data_cutoff", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN market_data_cutoff DATETIME DEFAULT NULL"),
+    ("order_created_at", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN order_created_at DATETIME DEFAULT NULL"),
+    ("fill_timestamp", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN fill_timestamp DATETIME DEFAULT NULL"),
+    ("fallback_reason", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN fallback_reason VARCHAR(255) DEFAULT NULL"),
     ("updated_at", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
 ]
 

@@ -1,0 +1,34 @@
+name: pr-fast-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fast-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements-ci.lock.txt
+      - name: Compile production modules
+        run: python -m compileall -q runtime scripts/ops scripts/research web
+      - name: Production contracts and PIT/risk invariants
+        run: >-
+          python -m pytest -q
+          test/test_trusted_production_closure.py
+          test/test_p0_trustworthiness.py
+          test/test_production_config_consistency.py
+          test/test_production_health_order_gating.py
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: python scripts/ops/check_no_hardcoded_db_credentials.py

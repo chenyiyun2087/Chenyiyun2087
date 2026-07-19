@@ -1,93 +1,88 @@
+#!/usr/bin/env python3
+"""Read-only account reconciliation.
+
+The former script deleted and rebuilt ``live_positions``.  Reconciliation is
+now evidence, never a repair action: mismatches halt new orders and require a
+separate, reviewed maintenance task.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
 import sys
 from pathlib import Path
-from datetime import date
 
-# Add project root to sys.path
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from sina.live_tracker.live_tracker import LiveTracker
 from sina.live_tracker import live_tracker_db as db
 from sina.live_tracker.live_tracker_config import LIVE_CONFIG
 
-def reconcile():
-    print("Starting reconciliation...")
-    tracker = LiveTracker()
-    
-    # Reset to initial state
-    tracker.cash = LIVE_CONFIG["initial_capital"]
-    tracker.positions = {}
-    
-    # Fetch all trades ordered by date and ID
-    trades = db.get_trades()
-    trades.sort(key=lambda x: (x['trade_date'], x['id']))
-    
-    print(f"Found {len(trades)} trades.")
-    
-    for t in trades:
-        symbol = t['symbol']
-        shares = t['shares']
-        price = float(t['price']) # this is actual_price (with slippage)
-        amount = float(t['amount']) # actual_price * shares
-        commission = float(t['commission'])
-        direction = t['direction']
-        
-        total_cost = amount + commission
-        
-        if direction == 'buy':
-            tracker.cash -= total_cost
-            if symbol in tracker.positions:
-                pos = tracker.positions[symbol]
-                old_cost = pos.shares * pos.avg_cost
-                new_cost = old_cost + amount
-                new_shares = pos.shares + shares
-                pos.avg_cost = new_cost / new_shares
-                pos.shares = new_shares
-            else:
-                from sina.live_tracker.live_tracker import LivePosition
-                tracker.positions[symbol] = LivePosition(
-                    symbol=symbol,
-                    name=db.get_stock_name(symbol),
-                    shares=shares,
-                    avg_cost=amount / shares,
-                    entry_date=t['trade_date'],
-                    current_price=price
-                )
-        else:
-            net_proceeds = amount - commission
-            tracker.cash += net_proceeds
-            if symbol in tracker.positions:
-                pos = tracker.positions[symbol]
-                pos.shares -= shares
-                if pos.shares <= 0:
-                    del tracker.positions[symbol]
-    
-    print(f"Reconciled Cash: {tracker.cash:.2f}")
-    print(f"Reconciled Positions: {list(tracker.positions.keys())}")
-    
-    # Update Database
-    # 1. Clear positions table for a clean sync
-    conn = db.get_db_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM live_positions")
-        conn.commit()
-    finally:
-        conn.close()
 
-    # 2. Update positions table
-    for symbol, pos in tracker.positions.items():
-        db.upsert_position(
-            symbol=pos.symbol,
-            shares=pos.shares,
-            avg_cost=pos.avg_cost,
-            entry_date=pos.entry_date,
-            name=pos.name,
-            current_price=pos.current_price
-        )
-    
-    # 2. Update snapshot
-    tracker.calculate_daily_pnl(date.today())
-    print("Account record successfully reconciled and persisted.")
+def reconcile_records(
+    trades: list[dict],
+    stored_positions: list[dict],
+    *,
+    initial_capital: float,
+) -> dict[str, object]:
+    cash = float(initial_capital)
+    expected: dict[str, int] = {}
+    violations: list[dict[str, object]] = []
+    for trade in sorted(trades, key=lambda row: (str(row.get("trade_date")), int(row.get("id") or 0))):
+        symbol = str(trade.get("symbol") or "")
+        shares = int(trade.get("shares") or 0)
+        amount = float(trade.get("amount") or 0)
+        commission = float(trade.get("commission") or 0)
+        direction = str(trade.get("direction") or "").lower()
+        if not symbol or shares <= 0 or amount < 0 or commission < 0 or direction not in {"buy", "sell"}:
+            violations.append({"scope": "TRADE", "key": trade.get("id"), "reason": "invalid_trade_record"})
+            continue
+        if direction == "buy":
+            cash -= amount + commission
+            expected[symbol] = expected.get(symbol, 0) + shares
+        else:
+            if expected.get(symbol, 0) < shares:
+                violations.append({"scope": "TRADE", "key": trade.get("id"), "reason": "sell_exceeds_replayed_position"})
+            cash += amount - commission
+            expected[symbol] = expected.get(symbol, 0) - shares
+            if expected[symbol] == 0:
+                del expected[symbol]
+    actual = {str(row.get("symbol")): int(row.get("shares") or 0) for row in stored_positions}
+    for symbol in sorted(set(expected) | set(actual)):
+        if expected.get(symbol, 0) != actual.get(symbol, 0):
+            violations.append({
+                "scope": "POSITION", "key": symbol,
+                "expected_shares": expected.get(symbol, 0), "actual_shares": actual.get(symbol, 0),
+                "reason": "position_share_mismatch",
+            })
+    return {
+        "status": "VERIFIED" if not violations else "HALT_NEW_ORDERS",
+        "production_state": "ACTIVE_FIXED_CAPITAL" if not violations else "FREEZE_NEW_BUYS",
+        "expected_cash_before_marks": round(cash, 2),
+        "expected_positions": expected,
+        "actual_positions": actual,
+        "violations": violations,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Read-only local account reconciliation")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    report = reconcile_records(
+        db.get_trades(), db.get_all_positions(),
+        initial_capital=float(LIVE_CONFIG["initial_capital"]),
+    )
+    encoded = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(encoded, encoding="utf-8")
+    print(encoded, end="")
+    if report["status"] != "VERIFIED":
+        raise SystemExit(2)
+
 
 if __name__ == "__main__":
-    reconcile()
+    main()

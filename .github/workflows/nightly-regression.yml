@@ -1,0 +1,30 @@
+name: nightly-regression
+
+on:
+  schedule:
+    - cron: '30 16 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -r requirements-ci.lock.txt
+      - run: python -m pytest -q -m 'not integration'
+      - name: Verify tournament remains fail-closed without evidence
+        run: >-
+          python scripts/research/run_production_strategy_tournament.py
+          --as-of 2026-07-20 --precheck-only
+          --output-dir "$RUNNER_TEMP/tournament-precheck"

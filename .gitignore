@@ -7,6 +7,7 @@ exports/归档.zip
 exports/bs_point_models/
 exports/signal_enhancement/
 data/processed/
+data/evidence_store/
 
 /sina/sina_bs_capture.log
 /sina_bs_capture.log

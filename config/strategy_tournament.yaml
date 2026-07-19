@@ -14,6 +14,24 @@ tournament:
   stress_slippage_bps: 50
   capacities: [100000, 500000, 1500000, 3000000, 5000000, 10000000]
 
+  walk_forward:
+    train_months: 12
+    validation_months: 3
+    test_months: 3
+    step_months: 3
+    purge_trading_days: 10
+    embargo_trading_days: 5
+    initial_capital: 500000
+
+  required_experiments:
+    - PRODUCTION_BASELINE
+    - FROZEN_CHAMPION
+    - A7
+    - REV_A7
+    - RND_TOP30
+    - RND_FULL
+    - A8
+
   hard_gates:
     min_net_oos_annualized_return: 0.20
     max_oos_drawdown_abs: 0.20
@@ -23,10 +41,15 @@ tournament:
     min_corporate_action_coverage: 1.00
     max_t_plus_one_violations: 0
     min_stress_annualized_return: 0.00
-    max_single_position_weight: 0.20
-    max_single_industry_weight: 0.40
+    max_single_position_weight: 0.18
+    max_single_industry_weight: 0.35
     max_correlated_theme_weight: 0.55
     max_single_order_adv_ratio: 0.01
+    max_top5_trade_profit_dependency: 0.35
+    min_market_regime_count: 3
+    require_positive_cost_after_alpha: true
+    require_dual_ledger_verified: true
+    require_factor_ablation_complete: true
 
   shadow_release:
     disabled_shadow_days: 20
@@ -51,4 +74,3 @@ tournament:
         - tiered_liquidity_then_bs_v2
         - adaptive_market_style
       complexity_rank: 3
-

@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-ci.lock.txt
       - name: Production config consistency
-        run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py -v
+        run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py test/test_trusted_production_closure.py -v
       - name: PR18 Independent Oracle and Evidence Semantic tests
         run: python -m pytest test/test_pr18_independent_oracle.py -v
       - name: PR19 Oracle Coverage and Evidence Gates
@@ -100,7 +100,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-ci.lock.txt
       - name: Strict ledger tests
-        run: python -m pytest test/test_strict_execution_ledger.py test/test_strict_corporate_action_snapshot.py test/test_strict_snapshot_integrity.py test/test_strict_reliability_matrix.py test/test_strict_precommit_cap_and_sizing.py test/test_strict_pit_market_rules.py test/test_replay_strict_execution_ledger.py -v
+        run: python -m pytest test/test_strict_execution_ledger.py test/test_strict_corporate_action_snapshot.py test/test_strict_snapshot_integrity.py test/test_strict_reliability_matrix.py test/test_strict_precommit_cap_and_sizing.py test/test_strict_pit_market_rules.py test/test_replay_strict_execution_ledger.py test/test_trusted_production_closure.py -v
       - name: No research imports in replay_v2
         run: '! grep -E "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
 
