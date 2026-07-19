@@ -9,11 +9,13 @@ import subprocess
 
 
 REQUIRED_CONTEXTS = [
-    "pr-fast-gate / fast-gate",
-    "production-core-audit / production-core",
-    "production-core-audit / strict-ledger",
-    "production-core-audit / integration-test",
-    "full-regression-ci / full-regression",
+    "fast-gate",
+    "production-core",
+    "strict-ledger",
+    "integration-test",
+    "fixtures",
+    "full-regression",
+    "secret-scan",
 ]
 
 
