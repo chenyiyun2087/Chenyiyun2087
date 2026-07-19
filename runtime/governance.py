@@ -12,17 +12,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DDL_GOVERNANCE = """
 CREATE TABLE IF NOT EXISTS chenyiyun.strategy_releases (
   release_id VARCHAR(128) PRIMARY KEY, strategy_id VARCHAR(128) NOT NULL,
+  strategy_version VARCHAR(64) NOT NULL, cost_model_id VARCHAR(64) NOT NULL,
+  execution_model_id VARCHAR(64) NOT NULL, initial_capital DECIMAL(20,2) NOT NULL,
   signal_date DATE NOT NULL, execution_date DATE NOT NULL, config_sha VARCHAR(128) NOT NULL,
   git_commit_sha VARCHAR(128) NOT NULL, data_snapshot_hash VARCHAR(128) NOT NULL,
+  calendar_snapshot_sha VARCHAR(128) NOT NULL, corporate_action_snapshot_sha VARCHAR(128) NOT NULL,
+  lifecycle_snapshot_sha VARCHAR(128) NOT NULL,
   feature_schema_version VARCHAR(128) NOT NULL, manifest_json JSON NOT NULL,
   manifest_sha VARCHAR(128) NOT NULL, created_at DATETIME NOT NULL,
   UNIQUE KEY uk_strategy_release_identity(strategy_id, signal_date, config_sha, data_snapshot_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS chenyiyun.strategy_runs (
   run_id BIGINT AUTO_INCREMENT PRIMARY KEY, release_id VARCHAR(128) NOT NULL,
+  external_run_id VARCHAR(128) NOT NULL,
   run_type VARCHAR(32) NOT NULL, decision_fingerprint VARCHAR(128), status VARCHAR(32) NOT NULL,
   created_at DATETIME NOT NULL, FOREIGN KEY (release_id) REFERENCES chenyiyun.strategy_releases(release_id),
-  KEY idx_runs_release(release_id)
+  UNIQUE KEY uk_runs_external(external_run_id), KEY idx_runs_release(release_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS chenyiyun.order_intents (
   intent_id VARCHAR(128) PRIMARY KEY, release_id VARCHAR(128) NOT NULL, strategy_id VARCHAR(128) NOT NULL,
@@ -56,6 +61,16 @@ CREATE TABLE IF NOT EXISTS chenyiyun.promotion_evidence (
 
 REQUIRED_EVIDENCE_FIELDS = frozenset({"release_id", "strategy_id", "signal_date", "execution_date", "config_sha", "git_commit_sha", "data_snapshot_hash", "gate_name", "required_value", "actual_value", "pass_fail", "failure_reason", "evidence_uri", "evidence_sha", "evaluated_at"})
 
+GOVERNANCE_COLUMN_UPGRADES = {
+    "strategy_version": "VARCHAR(64) NULL AFTER strategy_id",
+    "cost_model_id": "VARCHAR(64) NULL AFTER strategy_version",
+    "execution_model_id": "VARCHAR(64) NULL AFTER cost_model_id",
+    "initial_capital": "DECIMAL(20,2) NULL AFTER execution_model_id",
+    "calendar_snapshot_sha": "VARCHAR(128) NULL AFTER data_snapshot_hash",
+    "corporate_action_snapshot_sha": "VARCHAR(128) NULL AFTER calendar_snapshot_sha",
+    "lifecycle_snapshot_sha": "VARCHAR(128) NULL AFTER corporate_action_snapshot_sha",
+}
+
 
 def canonical_sha(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str, separators=(",", ":")).encode()).hexdigest()
@@ -67,6 +82,15 @@ def ensure_governance_schema(engine) -> None:
         for statement in DDL_GOVERNANCE.split(";\n"):
             if statement.strip():
                 conn.execute(text(statement))
+        columns = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA='chenyiyun' AND TABLE_NAME='strategy_releases'"
+            ))
+        }
+        for name, definition in GOVERNANCE_COLUMN_UPGRADES.items():
+            if name not in columns:
+                conn.execute(text(f"ALTER TABLE chenyiyun.strategy_releases ADD COLUMN {name} {definition}"))
 
 
 def write_evidence_package(release_id: str, payloads: dict[str, Any], output_root: Path | None = None) -> tuple[str, str]:
@@ -106,6 +130,7 @@ def persist_release(engine, manifest: Any) -> None:
     """Persist a ReleaseManifest once; a conflicting immutable snapshot is rejected."""
     from sqlalchemy import text
     ensure_governance_schema(engine)
+    identity = manifest.to_identity()
     payload = manifest.to_dict()
     sha = canonical_sha(payload)
     with engine.begin() as conn:
@@ -114,9 +139,18 @@ def persist_release(engine, manifest: Any) -> None:
             raise RuntimeError("release_manifest_immutable_conflict")
         if not existing:
             conn.execute(text("""INSERT INTO chenyiyun.strategy_releases
-            (release_id,strategy_id,signal_date,execution_date,config_sha,git_commit_sha,data_snapshot_hash,feature_schema_version,manifest_json,manifest_sha,created_at)
-            VALUES (:release_id,:strategy_id,:signal_date,:execution_date,:config_sha,:git_commit_sha,:data_snapshot_hash,:feature_schema_version,:manifest_json,:manifest_sha,:created_at)"""), {
-                "release_id": manifest.release_id, "strategy_id": manifest.strategy_wrapper_id, "signal_date": manifest.signal_date, "execution_date": manifest.execution_date,
+            (release_id,strategy_id,strategy_version,cost_model_id,execution_model_id,initial_capital,
+             signal_date,execution_date,config_sha,git_commit_sha,data_snapshot_hash,calendar_snapshot_sha,
+             corporate_action_snapshot_sha,lifecycle_snapshot_sha,feature_schema_version,manifest_json,manifest_sha,created_at)
+            VALUES (:release_id,:strategy_id,:strategy_version,:cost_model_id,:execution_model_id,:initial_capital,
+                    :signal_date,:execution_date,:config_sha,:git_commit_sha,:data_snapshot_hash,:calendar_snapshot_sha,
+                    :corporate_action_snapshot_sha,:lifecycle_snapshot_sha,:feature_schema_version,:manifest_json,:manifest_sha,:created_at)"""), {
+                "release_id": manifest.release_id, "strategy_id": identity.strategy_id, "signal_date": manifest.signal_date, "execution_date": manifest.execution_date,
                 "config_sha": manifest.config_sha, "git_commit_sha": manifest.git_commit_sha, "data_snapshot_hash": manifest.data_snapshot_hash,
+                "strategy_version": identity.strategy_version, "cost_model_id": identity.cost_model_id,
+                "execution_model_id": identity.execution_model_id, "initial_capital": identity.initial_capital,
+                "calendar_snapshot_sha": identity.calendar_snapshot_sha,
+                "corporate_action_snapshot_sha": identity.corporate_action_snapshot_sha,
+                "lifecycle_snapshot_sha": identity.lifecycle_snapshot_sha,
                 "feature_schema_version": manifest.feature_schema_version, "manifest_json": json.dumps(payload, ensure_ascii=False), "manifest_sha": sha, "created_at": manifest.created_at,
             })

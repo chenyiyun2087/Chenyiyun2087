@@ -11,9 +11,15 @@
 | SCALED | Staged capital increase | 25/50/100% | Strategy owner + risk officer + compliance |
 | PRODUCTION | Full production | 100% target | Full approval chain |
 
+当前部署边界为人工下单，`broker_api_enabled=false`。CANARY/SCALED
+条款保留为未来治理定义，但本轮实现不得进入这两个通道；现有生产仅允许
+`ACTIVE_FIXED_CAPITAL`，且上限为 50 万元。
+
 ## Promotion gates
 
 ### RESEARCH → SHADOW_DISABLED
+- [ ] ReleaseIdentity 全字段完整且所有快照 SHA 非占位符
+- [ ] 独立双账本状态为 VERIFIED（现金差 ≤ 0.01 元，NAV 差 ≤ 1bp）
 - [ ] Full-history strict T+1 backtest passed
 - [ ] Rolling OOS Calmar ≥ 0.25
 - [ ] OOS return > baseline
@@ -22,6 +28,8 @@
 - [ ] Corporate action coverage 100%
 - [ ] No T+1 fill violations
 - [ ] Release manifest frozen
+- [ ] 12/3/3 月 Walk-forward，purge 10 日、embargo 5 日
+- [ ] A7 同场优于 REV-A7、RND_TOP30 和 RND_FULL
 
 ### SHADOW_DISABLED → SHADOW_ENABLED
 - [ ] 20 real trading days of disabled shadow

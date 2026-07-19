@@ -1,6 +1,8 @@
-# 策略晋级门禁配置
-# 由 run_champion_challenger_eval.py 读取
-# 策略从 RESEARCH → SHADOW → PAPER → CANARY → PRODUCTION 的硬性条件
+# Deprecated compatibility view. The source of truth is
+# config/production_acceptance.yaml; values here must match it and are checked
+# by CI so task consumers cannot silently define a weaker promotion lane.
+
+source_of_truth: config/production_acceptance.yaml
 
 promotion_gate:
   # Walk-forward 晋级条件
@@ -13,21 +15,26 @@ promotion_gate:
 
   # Shadow 影子盘晋级条件
   shadow:
-    min_trading_days: 60
-    min_order_count: 100
+    disabled_shadow_days: 20
+    enabled_shadow_days: 60
+    min_trading_days: 80
+    min_order_count: 30
     max_execution_degraded_ratio: 0.05
     max_theory_gap: 0.03
     min_pass_rate: 0.80
 
-  # Paper 模拟盘晋级条件
+  # Paper 只用于诊断，不是晋级捷径。
   paper:
     min_trading_days: 30
     min_order_count: 50
     max_slippage_bps: 100
+    promotion_eligible: false
 
   # Canary 小资金实盘晋级条件
   canary:
-    min_trading_days: 20
+    enabled: false
+    reason: manual_orders_no_broker_integration
+    min_trading_days: 60
     min_order_count: 30
     max_drawdown_vs_shadow: 0.02
 

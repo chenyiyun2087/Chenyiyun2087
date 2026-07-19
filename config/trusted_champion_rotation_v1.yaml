@@ -53,8 +53,8 @@ earnings_season:
   fail_closed_on_missing_data: true
 
 portfolio_risk:
-  max_single_position_weight: 0.20
-  max_industry_weight: 0.40
+  max_single_position_weight: 0.18
+  max_industry_weight: 0.35
   switch_notional_ratio: 0.70
 
 execution:
@@ -66,10 +66,11 @@ execution:
   switch_only_on_last_trade_day_of_week: true
 
 walk_forward:
-  train_months: 24
+  train_months: 12
   validation_months: 3
+  test_months: 3
   step_months: 3
-  purge_trading_days: 15
+  purge_trading_days: 10
   embargo_trading_days: 5
 
 acceptance:

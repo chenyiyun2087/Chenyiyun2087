@@ -15,6 +15,9 @@ releases:
     promotion_status: BLOCKED
     capital_status: NO_EXTERNAL_SCALE
     approved_principal: 500000
+    initial_capital: 500000
+    cost_model_id: cn_stock_v2
+    execution_model_id: ashare_open_auction_v1
     order_policy: ACTIVE_FIXED_CAPITAL
     git_commit_sha: 1fcab572927183b8058fbdb98249dfec6862475b
     config_sha: 848a887e5bfb6666c491d07e648e3720c16c91faccdd9fb5c0e21b3b7ada1a9c
@@ -34,6 +37,9 @@ releases:
     promotion_status: BLOCKED
     capital_status: NO_EXTERNAL_SCALE
     approved_principal: 500000
+    initial_capital: 500000
+    cost_model_id: cn_stock_v2
+    execution_model_id: ashare_open_auction_v1
     order_policy: SHADOW
     walk_forward_passed: false
     walk_forward_windows_passed: 0
@@ -74,6 +80,9 @@ releases:
     execution_status: ACTIVE_EXISTING_ONLY
     promotion_status: BLOCKED
     capital_status: NO_SCALE
+    initial_capital: 500000
+    cost_model_id: cn_stock_v2
+    execution_model_id: ashare_open_auction_v1
 
   adaptive_market_style:
     strategy_id: adaptive_market_style

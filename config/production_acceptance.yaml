@@ -57,10 +57,11 @@ acceptance:
   # Rolling OOS (walk-forward)
   # -----------------------------------------------------------------------
   rolling_oos:
-    train_months: 24
+    train_months: 12
+    validation_months: 3
     test_months: 3
     step_months: 3
-    purge_trading_days: 15
+    purge_trading_days: 10
     embargo_trading_days: 5
     min_oos_window_coverage: 1.00
     min_positive_window_ratio: 0.55
@@ -166,8 +167,8 @@ acceptance:
   # Production risk controls (portfolio-level)
   # -----------------------------------------------------------------------
   portfolio_risk_controls:
-    max_single_position_weight_pct_nav: 20
-    max_single_industry_weight_pct_nav: 40
+    max_single_position_weight_pct_nav: 18
+    max_single_industry_weight_pct_nav: 35
     max_correlated_theme_weight_pct_nav: 55
     max_daily_new_position_pct_nav: 30
     max_daily_turnover_pct_nav: 50

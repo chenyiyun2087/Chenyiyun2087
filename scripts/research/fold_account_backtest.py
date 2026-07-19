@@ -1488,7 +1488,7 @@ class FoldAccountBacktest:
                     target_exp = self.config.target_gross_exposure
 
                 # Check: single stock > 15%
-                if max_single > 0.15:
+                if max_single > 0.18:
                     violations.append(f"single_stock_overweight:{max_single_sym}:{max_single:.4f}")
 
                 # Check: industry > 30%

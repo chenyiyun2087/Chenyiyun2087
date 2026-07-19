@@ -37,6 +37,9 @@ class ReleaseRecord(BaseModel):
     sample_end: str = ""
     actual_trading_days: int = 0
     cost_model: str = "NOT_FROZEN"
+    cost_model_id: str = "NOT_FROZEN"
+    execution_model_id: str = "NOT_FROZEN"
+    initial_capital: float = 0.0
     approved_principal: float = 0.0
     order_policy: str = "BLOCKED"
     walk_forward_passed: bool = False
@@ -44,6 +47,14 @@ class ReleaseRecord(BaseModel):
     approved_snapshot: str = ""
     approved_by: str = ""
     approved_at: str = ""
+
+    @model_validator(mode="after")
+    def normalize_economic_identity(self) -> "ReleaseRecord":
+        if self.cost_model_id == "NOT_FROZEN" and self.cost_model != "NOT_FROZEN":
+            self.cost_model_id = self.cost_model
+        if self.initial_capital == 0.0 and self.approved_principal > 0:
+            self.initial_capital = self.approved_principal
+        return self
 
 
 class StrategyReleaseRegistry(BaseModel):

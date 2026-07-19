@@ -285,12 +285,21 @@ def evaluate_sensitivity(items: pd.DataFrame, engine) -> list[dict]:
 
 
 def load_promotion_gate() -> dict:
-    """加载晋级门禁配置。"""
+    """Load the compatibility view and reject drift from the source of truth."""
     gate_path = PROJECT_ROOT / "task_registry" / "promotion_gate.yaml"
     if gate_path.exists():
         import yaml
         with open(gate_path, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+            gate = yaml.safe_load(f) or {}
+        acceptance_path = PROJECT_ROOT / "config" / "production_acceptance.yaml"
+        acceptance = yaml.safe_load(acceptance_path.read_text(encoding="utf-8")) or {}
+        canonical = acceptance.get("acceptance", {})
+        shadow = gate.get("promotion_gate", {}).get("shadow", {})
+        if int(shadow.get("disabled_shadow_days", -1)) != int(canonical.get("enabled_shadow", {}).get("min_real_trading_days", -2)):
+            raise RuntimeError("promotion_gate_drift:disabled_shadow_days")
+        if int(shadow.get("enabled_shadow_days", -1)) != int(canonical.get("canary", {}).get("min_real_trading_days", -2)):
+            raise RuntimeError("promotion_gate_drift:enabled_shadow_days")
+        return gate
     return {}
 
 

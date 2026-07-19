@@ -44,7 +44,7 @@ class DataSnapshot:
             "factor": self.factor_hash,
             "date": self.snapshot_date,
         }, sort_keys=True).encode()
-        return hashlib.sha256(payload).hexdigest()[:16]
+        return hashlib.sha256(payload).hexdigest()
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -74,7 +74,7 @@ def hash_dataframe(df) -> str:
     """Compute SHA-256 of a DataFrame's sorted CSV representation."""
     import pandas as pd
     csv_bytes = df.sort_index(axis=1).to_csv(index=False).encode("utf-8")
-    return hashlib.sha256(csv_bytes).hexdigest()[:16]
+    return hashlib.sha256(csv_bytes).hexdigest()
 
 
 def freeze_data_snapshot(

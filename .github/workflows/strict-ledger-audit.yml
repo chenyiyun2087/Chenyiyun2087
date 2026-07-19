@@ -28,6 +28,7 @@ jobs:
           test/test_strict_pit_market_rules.py
           test/test_replay_strict_execution_ledger.py
           test/test_pr21_fold_account_backtest.py
+          test/test_trusted_production_closure.py
       - run: '! rg "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
   secret-scan:
     runs-on: ubuntu-latest

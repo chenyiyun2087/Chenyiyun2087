@@ -32,6 +32,7 @@ from scoreRank.core.db_config import build_sqlalchemy_url
 from scripts.ops.production_config import load_production_config, production_risk_profile_description
 from runtime.provenance import ProvenanceEnvelope
 from runtime.release_registry import get_release
+from runtime.portfolio_risk import evaluate_portfolio_risk
 from scripts.ops.production_risk_governor import build_risk_governor_decision, summarize_recent_shadow
 from scripts.ops.data_readiness_gate import PipelineReadinessGate
 from scripts.ops.feishu_notifier import strategy_identity_block
@@ -856,7 +857,7 @@ def _publish_order_notification_event(
         industry_summary = "；".join(f"{name} {weight:.1%}" for name, weight in weights.head(3).items()) or "-"
         industry_limit = float(
             dict(PRODUCTION_CONFIG.get("portfolio_risk_budget") or {}).get(
-                "max_single_industry_weight_pct_nav", 40
+                "max_single_industry_weight_pct_nav", 35
             )
         ) / 100.0
         if not weights.empty and float(weights.iloc[0]) > industry_limit:
@@ -2560,6 +2561,35 @@ def export_candidates(args: argparse.Namespace) -> dict:
     candidates.attrs["risk_governor"] = risk_governor
 
     warnings: list[str] = []
+    risk_nav = float(args.total_equity) if args.total_equity is not None else float(
+        get_release(str(PRODUCTION_CONFIG["primary_strategy"])).approved_principal or 500_000
+    )
+    risk_rows = []
+    for row in candidates.to_dict("records"):
+        weight = float(row.get("effective_weight") or 0.0)
+        risk_rows.append({
+            "symbol": row.get("symbol") or row.get("ts_code"),
+            "market_value": weight * risk_nav,
+            "industry": row.get("industry"),
+            "theme": row.get("correlated_theme") or row.get("theme"),
+        })
+    portfolio_risk = evaluate_portfolio_risk(
+        risk_rows,
+        account_nav=risk_nav,
+        phase="candidate",
+    )
+    portfolio_risk_block_reason: str | None = None
+    if not portfolio_risk.passed:
+        portfolio_risk_block_reason = "; ".join(portfolio_risk.violations)
+        risk_governor = {
+            **dict(risk_governor or {}),
+            "risk_decision": "FREEZE_NEW_BUYS",
+            "allow_new_buys": False,
+            "reasons": [*list((risk_governor or {}).get("reasons") or []), *portfolio_risk.violations],
+            "portfolio_nav_contract": portfolio_risk.model_dump(mode="json"),
+        }
+        candidates.attrs["risk_governor"] = risk_governor
+        warnings.append(f"候选组合触发 NAV 风险硬门禁：{portfolio_risk_block_reason}")
     if candidates["industry"].fillna("").str.strip().eq("").any():
         warnings.append("存在空行业字段，请先运行 industry 回填。")
     candidate_weight_sum = float(pd.to_numeric(candidates["effective_weight"], errors="coerce").fillna(0.0).sum())
@@ -2715,7 +2745,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
     files = _write_outputs(out_dir, candidates, factor_weights, market_env, params, warnings)
     db_write: dict[str, object] = {}
     orders = pd.DataFrame()
-    order_block_reason: str | None = None
+    order_block_reason: str | None = portfolio_risk_block_reason
     canary_orders = pd.DataFrame()
     canary_total_equity: float | None = None
     canary_order_path: Path | None = None

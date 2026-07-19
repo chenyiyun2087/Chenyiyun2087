@@ -31,6 +31,12 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+from runtime.portfolio_risk import (
+    MAX_SINGLE_ORDER_ADV_RATIO,
+    MAX_SINGLE_POSITION_WEIGHT,
+    evaluate_portfolio_risk,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +69,17 @@ def _get_engine():
     return create_engine(build_sqlalchemy_url())
 
 
+def _ts_code(symbol: str) -> str:
+    digits = "".join(char for char in str(symbol) if char.isdigit())[-6:].zfill(6)
+    if digits.startswith(("5", "6", "9")) and not digits.startswith("92"):
+        exchange = "SH"
+    elif digits.startswith(("4", "8", "92")):
+        exchange = "BJ"
+    else:
+        exchange = "SZ"
+    return f"{digits}.{exchange}"
+
+
 def check_position_limits(engine, symbol: str, account_id: str, target_notional: float) -> RiskCheckResult:
     """检查仓位上限：单票不超过总权益的 max_single_name。"""
     try:
@@ -70,37 +87,40 @@ def check_position_limits(engine, symbol: str, account_id: str, target_notional:
             total_equity = conn.execute(
                 text("SELECT COALESCE(total_equity, 0) FROM chenyiyun.live_daily_snapshots ORDER BY snapshot_date DESC LIMIT 1"),
             ).scalar() or 500000.0
-        max_single = total_equity * 0.18
+        if total_equity <= 0:
+            return RiskCheckResult("position_limit", False, "BLOCKED: account NAV unavailable")
+        max_single = total_equity * MAX_SINGLE_POSITION_WEIGHT
         passed = target_notional <= max_single
         return RiskCheckResult(
             "position_limit",
             passed,
-            f"Target {target_notional:,.0f} / Max {max_single:,.0f} (18% of {total_equity:,.0f})",
+            f"Target {target_notional:,.0f} / Max {max_single:,.0f} ({MAX_SINGLE_POSITION_WEIGHT:.0%} of NAV {total_equity:,.0f})",
             target_notional,
             max_single,
         )
     except Exception as e:
-        return RiskCheckResult("position_limit", True, f"Skipped (error: {e})")
+        return RiskCheckResult("position_limit", False, f"BLOCKED: position limit unavailable ({e})")
 
 
 def check_suspension_st(engine, symbol: str, trade_date: date) -> RiskCheckResult:
     """检查停牌/ST/涨跌停。"""
     try:
         td = int(trade_date.strftime("%Y%m%d"))
+        ts_code = _ts_code(symbol)
         with engine.connect() as conn:
             # Check ST / suspension via dwd_stock_label_daily
             row = conn.execute(
                 text(
                     "SELECT l.is_st, l.is_suspended, k.close as last_close, k.pre_close "
                     "FROM tushare_stock.dwd_stock_label_daily l "
-                    "LEFT JOIN tushare_stock.dwd_daily k ON k.ts_code = CONCAT(:sym, '.SZ') AND k.trade_date = :td "
-                    "WHERE l.trade_date = :td2 AND l.ts_code = CONCAT(:sym2, '.SZ')"
+                    "LEFT JOIN tushare_stock.dwd_daily k ON k.ts_code = :ts_code AND k.trade_date = :td "
+                    "WHERE l.trade_date = :td2 AND l.ts_code = :ts_code2"
                 ),
-                {"sym": symbol, "sym2": symbol, "td": td, "td2": td},
+                {"ts_code": ts_code, "ts_code2": ts_code, "td": td, "td2": td},
             ).mappings().first()
 
         if row is None:
-            return RiskCheckResult("suspension_st", True, "No label data — assuming OK")
+            return RiskCheckResult("suspension_st", False, "BLOCKED: no PIT trading label")
 
         issues = []
         if row.get("is_st"):
@@ -112,7 +132,7 @@ def check_suspension_st(engine, symbol: str, trade_date: date) -> RiskCheckResul
             return RiskCheckResult("suspension_st", False, "; ".join(issues))
         return RiskCheckResult("suspension_st", True, "OK")
     except Exception as e:
-        return RiskCheckResult("suspension_st", True, f"Skipped (error: {e})")
+        return RiskCheckResult("suspension_st", False, f"BLOCKED: trading label unavailable ({e})")
 
 
 def check_liquidity(engine, symbol: str, target_notional: float) -> RiskCheckResult:
@@ -128,19 +148,19 @@ def check_liquidity(engine, symbol: str, target_notional: float) -> RiskCheckRes
             ).scalar() or 0
 
         if avg_amt is None or float(avg_amt) <= 0:
-            return RiskCheckResult("liquidity", True, "No amount data — assuming OK")
+            return RiskCheckResult("liquidity", False, "BLOCKED: no positive ADV data")
 
         participation = float(target_notional) / float(avg_amt)
-        passed = participation <= 0.20
+        passed = participation <= MAX_SINGLE_ORDER_ADV_RATIO
         return RiskCheckResult(
             "liquidity",
             passed,
-            f"Participation {participation*100:.1f}% / Max 20% (avg_amt={avg_amt:,.0f})",
+            f"Participation {participation*100:.2f}% / Max {MAX_SINGLE_ORDER_ADV_RATIO:.2%} (avg_amt={avg_amt:,.0f})",
             participation,
-            0.20,
+            MAX_SINGLE_ORDER_ADV_RATIO,
         )
     except Exception as e:
-        return RiskCheckResult("liquidity", True, f"Skipped (error: {e})")
+        return RiskCheckResult("liquidity", False, f"BLOCKED: ADV unavailable ({e})")
 
 
 def run_checks(
@@ -149,6 +169,8 @@ def run_checks(
     target_notional: float,
     trade_date: date,
     engine=None,
+    projected_positions: list[dict[str, Any]] | None = None,
+    account_nav: float | None = None,
 ) -> OrderIntentRiskReport:
     """执行所有 PreTradeRiskCheck。"""
     if engine is None:
@@ -158,6 +180,25 @@ def run_checks(
     report.results.append(check_position_limits(engine, symbol, account_id, target_notional))
     report.results.append(check_suspension_st(engine, symbol, trade_date))
     report.results.append(check_liquidity(engine, symbol, target_notional))
+
+    if projected_positions is not None:
+        try:
+            decision = evaluate_portfolio_risk(
+                projected_positions,
+                account_nav=float(account_nav or 0),
+                phase="projected_fill",
+            )
+            report.results.append(RiskCheckResult(
+                "portfolio_nav_contract",
+                decision.passed,
+                "OK" if decision.passed else "; ".join(decision.violations),
+                decision.max_single_weight,
+                MAX_SINGLE_POSITION_WEIGHT,
+            ))
+        except Exception as exc:
+            report.results.append(RiskCheckResult(
+                "portfolio_nav_contract", False, f"BLOCKED: portfolio risk unavailable ({exc})"
+            ))
 
     return report
 

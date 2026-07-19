@@ -1,8 +1,8 @@
 """Order state machine — enforces atomic, irreversible status transitions.
 
 Valid transitions:
-  planned → submitted_manually → submitted → partial → filled
-  planned → superseded / cancelled / expired / rejected
+  draft → risk_approved → manual_submitted → partial_fill → filled
+  draft/risk_approved → cancelled / expired / rejected
   planned → corporate_action_freeze
 
 Any filled / partial / submitted* / cancelled / rejected / superseded / expired
@@ -19,6 +19,10 @@ from typing import Any
 
 # Allowed transitions: current_status → {valid next statuses}
 VALID_TRANSITIONS: dict[str, set[str]] = {
+    "draft": {"risk_approved", "cancelled", "expired", "rejected", "corporate_action_freeze"},
+    "risk_approved": {"manual_submitted", "cancelled", "expired", "rejected"},
+    "manual_submitted": {"partial_fill", "filled", "cancelled", "rejected"},
+    "partial_fill": {"filled", "cancelled", "rejected"},
     "planned": {"submitted_manually", "submitted", "superseded", "cancelled",
                 "expired", "rejected", "corporate_action_freeze"},
     "submitted_manually": {"submitted", "cancelled", "rejected"},
@@ -118,5 +122,6 @@ def describe_state_machine() -> dict[str, Any]:
         "terminal_statuses": sorted(TERMINAL_STATUSES),
         "protected_from_overwrite": sorted(
             TERMINAL_STATUSES | {"submitted_manually", "submitted", "partial"}
+            | {"manual_submitted", "partial_fill"}
         ),
     }

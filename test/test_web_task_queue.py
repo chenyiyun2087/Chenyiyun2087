@@ -325,6 +325,22 @@ def test_normal_task_success_is_silent(monkeypatch):
     assert sent == []
 
 
+def test_scheduler_skip_never_sends_failure_notification(monkeypatch):
+    sent = []
+    monkeypatch.setattr(web_app, "_dispatch_non_feishu_task_event", lambda *args, **kwargs: sent.append(1))
+    monkeypatch.setattr(feishu_notifier, "publish_notification", lambda *args, **kwargs: sent.append(1))
+    now = datetime(2026, 7, 18, 21, 5, 0)
+
+    for status in ("SKIPPED_NON_TRADING_DAY", "SKIPPED_SCHEDULE_DAY"):
+        web_app._send_task_completion_notification(
+            "adc_bs_detect", status, "schedule", now, now,
+            run_options={"datestr": "20260718"},
+            message="result=SKIP",
+        )
+
+    assert sent == []
+
+
 def test_dependency_block_publishes_warning_card(monkeypatch):
     sent = []
     monkeypatch.setattr(feishu_notifier, "publish_notification", lambda _engine, event: sent.append(event))
@@ -409,6 +425,28 @@ def test_start_scheduler_delegates_to_dedicated_services():
     source = Path("start_scheduler.sh").read_text(encoding="utf-8")
     assert "install_web_launchd.sh" in source
     assert 'SCRIPT="scheduler.py"' not in source
+
+
+def test_scheduler_is_silent_and_does_not_enqueue_on_non_trading_day(monkeypatch):
+    calls = []
+    monkeypatch.setattr(web_app, "_is_trading_day", lambda _date: False)
+    monkeypatch.setattr(
+        web_app,
+        "_trigger_task_execution",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    def stop_after_first_poll(_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(web_app.time, "sleep", stop_after_first_poll)
+
+    try:
+        web_app._run_scheduled_tasks_loop()
+    except KeyboardInterrupt:
+        pass
+
+    assert calls == []
 
 
 def test_historical_replay_disables_orders_and_marks_business_notifications():
