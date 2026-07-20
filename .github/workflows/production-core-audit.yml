@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-ci.lock.txt
       - name: Production config consistency
-        run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py test/test_trusted_production_closure.py -v
+        run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py test/test_trusted_production_closure.py test/test_comprehensive_trust_upgrade.py -v
       - name: PR18 Independent Oracle and Evidence Semantic tests
         run: python -m pytest test/test_pr18_independent_oracle.py -v
       - name: PR19 Oracle Coverage and Evidence Gates
@@ -65,7 +65,7 @@ jobs:
           import sys; sys.path.insert(0, '.');
           from scripts.ops.data_readiness_gate import PreScoreGate, PostScoreGate;
           g = PreScoreGate.__name__;
-          print('OK: PreScoreGate/PostScoreGate classes load, gate_version=2.0');
+          print('OK: PreScoreGate/PostScoreGate classes load, gate_version=3.0');
           "
       - name: Strategy release registry module loads
         run: |
@@ -160,6 +160,10 @@ jobs:
         env:
           ORDER_TEST_DB_URL: mysql+pymysql://root:test_password@127.0.0.1:3306/order_test_db
         run: python -m pytest test/test_order_v2_migration_integration.py -v
+      - name: Reject skipped database integration tests
+        env:
+          ORDER_TEST_DB_URL: mysql+pymysql://root:test_password@127.0.0.1:3306/order_test_db
+        run: python -m pytest test/test_order_v2_migration_integration.py -q -rs | tee /tmp/db-tests.txt && ! grep -q "SKIPPED" /tmp/db-tests.txt
 
   secret-scan:
     runs-on: ubuntu-latest

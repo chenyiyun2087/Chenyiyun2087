@@ -15,7 +15,7 @@ Split into two phases to avoid circular dependencies:
     - Score / liquidity / BS field null rates
     - Minimum candidate pool size
 
-Output states: READY | READY_WITH_WARNING | BLOCKED
+Output states: READY | REVIEW_ONLY | BLOCKED
 """
 
 from __future__ import annotations
@@ -623,19 +623,19 @@ def _summarize(checks: list[dict[str, Any]], target_date: date, gate_name: str) 
     if critical_failures:
         status = "BLOCKED"
     elif warning_failures:
-        status = "READY_WITH_WARNING"
+        status = "REVIEW_ONLY"
     else:
         status = "READY"
 
     return {
         "status": status,
-        "passed": status != "BLOCKED",
+        "passed": status == "READY",
         "gate_name": gate_name,
         "checks": checks,
         "failed_critical": [c["check"] for c in critical_failures],
         "failed_warnings": [c["check"] for c in warning_failures],
         "target_date": target_date.isoformat(),
-        "gate_version": "2.0",
+        "gate_version": "3.0",
     }
 
 
@@ -668,7 +668,7 @@ class PipelineReadinessGate:
         blocking = [item for item in ("score_date_matches", "score_null_rates", "candidate_pool_size") if item in failed]
         status = result.get("status")
         if not blocking:
-            status = "READY_WITH_ALLOWED_HISTORICAL" if allowed_failures else "READY"
+            status = "REVIEW_ONLY" if allowed_failures else "READY"
         return {
             "check": "scoring_complete",
             "passed": not blocking,
@@ -751,7 +751,7 @@ class PipelineReadinessGate:
         }
 
     def check_candidate_export_ready(self, target_date: date, candidate_count: int | None = None) -> dict[str, Any]:
-        passed = candidate_count is None or int(candidate_count) > 0
+        passed = candidate_count is not None and int(candidate_count) > 0
         return {
             "check": "candidate_export_ready",
             "passed": passed,
@@ -771,9 +771,10 @@ class PipelineReadinessGate:
             }
         return {
             "check": "order_draft_ready",
-            "passed": order_count is None or int(order_count) >= 0,
+            "passed": order_count is not None and int(order_count) >= 0,
             "severity": "critical",
             "order_count": order_count,
+            "detail": "order_count_unverified" if order_count is None else "",
         }
 
     def all_checks(

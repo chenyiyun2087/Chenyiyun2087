@@ -64,10 +64,18 @@ Step 11: Live tracker sync
 | State | Meaning | Permitted actions |
 |-------|---------|-------------------|
 | GREEN | All checks normal | Full candidate export + order drafts |
-| YELLOW | Warnings present | Manual review only; no automatic submission exists |
+| YELLOW / REVIEW_ONLY | Warnings present | Manual review only; no new order drafts |
 | RED | Critical failure | No new BUY orders; sell + maintain only |
 | BLOCKED | Data gate failed | Pipeline aborted before candidate export |
 
 Portfolio or reconciliation failures set `FREEZE_NEW_BUYS`; unreconciled
 orders/fills set `HALT_NEW_ORDERS`. Neither state can be downgraded to a report
 warning.
+
+Production-ready data gates use only `READY / REVIEW_ONLY / FREEZE_NEW_BUYS /
+HALT_NEW_ORDERS / BLOCKED`. `ACTIVE_FIXED_CAPITAL` remains a capital policy,
+not a health or readiness state.
+
+Broker interaction is offline-only: operators may import manually exported
+cash, position, order and fill statements, but no runtime module connects to or
+submits orders through a broker API.

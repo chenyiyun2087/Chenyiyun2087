@@ -76,7 +76,7 @@ def test_adaptive_risk_profile_defaults_to_governed_main_push():
 
     assert resolved.strategy == "production_governed_vol_position"
     assert resolved.hold_days == 10
-    assert resolved.position_ratio == 0.7
+    assert resolved.position_ratio == 0.5
 
 
 def test_rebalance_orders_effective_weight_uses_total_account_equity():

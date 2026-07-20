@@ -847,7 +847,7 @@ def _summarize_orders(orders: pd.DataFrame) -> dict:
         "sell_orders": int(d["side"].eq("SELL").sum()) if "side" in d.columns else 0,
         "planned_amount": amount,
         "target_weight_sum": float(d["target_weight"].fillna(0).sum()) if "target_weight" in d.columns else None,
-        "status_counts": d["order_status"].fillna("planned").astype(str).value_counts().to_dict() if "order_status" in d.columns else {},
+        "status_counts": d["order_status"].fillna("DRAFT").astype(str).str.upper().value_counts().to_dict() if "order_status" in d.columns else {},
     }
 
 

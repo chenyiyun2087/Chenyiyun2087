@@ -12,12 +12,14 @@ from scripts.research_full_pool_liquidity_strategies import build_strategy_specs
 from strategy_registry import load_all_cards, status_gate
 
 
-def test_production_config_loads_upgrade_sections_without_changing_defaults():
+def test_production_config_loads_upgrade_sections_with_current_approved_exposure():
     config = load_production_config()
 
     assert config["primary_strategy"] == "production_governed_vol_position"
     assert config["primary_selection_strategy"] == "baseline_full_liquidity_detail_vol_position"
-    assert config["position_ratio"] == 0.70
+    assert config["position_ratio"] == 0.50
+    assert config["portfolio_risk_budget"]["max_total_exposure"] == 0.50
+    assert config["portfolio_risk_budget"]["system_hard_max_total_exposure"] == 0.85
     assert config["research_shadow_candidate"]["enabled"] is False
     assert config["live_canary"]["enabled"] is False
     assert "market_regime" in config
@@ -116,7 +118,7 @@ def test_pipeline_scoring_status_matches_allowed_historical_pass(monkeypatch):
     result = gate.check_scoring_complete(date(2026, 7, 7), allow_historical=True)
 
     assert result["passed"] is True
-    assert result["status"] == "READY_WITH_ALLOWED_HISTORICAL"
+    assert result["status"] == "REVIEW_ONLY"
     assert result["original_status"] == "BLOCKED"
     assert result["allowed_failures"] == ["score_date_matches"]
 

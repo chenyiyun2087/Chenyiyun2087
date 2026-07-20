@@ -59,7 +59,7 @@ def reconcile_records(
             })
     return {
         "status": "VERIFIED" if not violations else "HALT_NEW_ORDERS",
-        "production_state": "ACTIVE_FIXED_CAPITAL" if not violations else "FREEZE_NEW_BUYS",
+        "production_state": "READY" if not violations else "HALT_NEW_ORDERS",
         "expected_cash_before_marks": round(cash, 2),
         "expected_positions": expected,
         "actual_positions": actual,

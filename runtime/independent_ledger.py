@@ -117,10 +117,26 @@ def replay_orders(
             for action in actions[actions["trade_date"].eq(trade_date)].itertuples(index=False):
                 symbol = str(action.symbol)
                 shares = holdings.get(symbol, 0)
-                cash += _money(Decimal(shares) * _decimal_or_zero(action.cash_per_share))
-                ratio = _decimal_or_zero(action.share_ratio)
-                if shares and ratio:
-                    holdings[symbol] = int((Decimal(shares) * (Decimal("1") + ratio)).to_integral_value(rounding=ROUND_HALF_UP))
+                action_type = str(getattr(action, "action_type", "dividend_cash") or "dividend_cash")
+                if action_type == "rights_subscription":
+                    rights = int((Decimal(shares) * _decimal_or_zero(getattr(action, "rights_ratio", 0))).to_integral_value(rounding=ROUND_HALF_UP))
+                    price = _decimal_or_zero(getattr(action, "rights_price", 0))
+                    required = _money(Decimal(rights) * price)
+                    if required > cash:
+                        raise RuntimeError(f"oracle_rights_cash_insufficient:{symbol}:{trade_date}")
+                    cash -= required
+                    holdings[symbol] = shares + rights
+                elif action_type == "delist_cash_settlement":
+                    settlement = _decimal_or_zero(getattr(action, "settlement_price", 0))
+                    cash += _money(Decimal(shares) * settlement)
+                    holdings.pop(symbol, None)
+                elif action_type in {"rename", "st_change"}:
+                    pass
+                else:
+                    cash += _money(Decimal(shares) * _decimal_or_zero(action.cash_per_share))
+                    ratio = _decimal_or_zero(action.share_ratio)
+                    if shares and ratio:
+                        holdings[symbol] = int((Decimal(shares) * (Decimal("1") + ratio)).to_integral_value(rounding=ROUND_HALF_UP))
 
         day_orders = order_frame[order_frame["execution_date"].eq(trade_date)].sort_values("order_id")
         for order in day_orders.itertuples(index=False):

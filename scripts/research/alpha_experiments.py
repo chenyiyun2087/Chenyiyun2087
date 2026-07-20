@@ -587,9 +587,19 @@ def build_experiment_specs() -> dict[str, ExperimentSpec]:
             needs_training=True,
             is_available=True,
         ),
+        "REV_A7": ExperimentSpec(
+            experiment_id="REV_A7",
+            description="Reverse A7 alpha — bottom-5 ranking, constrained weights",
+            ranking_fn=a7_industry_neutral_alpha_v3,
+            runtime_id="alpha_v3_rev",
+            needs_training=True,
+            is_available=True,
+        ),
+        # Historical releases used the hyphenated identifier.  Keep it as an
+        # explicit replay alias while all new manifests use REV_A7.
         "REV-A7": ExperimentSpec(
             experiment_id="REV-A7",
-            description="Reverse A7 alpha — bottom-5 ranking, constrained weights",
+            description="Legacy replay alias for REV_A7",
             ranking_fn=a7_industry_neutral_alpha_v3,
             runtime_id="alpha_v3_rev",
             needs_training=True,

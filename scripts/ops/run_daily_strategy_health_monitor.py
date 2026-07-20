@@ -338,7 +338,7 @@ def grade_data_integrity(engine, as_of_date_str: str) -> dict[str, Any]:
 
     if result["status"] == "READY":
         return {"grade": "GREEN", "detail": result}
-    if result["status"] == "READY_WITH_WARNING":
+    if result["status"] == "REVIEW_ONLY":
         return {"grade": "YELLOW", "reason": "warnings_present", "detail": result}
     return {"grade": "RED", "reason": "data_blocked", "detail": result}
 

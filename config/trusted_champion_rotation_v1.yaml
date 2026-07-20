@@ -80,8 +80,8 @@ acceptance:
   min_calmar: 0.25
   min_calmar_improvement_pct: 10.0
   max_turnover_ratio: 1.20
-  min_dsr_confidence: 0.90
-  max_pbo: 0.25
+  min_dsr_confidence: 0.95
+  max_pbo: 0.20
   min_stress_annualized_return: 0.0
   required_corporate_action_coverage: 1.0
   max_t_plus_one_violations: 0

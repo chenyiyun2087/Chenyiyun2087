@@ -37,6 +37,7 @@ PROTECTED_STATUSES: frozenset[str] = frozenset({
     "expired",
     "manual_submitted",
     "partial_fill",
+    "MANUAL_SUBMITTED", "PARTIAL_FILL", "FILLED", "CANCELLED", "REJECTED",
 })
 
 
@@ -74,6 +75,9 @@ DDL_V2_COLUMNS: list[tuple[str, str]] = [
     ("market_data_cutoff", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN market_data_cutoff DATETIME DEFAULT NULL"),
     ("order_created_at", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN order_created_at DATETIME DEFAULT NULL"),
     ("fill_timestamp", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN fill_timestamp DATETIME DEFAULT NULL"),
+    ("filled_notional", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN filled_notional DECIMAL(20,8) NOT NULL DEFAULT 0"),
+    ("filled_fee", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN filled_fee DECIMAL(20,8) NOT NULL DEFAULT 0"),
+    ("legacy_order_status", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN legacy_order_status VARCHAR(32) DEFAULT NULL"),
     ("fallback_reason", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN fallback_reason VARCHAR(255) DEFAULT NULL"),
     ("updated_at", "ALTER TABLE chenyiyun.ads_local_strategy_orders ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
 ]
@@ -312,14 +316,14 @@ def supersede_pending_buys(
     ensure_order_schema(engine, table_name=tbl)
 
     sql = text(
-        f"UPDATE {tbl} SET order_status = 'superseded', "
+        f"UPDATE {tbl} SET legacy_order_status = order_status, order_status = 'CANCELLED', "
         "    status_reason = CONCAT(COALESCE(status_reason, ''), "
         "      ' | superseded by ', :reason, ' on ', :today) "
         "WHERE side = 'BUY' "
         "  AND account_id = :account_id "
         "  AND release_id = :release_id "
         "  AND strategy = :strategy "
-        "  AND order_status = 'planned' "
+        "  AND order_status IN ('planned','draft','DRAFT') "
         "  AND (execution_date < :today OR "
         "       (execution_date IS NULL AND trade_date < :today))"
     )
@@ -371,6 +375,11 @@ def write_orders_with_metadata(
     orders_df["health_substatus"] = health_substatus
     orders_df["manual_confirmation_required"] = 1 if manual_confirmation_required else 0
     orders_df["config_sha"] = config_sha
+    if "order_status" not in orders_df.columns:
+        orders_df["order_status"] = "DRAFT"
+    else:
+        from runtime.order_state_machine import canonicalize_status
+        orders_df["order_status"] = orders_df["order_status"].map(canonicalize_status)
 
     cols = [
         "trade_date", "ts_code", "side", "price",

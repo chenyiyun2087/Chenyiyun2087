@@ -3,7 +3,7 @@ production:
   primary_strategy: production_governed_vol_position
   primary_selection_strategy: baseline_full_liquidity_detail_vol_position
   risk_profile: adaptive
-  position_ratio: 0.70
+  position_ratio: 0.50
   top_n: 5
   max_total_positions: 5
   hold_days: 10
@@ -41,15 +41,15 @@ production:
     stress_immediate: true
     regimes:
       strong_risk_on:
-        target_exposure_range: [0.70, 0.85]
+        target_exposure_range: [0.50, 0.50]
         allowed_pools: [trend_continuation, liquidity_quality]
         attack_budget_cap: 0.35
       normal_risk_on:
-        target_exposure_range: [0.55, 0.70]
+        target_exposure_range: [0.45, 0.50]
         allowed_pools: [liquidity_quality]
         attack_budget_cap: 0.20
       neutral:
-        target_exposure_range: [0.35, 0.55]
+        target_exposure_range: [0.35, 0.50]
         allowed_pools: [liquidity_quality, repair_reversal]
         attack_budget_cap: 0.00
       risk_off:
@@ -79,8 +79,9 @@ production:
       order_lane: research
       max_budget_share: 0.00
   portfolio_risk_budget:
-    max_total_exposure: 0.85
-    champion_default_exposure: 0.70
+    max_total_exposure: 0.50
+    system_hard_max_total_exposure: 0.85
+    champion_default_exposure: 0.50
     max_single_position_weight_pct_nav: 18
     max_single_industry_weight_pct_nav: 35
     max_correlated_theme_weight_pct_nav: 55

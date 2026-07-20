@@ -166,13 +166,13 @@ ORDER_DETAIL_CONFIGS = (
     {
         "detail_id": "baseline_full_liquidity_detail_vol_position_shadow",
         "base_strategy": "baseline_full_liquidity_detail_vol_position",
-        "position_ratio": 0.7,
+        "position_ratio": 0.5,
         "shadow_note": "高波动且流动性尚可时的稳健仓位影子对照。",
     },
     {
         "detail_id": "baseline_full_liquidity_detail_hist_mdd_position_shadow",
         "base_strategy": "baseline_full_liquidity_detail_hist_mdd_position",
-        "position_ratio": 0.7,
+        "position_ratio": 0.5,
         "shadow_note": "近期回撤扩大时的稳健仓位影子对照。",
     },
     {
@@ -496,10 +496,12 @@ def _validate_order_prerequisites(engine, asof_date: str, min_pool_size: int) ->
         raise RuntimeError(f"Prerequisite failed before local order generation: {', '.join(failed)}; {detail}")
 
 
-def _infer_total_equity(engine) -> float:
-    sql = text("SELECT total_equity FROM chenyiyun.live_daily_snapshots ORDER BY snapshot_date DESC LIMIT 1")
+def _infer_total_equity(engine, account_id: str, trade_date: object) -> float:
+    sql = text("SELECT total_equity FROM chenyiyun.live_daily_snapshots "
+               "WHERE account_id=:account_id AND snapshot_date<=:trade_date "
+               "ORDER BY snapshot_date DESC LIMIT 1")
     with engine.connect() as conn:
-        value = conn.execute(sql).scalar()
+        value = conn.execute(sql, {"account_id": account_id, "trade_date": pd.Timestamp(trade_date).date()}).scalar()
     total = float(value or 0.0)
     if total <= 0:
         raise RuntimeError("Cannot infer total equity from chenyiyun.live_daily_snapshots.")
@@ -1497,7 +1499,7 @@ def _build_dual_system_candidate_detail(
     )
     if not candidates.empty:
         candidates["latest_close"] = candidates["symbol"].astype(str).str.zfill(6).map(latest_prices)
-        candidates = _scale_candidate_weights_for_export(candidates, _safe_float(meta.get("target_position_ratio"), 0.7))
+        candidates = _scale_candidate_weights_for_export(candidates, _safe_float(meta.get("target_position_ratio"), 0.5))
         candidates["strategy"] = DUAL_SYSTEM_ADAPTIVE_STRATEGY_NAME
         candidates["sort_col"] = "dual_system_route_score"
     meta.update(
@@ -1733,7 +1735,7 @@ def _build_rebalance_orders(
                 "current_weight": current_weight,
                 "target_weight": effective_weight,
                 "delta_weight": effective_weight - current_weight,
-                "order_status": "planned",
+                "order_status": "DRAFT",
                 "submitted_at": None,
                 "filled_shares": None,
                 "filled_price": None,
@@ -2024,7 +2026,7 @@ def _write_orders_and_signal_snapshot(
             current_weight DOUBLE,
             target_weight DOUBLE,
             delta_weight DOUBLE,
-            order_status VARCHAR(24) NOT NULL DEFAULT 'planned',
+            order_status VARCHAR(24) NOT NULL DEFAULT 'DRAFT',
             submitted_at DATETIME NULL,
             filled_shares INT NULL,
             filled_price DOUBLE NULL,
@@ -2080,7 +2082,7 @@ def _write_orders_and_signal_snapshot(
         ]
     ].to_dict("records")
     for row in order_rows:
-        row["order_status"] = row.get("order_status") or "planned"
+        row["order_status"] = row.get("order_status") or "DRAFT"
         row["submitted_at"] = row.get("submitted_at")
         row["filled_shares"] = row.get("filled_shares")
         row["filled_price"] = row.get("filled_price")
@@ -2105,7 +2107,7 @@ def _write_orders_and_signal_snapshot(
         conn.execute(create_signals)
         existing_order_cols = _columns_for_table(engine, order_table)
         order_alters = {
-            "order_status": "ALTER TABLE {table} ADD COLUMN order_status VARCHAR(24) NOT NULL DEFAULT 'planned' AFTER delta_weight",
+            "order_status": "ALTER TABLE {table} ADD COLUMN order_status VARCHAR(24) NOT NULL DEFAULT 'DRAFT' AFTER delta_weight",
             "submitted_at": "ALTER TABLE {table} ADD COLUMN submitted_at DATETIME NULL AFTER order_status",
             "filled_shares": "ALTER TABLE {table} ADD COLUMN filled_shares INT NULL AFTER submitted_at",
             "filled_price": "ALTER TABLE {table} ADD COLUMN filled_price DOUBLE NULL AFTER filled_shares",
@@ -2133,11 +2135,11 @@ def _write_orders_and_signal_snapshot(
                     current_weight=VALUES(current_weight),
                     target_weight=VALUES(target_weight),
                     delta_weight=VALUES(delta_weight),
-                    submitted_at=IF(order_status IN ('submitted_manually','submitted','partial','filled','cancelled','rejected'), submitted_at, VALUES(submitted_at)),
-                    filled_shares=IF(order_status IN ('partial','filled'), filled_shares, VALUES(filled_shares)),
-                    filled_price=IF(order_status IN ('partial','filled'), filled_price, VALUES(filled_price)),
-                    status_reason=IF(order_status IN ('submitted_manually','submitted','partial','filled','cancelled','rejected'), status_reason, VALUES(status_reason)),
-                    order_status=IF(order_status IN ('submitted_manually','submitted','partial','filled','cancelled','rejected'), order_status, VALUES(order_status)),
+                    submitted_at=IF(UPPER(order_status) IN ('MANUAL_SUBMITTED','PARTIAL_FILL','FILLED','CANCELLED','REJECTED'), submitted_at, VALUES(submitted_at)),
+                    filled_shares=IF(UPPER(order_status) IN ('PARTIAL_FILL','FILLED'), filled_shares, VALUES(filled_shares)),
+                    filled_price=IF(UPPER(order_status) IN ('PARTIAL_FILL','FILLED'), filled_price, VALUES(filled_price)),
+                    status_reason=IF(UPPER(order_status) IN ('MANUAL_SUBMITTED','PARTIAL_FILL','FILLED','CANCELLED','REJECTED'), status_reason, VALUES(status_reason)),
+                    order_status=IF(UPPER(order_status) IN ('MANUAL_SUBMITTED','PARTIAL_FILL','FILLED','CANCELLED','REJECTED'), order_status, VALUES(order_status)),
                     note=VALUES(note)
                 """
             ),
@@ -2561,9 +2563,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
     candidates.attrs["risk_governor"] = risk_governor
 
     warnings: list[str] = []
-    risk_nav = float(args.total_equity) if args.total_equity is not None else float(
-        get_release(str(PRODUCTION_CONFIG["primary_strategy"])).approved_principal or 500_000
-    )
+    risk_nav = float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine, "default", asof_date)
     risk_rows = []
     for row in candidates.to_dict("records"):
         weight = float(row.get("effective_weight") or 0.0)
@@ -2812,7 +2812,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
             args.emit_orders = False
 
     if args.emit_orders:
-        account_total_equity = float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine)
+        account_total_equity = float(args.total_equity) if args.total_equity is not None else _infer_total_equity(engine, "default", asof_date)
         total_equity = account_total_equity
         positions = _load_current_positions(engine, args.position_table, asof_date=asof_date)
         latest_price_lookup = {str(k).zfill(6): float(v) for k, v in latest_prices.items()}

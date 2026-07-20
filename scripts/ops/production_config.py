@@ -85,6 +85,7 @@ class CandidatePoolConfig(_StrictModel):
 
 class PortfolioRiskBudgetConfig(_StrictModel):
     max_total_exposure: float
+    system_hard_max_total_exposure: float = 0.85
     champion_default_exposure: float
     max_single_position_weight_pct_nav: float
     max_single_industry_weight_pct_nav: float
@@ -92,6 +93,14 @@ class PortfolioRiskBudgetConfig(_StrictModel):
     max_daily_new_position_pct_nav: float
     max_daily_turnover_pct_nav: float
     max_attack_pool_budget_share: float
+
+    @model_validator(mode="after")
+    def validate_exposure_caps(self) -> "PortfolioRiskBudgetConfig":
+        if self.max_total_exposure > 0.50:
+            raise ValueError("current approved exposure cannot exceed 50%")
+        if self.system_hard_max_total_exposure != 0.85:
+            raise ValueError("system hard exposure cap must remain 85%")
+        return self
 
 
 class ChallengerLaneConfig(_StrictModel):
@@ -246,17 +255,17 @@ DEFAULT_MARKET_REGIME = {
     "stress_immediate": True,
     "regimes": {
         "strong_risk_on": {
-            "target_exposure_range": [0.70, 0.85],
+            "target_exposure_range": [0.50, 0.50],
             "allowed_pools": ["trend_continuation", "liquidity_quality"],
             "attack_budget_cap": 0.35,
         },
         "normal_risk_on": {
-            "target_exposure_range": [0.55, 0.70],
+            "target_exposure_range": [0.45, 0.50],
             "allowed_pools": ["liquidity_quality"],
             "attack_budget_cap": 0.20,
         },
         "neutral": {
-            "target_exposure_range": [0.35, 0.55],
+            "target_exposure_range": [0.35, 0.50],
             "allowed_pools": ["liquidity_quality", "repair_reversal"],
             "attack_budget_cap": 0.0,
         },
@@ -299,8 +308,9 @@ DEFAULT_CANDIDATE_POOLS = {
 
 
 DEFAULT_PORTFOLIO_RISK_BUDGET = {
-    "max_total_exposure": 0.85,
-    "champion_default_exposure": 0.70,
+    "max_total_exposure": 0.50,
+    "system_hard_max_total_exposure": 0.85,
+    "champion_default_exposure": 0.50,
     "max_single_position_weight_pct_nav": 18,
     "max_single_industry_weight_pct_nav": 35,
     "max_correlated_theme_weight_pct_nav": 55,

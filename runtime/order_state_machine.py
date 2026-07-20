@@ -18,6 +18,23 @@ from enum import Enum
 from typing import Any
 
 # Allowed transitions: current_status → {valid next statuses}
+CANONICAL_STATUS_ALIASES: dict[str, str] = {
+    "planned": "DRAFT", "draft": "DRAFT", "risk_approved": "RISK_APPROVED",
+    "submitted_manually": "MANUAL_SUBMITTED", "submitted": "MANUAL_SUBMITTED",
+    "manual_submitted": "MANUAL_SUBMITTED", "partial": "PARTIAL_FILL",
+    "partial_fill": "PARTIAL_FILL", "filled": "FILLED", "cancelled": "CANCELLED",
+    "expired": "CANCELLED", "superseded": "CANCELLED", "rejected": "REJECTED",
+    "corporate_action_freeze": "REJECTED",
+}
+
+CANONICAL_TRANSITIONS: dict[str, set[str]] = {
+    "DRAFT": {"RISK_APPROVED", "CANCELLED", "REJECTED"},
+    "RISK_APPROVED": {"MANUAL_SUBMITTED", "CANCELLED", "REJECTED"},
+    "MANUAL_SUBMITTED": {"PARTIAL_FILL", "FILLED", "CANCELLED", "REJECTED"},
+    "PARTIAL_FILL": {"PARTIAL_FILL", "FILLED", "CANCELLED", "REJECTED"},
+    "FILLED": set(), "CANCELLED": set(), "REJECTED": set(),
+}
+
 VALID_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"risk_approved", "cancelled", "expired", "rejected", "corporate_action_freeze"},
     "risk_approved": {"manual_submitted", "cancelled", "expired", "rejected"},
@@ -45,8 +62,26 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({
 
 def is_valid_transition(current: str, target: str) -> bool:
     """Check if a transition from current to target status is valid."""
+    try:
+        canonical_current = canonicalize_status(current)
+        canonical_target = canonicalize_status(target)
+        if canonical_current in CANONICAL_TRANSITIONS:
+            return canonical_target in CANONICAL_TRANSITIONS[canonical_current]
+    except ValueError:
+        pass
     allowed = VALID_TRANSITIONS.get(current, set())
     return target in allowed
+
+
+def canonicalize_status(status: str) -> str:
+    raw = str(status or "").strip()
+    upper = raw.upper()
+    if upper in CANONICAL_TRANSITIONS:
+        return upper
+    try:
+        return CANONICAL_STATUS_ALIASES[raw.lower()]
+    except KeyError as exc:
+        raise ValueError(f"unknown_order_status:{status}") from exc
 
 
 def is_terminal(status: str) -> bool:
@@ -102,7 +137,7 @@ def atomic_transition(
                 "status_reason = CONCAT(COALESCE(status_reason, ''), ' → ', :reason) "
                 "WHERE id = :oid"
             ),
-            {"target": target_status, "reason": status_reason, "oid": order_id},
+            {"target": canonicalize_status(target_status), "reason": status_reason, "oid": order_id},
         )
 
     return True
@@ -117,9 +152,9 @@ def describe_state_machine() -> dict[str, Any]:
     """Return a human-readable description of the state machine."""
     return {
         "valid_transitions": {
-            k: sorted(v) for k, v in VALID_TRANSITIONS.items()
+            k: sorted(v) for k, v in CANONICAL_TRANSITIONS.items()
         },
-        "terminal_statuses": sorted(TERMINAL_STATUSES),
+        "terminal_statuses": ["CANCELLED", "FILLED", "REJECTED"],
         "protected_from_overwrite": sorted(
             TERMINAL_STATUSES | {"submitted_manually", "submitted", "partial"}
             | {"manual_submitted", "partial_fill"}

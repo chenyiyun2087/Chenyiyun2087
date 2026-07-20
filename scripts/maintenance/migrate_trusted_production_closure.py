@@ -24,6 +24,13 @@ ORDER_MODIFICATIONS = (
     "MODIFY COLUMN release_id VARCHAR(128) NULL",
 )
 
+MANUAL_FILL_UPGRADES = {
+    "broker_fill_id": "VARCHAR(128) NOT NULL DEFAULT '' AFTER fill_id",
+    "broker_order_id": "VARCHAR(128) NOT NULL DEFAULT '' AFTER broker_fill_id",
+    "source_file_sha": "CHAR(64) NOT NULL DEFAULT '' AFTER fallback_reason",
+    "imported_at": "DATETIME NULL AFTER source_file_sha",
+}
+
 
 def migrate(engine, *, dry_run: bool = True) -> list[str]:
     statements = [
@@ -56,6 +63,15 @@ def migrate(engine, *, dry_run: bool = True) -> list[str]:
         ):
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE app_task_queue ADD COLUMN {name} {definition}"))
+        fill_columns = {
+            row[0] for row in connection.execute(text(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA='chenyiyun' AND TABLE_NAME='ads_manual_broker_fills'"
+            ))
+        }
+        for name, definition in MANUAL_FILL_UPGRADES.items():
+            if name not in fill_columns:
+                connection.execute(text(f"ALTER TABLE chenyiyun.ads_manual_broker_fills ADD COLUMN {name} {definition}"))
     return statements
 
 

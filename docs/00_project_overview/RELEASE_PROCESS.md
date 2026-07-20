@@ -23,7 +23,7 @@
 - [ ] Full-history strict T+1 backtest passed
 - [ ] Rolling OOS Calmar ≥ 0.25
 - [ ] OOS return > baseline
-- [ ] Statistical robustness checks passed (DSR ≥ 90%, PBO ≤ 25%)
+- [ ] Statistical robustness checks passed (DSR ≥ 95%, PBO ≤ 20%)
 - [ ] Cost/slippage/capacity stress passed
 - [ ] Corporate action coverage 100%
 - [ ] No T+1 fill violations

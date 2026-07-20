@@ -21,13 +21,15 @@ def reconcile_ledgers(
     oracle_nav: pd.DataFrame,
     primary_metrics: dict[str, float],
     oracle_metrics: dict[str, float],
+    primary_rejections: pd.DataFrame | None = None,
+    oracle_rejections: pd.DataFrame | None = None,
     cash_tolerance_cny: float = 0.01,
     nav_tolerance_bps: float = 1.0,
 ) -> LedgerReconciliationReport:
     differences: list[ReconciliationDifference] = []
     first_dates: list[str] = []
 
-    trade_columns = ["order_id", "symbol", "side", "filled_shares", "filled_price", "fee"]
+    trade_columns = ["order_id", "symbol", "side", "filled_shares", "filled_price", "filled_notional", "fee"]
     for frame, name in ((primary_trades, "primary"), (oracle_trades, "oracle")):
         missing = sorted(set(trade_columns) - set(frame.columns))
         if missing:
@@ -38,6 +40,9 @@ def reconcile_ledgers(
     oracle_by_order = oracle_trades.set_index("order_id", drop=False)
     for order_id in sorted(set(primary_by_order.index) | set(oracle_by_order.index)):
         if order_id not in primary_by_order.index or order_id not in oracle_by_order.index:
+            present = primary_by_order.loc[order_id] if order_id in primary_by_order.index else oracle_by_order.loc[order_id]
+            if "trade_date" in present:
+                first_dates.append(str(present["trade_date"]))
             differences.append(ReconciliationDifference(
                 scope="ORDER", key=str(order_id),
                 primary_value="MISSING" if order_id not in primary_by_order.index else "PRESENT",
@@ -48,14 +53,36 @@ def reconcile_ledgers(
         left, right = primary_by_order.loc[order_id], oracle_by_order.loc[order_id]
         for column in trade_columns[1:]:
             lv, rv = left[column], right[column]
-            tolerance = 0.005 if column in {"filled_price", "fee"} else 0.0
-            numeric = column in {"filled_shares", "filled_price", "fee"}
+            tolerance = 0.01 if column == "fee" else 0.005 if column == "filled_price" else 0.0
+            numeric = column in {"filled_shares", "filled_price", "filled_notional", "fee"}
             mismatch = abs(float(lv) - float(rv)) > tolerance if numeric else str(lv) != str(rv)
             if mismatch:
                 differences.append(ReconciliationDifference(
                     scope="ORDER", key=f"{order_id}:{column}", primary_value=lv,
                     oracle_value=rv, difference=(float(lv) - float(rv)) if numeric else None,
                     classification="ORDER_ECONOMICS_MISMATCH", detail=f"order field {column} differs",
+                ))
+
+    if primary_rejections is not None or oracle_rejections is not None:
+        left_rejections = primary_rejections if primary_rejections is not None else pd.DataFrame()
+        right_rejections = oracle_rejections if oracle_rejections is not None else pd.DataFrame()
+        for frame, name in ((left_rejections, "primary"), (right_rejections, "oracle")):
+            missing = sorted({"order_id", "reason"} - set(frame.columns))
+            if missing and not frame.empty:
+                raise ValueError(f"{name}_rejections_missing:{','.join(missing)}")
+        left = {str(row.order_id): str(row.reason) for row in left_rejections.itertuples(index=False)}
+        right = {str(row.order_id): str(row.reason) for row in right_rejections.itertuples(index=False)}
+        for order_id in sorted(set(left) | set(right)):
+            left_reason, right_reason = left.get(order_id), right.get(order_id)
+            insufficient_equivalent = {left_reason, right_reason} in (
+                {"insufficient_cash_or_shares", "insufficient_cash"},
+                {"insufficient_cash_or_shares", "insufficient_shares"},
+            )
+            if left_reason != right_reason and not insufficient_equivalent:
+                differences.append(ReconciliationDifference(
+                    scope="ORDER", key=f"{order_id}:rejection", primary_value=left.get(order_id),
+                    oracle_value=right.get(order_id), classification="REJECTION_SET_MISMATCH",
+                    detail="rejection presence or reason differs",
                 ))
 
     position_columns = {"trade_date", "symbol", "shares"}

@@ -1,0 +1,80 @@
+schema_version: "1.0"
+factors:
+  - factor_id: relative_strength
+    economic_logic: 中期相对强势可能延续
+    formula: 20日收益减截面中位数
+    input_fields: [adj_close, trade_date, symbol]
+    availability_rule: T日收盘后可见，T+1执行
+    frequency: daily
+    expected_direction: positive
+    normalization: winsorize_1_99_then_zscore
+    industry_neutralization: cross_sectional_industry_residual
+    missing_value_policy: exclude
+    code_sha: e1d287fac1a67b50042384138855a90d9a992954
+    research_status: VALIDATED
+    production_status: RESEARCH
+  - factor_id: trend_persistence
+    economic_logic: 稳定趋势比单日跳升更可持续
+    formula: 收盘相对MA20与均线斜率组合
+    input_fields: [adj_close, trade_date, symbol]
+    availability_rule: T日收盘后可见，T+1执行
+    frequency: daily
+    expected_direction: positive
+    normalization: winsorize_1_99_then_zscore
+    industry_neutralization: cross_sectional_industry_residual
+    missing_value_policy: exclude
+    code_sha: e1d287fac1a67b50042384138855a90d9a992954
+    research_status: VALIDATED
+    production_status: RESEARCH
+  - factor_id: trend_acceleration
+    economic_logic: 趋势加速度刻画动量变化
+    formula: 短周期趋势减长周期趋势
+    input_fields: [adj_close, trade_date, symbol]
+    availability_rule: T日收盘后可见，T+1执行
+    frequency: daily
+    expected_direction: positive
+    normalization: winsorize_1_99_then_zscore
+    industry_neutralization: cross_sectional_industry_residual
+    missing_value_policy: exclude
+    code_sha: e1d287fac1a67b50042384138855a90d9a992954
+    research_status: RESEARCH
+    production_status: RESEARCH
+  - factor_id: vol_contraction_breakout
+    economic_logic: 波动收缩后的放量突破可能形成趋势
+    formula: 波动收缩与价格突破组合
+    input_fields: [adj_close, high, low, vol, trade_date, symbol]
+    availability_rule: T日收盘后可见，T+1执行
+    frequency: daily
+    expected_direction: positive
+    normalization: winsorize_1_99_then_zscore
+    industry_neutralization: cross_sectional_industry_residual
+    missing_value_policy: exclude
+    code_sha: e1d287fac1a67b50042384138855a90d9a992954
+    research_status: RESEARCH
+    production_status: RESEARCH
+  - factor_id: liquidity_quality
+    economic_logic: 充足且稳定的流动性降低不可成交与冲击成本
+    formula: 20日成交额及稳定性截面排序
+    input_fields: [amount, vol, trade_date, symbol]
+    availability_rule: T日收盘后可见，T+1执行
+    frequency: daily
+    expected_direction: positive
+    normalization: rank_then_zscore
+    industry_neutralization: cross_sectional_industry_residual
+    missing_value_policy: exclude
+    code_sha: e1d287fac1a67b50042384138855a90d9a992954
+    research_status: VALIDATED
+    production_status: RESEARCH
+  - factor_id: volume_price_resonance
+    economic_logic: 价量同向确认减少无量上涨误判
+    formula: 价格变化与成交量变化的滚动共振
+    input_fields: [adj_close, vol, trade_date, symbol]
+    availability_rule: T日收盘后可见，T+1执行
+    frequency: daily
+    expected_direction: positive
+    normalization: winsorize_1_99_then_zscore
+    industry_neutralization: cross_sectional_industry_residual
+    missing_value_policy: exclude
+    code_sha: e1d287fac1a67b50042384138855a90d9a992954
+    research_status: RESEARCH
+    production_status: RESEARCH

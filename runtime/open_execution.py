@@ -18,6 +18,51 @@ class OpeningExecutionDecision:
     fallback_reason: str
 
 
+@dataclass(frozen=True)
+class ExecutionPrediction:
+    fill_probability: float
+    expected_slippage_bps: float
+    expected_mode: str
+    reason_codes: tuple[str, ...]
+
+
+def predict_opening_execution(
+    *, auction_volume: float, auction_imbalance: float, opening_gap: float,
+    previous_return: float, board: str, is_st: bool, adv20: float, adv60: float,
+    order_notional: float, market_liquidity: float, side: str,
+    distance_to_limit: float,
+) -> ExecutionPrediction:
+    """Deterministic, auditable V2 proxy; coefficients require weekly calibration."""
+    if min(adv20, adv60, order_notional, market_liquidity) < 0:
+        raise ValueError("execution_prediction_negative_input")
+    participation = order_notional / adv20 if adv20 > 0 else float("inf")
+    probability = 0.98
+    reasons: list[str] = []
+    penalty = 0.0
+    if participation > 0.01:
+        penalty += min(0.75, participation * 4)
+        reasons.append("participation_above_1pct_adv")
+    if auction_volume <= 0:
+        penalty += 0.25
+        reasons.append("auction_liquidity_missing")
+    if abs(auction_imbalance) > 0.7:
+        penalty += 0.10
+        reasons.append("auction_imbalance_extreme")
+    if distance_to_limit < 0.01 or is_st:
+        penalty += 0.25
+        reasons.append("limit_or_st_risk")
+    if market_liquidity < 0.5:
+        penalty += 0.10
+        reasons.append("market_liquidity_low")
+    probability = max(0.0, min(1.0, probability - penalty))
+    board_multiplier = 1.5 if str(board).upper() in {"STAR", "CHINEXT", "BSE"} else 1.0
+    direction_multiplier = 1.1 if str(side).upper() == "BUY" and opening_gap > 0 else 1.0
+    slippage = (5.0 + 400.0 * min(participation, 0.10) + 50.0 * abs(opening_gap)
+                + 10.0 * abs(previous_return)) * board_multiplier * direction_multiplier
+    mode = "T1_OPEN" if probability >= 0.80 else "MINUTE_VWAP_0931_0935" if probability >= 0.35 else "UNFILLED_HOLD_CASH"
+    return ExecutionPrediction(round(probability, 6), round(slippage, 4), mode, tuple(reasons))
+
+
 def _limit_ratio(symbol: str, is_st: bool) -> Decimal:
     if is_st:
         return Decimal("0.05")

@@ -22,15 +22,15 @@ from typing import Any
 
 
 class OrderStatus(str, Enum):
-    PLANNED = "planned"
-    SUBMITTED = "submitted"
-    PARTIAL = "partial"
-    FILLED = "filled"
-    CANCELLED = "cancelled"
-    REJECTED = "rejected"
-    SUPERSEDED = "superseded"
-    EXPIRED = "expired"
-    CORPORATE_ACTION_FREEZE = "corporate_action_freeze"
+    PLANNED = "DRAFT"
+    SUBMITTED = "MANUAL_SUBMITTED"
+    PARTIAL = "PARTIAL_FILL"
+    FILLED = "FILLED"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "CANCELLED"
+    EXPIRED = "CANCELLED"
+    CORPORATE_ACTION_FREEZE = "REJECTED"
 
 
 class CorporateActionType(str, Enum):
@@ -88,8 +88,9 @@ ALLOWED_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
 
 def validate_order_transition(previous: OrderStatus | str, next_status: OrderStatus | str) -> None:
     """Enforce the one runtime state machine for research, shadow and canary."""
-    old = OrderStatus(previous)
-    new = OrderStatus(next_status)
+    from runtime.order_state_machine import canonicalize_status
+    old = OrderStatus(canonicalize_status(previous.value if isinstance(previous, OrderStatus) else str(previous)))
+    new = OrderStatus(canonicalize_status(next_status.value if isinstance(next_status, OrderStatus) else str(next_status)))
     if new not in ALLOWED_TRANSITIONS[old]:
         raise ValueError(f"illegal_order_transition:{old.value}->{new.value}")
 

@@ -41,7 +41,7 @@ class DecisionOutput:
     target_weights: dict[str, float]      # symbol → target weight
     orders: list[dict[str, Any]]          # BUY/SELL orders
     risk_decision: dict[str, Any]         # risk governor output
-    data_gate_status: str                 # READY / READY_WITH_WARNING / BLOCKED
+    data_gate_status: str                 # READY / REVIEW_ONLY / FREEZE_NEW_BUYS / HALT_NEW_ORDERS / BLOCKED
     health_grade: str                     # GREEN / YELLOW / RED
     fingerprint: str                      # hash of the entire decision for audit
 
@@ -52,7 +52,7 @@ def generate_targets(
     data_snapshot: dict[str, Any],
     strategy_release: ReleaseManifest,
     max_positions: int = 5,
-    target_position_ratio: float = 0.70,
+    target_position_ratio: float = 0.50,
 ) -> DecisionOutput:
     """Generate target portfolio and orders for a given signal date.
 
@@ -104,17 +104,20 @@ def generate_targets(
     import hashlib
     import json as _json
 
+    gate_status = str(data_snapshot.get("data_gate_status") or "BLOCKED").upper()
+    if target_position_ratio > 0.50:
+        raise ValueError("current_approved_exposure_exceeded")
     candidate_rows = list(data_snapshot.get("candidates", []))
     candidates = sorted(candidate_rows, key=lambda row: (-float(row.get("score", row.get("total_score", 0)) or 0), str(row.get("symbol", row.get("ts_code", "")))) )[:max_positions]
-    if data_snapshot.get("data_gate_status") == "BLOCKED":
+    if gate_status != "READY":
         candidates = []
     deployable_nav = portfolio_state.nav * target_position_ratio
     equal_weight = (target_position_ratio / len(candidates)) if candidates else 0.0
     target_weights = {str(row.get("symbol", row.get("ts_code"))): equal_weight for row in candidates}
-    orders = list(data_snapshot.get("orders", []))
+    orders = list(data_snapshot.get("orders", [])) if gate_status == "READY" else []
     if not orders:
         orders = [{"intent_id": f"{strategy_release.release_id}:{symbol}", "symbol": symbol, "side": "BUY", "target_weight": weight,
-                   "planned_notional": deployable_nav / len(candidates) if candidates else 0.0, "status": "planned"}
+                   "planned_notional": deployable_nav / len(candidates) if candidates else 0.0, "status": "DRAFT"}
                   for symbol, weight in target_weights.items()]
     fingerprint_data = _json.dumps({
         "release_id": strategy_release.release_id,
@@ -132,7 +135,7 @@ def generate_targets(
         target_weights=target_weights,
         orders=orders,
         risk_decision=dict(data_snapshot.get("risk_decision", {})),
-        data_gate_status=str(data_snapshot.get("data_gate_status", "READY")),
+        data_gate_status=gate_status,
         health_grade=str(data_snapshot.get("health_grade", "UNKNOWN")),
         fingerprint=hashlib.sha256(fingerprint_data).hexdigest()[:16],
     )

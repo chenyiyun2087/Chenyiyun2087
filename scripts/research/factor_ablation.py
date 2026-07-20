@@ -11,15 +11,12 @@ import numpy as np
 import pandas as pd
 
 
-LAYERS = (
-    "liquidity_quality",
-    "technical",
-    "bs_signal",
-    "llm_shadow",
-    "ashare",
-    "industry_filter",
-    "market_regime",
-)
+LAYERS = ("L0", "L1", "L2", "L3", "L4", "L5", "L6")
+LAYER_NAMES = {
+    "L0": "liquidity_quality", "L1": "technical", "L2": "bs_signal",
+    "L3": "ashare", "L4": "industry_theme_constraints",
+    "L5": "market_regime", "L6": "covariance_optimization",
+}
 
 
 def _metrics(returns: pd.Series, turnover: pd.Series | None = None, cost: pd.Series | None = None) -> dict[str, float]:
@@ -33,6 +30,8 @@ def _metrics(returns: pd.Series, turnover: pd.Series | None = None, cost: pd.Ser
         "worst_20d_return": float((1.0 + values).rolling(20).apply(np.prod, raw=True).sub(1.0).min()) if len(values) >= 20 else float("nan"),
         "mean_turnover": float(pd.to_numeric(turnover, errors="coerce").mean()) if turnover is not None else float("nan"),
         "total_cost": float(pd.to_numeric(cost, errors="coerce").sum()) if cost is not None else float("nan"),
+        "calmar": float((nav.iloc[-1] ** (252 / len(values)) - 1.0) / abs((nav / nav.cummax() - 1.0).min())) if (nav / nav.cummax() - 1.0).min() < 0 else float("nan"),
+        "cvar_95": float(values[values <= values.quantile(0.05)].mean()),
     }
 
 
@@ -42,13 +41,14 @@ def build_ablation_report(frame: pd.DataFrame) -> dict[str, object]:
     reports: list[dict[str, object]] = []
     previous: dict[str, float] | None = None
     for layer in LAYERS:
-        return_column = f"{layer}_return"
+        name = LAYER_NAMES[layer]
+        return_column = f"{layer}_return" if f"{layer}_return" in frame.columns else f"{name}_return"
         if return_column not in frame.columns:
             raise ValueError(f"ablation input missing {return_column}")
         metrics = _metrics(
             frame[return_column],
-            frame.get(f"{layer}_turnover"),
-            frame.get(f"{layer}_cost"),
+            frame.get(f"{layer}_turnover", frame.get(f"{name}_turnover")),
+            frame.get(f"{layer}_cost", frame.get(f"{name}_cost")),
         )
         delta = {
             "annualized_return": 0.0 if previous is None else metrics["annualized_return"] - previous["annualized_return"],
@@ -56,7 +56,9 @@ def build_ablation_report(frame: pd.DataFrame) -> dict[str, object]:
             "mean_turnover": 0.0 if previous is None else metrics["mean_turnover"] - previous["mean_turnover"],
             "total_cost": 0.0 if previous is None else metrics["total_cost"] - previous["total_cost"],
         }
-        reports.append({"layer": layer, "metrics": metrics, "incremental": delta})
+        rejected = previous is not None and (delta["annualized_return"] <= 0 or delta["max_drawdown"] < 0 or delta["total_cost"] > 0 and delta["annualized_return"] <= delta["total_cost"])
+        reports.append({"layer": layer, "name": name, "metrics": metrics, "incremental": delta,
+                        "decision": "REJECT" if rejected else "RETAIN_FOR_REVIEW"})
         previous = metrics
     return {"status": "RESEARCH_ONLY", "layers": reports, "production_ranking_changed": False}
 

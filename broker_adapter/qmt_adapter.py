@@ -1,11 +1,11 @@
-"""QMT 券商适配器（占位）。
+"""Disabled QMT boundary retained only to prevent accidental broker access.
 
 QMT 接入边界：
   - QMT 只能通过本 Adapter 与系统交互
   - QMT 不能直接触发策略、绕过风险检查、修改仓位真相
   - 所有 QMT 回报（委托/成交/撤单）只能进入 BrokerOrder 与 Fill
 
-当前状态：占位实现。等 QMT API 环境就绪后实现 submit_order/cancel_order/query_orders/query_fills。
+当前状态：永久离线硬失败。本项目仅支持人工订单、人工成交和离线对账单。
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class OrderResult:
 
 
 class QMTAdapter:
-    """QMT 券商适配器 — 占位实现，待 QMT API 就绪。"""
+    """Disabled adapter: every broker operation fails closed."""
 
     def __init__(self, account_id: str = "default"):
         self.account_id = account_id
@@ -56,19 +56,15 @@ class QMTAdapter:
         return self._connected
 
     def connect(self) -> bool:
-        """连接 QMT。当前占位。"""
-        logger.warning("QMT adapter: connect() not implemented — placeholder")
-        return False
+        raise RuntimeError("broker_api_disabled_offline_statement_only")
 
     def get_account_snapshot(self) -> AccountSnapshot | None:
         """获取账户快照。"""
-        logger.warning("QMT adapter: get_account_snapshot() not implemented")
-        return None
+        raise RuntimeError("broker_api_disabled_offline_statement_only")
 
     def get_positions(self) -> list[Position]:
         """获取当前持仓。"""
-        logger.warning("QMT adapter: get_positions() not implemented")
-        return []
+        raise RuntimeError("broker_api_disabled_offline_statement_only")
 
     def submit_order(
         self,
@@ -84,28 +80,16 @@ class QMTAdapter:
 
         QMT 只能通过此方法接收订单。所有参数由 PreTradeRiskCheck 校验后传入。
         """
-        logger.warning("QMT adapter: submit_order() not implemented — placeholder")
-        return OrderResult(
-            broker_order_id=None,
-            status="ERROR",
-            message="QMT adapter not connected",
-        )
+        raise RuntimeError("broker_api_disabled_manual_execution_only")
 
     def cancel_order(self, broker_order_id: str) -> OrderResult:
         """撤单。"""
-        logger.warning("QMT adapter: cancel_order() not implemented")
-        return OrderResult(
-            broker_order_id=broker_order_id,
-            status="ERROR",
-            message="QMT adapter not connected",
-        )
+        raise RuntimeError("broker_api_disabled_manual_execution_only")
 
     def query_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """查询委托状态。"""
-        logger.warning("QMT adapter: query_orders() not implemented")
-        return []
+        raise RuntimeError("broker_api_disabled_offline_statement_only")
 
     def query_fills(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """查询成交记录。"""
-        logger.warning("QMT adapter: query_fills() not implemented")
-        return []
+        raise RuntimeError("broker_api_disabled_offline_statement_only")

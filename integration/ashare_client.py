@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import subprocess
 from datetime import date, datetime
 
 import pandas as pd
@@ -28,7 +30,18 @@ ADC_DATABASE = "tushare_stock"
 ADC_TABLE = "ads_selection_digest_history_di"
 FEATURE_VERSION = "factor_2026.06.23.1"
 LABEL_VERSION = "ret5_t1open_v2"
-SOURCE_COMMIT = "local"
+def _source_commit() -> str:
+    configured = os.environ.get("ASHARE_SOURCE_COMMIT", "").strip().lower()
+    if configured:
+        return configured
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[1], text=True).strip()
+    except Exception as exc:
+        raise RuntimeError("ashare_source_commit_unavailable") from exc
+
+
+from pathlib import Path
+SOURCE_COMMIT = _source_commit()
 
 
 def _adc_engine():
@@ -40,12 +53,9 @@ def _adc_engine():
 
 
 def _generate_snapshot_id(as_of_date: date) -> str:
-    """生成快照 ID：rs_YYYYMMDD_HHMMSS_随机4位"""
-    now = datetime.now()
-    import random
-
-    rand = "".join(random.choices("abcdef0123456789", k=4))
-    return f"rs_{as_of_date.strftime('%Y%m%d')}_{now.strftime('%H%M%S')}_{rand}"
+    """Generate a deterministic identity from date, schema versions and code."""
+    identity = f"{as_of_date.isoformat()}|{FEATURE_VERSION}|{LABEL_VERSION}|{SOURCE_COMMIT}"
+    return f"rs_{as_of_date.strftime('%Y%m%d')}_{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
 
 
 def fetch_strategy_signals(
@@ -176,8 +186,8 @@ def fetch_risk_gate(as_of_date: date) -> RiskGateResult | None:
     return RiskGateResult(
         trade_date=as_of_date,
         snapshot_id=snapshot_id,
-        gate_passed=True,
-        risk_flags=[],
+        gate_passed=False,
+        risk_flags=["risk_gate_source_not_implemented"],
         market_regime="neutral",
         limit_up_rate=0.0,
         avg_score=0.0,

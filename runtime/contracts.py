@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
@@ -25,6 +25,8 @@ def _is_blocked(value: object) -> bool:
 
 
 class ProductionState(str, Enum):
+    READY = "READY"
+    REVIEW_ONLY = "REVIEW_ONLY"
     ACTIVE_FIXED_CAPITAL = "ACTIVE_FIXED_CAPITAL"
     FREEZE_NEW_BUYS = "FREEZE_NEW_BUYS"
     HALT_NEW_ORDERS = "HALT_NEW_ORDERS"
@@ -36,6 +38,37 @@ class EvidenceStatus(str, Enum):
     DIAGNOSTIC = "DIAGNOSTIC"
     LEGACY_UNVERIFIED = "LEGACY_UNVERIFIED"
     BLOCKED = "BLOCKED"
+
+
+class ManualWaiver(BaseModel):
+    """Time-bounded waiver for non-critical warnings only."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    waiver_id: str
+    reason: str
+    approved_by: str
+    created_at: datetime
+    expires_at: datetime
+    scope: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def validate_waiver(self) -> "ManualWaiver":
+        protected = {"DUAL_LEDGER", "T1", "CORPORATE_ACTION", "ACCOUNT_RECONCILIATION"}
+        if protected.intersection(item.upper() for item in self.scope):
+            raise ValueError("waiver_cannot_cover_protected_gate")
+        if self.expires_at <= self.created_at:
+            raise ValueError("waiver_expiry_invalid")
+        if not all(str(value).strip() for value in (self.waiver_id, self.reason, self.approved_by)):
+            raise ValueError("waiver_identity_incomplete")
+        return self
+
+    def is_active(self, at: datetime | None = None) -> bool:
+        instant = at or datetime.now(timezone.utc)
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+        expiry = self.expires_at if self.expires_at.tzinfo else self.expires_at.replace(tzinfo=timezone.utc)
+        created = self.created_at if self.created_at.tzinfo else self.created_at.replace(tzinfo=timezone.utc)
+        return created <= instant < expiry
 
 
 class ReleaseIdentity(BaseModel):
@@ -122,6 +155,12 @@ class SnapshotComponent(BaseModel):
     coverage_start: str
     coverage_end: str
     source: str
+    data_version: str = "legacy_unversioned"
+    visible_at_field: str = "visible_at"
+    primary_key: tuple[str, ...] = ()
+    historical_backfill: bool = False
+    validation_status: Literal["VERIFIED", "BLOCKED", "LEGACY_UNVERIFIED"] = "LEGACY_UNVERIFIED"
+    anomalies: tuple[str, ...] = ()
 
 
 class SnapshotManifest(BaseModel):
@@ -129,9 +168,13 @@ class SnapshotManifest(BaseModel):
 
     schema_version: str = "pit_snapshot_v1"
     snapshot_date: str
+    snapshot_id: str = ""
     market_data_cutoff: datetime
     components: tuple[SnapshotComponent, ...]
     created_at: datetime
+    generator_git_sha: str = ""
+    validation_status: Literal["VERIFIED", "BLOCKED", "LEGACY_UNVERIFIED"] = "LEGACY_UNVERIFIED"
+    anomalies: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def require_core_components(self) -> "SnapshotManifest":
@@ -143,6 +186,15 @@ class SnapshotManifest(BaseModel):
             raise ValueError(f"snapshot_missing_components:{','.join(missing)}")
         if len(names) != len(self.components):
             raise ValueError("snapshot_duplicate_component")
+        if self.validation_status == "VERIFIED":
+            expected_id_prefix = f"pit-cn-equity-{self.snapshot_date.replace('-', '')}-v"
+            if not self.snapshot_id.startswith(expected_id_prefix):
+                raise ValueError("verified_snapshot_id_invalid")
+            if len(self.generator_git_sha) not in {40, 64}:
+                raise ValueError("verified_snapshot_generator_sha_invalid")
+            blocked = [item.name for item in self.components if item.validation_status != "VERIFIED"]
+            if blocked:
+                raise ValueError(f"verified_snapshot_has_unverified_components:{','.join(blocked)}")
         return self
 
     def fingerprint(self) -> str:
@@ -166,7 +218,7 @@ class PortfolioRiskDecision(BaseModel):
     def fail_closed_state(self) -> "PortfolioRiskDecision":
         if self.passed and self.violations:
             raise ValueError("passing risk decision cannot contain violations")
-        if not self.passed and self.state == ProductionState.ACTIVE_FIXED_CAPITAL:
+        if not self.passed and self.state in {ProductionState.ACTIVE_FIXED_CAPITAL, ProductionState.READY}:
             raise ValueError("failed risk decision must freeze or halt orders")
         return self
 
@@ -175,6 +227,8 @@ class ManualFill(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     fill_id: str
+    broker_fill_id: str = ""
+    broker_order_id: str = ""
     order_id: str
     account_id: str
     release_id: str
@@ -188,11 +242,15 @@ class ManualFill(BaseModel):
     fill_timestamp: datetime
     execution_mode: Literal["MANUAL_OPEN", "MANUAL_VWAP_FALLBACK", "MANUAL_OTHER"]
     fallback_reason: str = ""
+    source_file_sha: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
+    imported_at: datetime | None = None
 
     @model_validator(mode="after")
     def validate_times(self) -> "ManualFill":
         if self.fill_timestamp < self.submitted_at:
             raise ValueError("fill_timestamp precedes submitted_at")
+        if self.source_file_sha and len(self.source_file_sha) != 64:
+            raise ValueError("source_file_sha_invalid")
         return self
 
 

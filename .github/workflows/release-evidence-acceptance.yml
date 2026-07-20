@@ -7,6 +7,18 @@ on:
         description: Absolute path mounted by the self-hosted runner
         required: true
         type: string
+      evidence_replica_root:
+        description: Distinct mounted replica path on the self-hosted runner
+        required: true
+        type: string
+      pit_manifest:
+        description: Absolute path to the verified PIT manifest
+        required: true
+        type: string
+      dual_ledger_package:
+        description: Absolute path to the frozen dual-ledger input package
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,6 +28,7 @@ jobs:
     runs-on: self-hosted
     env:
       CHENYIYUN_EVIDENCE_ROOT: ${{ inputs.evidence_root }}
+      CHENYIYUN_EVIDENCE_REPLICA_ROOT: ${{ inputs.evidence_replica_root }}
       CHENYIYUN_DB_URL: ${{ secrets.CHENYIYUN_READ_ONLY_DB_URL }}
       CHENYIYUN_DB_READ_ONLY: '1'
     steps:
@@ -26,6 +39,10 @@ jobs:
       - run: pip install -r requirements-ci.lock.txt
       - name: Verify content-addressed evidence
         run: python scripts/maintenance/manage_evidence_store.py verify
+      - name: Verify frozen PIT snapshot and replica
+        run: python scripts/ops/verify_pit_snapshot.py --manifest "${{ inputs.pit_manifest }}"
+      - name: Run real dual-ledger acceptance package
+        run: python scripts/research/run_dual_ledger_acceptance.py --package "${{ inputs.dual_ledger_package }}" --output /tmp/dual-ledger-acceptance
       - name: Strict and independent ledger gates
         run: >-
           python -m pytest -q
@@ -34,5 +51,6 @@ jobs:
           test/test_trusted_production_closure.py
           test/test_pr18_independent_oracle.py
           test/test_pr19_oracle_coverage.py
+          test/test_comprehensive_trust_upgrade.py
       - name: Require read-only database credential
         run: test -n "$CHENYIYUN_DB_URL"

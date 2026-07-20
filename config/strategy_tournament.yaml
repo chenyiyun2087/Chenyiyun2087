@@ -26,18 +26,24 @@ tournament:
   required_experiments:
     - PRODUCTION_BASELINE
     - FROZEN_CHAMPION
+    - EQUAL_WEIGHT_TOPN
     - A7
     - REV_A7
     - RND_TOP30
     - RND_FULL
+    - LIQUIDITY_ONLY
+    - INDEX_BENCHMARK
+    - MATCHED_BETA_STYLE
     - A8
 
   hard_gates:
     min_net_oos_annualized_return: 0.20
     max_oos_drawdown_abs: 0.20
-    min_positive_quarter_ratio: 0.55
-    min_dsr_confidence: 0.90
-    max_pbo: 0.25
+    min_positive_quarter_ratio: 0.60
+    min_random_baseline_win_ratio: 0.70
+    min_reverse_baseline_win_ratio: 0.70
+    min_dsr_confidence: 0.95
+    max_pbo: 0.20
     min_corporate_action_coverage: 1.00
     max_t_plus_one_violations: 0
     min_stress_annualized_return: 0.00

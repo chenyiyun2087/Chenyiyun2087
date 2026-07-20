@@ -38,7 +38,7 @@ def _source(root: Path, strategy_id: str, annual_daily_return: float, *, contrac
             "cost_model_id": "cn_stock_v2", "execution_model_id": "strict_t1_open_precommit",
             "initial_capital": 500000, "signal_date": "2026-06-29", "execution_date": "2026-06-30",
         },
-        "experiments": ["PRODUCTION_BASELINE", "FROZEN_CHAMPION", "A7", "REV_A7", "RND_TOP30", "RND_FULL", "A8"],
+        "experiments": ["PRODUCTION_BASELINE", "FROZEN_CHAMPION", "EQUAL_WEIGHT_TOPN", "A7", "REV_A7", "RND_TOP30", "RND_FULL", "LIQUIDITY_ONLY", "INDEX_BENCHMARK", "MATCHED_BETA_STYLE", "A8"],
         "evidence_status": "REPRODUCIBLE",
         "strict_ledger_status": "VERIFIED",
         "dual_ledger_status": "VERIFIED",

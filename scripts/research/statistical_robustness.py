@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import random
+from itertools import combinations
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,7 +39,7 @@ class RobustnessReport:
 
     # PBO
     pbo: float
-    pbo_passed: bool                      # ≤ 0.25
+    pbo_passed: bool                      # ≤ 0.20
 
     # Bootstrap
     bootstrap_return_5th: float
@@ -210,6 +211,61 @@ def compute_pbo(
     return round(pbo, 4)
 
 
+def combinatorial_purged_splits(n_samples: int, *, n_groups: int = 6, test_groups: int = 2,
+                                purge: int = 10, embargo: int = 5) -> list[tuple[list[int], list[int]]]:
+    """Return CPCV train/test indices with purge and embargo around test blocks."""
+    if n_samples < n_groups or not 0 < test_groups < n_groups:
+        raise ValueError("cpcv_invalid_shape")
+    groups = [list(map(int, block)) for block in __import__("numpy").array_split(range(n_samples), n_groups)]
+    splits: list[tuple[list[int], list[int]]] = []
+    for selected in combinations(range(n_groups), test_groups):
+        test = sorted(index for group in selected for index in groups[group])
+        excluded = set(test)
+        for index in test:
+            excluded.update(range(max(0, index - purge), min(n_samples, index + embargo + 1)))
+        train = [index for index in range(n_samples) if index not in excluded]
+        if train and test:
+            splits.append((train, test))
+    return splits
+
+
+def compute_cpcv_pbo(configuration_returns: list[list[float]], *, n_groups: int = 6,
+                     test_groups: int = 2, purge: int = 10, embargo: int = 5) -> float:
+    if len(configuration_returns) < 2:
+        return 1.0
+    n = min(len(values) for values in configuration_returns)
+    losses = 0
+    splits = combinatorial_purged_splits(n, n_groups=n_groups, test_groups=test_groups, purge=purge, embargo=embargo)
+    for train, test in splits:
+        in_sample = [_sharpe([values[i] for i in train]) for values in configuration_returns]
+        selected = max(range(len(in_sample)), key=in_sample.__getitem__)
+        out_sample = [_sharpe([values[i] for i in test]) for values in configuration_returns]
+        median = sorted(out_sample)[len(out_sample) // 2]
+        losses += out_sample[selected] < median
+    return round(losses / max(len(splits), 1), 4)
+
+
+def whites_reality_check(candidate_returns: list[list[float]], benchmark_returns: list[float],
+                         *, n_bootstrap: int = 1000, block_size: int = 20, seed: int = 42) -> float:
+    """Block-bootstrap p-value for the best candidate's mean excess return."""
+    if not candidate_returns or not benchmark_returns:
+        return 1.0
+    n = min(len(benchmark_returns), *(len(values) for values in candidate_returns))
+    excess = [[candidate[i] - benchmark_returns[i] for i in range(n)] for candidate in candidate_returns]
+    observed = max(sum(values) / n for values in excess)
+    centered = [[value - sum(values) / n for value in values] for values in excess]
+    rng = random.Random(seed)
+    exceed = 0
+    for _ in range(n_bootstrap):
+        sample_indices: list[int] = []
+        while len(sample_indices) < n:
+            start = rng.randint(0, max(0, n - min(block_size, n)))
+            sample_indices.extend(range(start, min(n, start + block_size)))
+        statistic = max(sum(values[i] for i in sample_indices[:n]) / n for values in centered)
+        exceed += statistic >= observed
+    return round((exceed + 1) / (n_bootstrap + 1), 4)
+
+
 def compute_concentration_metrics(
     monthly_returns: list[float],
 ) -> dict[str, Any]:
@@ -272,10 +328,10 @@ def analyze_strategy_robustness(
 
     # Acceptance thresholds
     failures: list[str] = []
-    if dsr_conf < 0.90:
-        failures.append(f"DSR confidence={dsr_conf:.2f} < 0.90")
-    if pbo > 0.25:
-        failures.append(f"PBO={pbo:.2f} > 0.25")
+    if dsr_conf < 0.95:
+        failures.append(f"DSR confidence={dsr_conf:.2f} < 0.95")
+    if pbo > 0.20:
+        failures.append(f"PBO={pbo:.2f} > 0.20")
     if boot_ann_rets[int(len(boot_ann_rets) * 0.05)] < 0:
         failures.append("Bootstrap 5th percentile annual return < 0")
     if boot_mdds[int(len(boot_mdds) * 0.95)] < -0.40:
@@ -295,7 +351,7 @@ def analyze_strategy_robustness(
         deflated_sharpe_pvalue=dsr_pval,
         deflated_sharpe_confidence=dsr_conf,
         pbo=pbo,
-        pbo_passed=pbo <= 0.25,
+        pbo_passed=pbo <= 0.20,
         bootstrap_return_5th=round(boot_ann_rets[int(len(boot_ann_rets) * 0.05)], 6) if boot_ann_rets else 0,
         bootstrap_return_95th=round(boot_ann_rets[int(len(boot_ann_rets) * 0.95)], 6) if boot_ann_rets else 0,
         bootstrap_max_dd_5th=round(boot_mdds[int(len(boot_mdds) * 0.05)], 6) if boot_mdds else 0,

@@ -73,16 +73,21 @@ def main() -> None:
     gc = sub.add_parser("gc")
     gc.add_argument("--manifest", type=Path, action="append", default=[])
     gc.add_argument("--execute", action="store_true")
+    gc.add_argument("--approval-id", default="")
     args = parser.parse_args()
     store = EvidenceStore(args.root)
     if args.command == "verify":
-        print(json.dumps(store.verify_all(), ensure_ascii=False, indent=2))
+        result = store.verify_all()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if result["status"] != "VERIFIED":
+            raise SystemExit(2)
     elif args.command == "package":
         package_store(store, args.output)
     elif args.command == "restore":
         restore_store(store, args.input)
     elif args.command == "gc":
-        orphans = store.remove_orphans(_referenced_hashes(args.manifest), dry_run=not args.execute)
+        orphans = store.remove_orphans(_referenced_hashes(args.manifest), dry_run=not args.execute,
+                                       approval_id=args.approval_id)
         print(json.dumps({"dry_run": not args.execute, "orphans": orphans}, ensure_ascii=False, indent=2))
 
 

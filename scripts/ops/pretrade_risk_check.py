@@ -80,13 +80,16 @@ def _ts_code(symbol: str) -> str:
     return f"{digits}.{exchange}"
 
 
-def check_position_limits(engine, symbol: str, account_id: str, target_notional: float) -> RiskCheckResult:
+def check_position_limits(engine, symbol: str, account_id: str, target_notional: float, trade_date: date) -> RiskCheckResult:
     """检查仓位上限：单票不超过总权益的 max_single_name。"""
     try:
         with engine.connect() as conn:
             total_equity = conn.execute(
-                text("SELECT COALESCE(total_equity, 0) FROM chenyiyun.live_daily_snapshots ORDER BY snapshot_date DESC LIMIT 1"),
-            ).scalar() or 500000.0
+                text("SELECT total_equity FROM chenyiyun.live_daily_snapshots "
+                     "WHERE account_id=:account_id AND snapshot_date<=:trade_date "
+                     "ORDER BY snapshot_date DESC LIMIT 1"),
+                {"account_id": account_id, "trade_date": trade_date},
+            ).scalar()
         if total_equity <= 0:
             return RiskCheckResult("position_limit", False, "BLOCKED: account NAV unavailable")
         max_single = total_equity * MAX_SINGLE_POSITION_WEIGHT
@@ -135,16 +138,18 @@ def check_suspension_st(engine, symbol: str, trade_date: date) -> RiskCheckResul
         return RiskCheckResult("suspension_st", False, f"BLOCKED: trading label unavailable ({e})")
 
 
-def check_liquidity(engine, symbol: str, target_notional: float) -> RiskCheckResult:
-    """检查流动性：预计成交额不超过日均的20%。"""
+def check_liquidity(engine, symbol: str, target_notional: float, trade_date: date) -> RiskCheckResult:
+    """检查PIT流动性：订单不超过截至 trade_date 的20日ADV的1%。"""
     try:
         with engine.connect() as conn:
             avg_amt = conn.execute(
                 text(
-                    "SELECT AVG(amount) FROM tushare_stock.dwd_stock_daily_standard "
-                    "WHERE ts_code LIKE :sym AND trade_date >= :since"
+                    "SELECT AVG(recent.amount) FROM ("
+                    "SELECT amount FROM tushare_stock.dwd_stock_daily_standard "
+                    "WHERE ts_code LIKE :sym AND trade_date <= :trade_date "
+                    "ORDER BY trade_date DESC LIMIT 20) AS recent"
                 ),
-                {"sym": f"{symbol}.%", "since": int((date.today().strftime("%Y%m%d"))[:-2] + "01")},
+                {"sym": f"{symbol}.%", "trade_date": int(trade_date.strftime("%Y%m%d"))},
             ).scalar() or 0
 
         if avg_amt is None or float(avg_amt) <= 0:
@@ -177,9 +182,9 @@ def run_checks(
         engine = _get_engine()
 
     report = OrderIntentRiskReport(signal_id="", symbol=symbol)
-    report.results.append(check_position_limits(engine, symbol, account_id, target_notional))
+    report.results.append(check_position_limits(engine, symbol, account_id, target_notional, trade_date))
     report.results.append(check_suspension_st(engine, symbol, trade_date))
-    report.results.append(check_liquidity(engine, symbol, target_notional))
+    report.results.append(check_liquidity(engine, symbol, target_notional, trade_date))
 
     if projected_positions is not None:
         try:

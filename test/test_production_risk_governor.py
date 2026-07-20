@@ -18,7 +18,7 @@ def test_risk_governor_returns_normal_for_default_state():
         recent_shadow_summary={"fail_streak": 0, "worst_action": "none", "latest_status": "pass"},
     )
     assert decision["risk_decision"] == "normal"
-    assert decision["target_position_ratio"] == 0.7
+    assert decision["target_position_ratio"] == 0.5
 
 
 def test_risk_governor_reduces_for_low_liquidity():
@@ -67,7 +67,7 @@ def test_risk_governor_v2_soft_reduces_light_risk_in_strong_state():
         recent_shadow_summary={"fail_streak": 0, "worst_action": "none", "latest_status": "pass"},
     )
     assert decision["risk_decision"] == "soft_reduce"
-    assert decision["target_position_ratio"] == 0.6
+    assert decision["target_position_ratio"] == 0.5
 
 
 def test_risk_governor_v2_hard_reduces_compound_liquidity_and_volatility():
@@ -105,7 +105,7 @@ def test_risk_governor_v1_1_keeps_normal_unchanged():
         recent_shadow_summary={"fail_streak": 0, "worst_action": "none", "latest_status": "pass"},
     )
     assert decision["risk_decision"] == "normal"
-    assert decision["target_position_ratio"] == 0.7
+    assert decision["target_position_ratio"] == 0.5
 
 
 def test_risk_governor_v1_1_recovers_negative_champion_single_reason():

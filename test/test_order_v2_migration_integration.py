@@ -192,24 +192,24 @@ class TestMultiReleaseIsolation:
 
         from sqlalchemy import text
         with _engine().connect() as conn:
-            # v1 releases still planned
+            # v1 releases are canonical drafts
             v1 = conn.execute(text(
                 f"SELECT COUNT(*) FROM {migrated_table} "
-                "WHERE strategy = 'prod_governed_vol_position' AND order_status = 'planned'"
+                "WHERE strategy = 'prod_governed_vol_position' AND order_status = 'DRAFT'"
             )).scalar()
             assert int(v1 or 0) >= 2
-            # GateTuned main release still planned
+            # GateTuned main release still draft
             gt_main = conn.execute(text(
                 f"SELECT COUNT(*) FROM {migrated_table} "
                 "WHERE strategy = 'gate_tuned_v1_2b' AND release_id = 'release-gt-A' "
-                "AND order_status = 'planned'"
+                "AND order_status = 'DRAFT'"
             )).scalar()
             assert int(gt_main or 0) == 1
-            # GateTuned canary superseded
+            # GateTuned canary cancelled with the supersede reason retained
             gt_canary = conn.execute(text(
                 f"SELECT COUNT(*) FROM {migrated_table} "
                 "WHERE strategy = 'gate_tuned_v1_2b' AND release_id = 'release-gt-canary' "
-                "AND order_status = 'superseded'"
+                "AND order_status = 'CANCELLED'"
             )).scalar()
             assert int(gt_canary or 0) == 1
 
@@ -290,8 +290,8 @@ class TestCrossAccountREDIsolation:
                 f"SELECT order_status FROM {migrated_table} "
                 "WHERE account_id='canary_bucket' AND ts_code='000005.SZ'"
             )).scalar()
-        assert str(d) == "superseded"
-        assert str(c) == "planned"
+        assert str(d) == "CANCELLED"
+        assert str(c) == "DRAFT"
 
 
 @NEEDS_MYSQL
