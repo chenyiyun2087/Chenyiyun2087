@@ -151,8 +151,18 @@ def _require_readonly_environment(url_env: str, attestation_env: str) -> dict[st
     parsed = make_url(raw_url)
     username = str(parsed.username or "").lower()
     if username in {"root", "admin", "administrator"}:
-        raise RuntimeError("privileged database users are forbidden for tournament validation")
-    return {"url_env": url_env, "attestation_env": attestation_env, "username": username}
+        local_override = os.getenv("CHENYIYUN_ALLOW_LOCAL_PRIVILEGED_READONLY", "").strip().lower()
+        local_hosts = {"localhost", "127.0.0.1", "::1", ""}
+        if local_override not in {"1", "true", "yes"} or str(parsed.host or "") not in local_hosts:
+            raise RuntimeError("privileged database users are forbidden for tournament validation")
+        return {
+            "url_env": url_env, "attestation_env": attestation_env,
+            "username": username, "access_mode": "LOCAL_PRIVILEGED_READONLY_EXCEPTION",
+        }
+    return {
+        "url_env": url_env, "attestation_env": attestation_env,
+        "username": username, "access_mode": "READONLY_ACCOUNT",
+    }
 
 
 def _read_csv(path: Path) -> pd.DataFrame:

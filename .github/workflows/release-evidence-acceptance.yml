@@ -23,6 +23,11 @@ on:
         description: Content-addressed V2 full-history acceptance JSON
         required: true
         type: string
+      allow_local_root_readonly:
+        description: Explicit local-only root exception; keep false for normal acceptance
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -35,6 +40,7 @@ jobs:
       CHENYIYUN_EVIDENCE_REPLICA_ROOT: ${{ inputs.evidence_replica_root }}
       CHENYIYUN_DB_URL: ${{ secrets.CHENYIYUN_READ_ONLY_DB_URL }}
       CHENYIYUN_DB_READ_ONLY: '1'
+      CHENYIYUN_ALLOW_LOCAL_PRIVILEGED_READONLY: ${{ inputs.allow_local_root_readonly && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

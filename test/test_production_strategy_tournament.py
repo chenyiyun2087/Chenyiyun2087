@@ -139,6 +139,13 @@ def test_formal_environment_requires_non_privileged_readonly_url(monkeypatch):
     with pytest.raises(RuntimeError, match="privileged database users"):
         _require_readonly_environment("TOURNAMENT_DB_URL", "TOURNAMENT_DB_READ_ONLY")
 
+    monkeypatch.setenv("CHENYIYUN_ALLOW_LOCAL_PRIVILEGED_READONLY", "1")
+    local_root = _require_readonly_environment("TOURNAMENT_DB_URL", "TOURNAMENT_DB_READ_ONLY")
+    assert local_root["access_mode"] == "LOCAL_PRIVILEGED_READONLY_EXCEPTION"
+    monkeypatch.setenv("TOURNAMENT_DB_URL", "mysql+pymysql://root:secret@remote.example/db")
+    with pytest.raises(RuntimeError, match="privileged database users"):
+        _require_readonly_environment("TOURNAMENT_DB_URL", "TOURNAMENT_DB_READ_ONLY")
+
     monkeypatch.setenv("TOURNAMENT_DB_URL", "mysql+pymysql://readonly@localhost/db")
     result = _require_readonly_environment("TOURNAMENT_DB_URL", "TOURNAMENT_DB_READ_ONLY")
     assert result["username"] == "readonly"

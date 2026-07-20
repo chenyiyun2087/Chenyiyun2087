@@ -31,14 +31,14 @@ canary_capital_authorized = false
 
 ## 外部证据阻断
 
-当前环境未配置 `CHENYIYUN_DB_URL`、`CHENYIYUN_EVIDENCE_ROOT` 和
-`CHENYIYUN_EVIDENCE_REPLICA_ROOT`。因此不能生成或声称以下结果：2013+ 正式 PIT 覆盖率、完整 25 情景经济回测、真实数据库集成零跳过、真实双账本 VERIFIED，以及 20+60 个真实交易日 Shadow。
+本地数据库已通过显式的 root 只读例外连接；主证据卷位于外置盘，副证据卷位于内置盘，主副 SHA 验证通过。首次 14 组件源表审计执行了零次写操作，但 14 项全部阻断：10 张 V2 源表尚不存在，现有交易日历、行情和公司行为表也缺少 V2 lineage 或业务字段。因此仍不能生成或声称以下结果：2013+ 正式 PIT 覆盖率、完整 25 情景经济回测、真实双账本 VERIFIED，以及 20+60 个真实交易日 Shadow。
 
 这些缺口是验收输入，不是可由历史模拟填补的工程缺口。数据接入后运行 Release Evidence workflow；失败时自动延长观察并继续 `BLOCKED / NO_SCALE`。
 
 ## 本地验证结果
 
 - 全量测试：`1392 passed, 16 skipped, 0 failed`；16 项均未被当作 Release Evidence 接受，正式 CI 的数据库层配置为发现 skip 即失败。
+- PIT V2 只读源审计：数据库连接成功、写操作 0、14/14 组件阻断；完整报告已写入主副 Evidence Store，SHA256 为 `e6d803b6529acebf42368c5fa9ca08ab77e4efb43be37a4b177e69ae9b16454d`。
 - V2 与 Golden 定向合同：`20 passed`。
 - 2013+ 执行矩阵 dry-run：5 个资金规模 × 5 个成本/滑点情景，共 25 项，命令与参数合同有效；没有把 dry-run 记为经济结果。
 - Golden comparator：`PASS`，差异数 0。

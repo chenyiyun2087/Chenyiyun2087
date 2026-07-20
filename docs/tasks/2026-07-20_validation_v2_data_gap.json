@@ -1,34 +1,63 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "as_of": "2026-07-20",
-  "status": "BLOCKED_EXTERNAL_INPUTS",
-  "missing_environment": [
-    "CHENYIYUN_DB_URL",
-    "CHENYIYUN_EVIDENCE_ROOT",
-    "CHENYIYUN_EVIDENCE_REPLICA_ROOT"
-  ],
-  "pit_v2_components_unverified": [
-    "trade_calendar",
-    "raw_daily_price",
-    "adjusted_daily_price",
-    "adjustment_factor",
-    "limit_rule",
-    "st_name_history",
-    "suspend_resume_history",
-    "list_delist_history",
-    "corporate_actions",
-    "industry_membership_history",
-    "theme_membership_history",
-    "financial_disclosure_visibility",
-    "factor_source_snapshot",
-    "score_schema"
-  ],
+  "status": "BLOCKED_PIT_V2_SOURCE_SCHEMA",
+  "environment": {
+    "database_connection": "PASS_LOCAL_ROOT_READONLY_EXCEPTION",
+    "database_write_operations_performed": 0,
+    "evidence_root": "/Volumes/extension/projects/chenyiyun_evidence",
+    "evidence_replica_root": "/Users/chenyiyun/QuantEvidenceReplica",
+    "evidence_volumes_physically_distinct": true,
+    "evidence_store_status": "VERIFIED",
+    "replica_status": "VERIFIED"
+  },
+  "source_audit": {
+    "component_count": 14,
+    "blocked_count": 14,
+    "evidence_sha256": "e6d803b6529acebf42368c5fa9ca08ab77e4efb43be37a4b177e69ae9b16454d",
+    "evidence_relative_path": "sha256/e6/d803b6529acebf42368c5fa9ca08ab77e4efb43be37a4b177e69ae9b16454d",
+    "existing_sources_with_missing_columns": {
+      "chenyiyun.dim_trade_cal": ["available_at", "data_version", "event_date", "ingested_at", "publish_date", "schema_version", "snapshot_sha", "source"],
+      "tushare_stock.dwd_stock_daily_standard.raw": ["available_at", "close", "data_version", "event_date", "high", "ingested_at", "low", "open", "publish_date", "schema_version", "snapshot_sha", "source"],
+      "tushare_stock.dwd_stock_daily_standard.adjusted": ["available_at", "data_version", "event_date", "ingested_at", "publish_date", "schema_version", "snapshot_sha", "source"],
+      "tushare_stock.ods_dividend": ["action_type", "available_at", "data_version", "event_date", "ingested_at", "publish_date", "schema_version", "snapshot_sha", "source"]
+    },
+    "missing_source_tables": [
+      "tushare_stock.dwd_stock_adj_factor",
+      "tushare_stock.dwd_stock_limit_rule_daily",
+      "tushare_stock.dwd_stock_name_history",
+      "tushare_stock.dwd_stock_suspend_history",
+      "tushare_stock.dwd_stock_lifecycle_history",
+      "tushare_stock.dwd_stock_industry_history",
+      "tushare_stock.dwd_stock_theme_history",
+      "tushare_stock.dwd_financial_disclosure_visibility",
+      "chenyiyun.factor_source_snapshot",
+      "chenyiyun.score_schema_history"
+    ],
+    "read_only_migration_candidates": {
+      "raw_daily_price": {"source": "tushare_stock.dwd_daily", "coverage": ["1990-12-19", "2026-07-17"]},
+      "adjustment_factor": {"source": "tushare_stock.dwd_adj_factor", "coverage": ["1990-12-19", "2026-07-17"]},
+      "limit_events": {"source": "tushare_stock.ods_limit_list_d_di", "coverage": ["2025-01-02", "2026-07-17"], "limitation": "event list, not complete daily rule history"},
+      "corporate_actions": {"source": "tushare_stock.ods_dividend", "coverage": ["1991-05-02", "2026-07-31"]},
+      "industry_theme_membership": {"source": "tushare_stock.dwd_plate_member_range_df", "coverage": ["1991-04-03", "2026-07-17"], "limitation": "requires plate type classification and PIT availability migration"},
+      "financial_disclosure_visibility": {"source": "tushare_stock.dws_disclosure_pit_daily", "coverage": ["2024-03-26", "2026-07-17"]},
+      "factor_input_snapshot": {"source": "tushare_stock.lab_factor_input_snapshot_di", "coverage": ["2026-03-18", "2026-03-18"]},
+      "factor_snapshot": {"source": "tushare_stock.ads_stock_factor_snapshot_di", "coverage": ["2025-11-03", "2026-07-17"]}
+    },
+    "unresolved_historical_data_gaps": [
+      "ST/name history: tushare_stock.ods_namechange is empty",
+      "suspension/resumption history: no suitable source table found",
+      "listing/delisting lifecycle history: current stock list is insufficient for PIT delist and survivor-bias control",
+      "daily limit-rule history before 2025 is not materialized and depends on complete board/ST/lifecycle history",
+      "financial disclosure visibility is missing from 2013-01-01 through 2024-03-25",
+      "historical factor-source snapshots and score-schema history are not materialized"
+    ]
+  },
   "formal_results_not_claimed": [
     "2013_plus_pit_coverage",
     "future_data_violation_count",
     "25_scenario_economic_results",
     "dual_ledger_verified",
-    "database_integration_zero_skip",
     "20_real_day_technical_shadow",
     "60_real_day_economic_shadow",
     "30_completed_round_trips"
