@@ -18,6 +18,41 @@ LAYER_NAMES = {
     "L5": "market_regime", "L6": "covariance_optimization",
 }
 
+# V2 is a matched, pre-registered matrix.  These identities are immutable;
+# reports may not silently omit a losing control arm.
+REQUIRED_V2_ABLATIONS = (
+    "FULL_STRATEGY",
+    "WITHOUT_BS",
+    "WITHOUT_INDUSTRY_RESONANCE",
+    "WITHOUT_NONLINEAR",
+    "WITHOUT_ASHARE_SUPPLEMENT",
+    "WITHOUT_LIQUIDITY",
+    "WITHOUT_TREND",
+    "TREND_PLUS_LIQUIDITY",
+    "EQUAL_WEIGHT_TOP5",
+    "RANDOM_TOP5",
+    "REVERSE_TOP5",
+)
+
+
+def validate_v2_ablation_matrix(frame: pd.DataFrame) -> dict[str, object]:
+    """Fail closed unless every pre-registered matched return arm is present."""
+    required_columns = {f"{name}_return" for name in REQUIRED_V2_ABLATIONS}
+    missing = sorted(required_columns.difference(frame.columns))
+    if missing:
+        raise ValueError(f"V2_ABLATION_INCOMPLETE: missing {missing}")
+    if "trade_date" not in frame.columns or frame["trade_date"].isna().any():
+        raise ValueError("V2_ABLATION_INVALID_DATE")
+    row_counts = {name: int(pd.to_numeric(frame[f"{name}_return"], errors="coerce").notna().sum()) for name in REQUIRED_V2_ABLATIONS}
+    if not row_counts or min(row_counts.values()) == 0 or len(set(row_counts.values())) != 1:
+        raise ValueError(f"V2_ABLATION_UNMATCHED_ROWS: {row_counts}")
+    return {
+        "status": "COMPLETE",
+        "matrix_version": "2.0",
+        "experiments": list(REQUIRED_V2_ABLATIONS),
+        "matched_row_count": next(iter(row_counts.values())),
+    }
+
 
 def _metrics(returns: pd.Series, turnover: pd.Series | None = None, cost: pd.Series | None = None) -> dict[str, float]:
     values = pd.to_numeric(returns, errors="coerce").dropna()

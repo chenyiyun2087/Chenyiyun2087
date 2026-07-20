@@ -53,8 +53,10 @@ earnings_season:
   fail_closed_on_missing_data: true
 
 portfolio_risk:
-  max_single_position_weight: 0.18
-  max_industry_weight: 0.35
+  max_single_position_weight: 0.15
+  max_industry_weight: 0.30
+  max_theme_weight: 0.40
+  max_top2_risk_contribution: 0.45
   switch_notional_ratio: 0.70
 
 execution:

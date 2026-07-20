@@ -97,7 +97,10 @@ def test_pipeline_readiness_blocks_when_any_critical_link_fails(monkeypatch):
     monkeypatch.setattr(gate, "check_bs_signal_complete", lambda target: {"check": "bs_signal_complete", "passed": True, "severity": "critical"})
     monkeypatch.setattr(gate, "check_health_monitor_ready", lambda target: {"check": "health_monitor_ready", "passed": True, "severity": "info"})
 
-    result = gate.all_checks(date(2026, 6, 24), candidate_count=5, emit_orders=True, order_count=0)
+    result = gate.all_checks(
+        date(2026, 6, 24), candidate_count=5, emit_orders=True, order_count=0,
+        zero_order_reason="NO_REBALANCE",
+    )
 
     assert result["status"] == "BLOCKED"
     assert result["passed"] is False

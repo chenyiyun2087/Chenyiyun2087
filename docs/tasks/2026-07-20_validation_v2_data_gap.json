@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "as_of": "2026-07-20",
+  "status": "BLOCKED_EXTERNAL_INPUTS",
+  "missing_environment": [
+    "CHENYIYUN_DB_URL",
+    "CHENYIYUN_EVIDENCE_ROOT",
+    "CHENYIYUN_EVIDENCE_REPLICA_ROOT"
+  ],
+  "pit_v2_components_unverified": [
+    "trade_calendar",
+    "raw_daily_price",
+    "adjusted_daily_price",
+    "adjustment_factor",
+    "limit_rule",
+    "st_name_history",
+    "suspend_resume_history",
+    "list_delist_history",
+    "corporate_actions",
+    "industry_membership_history",
+    "theme_membership_history",
+    "financial_disclosure_visibility",
+    "factor_source_snapshot",
+    "score_schema"
+  ],
+  "formal_results_not_claimed": [
+    "2013_plus_pit_coverage",
+    "future_data_violation_count",
+    "25_scenario_economic_results",
+    "dual_ledger_verified",
+    "database_integration_zero_skip",
+    "20_real_day_technical_shadow",
+    "60_real_day_economic_shadow",
+    "30_completed_round_trips"
+  ],
+  "current_decision": {
+    "promotion_status": "BLOCKED",
+    "capital_status": "NO_SCALE",
+    "canary_capital_authorized": false
+  }
+}

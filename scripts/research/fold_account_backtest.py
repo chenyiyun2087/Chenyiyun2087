@@ -30,6 +30,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from runtime.exit_policy import evaluate_exit_policy
 
 from scripts.research.constrained_weights import (
     PortfolioConstraints,
@@ -783,6 +784,14 @@ class FoldAccountBacktest:
                     price_meta_map[str(sym)] = ({
                         "is_suspended": bool(_safe_float(row.get("is_suspended", row.get("suspend_type")), 0)),
                         "is_delisted": bool(_safe_float(row.get("is_delisted"), 0)),
+                        "is_st": bool(_safe_float(row.get("is_st"), 0)),
+                        "major_event": bool(_safe_float(row.get("major_event"), 0)),
+                        "industry_risk_red": bool(_safe_float(row.get("industry_risk_red"), 0)),
+                        "consecutive_unfilled_risk": bool(_safe_float(row.get("consecutive_unfilled_risk"), 0)),
+                        "alpha_sell_signal": bool(_safe_float(row.get("alpha_sell_signal"), 0)),
+                        "corporate_action_anomaly": bool(_safe_float(row.get("corporate_action_anomaly"), 0)),
+                        "data_anomaly": bool(_safe_float(row.get("data_anomaly"), 0)),
+                        "account_hard_risk": bool(_safe_float(row.get("account_hard_risk"), 0)),
                         "rank_score": _safe_float(row.get("rank_score"), 0.0),
                         "rank": int(_safe_float(row.get("rank"), 999)),
                     } if hasattr(row, "get") else {})
@@ -1124,6 +1133,7 @@ class FoldAccountBacktest:
                 # PR26A L2: Pending exits persist in account.pending_exits
                 # and are retried before all other sells.
                 sells_to_execute: list[tuple[str, int, str]] = []  # (sym, shares, reason)
+                exit_decision_details: dict[str, dict[str, Any]] = {}
 
                 # --- L2: Retry pending exits first ---
                 for sym in list(account.pending_exits.keys()):
@@ -1152,10 +1162,19 @@ class FoldAccountBacktest:
                     is_suspended = meta.get("is_suspended", False)
                     is_delisted = meta.get("is_delisted", False)
 
-                    # Gate 0: Hard risk — forced exit regardless of lock
-                    if is_delisted:
-                        exit_reason = "hard_exit:delisted"
+                    # Gate 0: canonical minimum-holding preference.  Explicit
+                    # PIT risk flags may bypass the ten-day preference.
+                    policy_decision = evaluate_exit_policy(
+                        holding_days=holding_days_sym,
+                        minimum_holding_days=hold_days,
+                        signals=meta,
+                    )
+                    if policy_decision.should_exit and policy_decision.bypass_minimum_holding:
+                        exit_reason = f"early_exit:{policy_decision.reason_code}"
+                        exit_decision_details[sym] = policy_decision.to_dict()
                     elif is_suspended:
+                        # Suspension is not itself a successful exit trigger;
+                        # preserve a pending retry until the stock is tradable.
                         exit_reason = "hard_exit:suspended"
 
                     # Gate 1: Maximum holding days (A9: force exit at max_hold)
@@ -1182,6 +1201,12 @@ class FoldAccountBacktest:
                         )
                         if should_exit:
                             exit_reason = f"alpha_decay:{exit_msg}"
+                            exit_decision_details[sym] = {
+                                "should_exit": True, "reason_code": "ALPHA_DECAY",
+                                "priority": 60, "evidence": {"runtime_reason": exit_msg},
+                                "bypass_minimum_holding": True,
+                                "retry_required_if_unfilled": True,
+                            }
 
                     # Gate 3: Fixed-hold exit (A7/A8: always exit after hold_days)
                     if not exit_reason and not uses_decay_exit and sym not in locked_until:
@@ -1272,6 +1297,7 @@ class FoldAccountBacktest:
                             "experiment_id": experiment_id, "window": window_label,
                             "trade_date": trade_date, "symbol": sym,
                             "exit_reason": reason, "exit_shares": sold,
+                            "exit_decision": exit_decision_details.get(sym, {}),
                         })
                         position_entry_day.pop(sym, None)
                         locked_until.pop(sym, None)

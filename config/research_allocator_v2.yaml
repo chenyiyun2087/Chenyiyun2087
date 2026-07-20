@@ -1,0 +1,13 @@
+schema_version: "1.0"
+allocator_id: research_allocator_50_30_20_v1
+status: RESEARCH_ONLY
+production_route_allowed: false
+weights:
+  frozen_champion: 0.50
+  regime_matched: 0.30
+  challenger_shadow: 0.20
+required_states:
+  frozen_champion: CHAMPION_BENCHMARK
+  regime_matched: SHADOW
+  challenger_shadow: SHADOW
+promotion_policy: MANUAL_AFTER_ALL_ACCEPTANCE_GATES

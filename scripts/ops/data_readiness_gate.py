@@ -38,6 +38,14 @@ EXPECTED_BSE_ROWS: int = 100     # Beijing (minimal)
 
 MAX_STALE_CALENDAR_DAYS: int = 2     # T+1 data delay tolerance
 MAX_STALE_TRADING_DAYS: int = 1      # Must not be more than 1 trading day behind
+MAX_EXPORTED_CANDIDATES: int = 20
+ZERO_ORDER_REASON_CODES: frozenset[str] = frozenset({
+    "NO_REBALANCE",
+    "NO_ELIGIBLE_CANDIDATE",
+    "RISK_GATE_BLOCKED",
+    "DATA_STALE",
+    "POSITION_HOLD_GATE",
+})
 
 FRESHNESS_CHECK_SYMBOLS: tuple[str, ...] = (
     "600519.SH",  # Kweichow Moutai
@@ -742,25 +750,71 @@ class PipelineReadinessGate:
         if not row:
             return {"check": "health_monitor_ready", "passed": False, "detail": "missing_health_record", "severity": "critical"}
         grade = str(row[1] or "UNKNOWN").upper()
+        try:
+            health_date = datetime.fromisoformat(str(row[0])[:10]).date()
+        except (TypeError, ValueError):
+            return {
+                "check": "health_monitor_ready", "passed": False,
+                "detail": "invalid_health_date", "severity": "critical",
+                "order_permission": "SELL_AND_MAINTAIN_ONLY",
+            }
+        try:
+            with self._engine.connect() as conn:
+                trading_days_behind = int(conn.execute(
+                    text_fn(
+                        "SELECT COUNT(DISTINCT cal_date) FROM chenyiyun.dim_trade_cal "
+                        "WHERE exchange = 'SSE' AND is_open = 1 "
+                        "AND cal_date > :health_date AND cal_date <= :target_date"
+                    ),
+                    {"health_date": health_date.isoformat(), "target_date": target_date.isoformat()},
+                ).scalar() or 0)
+        except Exception as exc:
+            return {
+                "check": "health_monitor_ready", "passed": False,
+                "detail": f"calendar_age_query_error={exc}", "severity": "critical",
+                "as_of_date": health_date.isoformat(), "overall_grade": grade,
+                "order_permission": "SELL_AND_MAINTAIN_ONLY",
+            }
+        stale = trading_days_behind > MAX_STALE_TRADING_DAYS
+        passed = grade in {"GREEN", "YELLOW"} and not stale
+        if stale or grade not in {"GREEN", "YELLOW"}:
+            permission = "SELL_AND_MAINTAIN_ONLY"
+        elif grade == "YELLOW":
+            permission = "FREEZE_NEW_HIGH_RISK"
+        else:
+            permission = "NORMAL_MANUAL_DRAFTS"
         return {
             "check": "health_monitor_ready",
-            "passed": grade in {"GREEN", "YELLOW"},
-            "severity": "critical" if grade not in {"GREEN", "YELLOW"} else "info",
-            "as_of_date": str(row[0]),
+            "passed": passed,
+            "severity": "critical" if not passed else "info",
+            "as_of_date": health_date.isoformat(),
             "overall_grade": grade,
+            "trading_days_behind": trading_days_behind,
+            "stale": stale,
+            "order_permission": permission,
         }
 
     def check_candidate_export_ready(self, target_date: date, candidate_count: int | None = None) -> dict[str, Any]:
-        passed = candidate_count is not None and int(candidate_count) > 0
+        passed = candidate_count is not None and 1 <= int(candidate_count) <= MAX_EXPORTED_CANDIDATES
         return {
             "check": "candidate_export_ready",
             "passed": passed,
             "severity": "critical",
             "candidate_count": candidate_count,
-            "detail": "candidate_count_not_supplied_pre_export" if candidate_count is None else "",
+            "detail": (
+                "candidate_count_not_supplied_pre_export" if candidate_count is None
+                else "candidate_count_out_of_range" if not passed else ""
+            ),
         }
 
-    def check_order_draft_ready(self, target_date: date, *, emit_orders: bool, order_count: int | None = None) -> dict[str, Any]:
+    def check_order_draft_ready(
+        self,
+        target_date: date,
+        *,
+        emit_orders: bool,
+        order_count: int | None = None,
+        zero_order_reason: str | None = None,
+    ) -> dict[str, Any]:
         if not emit_orders:
             return {
                 "check": "order_draft_ready",
@@ -769,12 +823,22 @@ class PipelineReadinessGate:
                 "detail": "emit_orders_disabled",
                 "order_count": order_count,
             }
+        normalized_reason = str(zero_order_reason or "").strip().upper() or None
+        passed = order_count is not None and int(order_count) >= 0
+        if passed and int(order_count) == 0:
+            passed = normalized_reason in ZERO_ORDER_REASON_CODES
         return {
             "check": "order_draft_ready",
-            "passed": order_count is not None and int(order_count) >= 0,
+            "passed": passed,
             "severity": "critical",
             "order_count": order_count,
-            "detail": "order_count_unverified" if order_count is None else "",
+            "zero_order_reason": normalized_reason,
+            "allowed_zero_order_reasons": sorted(ZERO_ORDER_REASON_CODES),
+            "detail": (
+                "order_count_unverified" if order_count is None
+                else "zero_order_reason_required" if int(order_count) == 0 and not passed
+                else ""
+            ),
         }
 
     def all_checks(
@@ -784,7 +848,9 @@ class PipelineReadinessGate:
         candidate_count: int | None = None,
         emit_orders: bool = False,
         order_count: int | None = None,
+        zero_order_reason: str | None = None,
         allow_historical: bool = False,
+        validate_outputs: bool = True,
     ) -> dict[str, Any]:
         scoring_check = (
             self.check_scoring_complete(target_date, allow_historical=True)
@@ -797,10 +863,29 @@ class PipelineReadinessGate:
             self.check_industry_complete(target_date),
             self.check_bs_signal_complete(target_date),
             self.check_health_monitor_ready(target_date),
-            self.check_candidate_export_ready(target_date, candidate_count),
-            self.check_order_draft_ready(target_date, emit_orders=emit_orders, order_count=order_count),
         ]
-        return _summarize(self._checks, target_date, gate_name="pipeline_readiness")
+        if validate_outputs:
+            self._checks.extend([
+                self.check_candidate_export_ready(target_date, candidate_count),
+                self.check_order_draft_ready(
+                    target_date,
+                    emit_orders=emit_orders,
+                    order_count=order_count,
+                    zero_order_reason=zero_order_reason,
+                ),
+            ])
+        result = _summarize(self._checks, target_date, gate_name="pipeline_readiness")
+        health = next((item for item in self._checks if item.get("check") == "health_monitor_ready"), {})
+        result.update({
+            "candidate_count": candidate_count,
+            "order_count": order_count,
+            "zero_order_reason": zero_order_reason,
+            "health_as_of_date": health.get("as_of_date"),
+            "health_trading_days_behind": health.get("trading_days_behind"),
+            "order_permission": health.get("order_permission", "SELL_AND_MAINTAIN_ONLY"),
+            "outputs_validated": validate_outputs,
+        })
+        return result
 
     @staticmethod
     def write_evidence(result: dict[str, Any], output_dir: str | Path) -> Path:

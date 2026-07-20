@@ -1,0 +1,97 @@
+{
+  "baseline_id": "strict-ledger-core.v1",
+  "expected": {
+    "artifacts": {
+      "chenyiyun_selected_topn": {
+        "row_count": 1,
+        "sha256": "e2cd92c0e07ffec5b439dbb8509d71e44205ed06e63836c512026b0e445f018e"
+      },
+      "events": {
+        "row_count": 4,
+        "sha256": "d5dfe5826d8812c30e75855ce1d061d586071bf51d9cd7808b688aeb990314ff"
+      },
+      "independent_ledger": {
+        "row_count": 1,
+        "sha256": "b6b9d1112d18d2fe87de930300347c14577fc6b9202fc88b8ed29ecfa7cce226"
+      },
+      "mysql_redacted_snapshot": {
+        "row_count": 1,
+        "sha256": "33a6fd5454426f5a34fb8cc86a503fb22a4cd071dbf671c96b05887357febc8b"
+      },
+      "nav": {
+        "row_count": 2,
+        "sha256": "2a918c1d22047cc71190bcbc783c45daf4f85fd1774dba5f102032bac456bc15"
+      },
+      "orders": {
+        "row_count": 1,
+        "sha256": "c2f23f5677870cf34c12999d7b0d5fe3d7f204463a7ee5d120f141542b68a8b4"
+      },
+      "prices": {
+        "row_count": 2,
+        "sha256": "5201a3c8933fa50864e1c0061ed239126657cc7058955581115c92b6e4ac5d52"
+      },
+      "primary_ledger": {
+        "row_count": 1,
+        "sha256": "b6b9d1112d18d2fe87de930300347c14577fc6b9202fc88b8ed29ecfa7cce226"
+      },
+      "score_rank_m1_m2_m6_m7": {
+        "row_count": 1,
+        "sha256": "e05fc2358a578871f3c9d6a5854c423d27994c7703a678f1f3c0a5f4f925363f"
+      }
+    },
+    "invariants": {
+      "corporate_actions_pre_execution": true,
+      "dual_ledger_verified": true,
+      "execution_mode": "strict_t1_open_precommit",
+      "mark_price_basis": "raw",
+      "mysql_snapshot_redacted": true,
+      "replay_pass": true
+    },
+    "metrics": {
+      "end_equity": 1010.0,
+      "max_event_replay_error_bps": 0.0,
+      "max_ledger_vs_nav_error_bps": 0.0,
+      "start_equity": 1000.0
+    },
+    "selection": {
+      "symbols": [
+        "000001"
+      ],
+      "weights": {
+        "000001": 0.15
+      }
+    }
+  },
+  "metadata": {
+    "approval": "initial bootstrap baseline; changes require reviewed baseline update",
+    "approved_at": "2026-07-20T00:00:00+08:00",
+    "approved_by": "chenyiyun (Validation V2 implementation authorization)",
+    "change_reason": "PR135 rebase: extend fail-closed scope to TopN, weights, orders, NAV, dual ledgers, ScoreRank M1/M2/M6/M7 and redacted MySQL fixture",
+    "component": "strict_execution_ledger",
+    "fixture_id": "strict-ledger-core-fixture.v1",
+    "owner": "research-runtime",
+    "previous_baseline_sha256": "4a1edc441d1fe8ec2d5d317a2f4f51043701878bb2c3d643b4133e46c65a3aab"
+  },
+  "schema_version": "1.0",
+  "tolerances": {
+    "metrics.end_equity": {
+      "absolute": 0.0
+    },
+    "metrics.max_event_replay_error_bps": {
+      "absolute": 0.0
+    },
+    "metrics.max_ledger_vs_nav_error_bps": {
+      "absolute": 0.0
+    },
+    "metrics.start_equity": {
+      "absolute": 0.0
+    },
+    "selection.symbols": {
+      "max_symbol_changes": 0,
+      "order_sensitive": true
+    },
+    "selection.weights.000001": {
+      "absolute": 0.0
+    }
+  }
+}

@@ -9,20 +9,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
+from scripts.research.oos_registry import fixed_windows
 
 
-FIXED_WINDOWS = (
-    ("2024Q1", "2024-01-01", "2024-03-31"),
-    ("2024Q2", "2024-04-01", "2024-06-30"),
-    ("2024Q3", "2024-07-01", "2024-09-30"),
-    ("2024Q4", "2024-10-01", "2024-12-31"),
-    ("2025Q1", "2025-01-01", "2025-03-31"),
-    ("2025Q2", "2025-04-01", "2025-06-30"),
-    ("2025Q3", "2025-07-01", "2025-09-30"),
-    ("2025Q4", "2025-10-01", "2025-12-31"),
-    ("2026Q1", "2026-01-01", "2026-03-31"),
-    ("2026Q2", "2026-04-01", "2026-06-30"),
-)
+FIXED_WINDOWS = fixed_windows()
 
 # PR20: Windows that are still in-progress as of the current date.
 # These windows must NOT be used for promotion statistics.

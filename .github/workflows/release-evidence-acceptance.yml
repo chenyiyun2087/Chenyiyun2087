@@ -19,6 +19,10 @@ on:
         description: Absolute path to the frozen dual-ledger input package
         required: true
         type: string
+      full_history_package:
+        description: Content-addressed V2 full-history acceptance JSON
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -41,6 +45,10 @@ jobs:
         run: python scripts/maintenance/manage_evidence_store.py verify
       - name: Verify frozen PIT snapshot and replica
         run: python scripts/ops/verify_pit_snapshot.py --manifest "${{ inputs.pit_manifest }}"
+      - name: Audit all fourteen PIT V2 source contracts read-only
+        run: python scripts/maintenance/audit_pit_v2_sources.py --output /tmp/pit-v2-source-audit.json
+      - name: Verify complete 2013+ account-level research evidence
+        run: python scripts/research/validate_full_history_v2_evidence.py --input "${{ inputs.full_history_package }}"
       - name: Run real dual-ledger acceptance package
         run: python scripts/research/run_dual_ledger_acceptance.py --package "${{ inputs.dual_ledger_package }}" --output /tmp/dual-ledger-acceptance
       - name: Strict and independent ledger gates
@@ -52,5 +60,7 @@ jobs:
           test/test_pr18_independent_oracle.py
           test/test_pr19_oracle_coverage.py
           test/test_comprehensive_trust_upgrade.py
+          test/test_quant_validation_v2.py
+          regression/tests
       - name: Require read-only database credential
         run: test -n "$CHENYIYUN_DB_URL"

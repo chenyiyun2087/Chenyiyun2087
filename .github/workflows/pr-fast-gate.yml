@@ -30,6 +30,17 @@ jobs:
           test/test_p0_trustworthiness.py
           test/test_production_config_consistency.py
           test/test_production_health_order_gating.py
+          test/test_quant_validation_v2.py
+          regression/tests
+      - name: Enforce canonical portfolio entry point
+        run: >-
+          ! rg "from scripts\\.research\\.alpha_risk_portfolio|import RiskPortfolioBuilder"
+          runtime scripts scoreRank
+          --glob '!scripts/research/alpha_risk_portfolio.py'
+      - name: Verify fixed-capital release freeze
+        run: >-
+          python scripts/ops/verify_release_freeze.py
+          --freeze config/release_freeze/prod-fixed-v2-20260720-01.json
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
         env:

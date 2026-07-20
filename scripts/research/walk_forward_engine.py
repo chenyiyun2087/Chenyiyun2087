@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -39,24 +39,14 @@ from scripts.research.walk_forward_metrics import (
 )
 from scripts.research.executable_labels import compute_executable_forward_returns
 from scripts.research.strategy_runtime import resolve_runtime
+from scripts.research.oos_registry import fixed_window_pairs
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 # Fixed OOS validation windows — the only windows that matter for the gate.
-FIXED_VALIDATION_WINDOWS: list[tuple[str, str]] = [
-    ("2024-01-01", "2024-03-31"),   # 2024Q1
-    ("2024-04-01", "2024-06-30"),   # 2024Q2
-    ("2024-07-01", "2024-09-30"),   # 2024Q3
-    ("2024-10-01", "2024-12-31"),   # 2024Q4
-    ("2025-01-01", "2025-03-31"),   # 2025Q1
-    ("2025-04-01", "2025-06-30"),   # 2025Q2
-    ("2025-07-01", "2025-09-30"),   # 2025Q3
-    ("2025-10-01", "2025-12-31"),   # 2025Q4
-    ("2026-01-01", "2026-03-31"),   # 2026Q1
-    ("2026-04-01", "2026-06-30"),   # 2026Q2
-]
+FIXED_VALIDATION_WINDOWS: list[tuple[str, str]] = fixed_window_pairs()
 
 DEFAULT_TRAIN_MONTHS = 12
 DEFAULT_VALIDATE_MONTHS = 3
@@ -85,6 +75,10 @@ class WalkForwardConfig:
     fixed_validation_windows: list[tuple[str, str]] = field(
         default_factory=lambda: list(FIXED_VALIDATION_WINDOWS)
     )
+    # Pre-registered candidates.  Validation may choose one; Test may never
+    # create or alter this set.
+    hold_day_candidates: tuple[int, ...] = (5, 8, 10, 12, 15)
+    factor_schema_version: str = "1.0"
 
 
 @dataclass(frozen=True)
@@ -119,6 +113,9 @@ class FoldResult:
     # PR3: per-factor diagnostic reports (populated for A7)
     factor_reports: list[Any] = field(default_factory=list)
     composite_factor_report: Any | None = None
+    validation_selection: dict[str, Any] = field(default_factory=dict)
+    frozen_model_identity: dict[str, Any] = field(default_factory=dict)
+    test_metrics_only: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +312,8 @@ class WalkForwardEngine:
                         "test_end": test_end,
                         "purge_days": self.config.purge_trading_days,
                         "embargo_days": self.config.embargo_trading_days,
+                        "hold_day_candidates": list(self.config.hold_day_candidates),
+                        "factor_schema_version": self.config.factor_schema_version,
                     },
                     sort_keys=True,
                 ).encode()
@@ -372,31 +371,44 @@ class WalkForwardEngine:
             ),
         )
 
-        # Validation is reserved for model/parameter selection.  Economic
-        # metrics are computed only on the untouched test window.
-        validate_scores = scores[
+        # Validation is used exclusively to select one pre-registered
+        # parameter candidate.  Economic metrics below are computed only on
+        # the untouched Test window.
+        validation_scores = scores[
             (
                 pd.to_datetime(scores["trade_date"], errors="coerce").dt.date
-                >= pd.Timestamp(fold.test_start).date()
+                >= pd.Timestamp(fold.validate_start).date()
             )
             & (
                 pd.to_datetime(scores["trade_date"], errors="coerce").dt.date
-                <= pd.Timestamp(fold.test_end).date()
+                <= pd.Timestamp(fold.validate_end).date()
             )
         ].copy()
 
-        validate_prices = prices[
+        validation_prices = prices[
             (
                 pd.to_datetime(prices["trade_date"], errors="coerce").dt.date
-                >= pd.Timestamp(fold.test_start).date()
+                >= pd.Timestamp(fold.validate_start).date()
             )
             & (
                 pd.to_datetime(prices["trade_date"], errors="coerce").dt.date
-                <= pd.Timestamp(fold.test_end).date()
+                <= pd.Timestamp(fold.validate_end).date()
             )
         ].copy()
 
-        if validate_scores.empty:
+        test_scores = scores[
+            (pd.to_datetime(scores["trade_date"], errors="coerce").dt.date >= pd.Timestamp(fold.test_start).date())
+            & (pd.to_datetime(scores["trade_date"], errors="coerce").dt.date <= pd.Timestamp(fold.test_end).date())
+        ].copy()
+        test_prices = prices[
+            (pd.to_datetime(prices["trade_date"], errors="coerce").dt.date >= pd.Timestamp(fold.test_start).date())
+            & (pd.to_datetime(prices["trade_date"], errors="coerce").dt.date <= pd.Timestamp(fold.test_end).date())
+        ].copy()
+
+        if validation_scores.empty:
+            result.error = f"empty_validation_scores:{fold.validate_start}..{fold.validate_end}"
+            return result
+        if test_scores.empty:
             result.error = f"empty_test_scores:{fold.test_start}..{fold.test_end}"
             return result
 
@@ -419,35 +431,76 @@ class WalkForwardEngine:
                 else None
             )
             runtime_state = runtime.fit(train_scores, train_prices, train_labels)
-            ranked_days: list[pd.DataFrame] = []
-            validation_dates = sorted(validate_scores["trade_date"].dropna().unique())
-            for signal_date in validation_dates:
-                as_of = pd.Timestamp(signal_date).date()
-                history_scores = scores[
-                    pd.to_datetime(scores["trade_date"], errors="coerce").dt.date <= as_of
-                ].copy()
-                history_prices = prices[
-                    pd.to_datetime(prices["trade_date"], errors="coerce").dt.date <= as_of
-                ].copy()
-                day_ranked = runtime.rank_as_of(
-                    runtime_state,
-                    str(as_of),
-                    history_scores,
-                    history_prices,
+            def rank_window(window_scores: pd.DataFrame) -> pd.DataFrame:
+                ranked_days: list[pd.DataFrame] = []
+                for signal_date in sorted(window_scores["trade_date"].dropna().unique()):
+                    as_of = pd.Timestamp(signal_date).date()
+                    history_scores = scores[
+                        pd.to_datetime(scores["trade_date"], errors="coerce").dt.date <= as_of
+                    ].copy()
+                    history_prices = prices[
+                        pd.to_datetime(prices["trade_date"], errors="coerce").dt.date <= as_of
+                    ].copy()
+                    day_ranked = runtime.rank_as_of(
+                        runtime_state, str(as_of), history_scores, history_prices,
+                    )
+                    if day_ranked.empty:
+                        raise RuntimeError(f"empty ranking on {as_of}")
+                    exposure = runtime.target_exposure(runtime_state, str(as_of))
+                    ranked_days.append(runtime.build_weights(
+                        runtime_state, day_ranked, str(as_of), history_prices,
+                        exposure, runner_spec.top_n,
+                    ))
+                return pd.concat(ranked_days, ignore_index=True) if ranked_days else pd.DataFrame()
+
+            validation_ranked = rank_window(validation_scores)
+            if validation_ranked.empty:
+                raise RuntimeError("empty validation ranking output")
+
+            validation_calendar = [
+                day for day in self.calendar
+                if pd.Timestamp(fold.validate_start).date() <= pd.Timestamp(day).date() <= pd.Timestamp(fold.validate_end).date()
+            ]
+            candidate_audit: list[dict[str, Any]] = []
+            for candidate_index, hold_days in enumerate(self.config.hold_day_candidates):
+                candidate_spec = replace(runner_spec, hold_days=int(hold_days))
+                candidate_curve = MatchedPortfolioRunner(candidate_spec, validation_calendar)._run_base_curve(
+                    validation_ranked,
+                    validation_prices,
+                    curve_name=f"{experiment.experiment_id}_fold_{fold.fold_index}_validation_hold_{hold_days}",
+                    rank_fn=lambda frame, **kwargs: frame,
                 )
-                if day_ranked.empty:
-                    raise RuntimeError(f"empty ranking on {as_of}")
-                exposure = runtime.target_exposure(runtime_state, str(as_of))
-                day_weighted = runtime.build_weights(
-                    runtime_state,
-                    day_ranked,
-                    str(as_of),
-                    history_prices,
-                    exposure,
-                    runner_spec.top_n,
-                )
-                ranked_days.append(day_weighted)
-            ranked = pd.concat(ranked_days, ignore_index=True) if ranked_days else pd.DataFrame()
+                nav = pd.Series([row["nav"] for row in candidate_curve.nav_rows], dtype=float)
+                metrics = WalkForwardMetrics.compute_window_metrics(nav, pd.DataFrame(candidate_curve.trade_rows))
+                candidate_audit.append({
+                    "candidate_index": candidate_index,
+                    "parameters": {"hold_days": int(hold_days)},
+                    "calmar": float(metrics.calmar_ratio),
+                    "total_return": float(metrics.total_return),
+                    "trade_count": int(len(candidate_curve.trade_rows)),
+                })
+            winner = max(candidate_audit, key=lambda item: (item["calmar"], -item["candidate_index"]))
+            selected_runner_spec = replace(runner_spec, hold_days=int(winner["parameters"]["hold_days"]))
+            parameter_payload = {
+                "factor_model_id": f"{experiment.experiment_id}-fold-{fold.fold_index}",
+                "factor_schema_version": self.config.factor_schema_version,
+                "train_end": fold.train_end,
+                "parameter_candidates": [item["parameters"] for item in candidate_audit],
+                "selected_parameters": winner["parameters"],
+                "random_seed": f"{experiment.experiment_id}:{fold.config_sha}",
+                "fold_config_sha": fold.config_sha,
+            }
+            parameter_payload["config_sha"] = hashlib.sha256(
+                json.dumps(parameter_payload, ensure_ascii=False, sort_keys=True).encode()
+            ).hexdigest()
+            result.validation_selection = {
+                "window": [fold.validate_start, fold.validate_end],
+                "objective": "max_calmar_then_preregistered_order",
+                "candidates": candidate_audit,
+                "winner": winner,
+            }
+            result.frozen_model_identity = parameter_payload
+            ranked = rank_window(test_scores)
         except NotImplementedError:
             result.error = f"NOT_AVAILABLE:{experiment.experiment_id}"
             return result
@@ -459,8 +512,8 @@ class WalkForwardEngine:
             result.error = "empty_ranking_output"
             return result
 
-        # Run through MatchedPortfolioRunner for the validate period
-        validate_calendar = [
+        # Run the frozen Validation winner through the untouched Test period.
+        test_calendar = [
             d for d in self.calendar
             if (
                 pd.Timestamp(fold.test_start).date()
@@ -492,12 +545,12 @@ class WalkForwardEngine:
                     pass
 
         runner = MatchedPortfolioRunner(
-            runner_spec, validate_calendar, decay_exit_rule=decay_rule,
+            selected_runner_spec, test_calendar, decay_exit_rule=decay_rule,
         )
 
         # Use a generic curve run with the ranked data as input
         curve = runner._run_base_curve(
-            ranked, validate_prices,
+            ranked, test_prices,
             curve_name=f"{experiment.experiment_id}_fold_{fold.fold_index}",
             rank_fn=lambda df, **kw: df,  # identity — already ranked
         )

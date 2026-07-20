@@ -1,4 +1,4 @@
-"""Risk-aware portfolio construction for the alpha walk-forward pipeline.
+"""Deprecated compatibility implementation for historical research only.
 
 RiskPortfolioBuilder translates AlphaModel rankings into risk-adjusted
 position weights via a per-day pipeline:
@@ -114,6 +114,12 @@ class RiskPortfolioBuilder:
     """
 
     def __init__(self, config: RiskPortfolioConfig | None = None) -> None:
+        import warnings
+        warnings.warn(
+            "DEPRECATED_DO_NOT_USE: use scripts.research.constrained_weights.construct_portfolio",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.config = config or RiskPortfolioConfig()
 
     # ------------------------------------------------------------------
@@ -248,7 +254,7 @@ class RiskPortfolioBuilder:
           3. Cap industry weight at max_industry_pct
           4. Apply drawdown scaling
           5. Drop sub-min_weight stocks
-          6. Re-normalize to sum to 1.0
+          6. Restore only the drawdown-scaled target exposure; keep residual cash
         """
         result = day_df.copy()
         n = len(result)
@@ -307,10 +313,7 @@ class RiskPortfolioBuilder:
         # --- Step 4: Drawdown scaling ---
         exposure_mult = self.exposure_multiplier(current_drawdown)
         result["_weight"] *= exposure_mult
-        # Re-normalize after scaling
-        w_sum = result["_weight"].sum()
-        if w_sum > 0:
-            result["_weight"] /= w_sum
+        # Never re-normalize after exposure scaling.  The residual is cash.
 
         # --- Step 5: Drop sub-min_weight ---
         result = result[result["_weight"] >= self.config.min_weight].copy()
@@ -323,12 +326,15 @@ class RiskPortfolioBuilder:
             )
             return result
 
-        # --- Step 6: Final normalize ---
-        final_sum = result["_weight"].sum()
-        if final_sum > 0:
-            result["effective_weight"] = result["_weight"] / final_sum
+        # --- Step 6: Preserve the pre-drop exposure, never scale back to 100% ---
+        surviving_sum = float(result["_weight"].sum())
+        if surviving_sum > 0:
+            result["effective_weight"] = (
+                result["_weight"].clip(lower=0.0) / surviving_sum * exposure_mult
+            )
         else:
-            result["effective_weight"] = 1.0 / max(len(result), 1)
+            result["effective_weight"] = 0.0
+        result["cash_weight"] = max(0.0, 1.0 - float(result["effective_weight"].sum()))
 
         # Cleanup temporary columns
         result.drop(

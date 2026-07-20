@@ -183,9 +183,10 @@ acceptance:
   portfolio_risk_controls:
     current_approved_total_exposure_pct_nav: 50
     system_hard_max_total_exposure_pct_nav: 85
-    max_single_position_weight_pct_nav: 18
-    max_single_industry_weight_pct_nav: 35
-    max_correlated_theme_weight_pct_nav: 55
+    max_single_position_weight_pct_nav: 15
+    max_single_industry_weight_pct_nav: 30
+    max_correlated_theme_weight_pct_nav: 40
+    max_top2_risk_contribution_pct: 45
     max_daily_new_position_pct_nav: 30
     max_daily_turnover_pct_nav: 50
     max_single_order_adv_ratio: 0.01

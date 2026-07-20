@@ -39,6 +39,12 @@ class FactorReport:
     quantile_monotonicity: float = 0.0  # corr(decile_index, mean_return)
     # Cost-adjusted
     cost_adjusted_return: float = 0.0
+    turnover: float = 0.0
+    half_life_days: float = 0.0
+    regime_stability: float = 0.0
+    marginal_calmar: float = 0.0
+    neutralized_return: float = 0.0
+    capacity_cny: float = 0.0
     # Stability
     industry_stability: float = 0.0   # std of IC across industries
     cap_stability: float = 0.0        # IC for large vs small cap
@@ -68,6 +74,12 @@ class FactorReport:
             "top10_lift": self.top10_lift,
             "quantile_monotonicity": self.quantile_monotonicity,
             "cost_adjusted_return": self.cost_adjusted_return,
+            "turnover": self.turnover,
+            "half_life_days": self.half_life_days,
+            "regime_stability": self.regime_stability,
+            "marginal_calmar": self.marginal_calmar,
+            "neutralized_return": self.neutralized_return,
+            "capacity_cny": self.capacity_cny,
             "industry_stability": self.industry_stability,
             "cap_stability": self.cap_stability,
             "status_stability": self.status_stability,

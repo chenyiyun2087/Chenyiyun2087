@@ -68,8 +68,10 @@ meta_allocator:
     min_trade_value: 500.0
     initial_cash: 10_000_000.0     # 1000万初始资金
     max_total_positions: 5
-    max_single_stock_pct: 0.18     # 单股权重上限 (占NAV)
-    max_industry_pct: 0.35         # 行业权重上限 (占NAV)
+    max_single_stock_pct: 0.15     # 单股权重上限 (占NAV)
+    max_industry_pct: 0.30         # 行业权重上限 (占NAV)
+    max_theme_pct: 0.40
+    max_top2_risk_contribution: 0.45
     price_tick: 0.01
     execution_mode: "strict_t1_open_precommit"
 

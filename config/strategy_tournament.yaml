@@ -47,9 +47,10 @@ tournament:
     min_corporate_action_coverage: 1.00
     max_t_plus_one_violations: 0
     min_stress_annualized_return: 0.00
-    max_single_position_weight: 0.18
-    max_single_industry_weight: 0.35
-    max_correlated_theme_weight: 0.55
+    max_single_position_weight: 0.15
+    max_single_industry_weight: 0.30
+    max_correlated_theme_weight: 0.40
+    max_top2_risk_contribution: 0.45
     max_single_order_adv_ratio: 0.01
     max_top5_trade_profit_dependency: 0.35
     min_market_regime_count: 3

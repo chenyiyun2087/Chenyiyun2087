@@ -2,6 +2,7 @@
 
 | 主题 | 目录/文件 | 当前状态 | 最新结论 |
 |---|---|---|---|
+| Quant Research Validation V2 | `docs/01_strategy_research/2026-07-20_Quant_Research_Validation_V2.md` | 工程完成，真实证据阻断 | 严格 Train/Validation/Test、因子三层、精确消融、PIT V2、执行真实性和 20+60 日 Shadow 已形成 fail-closed 合同；没有新增 Alpha 或扩资结论。 |
 | 可信生产闭环 | `docs/01_strategy_research/2026-07-20_可信生产闭环升级.md` | 工程实现，正式证据阻断 | 统一身份、PIT、双账本、NAV 风险、人工执行和 12/3/3 赛马；未产生新收益结论，保持 `BLOCKED / NO_SCALE`。 |
 | 三个月冠军策略轮动 | `docs/01_strategy_research/2026-07-13_三个月冠军策略轮动研究实施.md` | v1.1研究实现，数据源阻断 | 63日冠军、126日确认、财报季加严、失效/成本/置信度保护及顺序晋级状态机；数据库凭证、严格账本或真实影子证据缺失时 fail closed。 |
 | 全策略统一赛马与生产门禁 | `docs/01_strategy_research/2026-07-12_全策略统一赛马与生产门禁.md` | 已实现，正式证据阻断 | 单策略与组合使用同一 fail-closed 赛马契约；无人通过 20%净年化、20%回撤、统计、账本、成本和容量硬门槛时不晋级。 |

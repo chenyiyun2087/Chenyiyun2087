@@ -79,7 +79,8 @@ CONFIG = {
         },
         # 启用开关
         "enabled": True,
-        # 仅对 TRADE 池生效（WATCH 池不惩罚，保留观察）
+        # 只控制 bearish penalty 是否限于 TRADE 池。Bullish bonus
+        # 始终只对 30-65 分恢复区间生效，否则与 75 分门槛互斥。
         "apply_to_trade_only": True,
     },
 }

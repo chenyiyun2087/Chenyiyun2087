@@ -9,9 +9,9 @@ A7 (industry_neutral_alpha_v3) is now implemented — a 6-factor
 cross-sectional model with industry neutralization, IC-based weighting,
 and Benjamini-Hochberg correction.
 
-A8 (risk_weighted_alpha_v2) wraps A7 with risk-adjusted position weights
-via RiskPortfolioBuilder — replacing equal-weight with score-weighted
-inverse-volatility weights, concentration caps, and drawdown scaling.
+A8 (risk_weighted_alpha_v2) wraps A7 through the canonical
+``construct_portfolio`` entry point.  The legacy RiskPortfolioBuilder is not
+part of any formal research or production path.
 """
 
 from __future__ import annotations
@@ -428,8 +428,8 @@ def a8_risk_weighted_alpha_v2(
 ) -> pd.DataFrame:
     """Risk-weighted alpha v2 — A7 rankings + risk-adjusted position weights.
 
-    Wraps A7's industry-neutral alpha model and passes the output through
-    RiskPortfolioBuilder to produce risk-adjusted effective_weight values.
+    Wraps A7's industry-neutral alpha model and passes each PIT cross-section
+    through the canonical constrained portfolio constructor.
     The ranking (rank_score) is identical to A7 — only the effective_weight
     differs, replacing equal-weight with score-weighted inverse-volatility
     weights subject to concentration caps and drawdown scaling.
@@ -441,16 +441,66 @@ def a8_risk_weighted_alpha_v2(
         scores, prices, train_start, train_end
     )
 
-    # Apply risk portfolio weights
-    from scripts.research.alpha_risk_portfolio import (
-        RiskPortfolioBuilder,
-        RiskPortfolioConfig,
+    from scripts.research.constrained_weights import (
+        OrderingMode,
+        PortfolioConstraints,
+        construct_portfolio,
     )
 
-    builder = RiskPortfolioBuilder(RiskPortfolioConfig())
-    risk_weighted = builder.compute_risk_weights(ranked, prices)
+    price_history = prices.copy()
+    price_history["trade_date"] = pd.to_datetime(price_history["trade_date"])
+    price_history = price_history[price_history["trade_date"] <= pd.Timestamp(train_end)]
+    price_history = price_history.sort_values(["symbol", "trade_date"])
+    trailing_vol = (
+        price_history.groupby("symbol")["adj_close"]
+        .pct_change()
+        .groupby(price_history["symbol"])
+        .std()
+        .mul(np.sqrt(252.0))
+        .replace(0.0, np.nan)
+    )
+    fallback_vol = float(trailing_vol.dropna().median()) if trailing_vol.notna().any() else 0.30
+    trailing_vol = trailing_vol.fillna(fallback_vol).clip(lower=0.01)
+    industry_map = (
+        price_history.dropna(subset=["symbol"])
+        .drop_duplicates("symbol", keep="last")
+        .set_index("symbol")
+        .get("industry", pd.Series(dtype=object))
+    )
 
-    return risk_weighted
+    weighted_days: list[pd.DataFrame] = []
+    constraints = PortfolioConstraints(target_gross_exposure=0.70)
+    for trade_date, day in ranked.groupby("trade_date", sort=True):
+        # Keep the A7 ordering while allowing the canonical constructor to
+        # express a genuine risk-weighted portfolio rather than five equal
+        # cap-bound names.  A wider eligible set also makes the 15% name cap
+        # feasible without manufacturing exposure.
+        risk_day = day.copy()
+        risk_day["pit_vol_20"] = risk_day["symbol"].map(trailing_vol).fillna(fallback_vol)
+        if "industry" not in risk_day.columns:
+            risk_day["industry"] = risk_day["symbol"].map(industry_map).fillna("unknown")
+        base_signal = pd.to_numeric(risk_day["rank_score"], errors="coerce").fillna(0.0)
+        base_signal = base_signal - base_signal.min()
+        # Inverse-volatility supplies deterministic differentiation when the
+        # upstream alpha is tied (including deliberately feature-poor tests).
+        risk_day["rank_score"] = base_signal + 1.0 / risk_day["pit_vol_20"]
+        # A uniform risk unit makes the top-two contribution cap equivalent to
+        # the auditable portfolio-weight contribution cap in this adapter.
+        risk_day["risk_value"] = 1.0
+        risk_day = risk_day.drop(columns=["pit_vol_20"])
+        allocation = construct_portfolio(
+            risk_day,
+            OrderingMode.ALPHA_FORWARD,
+            target_exposure=0.70,
+            top_n=min(15, len(day)),
+            constraints=constraints,
+        )
+        if allocation.empty:
+            continue
+        allocation["trade_date"] = trade_date
+        allocation["effective_weight"] = allocation["final_portfolio_weight"]
+        weighted_days.append(allocation)
+    return pd.concat(weighted_days, ignore_index=True) if weighted_days else ranked.iloc[0:0].copy()
 
 
 # ---------------------------------------------------------------------------

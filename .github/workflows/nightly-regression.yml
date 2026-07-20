@@ -23,6 +23,13 @@ jobs:
           cache: pip
       - run: pip install -r requirements-ci.lock.txt
       - run: python -m pytest -q -m 'not integration'
+      - name: Validate immutable OOS window registry
+        run: python scripts/research/oos_registry.py
+      - name: Reject formal use of deprecated portfolio builder
+        run: >-
+          ! rg "from scripts\\.research\\.alpha_risk_portfolio|import RiskPortfolioBuilder"
+          runtime scripts scoreRank
+          --glob '!scripts/research/alpha_risk_portfolio.py'
       - name: Verify tournament remains fail-closed without evidence
         run: >-
           python scripts/research/run_production_strategy_tournament.py

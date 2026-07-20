@@ -638,7 +638,7 @@ def test_champion_has_order_policy_and_principal():
 def test_production_has_order_policy_and_principal():
     registry = load_release_registry()
     prod = registry.releases["production_governed_vol_position"]
-    assert prod.order_policy == "ACTIVE_FIXED_CAPITAL"
+    assert prod.order_policy == "MANUAL_ORDER_DRAFT_ONLY"
     assert prod.approved_principal == 500_000.0
     assert prod.execution_status == "ACTIVE_FIXED_CAPITAL"
 

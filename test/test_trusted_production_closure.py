@@ -89,15 +89,15 @@ def test_data_contract_is_pit_and_fail_closed():
         reject_forbidden_backfilled_fields(["score", "bs_model_alpha"])
 
 
-def test_nav_risk_contract_uses_18_35_55_and_requires_classification():
+def test_nav_risk_contract_uses_15_30_40_and_requires_classification():
     passing = evaluate_portfolio_risk([
-        {"symbol": "A", "market_value": 90_000, "industry": "I1", "theme": "T1"},
-        {"symbol": "B", "market_value": 80_000, "industry": "I2", "theme": "T2"},
+        {"symbol": "A", "market_value": 75_000, "industry": "I1", "theme": "T1"},
+        {"symbol": "B", "market_value": 70_000, "industry": "I2", "theme": "T2"},
     ], account_nav=500_000)
     assert passing.passed
     failed = evaluate_portfolio_risk([
-        {"symbol": "A", "market_value": 90_001, "industry": "I1", "theme": "T1"},
-        {"symbol": "B", "market_value": 90_000, "industry": "I1", "theme": "T1"},
+        {"symbol": "A", "market_value": 75_001, "industry": "I1", "theme": "T1"},
+        {"symbol": "B", "market_value": 75_000, "industry": "I1", "theme": "T1"},
     ], account_nav=500_000)
     assert not failed.passed
     assert failed.state.value == "FREEZE_NEW_BUYS"

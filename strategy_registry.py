@@ -24,13 +24,17 @@ logger = logging.getLogger(__name__)
 STRATEGY_CARDS_DIR = Path(__file__).resolve().parent / "strategy_cards"
 
 # 策略状态枚举
-VALID_STATUSES = {"RESEARCH", "SHADOW", "PAPER", "CANARY", "PRODUCTION", "LEGACY", "RETIRED"}
+FIXED_CAPITAL_STATUS = "PRODUCTION_EXCEPTION_FIXED_CAPITAL"
+VALID_STATUSES = {
+    "RESEARCH", "SHADOW", "PAPER", "CANARY", "PRODUCTION",
+    FIXED_CAPITAL_STATUS, "LEGACY", "RETIRED",
+}
 
 # 禁止生成订单的状态
 ORDER_BLOCKED_STATUSES = {"LEGACY", "RETIRED", "RESEARCH"}
 
 # 可进入影子盘的状态
-SHADOW_ALLOWED_STATUSES = {"SHADOW", "PAPER", "CANARY", "PRODUCTION"}
+SHADOW_ALLOWED_STATUSES = {"SHADOW", "PAPER", "CANARY", "PRODUCTION", FIXED_CAPITAL_STATUS}
 
 
 @dataclass
@@ -57,7 +61,7 @@ class StrategyCard:
 
     @property
     def is_production(self) -> bool:
-        return self.status == "PRODUCTION"
+        return self.status in {"PRODUCTION", FIXED_CAPITAL_STATUS}
 
     @property
     def is_shadow(self) -> bool:

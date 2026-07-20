@@ -53,7 +53,7 @@ def _frames(days: int = 150):
             for idx in range(4):
                 position_rows.append({
                     "strategy": strategy, "trade_date": date, "symbol": f"00000{idx + 1}",
-                    "industry": f"industry_{idx}", "weight": 0.18,
+                    "industry": f"industry_{idx}", "weight": 0.15,
                 })
     market = pd.DataFrame({
         "trade_date": dates, "market_amount_ratio_20": 1.25,

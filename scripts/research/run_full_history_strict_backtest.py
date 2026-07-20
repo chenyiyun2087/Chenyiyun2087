@@ -40,8 +40,14 @@ REQUIRED_REGIMES: list[dict[str, str]] = [
 ]
 
 DEFAULT_START_DATE = "2013-01-01"
-DEFAULT_COST_RATES = [0.00075, 0.001, 0.0015]
-DEFAULT_SLIPPAGE_BPS = [0, 10, 25, 50]
+ACCOUNT_SIZES = [500_000, 1_500_000, 3_000_000, 5_000_000, 10_000_000]
+EXECUTION_SCENARIOS = (
+    ("base", 0.00075, 10),
+    ("conservative_25", 0.0015, 25),
+    ("conservative_50", 0.0015, 50),
+    ("extreme_30", 0.0030, 100),
+    ("extreme_50", 0.0050, 100),
+)
 
 
 def _load_acceptance() -> dict[str, Any]:
@@ -61,6 +67,7 @@ def build_backtest_command(
     strategy: str = "production_governed_vol_position",
     cost_rate: float = 0.00075,
     slippage_bps: int = 10,
+    initial_cash: int = 500_000,
     output_dir: str = "",
 ) -> list[str]:
     """Build the subprocess command for the trusted strategy account backtest."""
@@ -74,6 +81,7 @@ def build_backtest_command(
         "--end-date", end_date,
         "--trade-cost-rate", str(cost_rate),
         "--slippage-rate", str(slippage_bps / 10_000),
+        "--initial-cash", str(initial_cash),
         "--output-dir", output_dir,
     ]
 
@@ -113,46 +121,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
-    # Phase 1: Base scenario (7.5 bps cost, 10 bps slippage)
-    base_dir = output / "base"
-    base_dir.mkdir(exist_ok=True)
-    base_cmd = build_backtest_command(
-        start_date=args.start_date,
-        end_date=args.end_date,
-        strategy=args.strategy,
-        cost_rate=0.00075,
-        slippage_bps=10,
-        output_dir=str(base_dir),
-    )
-
-    print(f"Running base scenario: {args.start_date} → {args.end_date}")
-    if not args.dry_run:
-        result = subprocess.run(base_cmd, cwd=PROJECT_ROOT, text=True, capture_output=True)
-        (base_dir / "run.log").write_text(result.stdout + "\n" + result.stderr)
-
-    # Phase 2: Stress scenarios (subset for speed)
-    stress_results: list[dict] = []
-    if not args.skip_stress:
-        for cost in DEFAULT_COST_RATES[1:]:  # Skip base (already run)
-            for slip in DEFAULT_SLIPPAGE_BPS:
-                label = f"cost_{int(cost*10000)}bps_slip_{slip}bps"
-                stress_dir = output / "stress" / label
-                stress_dir.mkdir(parents=True, exist_ok=True)
-                cmd = build_backtest_command(
-                    start_date=args.start_date,
-                    end_date=args.end_date,
-                    strategy=args.strategy,
-                    cost_rate=cost,
-                    slippage_bps=slip,
-                    output_dir=str(stress_dir),
-                )
-                if not args.dry_run:
-                    r = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True, capture_output=True)
-                    (stress_dir / "run.log").write_text(r.stdout + "\n" + r.stderr)
-                stress_results.append({
-                    "cost_rate": cost, "slippage_bps": slip,
-                    "status": "DRY_RUN" if args.dry_run else "SUBMITTED",
-                })
+    scenario_results: list[dict[str, Any]] = []
+    scenarios = EXECUTION_SCENARIOS if not args.skip_stress else EXECUTION_SCENARIOS[:1]
+    for account_size in ACCOUNT_SIZES:
+        for scenario, cost, slip in scenarios:
+            scenario_dir = output / f"capital_{account_size}" / scenario
+            scenario_dir.mkdir(parents=True, exist_ok=True)
+            cmd = build_backtest_command(
+                start_date=args.start_date, end_date=args.end_date,
+                strategy=args.strategy, cost_rate=cost, slippage_bps=slip,
+                initial_cash=account_size, output_dir=str(scenario_dir),
+            )
+            status = "DRY_RUN"
+            return_code = None
+            if not args.dry_run:
+                completed = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True, capture_output=True)
+                (scenario_dir / "run.log").write_text(completed.stdout + "\n" + completed.stderr)
+                return_code = completed.returncode
+                status = "COMPLETE" if completed.returncode == 0 else "FAILED"
+            scenario_results.append({
+                "account_size": account_size, "scenario": scenario,
+                "cost_rate": cost, "slippage_bps": slip,
+                "command": cmd, "return_code": return_code, "status": status,
+            })
 
     # Build summary
     summary = {
@@ -160,7 +151,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "end_date": args.end_date,
         "strategy": args.strategy,
         "required_regimes": REQUIRED_REGIMES,
-        "stress_scenarios": len(stress_results),
+        "scenario_count": len(scenario_results),
+        "scenarios": scenario_results,
+        "status": (
+            "DRY_RUN" if args.dry_run
+            else "BLOCKED" if any(item["status"] == "FAILED" for item in scenario_results)
+            else "COMPLETE"
+        ),
         "dry_run": args.dry_run,
         "output_dir": str(output),
     }

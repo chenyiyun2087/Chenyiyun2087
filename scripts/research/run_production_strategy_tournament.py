@@ -302,7 +302,7 @@ def _load_candidate(
         "dsr_confidence", "pbo", "corporate_action_coverage",
         "t_plus_one_violations", "stress_annualized_return",
         "max_single_position_weight", "max_single_industry_weight",
-        "max_correlated_theme_weight", "max_single_order_adv_ratio",
+        "max_correlated_theme_weight", "max_top2_risk_contribution", "max_single_order_adv_ratio",
         "turnover", "total_cost", "strict_ledger_status", "evidence_status",
         "dual_ledger_status", "worst_20d_return", "cost_after_alpha",
         "top5_trade_profit_dependency", "market_regime_count",
@@ -332,7 +332,7 @@ def _gate_candidate(
     required = (
         "dsr_confidence", "pbo", "corporate_action_coverage", "t_plus_one_violations",
         "stress_annualized_return", "max_single_position_weight",
-        "max_single_industry_weight", "max_correlated_theme_weight",
+        "max_single_industry_weight", "max_correlated_theme_weight", "max_top2_risk_contribution",
         "max_single_order_adv_ratio", "full_history_start", "data_complete_through",
         "capacity_100k_pass", "capacity_500k_pass", "trade_day_coverage",
         "dual_ledger_status", "worst_20d_return", "cost_after_alpha",
@@ -370,6 +370,7 @@ def _gate_candidate(
         "single_position": float(metrics["max_single_position_weight"]) <= float(gates["max_single_position_weight"]),
         "industry": float(metrics["max_single_industry_weight"]) <= float(gates["max_single_industry_weight"]),
         "theme": float(metrics["max_correlated_theme_weight"]) <= float(gates["max_correlated_theme_weight"]),
+        "top2_risk": float(metrics["max_top2_risk_contribution"]) <= float(gates["max_top2_risk_contribution"]),
         "adv": float(metrics["max_single_order_adv_ratio"]) <= float(gates["max_single_order_adv_ratio"]),
         "cost_after_alpha": (
             float(metrics["cost_after_alpha"]) > 0

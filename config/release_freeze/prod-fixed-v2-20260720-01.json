@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "release_id": "prod-fixed-v2-20260720-01",
+  "strategy_version": "2026.07.20",
+  "frozen_at": "2026-07-20T00:00:00+08:00",
+  "approved_by": "chenyiyun",
+  "base_git_commit_sha": "ea535ebd6167a273923d1decb6b879fc2949a95a",
+  "config_bundle_sha256": "4a4a961f46e6141aa059681c510f874b2d14dbfe8ef49deb9baac5feef5d44c3",
+  "permissions": {
+    "candidate_generation_allowed": true,
+    "risk_exposure_increase_allowed": false,
+    "external_capital_allowed": false,
+    "broker_api_enabled": false,
+    "order_mode": "MANUAL_ORDER_DRAFT_ONLY"
+  },
+  "approved_principal": 500000,
+  "max_nav_exposure": 0.50,
+  "file_sha256": {
+    "config/factor_acceptance_v2.yaml": "bcaca04511fcd0f99926b21746697cbf2388b34386e91fcba92cd0f7e9bc2247",
+    "config/oos_registry.yaml": "0fbe85247060e67ad27626f5b7a7873e8a3b22ace72b83a7ecc7d19c32de765b",
+    "config/pit_snapshot.yaml": "0f90869d3a2ca04628bfbea34640a135d6233af3d4bad42d4fc13e5189b305a3",
+    "config/production_acceptance.yaml": "8403c316aec6754115cb602594d7bfe1d9988e573b28cdab775a6245b3e27fe6",
+    "config/production_strategy.yaml": "49456cfde9e8f34a2cd3f2fd9388b46d642d6f80976bd23fd98324bcb5c9da61",
+    "config/research_allocator_v2.yaml": "a37359f6daa16479ad8a5e262a7fe2948c982fc1742f56600d50e3ceead1afc4",
+    "strategy_cards/baseline_full_liquidity_detail_vol_position.yaml": "11a46e0b894ddd8a596b13c450bb78371c126f117cca4f7c4c45627d827e988c"
+  },
+  "change_reason": "Validation V2 governance and risk constraints; Alpha weights remain frozen",
+  "promotion_status": "BLOCKED",
+  "capital_status": "NO_SCALE"
+}

@@ -90,6 +90,7 @@ class PortfolioRiskBudgetConfig(_StrictModel):
     max_single_position_weight_pct_nav: float
     max_single_industry_weight_pct_nav: float
     max_correlated_theme_weight_pct_nav: float
+    max_top2_risk_contribution_pct: float
     max_daily_new_position_pct_nav: float
     max_daily_turnover_pct_nav: float
     max_attack_pool_budget_share: float
@@ -100,6 +101,13 @@ class PortfolioRiskBudgetConfig(_StrictModel):
             raise ValueError("current approved exposure cannot exceed 50%")
         if self.system_hard_max_total_exposure != 0.85:
             raise ValueError("system hard exposure cap must remain 85%")
+        if (
+            self.max_single_position_weight_pct_nav != 15
+            or self.max_single_industry_weight_pct_nav != 30
+            or self.max_correlated_theme_weight_pct_nav != 40
+            or self.max_top2_risk_contribution_pct != 45
+        ):
+            raise ValueError("portfolio caps must remain 15/30/40/45")
         return self
 
 
@@ -311,9 +319,10 @@ DEFAULT_PORTFOLIO_RISK_BUDGET = {
     "max_total_exposure": 0.50,
     "system_hard_max_total_exposure": 0.85,
     "champion_default_exposure": 0.50,
-    "max_single_position_weight_pct_nav": 18,
-    "max_single_industry_weight_pct_nav": 35,
-    "max_correlated_theme_weight_pct_nav": 55,
+    "max_single_position_weight_pct_nav": 15,
+    "max_single_industry_weight_pct_nav": 30,
+    "max_correlated_theme_weight_pct_nav": 40,
+    "max_top2_risk_contribution_pct": 45,
     "max_daily_new_position_pct_nav": 30,
     "max_daily_turnover_pct_nav": 50,
     "max_attack_pool_budget_share": 0.35,

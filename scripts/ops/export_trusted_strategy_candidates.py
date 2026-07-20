@@ -2351,6 +2351,7 @@ def _write_outputs(
 
 def export_candidates(args: argparse.Namespace) -> dict:
     args = _apply_risk_profile_defaults(args)
+    requested_emit_orders = bool(args.emit_orders)
     engine = create_engine(build_sqlalchemy_url())
     asof_date = _normalize_date(args.date) or _latest_score_date(engine)
     start_date = (pd.Timestamp(asof_date) - pd.Timedelta(days=int(args.history_days))).strftime("%Y-%m-%d")
@@ -2358,11 +2359,12 @@ def export_candidates(args: argparse.Namespace) -> dict:
     pipeline_gate = PipelineReadinessGate(engine)
     pipeline_preflight = pipeline_gate.all_checks(
         signal_date,
-        emit_orders=bool(args.emit_orders),
+        emit_orders=requested_emit_orders,
         allow_historical=bool(getattr(args, "historical_reissue", False)),
+        validate_outputs=False,
     )
     pipeline_preflight_path = PipelineReadinessGate.write_evidence(pipeline_preflight, OUT_ROOT / asof_date)
-    if args.emit_orders and not bool(pipeline_preflight.get("passed")):
+    if requested_emit_orders and not bool(pipeline_preflight.get("passed")):
         failed = ", ".join(pipeline_preflight.get("failed_critical") or [])
         raise RuntimeError(f"Pipeline readiness blocked order draft generation: {failed}")
     if args.emit_orders:
@@ -2733,13 +2735,14 @@ def export_candidates(args: argparse.Namespace) -> dict:
     pipeline_with_candidates = pipeline_gate.all_checks(
         signal_date,
         candidate_count=int(len(candidates)),
-        emit_orders=bool(args.emit_orders),
+        emit_orders=requested_emit_orders,
         allow_historical=bool(getattr(args, "historical_reissue", False)),
+        validate_outputs=False,
     )
     pipeline_evidence_path = PipelineReadinessGate.write_evidence(pipeline_with_candidates, out_dir)
     params["pipeline_readiness_status"] = pipeline_with_candidates.get("status")
     params["pipeline_readiness_evidence"] = str(pipeline_evidence_path)
-    if args.emit_orders and not bool(pipeline_with_candidates.get("passed")):
+    if requested_emit_orders and not bool(pipeline_with_candidates.get("passed")):
         failed = ", ".join(pipeline_with_candidates.get("failed_critical") or [])
         raise RuntimeError(f"Pipeline readiness blocked order draft generation: {failed}")
     files = _write_outputs(out_dir, candidates, factor_weights, market_env, params, warnings)
@@ -2855,6 +2858,31 @@ def export_candidates(args: argparse.Namespace) -> dict:
         db_write["position_cap_skipped"] = int(len(orders.attrs.get("position_cap_skipped_symbols") or []))
         db_write["risk_decision"] = risk_governor.get("risk_decision") if risk_governor else None
         db_write["allow_new_buys"] = bool(risk_governor.get("allow_new_buys", True)) if risk_governor else True
+        zero_order_reason = None
+        if orders.empty:
+            zero_order_reason = (
+                "POSITION_HOLD_GATE"
+                if orders.attrs.get("hold_gate_locked_symbols")
+                else "RISK_GATE_BLOCKED"
+                if risk_governor and not bool(risk_governor.get("allow_new_buys", True))
+                else "NO_REBALANCE"
+            )
+        pipeline_final = pipeline_gate.all_checks(
+            signal_date,
+            candidate_count=int(len(candidates)),
+            emit_orders=True,
+            order_count=int(len(orders)),
+            zero_order_reason=zero_order_reason,
+            allow_historical=bool(getattr(args, "historical_reissue", False)),
+        )
+        pipeline_evidence_path = PipelineReadinessGate.write_evidence(pipeline_final, out_dir)
+        params["pipeline_readiness_status"] = pipeline_final.get("status")
+        params["pipeline_readiness_evidence"] = str(pipeline_evidence_path)
+        db_write["zero_order_reason"] = zero_order_reason
+        db_write["order_permission"] = pipeline_final.get("order_permission")
+        if not bool(pipeline_final.get("passed")):
+            failed = ", ".join(pipeline_final.get("failed_critical") or [])
+            raise RuntimeError(f"Pipeline readiness blocked order persistence: {failed}")
         if args.write_db:
             from scripts.ops.order_repository import write_orders_with_metadata
             from scripts.ops.production_config import load_production_config
@@ -2907,6 +2935,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                 config_sha=str(_prod_cfg.get("config_sha", "")),
             )
             db_write.update({"orders_written_v2": _order_count})
+
             # Also write signal snapshot for web dashboard compatibility
             if not orders.empty:
                 from sqlalchemy import text as _txt3
@@ -2952,7 +2981,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
                             " target_shares=VALUES(target_shares), status='DRAFT'"
                         ), {
                             "sid": _signal_id, "snap": _snapshot_id,
-                            "stid": _order_strategy, "stver": "2026.06.23",
+                            "stid": _order_strategy, "stver": "2026.07.20",
                             "rid": _release_id, "aid": "default",
                             "td": asof_date, "ed": _exec_date,
                             "sym": _sym, "ts": str(_row.get("ts_code", "")),
@@ -3192,6 +3221,23 @@ def export_candidates(args: argparse.Namespace) -> dict:
             db_write["feishu_notify"] = delivery.reason
             if not delivery.ok:
                 print(f"[WARN] Feishu notification queued for retry: {delivery.reason}")
+    if requested_emit_orders and not args.emit_orders:
+        # A final, fully populated readiness artifact is still required for a
+        # deliberately blocked zero-order day.
+        pipeline_final = pipeline_gate.all_checks(
+            signal_date,
+            candidate_count=int(len(candidates)),
+            emit_orders=True,
+            order_count=0,
+            zero_order_reason="RISK_GATE_BLOCKED",
+            allow_historical=bool(getattr(args, "historical_reissue", False)),
+        )
+        pipeline_evidence_path = PipelineReadinessGate.write_evidence(pipeline_final, out_dir)
+        params["pipeline_readiness_status"] = pipeline_final.get("status")
+        params["pipeline_readiness_evidence"] = str(pipeline_evidence_path)
+        db_write["zero_order_reason"] = "RISK_GATE_BLOCKED"
+        db_write["order_permission"] = pipeline_final.get("order_permission")
+
     # Candidate selection is a production business event even when order emission
     # is intentionally disabled (for example, a historical repair).
     if args.notify_feishu and "feishu_notify" not in db_write:

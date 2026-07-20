@@ -47,6 +47,9 @@ class ReleaseRecord(BaseModel):
     approved_snapshot: str = ""
     approved_by: str = ""
     approved_at: str = ""
+    candidate_generation_allowed: bool = False
+    risk_exposure_increase_allowed: bool = False
+    external_capital_allowed: bool = False
 
     @model_validator(mode="after")
     def normalize_economic_identity(self) -> "ReleaseRecord":
@@ -54,6 +57,16 @@ class ReleaseRecord(BaseModel):
             self.cost_model_id = self.cost_model
         if self.initial_capital == 0.0 and self.approved_principal > 0:
             self.initial_capital = self.approved_principal
+        failed_research = self.research_status.startswith("FAILED") or self.walk_forward_status == "FAILED"
+        if failed_research and (self.external_capital_allowed or self.promotion_status != "BLOCKED"):
+            raise ValueError("failed research release cannot scale or promote")
+        if self.lifecycle_status == "PRODUCTION_EXCEPTION_FIXED_CAPITAL":
+            if not self.candidate_generation_allowed:
+                raise ValueError("fixed-capital exception must explicitly allow candidate generation")
+            if self.risk_exposure_increase_allowed or self.external_capital_allowed:
+                raise ValueError("fixed-capital exception cannot increase risk or external capital")
+            if self.approved_principal != 500000:
+                raise ValueError("fixed-capital exception principal must remain 500000")
         return self
 
 

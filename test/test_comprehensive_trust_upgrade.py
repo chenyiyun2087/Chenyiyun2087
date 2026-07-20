@@ -44,11 +44,11 @@ def test_unknown_order_count_is_fail_closed():
 def test_projected_portfolio_uses_current_pending_and_new_orders():
     projected = build_projected_positions(
         [{"symbol": "000001", "market_value": 100_000, "industry": "bank", "theme": "finance"}],
-        [{"symbol": "000001", "side": "SELL", "notional": 20_000}],
+        [{"symbol": "000001", "side": "SELL", "notional": 25_000}],
         [{"symbol": "000002", "side": "BUY", "notional": 50_000, "industry": "property", "theme": "cyclical"}],
     )
     by_symbol = {row["symbol"]: row for row in projected}
-    assert by_symbol["000001"]["market_value"] == 80_000
+    assert by_symbol["000001"]["market_value"] == 75_000
     assert evaluate_portfolio_risk(projected, account_nav=500_000).passed
 
 

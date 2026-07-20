@@ -75,7 +75,7 @@ class ProductionStrategyAdapter(StrategyAdapter):
         self.top_n = top_n
         self._identity = StrategyIdentity(
             experiment_id="P0", strategy_id=self.PRODUCTION_STRATEGY,
-            strategy_version="2026.06.23", ranking_method="production_select_candidates",
+            strategy_version="2026.07.20", ranking_method="production_select_candidates",
             weighting_method="vol_position", exit_method="hold_10d",
         )
 

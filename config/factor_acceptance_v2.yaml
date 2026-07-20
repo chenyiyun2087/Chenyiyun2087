@@ -1,0 +1,32 @@
+schema_version: "2.0"
+status: BLOCKED_PENDING_REAL_PIT_EVIDENCE
+frozen_alpha_changes_allowed: false
+required_metrics:
+  - rank_ic
+  - icir
+  - positive_ic_month_ratio
+  - quantile_monotonicity
+  - industry_size_neutral_return
+  - turnover
+  - half_life
+  - regime_stability
+  - capacity
+  - marginal_calmar
+factors:
+  trend_20: {factor_model_id: pit_trend_20_v1, inclusion: frozen_train_only}
+  trend_60: {factor_model_id: pit_trend_60_v1, inclusion: frozen_train_only}
+  relative_strength_20: {factor_model_id: pit_rs_20_v1, inclusion: frozen_train_only}
+  breakout_distance: {factor_model_id: pit_breakout_v1, inclusion: frozen_train_only}
+  volume_ratio: {factor_model_id: pit_volume_ratio_v1, inclusion: frozen_train_only}
+  volatility_contraction: {factor_model_id: pit_vol_contraction_v1, inclusion: frozen_train_only}
+  bias_20: {factor_model_id: pit_bias_20_v1, inclusion: frozen_train_only}
+  turnover_20: {factor_model_id: pit_turnover_20_v1, inclusion: frozen_train_only}
+  amount_20: {factor_model_id: pit_amount_20_v1, inclusion: frozen_train_only}
+  amihud_illiquidity: {factor_model_id: pit_amihud_v1, inclusion: frozen_train_only}
+  limit_state: {factor_model_id: pit_limit_state_v1, inclusion: frozen_train_only}
+  industry_momentum: {factor_model_id: pit_industry_momentum_v1, inclusion: frozen_train_only}
+acceptance:
+  source_window: train_only
+  validation_role: select_one_champion
+  test_role: immutable_economics_only
+  production_promotion: forbidden_until_all_real_evidence_passes

@@ -30,6 +30,37 @@ def _score_01_centered(x: float, center: float, half_range: float) -> float:
     return _clip01(1.0 - abs(x - center) / half_range)
 
 
+def apply_industry_resonance(frame: pd.DataFrame) -> pd.DataFrame:
+    """Apply the industry overlay and retain row-level audit evidence."""
+    d = frame.copy()
+    d["score_before_industry"] = pd.to_numeric(d["score"], errors="coerce")
+    d["industry_score_adjustment"] = 0.0
+    d["industry_adjustment_reason"] = "NONE"
+    ind_cfg = CONFIG.get("industry_resonance", {})
+    if not ind_cfg.get("enabled") or "industry" not in d.columns:
+        return d
+    apply_trade_only = ind_cfg.get("apply_to_trade_only", True)
+    for ind, penalty in ind_cfg.get("bearish_penalty", {}).items():
+        mask = d["industry"].str.contains(ind, na=False)
+        if apply_trade_only:
+            mask &= d["score_before_industry"] >= CONFIG.get("trade_threshold", 75)
+        before = d.loc[mask, "score"]
+        d.loc[mask, "score"] = (before - penalty).clip(0, 100)
+        d.loc[mask, "industry_score_adjustment"] = d.loc[mask, "score"] - before
+        d.loc[mask, "industry_adjustment_reason"] = f"BEARISH_PENALTY:{ind}"
+    for ind, bonus in ind_cfg.get("bullish_bonus", {}).items():
+        mask = (
+            d["industry"].str.contains(ind, na=False)
+            & (d["score_before_industry"] >= 30)
+            & (d["score_before_industry"] <= 65)
+        )
+        before = d.loc[mask, "score"]
+        d.loc[mask, "score"] = (before + bonus).clip(0, 100)
+        d.loc[mask, "industry_score_adjustment"] = d.loc[mask, "score"] - before
+        d.loc[mask, "industry_adjustment_reason"] = f"BULLISH_BONUS:{ind}"
+    return d
+
+
 def build_features_from_qfq(qfq: pd.DataFrame, breakout_n: int) -> pd.DataFrame:
     """
     输入：qfq长表：symbol, trade_date, open/high/low/close/volume/amount
@@ -252,25 +283,7 @@ def score_asof_date(
     d["score"] = (raw_score - adjustment + d["s_trend_label"]).clip(0, 100)
 
     # === 行业共振调整（2026-06-23）===
-    ind_cfg = CONFIG.get("industry_resonance", {})
-    if ind_cfg.get("enabled") and "industry" in d.columns:
-        bearish_map = ind_cfg.get("bearish_penalty", {})
-        bullish_map = ind_cfg.get("bullish_bonus", {})
-        apply_trade_only = ind_cfg.get("apply_to_trade_only", True)
-
-        for ind, penalty in bearish_map.items():
-            mask = d["industry"].str.contains(ind, na=False)
-            if apply_trade_only:
-                mask = mask & (d["score"] >= CONFIG.get("trade_threshold", 75))
-            d.loc[mask, "score"] = (d.loc[mask, "score"] - penalty).clip(0, 100)
-
-        for ind, bonus in bullish_map.items():
-            mask = d["industry"].str.contains(ind, na=False)
-            # 仅对中分段(30-65)加分，避免推高高分段
-            mask = mask & (d["score"] >= 30) & (d["score"] <= 65)
-            if apply_trade_only:
-                mask = mask & (d["score"] >= CONFIG.get("trade_threshold", 75))
-            d.loc[mask, "score"] = (d.loc[mask, "score"] + bonus).clip(0, 100)
+    d = apply_industry_resonance(d)
 
     # 今日触发：趋势ok 且 is_breakout=1（你后续可扩展为"回踩确认"等更稳触发）
     d["trigger_today"] = ((d["trend_ok"] == 1) & (d["is_breakout"] == 1)).astype(int)
@@ -278,7 +291,8 @@ def score_asof_date(
     # 输出更利于复盘的字段
     out_cols = [
         "symbol", "name", "trade_date",
-        "score", "base_score", "base_score_raw", "penalty", "trigger_today",
+        "score", "score_before_industry", "industry_score_adjustment",
+        "industry_adjustment_reason", "base_score", "base_score_raw", "penalty", "trigger_today",
         "trend_label", "s_trend_label",
         "is_breakout", "breakout_dist", "vol_ratio", "rs20", "contraction", "avg_amount20",
         "bull_align", "bias_ma20", "chip_healthy",
