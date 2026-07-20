@@ -4,6 +4,8 @@
 
 配置口径以 `task_registry/pipeline.yaml` 中状态为 `enabled` 的任务为准；本文记录的是仓库默认值，不代表管理员后台当前保存的运行时启停与时间。任务定义和入队逻辑由 `web/app.py` 提供，实际调度与执行由独立的 `scripts/ops/task_queue_worker.py` 承担；Web 重启不会终止正在执行的批任务。历史文件 `archive/scheduler.py` 不参与生产运行。
 
+Validation V2 新增交易日 21:55 的 `pit_forward_shadow_collection`：只读冻结当前可用数据到主副 Evidence Store，并在数据日等于实际运行交易日且关键组件全部成功时累计技术 Shadow。该任务固定为 `PARTIAL_FORWARD_ONLY`，不会把历史补采或滞后数据计入真实 Shadow。
+
 ## 1. 时间顺序
 
 ### 1.1 盘中任务

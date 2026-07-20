@@ -44,6 +44,16 @@ canary_capital_authorized = false
 - Golden comparator：`PASS`，差异数 0。
 - Release freeze SHA、OOS 注册表、Python 编译和 `git diff --check`：通过。
 
+## 前向 PIT 与 Shadow 启动记录
+
+- 2026-07-20 已启用 `pit_forward_shadow_collection`，交易日 21:55 在候选生成和既有 Shadow monitor 后运行，日终批次审计依赖其成功完成。
+- 采集模式固定为 `PARTIAL_FORWARD_ONLY`；`observed_at` 只表示本采集器确认数据已可见的上界，不伪装成供应商真实发布时间。
+- 首次采集时数据库最新完整日为 2026-07-17，共冻结交易日历、原始/复权行情、复权因子、涨跌停事件、公司行为、行业/主题、披露、因子和评分配置等证据；数据库写操作为 0。
+- 修正当前股票列表、只读会话/零写入声明及部分观察不晋级规则后，最新启动基线 manifest SHA256 为 `ee1429dbed4232abd006b128331e112ab34be2a4ef4048c121636ed8eed489d2`，Evidence Store 对象 SHA256 为 `82edd90885a57b293cf267e886d64d62d1c8f5ac6a6b7152a3881137b39d4421`；manifest 同时冻结 collection config SHA。
+- 因采集日 2026-07-20 与数据日 2026-07-17 不相同，本次连同日观察也不通过。日终同日快照可形成 `PARTIAL_FORWARD_ONLY` 技术观察记录，但在 14 组件正式 PIT 契约完成前不累计正式 20 日 Shadow，也绝不允许解锁 Canary 审批包。
+- 用户指定的 `/Volumes/extension/chenyiyun_evidence` 与 `/Volumes/extension/chenyiyun/QuantEvidenceReplica` 当前无法由任务用户在卷根目录创建（`Permission denied`）。为保证采集不中断，运行时暂用已验证可写且位于不同物理卷的 `/Volumes/extension/projects/chenyiyun_evidence`（主）与 `/Users/chenyiyun/QuantEvidenceReplica`（副）；旧证据未删除。待管理员预建并授权指定目录后可进行非覆盖迁移。
+- 当前 ST/名称、停复牌和历史退市仍为明确缺口；当前股票列表仅按 `PARTIAL_CURRENT_LIST_ONLY` 保存，不获得正式 PIT 身份。
+
 ## 复现入口
 
 ```bash

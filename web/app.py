@@ -2624,6 +2624,70 @@ def _verify_shadow_monitor_result(started_at, finished_at, run_options=None):
         return False, [f"result=FAIL; verifier_error={e}"]
 
 
+def _verify_pit_forward_shadow_collection_result(started_at, finished_at, run_options=None):
+    """Fail closed unless this run froze a verified, same-day forward PIT snapshot."""
+    target_datestr = _queue_business_date(run_options)
+    target_iso = f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"
+    run_root = Path(app.root_path).parent / "exports" / "pit_forward" / "runs" / target_datestr
+    candidates = []
+    for path in run_root.glob("pit-forward-*.json"):
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if (started_at - timedelta(seconds=30)) <= mtime <= (finished_at + timedelta(seconds=300)):
+            candidates.append((mtime, path, payload))
+    if not candidates:
+        return False, [
+            f"result=FAIL; task=pit_forward_shadow_collection; business_date={target_datestr}; reason=no_current_run_manifest"
+        ]
+
+    _, output_path, payload = max(candidates, key=lambda item: item[0])
+    manifest = payload.get("manifest") or {}
+    observation = payload.get("shadow_observation") or {}
+    config_path = Path(app.root_path).parent / "config" / "pit_forward_collection_v1.yaml"
+    try:
+        import yaml
+        from runtime.evidence_store import EvidenceStore
+
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        required = set(config.get("technical_required_components") or [])
+        component_status = {
+            str(item.get("name")): item.get("collection_status")
+            for item in manifest.get("components") or []
+        }
+        missing = sorted(
+            name for name in required
+            if component_status.get(name) not in {"CAPTURED", "CAPTURED_EMPTY_NO_EVENT"}
+        )
+        evidence_sha = str(manifest.get("manifest_evidence_sha256") or "")
+        EvidenceStore(require_replica=True).get(evidence_sha, verify=True)
+        checks = {
+            "partial_forward_mode": manifest.get("mode") == "PARTIAL_FORWARD_ONLY",
+            "same_day_snapshot": manifest.get("data_date") == target_iso,
+            "primary_evidence": manifest.get("evidence_status") == "VERIFIED",
+            "replica_evidence": manifest.get("replica_status") == "VERIFIED",
+            "database_read_only": manifest.get("database_session_mode") == "READ_ONLY",
+            "database_zero_writes": manifest.get("database_write_operations_performed") == 0,
+            "required_components": not missing,
+            "same_day_collection_eligible": observation.get("collection_observation_eligible") is True,
+            "manifest_identity": observation.get("manifest_sha256") == manifest.get("manifest_sha256"),
+        }
+        failed = [name for name, passed in checks.items() if not passed]
+        ok = not failed
+        return ok, [
+            f"result={'PASS' if ok else 'FAIL'}; task=pit_forward_shadow_collection; business_date={target_datestr}; "
+            f"data_date={manifest.get('data_date') or '-'}; failed_checks={','.join(failed) or '-'}",
+            f"manifest={output_path}; manifest_sha256={manifest.get('manifest_sha256') or '-'}; "
+            f"evidence_sha256={evidence_sha or '-'}; missing_required={','.join(missing) or '-'}",
+        ]
+    except Exception as e:
+        return False, [
+            f"result=FAIL; task=pit_forward_shadow_collection; business_date={target_datestr}; verifier_error={e}"
+        ]
+
+
 def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
@@ -2767,6 +2831,8 @@ def _run_task_result_verification(task_name, started_at, finished_at, run_option
         return _verify_trusted_strategy_candidates_result(started_at, finished_at, run_options=run_options)
     if task_name == "trusted_strategy_shadow_monitor":
         return _verify_shadow_monitor_result(started_at, finished_at, run_options=run_options)
+    if task_name == "pit_forward_shadow_collection":
+        return _verify_pit_forward_shadow_collection_result(started_at, finished_at, run_options=run_options)
     if task_name == "trusted_strategy_performance_review":
         return _verify_trusted_strategy_performance_review_result(started_at, finished_at, run_options=run_options)
     if task_name == "candle_diag_scan":
@@ -3575,6 +3641,9 @@ def _build_task_script_parts(task_name, run_options=None):
         if historical_safe:
             args.append('--no-push')
         return [script, *args]
+    if task_name == 'pit_forward_shadow_collection':
+        target_date = datestr or datetime.now().strftime('%Y%m%d')
+        return [script, '--as-of', f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:]}"]
     if task_name == 'trusted_strategy_candidates':
         target_date = datestr or datetime.now().strftime('%Y%m%d')
         release_id = f"{TRUSTED_PRODUCTION_STRATEGY}_{target_date}_{TRUSTED_PRODUCTION_CONFIG['config_sha']}"

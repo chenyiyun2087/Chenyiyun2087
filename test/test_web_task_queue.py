@@ -96,7 +96,7 @@ def test_every_enabled_pipeline_task_has_a_result_verifier():
         "sina_score", "sina_bs_consensus", "trusted_strategy_backtest",
         "rolling_strategy_scorer", "trusted_strategy_candidates",
         "trusted_strategy_shadow_monitor", "trusted_strategy_performance_review",
-        "candle_diag_scan", "bs_signal_monthly_cycle",
+        "candle_diag_scan", "pit_forward_shadow_collection", "bs_signal_monthly_cycle",
         "sina_bs_image_weekly_cleanup",
     }
     assert {task.task_name for task in expected} == verifier_tasks
@@ -107,6 +107,14 @@ def test_rolling_strategy_scorer_is_dispatched_to_verifier(monkeypatch):
     monkeypatch.setattr(web_app, "_verify_rolling_strategy_scorer_result", lambda *args, **kwargs: expected)
     assert web_app._run_task_result_verification(
         "rolling_strategy_scorer", None, None, run_options={"datestr": "20260702"}
+    ) == expected
+
+
+def test_pit_forward_collection_is_dispatched_to_verifier(monkeypatch):
+    expected = (True, ["result=PASS"])
+    monkeypatch.setattr(web_app, "_verify_pit_forward_shadow_collection_result", lambda *args, **kwargs: expected)
+    assert web_app._run_task_result_verification(
+        "pit_forward_shadow_collection", None, None, run_options={"datestr": "20260702"}
     ) == expected
 
 
@@ -206,7 +214,7 @@ def test_retired_db_bs_detect_cannot_be_scheduled():
 
 def test_batch_monitor_definition_and_status_merge_follow_pipeline():
     definitions = web_app._load_batch_monitor_definition()
-    assert len(definitions) == 15
+    assert len(definitions) == 16
     assert definitions[0]["task_name"] == "adc_bs_detect"
     assert {row["group_label"] for row in definitions} == {"盘中", "日终", "周度"}
 

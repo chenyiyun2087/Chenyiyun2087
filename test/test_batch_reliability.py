@@ -20,6 +20,9 @@ def test_all_daily_commands_receive_explicit_business_date():
     monthly = web_app._build_task_script_parts("bs_signal_monthly_cycle", options)
     assert monthly[-2:] == ["--date", "2026-07-01"]
     assert "--force" not in monthly
+    assert web_app._build_task_script_parts("pit_forward_shadow_collection", options)[-2:] == [
+        "--as-of", "2026-07-01"
+    ]
 
 
 def test_retry_only_allows_transient_failures():

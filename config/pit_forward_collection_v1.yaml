@@ -1,0 +1,140 @@
+schema_version: "1.0"
+collection_id: pit-forward-partial-v1
+release_id: prod-fixed-v2-20260720-01
+mode: PARTIAL_FORWARD_ONLY
+forward_start_date: "2026-07-20"
+formal_pit_eligible: false
+historical_backfill_counts_as_shadow: false
+availability_semantics: OBSERVED_BY_COLLECTOR_UPPER_BOUND
+shadow:
+  strategy_id: production_governed_vol_position
+  phase: TECHNICAL_SHADOW
+  count_only_same_day_complete_snapshot: true
+  production_mutation_allowed: false
+  canary_capital_authorized: false
+technical_required_components:
+  - trade_calendar
+  - raw_daily_price
+  - adjusted_daily_price
+  - adjustment_factor
+  - corporate_actions
+  - industry_membership_history
+  - theme_membership_history
+  - factor_source_snapshot
+  - score_schema
+components:
+  - name: trade_calendar
+    source: chenyiyun.dim_trade_cal
+    allow_empty: false
+    maturity: FORWARD_OBSERVED
+    sql: >-
+      SELECT exchange, cal_date, is_open, pretrade_date
+      FROM chenyiyun.dim_trade_cal
+      WHERE exchange='SSE' AND cal_date=:data_date_compact
+  - name: raw_daily_price
+    source: tushare_stock.dwd_daily
+    allow_empty: false
+    maturity: FORWARD_OBSERVED
+    sql: >-
+      SELECT trade_date, ts_code, open, high, low, close, pre_close,
+             change_amount, pct_chg, vol, amount, updated_at
+      FROM tushare_stock.dwd_daily WHERE trade_date=:data_date_compact
+  - name: adjusted_daily_price
+    source: tushare_stock.dwd_stock_daily_standard
+    allow_empty: false
+    maturity: FORWARD_OBSERVED
+    sql: >-
+      SELECT trade_date, ts_code, adj_open, adj_high, adj_low, adj_close,
+             turnover_rate_f, vol, amount, updated_at
+      FROM tushare_stock.dwd_stock_daily_standard WHERE trade_date=:data_date_compact
+  - name: adjustment_factor
+    source: tushare_stock.dwd_adj_factor
+    allow_empty: false
+    maturity: FORWARD_OBSERVED
+    sql: >-
+      SELECT trade_date, ts_code, adj_factor, updated_at
+      FROM tushare_stock.dwd_adj_factor WHERE trade_date=:data_date_compact
+  - name: limit_rule
+    source: tushare_stock.ods_limit_list_d_di
+    allow_empty: true
+    maturity: PARTIAL_EVENT_ONLY
+    sql: >-
+      SELECT trade_date, ts_code, limit_type, exchange, market, is_limit_up,
+             is_broken_limit, is_limit_down, source_fetch_time, updated_at
+      FROM tushare_stock.ods_limit_list_d_di WHERE trade_date=:data_date_compact
+  - name: st_name_history
+    source: tushare_stock.ods_namechange
+    allow_empty: true
+    maturity: MISSING_SOURCE_DATA
+    sql: >-
+      SELECT ts_code, effective_date, expire_date, as_of_datetime, name,
+             start_date, end_date, ann_date, change_reason, is_st, updated_at
+      FROM tushare_stock.ods_namechange
+      WHERE COALESCE(effective_date,start_date,ann_date)<=:data_date_compact
+        AND (COALESCE(expire_date,end_date) IS NULL OR COALESCE(expire_date,end_date)>=:data_date_compact)
+  - name: suspend_resume_history
+    source: UNAVAILABLE
+    allow_empty: true
+    maturity: MISSING_SOURCE_TABLE
+  - name: list_delist_history
+    source: chenyiyun.a_share_stock_list
+    allow_empty: false
+    maturity: PARTIAL_CURRENT_LIST_ONLY
+    sql: >-
+      SELECT stock_code, stock_name, exchange, list_date, is_active, created_at, updated_at
+      FROM chenyiyun.a_share_stock_list
+  - name: corporate_actions
+    source: tushare_stock.ods_dividend
+    allow_empty: true
+    maturity: FORWARD_OBSERVED
+    sql: >-
+      SELECT ts_code, ann_date, imp_ann_date, record_date, ex_date, pay_date,
+             div_listdate, stk_div, cash_div, cash_div_tax, updated_at
+      FROM tushare_stock.ods_dividend
+      WHERE ann_date=:data_date_compact OR imp_ann_date=:data_date_compact
+         OR DATE(updated_at)=:data_date_iso
+  - name: industry_membership_history
+    source: tushare_stock.dwd_plate_member_range_df+dwd_plate_master_df
+    allow_empty: false
+    maturity: FORWARD_OBSERVED
+    sql: >-
+      SELECT r.plate_id, m.plate_name, m.canonical_name, m.plate_type,
+             r.ts_code, r.valid_from, r.valid_to, r.source, r.scd_version, r.updated_at
+      FROM tushare_stock.dwd_plate_member_range_df r
+      JOIN tushare_stock.dwd_plate_master_df m ON m.plate_id=r.plate_id
+      WHERE m.plate_type='industry' AND r.valid_from<=:data_date_compact
+        AND (r.valid_to IS NULL OR r.valid_to>=:data_date_compact)
+  - name: theme_membership_history
+    source: tushare_stock.dwd_plate_member_range_df+dwd_plate_master_df
+    allow_empty: false
+    maturity: FORWARD_OBSERVED
+    sql: >-
+      SELECT r.plate_id, m.plate_name, m.canonical_name, m.plate_type,
+             r.ts_code, r.valid_from, r.valid_to, r.source, r.scd_version, r.updated_at
+      FROM tushare_stock.dwd_plate_member_range_df r
+      JOIN tushare_stock.dwd_plate_master_df m ON m.plate_id=r.plate_id
+      WHERE m.plate_type IN ('theme','concept') AND r.valid_from<=:data_date_compact
+        AND (r.valid_to IS NULL OR r.valid_to>=:data_date_compact)
+  - name: financial_disclosure_visibility
+    source: tushare_stock.dws_disclosure_pit_daily
+    allow_empty: true
+    maturity: FORWARD_OBSERVED_2024_PLUS
+    sql: >-
+      SELECT trade_date, ts_code, visible_date, end_date, ann_date, pre_date,
+             actual_date, modify_date, target_date, source_table, updated_at
+      FROM tushare_stock.dws_disclosure_pit_daily WHERE trade_date=:data_date_compact
+  - name: factor_source_snapshot
+    source: tushare_stock.ads_stock_factor_snapshot_di
+    allow_empty: true
+    maturity: FORWARD_OBSERVED_2025_PLUS
+    sql: >-
+      SELECT trade_date, ts_code, factor_bundle_version, data_contract_version,
+             time_semantics_version, asof_date, snapshot_version_id,
+             lineage_version_id, pit_violation_count, max_source_visible_date,
+             updated_at
+      FROM tushare_stock.ads_stock_factor_snapshot_di WHERE trade_date=:data_date_compact
+  - name: score_schema
+    source: config/release_freeze/prod-fixed-v2-20260720-01.json
+    allow_empty: false
+    maturity: FROZEN_CONFIG_FILE
+    file: config/release_freeze/prod-fixed-v2-20260720-01.json

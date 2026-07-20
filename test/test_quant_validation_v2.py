@@ -127,6 +127,55 @@ def test_shadow_lifecycle_never_authorizes_capital():
     assert status.to_dict()["capital_status"] == "NO_SCALE"
 
 
+def test_forward_pit_shadow_never_counts_stale_data_as_real_day():
+    from scripts.ops.collect_forward_pit_shadow import build_shadow_observation
+
+    required = {"raw_daily_price", "score_schema"}
+    manifest = {
+        "data_date": "2026-07-17", "observed_at": "2026-07-20T11:00:00+08:00",
+        "replica_status": "VERIFIED", "manifest_sha256": "a" * 64,
+        "components": [
+            {"name": "raw_daily_price", "collection_status": "CAPTURED"},
+            {"name": "score_schema", "collection_status": "CAPTURED"},
+        ],
+    }
+    stale = build_shadow_observation(manifest, as_of=pd.Timestamp("2026-07-20").date(), technical_required=required)
+    assert stale["shadow_day_count_eligible"] is False
+    manifest["data_date"] = "2026-07-20"
+    current = build_shadow_observation(manifest, as_of=pd.Timestamp("2026-07-20").date(), technical_required=required)
+    assert current["technical_pass"] is True
+    assert current["formal_pit_status"] == "PARTIAL_FORWARD_ONLY"
+    assert current["collection_observation_eligible"] is True
+    assert current["shadow_day_count_eligible"] is False
+
+
+def test_partial_pit_rows_can_never_unlock_canary_package():
+    from runtime.shadow_lifecycle import evaluate_shadow_lifecycle
+
+    rows = []
+    for index in range(80):
+        rows.append({
+            "trade_date": f"2026-{index // 28 + 1:02d}-{index % 28 + 1:02d}",
+            "technical_pass": True, "formal_pit_status": "PARTIAL_FORWARD_ONLY",
+            "dual_ledger_status": "VERIFIED", "cost_after_alpha": 1.0,
+            "completed_round_trips": 1, "risk_gate_false_negative": 0,
+            "historical_simulation": False,
+        })
+    status = evaluate_shadow_lifecycle(rows)
+    assert "FORMAL_PIT_NOT_VERIFIED" in status.blockers
+    assert status.canary_approval_package_allowed is False
+
+
+def test_forward_pit_task_is_enabled_and_not_blocked_by_strategy_failures():
+    pipeline = yaml.safe_load((ROOT / "task_registry" / "pipeline.yaml").read_text(encoding="utf-8"))
+    tasks = {item["id"]: item for item in pipeline["daily_close"]["tasks"]}
+    collector = tasks["pit_forward_shadow_collection"]
+    assert collector["status"] == "enabled"
+    assert collector["time"] == "21:55"
+    assert collector.get("depends_on") == []
+    assert "pit_forward_shadow_collection" in tasks["ops_daily_batch_audit"]["depends_on"]
+
+
 def test_research_allocator_keeps_ineligible_sleeves_as_cash():
     from scripts.research.research_allocator import allocate_research_sleeves
 

@@ -60,6 +60,11 @@ def evaluate_shadow_lifecycle(rows: Iterable[Mapping[str, Any]]) -> ShadowLifecy
         blockers.append("COST_AFTER_ALPHA_NOT_POSITIVE")
     if any(int(row.get("risk_gate_false_negative") or 0) > 0 for row in unique_dates):
         blockers.append("RISK_GATE_FALSE_NEGATIVE")
+    if any(
+        "formal_pit_status" in row and str(row.get("formal_pit_status")) != "VERIFIED"
+        for row in unique_dates
+    ):
+        blockers.append("FORMAL_PIT_NOT_VERIFIED")
     ready = not blockers
     state = (
         "READY_FOR_MANUAL_CANARY_APPROVAL_PACKAGE" if ready

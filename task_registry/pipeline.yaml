@@ -86,6 +86,15 @@ daily_close:
       status: enabled
       depends_on: [sina_score]
 
+    - id: pit_forward_shadow_collection
+      description: "PIT V2 前向证据冻结与技术 Shadow 采集"
+      time: "21:55"
+      script: scripts/ops/collect_forward_pit_shadow.py
+      type: script
+      trading_day_only: true
+      status: enabled
+      depends_on: []
+
     - id: bs_signal_monthly_cycle
       time: "22:00"
       script: scripts/ops/run_monthly_bs_signal_enhancement_cycle.py
@@ -99,7 +108,7 @@ daily_close:
       type: script
       trading_day_only: true
       status: enabled
-      depends_on: [trusted_strategy_shadow_monitor, trusted_strategy_performance_review, candle_diag_scan]
+      depends_on: [trusted_strategy_shadow_monitor, trusted_strategy_performance_review, candle_diag_scan, pit_forward_shadow_collection]
 
 intraday:
   description: "盘中任务"
