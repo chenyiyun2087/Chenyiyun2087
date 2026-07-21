@@ -497,11 +497,19 @@ def _validate_order_prerequisites(engine, asof_date: str, min_pool_size: int) ->
 
 
 def _infer_total_equity(engine, account_id: str, trade_date: object) -> float:
+    """Return the default account NAV available on or before ``trade_date``.
+
+    ``live_daily_snapshots`` is currently the production single-account
+    ledger: one row per ``snapshot_date`` and no ``account_id`` column.  Keep
+    the argument for callers that already carry an account identity, but do
+    not project the future multi-account schema onto the current table.
+    """
+    _ = account_id
     sql = text("SELECT total_equity FROM chenyiyun.live_daily_snapshots "
-               "WHERE account_id=:account_id AND snapshot_date<=:trade_date "
+               "WHERE snapshot_date<=:trade_date "
                "ORDER BY snapshot_date DESC LIMIT 1")
     with engine.connect() as conn:
-        value = conn.execute(sql, {"account_id": account_id, "trade_date": pd.Timestamp(trade_date).date()}).scalar()
+        value = conn.execute(sql, {"trade_date": pd.Timestamp(trade_date).date()}).scalar()
     total = float(value or 0.0)
     if total <= 0:
         raise RuntimeError("Cannot infer total equity from chenyiyun.live_daily_snapshots.")
@@ -1224,6 +1232,41 @@ def _build_candidate_rows(
             }
         )
     return pd.DataFrame(rows)
+
+
+def _attach_candidate_risk_classifications(candidates: pd.DataFrame) -> pd.DataFrame:
+    """Attach the correlated-theme classification required by the NAV gate.
+
+    The production score table currently has a durable industry taxonomy but
+    no separate theme taxonomy. Preserve an explicit upstream theme when it
+    exists; otherwise use a namespaced industry bucket as a conservative
+    correlated-theme proxy. A missing industry remains missing and is still
+    rejected by the hard risk gate.
+    """
+    if candidates.empty:
+        return candidates.copy()
+
+    result = candidates.copy()
+    industry = (
+        result["industry"].fillna("").astype(str).str.strip()
+        if "industry" in result.columns
+        else pd.Series("", index=result.index, dtype="object")
+    )
+    theme = pd.Series("", index=result.index, dtype="object")
+    if "correlated_theme" in result.columns:
+        theme = result["correlated_theme"].fillna("").astype(str).str.strip()
+    if "theme" in result.columns:
+        explicit_theme = result["theme"].fillna("").astype(str).str.strip()
+        theme = theme.mask(theme.eq(""), explicit_theme)
+
+    fallback = theme.eq("") & industry.ne("")
+    result["correlated_theme"] = theme.mask(fallback, "industry:" + industry)
+    result["theme_source"] = np.where(
+        result["correlated_theme"].fillna("").astype(str).str.strip().eq(""),
+        "missing",
+        np.where(fallback, "industry_fallback", "explicit"),
+    )
+    return result
 
 
 def _latest_adaptive_decision(
@@ -2560,6 +2603,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
             candidates["candidate_pool"] = getattr(spec, "candidate_pool", "generic")
         if "candidate_pool_role" not in candidates.columns:
             candidates["candidate_pool_role"] = getattr(spec, "pool_role", "research")
+    candidates = _attach_candidate_risk_classifications(candidates)
     target_position_ratio = float(risk_governor.get("target_position_ratio") or target_position_ratio)
     candidates = _scale_candidate_weights_for_export(candidates, target_position_ratio)
     candidates.attrs["risk_governor"] = risk_governor

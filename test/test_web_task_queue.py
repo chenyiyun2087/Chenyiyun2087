@@ -484,6 +484,15 @@ def test_historical_replay_disables_orders_and_marks_business_notifications():
         assert "--historical-reissue" in web_app._build_task_script_parts(task_name, options)
 
 
+def test_current_day_candidate_task_always_writes_signal_snapshot():
+    candidate = web_app._build_task_script_parts(
+        "trusted_strategy_candidates", {"datestr": "20260720"}
+    )
+
+    assert "--emit-orders" in candidate
+    assert "--write-signal-snapshot" in candidate
+
+
 def test_historical_replay_suppresses_business_notifications_without_reissue():
     options = {"datestr": "20260629", "historical_safe": True}
     for task_name in (

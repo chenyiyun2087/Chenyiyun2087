@@ -1,0 +1,35 @@
+【替代策略诊断报告｜非生产策略绩效报告】
+日期：2026-07-20
+生产外壳：生产治理波动仓位策略（production_governed_vol_position）
+选股内核：流动性质量稳健策略（波动仓位）（baseline_full_liquidity_detail_vol_position）
+风控锚：市场风格自适应生产策略（adaptive_market_style） v2.2
+风险档位：adaptive / 当前目标仓位 50%
+实际回测策略：动态评分 Champion 基准（production_governed_vol_position_v1_2b_dynamic_score）
+风险总闸版本：v1 / 目标仓位 50.00%
+结论：风险总闸触发：freeze_buy，目标仓位 50.00%
+
+最近3个月收益评估：
+- 状态：PASS；区间 2026-04-17~2026-07-20，交易日 63/63
+- 收益 23.78%，年化 138.02%，最大回撤 -15.18%，当前回撤 -14.64%
+- 胜率 51.61%，最差单日 -15.18%，波动率 54.00%，Sharpe 1.88，Calmar 9.09，平均暴露 48.74%
+
+当前回测窗口收益/回撤：
+- 主策略窗口 2025-09-02~2026-07-20（211个交易日）：累计52.55%，年化65.99%，最大回撤-15.18%，期末权益762,741
+- 风控影子v2.2窗口 2025-09-02~2026-07-20（211个交易日）：累计14.85%，年化18.08%，最大回撤-14.54%
+
+当前运行：
+- 候选 5 只，目标仓位合计50.00%；行业：半导体1只、水力发电1只、建筑工程1只、白酒1只、保险1只
+- 订单 0 笔（BUY 0 / SELL 0），计划金额 0
+- 影子盘：可成交 3 / 不可成交 0，均值滑点 -11.3 bps；验收 pass / none
+- 最近影子盘：fail_streak 0，worst_action reduce_position
+- 实盘快照：总权益 500,000，现金 500,000，持仓市值 0，日收益 0.00%
+- 数据提醒：live_positions is empty; live realized strategy trend cannot be judged
+
+Top5：
+- 1. 688498 源杰科技 半导体 权重4.08%
+- 2. 600900 长江电力 水力发电 权重12.65%
+- 3. 601668 中国建筑 建筑工程 权重12.16%
+- 4. 600519 贵州茅台 白酒 权重10.18%
+- 5. 601318 中国平安 保险 权重10.94%
+
+报告：/Volumes/extension/projects/Chenyiyun2087/exports/production_strategy_reviews/20260720_222446_20260720/strategy_performance_review.md

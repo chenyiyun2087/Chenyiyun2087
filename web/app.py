@@ -3662,8 +3662,9 @@ def _build_task_script_parts(task_name, run_options=None):
         if not historical_safe or historical_reissue:
             args.append('--notify-feishu')
         args.append('--no-emit-orders' if historical_safe else '--emit-orders')
-        if historical_safe:
-            args.append('--write-signal-snapshot')
+        # Candidate WATCH snapshots are the durable signal output even when
+        # the risk governor legitimately produces zero order drafts.
+        args.append('--write-signal-snapshot')
         if historical_reissue:
             args.append('--historical-reissue')
         if datestr:

@@ -6,6 +6,7 @@ from scripts.ops import export_trusted_strategy_candidates as export_candidates_
 from scripts.ops import feishu_notifier
 from scripts.ops.export_trusted_strategy_candidates import (
     _apply_risk_profile_defaults,
+    _attach_candidate_risk_classifications,
     _build_canary_orders,
     _build_rebalance_orders,
     _check_candidate_tradability,
@@ -67,6 +68,27 @@ def test_rebalance_orders_respect_min_holding_gate_and_reserve_locked_weight():
 def test_symbol_from_ts_code_normalizes_exchange_suffix():
     assert _symbol_from_ts_code("600000.SH") == "600000"
     assert _symbol_from_ts_code("000001.SZ") == "000001"
+
+
+def test_candidate_risk_classification_uses_namespaced_industry_fallback():
+    candidates = pd.DataFrame([
+        {"symbol": "000001", "industry": "银行"},
+        {"symbol": "000002", "industry": "软件", "correlated_theme": "AI"},
+    ])
+
+    classified = _attach_candidate_risk_classifications(candidates)
+
+    assert classified["correlated_theme"].tolist() == ["industry:银行", "AI"]
+    assert classified["theme_source"].tolist() == ["industry_fallback", "explicit"]
+
+
+def test_candidate_risk_classification_does_not_hide_missing_industry():
+    classified = _attach_candidate_risk_classifications(
+        pd.DataFrame([{"symbol": "000001", "industry": ""}])
+    )
+
+    assert classified.iloc[0]["correlated_theme"] == ""
+    assert classified.iloc[0]["theme_source"] == "missing"
 
 
 def test_adaptive_risk_profile_defaults_to_governed_main_push():

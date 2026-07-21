@@ -81,15 +81,21 @@ def _ts_code(symbol: str) -> str:
 
 
 def check_position_limits(engine, symbol: str, account_id: str, target_notional: float, trade_date: date) -> RiskCheckResult:
-    """检查仓位上限：单票不超过总权益的 max_single_name。"""
+    """检查仓位上限：单票不超过默认账户总权益的 max_single_name。
+
+    现有 ``live_daily_snapshots`` 是单账户表，没有 ``account_id`` 字段。
+    参数保留给上层订单接口使用；多账户支持需配套独立数据库迁移。
+    """
+    _ = account_id
     try:
         with engine.connect() as conn:
             total_equity = conn.execute(
                 text("SELECT total_equity FROM chenyiyun.live_daily_snapshots "
-                     "WHERE account_id=:account_id AND snapshot_date<=:trade_date "
+                     "WHERE snapshot_date<=:trade_date "
                      "ORDER BY snapshot_date DESC LIMIT 1"),
-                {"account_id": account_id, "trade_date": trade_date},
+                {"trade_date": trade_date},
             ).scalar()
+        total_equity = float(total_equity or 0.0)
         if total_equity <= 0:
             return RiskCheckResult("position_limit", False, "BLOCKED: account NAV unavailable")
         max_single = total_equity * MAX_SINGLE_POSITION_WEIGHT
