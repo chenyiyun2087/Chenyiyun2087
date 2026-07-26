@@ -546,7 +546,8 @@ class FactorCalculator:
         prices_sorted["corr_vp"] = g.apply(
             lambda grp: grp["vol_change"]
             .rolling(10, min_periods=5)
-            .corr(grp["ret"])
+            .corr(grp["ret"]),
+            include_groups=False,
         ).reset_index(level=0, drop=True)
 
         # Volume ratio: current volume / average volume
@@ -718,9 +719,14 @@ class FactorWeightOptimizer:
         def _daily_ic(grp: pd.DataFrame) -> float:
             if len(grp) < 5:
                 return 0.0
+            if grp[signal_col].nunique(dropna=True) < 2 or grp["fwd_ret"].nunique(dropna=True) < 2:
+                return float("nan")
             return grp[signal_col].rank().corr(grp["fwd_ret"].rank())
 
-        ic_series = merged.groupby("trade_date").apply(_daily_ic)
+        ic_series = merged.groupby("trade_date").apply(
+            _daily_ic,
+            include_groups=False,
+        )
         return ic_series.dropna()
 
     @staticmethod
