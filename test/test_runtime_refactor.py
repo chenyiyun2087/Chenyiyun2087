@@ -162,3 +162,11 @@ def test_web_route_and_endpoint_contract_is_unchanged(monkeypatch):
     assert hashlib.sha256(payload.encode()).hexdigest() == (
         "e7242a204604c459afcca6af363e113f81fa419b06426ae1a947ede6ade3bff4"
     )
+
+
+def test_legacy_order_transition_remains_compatible_without_terminal_regression():
+    from runtime.order_state_machine import is_valid_transition
+
+    assert is_valid_transition("planned", "submitted") is True
+    assert is_valid_transition("submitted_manually", "submitted") is True
+    assert is_valid_transition("filled", "planned") is False
