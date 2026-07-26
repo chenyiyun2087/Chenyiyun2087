@@ -46,3 +46,18 @@ def test_web_benchmark_percentile_is_deterministic():
     benchmark = _load("benchmark_web_endpoints", "scripts/maintenance/benchmark_web_endpoints.py")
     assert benchmark.percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.50) == 3.0
     assert benchmark.percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.95) == 5.0
+
+
+def test_web_benchmark_comparison_enforces_p95_budget():
+    benchmark = _load("benchmark_web_endpoints_compare", "scripts/maintenance/benchmark_web_endpoints.py")
+    current = [{"endpoint": "/scores", "p95_ms": 111.0}]
+    baseline = [{"endpoint": "/scores", "p95_ms": 100.0}]
+
+    result = benchmark.compare_with_baseline(
+        current,
+        baseline,
+        max_regression_pct=10.0,
+    )
+
+    assert result["passed"] is False
+    assert result["comparisons"][0]["delta_pct"] == 11.0

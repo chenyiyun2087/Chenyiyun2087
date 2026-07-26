@@ -258,6 +258,13 @@ __pycache__/
 /eastmoney/logs/debug_screenshots/timeout_600006_164812.png
 /eastmoney/logs/debug_screenshots/timeout_600009_164303.png
 /eastmoney/logs/debug_screenshots/timeout_600009_164813.png
+
+# ===== 日期化运行产物：保留已有证据，忽略未来自动生成批次 =====
+/exports/production_candidates/20*/
+/exports/production_strategy_reviews/20*/
+/exports/signal_research/20*/
+/exports/signal_research/cache/
+/result/20*.txt
 /eastmoney/logs/debug_screenshots/timeout_600027_164315.png
 /eastmoney/logs/debug_screenshots/timeout_600027_164816.png
 /eastmoney/logs/debug_screenshots/timeout_600037_164320.png

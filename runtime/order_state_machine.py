@@ -62,6 +62,13 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({
 
 def is_valid_transition(current: str, target: str) -> bool:
     """Check if a transition from current to target status is valid."""
+    legacy_current = str(current or "").strip().lower()
+    legacy_target = str(target or "").strip().lower()
+    legacy_allowed = VALID_TRANSITIONS.get(legacy_current)
+    if legacy_allowed is not None and legacy_target in legacy_allowed:
+        # Preserve explicitly documented legacy transitions before aliases
+        # collapse intermediate states into the stricter canonical model.
+        return True
     try:
         canonical_current = canonicalize_status(current)
         canonical_target = canonicalize_status(target)
@@ -69,8 +76,7 @@ def is_valid_transition(current: str, target: str) -> bool:
             return canonical_target in CANONICAL_TRANSITIONS[canonical_current]
     except ValueError:
         pass
-    allowed = VALID_TRANSITIONS.get(current, set())
-    return target in allowed
+    return False
 
 
 def canonicalize_status(status: str) -> str:

@@ -20,9 +20,12 @@ from project_network import build_direct_network_env, enforce_direct_network
 enforce_direct_network()
 
 from scoreRank.core.bs_enhanced_score import calculate_bs_consensus_signal, calculate_bs_enhanced_score, calculate_bs_research_signal, calculate_bs_score_v2, calculate_bs_trade_gate
-from scoreRank.core.db_config import build_pymysql_config, build_sqlalchemy_url, validate_db_credentials
+from scoreRank.core.db_config import build_pymysql_config, validate_db_credentials
+from scoreRank.core.db_runtime import connect_pymysql, get_sqlalchemy_engine
 from scripts.ops.production_config import load_production_config
 from scripts.strategy_display import strategy_display_name
+from web.runtime_lifecycle import start_daemon_loops
+from web.task_commands import TaskCommandContext, build_task_script_parts
 
 try:
     from sina.live_tracker.live_tracker import LiveTracker
@@ -73,6 +76,10 @@ app.secret_key = os.getenv("CHENYIYUN_WEB_SECRET_KEY", os.urandom(32))
 
 # Database Configuration
 DB_CONFIG = build_pymysql_config()
+
+
+def _connect_db():
+    return connect_pymysql(DB_CONFIG)
 
 BS_SOURCE_OPTIONS = {
     "config_1": {
@@ -977,7 +984,7 @@ def _refresh_task_next_runs():
 def _insert_task_history(task_name, trigger_type, status, started_at, finished_at=None, exit_code=None, duration_seconds=None, message=None, business_date=None):
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             cursor.execute(
@@ -1320,7 +1327,7 @@ def _get_task_runner():
 def _set_task_runner(job=None, message="idle"):
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             if job:
@@ -1491,7 +1498,7 @@ def _try_acquire_task_lock(task_name, trigger_type="manual", queue_id=None):
 
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             cursor.execute(
@@ -1559,7 +1566,7 @@ def _try_acquire_task_lock(task_name, trigger_type="manual", queue_id=None):
 def _touch_task_lock_heartbeat(task_name):
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             cursor.execute(
@@ -1583,7 +1590,7 @@ def _mark_task_lock_finished(task_name, lock_status, message):
     conn = None
     try:
         msg = (str(message) if message is not None else lock_status)[:240]
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             cursor.execute(
@@ -1642,7 +1649,7 @@ def _enqueue_task(task_name, trigger_type="manual", run_options=None, scheduled_
     dedupe_key = f"{task_name}:{business_date}"
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             # A scheduled slot is terminal for the business date even after its
@@ -1744,7 +1751,6 @@ def _dependency_state(cursor, task_name, business_date):
 
 def _send_task_blocked_notification(job, reason):
     try:
-        from sqlalchemy import create_engine
         from scripts.ops.feishu_notifier import NotificationEvent, publish_notification
 
         queue_id = int(job.get("id") or 0)
@@ -1769,14 +1775,13 @@ def _send_task_blocked_notification(job, reason):
             details=(str(reason or "上游任务失败。"), "先修复并补跑上游任务，再重新执行当前任务。"),
             actions=_task_notification_action(queue_id),
         )
-        publish_notification(create_engine(build_sqlalchemy_url()), event)
+        publish_notification(get_sqlalchemy_engine(), event)
     except Exception as exc:
         print(f"Task blocked notification error ({job.get('task_name')}): {exc}")
 
 
 def _send_scheduler_enqueue_failure(task_name, business_date, reason):
     try:
-        from sqlalchemy import create_engine
         from scripts.ops.feishu_notifier import NotificationEvent, publish_notification
 
         raw_run_id = f"scheduler:{task_name}:{business_date}"
@@ -1801,7 +1806,7 @@ def _send_scheduler_enqueue_failure(task_name, business_date, reason):
             },
             details=(str(reason or "未知入队错误"), "检查任务队列表和数据库连接后人工补跑。"),
         )
-        publish_notification(create_engine(build_sqlalchemy_url()), event)
+        publish_notification(get_sqlalchemy_engine(), event)
     except Exception as exc:
         print(f"Scheduler failure notification error ({task_name}): {exc}")
 
@@ -1810,7 +1815,7 @@ def _claim_next_queued_task():
     """Atomically claim one ready job. Waiting jobs remain visible as PENDING."""
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             cursor.execute(
@@ -1892,7 +1897,7 @@ def _finish_queued_task(job, history_status, exit_code, message):
         "recovered": history_status == "Success" and int(job.get("attempt_count") or 0) > 1,
     }
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             error_kind, retryable = _classify_task_failure(history_status, exit_code, message)
@@ -1971,7 +1976,7 @@ def _has_scheduled_run_in_slot(task_name, scheduled_for):
     """Return True if a scheduled run already exists in history for this slot."""
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             slot_end = scheduled_for + timedelta(days=1)
@@ -2020,7 +2025,7 @@ def _verify_sina_analyse_result(started_at, finished_at, run_options=None):
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             cursor.execute(
                 """
@@ -2056,7 +2061,7 @@ def _verify_sina_score_result(started_at, finished_at, run_options=None):
     lines = []
     try:
         target_datestr = _normalize_datestr((run_options or {}).get("datestr"))
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT MAX(trade_date) AS d FROM score_rank_daily")
@@ -2137,7 +2142,7 @@ def _verify_sina_bs_consensus_result(started_at, finished_at, run_options=None):
     lines = []
     try:
         target_datestr = _normalize_datestr((run_options or {}).get("datestr"))
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 _ensure_score_rank_daily_score_columns(cursor)
@@ -2191,7 +2196,7 @@ def _verify_sina_bs_consensus_result(started_at, finished_at, run_options=None):
 def _verify_sina_m8_result(started_at, finished_at):
     lines = []
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -2278,7 +2283,7 @@ def _verify_trusted_strategy_candidates_result(started_at, finished_at, run_opti
         db_candidate_rows = 0
         db_signal_rows = 0
         try:
-            conn = pymysql.connect(**DB_CONFIG)
+            conn = _connect_db()
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
@@ -2395,7 +2400,7 @@ def _verify_sina_m7_sell_result(started_at, finished_at, run_options=None):
     lines = []
     try:
         target_datestr = _normalize_datestr((run_options or {}).get("datestr"))
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 _ensure_m7_sell_signal_table(cursor)
@@ -2448,7 +2453,7 @@ def _verify_adc_bs_detect_result(started_at, finished_at, run_options=None):
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -2491,7 +2496,7 @@ def _verify_bs_ocr_adc_compare_result(started_at, finished_at, run_options=None)
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -2556,7 +2561,7 @@ def _verify_rolling_strategy_scorer_result(started_at, finished_at, run_options=
     target_datestr = _queue_business_date(run_options)
     date_iso = f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -2600,7 +2605,7 @@ def _verify_shadow_monitor_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -2693,7 +2698,7 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
     date_iso = f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -2784,7 +2789,7 @@ def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
     rows = []
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = _connect_db()
     try:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -3127,7 +3132,7 @@ def _build_task_completion_notification(task_name, trigger_type, started_at, fin
                                         run_options=None, history_status="Success", message=None):
     detail = None
     if task_name in {"sina_analyse", "sina_m8", "sina_snapshot"} and history_status == "Success":
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         try:
             with conn.cursor() as cursor:
                 _ensure_task_management_schema(cursor)
@@ -3157,7 +3162,7 @@ def _build_task_completion_notification(task_name, trigger_type, started_at, fin
 
 
 def _has_successful_business_notification(task_name, business_date, event_id_prefix=None):
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = _connect_db()
     try:
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
@@ -3227,7 +3232,7 @@ def _render_task_event_text(event):
 
 def _dispatch_non_feishu_task_event(engine, event):
     """Keep existing WeChat/DingTalk/custom delivery while Feishu uses cards."""
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = _connect_db()
     try:
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
@@ -3332,7 +3337,6 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
         ):
             return
 
-        from sqlalchemy import create_engine
         from scripts.ops.feishu_notifier import NotificationEvent, publish_notification
 
         duration = (
@@ -3372,7 +3376,7 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
             details=tuple(details),
             actions=_task_notification_action(queue_id),
         )
-        notification_engine = create_engine(build_sqlalchemy_url())
+        notification_engine = get_sqlalchemy_engine()
         publish_notification(notification_engine, event)
         _dispatch_non_feishu_task_event(notification_engine, event)
     except Exception as e:
@@ -3534,7 +3538,7 @@ def _run_queued_tasks_loop():
             acquired, reason = _try_acquire_task_lock(job["task_name"], job["trigger_type"], queue_id=job["id"])
             if not acquired:
                 # Another process still owns the per-task lock. Leave this job safely queued.
-                conn = pymysql.connect(**DB_CONFIG)
+                conn = _connect_db()
                 try:
                     with conn.cursor() as cursor:
                         cursor.execute(
@@ -3560,7 +3564,7 @@ def _is_trading_day(target_date=None):
     ymd = target.strftime('%Y%m%d')
 
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             cursor.execute(
                 "SELECT is_open FROM chenyiyun.dim_trade_cal WHERE cal_date = %s AND exchange = 'SSE' LIMIT 1",
@@ -3607,146 +3611,20 @@ def _mark_scheduled_non_trading_success(task_name, scheduled_for):
 
 
 def _build_task_script_parts(task_name, run_options=None):
-    task_config = TASKS[task_name]
-    script = task_config['script']
-    run_options = run_options or {}
-    datestr = _normalize_datestr(run_options.get("datestr"))
-    historical_safe = bool(run_options.get("historical_safe"))
-    historical_reissue = bool(run_options.get("historical_reissue"))
-    if task_name == 'sina_picture':
-        target_date = datestr or datetime.now().strftime('%Y%m%d')
-        return [script, 'config_1', target_date, '--capture-only']
-    if task_name == 'sina_analyse':
-        target_date = datestr or datetime.now().strftime('%Y%m%d')
-        return [script, 'config_1', target_date, '--analyze-only']
-    if task_name == 'adc_bs_detect':
-        if datestr:
-            return [script, '--date', datestr]
-        return [script, '--date', datetime.now().strftime('%Y%m%d')]
-    if task_name == 'bs_ocr_adc_compare':
-        target_date = datestr or datetime.now().strftime('%Y%m%d')
-        return [script, '--start', target_date, '--end', target_date]
-    if task_name == 'sina_score':
-        if datestr:
-            return [script, '--date', datestr, '--force']
-        return [script, '--force']
-    if task_name == 'sina_bs_consensus':
-        if datestr:
-            return [script, '--date', datestr]
-        return [script]
-    if task_name == 'rolling_strategy_scorer':
-        args = []
-        if datestr:
-            args.extend(['--calc-date', f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"])
-        if historical_safe:
-            args.append('--no-push')
-        return [script, *args]
-    if task_name == 'pit_forward_shadow_collection':
-        target_date = datestr or datetime.now().strftime('%Y%m%d')
-        return [script, '--as-of', f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:]}"]
-    if task_name == 'trusted_strategy_candidates':
-        target_date = datestr or datetime.now().strftime('%Y%m%d')
-        release_id = f"{TRUSTED_PRODUCTION_STRATEGY}_{target_date}_{TRUSTED_PRODUCTION_CONFIG['config_sha']}"
-        args = [
-            '--risk-profile',
-            TRUSTED_PRODUCTION_RISK_PROFILE,
-            '--strategy',
-            TRUSTED_PRODUCTION_STRATEGY,
-            '--release-id', release_id,
-            '--top-n',
-            str(TRUSTED_PRODUCTION_CONFIG["top_n"]),
-            '--max-total-positions',
-            str(TRUSTED_PRODUCTION_CONFIG["max_total_positions"]),
-            '--write-db',
-        ]
-        if not historical_safe or historical_reissue:
-            args.append('--notify-feishu')
-        args.append('--no-emit-orders' if historical_safe else '--emit-orders')
-        # Candidate WATCH snapshots are the durable signal output even when
-        # the risk governor legitimately produces zero order drafts.
-        args.append('--write-signal-snapshot')
-        if historical_reissue:
-            args.append('--historical-reissue')
-        if datestr:
-            args.extend(['--date', datestr])
-        return [script, *args]
-    if task_name == 'trusted_strategy_shadow_monitor':
-        target_date = datestr or datetime.now().strftime('%Y%m%d')
-        release_id = f"{TRUSTED_PRODUCTION_STRATEGY}_{target_date}_{TRUSTED_PRODUCTION_CONFIG['config_sha']}"
-        args = [
-            '--strategy-id', TRUSTED_PRODUCTION_STRATEGY,
-            '--release-id', release_id,
-            '--write-db', '--allow-empty',
-        ]
-        if not historical_safe or historical_reissue:
-            args.append('--notify-feishu')
-        if datestr:
-            args.extend(['--execution-date', datestr])
-        if historical_reissue:
-            args.append('--historical-reissue')
-        return [script, *args]
-    if task_name == 'trusted_strategy_backtest':
-        args: list[str] = []
-        if datestr:
-            args.extend(['--date', datestr])
-        return [script, *args]
-    if task_name == 'trusted_strategy_performance_review':
-        # The nightly backtest intentionally excludes the snapshot-dependent
-        # production strategy.  Opt in to the reviewer's explicitly labelled
-        # non-production fallback instead of making this scheduled task fail
-        # on every fresh nightly backtest directory.
-        args = ['--review-window-days', '63', '--allow-substitute-diagnostic']
-        if not historical_safe or historical_reissue:
-            args.append('--notify-feishu')
-        if datestr:
-            args.extend(['--date', datestr])
-        if historical_reissue:
-            args.append('--historical-reissue')
-        return [script, *args]
-    if task_name == 'sina_bs_image_weekly_cleanup':
-        args = ['--execute']
-        if datestr:
-            args.extend(['--date', datestr])
-        return [script, *args]
-    if task_name == 'sina_m8':
-        return [script, '--lookback-dates', '60']
-    if task_name == 'sina_snapshot':
-        if datestr and len(datestr) == 8:
-            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
-            return [script, 'snapshot', '--date', date_iso]
-        return [script, 'snapshot']
-    if task_name == 'sina_m7_sell':
-        if datestr and len(datestr) == 8:
-            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
-            return [script, '--date', date_iso]
-        return [script]
-    if task_name == 'bs_signal_monthly_cycle':
-        args = []
-        if datestr and len(datestr) == 8:
-            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
-            args.extend(['--date', date_iso])
-        if bool(run_options.get("force")):
-            args.append('--force')
-        return [script, *args]
-    if task_name == 'candle_diag_scan':
-        args = ['--skip-existing']
-        if datestr and len(datestr) == 8:
-            date_iso = f"{datestr[:4]}-{datestr[4:6]}-{datestr[6:]}"
-            args.extend(['--date', date_iso])
-        return [script, *args]
-    if task_name == OPS_DAILY_BATCH_AUDIT_TASK:
-        args = ['--notify-feishu']
-        if datestr:
-            args.extend(['--date', datestr])
-        if historical_reissue:
-            args.append('--historical-reissue')
-        return [script, *args]
-    return [script]
+    context = TaskCommandContext(
+        tasks=TASKS,
+        normalize_datestr=_normalize_datestr,
+        trusted_strategy=TRUSTED_PRODUCTION_STRATEGY,
+        trusted_risk_profile=TRUSTED_PRODUCTION_RISK_PROFILE,
+        trusted_config=TRUSTED_PRODUCTION_CONFIG,
+        daily_audit_task=OPS_DAILY_BATCH_AUDIT_TASK,
+    )
+    return build_task_script_parts(task_name, run_options, context)
 
 def init_tasks():
     """Load task status from database"""
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             cursor.execute("SELECT * FROM app_task_status")
@@ -3797,12 +3675,9 @@ def init_tasks():
     except Exception as e:
         print(f"Failed to load task status: {e}")
 
-# Initialize tasks from DB
-init_tasks()
-
 def get_db():
     if 'db' not in g:
-        g.db = pymysql.connect(**DB_CONFIG)
+        g.db = _connect_db()
     return g.db
 
 @app.teardown_appcontext
@@ -5643,7 +5518,7 @@ def execute_trade():
             # 成交后清理挂起强制卖出状态（若仍有残余持仓）
             conn = None
             try:
-                conn = pymysql.connect(**DB_CONFIG)
+                conn = _connect_db()
                 with conn.cursor() as cursor:
                     _ensure_live_positions_m7_columns(cursor)
                     cursor.execute(
@@ -7328,7 +7203,7 @@ def cancel_task_job(job_id):
 def update_task_db(task_name):
     """Save task status to database"""
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             with TASKS_LOCK:
@@ -7410,7 +7285,7 @@ def update_notification_channels():
     invalid_channels = []
     conn = None
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
             for channel_key, channel_name in NOTIFICATION_CHANNEL_DEFS:
@@ -7641,20 +7516,18 @@ def start_task_scheduler_loop():
     # also imports this module. Skip scheduler in parent to avoid duplicate loops.
     if __name__ == "__main__" and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return
-    scheduler_thread = threading.Thread(target=_run_scheduled_tasks_loop, name="task-scheduler", daemon=True)
-    worker_thread = threading.Thread(target=_run_queued_tasks_loop, name="task-queue-worker", daemon=True)
-    notification_thread = threading.Thread(
-        target=_run_notification_outbox_loop, name="notification-outbox-worker", daemon=True
+    return start_daemon_loops(
+        (
+            ("task-scheduler", _run_scheduled_tasks_loop),
+            ("task-queue-worker", _run_queued_tasks_loop),
+            ("notification-outbox-worker", _run_notification_outbox_loop),
+        )
     )
-    scheduler_thread.start()
-    worker_thread.start()
-    notification_thread.start()
 
 
 def _run_notification_outbox_loop():
-    from sqlalchemy import create_engine
     from scripts.ops.feishu_notifier import process_notification_outbox
-    engine = create_engine(build_sqlalchemy_url())
+    engine = get_sqlalchemy_engine()
     while True:
         try:
             process_notification_outbox(engine, limit=10)
@@ -7704,10 +7577,11 @@ def _run_web_startup_preflight(*, strict=False):
         except Exception as exc:
             issues.append(f"Cannot parse pipeline registry: {exc}")
     try:
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = _connect_db()
         with conn.cursor() as cursor:
             _initialize_web_schema(cursor)
             conn.commit()
+            init_tasks()
             cursor.execute("SELECT 1")
             cursor.execute("SHOW TABLES LIKE 'app_notification_channel'")
             if not cursor.fetchone():

@@ -11,10 +11,17 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_PYTHON = (PROJECT_ROOT / ".venv" / "bin" / "python").resolve()
 REQUIRED_MODULES = ("pandas", "pymysql", "sqlalchemy", "yaml")
+MIN_PYTHON = (3, 11)
 
 
 def collect_runtime_issues(*, require_database: bool = True) -> list[str]:
     issues: list[str] = []
+    current_python = tuple(sys.version_info[:2])
+    if current_python < MIN_PYTHON:
+        issues.append(
+            f"unsupported_python:{current_python[0]}.{current_python[1]}; "
+            f"minimum:{MIN_PYTHON[0]}.{MIN_PYTHON[1]}"
+        )
     executable = Path(sys.executable).resolve()
     if executable != PROJECT_PYTHON:
         issues.append(f"wrong_python:{executable}; expected:{PROJECT_PYTHON}")

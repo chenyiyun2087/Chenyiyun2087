@@ -81,9 +81,14 @@ def compute_executable_ic(
     def _daily_ic(grp: pd.DataFrame) -> float:
         if len(grp) < 5:
             return 0.0
+        if grp[signal_col].nunique(dropna=True) < 2 or grp[label_col].nunique(dropna=True) < 2:
+            return float("nan")
         return grp[signal_col].rank().corr(grp[label_col].rank())
 
-    return merged.groupby("trade_date").apply(_daily_ic).dropna()
+    return merged.groupby("trade_date").apply(
+        _daily_ic,
+        include_groups=False,
+    ).dropna()
 
 
 def evaluate_factor_effectiveness(

@@ -51,6 +51,12 @@ def test_runtime_preflight_detects_wrong_interpreter(monkeypatch, tmp_path):
     assert any(issue.startswith("wrong_python:") for issue in issues)
 
 
+def test_runtime_preflight_rejects_python_before_311(monkeypatch):
+    monkeypatch.setattr(runtime_preflight.sys, "version_info", (3, 9, 18))
+    issues = runtime_preflight.collect_runtime_issues(require_database=False)
+    assert "unsupported_python:3.9; minimum:3.11" in issues
+
+
 def test_model_activation_is_atomic_and_preserves_previous_pointer(monkeypatch, tmp_path):
     monkeypatch.setattr(cycle, "MODEL_ROOT", tmp_path)
     old = {"model_dir": "/models/old", "model_path": "/models/old/model.joblib"}
