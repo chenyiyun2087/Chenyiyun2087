@@ -195,7 +195,7 @@ def test_execution_grid_covers_all_capital_and_cost_scenarios(tmp_path):
         output_dir=str(tmp_path), start_date="2013-01-01", end_date="2026-07-17",
         strategy="production_governed_vol_position", dry_run=True, skip_stress=False,
     ))
-    assert result["scenario_count"] == 25
+    assert result["scenario_count"] == 50
     assert {item["account_size"] for item in result["scenarios"]} == {500000, 1500000, 3000000, 5000000, 10000000}
     assert all(item["status"] == "DRY_RUN" for item in result["scenarios"])
 

@@ -62,6 +62,8 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
     formal_pit_eligible = bool(manifest.get("formal_pit_eligible", False))
     shadow_eligible = bool(collection_eligible and formal_pit_eligible)
     return {
+        "strategy_id": manifest.get("strategy_id"),
+        "release_id": manifest.get("release_id"),
         "trade_date": manifest["data_date"],
         "observed_at": manifest["observed_at"],
         "technical_pass": collection_eligible,
@@ -72,7 +74,9 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
             else "REQUIRED_COMPONENT_CAPTURE_FAILED"
         ),
         "collection_observation_eligible": collection_eligible,
-        "formal_pit_status": "PARTIAL_FORWARD_ONLY",
+        "formal_pit_status": (
+            "VERIFIED" if formal_pit_eligible else "PARTIAL_FORWARD_ONLY"
+        ),
         "dual_ledger_status": "NOT_STARTED",
         "cost_after_alpha": 0.0,
         "completed_round_trips": 0,
@@ -85,12 +89,28 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
     }
 
 
-def collect(*, engine, config_path: Path, output_root: Path, as_of: date, observed_at: datetime | None = None) -> dict:
+def collect(
+    *,
+    engine,
+    config_path: Path,
+    output_root: Path,
+    as_of: date,
+    observed_at: datetime | None = None,
+    release_id_override: str | None = None,
+    strategy_id_override: str | None = None,
+) -> dict:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     observed = observed_at or datetime.now(SHANGHAI)
     store = EvidenceStore(require_replica=True)
     run_id = f"pit-forward-{observed.strftime('%Y%m%dT%H%M%S%z')}"
-    release_id = str(config["release_id"])
+    release_id = str(release_id_override or config["release_id"])
+    strategy_id = str(
+        strategy_id_override
+        or (config.get("shadow") or {}).get("strategy_id")
+        or ""
+    )
+    if not strategy_id:
+        raise ValueError("FORWARD_PIT_STRATEGY_ID_REQUIRED")
     component_rows: list[dict] = []
     with engine.connect() as connection:
         connection.execute(text("SET SESSION TRANSACTION READ ONLY"))
@@ -138,11 +158,17 @@ def collect(*, engine, config_path: Path, output_root: Path, as_of: date, observ
     manifest = {
         "schema_version": "1.0", "collection_id": config["collection_id"],
         "collection_config_sha256": _canonical_sha(config),
-        "mode": "PARTIAL_FORWARD_ONLY", "release_id": release_id,
+        "mode": (
+            "FORMAL_PIT" if bool(config.get("formal_pit_eligible", False))
+            else "PARTIAL_FORWARD_ONLY"
+        ),
+        "release_id": release_id,
+        "strategy_id": strategy_id,
         "run_id": run_id, "as_of_date": as_of.isoformat(), "data_date": data_date.isoformat(),
         "observed_at": observed.isoformat(), "availability_semantics": config["availability_semantics"],
         "components": component_rows, "evidence_status": verification["status"],
-        "replica_status": verification["replica_status"], "formal_pit_eligible": False,
+        "replica_status": verification["replica_status"],
+        "formal_pit_eligible": bool(config.get("formal_pit_eligible", False)),
         "historical_backfill_counts_as_shadow": False,
         "database_session_mode": "READ_ONLY",
         "database_write_operations_performed": 0,
@@ -191,9 +217,18 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today())
+    parser.add_argument("--release-id", default=None)
+    parser.add_argument("--strategy-id", default=None)
     args = parser.parse_args()
     engine = create_engine(require_sqlalchemy_url(), pool_pre_ping=True)
-    result = collect(engine=engine, config_path=args.config, output_root=args.output_root, as_of=args.as_of)
+    result = collect(
+        engine=engine,
+        config_path=args.config,
+        output_root=args.output_root,
+        as_of=args.as_of,
+        release_id_override=args.release_id,
+        strategy_id_override=args.strategy_id,
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     if any(value == "QUERY_FAILED" for value in result["component_status"].values()):
         raise SystemExit(2)

@@ -1,5 +1,16 @@
 # 回测报告索引
 
+> 2026-07-27 动态评分冠军实盘准入全面评估：基于冻结账户回测和当前治理证据，
+> `production_governed_vol_position_v1_2b_dynamic_score` 的累计收益为+57.23%、
+> 年化+20.41%、最大回撤-25.52%，但样本仅覆盖2023-11-30至2026-06-17，
+> 且正式快照、2013年至今长回测、Walk-forward、严格账本、统计稳健性、成本容量
+> 和本release的20+60日真实Shadow均未通过。最终结论为 `NO_GO`，允许新增风险资金
+> 0元，生产路由和Canary配置不变。详见
+> `2026-07-27_动态评分冠军策略_实盘准入全面评估.md`，原始评估包位于
+> `exports/dynamic_champion_live_readiness/20260727_001940/`。
+> 私有可视化报告：
+> <https://dynamic-champion-readiness-20260727.supo2087.chatgpt.site>。
+
 > 2026-07-20 Quant Research Validation V2：固定 50 万元本金和 50% NAV 总仓位，建立 2013+、5 个资金规模 × 5 个成本情景、T/T+1、PIT V2、执行失败、统计稳健性和双账本的正式验收合同。当前未配置只读数据库与主副证据卷，因此没有新增正式回测结果；区间、收益、最大回撤和覆盖率均标记待真实证据，状态为 `BLOCKED / NO_SCALE`。实施记录见 `docs/tasks/2026-07-20_Quant_Research_Validation_V2.md`。
 
 > 2026-07-20 可信生产闭环工程升级：统一发布身份、PIT 快照、NAV 风险分母、独立双账本、人工执行、12/3/3 Walk-forward 和四级 CI。该变更没有生成新的正式经济回测，策略继续 `BLOCKED / NO_SCALE`；待真实冻结数据、双账本全历史、正式赛马和 20+60 个影子交易日完成后再更新收益结论。实施记录见 `docs/tasks/2026-07-20_可信生产闭环升级.md`。

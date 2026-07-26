@@ -1,0 +1,67 @@
+[
+  {
+    "file": "annual_returns.csv",
+    "sha256": "9cdfa413a8110102cac75014fe703d85a5e3b69e6b18c3409f0dccb21016544a",
+    "bytes": 204
+  },
+  {
+    "file": "artifact.json",
+    "sha256": "2120b8275209c61c6c2e74d1c074e9befb2211361114c2e0774dea6658889bd7",
+    "bytes": 162893
+  },
+  {
+    "file": "capital_ladder.csv",
+    "sha256": "577ee632c2fa4ceb0a992e5a0914d1de72f59d309e80ca43da18abb8c3606ef5",
+    "bytes": 197
+  },
+  {
+    "file": "data_quality.csv",
+    "sha256": "17513caeebab8da4db7ca5a48edff05a4a96996e3caef2de3e5a4e08a46cba19",
+    "bytes": 245
+  },
+  {
+    "file": "gate_matrix.csv",
+    "sha256": "49b9abf9d3344db0c77a8e0e68946ca3943abc9825016d2b4c82f24047381650",
+    "bytes": 2728
+  },
+  {
+    "file": "industry_attribution.csv",
+    "sha256": "0605b6163b1acc667d9e2cd08213ae15601ead1f6e8f78f14695283c5ad4a791",
+    "bytes": 3394
+  },
+  {
+    "file": "monthly_returns.csv",
+    "sha256": "38e248507acfafd5567c73d3731d5a3ef03562047f8b426c1158125be542c41c",
+    "bytes": 2408
+  },
+  {
+    "file": "nav_drawdown.csv",
+    "sha256": "76058bf5eb13b539ee1eae5089b456cf0e67c8a78bb4278e9d2dacc2f49a546e",
+    "bytes": 43550
+  },
+  {
+    "file": "readiness.json",
+    "sha256": "e94e813b25d7ee839c271caeb0b850cebb84105a0cd60ae116d5f49cb8b3005e",
+    "bytes": 11387
+  },
+  {
+    "file": "report.md",
+    "sha256": "27aff52b3d2448bcd8bcfddd83099fb69236ff87951c51bb53b4d2950e98bd78",
+    "bytes": 5796
+  },
+  {
+    "file": "rolling_returns.csv",
+    "sha256": "6c59f1c660b1b2b79ee0b0cf08f75ca57e3fe53a6557a83f4db642551a81c7a8",
+    "bytes": 162
+  },
+  {
+    "file": "round_trips.csv",
+    "sha256": "36f3cad1eaecfc0da96d60399c92e841a0d28578383e6a8cc294d535e1936360",
+    "bytes": 70016
+  },
+  {
+    "file": "stock_attribution.csv",
+    "sha256": "46c3f5a1443389c8adbafa8c4c2b0a3c7d75b889f31bed69cf0ae6677683ca60",
+    "bytes": 19129
+  }
+]

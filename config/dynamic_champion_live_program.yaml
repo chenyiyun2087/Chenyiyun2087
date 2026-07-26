@@ -1,0 +1,46 @@
+schema_version: "1.0"
+program_id: dynamic-champion-500k-v1
+strategy_id: production_governed_vol_position_v1_2b_dynamic_score
+release_id: champion-v1-2b-dynamic-score-20260618
+baseline_strategy_id: production_governed_vol_position
+acceptance_config: config/production_acceptance.yaml
+release_registry: config/strategy_release_registry.yaml
+approved_backtest_snapshot: exports/signal_research/20260618_213002_059138_trusted_account_backtest
+
+current_lane: RESEARCH_REVALIDATION
+production_route_mutation_allowed: false
+canary_enabled: false
+broker_api_enabled: false
+manual_confirmation_required: true
+
+target_capital_cny: 500000
+capital_ladder:
+  - stage: CANARY_10
+    capital_cny: 50000
+    min_real_trading_days: 60
+    min_completed_round_trips: 30
+  - stage: CANARY_25
+    capital_cny: 125000
+    min_real_trading_days: 60
+    min_completed_round_trips: 30
+  - stage: CANARY_50
+    capital_cny: 250000
+    min_real_trading_days: 60
+    min_completed_round_trips: 30
+  - stage: CANARY_100
+    capital_cny: 500000
+    min_real_trading_days: 60
+    min_completed_round_trips: 30
+
+shadow:
+  disabled_min_real_trading_days: 20
+  economic_min_real_trading_days: 60
+  economic_min_completed_round_trips: 30
+  historical_backfill_counts: false
+  require_formal_pit: true
+
+report:
+  raw_output_root: exports/dynamic_champion_live_readiness
+  docs_summary: docs/03_backtest_reports/2026-07-27_动态评分冠军策略_实盘准入全面评估.md
+  site_title: 动态评分冠军策略实盘准入全面评估
+  site_slug: dynamic-champion-live-readiness-20260727

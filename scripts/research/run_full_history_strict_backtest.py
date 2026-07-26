@@ -42,11 +42,12 @@ REQUIRED_REGIMES: list[dict[str, str]] = [
 DEFAULT_START_DATE = "2013-01-01"
 ACCOUNT_SIZES = [500_000, 1_500_000, 3_000_000, 5_000_000, 10_000_000]
 EXECUTION_SCENARIOS = (
-    ("base", 0.00075, 10),
-    ("conservative_25", 0.0015, 25),
-    ("conservative_50", 0.0015, 50),
-    ("extreme_30", 0.0030, 100),
-    ("extreme_50", 0.0050, 100),
+    ("base_cost_7_5_slip_10", 0.00075, 10),
+    *tuple(
+        (f"stress_cost_{int(cost * 10_000)}_slip_{slippage}", cost, slippage)
+        for cost in (0.0015, 0.0030, 0.0050)
+        for slippage in (25, 50, 100)
+    ),
 )
 
 
@@ -69,9 +70,16 @@ def build_backtest_command(
     slippage_bps: int = 10,
     initial_cash: int = 500_000,
     output_dir: str = "",
+    scores_snapshot: str | None = None,
+    prices_snapshot: str | None = None,
+    corporate_action_snapshot: str | None = None,
+    corporate_action_manifest: str | None = None,
+    security_lifecycle_snapshot: str | None = None,
+    security_lifecycle_manifest: str | None = None,
+    require_verified_evidence: bool = True,
 ) -> list[str]:
     """Build the subprocess command for the trusted strategy account backtest."""
-    return [
+    command = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "research_trusted_strategy_account_backtest.py"),
         "--risk-profile", "adaptive",
@@ -84,6 +92,20 @@ def build_backtest_command(
         "--initial-cash", str(initial_cash),
         "--output-dir", output_dir,
     ]
+    optional_paths = {
+        "--scores-snapshot": scores_snapshot,
+        "--prices-snapshot": prices_snapshot,
+        "--corporate-action-snapshot": corporate_action_snapshot,
+        "--corporate-action-manifest": corporate_action_manifest,
+        "--security-lifecycle-snapshot": security_lifecycle_snapshot,
+        "--security-lifecycle-manifest": security_lifecycle_manifest,
+    }
+    for flag, value in optional_paths.items():
+        if value:
+            command.extend([flag, value])
+    if require_verified_evidence:
+        command.append("--require-verified-evidence")
+    return command
 
 
 def check_regime_coverage(report: dict[str, Any]) -> dict[str, Any]:
@@ -97,8 +119,16 @@ def check_regime_coverage(report: dict[str, Any]) -> dict[str, Any]:
     for regime in REQUIRED_REGIMES:
         r_start = regime["start"]
         r_end = regime["end"]
-        # Simple overlap check
-        if start and end and r_end >= start and r_start <= end:
+        # A regime counts only when the backtest begins no later than the
+        # regime start and reaches the portion observable by the run end.
+        effective_end = min(r_end, end) if end else r_end
+        if (
+            start
+            and end
+            and start <= r_start
+            and end >= r_start
+            and end >= effective_end
+        ):
             covered.append(regime["name"])
         else:
             gaps.append(regime["name"])
@@ -120,6 +150,20 @@ def check_regime_coverage(report: dict[str, Any]) -> dict[str, Any]:
 def run(args: argparse.Namespace) -> dict[str, Any]:
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    snapshot_values = {
+        "scores_snapshot": getattr(args, "scores_snapshot", None),
+        "prices_snapshot": getattr(args, "prices_snapshot", None),
+        "corporate_action_snapshot": getattr(args, "corporate_action_snapshot", None),
+        "corporate_action_manifest": getattr(args, "corporate_action_manifest", None),
+        "security_lifecycle_snapshot": getattr(args, "security_lifecycle_snapshot", None),
+        "security_lifecycle_manifest": getattr(args, "security_lifecycle_manifest", None),
+    }
+    missing_snapshots = [name for name, value in snapshot_values.items() if not value]
+    if missing_snapshots and not args.dry_run:
+        raise RuntimeError(
+            "verified_full_history_snapshots_required:"
+            + ",".join(missing_snapshots)
+        )
 
     scenario_results: list[dict[str, Any]] = []
     scenarios = EXECUTION_SCENARIOS if not args.skip_stress else EXECUTION_SCENARIOS[:1]
@@ -131,6 +175,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 start_date=args.start_date, end_date=args.end_date,
                 strategy=args.strategy, cost_rate=cost, slippage_bps=slip,
                 initial_cash=account_size, output_dir=str(scenario_dir),
+                **snapshot_values,
             )
             status = "DRY_RUN"
             return_code = None
@@ -176,12 +221,21 @@ def main() -> None:
     )
     parser.add_argument("--start-date", default=DEFAULT_START_DATE)
     parser.add_argument("--end-date", default=datetime.now().strftime("%Y-%m-%d"))
-    parser.add_argument("--strategy", default="production_governed_vol_position")
+    parser.add_argument(
+        "--strategy",
+        default="production_governed_vol_position_v1_2b_dynamic_score",
+    )
     parser.add_argument("--output-dir", default=str(
         PROJECT_ROOT / "exports" / "full_history_backtest" / datetime.now().strftime("%Y%m%d_%H%M%S")
     ))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-stress", action="store_true")
+    parser.add_argument("--scores-snapshot")
+    parser.add_argument("--prices-snapshot")
+    parser.add_argument("--corporate-action-snapshot")
+    parser.add_argument("--corporate-action-manifest")
+    parser.add_argument("--security-lifecycle-snapshot")
+    parser.add_argument("--security-lifecycle-manifest")
     _args = parser.parse_args()
     run(_args)
 
