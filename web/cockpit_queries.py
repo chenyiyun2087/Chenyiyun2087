@@ -16,12 +16,13 @@ from datetime import date
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+
+from scoreRank.core.db_runtime import get_sqlalchemy_engine
 
 
 def _get_engine():
-    from scoreRank.core.db_config import build_sqlalchemy_url
-    return create_engine(build_sqlalchemy_url())
+    return get_sqlalchemy_engine()
 
 
 def get_todays_decisions(engine, as_of_date: date | None = None) -> dict[str, Any]:

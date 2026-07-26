@@ -21,14 +21,24 @@ logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scoreRank.core.config import CONFIG
-from scoreRank.core.db_config import build_sqlalchemy_url
+from scoreRank.core.db_runtime import get_sqlalchemy_engine
+from scripts.ops.candidate_export.metadata import (
+    clear_metadata_cache,
+    columns_for_table,
+    safe_table_name,
+    table_exists,
+)
+from scripts.ops.candidate_export.selection import (
+    attach_risk_classifications,
+    scale_candidate_weights,
+)
 from scripts.ops.production_config import load_production_config, production_risk_profile_description
 from runtime.provenance import ProvenanceEnvelope
 from runtime.release_registry import get_release
@@ -397,55 +407,15 @@ def _round_lot(shares: float, lot_size: int) -> int:
 
 
 def _safe_table_name(table: str) -> str:
-    value = str(table or "").strip()
-    if not value:
-        raise ValueError("empty table name")
-    if not all(part.replace("_", "").isalnum() for part in value.split(".")):
-        raise ValueError(f"invalid table name: {table}")
-    return value
+    return safe_table_name(table)
 
 
 def _table_exists(engine, full_table_name: str) -> bool:
-    table = _safe_table_name(full_table_name)
-    if "." in table:
-        schema, name = table.split(".", 1)
-    else:
-        schema, name = None, table
-    if schema:
-        sql = text(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema = :schema AND table_name = :name
-            """
-        )
-        params = {"schema": schema, "name": name}
-    else:
-        sql = text("SHOW TABLES LIKE :name")
-        params = {"name": name}
-    with engine.connect() as conn:
-        result = conn.execute(sql, params).scalar()
-    return bool(result)
+    return table_exists(engine, full_table_name)
 
 
 def _columns_for_table(engine, full_table_name: str) -> set[str]:
-    table = _safe_table_name(full_table_name)
-    if "." in table:
-        schema, name = table.split(".", 1)
-    else:
-        schema = None
-        name = table
-    sql = text(
-        """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = COALESCE(:schema, DATABASE())
-          AND table_name = :name
-        """
-    )
-    with engine.connect() as conn:
-        rows = conn.execute(sql, {"schema": schema, "name": name}).fetchall()
-    return {str(row[0]) for row in rows}
+    return columns_for_table(engine, full_table_name)
 
 
 def _validate_order_prerequisites(engine, asof_date: str, min_pool_size: int) -> None:
@@ -1243,30 +1213,7 @@ def _attach_candidate_risk_classifications(candidates: pd.DataFrame) -> pd.DataF
     correlated-theme proxy. A missing industry remains missing and is still
     rejected by the hard risk gate.
     """
-    if candidates.empty:
-        return candidates.copy()
-
-    result = candidates.copy()
-    industry = (
-        result["industry"].fillna("").astype(str).str.strip()
-        if "industry" in result.columns
-        else pd.Series("", index=result.index, dtype="object")
-    )
-    theme = pd.Series("", index=result.index, dtype="object")
-    if "correlated_theme" in result.columns:
-        theme = result["correlated_theme"].fillna("").astype(str).str.strip()
-    if "theme" in result.columns:
-        explicit_theme = result["theme"].fillna("").astype(str).str.strip()
-        theme = theme.mask(theme.eq(""), explicit_theme)
-
-    fallback = theme.eq("") & industry.ne("")
-    result["correlated_theme"] = theme.mask(fallback, "industry:" + industry)
-    result["theme_source"] = np.where(
-        result["correlated_theme"].fillna("").astype(str).str.strip().eq(""),
-        "missing",
-        np.where(fallback, "industry_fallback", "explicit"),
-    )
-    return result
+    return attach_risk_classifications(candidates)
 
 
 def _latest_adaptive_decision(
@@ -1385,7 +1332,7 @@ def _build_adaptive_dynamic_position_detail(
     position_scale, position_reason = _adaptive_position_scale(decision)
     if strategy_name == ADAPTIVE_MARKET_STYLE_STRATEGY_NAME:
         ashare_all = _load_ashare_strategy_candidates(
-            create_engine(build_sqlalchemy_url()),
+            get_sqlalchemy_engine(),
             scores["trade_date"].min(),
             signal_date,
         )
@@ -1446,19 +1393,7 @@ def _build_adaptive_dynamic_position_detail(
 
 
 def _scale_candidate_weights_for_export(candidates: pd.DataFrame, target_position_ratio: float) -> pd.DataFrame:
-    if candidates.empty:
-        return candidates
-    out = candidates.copy()
-    target = max(0.0, min(1.0, float(target_position_ratio)))
-    weights = pd.to_numeric(out.get("effective_weight"), errors="coerce").fillna(0.0)
-    weight_sum = float(weights.sum())
-    if weight_sum > 0:
-        out["effective_weight"] = weights / weight_sum * target
-    else:
-        out["effective_weight"] = target / max(1, len(out))
-    out["market_exposure_scale"] = target
-    out["target_position_ratio"] = target
-    return out
+    return scale_candidate_weights(candidates, target_position_ratio)
 
 
 def _build_ashare_shadow_detail(
@@ -1474,7 +1409,7 @@ def _build_ashare_shadow_detail(
     signal_date = pd.Timestamp(asof_date).date()
     strategy_version = ASHARE_STRATEGY_VERSION_BY_NAME[strategy_name]
     ashare_all = _load_ashare_strategy_candidates(
-        create_engine(build_sqlalchemy_url()),
+        get_sqlalchemy_engine(),
         scores["trade_date"].min(),
         signal_date,
     )
@@ -1524,7 +1459,7 @@ def _build_dual_system_candidate_detail(
     else:
         chenyiyun_targets = _build_candidate_rows(selected, underlying_spec, asof_date, latest_prices, top_n)
     ashare_all = _load_ashare_strategy_candidates(
-        create_engine(build_sqlalchemy_url()),
+        get_sqlalchemy_engine(),
         scores["trade_date"].min(),
         signal_date,
     )
@@ -2395,7 +2330,8 @@ def _write_outputs(
 def export_candidates(args: argparse.Namespace) -> dict:
     args = _apply_risk_profile_defaults(args)
     requested_emit_orders = bool(args.emit_orders)
-    engine = create_engine(build_sqlalchemy_url())
+    engine = get_sqlalchemy_engine()
+    clear_metadata_cache(engine)
     asof_date = _normalize_date(args.date) or _latest_score_date(engine)
     start_date = (pd.Timestamp(asof_date) - pd.Timedelta(days=int(args.history_days))).strftime("%Y-%m-%d")
     signal_date = pd.Timestamp(asof_date).date()
@@ -3393,7 +3329,7 @@ def main() -> None:
     except Exception as exc:
         if args.notify_feishu:
             try:
-                blocked_engine = create_engine(build_sqlalchemy_url())
+                blocked_engine = get_sqlalchemy_engine()
                 blocked_date = _normalize_date(args.date) or datetime.now().strftime("%Y-%m-%d")
                 try:
                     blocked_execution_date = _next_trading_day(blocked_engine, blocked_date)
