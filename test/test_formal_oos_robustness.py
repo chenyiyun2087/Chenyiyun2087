@@ -138,8 +138,10 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
             json.dumps({k: v for k, v in formal_payload.items() if k != "manifest_sha256"},
                        sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
-        "frozen_bundle_sha256": "e" * 64,
-        "acceptance_config_sha256": hashlib.sha256(b"test-acceptance").hexdigest(),
+        "frozen_bundle_sha256": formal_payload.get("frozen_bundle_sha256", "e" * 64),
+        "acceptance_config_sha256": hashlib.sha256(
+            (Path(__file__).resolve().parents[1] / "config" / "production_acceptance.yaml").read_bytes()
+        ).hexdigest(),
         "analysis_generator_git_sha": "f" * 40,
         "input_files": {
             name: {"sha256": hashlib.sha256((package / name).read_bytes()).hexdigest()}

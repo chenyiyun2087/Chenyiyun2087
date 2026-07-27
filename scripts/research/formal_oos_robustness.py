@@ -338,6 +338,9 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     ).hexdigest()
     if formal.get("manifest_sha256") != computed_manifest_sha:
         return _blocked(formal_manifest, analysis_package, ["formal_manifest_sha_mismatch"])
+    # P0-5: Reject fixture_mode manifests (same rule as Capacity evaluator)
+    if formal.get("fixture_mode") is True:
+        return _blocked(formal_manifest, analysis_package, ["formal_manifest_fixture_mode_rejected"])
     missing = [
         name for name in REQUIRED_PACKAGE_FILES if not (analysis_package / name).is_file()
     ]
@@ -412,6 +415,29 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
                 formal_manifest, analysis_package,
                 [f"selected_model_config_missing_fields:{fid}:{','.join(missing_fields)}"],
             )
+        # P0-6: Type/range validation for model config fields
+        if not isinstance(fconfig.get("factor_weights"), dict):
+            return _blocked(formal_manifest, analysis_package, [f"model_config_bad_factor_weights_type:{fid}"])
+        if not isinstance(fconfig.get("hold_days"), (int, float)) or float(fconfig["hold_days"]) <= 0:
+            return _blocked(formal_manifest, analysis_package, [f"model_config_bad_hold_days:{fid}"])
+        if not isinstance(fconfig.get("top_n"), (int, float)) or int(fconfig["top_n"]) <= 0:
+            return _blocked(formal_manifest, analysis_package, [f"model_config_bad_top_n:{fid}"])
+        if not isinstance(fconfig.get("cost_model"), dict):
+            return _blocked(formal_manifest, analysis_package, [f"model_config_bad_cost_model_type:{fid}"])
+        code_sha_v = str(fconfig.get("code_git_sha") or "")
+        if len(code_sha_v) != 40 or any(c not in "0123456789abcdef" for c in code_sha_v):
+            return _blocked(formal_manifest, analysis_package, [f"model_config_bad_code_sha:{fid}"])
+        config_sha_v = str(fconfig.get("config_sha") or "")
+        if len(config_sha_v) != 64 or any(c not in "0123456789abcdef" for c in config_sha_v):
+            return _blocked(formal_manifest, analysis_package, [f"model_config_bad_config_sha:{fid}"])
+        # selected_at must be <= validation_end
+        try:
+            sel_at = pd.Timestamp(str(fconfig["selected_at"]))
+            val_end = pd.Timestamp(fold_map_temp[fid].validation_end)
+            if sel_at > val_end:
+                return _blocked(formal_manifest, analysis_package, [f"model_config_selected_after_validation:{fid}"])
+        except (ValueError, KeyError):
+            pass
 
     returns = pd.read_csv(analysis_package / "oos_returns.csv")
     required_return_columns = {
@@ -438,6 +464,10 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
             row_shas = set(returns.loc[returns["fold_id"] == fid, "model_config_sha"].astype(str))
             if row_shas and row_shas != {expected_sha}:
                 contamination.append(f"model_config_sha_row_mismatch:{fid}")
+
+    # P0-3: Check OOS duplicate (fold_id, trade_date) before computation
+    if returns.duplicated(["fold_id", "trade_date"]).any():
+        return _blocked(formal_manifest, analysis_package, ["oos_duplicate_fold_date"])
 
     returns["trade_date"] = pd.to_datetime(returns["trade_date"], errors="coerce")
     returns["parameter_selected_at"] = pd.to_datetime(
@@ -490,10 +520,22 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         ).hexdigest()
         if analysis_manifest["formal_manifest_sha256"] != expected_fm_sha:
             manifest_blockers.append("analysis_manifest_formal_sha_mismatch")
-    if not analysis_manifest.get("frozen_bundle_sha256"):
+    # P0-4: Verify frozen_bundle_sha256 matches formal manifest
+    am_frozen = str(analysis_manifest.get("frozen_bundle_sha256") or "")
+    if not am_frozen:
         manifest_blockers.append("analysis_manifest_missing_frozen_bundle_sha256")
-    if not analysis_manifest.get("acceptance_config_sha256"):
+    elif am_frozen != str(formal.get("frozen_bundle_sha256") or ""):
+        manifest_blockers.append("analysis_manifest_frozen_bundle_sha_mismatch")
+    # P0-4: Verify acceptance_config_sha256 against actual config file
+    am_accept = str(analysis_manifest.get("acceptance_config_sha256") or "")
+    if not am_accept:
         manifest_blockers.append("analysis_manifest_missing_acceptance_config_sha256")
+    else:
+        actual_accept_sha = _sha(ACCEPTANCE_PATH)
+        if am_accept != actual_accept_sha:
+            manifest_blockers.append("analysis_manifest_acceptance_config_sha_mismatch")
+    if not analysis_manifest.get("analysis_generator_git_sha"):
+        manifest_blockers.append("analysis_manifest_missing_generator_git_sha")
     # Self-hash: analysis_manifest must have manifest_sha256 that validates
     am_self_sha = str(analysis_manifest.get("manifest_sha256") or "")
     if not am_self_sha:
@@ -523,14 +565,19 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         return _blocked(formal_manifest, analysis_package, contamination)
 
     configuration = pd.read_csv(analysis_package / "configuration_returns.csv")
-    configuration["trade_date"] = pd.to_datetime(configuration["trade_date"], errors="coerce")
-    # P0-9 fix: require fold_id for correct per-fold alignment
+    # P0-2 fix: check required columns BEFORE any transformations
     required_config = {"trade_date", "config_id", "daily_return", "fold_id"}
     if required_config - set(configuration.columns):
         return _blocked(formal_manifest, analysis_package, ["comparison_baseline_missing"])
-    pivot = configuration.pivot_table(
+    configuration["trade_date"] = pd.to_datetime(configuration["trade_date"], errors="coerce")
+    if configuration["trade_date"].isna().any():
+        return _blocked(formal_manifest, analysis_package, ["comparison_baseline_invalid_dates"])
+    # P0-1 fix: check duplicates BEFORE pivot (not after)
+    dup_key = ["fold_id", "trade_date", "config_id"]
+    if configuration.duplicated(dup_key, keep=False).any():
+        return _blocked(formal_manifest, analysis_package, ["baseline_duplicate_primary_key"])
+    pivot = configuration.pivot(
         index=["fold_id", "trade_date"], columns="config_id", values="daily_return",
-        aggfunc="first",
     )
     if pivot.isna().any().any() or pivot.shape[1] < 2:
         return _blocked(

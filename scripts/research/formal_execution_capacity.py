@@ -91,7 +91,10 @@ def _blocked(
     return result
 
 
-def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
+def evaluate(
+    formal_manifest: Path, matrix_path: Path,
+    *, artifact_root: Path | None = None,
+) -> dict[str, Any]:
     if not formal_manifest.exists():
         return _blocked(formal_manifest, matrix_path, ["formal_manifest_missing"])
     try:
@@ -184,9 +187,10 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
         # PR-H1: Verify artifact directory actually exists and files match SHAs
         formal_run_id = str(formal.get("formal_run_id") or "")
         if formal_run_id:
-            artifact_base = Path(
-                str(formal.get("_capacity_artifact_root") or "")
-                or str(PROJECT_ROOT / "exports" / "execution_capacity")
+            artifact_base = (
+                artifact_root
+                if artifact_root is not None
+                else PROJECT_ROOT / "exports" / "execution_capacity"
             )
             artifact_dir = (
                 artifact_base / formal_run_id / str(cell["account_size"]) / str(cell["scenario"])
@@ -213,14 +217,18 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                             blockers.append(f"capacity_artifact_account_size_mismatch:{label}")
                         if str(art_manifest.get("scenario") or "") != str(cell["scenario"]):
                             blockers.append(f"capacity_artifact_scenario_mismatch:{label}")
-                        # P0-E: strategy_id, formal_manifest_sha256, cost_rate, slippage, adv_limit_type mandatory
+                        # P0-11: ALL identity fields mandatory with exact match
                         if not art_manifest.get("strategy_id"):
                             blockers.append(f"capacity_artifact_missing_strategy_id:{label}")
+                        elif art_manifest["strategy_id"] != str(formal.get("strategy_ids", [""])[0]):
+                            blockers.append(f"capacity_artifact_strategy_id_mismatch:{label}")
                         art_fm_sha = str(art_manifest.get("formal_manifest_sha256") or "")
                         if not art_fm_sha:
                             blockers.append(f"capacity_artifact_missing_formal_manifest_sha256:{label}")
                         elif art_fm_sha != computed_manifest_sha:
                             blockers.append(f"capacity_artifact_formal_manifest_sha_mismatch:{label}")
+                        if art_manifest.get("schema_version") != "capacity_artifact_manifest_v1":
+                            blockers.append(f"capacity_artifact_bad_schema_version:{label}")
                         spec = scenarios.get(str(cell["scenario"]), {})
                         if abs(float(art_manifest.get("cost_rate", -1) or -1) - float(cell.get("cost_rate", -2))) > 1e-12:
                             blockers.append(f"capacity_artifact_cost_rate_mismatch:{label}")
@@ -228,11 +236,16 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                             blockers.append(f"capacity_artifact_slippage_bps_mismatch:{label}")
                         adv_type_manifest = str(art_manifest.get("adv_limit_type") or "")
                         adv_type_spec = str(spec.get("adv_limit_type", "base"))
-                        if adv_type_manifest and adv_type_manifest != adv_type_spec:
+                        if not adv_type_manifest:
+                            blockers.append(f"capacity_artifact_missing_adv_limit_type:{label}")
+                        elif adv_type_manifest != adv_type_spec:
                             blockers.append(f"capacity_artifact_adv_limit_type_mismatch:{label}")
                         gen_sha = str(art_manifest.get("generator_git_sha") or "")
-                        if gen_sha and len(gen_sha) != 40:
+                        if not gen_sha:
+                            blockers.append(f"capacity_artifact_missing_generator_sha:{label}")
+                        elif len(gen_sha) != 40 or any(c not in "0123456789abcdef" for c in gen_sha):
                             blockers.append(f"capacity_artifact_invalid_generator_sha:{label}")
+                                        # P0-12: _capacity_artifact_root only allowed via explicit CLI arg, not manifest
                         # Verify artifact_sha256 matches the manifest's self-hash (MANDATORY)
                         manifest_files = art_manifest.get("files") or {}
                         manifest_self_sha = str(art_manifest.get("manifest_sha256") or "")
@@ -264,28 +277,50 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                                         blockers.append(
                                             f"capacity_artifact_file_sha_mismatch:{label}:{req_file}"
                                         )
-                        # P0-H: Read nav.csv, recompute cumulative_return and max_drawdown
+                        # P0-10: NAV fail-closed — require valid NAV with ≥2 rows, no gaps
                         nav_path = artifact_dir / "nav.csv"
-                        if nav_path.is_file():
-                            nav_df = pd.read_csv(nav_path)
-                            if "nav" in nav_df.columns and len(nav_df) > 0:
-                                nav_vals = pd.to_numeric(nav_df["nav"], errors="coerce").dropna()
-                                if len(nav_vals) > 1:
-                                    nav_returns = nav_vals.pct_change().dropna()
-                                    recomputed_return = float((1.0 + nav_returns).prod() - 1.0)
-                                    recomputed_dd = float((nav_vals / nav_vals.cummax() - 1.0).min())
-                                    cell_return = float(cell.get("cumulative_return", 0))
-                                    cell_dd = float(cell.get("max_drawdown", 0))
-                                    if not math.isclose(recomputed_return, cell_return, rel_tol=0, abs_tol=1e-6):
-                                        blockers.append(
-                                            f"capacity_nav_return_mismatch:{label}:"
-                                            f"cell={cell_return:.6f}:nav={recomputed_return:.6f}"
-                                        )
-                                    if not math.isclose(recomputed_dd, cell_dd, rel_tol=0, abs_tol=1e-4):
-                                        blockers.append(
-                                            f"capacity_nav_drawdown_mismatch:{label}:"
-                                            f"cell={cell_dd:.4f}:nav={recomputed_dd:.4f}"
-                                        )
+                        if not nav_path.is_file():
+                            blockers.append(f"capacity_nav_missing:{label}")
+                        else:
+                            try:
+                                nav_df = pd.read_csv(nav_path)
+                                if "nav" not in nav_df.columns:
+                                    blockers.append(f"capacity_nav_missing_column:{label}")
+                                elif len(nav_df) < 2:
+                                    blockers.append(f"capacity_nav_insufficient_rows:{label}")
+                                else:
+                                    nav_vals = pd.to_numeric(nav_df["nav"], errors="coerce")
+                                    if nav_vals.isna().any():
+                                        blockers.append(f"capacity_nav_contains_nan:{label}")
+                                    elif (nav_vals <= 0).any():
+                                        blockers.append(f"capacity_nav_non_positive:{label}")
+                                    else:
+                                        # Check dates strictly increasing
+                                        if "trade_date" in nav_df.columns:
+                                            nav_dates = pd.to_datetime(nav_df["trade_date"], errors="coerce")
+                                            if nav_dates.isna().any():
+                                                blockers.append(f"capacity_nav_invalid_dates:{label}")
+                                            elif not nav_dates.is_monotonic_increasing:
+                                                blockers.append(f"capacity_nav_dates_not_increasing:{label}")
+                                            elif nav_dates.duplicated().any():
+                                                blockers.append(f"capacity_nav_duplicate_dates:{label}")
+                                        nav_returns = nav_vals.pct_change().dropna()
+                                        recomputed_return = float((1.0 + nav_returns).prod() - 1.0)
+                                        recomputed_dd = float((nav_vals / nav_vals.cummax() - 1.0).min())
+                                        cell_return = float(cell.get("cumulative_return", 0))
+                                        cell_dd = float(cell.get("max_drawdown", 0))
+                                        if not math.isclose(recomputed_return, cell_return, rel_tol=0, abs_tol=1e-6):
+                                            blockers.append(
+                                                f"capacity_nav_return_mismatch:{label}:"
+                                                f"cell={cell_return:.6f}:nav={recomputed_return:.6f}"
+                                            )
+                                        if not math.isclose(recomputed_dd, cell_dd, rel_tol=0, abs_tol=1e-4):
+                                            blockers.append(
+                                                f"capacity_nav_drawdown_mismatch:{label}:"
+                                                f"cell={cell_dd:.4f}:nav={recomputed_dd:.4f}"
+                                            )
+                            except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+                                blockers.append(f"capacity_nav_parse_error:{label}:{type(exc).__name__}")
                         # P0-F/G: Validate orders/fills counts against execution_metrics.json exactly
                         orders_path = artifact_dir / "orders.csv"
                         fills_path = artifact_dir / "fills.csv"
@@ -294,49 +329,64 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                             orders_df = pd.read_csv(orders_path)
                             fills_df = pd.read_csv(fills_path)
                             metrics_data = json.loads(metrics_path.read_text(encoding="utf-8"))
-                            actual_order_count = len(orders_df)
-                            actual_fill_count = len(fills_df)
-                            # Exact match for discrete counts
-                            metrics_order_count = int(metrics_data.get("order_count", -1))
-                            if metrics_order_count >= 0 and actual_order_count != metrics_order_count:
-                                blockers.append(
-                                    f"capacity_order_count_vs_metrics:{label}:"
-                                    f"metrics={metrics_order_count}:actual={actual_order_count}"
-                                )
-                            metrics_failed = int(metrics_data.get("failed_order_count", -1))
-                            if metrics_failed >= 0 and metrics_failed != int(cell.get("failed_order_count", -1)):
-                                blockers.append(
-                                    f"capacity_failed_order_mismatch:{label}:"
-                                    f"cell={cell.get('failed_order_count')}:metrics={metrics_failed}"
-                                )
-                            metrics_partial = int(metrics_data.get("partial_fill_count", -1))
-                            if metrics_partial >= 0 and metrics_partial != int(cell.get("partial_fill_count", -1)):
-                                blockers.append(
-                                    f"capacity_partial_fill_mismatch:{label}:"
-                                    f"cell={cell.get('partial_fill_count')}:metrics={metrics_partial}"
-                                )
-                            metrics_delayed = int(metrics_data.get("delayed_fill_count", -1))
-                            if metrics_delayed >= 0 and metrics_delayed != int(cell.get("delayed_fill_count", -1)):
-                                blockers.append(
-                                    f"capacity_delayed_fill_mismatch:{label}:"
-                                    f"cell={cell.get('delayed_fill_count')}:metrics={metrics_delayed}"
-                                )
-                            # Cross-check turnover, utilization, slippage from metrics
-                            metrics_turnover = float(metrics_data.get("turnover", -1))
-                            if metrics_turnover >= 0 and not math.isclose(
-                                metrics_turnover, float(cell.get("turnover", 0)), rel_tol=0, abs_tol=1e-6
-                            ):
-                                blockers.append(f"capacity_turnover_mismatch:{label}")
-                            metrics_slippage = float(metrics_data.get("realized_slippage_bps", -1))
-                            if metrics_slippage >= 0 and not math.isclose(
-                                metrics_slippage, float(cell.get("realized_slippage_bps", 0)), rel_tol=0, abs_tol=1e-6
-                            ):
-                                blockers.append(f"capacity_slippage_mismatch:{label}")
-                            metrics_util = float(metrics_data.get("capital_utilization", -1))
-                            if metrics_util >= 0 and not math.isclose(
-                                metrics_util, float(cell.get("capital_utilization", 0)), rel_tol=0, abs_tol=1e-6
-                            ):
-                                blockers.append(f"capacity_utilization_mismatch:{label}")
+                            # P0-7: ALL execution metrics mandatory — any missing or invalid → BLOCKED
+                            REQUIRED_METRICS_FIELDS = {
+                                "order_count", "fill_count", "failed_order_count",
+                                "partial_fill_count", "delayed_fill_count", "failure_rate",
+                                "turnover", "realized_slippage_bps", "capital_utilization",
+                                "max_order_adv_ratio", "expected_impact_bps_p95",
+                            }
+                            for mf in REQUIRED_METRICS_FIELDS:
+                                if mf not in metrics_data or not _is_number(metrics_data[mf]):
+                                    blockers.append(f"capacity_metrics_missing_or_invalid:{label}:{mf}")
+                            if not any(f"capacity_metrics_missing_or_invalid:{label}" in b for b in blockers):
+                                # P0-8: Three-way exact match — raw orders == metrics == cell
+                                raw_order_count = len(orders_df)
+                                metrics_order_count = int(metrics_data["order_count"])
+                                cell_order_count = int(cell.get("order_count", -1))
+                                if raw_order_count != metrics_order_count:
+                                    blockers.append(
+                                        f"capacity_order_count_raw_vs_metrics:{label}:"
+                                        f"raw={raw_order_count}:metrics={metrics_order_count}"
+                                    )
+                                if metrics_order_count != cell_order_count:
+                                    blockers.append(
+                                        f"capacity_order_count_metrics_vs_cell:{label}:"
+                                        f"metrics={metrics_order_count}:cell={cell_order_count}"
+                                    )
+                                # P0-9: Cross-check fill/fail/partial counts
+                                raw_fill_count = len(fills_df)
+                                if raw_fill_count != int(metrics_data["fill_count"]):
+                                    blockers.append(
+                                        f"capacity_fill_count_raw_vs_metrics:{label}:"
+                                        f"raw={raw_fill_count}:metrics={metrics_data['fill_count']}"
+                                    )
+                                for metric_key, cell_key in (
+                                    ("failed_order_count", "failed_order_count"),
+                                    ("partial_fill_count", "partial_fill_count"),
+                                    ("delayed_fill_count", "delayed_fill_count"),
+                                ):
+                                    mv = int(metrics_data[metric_key])
+                                    cv = int(cell.get(cell_key, -1))
+                                    if mv != cv:
+                                        blockers.append(
+                                            f"capacity_{metric_key}_mismatch:{label}:"
+                                            f"cell={cv}:metrics={mv}"
+                                        )
+                                # Cross-check continuous metrics
+                                for metric_key, cell_key in (
+                                    ("failure_rate", "failure_rate"),
+                                    ("turnover", "turnover"),
+                                    ("realized_slippage_bps", "realized_slippage_bps"),
+                                    ("capital_utilization", "capital_utilization"),
+                                ):
+                                    mv = float(metrics_data[metric_key])
+                                    cv = float(cell.get(cell_key, 0))
+                                    if not math.isclose(mv, cv, rel_tol=0, abs_tol=1e-6):
+                                        blockers.append(
+                                            f"capacity_{metric_key}_mismatch:{label}:"
+                                            f"cell={cv}:metrics={mv}"
+                                        )
                     except (json.JSONDecodeError, OSError) as exc:
                         blockers.append(f"capacity_artifact_manifest_read_error:{label}:{type(exc).__name__}")
         if all(_is_number(cell.get(field)) for field in (
@@ -485,8 +535,12 @@ def main() -> None:
     parser.add_argument("--formal-manifest", type=Path, required=True)
     parser.add_argument("--capacity-matrix", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--capacity-artifact-root", type=Path, default=None)
     args = parser.parse_args()
-    result = evaluate(args.formal_manifest, args.capacity_matrix)
+    result = evaluate(
+        args.formal_manifest, args.capacity_matrix,
+        artifact_root=args.capacity_artifact_root,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
