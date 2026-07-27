@@ -1,0 +1,13 @@
+{
+  "blockers": [
+    "formal_run_not_verified"
+  ],
+  "capacity_matrix": "exports/execution_capacity/input_not_available.json",
+  "economic_gates_passed": false,
+  "evidence_sha256": "95986ba491f54edca2725523a2a3a05df0be8c2a7e7a0408cab04ae4b6f0c84e",
+  "formal_manifest": "exports/formal_runs/20260727_pr_c/formal_run_precheck.json",
+  "gates": {},
+  "schema_version": "formal_execution_capacity_v1",
+  "status": "BLOCKED",
+  "technical_evidence_complete": false
+}

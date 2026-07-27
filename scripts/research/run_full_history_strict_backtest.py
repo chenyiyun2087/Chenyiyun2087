@@ -42,12 +42,11 @@ REQUIRED_REGIMES: list[dict[str, str]] = [
 DEFAULT_START_DATE = "2013-01-01"
 ACCOUNT_SIZES = [500_000, 1_500_000, 3_000_000, 5_000_000, 10_000_000]
 EXECUTION_SCENARIOS = (
-    ("base_cost_7_5_slip_10", 0.00075, 10),
-    *tuple(
-        (f"stress_cost_{int(cost * 10_000)}_slip_{slippage}", cost, slippage)
-        for cost in (0.0015, 0.0030, 0.0050)
-        for slippage in (25, 50, 100)
-    ),
+    ("BASE_7P5_10", 0.00075, 10),
+    ("CONSERVATIVE_15_25", 0.0015, 25),
+    ("CONSERVATIVE_15_50", 0.0015, 50),
+    ("EXTREME_30_100", 0.0030, 100),
+    ("EXTREME_50_100", 0.0050, 100),
 )
 
 
@@ -173,7 +172,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     for account_size in ACCOUNT_SIZES:
         for scenario, cost, slip in scenarios:
             scenario_dir = output / f"capital_{account_size}" / scenario
-            scenario_dir.mkdir(parents=True, exist_ok=True)
+            scenario_dir.parent.mkdir(parents=True, exist_ok=True)
             cmd = build_backtest_command(
                 start_date=args.start_date, end_date=args.end_date,
                 strategy=args.strategy, cost_rate=cost, slippage_bps=slip,
@@ -184,6 +183,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             return_code = None
             if not args.dry_run:
                 completed = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True, capture_output=True)
+                scenario_dir.mkdir(parents=True, exist_ok=True)
                 (scenario_dir / "run.log").write_text(completed.stdout + "\n" + completed.stderr)
                 return_code = completed.returncode
                 status = "COMPLETE" if completed.returncode == 0 else "FAILED"

@@ -209,12 +209,13 @@ def test_full_history_command_requires_frozen_evidence_inputs():
 def test_full_history_stress_matrix_contains_all_requested_cost_slippage_pairs():
     pairs = {(cost, slippage) for _, cost, slippage in EXECUTION_SCENARIOS}
 
-    assert (0.00075, 10) in pairs
-    assert {
-        (cost, slippage)
-        for cost in (0.0015, 0.0030, 0.0050)
-        for slippage in (25, 50, 100)
-    }.issubset(pairs)
+    assert pairs == {
+        (0.00075, 10),
+        (0.0015, 25),
+        (0.0015, 50),
+        (0.0030, 100),
+        (0.0050, 100),
+    }
 
 
 def test_market_regime_requires_full_observable_coverage_not_simple_overlap():

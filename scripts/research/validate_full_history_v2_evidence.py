@@ -6,11 +6,24 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.research.formal_execution_capacity import REQUIRED_METRICS
 
 
 ACCOUNT_SIZES = {500_000, 1_500_000, 3_000_000, 5_000_000, 10_000_000}
-SCENARIOS = {"BASE_7P5_10", "CONSERVATIVE_15_25", "CONSERVATIVE_15_50", "EXTREME_30_100", "EXTREME_50_100"}
+SCENARIOS = {
+    "BASE_7P5_10",
+    "CONSERVATIVE_15_25",
+    "CONSERVATIVE_15_50",
+    "EXTREME_30_100",
+    "EXTREME_50_100",
+}
 
 
 def validate(payload: dict) -> dict:
@@ -35,6 +48,11 @@ def validate(payload: dict) -> dict:
     if identities != expected:
         blockers.append("INCOMPLETE_25_SCENARIO_GRID")
     for row in results:
+        label = f"{row.get('account_size')}:{row.get('scenario')}"
+        for field in REQUIRED_METRICS:
+            value = row.get(field)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                blockers.append(f"MISSING_CAPACITY_METRIC:{label}:{field}")
         if float(row.get("max_drawdown", -1.0)) < -0.35:
             blockers.append(f"DRAWDOWN_GATE:{row.get('account_size')}:{row.get('scenario')}")
         if str(row.get("scenario", "")).startswith("EXTREME") and float(row.get("cumulative_return", -1.0)) <= 0:
