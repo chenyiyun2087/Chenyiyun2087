@@ -71,12 +71,15 @@ def build_backtest_command(
     output_dir: str = "",
     scores_snapshot: str | None = None,
     prices_snapshot: str | None = None,
+    tradable_universe_snapshot: str | None = None,
+    adjustment_factor_snapshot: str | None = None,
     corporate_action_snapshot: str | None = None,
     corporate_action_manifest: str | None = None,
     security_lifecycle_snapshot: str | None = None,
     security_lifecycle_manifest: str | None = None,
     trade_calendar_snapshot: str | None = None,
     require_verified_evidence: bool = True,
+    formal_mode: bool = False,
 ) -> list[str]:
     """Build the subprocess command for the trusted strategy account backtest."""
     command = [
@@ -95,6 +98,8 @@ def build_backtest_command(
     optional_paths = {
         "--scores-snapshot": scores_snapshot,
         "--prices-snapshot": prices_snapshot,
+        "--tradable-universe-snapshot": tradable_universe_snapshot,
+        "--adjustment-factor-snapshot": adjustment_factor_snapshot,
         "--corporate-action-snapshot": corporate_action_snapshot,
         "--corporate-action-manifest": corporate_action_manifest,
         "--security-lifecycle-snapshot": security_lifecycle_snapshot,
@@ -106,6 +111,8 @@ def build_backtest_command(
             command.extend([flag, value])
     if require_verified_evidence:
         command.append("--require-verified-evidence")
+    if formal_mode:
+        command.append("--formal-mode")
     return command
 
 

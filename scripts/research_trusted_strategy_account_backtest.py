@@ -2931,6 +2931,25 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         raise ValueError("formal champion evidence requires immutable score and price snapshots")
     if requires_frozen_inputs and not all((args.corporate_action_snapshot, args.corporate_action_manifest, args.security_lifecycle_snapshot, args.security_lifecycle_manifest)):
         raise ValueError("raw-ledger research requires verified corporate-action and lifecycle snapshots")
+
+    # --- PR-H0: Formal mode blocks ALL database fallback ---
+    formal_mode = bool(getattr(args, "formal_mode", False))
+    if formal_mode:
+        missing_formal: list[str] = []
+        for flag_name in (
+            "scores_snapshot", "prices_snapshot", "tradable_universe_snapshot",
+            "adjustment_factor_snapshot", "corporate_action_snapshot",
+            "corporate_action_manifest", "security_lifecycle_snapshot",
+            "security_lifecycle_manifest", "trade_calendar_snapshot",
+        ):
+            if not getattr(args, flag_name, None):
+                missing_formal.append(flag_name)
+        if missing_formal:
+            raise ValueError(
+                "formal_mode requires all immutable snapshots — "
+                "database fallback is blocked. Missing: "
+                + ",".join(missing_formal)
+            )
     ashare_weight_config = _resolve_ashare_weight_config(
         profile=getattr(args, "ashare_weight_profile", None),
         release_tier=getattr(args, "ashare_release_tier", None),
@@ -4131,6 +4150,21 @@ def main() -> None:
         "--trade-calendar-snapshot",
         default=None,
         help="Immutable SSE open calendar frozen from tushare_stock.dim_trade_cal",
+    )
+    parser.add_argument(
+        "--tradable-universe-snapshot",
+        default=None,
+        help="Immutable tradable universe CSV consumed instead of deriving universe from scores/prices.",
+    )
+    parser.add_argument(
+        "--adjustment-factor-snapshot",
+        default=None,
+        help="Immutable adjustment factor CSV consumed instead of querying adj_factor per symbol.",
+    )
+    parser.add_argument(
+        "--formal-mode",
+        action="store_true",
+        help="Enforce formal frozen input mode: block ALL database fallback paths.",
     )
     parser.add_argument("--strict-cap-profile", choices=["no_cap", "extreme_only", "high_v1_plus_5pct", "strict_cap"], default="strict_cap")
     parser.add_argument(

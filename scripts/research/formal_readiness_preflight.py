@@ -15,6 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -286,6 +287,233 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
             "CNY, positive initial cash, empty positions",
         )
     )
+
+    # --- 3.9.1 Universe → Price coverage (100% per day) ---
+    prices_frame = frames["prices.csv"].copy()
+    prices_frame["trade_date"] = pd.to_datetime(
+        prices_frame["trade_date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    universe_price_missing: set[tuple[str, str]] = set()
+    for trade_date_val in sorted(universe["trade_date"].unique()):
+        day_universe = set(
+            universe[universe["trade_date"] == trade_date_val]["symbol"]
+            .astype(str)
+        )
+        day_prices = set(
+            prices_frame[prices_frame["trade_date"] == trade_date_val]["symbol"]
+            .astype(str)
+        )
+        for sym in sorted(day_universe - day_prices):
+            universe_price_missing.add((trade_date_val, sym))
+    checks.append(
+        Check(
+            "universe_price_coverage",
+            not universe_price_missing,
+            f"missing_symbol_date_pairs={len(universe_price_missing)}",
+            "100% PIT tradable symbols ⊆ price symbols every day",
+        )
+    )
+
+    # --- 3.9.2 Universe → Adjustment Factor coverage (100% per day) ---
+    adj_frame = frames["adjustment_factors.csv"].copy()
+    adj_frame["trade_date"] = pd.to_datetime(
+        adj_frame["trade_date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    universe_adj_missing: set[tuple[str, str]] = set()
+    for trade_date_val in sorted(universe["trade_date"].unique()):
+        day_universe = set(
+            universe[universe["trade_date"] == trade_date_val]["symbol"]
+            .astype(str)
+        )
+        day_adj = set(
+            adj_frame[adj_frame["trade_date"] == trade_date_val]["symbol"]
+            .astype(str)
+        )
+        for sym in sorted(day_universe - day_adj):
+            universe_adj_missing.add((trade_date_val, sym))
+    checks.append(
+        Check(
+            "universe_adjustment_coverage",
+            not universe_adj_missing,
+            f"missing_symbol_date_pairs={len(universe_adj_missing)}",
+            "100% PIT tradable symbols ⊆ adjustment-factor symbols every day",
+        )
+    )
+
+    # --- 3.9.3 Lifecycle daily coverage (100%) ---
+    lifecycle = frames["strict_security_lifecycle.csv"].copy()
+    lifecycle["trade_date"] = pd.to_datetime(
+        lifecycle["trade_date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    lifecycle_missing: set[tuple[str, str]] = set()
+    for trade_date_val in sorted(universe["trade_date"].unique()):
+        day_universe = set(
+            universe[universe["trade_date"] == trade_date_val]["symbol"]
+            .astype(str)
+        )
+        day_lifecycle = set(
+            lifecycle[lifecycle["trade_date"] == trade_date_val]["symbol"]
+            .astype(str)
+        )
+        for sym in sorted(day_universe - day_lifecycle):
+            lifecycle_missing.add((trade_date_val, sym))
+    checks.append(
+        Check(
+            "lifecycle_daily_coverage",
+            not lifecycle_missing,
+            f"missing_symbol_date_pairs={len(lifecycle_missing)}",
+            "100% daily per-security lifecycle coverage",
+        )
+    )
+
+    # --- 3.9.4 Trade date coverage (≥98%, 0 unacceptable gaps) ---
+    min_trade_date_coverage = float(
+        config.get("minimum_trade_date_coverage", 0.98)
+    )
+    coverage_date_set: set[str] = set()
+    for filename, business_column in business_columns.items():
+        if filename in frames:
+            parsed = (
+                pd.to_datetime(frames[filename][business_column], errors="coerce")
+                .dropna()
+                .dt.strftime("%Y-%m-%d")
+            )
+            coverage_date_set |= set(parsed.unique())
+    missing_open_dates = sorted(open_dates - coverage_date_set)
+    coverage_ratio = (
+        len(open_dates - set(missing_open_dates)) / len(open_dates)
+        if open_dates
+        else 0.0
+    )
+    checks.append(
+        Check(
+            "calendar_date_coverage",
+            coverage_ratio >= min_trade_date_coverage and not missing_open_dates,
+            f"coverage_ratio={coverage_ratio:.4f};missing_open_dates={len(missing_open_dates)}",
+            f">= {min_trade_date_coverage:.0%} trade date coverage; 0 unacceptable gaps",
+        )
+    )
+
+    # --- 3.9.5 Data legality ---
+    # OHLC finite and positive
+    ohlc_cols = [
+        c
+        for c in ["open", "high", "low", "close"]
+        if c in prices_frame.columns
+    ]
+    for col in ohlc_cols:
+        values = pd.to_numeric(prices_frame[col], errors="coerce")
+        illegal = values.isna() | (values <= 0) | ~np.isfinite(values)
+        checks.append(
+            Check(
+                f"ohlc_legal:{col}",
+                not illegal.any(),
+                f"illegal_rows={int(illegal.sum())}",
+                f"{col} finite and > 0",
+            )
+        )
+
+    # OHLC consistency: high >= max(open, close, low)
+    if all(c in prices_frame.columns for c in ("high", "open", "close", "low")):
+        high_vals = pd.to_numeric(prices_frame["high"], errors="coerce")
+        ref_max = pd.concat(
+            [
+                pd.to_numeric(prices_frame[c], errors="coerce")
+                for c in ("open", "close", "low")
+            ],
+            axis=1,
+        ).max(axis=1)
+        high_violations = (high_vals < ref_max).sum()
+        checks.append(
+            Check(
+                "ohlc_consistency:high_gte_max_ocl",
+                int(high_violations) == 0,
+                f"violations={int(high_violations)}",
+                "high >= max(open, close, low)",
+            )
+        )
+
+    # low <= min(open, close, high)
+    if all(c in prices_frame.columns for c in ("low", "open", "close", "high")):
+        low_vals = pd.to_numeric(prices_frame["low"], errors="coerce")
+        ref_min = pd.concat(
+            [
+                pd.to_numeric(prices_frame[c], errors="coerce")
+                for c in ("open", "close", "high")
+            ],
+            axis=1,
+        ).min(axis=1)
+        low_violations = (low_vals > ref_min).sum()
+        checks.append(
+            Check(
+                "ohlc_consistency:low_lte_min_och",
+                int(low_violations) == 0,
+                f"violations={int(low_violations)}",
+                "low <= min(open, close, high)",
+            )
+        )
+
+    # adj_factor > 0
+    adj_col = pd.to_numeric(
+        frames["adjustment_factors.csv"]["adj_factor"], errors="coerce"
+    )
+    invalid_adj = adj_col.isna() | (adj_col <= 0) | ~np.isfinite(adj_col)
+    checks.append(
+        Check(
+            "adj_factor_positive",
+            not invalid_adj.any(),
+            f"invalid_rows={int(invalid_adj.sum())}",
+            "adj_factor > 0 for all rows",
+        )
+    )
+
+    # No duplicate (trade_date, symbol) in prices
+    price_dups = int(
+        prices_frame.duplicated(["trade_date", "symbol"]).sum()
+    )
+    checks.append(
+        Check(
+            "duplicate_price_rows",
+            price_dups == 0,
+            f"duplicate_rows={price_dups}",
+            "no duplicate (trade_date, symbol) rows in prices",
+        )
+    )
+
+    # Data end date == latest_complete_trade_date (if configured)
+    latest_cfg = config.get("latest_complete_trade_date")
+    if latest_cfg and str(latest_cfg).strip():
+        max_price_date = (
+            pd.to_datetime(prices_frame["trade_date"], errors="coerce")
+            .dropna()
+            .max()
+            .strftime("%Y-%m-%d")
+        )
+        checks.append(
+            Check(
+                "data_end_date",
+                max_price_date == str(latest_cfg),
+                f"max_price_date={max_price_date}",
+                f"latest_complete_trade_date={latest_cfg}",
+            )
+        )
+
+    # No symbols absent from lifecycle (aggregate check)
+    lifecycle_all_symbols = set(
+        frames["strict_security_lifecycle.csv"]["symbol"].astype(str).unique()
+    )
+    absent_lifecycle_symbols = sorted(
+        set(universe["symbol"].astype(str).unique()) - lifecycle_all_symbols
+    )
+    checks.append(
+        Check(
+            "symbols_in_lifecycle",
+            not absent_lifecycle_symbols,
+            f"absent_symbols={len(absent_lifecycle_symbols)}",
+            "all PIT tradable symbols present in lifecycle snapshot",
+        )
+    )
+
     return _result(package, config, checks)
 
 
