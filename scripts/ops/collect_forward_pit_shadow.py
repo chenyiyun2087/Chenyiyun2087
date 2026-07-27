@@ -83,6 +83,7 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
         "risk_gate_false_negative": 0,
         "historical_simulation": False,
         "manifest_sha256": manifest["manifest_sha256"],
+        "formal_evidence_sha256": manifest.get("formal_evidence_sha256"),
         "shadow_day_count_eligible": shadow_eligible,
         "promotion_status": "BLOCKED",
         "capital_status": "NO_SCALE",
@@ -200,7 +201,20 @@ def collect(
     shadow_rows = []
     for path in sorted((output_root / "shadow_daily").glob("*.json")) if (output_root / "shadow_daily").exists() else []:
         shadow_rows.append(json.loads(path.read_text(encoding="utf-8")))
-    lifecycle = evaluate_shadow_lifecycle(shadow_rows).to_dict()
+    lifecycle = evaluate_shadow_lifecycle(
+        shadow_rows,
+        expected_strategy_id=strategy_id,
+        expected_release_id=release_id,
+        expected_formal_evidence_sha256=(
+            str(manifest.get("formal_evidence_sha256"))
+            if manifest.get("formal_evidence_sha256")
+            else None
+        ),
+        formal_evidence_verified=bool(
+            manifest.get("formal_pit_eligible", False)
+            and len(str(manifest.get("formal_evidence_sha256") or "")) == 64
+        ),
+    ).to_dict()
     return {
         "status": "COLLECTED_PARTIAL_FORWARD_ONLY",
         "run_id": run_id, "data_date": manifest["data_date"],
