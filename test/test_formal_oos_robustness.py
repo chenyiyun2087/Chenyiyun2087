@@ -17,6 +17,10 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
         "status": "VERIFIED",
         "formal_run_id": "formal-fixture",
         "frozen_bundle_sha256": "e" * 64,
+        "fixture_mode": False,
+        "admission_candidate_strategy_id": "production_governed_vol_position",
+        "strategy_ids": ["production_governed_vol_position"],
+        "git_commit_sha_before": "f" * 40,
     }
     # Compute manifest_sha256 from content excluding self (matching evaluator)
     manifest_sha = _hashlib.sha256(
@@ -57,7 +61,7 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
                 "cost_model": {"cost_rate": 0.00075, "slippage_bps": 10},
                 "random_seed": 42,
                 "selected_at": "2023-10-10",
-                "code_git_sha": "f" * 40,
+                "code_git_sha": "f" * 40,  # matches formal.git_commit_sha_before
                 "config_sha": "c" * 64,
             }
         }

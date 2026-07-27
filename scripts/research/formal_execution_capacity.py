@@ -220,7 +220,9 @@ def evaluate(
                         # P0-11: ALL identity fields mandatory with exact match
                         if not art_manifest.get("strategy_id"):
                             blockers.append(f"capacity_artifact_missing_strategy_id:{label}")
-                        elif art_manifest["strategy_id"] != str(formal.get("strategy_ids", [""])[0]):
+                        # P0-3: Use admission_candidate_strategy_id, not strategy_ids[0]
+                        admission_id = str(formal.get("admission_candidate_strategy_id") or formal.get("strategy_ids", [""])[0])
+                        if art_manifest["strategy_id"] != admission_id:
                             blockers.append(f"capacity_artifact_strategy_id_mismatch:{label}")
                         art_fm_sha = str(art_manifest.get("formal_manifest_sha256") or "")
                         if not art_fm_sha:
@@ -284,7 +286,10 @@ def evaluate(
                         else:
                             try:
                                 nav_df = pd.read_csv(nav_path)
-                                if "nav" not in nav_df.columns:
+                                # P0-6: trade_date column is MANDATORY for NAV
+                                if "trade_date" not in nav_df.columns:
+                                    blockers.append(f"capacity_nav_missing_trade_date_column:{label}")
+                                elif "nav" not in nav_df.columns:
                                     blockers.append(f"capacity_nav_missing_column:{label}")
                                 elif len(nav_df) < 2:
                                     blockers.append(f"capacity_nav_insufficient_rows:{label}")
@@ -336,9 +341,24 @@ def evaluate(
                                 "turnover", "realized_slippage_bps", "capital_utilization",
                                 "max_order_adv_ratio", "expected_impact_bps_p95",
                             }
+                            DISCRETE_COUNT_FIELDS = {
+                                "order_count", "fill_count", "failed_order_count",
+                                "partial_fill_count", "delayed_fill_count",
+                            }
                             for mf in REQUIRED_METRICS_FIELDS:
-                                if mf not in metrics_data or not _is_number(metrics_data[mf]):
+                                if mf not in metrics_data:
                                     blockers.append(f"capacity_metrics_missing_or_invalid:{label}:{mf}")
+                                elif not _is_number(metrics_data[mf]):
+                                    blockers.append(f"capacity_metrics_missing_or_invalid:{label}:{mf}")
+                                elif mf in DISCRETE_COUNT_FIELDS:
+                                    v = metrics_data[mf]
+                                    # P0-7: must be exact integer, no float truncation
+                                    if isinstance(v, bool) or not isinstance(v, (int, float)):
+                                        blockers.append(f"capacity_metrics_not_integer:{label}:{mf}")
+                                    elif isinstance(v, float) and not float(v).is_integer():
+                                        blockers.append(f"capacity_metrics_not_integer:{label}:{mf}")
+                                    elif int(v) < 0:
+                                        blockers.append(f"capacity_metrics_negative:{label}:{mf}")
                             if not any(f"capacity_metrics_missing_or_invalid:{label}" in b for b in blockers):
                                 # P0-8: Three-way exact match — raw orders == metrics == cell
                                 raw_order_count = len(orders_df)

@@ -19,6 +19,8 @@ def _package(tmp_path):
         "status": "VERIFIED",
         "formal_run_id": "formal-fixture",
         "frozen_bundle_sha256": "e" * 64,
+        "fixture_mode": False,
+        "admission_candidate_strategy_id": "production_governed_vol_position",
         "strategy_ids": ["production_governed_vol_position"],
     }
     manifest_sha_val = hashlib.sha256(

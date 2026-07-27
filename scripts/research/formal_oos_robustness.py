@@ -338,9 +338,9 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     ).hexdigest()
     if formal.get("manifest_sha256") != computed_manifest_sha:
         return _blocked(formal_manifest, analysis_package, ["formal_manifest_sha_mismatch"])
-    # P0-5: Reject fixture_mode manifests (same rule as Capacity evaluator)
-    if formal.get("fixture_mode") is True:
-        return _blocked(formal_manifest, analysis_package, ["formal_manifest_fixture_mode_rejected"])
+    # P0-8: Require explicit fixture_mode: false (absence is treated as non-production)
+    if formal.get("fixture_mode") is not False:
+        return _blocked(formal_manifest, analysis_package, ["formal_manifest_fixture_mode_required_false"])
     missing = [
         name for name in REQUIRED_PACKAGE_FILES if not (analysis_package / name).is_file()
     ]
@@ -430,6 +430,13 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         config_sha_v = str(fconfig.get("config_sha") or "")
         if len(config_sha_v) != 64 or any(c not in "0123456789abcdef" for c in config_sha_v):
             return _blocked(formal_manifest, analysis_package, [f"model_config_bad_config_sha:{fid}"])
+        # P0-5: Bind model config identity to formal manifest
+        admission_id = str(formal.get("admission_candidate_strategy_id") or formal.get("strategy_ids", [""])[0])
+        if str(fconfig.get("strategy_id")) != admission_id:
+            return _blocked(formal_manifest, analysis_package, [f"model_config_strategy_id_mismatch:{fid}"])
+        formal_git = str(formal.get("formal_git_sha") or formal.get("git_commit_sha_before") or "")
+        if formal_git and str(fconfig.get("code_git_sha")) != formal_git:
+            return _blocked(formal_manifest, analysis_package, [f"model_config_code_sha_mismatch:{fid}"])
         # selected_at must be <= validation_end
         try:
             sel_at = pd.Timestamp(str(fconfig["selected_at"]))
