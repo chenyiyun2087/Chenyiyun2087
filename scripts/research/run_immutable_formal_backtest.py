@@ -6,15 +6,17 @@ import argparse
 import hashlib
 import json
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from scripts.research.run_dual_ledger_acceptance import run as run_dual_ledger
 from scripts.research.run_full_history_strict_backtest import build_backtest_command
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FORMAL_STRATEGIES = (
     "production_governed_vol_position",
     "production_governed_vol_position_v1_2b_dynamic_score",
