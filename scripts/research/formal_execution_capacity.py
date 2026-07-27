@@ -72,6 +72,17 @@ def _is_number(value: Any) -> bool:
     )
 
 
+def _is_non_negative_integer(value: Any) -> bool:
+    """P0-5: Reject bool, float-with-decimals, negatives for discrete count fields."""
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and float(value).is_integer()
+        and float(value) >= 0
+    )
+
+
 def _blocked(
     formal_manifest: Path,
     matrix_path: Path,
@@ -114,9 +125,9 @@ def evaluate(
     ).hexdigest()
     if formal.get("manifest_sha256") != computed_manifest_sha:
         return _blocked(formal_manifest, matrix_path, ["formal_manifest_sha_mismatch"])
-    # P0-8: Reject fixture_mode manifests in production evaluation
-    if formal.get("fixture_mode") is True:
-        return _blocked(formal_manifest, matrix_path, ["formal_manifest_fixture_mode_rejected"])
+    # P0-1: Require explicit fixture_mode: false (same rule as OOS evaluator)
+    if formal.get("fixture_mode") is not False:
+        return _blocked(formal_manifest, matrix_path, ["formal_manifest_fixture_mode_required_false"])
     if not matrix_path.exists():
         return _blocked(formal_manifest, matrix_path, ["capacity_matrix_missing"])
     try:
@@ -176,8 +187,12 @@ def evaluate(
                 blockers.append(f"slippage_mismatch:{label}")
             if int(specification["slippage_bps"]) <= 0:
                 blockers.append(f"zero_slippage_forbidden:{label}")
+        CELL_DISCRETE = {"order_count", "fill_count", "failed_order_count", "partial_fill_count", "delayed_fill_count"}
         for field in REQUIRED_METRICS:
-            if not _is_number(cell.get(field)):
+            if field in CELL_DISCRETE:
+                if not _is_non_negative_integer(cell.get(field)):
+                    blockers.append(f"metric_missing_or_invalid:{label}:{field}")
+            elif not _is_number(cell.get(field)):
                 blockers.append(f"metric_missing_or_invalid:{label}:{field}")
         artifact_sha = str(cell.get("artifact_sha256") or "")
         if len(artifact_sha) != 64 or any(
@@ -217,13 +232,16 @@ def evaluate(
                             blockers.append(f"capacity_artifact_account_size_mismatch:{label}")
                         if str(art_manifest.get("scenario") or "") != str(cell["scenario"]):
                             blockers.append(f"capacity_artifact_scenario_mismatch:{label}")
-                        # P0-11: ALL identity fields mandatory with exact match
-                        if not art_manifest.get("strategy_id"):
+                        # P0-3: admission_candidate_strategy_id MANDATORY, no fallback
+                        artifact_strategy_id = art_manifest.get("strategy_id")
+                        if not artifact_strategy_id:
                             blockers.append(f"capacity_artifact_missing_strategy_id:{label}")
-                        # P0-3: Use admission_candidate_strategy_id, not strategy_ids[0]
-                        admission_id = str(formal.get("admission_candidate_strategy_id") or formal.get("strategy_ids", [""])[0])
-                        if art_manifest["strategy_id"] != admission_id:
-                            blockers.append(f"capacity_artifact_strategy_id_mismatch:{label}")
+                        else:
+                            admission_id = formal.get("admission_candidate_strategy_id")
+                            if not isinstance(admission_id, str) or not admission_id:
+                                blockers.append(f"capacity_formal_missing_admission_candidate:{label}")
+                            elif str(artifact_strategy_id) != admission_id:
+                                blockers.append(f"capacity_artifact_strategy_id_mismatch:{label}")
                         art_fm_sha = str(art_manifest.get("formal_manifest_sha256") or "")
                         if not art_fm_sha:
                             blockers.append(f"capacity_artifact_missing_formal_manifest_sha256:{label}")

@@ -430,12 +430,17 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         config_sha_v = str(fconfig.get("config_sha") or "")
         if len(config_sha_v) != 64 or any(c not in "0123456789abcdef" for c in config_sha_v):
             return _blocked(formal_manifest, analysis_package, [f"model_config_bad_config_sha:{fid}"])
-        # P0-5: Bind model config identity to formal manifest
-        admission_id = str(formal.get("admission_candidate_strategy_id") or formal.get("strategy_ids", [""])[0])
+        # P0-5: Bind model config identity to formal manifest — admission_candidate_strategy_id MANDATORY
+        admission_id = formal.get("admission_candidate_strategy_id")
+        if not isinstance(admission_id, str) or not admission_id:
+            return _blocked(formal_manifest, analysis_package,
+                            ["formal_manifest_missing_admission_candidate_strategy_id"])
         if str(fconfig.get("strategy_id")) != admission_id:
             return _blocked(formal_manifest, analysis_package, [f"model_config_strategy_id_mismatch:{fid}"])
-        formal_git = str(formal.get("formal_git_sha") or formal.get("git_commit_sha_before") or "")
-        if formal_git and str(fconfig.get("code_git_sha")) != formal_git:
+        formal_git = formal.get("git_commit_sha_before")
+        if not isinstance(formal_git, str) or len(formal_git) != 40:
+            return _blocked(formal_manifest, analysis_package, ["formal_manifest_missing_git_commit_sha"])
+        if str(fconfig.get("code_git_sha")) != formal_git:
             return _blocked(formal_manifest, analysis_package, [f"model_config_code_sha_mismatch:{fid}"])
         # selected_at must be <= validation_end
         try:
@@ -480,6 +485,9 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     returns["parameter_selected_at"] = pd.to_datetime(
         returns["parameter_selected_at"], errors="coerce"
     )
+    # P0-7: Re-check duplicates after datetime normalization (different string formats)
+    if returns.duplicated(["fold_id", "trade_date"]).any():
+        return _blocked(formal_manifest, analysis_package, ["oos_duplicate_fold_date_after_normalization"])
     # P0-3: Populate fold model_config_sha from selected_model_config
     fold_map: dict[str, Fold] = {}
     for fold in folds:
