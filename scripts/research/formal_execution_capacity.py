@@ -406,7 +406,7 @@ def evaluate(
                                         f"metrics={metrics_order_count}:cell={cell_order_count}"
                                     )
                                 # Raw Execution Reconciliation: mandatory schema enforcement
-                                RAW_ORDERS_COLS = {"order_id", "ordered_qty", "symbol", "side", "submitted_at", "reference_price"}
+                                RAW_ORDERS_COLS = {"order_id", "ordered_qty", "symbol", "side", "submitted_at", "status", "reference_price"}
                                 RAW_FILLS_COLS = {"fill_id", "order_id", "filled_qty", "fill_price", "filled_at", "symbol", "side"}
                                 missing_orders_cols = RAW_ORDERS_COLS - set(orders_df.columns)
                                 missing_fills_cols = RAW_FILLS_COLS - set(fills_df.columns)
@@ -417,20 +417,21 @@ def evaluate(
                                 if missing_orders_cols or missing_fills_cols:
                                     continue  # skip reconciliation, blockers already recorded
 
-                                # P0-3: Normalize order_id to string
+                                # P0-3: Normalize order_id/fill_id to string, strip whitespace
                                 orders_df["order_id"] = orders_df["order_id"].astype("string").str.strip()
                                 fills_df["order_id"] = fills_df["order_id"].astype("string").str.strip()
+                                fills_df["fill_id"] = fills_df["fill_id"].astype("string").str.strip()
                                 # P0-3: Reject empty order_id/fill_id
                                 if orders_df["order_id"].isna().any() or (orders_df["order_id"] == "").any():
                                     blockers.append(f"capacity_orders_empty_order_id:{label}")
-                                if fills_df["fill_id"].astype("string").str.strip().isna().any():
+                                if fills_df["fill_id"].isna().any() or (fills_df["fill_id"] == "").any():
                                     blockers.append(f"capacity_fills_empty_fill_id:{label}")
                                 if fills_df["order_id"].isna().any() or (fills_df["order_id"] == "").any():
                                     blockers.append(f"capacity_fills_empty_order_id:{label}")
-                                # P0-4: Reject duplicates
+                                # P0-4: Reject duplicates (AFTER normalization)
                                 if orders_df["order_id"].duplicated().any():
                                     blockers.append(f"capacity_orders_duplicate_order_id:{label}")
-                                if fills_df["fill_id"].astype("string").duplicated().any():
+                                if fills_df["fill_id"].duplicated().any():
                                     blockers.append(f"capacity_fills_duplicate_fill_id:{label}")
                                 # P0-2: Reject unknown fill order_ids
                                 order_id_set = set(orders_df["order_id"])
@@ -457,6 +458,18 @@ def evaluate(
                                 overfill_oids = [oid for oid in common_overfill if fills_qty[oid] > orders_qty.get(oid, 0) * 1.001]
                                 if overfill_oids:
                                     blockers.append(f"capacity_overfill_orders:{label}:count={len(overfill_oids)}")
+                                # P0-7: Symbol/Side must match between orders and fills
+                                oid_sym = orders_df.set_index("order_id")[["symbol", "side"]]
+                                fid_sym = fills_df.set_index("fill_id")[["order_id", "symbol", "side"]].rename(
+                                    columns={"symbol": "fill_symbol", "side": "fill_side"}
+                                )
+                                merged_sym = fid_sym.join(oid_sym.add_suffix("_order"), on="order_id")
+                                sym_mismatch = (merged_sym["fill_symbol"] != merged_sym["symbol_order"]).sum()
+                                side_mismatch = (merged_sym["fill_side"] != merged_sym["side_order"]).sum()
+                                if sym_mismatch:
+                                    blockers.append(f"capacity_symbol_mismatch:{label}:count={sym_mismatch}")
+                                if side_mismatch:
+                                    blockers.append(f"capacity_side_mismatch:{label}:count={side_mismatch}")
                                 # Derive fill status per order
                                 filled_oids = set(fills_qty.index)
                                 all_oids = set(orders_df["order_id"])
@@ -465,6 +478,27 @@ def evaluate(
                                 raw_fully_filled = sum(1 for oid in common_oids if fills_qty[oid] >= orders_qty.get(oid, 1) * 0.999)
                                 raw_partial = sum(1 for oid in common_oids if 0 < fills_qty[oid] < orders_qty.get(oid, 1) * 0.999)
                                 total_failed_from_raw = len(no_fill_oids)
+                                # P0-6: Derive delayed_fill from raw timestamps
+                                raw_delayed_count = 0
+                                try:
+                                    orders_time = orders_df.set_index("order_id")["submitted_at"]
+                                    fills_time = fills_df.groupby("order_id")["filled_at"].min()
+                                    common_time = sorted(set(orders_time.index) & set(fills_time.index))
+                                    submitted = pd.to_datetime(orders_time[common_time], utc=True, errors="coerce")
+                                    first_filled = pd.to_datetime(fills_time[common_time], utc=True, errors="coerce")
+                                    valid = submitted.notna() & first_filled.notna()
+                                    latency = (first_filled[valid] - submitted[valid]).dt.total_seconds()
+                                    max_latency_seconds = float(acceptance.get("execution", {}).get("max_fill_latency_seconds", 300))
+                                    raw_delayed_count = int((latency > max_latency_seconds).sum())
+                                except (ValueError, KeyError, pd.errors.OutOfBoundsDatetime):
+                                    pass
+                                # Cross-validate delayed_fill against metrics and cell
+                                md = int(metrics_data.get("delayed_fill_count", -1))
+                                cd = int(cell.get("delayed_fill_count", -1))
+                                if md >= 0 and raw_delayed_count != md:
+                                    blockers.append(f"capacity_delayed_raw_vs_metrics:{label}:raw={raw_delayed_count}:metrics={md}")
+                                if cd >= 0 and raw_delayed_count != cd:
+                                    blockers.append(f"capacity_delayed_raw_vs_cell:{label}:raw={raw_delayed_count}:cell={cd}")
                                 # Cross-validate against metrics and cell
                                 for source_name, source_data in (
                                     ("metrics", metrics_data), ("cell", cell),
@@ -475,11 +509,15 @@ def evaluate(
                                         blockers.append(f"capacity_partial_raw_vs_{source_name}:{label}:raw={raw_partial}:{source_name}={sp}")
                                     if sf >= 0 and total_failed_from_raw != sf:
                                         blockers.append(f"capacity_failed_raw_vs_{source_name}:{label}:raw={total_failed_from_raw}:{source_name}={sf}")
-                                # P0-7: Cross-check ADV and Impact between metrics and cell
+                                # P0-4/P0-7: ADV/Impact must be non-negative AND metrics==cell
                                 for adv_field in ("max_order_adv_ratio", "expected_impact_bps_p95"):
                                     mv = float(metrics_data.get(adv_field, -999))
                                     cv = float(cell.get(adv_field, -999))
-                                    if mv >= 0 and not math.isclose(mv, cv, rel_tol=0, abs_tol=1e-9):
+                                    if mv < 0 or not math.isfinite(mv):
+                                        blockers.append(f"capacity_{adv_field}_negative_or_invalid:{label}:metrics={mv}")
+                                    elif cv < 0 or not math.isfinite(cv):
+                                        blockers.append(f"capacity_{adv_field}_negative_or_invalid:{label}:cell={cv}")
+                                    elif not math.isclose(mv, cv, rel_tol=0, abs_tol=1e-9):
                                         blockers.append(f"capacity_{adv_field}_metrics_vs_cell:{label}:metrics={mv}:cell={cv}")
 
                                 # P0-9: Cross-check fill/fail/partial counts

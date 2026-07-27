@@ -68,16 +68,13 @@ def _package(tmp_path):
             for i in range(100):
                 oid = f"ORD{i:04d}"
                 if i < 96:
-                    # Fully filled
-                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00,SUBMITTED,10.0")
-                    fills_lines.append(f"FILL{i:04d},{oid},000001,BUY,100,10.0,2024-01-02T09:30:05")
+                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00Z,SUBMITTED,10.0")
+                    fills_lines.append(f"FILL{i:04d},{oid},000001,BUY,100,10.0,2024-01-02T09:31:00Z")
                 elif i < 98:
-                    # Partially filled (ordered 100, filled 50)
-                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00,SUBMITTED,10.0")
-                    fills_lines.append(f"FILL{i:04d},{oid},000001,BUY,50,10.0,2024-01-02T09:30:05")
+                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00Z,SUBMITTED,10.0")
+                    fills_lines.append(f"FILL{i:04d},{oid},000001,BUY,50,10.0,2024-01-02T09:31:00Z")
                 else:
-                    # Unfilled/failed
-                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00,SUBMITTED,10.0")
+                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00Z,SUBMITTED,10.0")
             (adir / "orders.csv").write_text("\n".join(orders_lines) + "\n")
             (adir / "fills.csv").write_text("\n".join(fills_lines) + "\n")
             # Build proper artifact manifest with file SHAs

@@ -127,6 +127,7 @@ acceptance:
     max_turnover_ratio: 50                               # PR-H1: max turnover
     max_partial_fill_ratio: 0.05                         # PR-H1: max 5% partial fills
     max_delayed_fill_ratio: 0.05                         # PR-H1: max 5% delayed fills
+    max_fill_latency_seconds: 300                        # PR-H1: max seconds from submission to first fill
 
   # -----------------------------------------------------------------------
   # L1→L2: Shadow

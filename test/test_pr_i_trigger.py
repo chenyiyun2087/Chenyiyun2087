@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -11,6 +12,18 @@ def _write(path: Path, payload: dict) -> Path:
     return path
 
 
+def _signed(payload: dict) -> dict:
+    """Add canonical evidence_sha256 self-hash."""
+    result = dict(payload)
+    result["evidence_sha256"] = hashlib.sha256(
+        json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return result
+
+
+RUN_ID = "formal-test-run-001"
+
+
 def _technical_sources(tmp_path: Path, *, economics_passed: bool) -> dict[str, Path]:
     return {
         "pr_a_equivalence": _write(tmp_path / "a.json", {"status": "PASS"}),
@@ -19,28 +32,31 @@ def _technical_sources(tmp_path: Path, *, economics_passed: bool) -> dict[str, P
         ),
         "pr_c_formal_run": _write(
             tmp_path / "c.json",
-            {
+            _signed({
                 "status": "VERIFIED",
+                "formal_run_id": RUN_ID,
                 "dual_ledger_results": [
                     {"strategy": f"s{i}", "status": "VERIFIED"} for i in range(5)
                 ],
-            },
+            }),
         ),
         "pr_d_oos_robustness": _write(
             tmp_path / "d.json",
-            {
+            _signed({
                 "status": "PASS" if economics_passed else "ECONOMIC_FAILED",
+                "formal_run_id": RUN_ID,
                 "technical_evidence_complete": True,
                 "economic_gates_passed": economics_passed,
-            },
+            }),
         ),
         "pr_e_execution_capacity": _write(
             tmp_path / "e.json",
-            {
+            _signed({
                 "status": "PASS",
+                "formal_run_id": RUN_ID,
                 "technical_evidence_complete": True,
                 "economic_gates_passed": True,
-            },
+            }),
         ),
     }
 
