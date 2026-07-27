@@ -7,7 +7,9 @@
 > 和本release的20+60日真实Shadow均未通过。最终结论为 `NO_GO`，允许新增风险资金
 > 0元，生产路由和Canary配置不变。详见
 > `2026-07-27_动态评分冠军策略_实盘准入全面评估.md`，原始评估包位于
-> `exports/dynamic_champion_live_readiness/20260727_001940/`。
+> `exports/dynamic_champion_live_readiness/20260727_pr_f_a_to_e_v2/`。PR-A至PR-E
+> 工程升级已合并，但五份业务证据仍沿依赖链保持BLOCKED；Artifact已通过官方
+> 结构校验与仓库侧UTF-8/CNY/原始输出一致性校验。
 > 私有可视化报告：
 > <https://dynamic-champion-readiness-20260727.supo2087.chatgpt.site>。
 

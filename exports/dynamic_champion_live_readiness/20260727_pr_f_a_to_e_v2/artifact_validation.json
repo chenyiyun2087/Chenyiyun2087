@@ -1,0 +1,13 @@
+{
+  "blockers": [],
+  "currency": "CNY",
+  "decision": "NO_GO",
+  "gate_rows": 11,
+  "monthly_rows": 32,
+  "package": "exports/dynamic_champion_live_readiness/20260727_pr_f_a_to_e_v2",
+  "snapshot_status": "blocked",
+  "status": "PASS",
+  "upgrade_evidence_rows": 5,
+  "utf8_files_checked": 6,
+  "validation_sha256": "2cee503d46723a9ded0c623f49fd51f15667b4893ba73623c8bc0935b931c02b"
+}

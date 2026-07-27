@@ -144,6 +144,7 @@ def load_upgrade_evidence(program: dict[str, Any]) -> dict[str, Any]:
                 reasons = (
                     payload.get("blockers")
                     or payload.get("blocking_reasons")
+                    or payload.get("blocking_checks")
                     or ([payload["reason"]] if payload.get("reason") else [])
                 )
                 detail = "; ".join(str(reason) for reason in reasons) or status
@@ -1635,7 +1636,7 @@ def write_assessment(
                 gate=gate.gate,
                 category=gate.category,
                 required=gate.required,
-                actual="已生成并等待Artifact校验",
+                actual="已生成；Artifact与UTF-8校验结果随证据包归档",
                 passed=True,
                 blocking=gate.blocking,
                 evidence=gate.evidence,

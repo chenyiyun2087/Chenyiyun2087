@@ -1,0 +1,12 @@
+gate,category,required,actual,passed,blocking,evidence,remediation
+release_identity,数据与发布身份,Git、配置、数据、日历、公司行动及生命周期快照哈希完整,registry=FAILED_REVALIDATION; PR-A=BLOCKED; PR-B=BLOCKED,False,True,exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json,生成并冻结缺失快照，绑定新的不可变release证据包。
+full_history,长周期回测,2013-01-01至最新完整交易日，覆盖率≥98%,2023-11-30至2026-06-17，615个交易日；PR-C=BLOCKED,False,True,exports/signal_research/20260618_213002_059138_trusted_account_backtest,使用正式PIT快照从2013年重跑全部市场状态和基础/压力场景。
+rolling_oos,Walk-forward,12/3/3滚动OOS；正窗口≥60%,registry=FAILED; PR-D=BLOCKED,False,True,exports/formal_oos/20260727_pr_d/formal_oos_robustness.json,在冻结样本上完成带purge/embargo的滚动OOS，测试窗不得继续调参。
+strict_ledger,严格账本,VERIFIED；T+1、订单守恒、持仓错配均为0,registry=FAILED_REVALIDATION; PR-C=BLOCKED,False,True,config/strategy_release_registry.yaml,补齐公司行动和生命周期快照，生成逐release对账指标并通过严格账本Gate。
+statistical_robustness,统计稳健性,DSR≥95%、PBO≤20%、Bootstrap下界非负并完成因子归因,PR-D=BLOCKED; technical_complete=False,False,True,exports/formal_oos/20260727_pr_d/formal_oos_robustness.json,对完整OOS收益运行DSR、CPCV-PBO、Block Bootstrap和七因子归因。
+execution_stress,成本、滑点与容量,5档资金规模和全部成本/滑点压力场景通过,当前冻结回测滑点=0.00%；PR-E=BLOCKED,False,True,exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json,按50万至1000万元及全部成本/滑点组合重跑并保存拒单、冲击和回撤扩张。
+disabled_shadow,技术Shadow,连续20个真实交易日,0日；missing_release_scoped_shadow_evidence,False,True,未提供,从同日正式PIT快照开始累计，历史回填不得计数。
+economic_shadow,经济Shadow,60个额外交易日、30个闭环,0日、0个闭环,False,True,未提供,技术Shadow通过后再累计成本后Alpha、成交偏差和逐日对账证据。
+comprehensive_report,评估报告,完整报告通过校验并给出唯一资本结论,已生成；Artifact与UTF-8校验结果随证据包归档,True,True,exports/dynamic_champion_live_readiness,发布前完成Artifact与UTF-8校验。
+manual_approval,人工审批,与当前release及证据SHA绑定的Canary审批,缺失,False,True,docs/04_live_trading/CANARY_RUNBOOK.md,仅在其余门禁全部通过后记录人工审批。
+broker_api_boundary,执行边界,broker_api_enabled=false，所有订单人工确认,broker_api_enabled=false,True,True,config/dynamic_champion_live_program.yaml,保持人工订单草案、成交文件导入和离线对账。
