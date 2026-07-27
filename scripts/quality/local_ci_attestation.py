@@ -144,11 +144,14 @@ def run_attestation(
         for item in checks
     )
 
-    # PR-H3: Classify attestation
+    # PR-H3: Classify attestation (P0-15 fix: hosted CI must be available for RELEASE_PASS)
+    hosted_ci_available = False  # always false in local fallback
     if not all_tests_passed:
         attestation_status = "FAIL"
     elif not (worktree_clean_before and worktree_clean_after and head_unchanged):
         attestation_status = "DEVELOPMENT_PASS"
+    elif not hosted_ci_available:
+        attestation_status = "LOCAL_RELEASE_CANDIDATE_PASS"
     else:
         attestation_status = "RELEASE_PASS"
 
@@ -195,7 +198,12 @@ def main() -> int:
         encoding="utf-8",
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result["status"] == "PASS" else 1
+    # P0-14 fix: RELEASE_PASS→0, DEVELOPMENT_PASS→2, FAIL→1
+    if result["status"] == "RELEASE_PASS":
+        return 0
+    if result["status"] == "DEVELOPMENT_PASS":
+        return 2
+    return 1
 
 
 if __name__ == "__main__":

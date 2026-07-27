@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -65,7 +66,13 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
     }
     pd.DataFrame(rows).to_csv(package / "oos_returns.csv", index=False)
     configs = []
-    for config_id, shift in (("candidate", 0.0002), ("random", 0), ("reverse", -0.0002)):
+    # P0-10 fix: mandatory baseline config names
+    for config_id, shift in (
+        ("dynamic_champion", 0.0002),
+        ("production_baseline", 0),
+        ("matched_random", 0),
+        ("reverse_baseline", -0.0002),
+    ):
         configs.extend(
             {
                 "trade_date": day,
@@ -89,6 +96,21 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
             for index in range(20)
         ]
     ).to_csv(package / "closed_trades.csv", index=False)
+    # P0-7: analysis_manifest.json with formal run binding
+    analysis_m = {
+        "schema_version": "analysis_manifest_v1",
+        "formal_run_id": "formal-fixture",
+        "formal_manifest_sha256": hashlib.sha256(
+            json.dumps({k: v for k, v in formal_payload.items() if k != "manifest_sha256"},
+                       sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "analysis_generator_git_sha": "f" * 40,
+        "input_files": {
+            name: {"sha256": hashlib.sha256((package / name).read_bytes()).hexdigest()}
+            for name in ("folds.json", "oos_returns.csv", "configuration_returns.csv", "closed_trades.csv")
+        },
+    }
+    (package / "analysis_manifest.json").write_text(json.dumps(analysis_m), encoding="utf-8")
     return formal, package
 
 

@@ -51,7 +51,10 @@ def _resolve_data_date(connection, as_of: date) -> date:
     return datetime.strptime(raw[:8], "%Y%m%d").date() if "-" not in raw else date.fromisoformat(raw)
 
 
-def build_shadow_observation(manifest: dict, *, as_of: date, technical_required: set[str]) -> dict:
+def build_shadow_observation(
+    manifest: dict, *, as_of: date, technical_required: set[str],
+    authoritative_open_dates: list[str] | None = None,
+) -> dict:
     by_name = {item["name"]: item for item in manifest["components"]}
     required_pass = all(
         by_name.get(name, {}).get("collection_status") in {"CAPTURED", "CAPTURED_EMPTY_NO_EVENT"}
@@ -75,7 +78,12 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
         "trade_date": manifest["data_date"],
         "observed_at": manifest["observed_at"],
         "authoritative_calendar_sha256": calendar_sha,
-        "authoritative_trade_calendar_open": same_day and collection_eligible,
+        # P0-4 fix: derive from frozen calendar, not collection metadata
+        "authoritative_trade_calendar_open": (
+            (manifest["data_date"] in authoritative_open_dates)
+            if authoritative_open_dates is not None
+            else (same_day and collection_eligible)  # legacy fallback
+        ),
         "same_day_complete_pit": same_day and required_pass,
         "shadow_day_count_eligible": shadow_eligible,
         "technical_pass": collection_eligible,
@@ -89,19 +97,21 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
         "formal_pit_status": (
             "VERIFIED" if formal_pit_eligible else "PARTIAL_FORWARD_ONLY"
         ),
-        # PR-H2: Derived fields with documented sources
-        "execution_proxy_available": False,  # DERIVED from execution proxy check
-        "incremental_hard_block": False,     # DERIVED from hard-block detection
-        "recovery_event_count": 0,            # DERIVED from recovery event counter
-        "recovery_event_return": None,        # DERIVED from recovery return computation
-        "state_switch": False,                # DERIVED from market regime classifier
-        "switch_source": "NONE",              # DERIVED: REAL_OBSERVED | SIMULATED | NONE
-        "dual_ledger_status": "NOT_STARTED",  # DERIVED from dual-ledger acceptance
-        "reconciliation_errors": 0,           # DERIVED from ledger reconciliation
-        "cost_after_alpha": 0.0,              # DERIVED from cost-after-alpha computation
-        "completed_round_trips": 0,           # DERIVED from round-trip counter
-        "theory_execution_gate_pass": False,  # DERIVED from theory/execution deviation
-        "risk_gate_false_negative": 0,        # DERIVED from risk post-mortem
+        # P0-5 fix: fail-closed defaults — POPULATED BY separate pipeline steps, not derived in collector
+        # See: run_trusted_strategy_shadow_monitor.py, run_dual_ledger_acceptance.py, market_regime.py
+        "execution_proxy_available": False,  # POPULATED BY: shadow monitor execution proxy check
+        "incremental_hard_block": False,     # POPULATED BY: shadow monitor hard-block detection
+        "recovery_event_count": 0,            # POPULATED BY: shadow monitor recovery event counter
+        "recovery_event_return": None,        # POPULATED BY: shadow monitor recovery return computation
+        "state_switch": False,                # POPULATED BY: market regime classifier (market_regime.py)
+        "switch_source": "NONE",              # POPULATED BY: market regime classifier (REAL_OBSERVED|SIMULATED|NONE)
+        "dual_ledger_status": "NOT_STARTED",  # POPULATED BY: dual-ledger acceptance (run_dual_ledger_acceptance.py)
+        "reconciliation_errors": 0,           # POPULATED BY: ledger reconciliation
+        "cost_after_alpha": 0.0,              # POPULATED BY: cost-after-alpha computation
+        "completed_round_trips": 0,           # POPULATED BY: round-trip counter
+        "theory_execution_gate_pass": False,  # POPULATED BY: theory/execution deviation analysis
+        "risk_gate_false_negative": 0,        # POPULATED BY: risk post-mortem review
+        "producer_status": "SCHEMA_COMPLETE_PRODUCER_PENDING",
         "historical_simulation": False,
         "historical_backfill": False,
         "simulated_date": False,
@@ -111,12 +121,13 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
         "capital_status": "NO_SCALE",
     }
     # PR-H2: Compute row-level SHA chain
-    row_without_self = {k: v for k, v in observation.items() if k not in ("row_sha256",)}
+    # P0-6 fix: compute input_evidence_sha256 FIRST, then row_sha256 so it covers all fields
     observation["input_evidence_sha256"] = _canonical_sha({
         "formal_manifest_sha": formal_manifest_sha,
         "calendar_sha": calendar_sha,
         "component_count": len(manifest.get("components", [])),
     })
+    row_without_self = {k: v for k, v in observation.items() if k != "row_sha256"}
     observation["row_sha256"] = _canonical_sha(row_without_self)
     return observation
 
@@ -131,7 +142,54 @@ def collect(
     release_id_override: str | None = None,
     strategy_id_override: str | None = None,
     fixture_mode: bool = False,
+    formal_manifest_path: Path | None = None,
 ) -> dict:
+    # PR-H2 P0-3 fix: Formal manifest-driven identity and calendar binding
+    formal_manifest_data: dict[str, Any] | None = None
+    formal_run_id: str = ""
+    formal_manifest_sha256_val: str = ""
+    authoritative_calendar_sha: str = ""
+    authoritative_open_dates: list[str] = []
+
+    if formal_manifest_path is not None:
+        if not formal_manifest_path.is_file():
+            raise ValueError("FORMAL_MANIFEST_NOT_FOUND")
+        formal_manifest_data = json.loads(formal_manifest_path.read_text(encoding="utf-8"))
+        if formal_manifest_data.get("status") != "VERIFIED":
+            raise ValueError("FORMAL_MANIFEST_NOT_VERIFIED")
+        # Verify self-hash
+        manifest_without_self = {k: v for k, v in formal_manifest_data.items() if k != "manifest_sha256"}
+        computed_sha = _canonical_sha(manifest_without_self)
+        declared_sha = str(formal_manifest_data.get("manifest_sha256") or "")
+        if computed_sha != declared_sha:
+            raise ValueError("FORMAL_MANIFEST_SHA_MISMATCH")
+        # Prohibit identity overrides in formal mode
+        if release_id_override is not None:
+            raise ValueError("FORMAL_MODE_REJECTS_RELEASE_ID_OVERRIDE")
+        if strategy_id_override is not None:
+            raise ValueError("FORMAL_MODE_REJECTS_STRATEGY_ID_OVERRIDE")
+        # Extract identity from manifest
+        formal_run_id = str(formal_manifest_data.get("formal_run_id") or "")
+        formal_manifest_sha256_val = declared_sha
+        # Read authoritative calendar from frozen inputs
+        frozen_dir = formal_manifest_path.parent / "frozen_inputs"
+        calendar_csv = frozen_dir / "trade_calendar.csv"
+        if calendar_csv.is_file():
+            cal_frame = pd.read_csv(calendar_csv, dtype={"exchange": str})
+            cal_frame["cal_date"] = pd.to_datetime(cal_frame["cal_date"], errors="coerce")
+            open_dates_series = cal_frame.loc[
+                cal_frame["exchange"].astype(str).eq("SSE")
+                & pd.to_numeric(cal_frame["is_open"], errors="coerce").eq(1),
+                "cal_date",
+            ]
+            authoritative_open_dates = sorted(
+                open_dates_series.dropna().dt.strftime("%Y-%m-%d").unique().tolist()
+            )
+            authoritative_calendar_sha = _canonical_sha({
+                "calendar_dates": authoritative_open_dates,
+                "calendar_source": "frozen_inputs/trade_calendar.csv",
+            })
+
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     observed = observed_at or datetime.now(SHANGHAI)
     store = EvidenceStore(require_replica=not fixture_mode)
@@ -206,6 +264,10 @@ def collect(
         "database_session_mode": "READ_ONLY",
         "database_write_operations_performed": 0,
         "fixture_mode": fixture_mode,
+        "formal_run_id": formal_run_id,
+        "formal_manifest_sha256": formal_manifest_sha256_val,
+        "formal_evidence_sha256": formal_manifest_data.get("preflight_evidence_sha256", "") if formal_manifest_data else "",
+        "authoritative_calendar_sha256": authoritative_calendar_sha,
     }
     manifest["manifest_sha256"] = _canonical_sha(manifest)
     manifest_object = store.put_json(manifest, release_id=release_id, run_id=run_id)
@@ -213,6 +275,7 @@ def collect(
     observation = build_shadow_observation(
         manifest, as_of=as_of,
         technical_required=set(config.get("technical_required_components") or []),
+        authoritative_open_dates=authoritative_open_dates if authoritative_open_dates else None,
     )
     day_root = output_root / "runs" / observed.strftime("%Y%m%d")
     day_root.mkdir(parents=True, exist_ok=True)
@@ -247,6 +310,7 @@ def collect(
             manifest.get("formal_pit_eligible", False)
             and len(str(manifest.get("formal_evidence_sha256") or "")) == 64
         ),
+        open_dates=authoritative_open_dates if authoritative_open_dates else None,
     ).to_dict()
     return {
         "status": "COLLECTED_PARTIAL_FORWARD_ONLY",
@@ -267,6 +331,7 @@ def main() -> None:
     parser.add_argument("--release-id", default=None)
     parser.add_argument("--strategy-id", default=None)
     parser.add_argument("--fixture-mode", action="store_true", help="Skip EvidenceStore writes; mark results non-production.")
+    parser.add_argument("--formal-manifest", type=Path, default=None, help="Formal run manifest JSON — enables formal PIT mode with identity binding.")
     args = parser.parse_args()
     engine = create_engine(require_sqlalchemy_url(), pool_pre_ping=True)
     result = collect(
@@ -277,6 +342,7 @@ def main() -> None:
         release_id_override=args.release_id,
         strategy_id_override=args.strategy_id,
         fixture_mode=args.fixture_mode,
+        formal_manifest_path=args.formal_manifest,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     if any(value == "QUERY_FAILED" for value in result["component_status"].values()):

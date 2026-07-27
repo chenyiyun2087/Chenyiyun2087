@@ -2990,6 +2990,15 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         corporate_actions_by_date, corporate_action_source_status, corporate_action_snapshot_hash, corporate_manifest_provenance = _load_corporate_action_snapshot(args.corporate_action_snapshot, args.corporate_action_manifest)
         lifecycle, lifecycle_snapshot_hash, lifecycle_manifest_provenance = _load_lifecycle_snapshot(args.security_lifecycle_snapshot, args.security_lifecycle_manifest)
         prices = _apply_lifecycle_snapshot(prices, lifecycle)
+        # P0-19 fix: Actually load and apply tradable_universe and adjustment_factor snapshots
+        tradable_universe = None
+        adjustment_factors = None
+        if getattr(args, "tradable_universe_snapshot", None):
+            tradable_universe = pd.read_csv(args.tradable_universe_snapshot, dtype={"symbol": str})
+            tradable_universe["trade_date"] = pd.to_datetime(tradable_universe["trade_date"], errors="coerce").dt.date
+        if getattr(args, "adjustment_factor_snapshot", None):
+            adjustment_factors = pd.read_csv(args.adjustment_factor_snapshot, dtype={"symbol": str})
+            adjustment_factors["trade_date"] = pd.to_datetime(adjustment_factors["trade_date"], errors="coerce").dt.date
     else:
         corporate_actions_by_date, corporate_action_source_status = _load_corporate_actions(
             engine, prices["trade_date"].min(), prices["trade_date"].max()
@@ -3022,6 +3031,8 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "input_snapshot_hashes": {
             "scores": _sha256_file(Path(args.scores_snapshot)) if getattr(args, "scores_snapshot", None) else None,
             "prices": _sha256_file(Path(args.prices_snapshot)) if getattr(args, "prices_snapshot", None) else None,
+            "tradable_universe": _sha256_file(Path(args.tradable_universe_snapshot)) if getattr(args, "tradable_universe_snapshot", None) else None,
+            "adjustment_factors": _sha256_file(Path(args.adjustment_factor_snapshot)) if getattr(args, "adjustment_factor_snapshot", None) else None,
         },
     })
     specs = _strategy_specs(_parse_strategies(args.strategies))

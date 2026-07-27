@@ -45,22 +45,24 @@ def _scalar(value: str) -> Any:
     return int(parsed) if parsed.is_integer() else parsed
 
 
-def canonical_file(path: Path) -> tuple[str, int | None]:
+def canonical_file(path: Path) -> tuple[str, int | None, int]:
     if path.suffix.lower() == ".csv":
         with path.open(encoding="utf-8-sig", newline="") as handle:
             rows = [
                 {key: _scalar(value) for key, value in row.items()}
                 for row in csv.DictReader(handle)
             ]
+        # P0-17: preserve original order for ranking domains (sorting done by caller if needed)
+        unique_dates = len(set(str(row.get("trade_date", "")) for row in rows)) if rows else 0
         normalized = sorted(
             rows,
             key=lambda row: json.dumps(
                 row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ),
         )
-        return _sha(normalized), len(normalized)
+        return _sha(normalized), len(normalized), unique_dates
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return _sha(payload), None
+    return _sha(payload), None, 0
 
 
 def _compare_scope(
@@ -95,45 +97,51 @@ def _compare_scope(
             row["reason"] = "file_missing"
             result["blocking_reasons"].append(f"{domain}:file_missing")
         else:
-            left_sha, left_rows = canonical_file(left)
-            right_sha, right_rows = canonical_file(right)
-            # PR-H3: Require explicit rank column in candidates CSV
+            left_sha, left_rows, left_unique = canonical_file(left)
+            right_sha, right_rows, right_unique = canonical_file(right)
+            # PR-H3 P0-17: Require explicit rank column in BOTH baseline AND candidate CSVs
             if relative.endswith("candidates.csv") or "candidates" in domain.lower():
-                try:
-                    import csv as _csv
-                    with open(left, newline="", encoding="utf-8-sig") as f:
-                        reader = _csv.DictReader(f)
-                        if reader.fieldnames and "rank" not in reader.fieldnames:
-                            result["blocking_reasons"].append(f"{domain}:missing_rank_column")
-                except Exception:
-                    pass
+                for side_label, side_path in (("baseline", left), ("candidate", right)):
+                    try:
+                        import csv as _csv
+                        with open(side_path, newline="", encoding="utf-8-sig") as f:
+                            reader = _csv.DictReader(f)
+                            if reader.fieldnames and "rank" not in reader.fieldnames:
+                                result["blocking_reasons"].append(
+                                    f"{domain}:missing_rank_column:{side_label}"
+                                )
+                    except Exception as exc:
+                        result["blocking_reasons"].append(
+                            f"{domain}:rank_check_error:{side_label}:{type(exc).__name__}"
+                        )
             row.update(
                 {
                     "baseline_sha256": left_sha,
                     "candidate_sha256": right_sha,
                     "baseline_rows": left_rows,
                     "candidate_rows": right_rows,
+                    "baseline_unique_dates": left_unique,
+                    "candidate_unique_dates": right_unique,
                     "equal": left_sha == right_sha and left_rows == right_rows,
                 }
             )
             if not row["equal"]:
                 result["blocking_reasons"].append(f"{domain}:economic_diff")
         result["domains"].append(row)
-    # PR-H3: Enforce expected_trade_days (check trading-domain row counts, not report files)
+    # PR-H3 P0-16 fix: Enforce expected_trade_days using unique trade dates, not total rows
     expected_days = int(scope.get("expected_trade_days", 0))
     if expected_days > 0:
         for domain_entry in result["domains"]:
             domain_name = domain_entry.get("domain", "")
-            # Only check CSV domains (not report JSON)
             if domain_name in ("nav", "candidates", "trades", "positions"):
-                actual_rows = domain_entry.get("candidate_rows") or domain_entry.get("baseline_rows")
-                if actual_rows is not None and isinstance(actual_rows, int) and actual_rows > 0:
-                    if actual_rows != expected_days:
+                unique_dates = domain_entry.get("candidate_unique_dates") or domain_entry.get("baseline_unique_dates")
+                if unique_dates is not None and isinstance(unique_dates, int) and unique_dates > 0:
+                    if unique_dates != expected_days:
                         result["blocking_reasons"].append(
-                            f"trade_day_count_mismatch:{domain_name}:expected={expected_days}:actual={actual_rows}"
+                            f"trade_day_count_mismatch:{domain_name}:expected={expected_days}:actual_unique_dates={unique_dates}"
                         )
                         result["status"] = "BLOCKED"
-                    break  # Check first matching domain only
+                    break
 
     if not result["blocking_reasons"] and len(result["domains"]) == len(domains):
         result["status"] = "PASS"

@@ -43,6 +43,7 @@ REQUIRED_PACKAGE_FILES = (
     "oos_returns.csv",
     "configuration_returns.csv",
     "closed_trades.csv",
+    "analysis_manifest.json",
 )
 
 
@@ -126,7 +127,10 @@ def generate_formal_folds(
         )
         try:
             validation_end = _previous(open_dates, validation_nominal_end, 1)
-            test_start = _next(open_dates, validation_end, 1)
+            # P0-9 fix: embargo between Validation and Test (at least max_hold_days trading days)
+            max_hold = int(config.get("max_hold_days", 10))
+            test_embargo = max(int(config.get("embargo_trading_days", 5)), max_hold)
+            test_start = _next(open_dates, validation_end, test_embargo + 1)
             test_nominal_end = test_start + pd.DateOffset(
                 months=int(config["test_months"])
             )
@@ -204,6 +208,27 @@ def _block_bootstrap_annualized(
             start = int(rng.integers(0, len(data) - block_size + 1))
             sampled.extend(data[start : start + block_size].tolist())
         outputs.append(_annualized(pd.Series(sampled[: len(data)])))
+    return sorted(outputs)
+
+
+def _block_bootstrap_max_drawdown(
+    values: pd.Series,
+    *,
+    simulations: int = 500,
+    block_size: int = 20,
+) -> list[float]:
+    """P0-11: Block-bootstrap the max-drawdown distribution."""
+    data = values.astype(float).to_numpy()
+    if len(data) < block_size:
+        raise ValueError("bootstrap_sample_too_short")
+    rng = np.random.default_rng(42)
+    outputs: list[float] = []
+    for _ in range(simulations):
+        sampled: list[float] = []
+        while len(sampled) < len(data):
+            start = int(rng.integers(0, len(data) - block_size + 1))
+            sampled.extend(data[start : start + block_size].tolist())
+        outputs.append(_max_drawdown(pd.Series(sampled[: len(data)])))
     return sorted(outputs)
 
 
@@ -362,6 +387,28 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
             fold.test_start
         ) or frame["trade_date"].max() > pd.Timestamp(fold.test_end):
             contamination.append(f"test_window_date_mismatch:{fold_id}")
+    # P0-7: Validate analysis_manifest.json binds to formal run
+    analysis_manifest_path = analysis_package / "analysis_manifest.json"
+    analysis_manifest = json.loads(analysis_manifest_path.read_text(encoding="utf-8"))
+    if analysis_manifest.get("formal_run_id") != formal.get("formal_run_id"):
+        return _blocked(formal_manifest, analysis_package, ["analysis_manifest_formal_run_id_mismatch"])
+    if analysis_manifest.get("formal_manifest_sha256"):
+        manifest_without_self = {k: v for k, v in formal.items() if k != "manifest_sha256"}
+        expected = hashlib.sha256(
+            json.dumps(manifest_without_self, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if analysis_manifest["formal_manifest_sha256"] != expected:
+            return _blocked(formal_manifest, analysis_package, ["analysis_manifest_formal_sha_mismatch"])
+    # Verify declared input file SHAs
+    for fname in REQUIRED_PACKAGE_FILES:
+        if fname == "analysis_manifest.json":
+            continue
+        declared_sha = (analysis_manifest.get("input_files") or {}).get(fname, {}).get("sha256", "")
+        if declared_sha:
+            actual = _sha(analysis_package / fname)
+            if actual != declared_sha:
+                contamination.append(f"analysis_manifest_sha_mismatch:{fname}")
+
     if contamination or set(fold_map) != set(returns["fold_id"].astype(str)):
         if set(fold_map) != set(returns["fold_id"].astype(str)):
             contamination.append("fold_result_coverage_incomplete")
@@ -413,6 +460,9 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     )
     bootstrap = _block_bootstrap_annualized(strategy_returns)
     bootstrap_fifth = float(np.quantile(bootstrap, 0.05))
+    # P0-11: Bootstrap max drawdown distribution and gate
+    bootstrap_dds = _block_bootstrap_max_drawdown(strategy_returns)
+    bootstrap_dd_95th = float(np.quantile(bootstrap_dds, 0.95)) if bootstrap_dds else -1.0
     attribution = _multi_factor_attribution(oos)
     trades = pd.read_csv(
         analysis_package / "closed_trades.csv", dtype={"symbol": str}
@@ -439,6 +489,8 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         <= float(thresholds["max_probability_of_backtest_overfitting"]),
         "block_bootstrap": bootstrap_fifth
         >= float(thresholds["bootstrap_annual_return_5th_percentile_min"]),
+        "bootstrap_max_dd": bootstrap_dd_95th
+        >= float(thresholds.get("bootstrap_max_dd_95th_percentile_max", -0.40)),
         "single_stock_concentration": concentration[
             "max_single_stock_profit_share"
         ]
@@ -456,46 +508,62 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         ]
         <= float(acceptance["full_history"]["max_single_year_profit_contribution"]),
     }
-    # PR-H1: Baseline comparison gates (champion vs production/random/reverse)
-    champion_col = None
-    for col in pivot.columns:
-        if "champion" in str(col).lower() or "candidate" in str(col).lower():
-            champion_col = str(col)
-            break
-    if champion_col and pivot.shape[1] >= 3:
-        champ_returns = pivot[champion_col].astype(float)
-        other_cols = [c for c in pivot.columns if c != champion_col]
-        # Champion vs production baseline calmar improvement
-        for col in other_cols:
-            col_lower = str(col).lower()
-            if "production" in col_lower or "baseline" in col_lower:
-                base_returns = pivot[col].astype(float)
-                base_annual = _annualized(base_returns)
-                base_dd = _max_drawdown(base_returns)
-                base_calmar = base_annual / abs(base_dd) if base_dd < 0 else 0.0
-                calmar_improvement = (oos_calmar - base_calmar) / abs(base_calmar) if base_calmar != 0 else 0.0
-                gates["challenger_calmar_improvement"] = (
-                    calmar_improvement >= float(thresholds.get("challenger_min_calmar_improvement_pct", 10)) / 100.0
-                )
-                break
-        # Random baseline win ratio
-        random_cols = [c for c in other_cols if "random" in str(c).lower()]
-        if random_cols:
-            random_col = random_cols[0]
-            random_returns = pivot[random_col].astype(float)
-            random_win = float((champ_returns > random_returns).mean())
-            gates["random_baseline_win_ratio"] = (
-                random_win >= float(thresholds.get("min_random_baseline_win_ratio", 0.60))
-            )
-        # Reverse baseline win ratio
-        reverse_cols = [c for c in other_cols if "reverse" in str(c).lower()]
-        if reverse_cols:
-            reverse_col = reverse_cols[0]
-            reverse_returns = pivot[reverse_col].astype(float)
-            reverse_win = float((champ_returns > reverse_returns).mean())
-            gates["reverse_baseline_win_ratio"] = (
-                reverse_win >= float(thresholds.get("min_reverse_baseline_win_ratio", 0.60))
-            )
+    # P0-10 fix: Mandatory baseline config set — require exact named columns
+    REQUIRED_BASELINE_CONFIGS = (
+        "dynamic_champion",
+        "production_baseline",
+        "matched_random",
+        "reverse_baseline",
+    )
+    missing_baselines = [c for c in REQUIRED_BASELINE_CONFIGS if c not in pivot.columns]
+    if missing_baselines:
+        return _blocked(formal_manifest, analysis_package,
+                        [f"baseline_config_missing:{c}" for c in missing_baselines])
+
+    champ_returns = pivot["dynamic_champion"].astype(float)
+    oos_fold_returns = oos.groupby("fold_id")["strategy_return"].apply(
+        lambda v: float((1.0 + v).prod() - 1.0)
+    )
+
+    # Champion vs production baseline calmar improvement
+    base_returns = pivot["production_baseline"].astype(float)
+    base_annual = _annualized(base_returns)
+    base_dd = _max_drawdown(base_returns)
+    base_calmar = base_annual / abs(base_dd) if base_dd < 0 else 0.0
+    calmar_improvement = (oos_calmar - base_calmar) / abs(base_calmar) if base_calmar != 0 else 0.0
+    gates["challenger_calmar_improvement"] = (
+        calmar_improvement >= float(thresholds.get("challenger_min_calmar_improvement_pct", 10)) / 100.0
+    )
+
+    # Random baseline win ratio (per OOS fold)
+    random_returns = pivot["matched_random"].astype(float)
+    random_fold_wins = 0
+    for fold_id in oos_fold_returns.index:
+        fold_mask = oos["fold_id"] == fold_id
+        champ_fold = oos.loc[fold_mask, "strategy_return"].astype(float)
+        rand_fold = pivot.loc[fold_mask, "matched_random"].astype(float) if fold_id in pivot.index else None
+        if rand_fold is not None and len(champ_fold) == len(rand_fold):
+            if float((1.0 + champ_fold).prod() - 1.0) > float((1.0 + rand_fold).prod() - 1.0):
+                random_fold_wins += 1
+    random_win_ratio = random_fold_wins / len(oos_fold_returns) if len(oos_fold_returns) > 0 else 0.0
+    gates["random_baseline_win_ratio"] = (
+        random_win_ratio >= float(thresholds.get("min_random_baseline_win_ratio", 0.70))
+    )
+
+    # Reverse baseline win ratio (per OOS fold)
+    reverse_returns = pivot["reverse_baseline"].astype(float)
+    reverse_fold_wins = 0
+    for fold_id in oos_fold_returns.index:
+        fold_mask = oos["fold_id"] == fold_id
+        champ_fold = oos.loc[fold_mask, "strategy_return"].astype(float)
+        rev_fold = pivot.loc[fold_mask, "reverse_baseline"].astype(float) if fold_id in pivot.index else None
+        if rev_fold is not None and len(champ_fold) == len(rev_fold):
+            if float((1.0 + champ_fold).prod() - 1.0) > float((1.0 + rev_fold).prod() - 1.0):
+                reverse_fold_wins += 1
+    reverse_win_ratio = reverse_fold_wins / len(oos_fold_returns) if len(oos_fold_returns) > 0 else 0.0
+    gates["reverse_baseline_win_ratio"] = (
+        reverse_win_ratio >= float(thresholds.get("min_reverse_baseline_win_ratio", 0.70))
+    )
     economic_passed = all(gates.values())
     payload: dict[str, Any] = {
         "schema_version": "formal_oos_robustness_v1",

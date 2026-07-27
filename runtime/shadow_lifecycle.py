@@ -102,6 +102,7 @@ def evaluate_shadow_lifecycle(
     expected_release_id: str | None = None,
     expected_formal_evidence_sha256: str | None = None,
     formal_evidence_verified: bool = True,
+    open_dates: list[str] | None = None,
 ) -> ShadowLifecycleStatus:
     """Evaluate 20-day technical then 60-day economic Shadow, fail closed.
 
@@ -141,16 +142,34 @@ def evaluate_shadow_lifecycle(
             continue
         accepted.append(row)
 
+    # PR-H2: Initialize blockers BEFORE any append operations
+    blockers: list[str] = []
+
     # PR-H2: Consecutive calendar day check for technical shadow
-    # The 20 technical days must be CONSECUTIVE real trading days (no gaps > 5 calendar days)
+    # The 20 technical days must be CONSECUTIVE real trading days.
+    # When open_dates is provided (from frozen trade_calendar.csv), verify
+    # the observed dates form an exact subsequence of the authoritative calendar.
+    # When not provided (legacy/regression), use a lenient calendar-day heuristic.
     if len(accepted) >= TECHNICAL_DAYS:
         tech_candidates = accepted[:TECHNICAL_DAYS]
-        for i in range(1, len(tech_candidates)):
-            prev_date = date.fromisoformat(str(tech_candidates[i - 1].get("trade_date", "")))
-            curr_date = date.fromisoformat(str(tech_candidates[i].get("trade_date", "")))
-            if (curr_date - prev_date) > timedelta(days=5):
+        observed_dates = [str(r.get("trade_date", "")) for r in tech_candidates]
+        if open_dates:
+            # PR-H2 P0-2 fix: verify observed dates are consecutive in the authoritative calendar
+            try:
+                start_idx = open_dates.index(observed_dates[0])
+                expected_slice = open_dates[start_idx : start_idx + TECHNICAL_DAYS]
+                if observed_dates != expected_slice:
+                    blockers.append("TECHNICAL_SHADOW_NOT_CONSECUTIVE")
+            except (ValueError, IndexError):
                 blockers.append("TECHNICAL_SHADOW_NOT_CONSECUTIVE")
-                break
+        else:
+            # Legacy fallback: calendar-day heuristic (5 calendar days max gap)
+            for i in range(1, len(tech_candidates)):
+                prev_date = date.fromisoformat(str(tech_candidates[i - 1].get("trade_date", "")))
+                curr_date = date.fromisoformat(str(tech_candidates[i].get("trade_date", "")))
+                if (curr_date - prev_date) > timedelta(days=5):
+                    blockers.append("TECHNICAL_SHADOW_NOT_CONSECUTIVE")
+                    break
 
     # PR-H2: Reset on identity change — detect strategy/release/formal_run_id shifts
     identity_keys = ("strategy_id", "release_id", "formal_run_id")
@@ -168,7 +187,6 @@ def evaluate_shadow_lifecycle(
 
     technical = accepted[:TECHNICAL_DAYS]
     economic = accepted[TECHNICAL_DAYS : TECHNICAL_DAYS + ECONOMIC_DAYS]
-    blockers: list[str] = []
     if not formal_evidence_verified:
         blockers.append("FORMAL_EVIDENCE_NOT_VERIFIED")
     if rejection_reasons:

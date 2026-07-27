@@ -224,11 +224,12 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                 matrix_path,
                 [f"drawdown_widening_mismatch:{label}"],
             )
-        # PR-H1: Stress ADV uses 3% from config, base uses 1%
+        # P0-13 fix: Use per-scenario adv_limit_type from config, not string-prefix matching
         stress_adv_limit = float(acceptance.get("max_single_order_adv_ratio_stress", 0.03))
         base_adv_limit = float(acceptance["max_single_order_adv_ratio_base"])
+        adv_type = str(specification.get("adv_limit_type", "base"))
         limits = {
-            "adv": stress_adv_limit if scenario.startswith("EXTREME") else base_adv_limit,
+            "adv": stress_adv_limit if adv_type == "stress" else base_adv_limit,
             "impact": float(acceptance["max_expected_impact_bps_p95"]),
             "failure": (
                 float(acceptance["max_unfilled_order_ratio_stress"])
