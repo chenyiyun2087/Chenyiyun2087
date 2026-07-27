@@ -418,9 +418,11 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         # P0-6: Type/range validation for model config fields
         if not isinstance(fconfig.get("factor_weights"), dict):
             return _blocked(formal_manifest, analysis_package, [f"model_config_bad_factor_weights_type:{fid}"])
-        if not isinstance(fconfig.get("hold_days"), (int, float)) or float(fconfig["hold_days"]) <= 0:
+        hd = fconfig.get("hold_days")
+        if isinstance(hd, bool) or not isinstance(hd, (int, float)) or float(hd) <= 0 or (isinstance(hd, float) and not float(hd).is_integer()):
             return _blocked(formal_manifest, analysis_package, [f"model_config_bad_hold_days:{fid}"])
-        if not isinstance(fconfig.get("top_n"), (int, float)) or int(fconfig["top_n"]) <= 0:
+        tn = fconfig.get("top_n")
+        if isinstance(tn, bool) or not isinstance(tn, (int, float)) or float(tn) <= 0 or (isinstance(tn, float) and not float(tn).is_integer()):
             return _blocked(formal_manifest, analysis_package, [f"model_config_bad_top_n:{fid}"])
         if not isinstance(fconfig.get("cost_model"), dict):
             return _blocked(formal_manifest, analysis_package, [f"model_config_bad_cost_model_type:{fid}"])

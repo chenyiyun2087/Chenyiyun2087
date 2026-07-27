@@ -89,7 +89,8 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
             item.get("status") == "VERIFIED"
             for item in p.get("dual_ledger_results", [])
         ),
-        "pr_d_oos_robustness": lambda p: bool(p.get("technical_evidence_complete")),
+        "pr_d_oos_robustness": lambda p: bool(p.get("technical_evidence_complete"))
+        and p.get("status") in ("PASS", "ECONOMIC_FAILED"),
         "pr_e_execution_capacity": lambda p: bool(p.get("technical_evidence_complete"))
         and p.get("status") in {"PASS", "ECONOMIC_FAILED"},
     }
@@ -109,6 +110,21 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
     technical_complete = not missing_keys and len(payloads) == len(expected) and all(
         item["passed"] for item in checks
     )
+    # Cross-validate formal_run_id identity across PR-C, PR-D, PR-E
+    formal_run_ids: set[str] = set()
+    for pr_key in ("pr_c_formal_run", "pr_d_oos_robustness", "pr_e_execution_capacity"):
+        rid = str(payloads.get(pr_key, {}).get("formal_run_id") or "")
+        if rid:
+            formal_run_ids.add(rid)
+    if len(formal_run_ids) > 1:
+        technical_complete = False
+        checks.append({
+            "check": "pr_cross_formal_run_id_consistency",
+            "passed": False,
+            "actual": f"mismatched_ids={sorted(formal_run_ids)}",
+            "required": "PR-C/PR-D/PR-E must share the same formal_run_id",
+        })
+
     oos = payloads.get("pr_d_oos_robustness", {})
     capacity = payloads.get("pr_e_execution_capacity", {})
     economic_failed = (
