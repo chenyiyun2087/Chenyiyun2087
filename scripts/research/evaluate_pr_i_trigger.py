@@ -16,14 +16,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# PR-I must verify the exact frozen five-strategy set
-FORMAL_STRATEGIES = frozenset({
-    "production_governed_vol_position",
-    "production_governed_vol_position_v1_2b_dynamic_score",
-    "production_governed_vol_position_v1_2b_gate_tuned",
-    "production_governed_vol_position_v1_2b_execution_safe_uplift",
-    "production_governed_vol_position_v1_2b_strict_precommit_uplift",
-})
+from runtime.formal_contract import FORMAL_STRATEGIES, canonical_sha
 
 DEFAULT_SOURCES = {
     "pr_a_equivalence": PROJECT_ROOT
@@ -93,14 +86,20 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
     status_rules = {
         "pr_a_equivalence": lambda p: p.get("status") == "PASS",
         "pr_b_formal_readiness": lambda p: p.get("status") == "READY_FOR_FORMAL_RUN",
-        "pr_c_formal_run": lambda p: p.get("status") == "VERIFIED"
-        and isinstance(p.get("dual_ledger_results"), list)
-        and len(p.get("dual_ledger_results", [])) == len(FORMAL_STRATEGIES)
-        and {item.get("strategy") for item in p.get("dual_ledger_results", [])} == FORMAL_STRATEGIES
-        and set(p.get("strategy_ids") or []) == FORMAL_STRATEGIES
-        and all(
-            item.get("status") == "VERIFIED"
-            for item in p.get("dual_ledger_results", [])
+        "pr_c_formal_run": lambda p: (
+            p.get("status") == "VERIFIED"
+            and isinstance(p.get("dual_ledger_results"), list)
+            and len(p.get("dual_ledger_results", [])) == len(FORMAL_STRATEGIES)
+            and all(isinstance(item, dict) for item in p.get("dual_ledger_results", []))
+            and all(isinstance(item.get("strategy"), str) and item.get("strategy") for item in p.get("dual_ledger_results", []))
+            and {item["strategy"] for item in p.get("dual_ledger_results", [])} == FORMAL_STRATEGIES
+            and isinstance(p.get("strategy_ids"), list)
+            and all(isinstance(s, str) and s for s in p.get("strategy_ids", []))
+            and set(p.get("strategy_ids") or []) == FORMAL_STRATEGIES
+            and all(
+                item.get("status") == "VERIFIED"
+                for item in p.get("dual_ledger_results", [])
+            )
         ),
         "pr_d_oos_robustness": lambda p: bool(p.get("technical_evidence_complete"))
         and p.get("status") in ("PASS", "ECONOMIC_FAILED"),
@@ -158,9 +157,7 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
             })
         else:
             payload_without_sha = {k: v for k, v in p.items() if k != hash_field}
-            computed = hashlib.sha256(
-                json.dumps(payload_without_sha, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            ).hexdigest()
+            computed = canonical_sha(payload_without_sha)
             if computed != declared_sha:
                 checks.append({
                     "check": f"{pr_key}_{hash_field}",
