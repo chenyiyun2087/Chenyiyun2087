@@ -14,12 +14,47 @@ def _package(tmp_path):
     formal = tmp_path / "formal.json"
     # P0-12: Create artifact directories with proper manifest, orders, fills
     capacity_root = tmp_path / "capacity_artifacts"
+    # Pre-build formal payload first (needed for manifest_sha + artifact formal_manifest_sha256)
+    formal_payload = {
+        "status": "VERIFIED",
+        "formal_run_id": "formal-fixture",
+        "frozen_bundle_sha256": "e" * 64,
+        "_capacity_artifact_root": str(capacity_root),
+    }
+    manifest_sha_val = hashlib.sha256(
+        json.dumps(formal_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    # This is the SHA that the evaluator will compute from formal.json
+    formal_content_sha = manifest_sha_val
     for size in ACCOUNT_SIZES:
         for scenario, _cost, _slippage in EXECUTION_SCENARIOS:
             adir = capacity_root / "formal-fixture" / str(size) / scenario
             adir.mkdir(parents=True, exist_ok=True)
-            (adir / "execution_metrics.json").write_text('{"order_count":100,"fill_count":98}')
-            (adir / "nav.csv").write_text("trade_date,nav\n2024-01-01,1.0\n")
+            # P0-H: execution_metrics.json with full metrics matching cell declarations
+            metrics = {
+                "order_count": 100,
+                "fill_count": 98,
+                "failed_order_count": 1,
+                "partial_fill_count": 2,
+                "delayed_fill_count": 1,
+                "failure_rate": 0.01,
+                "turnover": 1.2,
+                "realized_slippage_bps": int(_slippage),
+                "capital_utilization": 0.7,
+            }
+            (adir / "execution_metrics.json").write_text(json.dumps(metrics))
+            # P0-H: nav.csv with data that produces cumulative_return=0.1 and max_drawdown=-0.2
+            # 252 days of NAV going from 1.0 to 1.1 with a -0.2 drawdown in the middle
+            nav_values = []
+            for d in range(252):
+                t = d / 251.0
+                base = 1.0 + t * 0.1  # linear from 1.0 to 1.1
+                if 50 <= d <= 100:  # drawdown period
+                    dd_factor = 1.0 - 0.2 * (1.0 - abs((d - 75) / 25.0))
+                    base = min(base, (1.0 + 50/251*0.1) * dd_factor)
+                nav_values.append(f"2024-{(d//30)+1:02d}-{(d%30)+1:02d},{base:.6f}")
+            nav_csv = "trade_date,nav\n" + "\n".join(nav_values)
+            (adir / "nav.csv").write_text(nav_csv)
             # P0-5 fix: orders.csv has 100 rows matching cell.order_count=100
             orders_rows = "\n".join(["symbol,side,shares"] + [f"00000{i%9+1},BUY,100" for i in range(100)])
             (adir / "orders.csv").write_text(orders_rows + "\n")
@@ -37,9 +72,12 @@ def _package(tmp_path):
                 "formal_run_id": "formal-fixture",
                 "account_size": size,
                 "scenario": scenario,
-                "strategy_id": "test-strategy",
-                "formal_manifest_sha256": "f" * 64,
+                "strategy_id": "production_governed_vol_position",
+                "formal_manifest_sha256": manifest_sha_val,
                 "adv_limit_type": "stress" if scenario.startswith(("EXTREME", "CONSERVATIVE")) else "base",
+                "cost_rate": float(_cost),
+                "slippage_bps": int(_slippage),
+                "generator_git_sha": "a" * 40,
                 "files": art_files,
             }
             manifest_self = hashlib.sha256(
@@ -47,16 +85,7 @@ def _package(tmp_path):
             ).hexdigest()
             art_manifest_content["manifest_sha256"] = manifest_self
             (adir / "artifact_manifest.json").write_text(json.dumps(art_manifest_content))
-    formal_payload = {
-        "status": "VERIFIED",
-        "formal_run_id": "formal-fixture",
-        "frozen_bundle_sha256": "e" * 64,
-        "_capacity_artifact_root": str(capacity_root),
-    }
-    manifest_sha = hashlib.sha256(
-        json.dumps(formal_payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    formal_payload["manifest_sha256"] = manifest_sha
+    formal_payload["manifest_sha256"] = manifest_sha_val
     formal.write_text(json.dumps(formal_payload), encoding="utf-8")
     cells = []
     for size in ACCOUNT_SIZES:
@@ -71,7 +100,7 @@ def _package(tmp_path):
                     "slippage_bps": slippage,
                     "max_order_adv_ratio": 0.009,
                     "expected_impact_bps_p95": 25,
-                    "realized_slippage_bps": slippage,
+                    "realized_slippage_bps": float(slippage),
                     "turnover": 1.2,
                     "capital_utilization": 0.7,
                     "partial_fill_count": 2,

@@ -68,6 +68,10 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _sha_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def _acceptance() -> dict[str, Any]:
     return (
         yaml.safe_load(ACCEPTANCE_PATH.read_text(encoding="utf-8")) or {}
@@ -383,6 +387,32 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
                 )
             selected_configs[fid] = fconfig
 
+    # P0-A: selected_model_config must cover ALL folds — no missing, no extra
+    fold_id_set = {f.fold_id for f in folds}
+    selected_id_set = set(selected_configs.keys())
+    if selected_id_set != fold_id_set:
+        missing = sorted(fold_id_set - selected_id_set)
+        extra = sorted(selected_id_set - fold_id_set)
+        reasons = []
+        if missing:
+            reasons.append(f"selected_config_missing_folds:{','.join(missing)}")
+        if extra:
+            reasons.append(f"selected_config_extra_folds:{','.join(extra)}")
+        return _blocked(formal_manifest, analysis_package, reasons)
+
+    # P0-B: Model config schema — every fold must have required fields
+    REQUIRED_MODEL_FIELDS = (
+        "strategy_id", "factor_weights", "hold_days", "top_n",
+        "cost_model", "code_git_sha", "config_sha", "selected_at",
+    )
+    for fid, fconfig in selected_configs.items():
+        missing_fields = [f for f in REQUIRED_MODEL_FIELDS if f not in fconfig or not fconfig[f]]
+        if missing_fields:
+            return _blocked(
+                formal_manifest, analysis_package,
+                [f"selected_model_config_missing_fields:{fid}:{','.join(missing_fields)}"],
+            )
+
     returns = pd.read_csv(analysis_package / "oos_returns.csv")
     required_return_columns = {
         "fold_id",
@@ -446,24 +476,46 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     # P0-7: Validate analysis_manifest.json binds to formal run
     analysis_manifest_path = analysis_package / "analysis_manifest.json"
     analysis_manifest = json.loads(analysis_manifest_path.read_text(encoding="utf-8"))
+
+    # P0-C: ALL key fields mandatory — any missing → BLOCKED
+    manifest_blockers: list[str] = []
     if analysis_manifest.get("formal_run_id") != formal.get("formal_run_id"):
-        return _blocked(formal_manifest, analysis_package, ["analysis_manifest_formal_run_id_mismatch"])
-    if analysis_manifest.get("formal_manifest_sha256"):
-        manifest_without_self = {k: v for k, v in formal.items() if k != "manifest_sha256"}
-        expected = hashlib.sha256(
-            json.dumps(manifest_without_self, sort_keys=True, separators=(",", ":")).encode()
+        manifest_blockers.append("analysis_manifest_formal_run_id_mismatch")
+    if not analysis_manifest.get("formal_manifest_sha256"):
+        manifest_blockers.append("analysis_manifest_missing_formal_manifest_sha256")
+    else:
+        manifest_without_self_c = {k: v for k, v in formal.items() if k != "manifest_sha256"}
+        expected_fm_sha = hashlib.sha256(
+            json.dumps(manifest_without_self_c, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
-        if analysis_manifest["formal_manifest_sha256"] != expected:
-            return _blocked(formal_manifest, analysis_package, ["analysis_manifest_formal_sha_mismatch"])
-    # Verify declared input file SHAs
+        if analysis_manifest["formal_manifest_sha256"] != expected_fm_sha:
+            manifest_blockers.append("analysis_manifest_formal_sha_mismatch")
+    if not analysis_manifest.get("frozen_bundle_sha256"):
+        manifest_blockers.append("analysis_manifest_missing_frozen_bundle_sha256")
+    if not analysis_manifest.get("acceptance_config_sha256"):
+        manifest_blockers.append("analysis_manifest_missing_acceptance_config_sha256")
+    # Self-hash: analysis_manifest must have manifest_sha256 that validates
+    am_self_sha = str(analysis_manifest.get("manifest_sha256") or "")
+    if not am_self_sha:
+        manifest_blockers.append("analysis_manifest_missing_self_sha")
+    else:
+        am_without = {k: v for k, v in analysis_manifest.items() if k != "manifest_sha256"}
+        if _sha_text(json.dumps(am_without, sort_keys=True, separators=(",", ":"))) != am_self_sha:
+            manifest_blockers.append("analysis_manifest_self_sha_mismatch")
+    # Verify ALL required input files declared with SHA
+    input_files = analysis_manifest.get("input_files") or {}
     for fname in REQUIRED_PACKAGE_FILES:
         if fname == "analysis_manifest.json":
             continue
-        declared_sha = (analysis_manifest.get("input_files") or {}).get(fname, {}).get("sha256", "")
-        if declared_sha:
+        declared = (input_files.get(fname) or {}).get("sha256", "")
+        if not declared:
+            manifest_blockers.append(f"analysis_manifest_missing_file_sha:{fname}")
+        else:
             actual = _sha(analysis_package / fname)
-            if actual != declared_sha:
-                contamination.append(f"analysis_manifest_sha_mismatch:{fname}")
+            if actual != declared:
+                manifest_blockers.append(f"analysis_manifest_sha_mismatch:{fname}")
+    if manifest_blockers:
+        return _blocked(formal_manifest, analysis_package, manifest_blockers)
 
     if contamination or set(fold_map) != set(returns["fold_id"].astype(str)):
         if set(fold_map) != set(returns["fold_id"].astype(str)):
@@ -471,12 +523,14 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         return _blocked(formal_manifest, analysis_package, contamination)
 
     configuration = pd.read_csv(analysis_package / "configuration_returns.csv")
+    configuration["trade_date"] = pd.to_datetime(configuration["trade_date"], errors="coerce")
     # P0-9 fix: require fold_id for correct per-fold alignment
     required_config = {"trade_date", "config_id", "daily_return", "fold_id"}
     if required_config - set(configuration.columns):
         return _blocked(formal_manifest, analysis_package, ["comparison_baseline_missing"])
     pivot = configuration.pivot_table(
-        index=["fold_id", "trade_date"], columns="config_id", values="daily_return"
+        index=["fold_id", "trade_date"], columns="config_id", values="daily_return",
+        aggfunc="first",
     )
     if pivot.isna().any().any() or pivot.shape[1] < 2:
         return _blocked(
@@ -593,8 +647,44 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         calmar_improvement >= float(thresholds.get("challenger_min_calmar_improvement_pct", 10)) / 100.0
     )
 
-    # P0-9 fix: Join on (fold_id, trade_date) — pivot now has MultiIndex
+    # P0-D: Verify no duplicate (fold_id, trade_date) in pivot
+    if pivot.index.duplicated().any():
+        dup_count = int(pivot.index.duplicated().sum())
+        return _blocked(formal_manifest, analysis_package,
+                        [f"baseline_duplicate_fold_date_rows:{dup_count}"])
+
+    # P0-D: Per-fold date alignment — OOS dates must exactly equal baseline dates
     oos_indexed = oos.set_index(["fold_id", "trade_date"])
+    for fold_id in oos_fold_returns.index:
+        try:
+            oos_fold_dates = set(
+                pd.to_datetime(oos_indexed.xs(fold_id, level="fold_id").index).strftime("%Y-%m-%d")
+            )
+            base_fold_dates = set(
+                pd.to_datetime(pivot.xs(fold_id, level="fold_id").index).strftime("%Y-%m-%d")
+            )
+            if oos_fold_dates != base_fold_dates:
+                missing_o = sorted(oos_fold_dates - base_fold_dates)[:5]
+                missing_b = sorted(base_fold_dates - oos_fold_dates)[:5]
+                return _blocked(formal_manifest, analysis_package,
+                                [f"baseline_date_mismatch:{fold_id}:oos_only={len(missing_o)}:base_only={len(missing_b)}"])
+        except KeyError:
+            return _blocked(formal_manifest, analysis_package,
+                            [f"baseline_fold_missing:{fold_id}"])
+
+    # P0-D: Champion consistency — dynamic_champion must equal oos strategy_return
+    for fold_id in oos_fold_returns.index:
+        try:
+            oos_fold = oos_indexed.xs(fold_id, level="fold_id")["strategy_return"].astype(float)
+            champ_fold = pivot.xs(fold_id, level="fold_id")["dynamic_champion"].astype(float)
+            if not np.allclose(oos_fold.values, champ_fold.values, rtol=1e-10, atol=1e-10):
+                max_diff = float((oos_fold - champ_fold).abs().max())
+                return _blocked(formal_manifest, analysis_package,
+                                [f"champion_return_divergence:{fold_id}:max_diff={max_diff:.2e}"])
+        except KeyError:
+            return _blocked(formal_manifest, analysis_package,
+                            [f"champion_consistency_fold_missing:{fold_id}"])
+
     # Random baseline win ratio (per OOS fold)
     random_fold_wins = 0
     for fold_id in oos_fold_returns.index:

@@ -213,6 +213,26 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                             blockers.append(f"capacity_artifact_account_size_mismatch:{label}")
                         if str(art_manifest.get("scenario") or "") != str(cell["scenario"]):
                             blockers.append(f"capacity_artifact_scenario_mismatch:{label}")
+                        # P0-E: strategy_id, formal_manifest_sha256, cost_rate, slippage, adv_limit_type mandatory
+                        if not art_manifest.get("strategy_id"):
+                            blockers.append(f"capacity_artifact_missing_strategy_id:{label}")
+                        art_fm_sha = str(art_manifest.get("formal_manifest_sha256") or "")
+                        if not art_fm_sha:
+                            blockers.append(f"capacity_artifact_missing_formal_manifest_sha256:{label}")
+                        elif art_fm_sha != computed_manifest_sha:
+                            blockers.append(f"capacity_artifact_formal_manifest_sha_mismatch:{label}")
+                        spec = scenarios.get(str(cell["scenario"]), {})
+                        if abs(float(art_manifest.get("cost_rate", -1) or -1) - float(cell.get("cost_rate", -2))) > 1e-12:
+                            blockers.append(f"capacity_artifact_cost_rate_mismatch:{label}")
+                        if int(art_manifest.get("slippage_bps", -1) or -1) != int(cell.get("slippage_bps", -2)):
+                            blockers.append(f"capacity_artifact_slippage_bps_mismatch:{label}")
+                        adv_type_manifest = str(art_manifest.get("adv_limit_type") or "")
+                        adv_type_spec = str(spec.get("adv_limit_type", "base"))
+                        if adv_type_manifest and adv_type_manifest != adv_type_spec:
+                            blockers.append(f"capacity_artifact_adv_limit_type_mismatch:{label}")
+                        gen_sha = str(art_manifest.get("generator_git_sha") or "")
+                        if gen_sha and len(gen_sha) != 40:
+                            blockers.append(f"capacity_artifact_invalid_generator_sha:{label}")
                         # Verify artifact_sha256 matches the manifest's self-hash (MANDATORY)
                         manifest_files = art_manifest.get("files") or {}
                         manifest_self_sha = str(art_manifest.get("manifest_sha256") or "")
@@ -220,10 +240,10 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                             blockers.append(f"capacity_artifact_missing_manifest_sha:{label}")
                         else:
                             manifest_content = {k: v for k, v in art_manifest.items() if k != "manifest_sha256"}
-                            computed_manifest_sha = hashlib.sha256(
+                            computed_art_self_sha = hashlib.sha256(
                                 json.dumps(manifest_content, sort_keys=True, separators=(",", ":")).encode()
                             ).hexdigest()
-                            if computed_manifest_sha != manifest_self_sha:
+                            if computed_art_self_sha != manifest_self_sha:
                                 blockers.append(f"capacity_artifact_manifest_sha_mismatch:{label}")
                             if artifact_sha != manifest_self_sha:
                                 blockers.append(f"capacity_artifact_sha_vs_manifest_mismatch:{label}")
@@ -244,27 +264,79 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                                         blockers.append(
                                             f"capacity_artifact_file_sha_mismatch:{label}:{req_file}"
                                         )
-                        # P0-5: Read orders.csv and fills.csv, recompute metrics independently
+                        # P0-H: Read nav.csv, recompute cumulative_return and max_drawdown
+                        nav_path = artifact_dir / "nav.csv"
+                        if nav_path.is_file():
+                            nav_df = pd.read_csv(nav_path)
+                            if "nav" in nav_df.columns and len(nav_df) > 0:
+                                nav_vals = pd.to_numeric(nav_df["nav"], errors="coerce").dropna()
+                                if len(nav_vals) > 1:
+                                    nav_returns = nav_vals.pct_change().dropna()
+                                    recomputed_return = float((1.0 + nav_returns).prod() - 1.0)
+                                    recomputed_dd = float((nav_vals / nav_vals.cummax() - 1.0).min())
+                                    cell_return = float(cell.get("cumulative_return", 0))
+                                    cell_dd = float(cell.get("max_drawdown", 0))
+                                    if not math.isclose(recomputed_return, cell_return, rel_tol=0, abs_tol=1e-6):
+                                        blockers.append(
+                                            f"capacity_nav_return_mismatch:{label}:"
+                                            f"cell={cell_return:.6f}:nav={recomputed_return:.6f}"
+                                        )
+                                    if not math.isclose(recomputed_dd, cell_dd, rel_tol=0, abs_tol=1e-4):
+                                        blockers.append(
+                                            f"capacity_nav_drawdown_mismatch:{label}:"
+                                            f"cell={cell_dd:.4f}:nav={recomputed_dd:.4f}"
+                                        )
+                        # P0-F/G: Validate orders/fills counts against execution_metrics.json exactly
                         orders_path = artifact_dir / "orders.csv"
                         fills_path = artifact_dir / "fills.csv"
-                        if orders_path.is_file() and fills_path.is_file():
+                        metrics_path = artifact_dir / "execution_metrics.json"
+                        if orders_path.is_file() and fills_path.is_file() and metrics_path.is_file():
                             orders_df = pd.read_csv(orders_path)
                             fills_df = pd.read_csv(fills_path)
+                            metrics_data = json.loads(metrics_path.read_text(encoding="utf-8"))
                             actual_order_count = len(orders_df)
                             actual_fill_count = len(fills_df)
-                            if actual_order_count != int(cell.get("order_count", 0)):
+                            # Exact match for discrete counts
+                            metrics_order_count = int(metrics_data.get("order_count", -1))
+                            if metrics_order_count >= 0 and actual_order_count != metrics_order_count:
                                 blockers.append(
-                                    f"capacity_order_count_mismatch:{label}:"
-                                    f"declared={cell.get('order_count')}:actual={actual_order_count}"
+                                    f"capacity_order_count_vs_metrics:{label}:"
+                                    f"metrics={metrics_order_count}:actual={actual_order_count}"
                                 )
-                            if actual_fill_count != actual_order_count:
-                                actual_partial = actual_order_count - actual_fill_count
-                                declared_partial = int(cell.get("partial_fill_count", -1))
-                                if abs(actual_partial - declared_partial) > max(1, actual_order_count * 0.05):
-                                    blockers.append(
-                                        f"capacity_partial_fill_mismatch:{label}:"
-                                        f"declared={declared_partial}:actual={actual_partial}"
-                                    )
+                            metrics_failed = int(metrics_data.get("failed_order_count", -1))
+                            if metrics_failed >= 0 and metrics_failed != int(cell.get("failed_order_count", -1)):
+                                blockers.append(
+                                    f"capacity_failed_order_mismatch:{label}:"
+                                    f"cell={cell.get('failed_order_count')}:metrics={metrics_failed}"
+                                )
+                            metrics_partial = int(metrics_data.get("partial_fill_count", -1))
+                            if metrics_partial >= 0 and metrics_partial != int(cell.get("partial_fill_count", -1)):
+                                blockers.append(
+                                    f"capacity_partial_fill_mismatch:{label}:"
+                                    f"cell={cell.get('partial_fill_count')}:metrics={metrics_partial}"
+                                )
+                            metrics_delayed = int(metrics_data.get("delayed_fill_count", -1))
+                            if metrics_delayed >= 0 and metrics_delayed != int(cell.get("delayed_fill_count", -1)):
+                                blockers.append(
+                                    f"capacity_delayed_fill_mismatch:{label}:"
+                                    f"cell={cell.get('delayed_fill_count')}:metrics={metrics_delayed}"
+                                )
+                            # Cross-check turnover, utilization, slippage from metrics
+                            metrics_turnover = float(metrics_data.get("turnover", -1))
+                            if metrics_turnover >= 0 and not math.isclose(
+                                metrics_turnover, float(cell.get("turnover", 0)), rel_tol=0, abs_tol=1e-6
+                            ):
+                                blockers.append(f"capacity_turnover_mismatch:{label}")
+                            metrics_slippage = float(metrics_data.get("realized_slippage_bps", -1))
+                            if metrics_slippage >= 0 and not math.isclose(
+                                metrics_slippage, float(cell.get("realized_slippage_bps", 0)), rel_tol=0, abs_tol=1e-6
+                            ):
+                                blockers.append(f"capacity_slippage_mismatch:{label}")
+                            metrics_util = float(metrics_data.get("capital_utilization", -1))
+                            if metrics_util >= 0 and not math.isclose(
+                                metrics_util, float(cell.get("capital_utilization", 0)), rel_tol=0, abs_tol=1e-6
+                            ):
+                                blockers.append(f"capacity_utilization_mismatch:{label}")
                     except (json.JSONDecodeError, OSError) as exc:
                         blockers.append(f"capacity_artifact_manifest_read_error:{label}:{type(exc).__name__}")
         if all(_is_number(cell.get(field)) for field in (

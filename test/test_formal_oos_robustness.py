@@ -90,22 +90,30 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
     pd.DataFrame(rows).to_csv(package / "oos_returns.csv", index=False)
     configs = []
     # P0-10 fix: mandatory baseline config names + fold_id for correct alignment
+    # P0-D: dynamic_champion MUST equal oos strategy_return exactly
     fold_id_val = "WF000"
-    for config_id, shift in (
-        ("dynamic_champion", 0.0002),
-        ("production_baseline", 0),
-        ("matched_random", 0),
-        ("reverse_baseline", -0.0002),
+    for config_id, shift, use_oos in (
+        ("dynamic_champion", 0, True),     # uses OOS strategy returns
+        ("production_baseline", 0, False),
+        ("matched_random", 0, False),
+        ("reverse_baseline", -0.0002, False),
     ):
-        configs.extend(
-            {
-                "fold_id": fold_id_val,
-                "trade_date": day,
-                "config_id": config_id,
-                "daily_return": float(value + shift),
-            }
-            for day, value in zip(dates, rng.normal(0, 0.006, len(dates)))
-        )
+        if use_oos:
+            for day, ret in zip(dates, strategy):
+                configs.append({
+                    "fold_id": fold_id_val, "trade_date": day,
+                    "config_id": config_id, "daily_return": float(ret),
+                })
+        else:
+            configs.extend(
+                {
+                    "fold_id": fold_id_val,
+                    "trade_date": day,
+                    "config_id": config_id,
+                    "daily_return": float(value + shift),
+                }
+                for day, value in zip(dates, rng.normal(0, 0.006, len(dates)))
+            )
     pd.DataFrame(configs).to_csv(
         package / "configuration_returns.csv", index=False
     )
@@ -121,7 +129,8 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
             for index in range(20)
         ]
     ).to_csv(package / "closed_trades.csv", index=False)
-    # P0-7: analysis_manifest.json with formal run binding
+    (package / "selected_model_config.json").write_text(json.dumps(selected_config_content), encoding="utf-8")
+    # P0-7/P0-C: analysis_manifest.json with ALL mandatory fields + self-hash
     analysis_m = {
         "schema_version": "analysis_manifest_v1",
         "formal_run_id": "formal-fixture",
@@ -129,14 +138,20 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
             json.dumps({k: v for k, v in formal_payload.items() if k != "manifest_sha256"},
                        sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
+        "frozen_bundle_sha256": "e" * 64,
+        "acceptance_config_sha256": hashlib.sha256(b"test-acceptance").hexdigest(),
         "analysis_generator_git_sha": "f" * 40,
         "input_files": {
             name: {"sha256": hashlib.sha256((package / name).read_bytes()).hexdigest()}
-            for name in ("folds.json", "oos_returns.csv", "configuration_returns.csv", "closed_trades.csv")
+            for name in ("folds.json", "oos_returns.csv", "configuration_returns.csv",
+                         "closed_trades.csv", "selected_model_config.json")
         },
     }
+    analysis_m["manifest_sha256"] = hashlib.sha256(
+        json.dumps({k: v for k, v in analysis_m.items() if k != "manifest_sha256"},
+                   sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     (package / "analysis_manifest.json").write_text(json.dumps(analysis_m), encoding="utf-8")
-    (package / "selected_model_config.json").write_text(json.dumps(selected_config_content), encoding="utf-8")
     return formal, package
 
 
