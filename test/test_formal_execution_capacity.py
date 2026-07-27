@@ -18,10 +18,14 @@ def _package(tmp_path):
         for scenario, _cost, _slippage in EXECUTION_SCENARIOS:
             adir = capacity_root / "formal-fixture" / str(size) / scenario
             adir.mkdir(parents=True, exist_ok=True)
-            (adir / "execution_metrics.json").write_text("{}")
+            (adir / "execution_metrics.json").write_text('{"order_count":100,"fill_count":98}')
             (adir / "nav.csv").write_text("trade_date,nav\n2024-01-01,1.0\n")
-            (adir / "orders.csv").write_text("symbol,side,shares\n000001,BUY,100\n")
-            (adir / "fills.csv").write_text("symbol,side,shares,price\n000001,BUY,100,10.0\n")
+            # P0-5 fix: orders.csv has 100 rows matching cell.order_count=100
+            orders_rows = "\n".join(["symbol,side,shares"] + [f"00000{i%9+1},BUY,100" for i in range(100)])
+            (adir / "orders.csv").write_text(orders_rows + "\n")
+            # fills.csv has 98 rows (100 - 2 = partial_fill_count)
+            fills_rows = "\n".join(["symbol,side,shares,price"] + [f"00000{i%9+1},BUY,100,10.0" for i in range(98)])
+            (adir / "fills.csv").write_text(fills_rows + "\n")
             # Build proper artifact manifest with file SHAs
             art_files = {}
             for fname in ("execution_metrics.json", "nav.csv", "orders.csv", "fills.csv"):
@@ -33,6 +37,9 @@ def _package(tmp_path):
                 "formal_run_id": "formal-fixture",
                 "account_size": size,
                 "scenario": scenario,
+                "strategy_id": "test-strategy",
+                "formal_manifest_sha256": "f" * 64,
+                "adv_limit_type": "stress" if scenario.startswith(("EXTREME", "CONSERVATIVE")) else "base",
                 "files": art_files,
             }
             manifest_self = hashlib.sha256(

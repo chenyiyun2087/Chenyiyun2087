@@ -44,6 +44,7 @@ REQUIRED_PACKAGE_FILES = (
     "configuration_returns.csv",
     "closed_trades.csv",
     "analysis_manifest.json",
+    "selected_model_config.json",
 )
 
 
@@ -139,6 +140,7 @@ def generate_formal_folds(
             break
         if test_end > end:
             break
+        # P0-3: Fold is purely a date window. model_config_sha lives in selected_model_config.json
         identity = {
             "fold_id": f"WF{index:03d}",
             "train_start": cursor.date().isoformat(),
@@ -151,10 +153,8 @@ def generate_formal_folds(
             "embargo_end": embargo_end.date().isoformat(),
             "test_start": test_start.date().isoformat(),
             "test_end": test_end.date().isoformat(),
+            "model_config_sha": "",  # populated from selected_model_config.json per fold
         }
-        identity["model_config_sha"] = hashlib.sha256(
-            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
         folds.append(Fold(**identity))
         index += 1
         cursor += pd.DateOffset(months=int(config["step_months"]))
@@ -349,6 +349,9 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     if not folds:
         return _blocked(formal_manifest, analysis_package, ["oos_folds_missing"])
 
+    # P0-1 fix: initialize contamination BEFORE selected_model_config validation
+    contamination: list[str] = []
+
     # P0-8: Validate selected_model_config.json if present — binds actual model params per fold
     selected_config_path = analysis_package / "selected_model_config.json"
     selected_configs: dict[str, dict[str, Any]] = {}
@@ -410,8 +413,21 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     returns["parameter_selected_at"] = pd.to_datetime(
         returns["parameter_selected_at"], errors="coerce"
     )
-    fold_map = {fold.fold_id: fold for fold in folds}
-    contamination: list[str] = []
+    # P0-3: Populate fold model_config_sha from selected_model_config
+    fold_map: dict[str, Fold] = {}
+    for fold in folds:
+        if fold.fold_id in selected_configs:
+            fold = Fold(
+                fold_id=fold.fold_id,
+                train_start=fold.train_start, train_end=fold.train_end,
+                purge_start=fold.purge_start, purge_end=fold.purge_end,
+                validation_start=fold.validation_start, validation_end=fold.validation_end,
+                embargo_start=fold.embargo_start, embargo_end=fold.embargo_end,
+                test_start=fold.test_start, test_end=fold.test_end,
+                model_config_sha=selected_configs[fold.fold_id].get("model_config_sha256", ""),
+            )
+        fold_map[fold.fold_id] = fold
+    folds = list(fold_map.values())
     for fold_id, frame in returns.groupby("fold_id"):
         fold = fold_map.get(str(fold_id))
         if not fold:
@@ -455,11 +471,12 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         return _blocked(formal_manifest, analysis_package, contamination)
 
     configuration = pd.read_csv(analysis_package / "configuration_returns.csv")
-    required_config = {"trade_date", "config_id", "daily_return"}
+    # P0-9 fix: require fold_id for correct per-fold alignment
+    required_config = {"trade_date", "config_id", "daily_return", "fold_id"}
     if required_config - set(configuration.columns):
         return _blocked(formal_manifest, analysis_package, ["comparison_baseline_missing"])
-    pivot = configuration.pivot(
-        index="trade_date", columns="config_id", values="daily_return"
+    pivot = configuration.pivot_table(
+        index=["fold_id", "trade_date"], columns="config_id", values="daily_return"
     )
     if pivot.isna().any().any() or pivot.shape[1] < 2:
         return _blocked(
@@ -501,8 +518,9 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     bootstrap = _block_bootstrap_annualized(strategy_returns)
     bootstrap_fifth = float(np.quantile(bootstrap, 0.05))
     # P0-11: Bootstrap max drawdown distribution and gate
+    # P0-10 fix: 5th percentile = worst (most negative) drawdowns = tail risk
     bootstrap_dds = _block_bootstrap_max_drawdown(strategy_returns)
-    bootstrap_dd_95th = float(np.quantile(bootstrap_dds, 0.95)) if bootstrap_dds else -1.0
+    bootstrap_dd_5th = float(np.quantile(bootstrap_dds, 0.05)) if bootstrap_dds else -1.0
     attribution = _multi_factor_attribution(oos)
     trades = pd.read_csv(
         analysis_package / "closed_trades.csv", dtype={"symbol": str}
@@ -529,7 +547,7 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         <= float(thresholds["max_probability_of_backtest_overfitting"]),
         "block_bootstrap": bootstrap_fifth
         >= float(thresholds["bootstrap_annual_return_5th_percentile_min"]),
-        "bootstrap_max_dd": bootstrap_dd_95th
+        "bootstrap_max_dd": bootstrap_dd_5th
         >= float(thresholds.get("bootstrap_max_dd_95th_percentile_max", -0.40)),
         "single_stock_concentration": concentration[
             "max_single_stock_profit_share"
@@ -575,31 +593,37 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         calmar_improvement >= float(thresholds.get("challenger_min_calmar_improvement_pct", 10)) / 100.0
     )
 
+    # P0-9 fix: Join on (fold_id, trade_date) — pivot now has MultiIndex
+    oos_indexed = oos.set_index(["fold_id", "trade_date"])
     # Random baseline win ratio (per OOS fold)
-    random_returns = pivot["matched_random"].astype(float)
     random_fold_wins = 0
     for fold_id in oos_fold_returns.index:
-        fold_mask = oos["fold_id"] == fold_id
-        champ_fold = oos.loc[fold_mask, "strategy_return"].astype(float)
-        rand_fold = pivot.loc[fold_mask, "matched_random"].astype(float) if fold_id in pivot.index else None
-        if rand_fold is not None and len(champ_fold) == len(rand_fold):
-            if float((1.0 + champ_fold).prod() - 1.0) > float((1.0 + rand_fold).prod() - 1.0):
+        try:
+            fold_pivot = pivot.xs(fold_id, level="fold_id")
+            fold_oos = oos_indexed.xs(fold_id, level="fold_id")
+            champ_cum = float((1.0 + fold_oos["strategy_return"].astype(float)).prod() - 1.0)
+            rand_cum = float((1.0 + fold_pivot["matched_random"].astype(float)).prod() - 1.0)
+            if champ_cum > rand_cum:
                 random_fold_wins += 1
+        except KeyError:
+            pass
     random_win_ratio = random_fold_wins / len(oos_fold_returns) if len(oos_fold_returns) > 0 else 0.0
     gates["random_baseline_win_ratio"] = (
         random_win_ratio >= float(thresholds.get("min_random_baseline_win_ratio", 0.70))
     )
 
     # Reverse baseline win ratio (per OOS fold)
-    reverse_returns = pivot["reverse_baseline"].astype(float)
     reverse_fold_wins = 0
     for fold_id in oos_fold_returns.index:
-        fold_mask = oos["fold_id"] == fold_id
-        champ_fold = oos.loc[fold_mask, "strategy_return"].astype(float)
-        rev_fold = pivot.loc[fold_mask, "reverse_baseline"].astype(float) if fold_id in pivot.index else None
-        if rev_fold is not None and len(champ_fold) == len(rev_fold):
-            if float((1.0 + champ_fold).prod() - 1.0) > float((1.0 + rev_fold).prod() - 1.0):
+        try:
+            fold_pivot = pivot.xs(fold_id, level="fold_id")
+            fold_oos = oos_indexed.xs(fold_id, level="fold_id")
+            champ_cum = float((1.0 + fold_oos["strategy_return"].astype(float)).prod() - 1.0)
+            rev_cum = float((1.0 + fold_pivot["reverse_baseline"].astype(float)).prod() - 1.0)
+            if champ_cum > rev_cum:
                 reverse_fold_wins += 1
+        except KeyError:
+            pass
     reverse_win_ratio = reverse_fold_wins / len(oos_fold_returns) if len(oos_fold_returns) > 0 else 0.0
     gates["reverse_baseline_win_ratio"] = (
         reverse_win_ratio >= float(thresholds.get("min_reverse_baseline_win_ratio", 0.70))

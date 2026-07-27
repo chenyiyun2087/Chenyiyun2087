@@ -15,6 +15,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import yaml
 
 
@@ -99,6 +100,20 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
         return _blocked(formal_manifest, matrix_path, ["formal_manifest_invalid"])
     if formal.get("status") != "VERIFIED":
         return _blocked(formal_manifest, matrix_path, ["formal_run_not_verified"])
+    # P0-8: Verify Formal Manifest self-hash (same pattern as OOS evaluator)
+    if not formal.get("manifest_sha256"):
+        return _blocked(formal_manifest, matrix_path, ["formal_manifest_incomplete_no_self_sha"])
+    if not formal.get("frozen_bundle_sha256"):
+        return _blocked(formal_manifest, matrix_path, ["formal_manifest_incomplete_no_frozen_bundle"])
+    manifest_without_self = {k: v for k, v in formal.items() if k != "manifest_sha256"}
+    computed_manifest_sha = hashlib.sha256(
+        json.dumps(manifest_without_self, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if formal.get("manifest_sha256") != computed_manifest_sha:
+        return _blocked(formal_manifest, matrix_path, ["formal_manifest_sha_mismatch"])
+    # P0-8: Reject fixture_mode manifests in production evaluation
+    if formal.get("fixture_mode") is True:
+        return _blocked(formal_manifest, matrix_path, ["formal_manifest_fixture_mode_rejected"])
     if not matrix_path.exists():
         return _blocked(formal_manifest, matrix_path, ["capacity_matrix_missing"])
     try:
@@ -108,10 +123,12 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
 
     acceptance = _acceptance()
     sizes = {int(value) for value in acceptance["account_sizes"]}
+    # P0-7 fix: include adv_limit_type in scenarios dict
     scenarios = {
         str(row["id"]): {
             "cost_rate": float(row["cost_rate"]),
             "slippage_bps": int(row["slippage_bps"]),
+            "adv_limit_type": str(row.get("adv_limit_type", "base")),
         }
         for row in acceptance["scenarios"]
     }
@@ -184,14 +201,24 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                 else:
                     try:
                         art_manifest = json.loads(artifact_manifest_path.read_text(encoding="utf-8"))
-                        # Verify formal_run_id in artifact manifest matches
+                        # P0-4: ALL key fields are mandatory — any missing → BLOCKED
                         art_run_id = str(art_manifest.get("formal_run_id") or "")
-                        if art_run_id and art_run_id != formal_run_id:
+                        if not art_run_id:
+                            blockers.append(f"capacity_artifact_missing_formal_run_id:{label}")
+                        elif art_run_id != formal_run_id:
                             blockers.append(f"capacity_artifact_run_id_mismatch:{label}")
-                        # Verify artifact_sha256 matches the manifest's self-hash
+                        if not art_manifest.get("schema_version"):
+                            blockers.append(f"capacity_artifact_missing_schema_version:{label}")
+                        if str(art_manifest.get("account_size") or "") != str(cell["account_size"]):
+                            blockers.append(f"capacity_artifact_account_size_mismatch:{label}")
+                        if str(art_manifest.get("scenario") or "") != str(cell["scenario"]):
+                            blockers.append(f"capacity_artifact_scenario_mismatch:{label}")
+                        # Verify artifact_sha256 matches the manifest's self-hash (MANDATORY)
                         manifest_files = art_manifest.get("files") or {}
                         manifest_self_sha = str(art_manifest.get("manifest_sha256") or "")
-                        if manifest_self_sha:
+                        if not manifest_self_sha:
+                            blockers.append(f"capacity_artifact_missing_manifest_sha:{label}")
+                        else:
                             manifest_content = {k: v for k, v in art_manifest.items() if k != "manifest_sha256"}
                             computed_manifest_sha = hashlib.sha256(
                                 json.dumps(manifest_content, sort_keys=True, separators=(",", ":")).encode()
@@ -200,26 +227,44 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                                 blockers.append(f"capacity_artifact_manifest_sha_mismatch:{label}")
                             if artifact_sha != manifest_self_sha:
                                 blockers.append(f"capacity_artifact_sha_vs_manifest_mismatch:{label}")
-                        # Require orders.csv and fills.csv
+                        # Require all 4 artifact files with SHA verification
                         for req_file in ("execution_metrics.json", "nav.csv", "orders.csv", "fills.csv"):
                             fpath = artifact_dir / req_file
                             if not fpath.is_file():
                                 blockers.append(f"capacity_artifact_file_missing:{label}:{req_file}")
-                            elif req_file in manifest_files:
+                            elif req_file not in manifest_files:
+                                blockers.append(f"capacity_artifact_file_not_in_manifest:{label}:{req_file}")
+                            else:
                                 declared_file_sha = str(manifest_files[req_file].get("sha256") or "")
-                                if declared_file_sha:
+                                if not declared_file_sha:
+                                    blockers.append(f"capacity_artifact_file_sha_missing:{label}:{req_file}")
+                                else:
                                     actual_file_sha = _sha(fpath)
                                     if actual_file_sha != declared_file_sha:
                                         blockers.append(
                                             f"capacity_artifact_file_sha_mismatch:{label}:{req_file}"
                                         )
-                        # Recompute partial_fill_ratio from actual data
-                        if "partial_fill_count" in manifest_files:
-                            pf_count = int(cell.get("partial_fill_count", 0))
-                            expected_pf_ratio = pf_count / order_count if order_count > 0 else 0.0
-                            actual_pf_ratio = float(cell.get("partial_fill_count", 0)) / order_count if order_count > 0 else 0.0
-                            if not math.isclose(actual_pf_ratio, expected_pf_ratio, rel_tol=0, abs_tol=1e-9):
-                                blockers.append(f"capacity_partial_fill_ratio_recomputation_mismatch:{label}")
+                        # P0-5: Read orders.csv and fills.csv, recompute metrics independently
+                        orders_path = artifact_dir / "orders.csv"
+                        fills_path = artifact_dir / "fills.csv"
+                        if orders_path.is_file() and fills_path.is_file():
+                            orders_df = pd.read_csv(orders_path)
+                            fills_df = pd.read_csv(fills_path)
+                            actual_order_count = len(orders_df)
+                            actual_fill_count = len(fills_df)
+                            if actual_order_count != int(cell.get("order_count", 0)):
+                                blockers.append(
+                                    f"capacity_order_count_mismatch:{label}:"
+                                    f"declared={cell.get('order_count')}:actual={actual_order_count}"
+                                )
+                            if actual_fill_count != actual_order_count:
+                                actual_partial = actual_order_count - actual_fill_count
+                                declared_partial = int(cell.get("partial_fill_count", -1))
+                                if abs(actual_partial - declared_partial) > max(1, actual_order_count * 0.05):
+                                    blockers.append(
+                                        f"capacity_partial_fill_mismatch:{label}:"
+                                        f"declared={declared_partial}:actual={actual_partial}"
+                                    )
                     except (json.JSONDecodeError, OSError) as exc:
                         blockers.append(f"capacity_artifact_manifest_read_error:{label}:{type(exc).__name__}")
         if all(_is_number(cell.get(field)) for field in (
@@ -258,6 +303,8 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
         size = int(cell["account_size"])
         scenario = str(cell["scenario"])
         label = f"{size}:{scenario}"
+        # P0-7 fix: re-fetch specification for this cell (don't reuse stale from first loop)
+        specification = scenarios.get(scenario, {})
         base_drawdown = base_drawdowns[size]
         calculated_widening = max(
             0.0,

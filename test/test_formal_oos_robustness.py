@@ -39,11 +39,34 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
         embargo_end="2023-07-07",
         test_start=dates.min().date().isoformat(),
         test_end=dates.max().date().isoformat(),
-        model_config_sha="a" * 64,
+        model_config_sha="",  # P0-3: populated from selected_model_config
     )
     (package / "folds.json").write_text(
         json.dumps([fold.__dict__]), encoding="utf-8"
     )
+    # P0-8: selected_model_config.json with per-fold model parameters (must be BEFORE oos_returns)
+    selected_config_content = {
+        "folds": {
+            "WF000": {
+                "strategy_id": "production_governed_vol_position",
+                "factor_weights": {"momentum": 0.3, "value": 0.2},
+                "risk_gate_params": {"max_drawdown": -0.35},
+                "hold_days": 10,
+                "top_n": 5,
+                "position_params": {"max_weight": 0.15},
+                "cost_model": {"cost_rate": 0.00075, "slippage_bps": 10},
+                "random_seed": 42,
+                "selected_at": "2023-10-10",
+                "code_git_sha": "f" * 40,
+                "config_sha": "c" * 64,
+            }
+        }
+    }
+    for fid, fconfig in selected_config_content["folds"].items():
+        config_without = {k: v for k, v in fconfig.items() if k != "model_config_sha256"}
+        fconfig["model_config_sha256"] = hashlib.sha256(
+            json.dumps(config_without, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
     rng = np.random.default_rng(42)
     factor_values = {factor: rng.normal(0, 0.006, len(dates)) for factor in FACTORS}
     strategy = (
@@ -57,7 +80,7 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
         "phase": ["TEST"] * len(dates),
         "strategy_return": strategy,
         "benchmark_return": factor_values["market_beta"],
-        "model_config_sha": ["a" * 64] * len(dates),
+        "model_config_sha": [selected_config_content["folds"]["WF000"]["model_config_sha256"]] * len(dates),
         "parameter_selected_at": [
             "2023-10-10" if not contaminated else "2024-02-01"
         ]
@@ -66,7 +89,8 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
     }
     pd.DataFrame(rows).to_csv(package / "oos_returns.csv", index=False)
     configs = []
-    # P0-10 fix: mandatory baseline config names
+    # P0-10 fix: mandatory baseline config names + fold_id for correct alignment
+    fold_id_val = "WF000"
     for config_id, shift in (
         ("dynamic_champion", 0.0002),
         ("production_baseline", 0),
@@ -75,6 +99,7 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
     ):
         configs.extend(
             {
+                "fold_id": fold_id_val,
                 "trade_date": day,
                 "config_id": config_id,
                 "daily_return": float(value + shift),
@@ -111,6 +136,7 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
         },
     }
     (package / "analysis_manifest.json").write_text(json.dumps(analysis_m), encoding="utf-8")
+    (package / "selected_model_config.json").write_text(json.dumps(selected_config_content), encoding="utf-8")
     return formal, package
 
 
