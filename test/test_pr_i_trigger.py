@@ -33,6 +33,13 @@ FORMAL_STRATEGIES = (
 _prc = {"status": "VERIFIED", "formal_run_id": RUN_ID, "strategy_ids": list(FORMAL_STRATEGIES),
         "dual_ledger_results": [{"strategy": s, "status": "VERIFIED"} for s in FORMAL_STRATEGIES]}
 PRC_MANIFEST_SHA = hashlib.sha256(json.dumps(_prc, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+PRC_FROZEN_BUNDLE = "e" * 64
+PRC_ACCEPTANCE_SHA = "a" * 64
+# Add binding fields to PR-C payload
+_prc["frozen_bundle_sha256"] = PRC_FROZEN_BUNDLE
+_prc["acceptance_config_sha256"] = PRC_ACCEPTANCE_SHA
+# Recompute after adding fields
+PRC_MANIFEST_SHA = hashlib.sha256(json.dumps(_prc, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _technical_sources(tmp_path: Path, *, economics_passed: bool) -> dict[str, Path]:
@@ -47,6 +54,8 @@ def _technical_sources(tmp_path: Path, *, economics_passed: bool) -> dict[str, P
                 "status": "VERIFIED",
                 "formal_run_id": RUN_ID,
                 "strategy_ids": list(FORMAL_STRATEGIES),
+                "frozen_bundle_sha256": PRC_FROZEN_BUNDLE,
+                "acceptance_config_sha256": PRC_ACCEPTANCE_SHA,
                 "dual_ledger_results": [
                     {"strategy": s, "status": "VERIFIED"} for s in FORMAL_STRATEGIES
                 ],
@@ -58,6 +67,8 @@ def _technical_sources(tmp_path: Path, *, economics_passed: bool) -> dict[str, P
                 "status": "PASS" if economics_passed else "ECONOMIC_FAILED",
                 "formal_run_id": RUN_ID,
                 "formal_manifest_sha256": PRC_MANIFEST_SHA,
+                "frozen_bundle_sha256": PRC_FROZEN_BUNDLE,
+                "acceptance_config_sha256": PRC_ACCEPTANCE_SHA,
                 "technical_evidence_complete": True,
                 "economic_gates_passed": economics_passed,
             }),
@@ -68,6 +79,8 @@ def _technical_sources(tmp_path: Path, *, economics_passed: bool) -> dict[str, P
                 "status": "PASS",
                 "formal_run_id": RUN_ID,
                 "formal_manifest_sha256": PRC_MANIFEST_SHA,
+                "frozen_bundle_sha256": PRC_FROZEN_BUNDLE,
+                "acceptance_config_sha256": PRC_ACCEPTANCE_SHA,
                 "technical_evidence_complete": True,
                 "economic_gates_passed": True,
             }),

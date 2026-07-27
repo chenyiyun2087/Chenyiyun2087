@@ -16,7 +16,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-from runtime.formal_contract import FORMAL_STRATEGIES, canonical_sha
+from runtime.formal_contract import FORMAL_STRATEGIES, FORMAL_STRATEGY_SET, canonical_sha
 
 DEFAULT_SOURCES = {
     "pr_a_equivalence": PROJECT_ROOT
@@ -92,10 +92,12 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
             and len(p.get("dual_ledger_results", [])) == len(FORMAL_STRATEGIES)
             and all(isinstance(item, dict) for item in p.get("dual_ledger_results", []))
             and all(isinstance(item.get("strategy"), str) and item.get("strategy") for item in p.get("dual_ledger_results", []))
-            and {item["strategy"] for item in p.get("dual_ledger_results", [])} == FORMAL_STRATEGIES
+            and {item["strategy"] for item in p.get("dual_ledger_results", [])} == FORMAL_STRATEGY_SET
             and isinstance(p.get("strategy_ids"), list)
+            and len(p.get("strategy_ids") or []) == len(FORMAL_STRATEGIES)
+            and len(p.get("strategy_ids") or []) == len(set(p.get("strategy_ids") or []))
             and all(isinstance(s, str) and s for s in p.get("strategy_ids", []))
-            and set(p.get("strategy_ids") or []) == FORMAL_STRATEGIES
+            and set(p.get("strategy_ids") or []) == FORMAL_STRATEGY_SET
             and all(
                 item.get("status") == "VERIFIED"
                 for item in p.get("dual_ledger_results", [])
@@ -157,7 +159,16 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
             })
         else:
             payload_without_sha = {k: v for k, v in p.items() if k != hash_field}
-            computed = canonical_sha(payload_without_sha)
+            try:
+                computed = canonical_sha(payload_without_sha)
+            except (TypeError, ValueError) as exc:
+                checks.append({
+                    "check": f"{pr_key}_{hash_field}",
+                    "passed": False,
+                    "actual": f"non_canonical_payload:{type(exc).__name__}",
+                    "required": "finite canonical JSON payload",
+                })
+                continue
             if computed != declared_sha:
                 checks.append({
                     "check": f"{pr_key}_{hash_field}",
@@ -166,25 +177,39 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
                     "required": f"{hash_field} matches canonical self-hash",
                 })
 
-    # PR-D/E must bind to PR-C's formal_manifest_sha256
-    pr_c_manifest_sha = payloads.get("pr_c_formal_run", {}).get("manifest_sha256")
-    if pr_c_manifest_sha:
+    # PR-D/E must bind to PR-C's formal_manifest_sha256, frozen_bundle_sha256, acceptance_config_sha256
+    BINDING_FIELDS = ("formal_manifest_sha256", "frozen_bundle_sha256", "acceptance_config_sha256")
+    pr_c_hash_field = "manifest_sha256"  # PR-C uses manifest_sha256, PR-D/E use formal_manifest_sha256
+    pr_c_binding = {
+        "formal_manifest_sha256": payloads.get("pr_c_formal_run", {}).get("manifest_sha256"),
+        "frozen_bundle_sha256": payloads.get("pr_c_formal_run", {}).get("frozen_bundle_sha256"),
+        "acceptance_config_sha256": payloads.get("pr_c_formal_run", {}).get("acceptance_config_sha256"),
+    }
+    if pr_c_binding["formal_manifest_sha256"]:
         for pr_key in ("pr_d_oos_robustness", "pr_e_execution_capacity"):
-            bound = str(payloads.get(pr_key, {}).get("formal_manifest_sha256") or "")
-            if not bound:
-                checks.append({
-                    "check": f"{pr_key}_formal_manifest_binding",
-                    "passed": False,
-                    "actual": "missing",
-                    "required": "must bind to PR-C formal_manifest_sha256",
-                })
-            elif bound != pr_c_manifest_sha:
-                checks.append({
-                    "check": f"{pr_key}_formal_manifest_binding",
-                    "passed": False,
-                    "actual": f"bound={bound[:16]}... != pr_c={pr_c_manifest_sha[:16]}...",
-                    "required": "PR-D/E formal_manifest_sha256 must equal PR-C manifest_sha256",
-                })
+            p_pr = payloads.get(pr_key, {})
+            for field in BINDING_FIELDS:
+                bound = str(p_pr.get(field) or "")
+                expected_val = str(pr_c_binding[field] or "")
+                if not bound:
+                    checks.append({
+                        "check": f"{pr_key}_{field}_binding",
+                        "passed": False, "actual": "missing",
+                        "required": f"must bind to PR-C {field}",
+                    })
+                elif not expected_val:
+                    checks.append({
+                        "check": f"{pr_key}_{field}_binding",
+                        "passed": False, "actual": "pr_c_missing",
+                        "required": f"PR-C missing {field}",
+                    })
+                elif bound != expected_val:
+                    checks.append({
+                        "check": f"{pr_key}_{field}_binding",
+                        "passed": False,
+                        "actual": f"bound={bound[:16]}... != pr_c={expected_val[:16]}...",
+                        "required": f"PR-D/E {field} must equal PR-C value",
+                    })
 
     # P0: Compute technical_complete ONCE after ALL checks (not before)
     technical_complete = not missing_keys and len(payloads) == len(expected) and all(

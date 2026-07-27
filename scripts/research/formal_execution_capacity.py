@@ -136,6 +136,11 @@ def evaluate(
     except (OSError, json.JSONDecodeError):
         return _blocked(formal_manifest, matrix_path, ["capacity_matrix_invalid"])
 
+    # P0-1: Verify acceptance config hasn't changed since formal run (TOCTOU)
+    actual_accept_sha = _sha(ACCEPTANCE_PATH)
+    declared_accept_sha = str(formal.get("acceptance_config_sha256") or "")
+    if declared_accept_sha and actual_accept_sha != declared_accept_sha:
+        return _blocked(formal_manifest, matrix_path, ["acceptance_config_sha_mismatch"])
     acceptance = _acceptance()
     sizes = {int(value) for value in acceptance["account_sizes"]}
     # P0-7 fix: include adv_limit_type in scenarios dict

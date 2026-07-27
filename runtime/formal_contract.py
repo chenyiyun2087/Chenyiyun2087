@@ -12,14 +12,17 @@ from typing import Any
 
 # ---------------------------------------------------------------------------
 # Frozen five-strategy admission set
+# FORMAL_STRATEGIES is an ordered TUPLE (stable run-id, CLI args).
+# FORMAL_STRATEGY_SET is a FROZENSET (O(1) membership, exact-match).
 # ---------------------------------------------------------------------------
-FORMAL_STRATEGIES = frozenset({
+FORMAL_STRATEGIES = (
     "production_governed_vol_position",
     "production_governed_vol_position_v1_2b_dynamic_score",
     "production_governed_vol_position_v1_2b_gate_tuned",
     "production_governed_vol_position_v1_2b_execution_safe_uplift",
     "production_governed_vol_position_v1_2b_strict_precommit_uplift",
-})
+)
+FORMAL_STRATEGY_SET = frozenset(FORMAL_STRATEGIES)
 
 # ---------------------------------------------------------------------------
 # Canonical SHA-256 — MUST be the single implementation used by ALL

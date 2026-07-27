@@ -661,6 +661,11 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         analysis_package / "closed_trades.csv", dtype={"symbol": str}
     )
     concentration = _concentration(trades, oos)
+    # P0-1: Verify acceptance config hasn't changed since formal run (TOCTOU)
+    actual_accept_sha = _sha(ACCEPTANCE_PATH)
+    declared_accept_sha = str(formal.get("acceptance_config_sha256") or "")
+    if declared_accept_sha and actual_accept_sha != declared_accept_sha:
+        return _blocked(formal_manifest, analysis_package, ["acceptance_config_sha_mismatch"])
     acceptance = _acceptance()
     thresholds = {
         **acceptance["rolling_oos"],
