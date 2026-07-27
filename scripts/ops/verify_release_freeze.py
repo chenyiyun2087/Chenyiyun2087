@@ -69,10 +69,24 @@ def verify(path: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--freeze", type=Path, required=True)
+    parser.add_argument(
+        "--require",
+        choices=("checkout", "frozen-manifest"),
+        default="checkout",
+        help=(
+            "checkout requires current files to match the freeze; "
+            "frozen-manifest only validates the immutable historical record"
+        ),
+    )
     args = parser.parse_args()
     result = verify(args.freeze)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    if result["status"] != "PASS":
+    required_status = (
+        result["status"]
+        if args.require == "checkout"
+        else result["freeze_manifest_status"]
+    )
+    if required_status != "PASS":
         raise SystemExit(2)
 
 

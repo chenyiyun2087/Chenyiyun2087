@@ -41,6 +41,14 @@ jobs:
         run: >-
           python scripts/ops/verify_release_freeze.py
           --freeze config/release_freeze/prod-fixed-v2-20260720-01.json
+          --require frozen-manifest
+      - name: Require current checkout identity to remain blocked without equivalence
+        run: >-
+          python -c "from pathlib import Path;
+          from scripts.ops.verify_release_freeze import verify;
+          r=verify(Path('config/release_freeze/prod-fixed-v2-20260720-01.json'));
+          assert r['checkout_status']=='BLOCKED';
+          assert r['freeze_manifest_status']=='PASS'"
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
         env:
