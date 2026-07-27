@@ -37,10 +37,10 @@ def _package(tmp_path):
             metrics = {
                 "order_count": 100,
                 "fill_count": 98,
-                "failed_order_count": 1,
-                "partial_fill_count": 2,
-                "delayed_fill_count": 1,
-                "failure_rate": 0.01,
+                "failed_order_count": 2,    # 2 unfilled (ORD0098, ORD0099)
+                "partial_fill_count": 2,     # 2 partial (ORD0096, ORD0097: 100 ordered, 50 filled)
+                "delayed_fill_count": 0,
+                "failure_rate": 0.02,
                 "turnover": 1.2,
                 "realized_slippage_bps": int(_slippage),
                 "capital_utilization": 0.7,
@@ -62,12 +62,24 @@ def _package(tmp_path):
                 nav_values.append(f"{day.strftime('%Y-%m-%d')},{base:.6f}")
             nav_csv = "trade_date,nav\n" + "\n".join(nav_values)
             (adir / "nav.csv").write_text(nav_csv)
-            # P0-5 fix: orders.csv has 100 rows matching cell.order_count=100
-            orders_rows = "\n".join(["symbol,side,shares"] + [f"00000{i%9+1},BUY,100" for i in range(100)])
-            (adir / "orders.csv").write_text(orders_rows + "\n")
-            # fills.csv has 98 rows (100 - 2 = partial_fill_count)
-            fills_rows = "\n".join(["symbol,side,shares,price"] + [f"00000{i%9+1},BUY,100,10.0" for i in range(98)])
-            (adir / "fills.csv").write_text(fills_rows + "\n")
+            # Raw Execution Reconciliation: orders with order_id + ordered_qty
+            orders_lines = ["order_id,symbol,side,ordered_qty,submitted_at,status,reference_price"]
+            fills_lines = ["fill_id,order_id,symbol,side,filled_qty,fill_price,filled_at"]
+            for i in range(100):
+                oid = f"ORD{i:04d}"
+                if i < 96:
+                    # Fully filled
+                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00,SUBMITTED,10.0")
+                    fills_lines.append(f"FILL{i:04d},{oid},000001,BUY,100,10.0,2024-01-02T09:30:05")
+                elif i < 98:
+                    # Partially filled (ordered 100, filled 50)
+                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00,SUBMITTED,10.0")
+                    fills_lines.append(f"FILL{i:04d},{oid},000001,BUY,50,10.0,2024-01-02T09:30:05")
+                else:
+                    # Unfilled/failed
+                    orders_lines.append(f"{oid},000001,BUY,100,2024-01-02T09:30:00,SUBMITTED,10.0")
+            (adir / "orders.csv").write_text("\n".join(orders_lines) + "\n")
+            (adir / "fills.csv").write_text("\n".join(fills_lines) + "\n")
             # Build proper artifact manifest with file SHAs
             art_files = {}
             for fname in ("execution_metrics.json", "nav.csv", "orders.csv", "fills.csv"):
@@ -98,7 +110,6 @@ def _package(tmp_path):
     for size in ACCOUNT_SIZES:
         for scenario, cost, slippage in EXECUTION_SCENARIOS:
             order_count = 100
-            failed = 1
             cells.append(
                 {
                     "account_size": size,
@@ -111,10 +122,10 @@ def _package(tmp_path):
                     "turnover": 1.2,
                     "capital_utilization": 0.7,
                     "partial_fill_count": 2,
-                    "delayed_fill_count": 1,
-                    "failed_order_count": failed,
+                    "delayed_fill_count": 0,
+                    "failed_order_count": 2,    # matches raw data (2 unfilled)
                     "order_count": order_count,
-                    "failure_rate": failed / order_count,
+                    "failure_rate": 2 / order_count,
                     "cumulative_return": 0.1,
                     "max_drawdown": -0.2,
                     "drawdown_widening": 0.0,

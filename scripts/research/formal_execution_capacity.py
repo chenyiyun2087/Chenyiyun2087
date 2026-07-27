@@ -404,6 +404,58 @@ def evaluate(
                                         f"capacity_order_count_metrics_vs_cell:{label}:"
                                         f"metrics={metrics_order_count}:cell={cell_order_count}"
                                     )
+                                # Raw Execution Reconciliation: derive fill/fail/partial from orders+fills
+                                if "order_id" in orders_df.columns and "order_id" in fills_df.columns:
+                                    # Group fills by order_id to compute per-order fill status
+                                    fills_grouped = fills_df.groupby("order_id").size()
+                                    orders_with_fill = set(fills_grouped.index)
+                                    all_order_ids = set(orders_df["order_id"].astype(str))
+                                    # If ordered_qty present, check partial vs full fills
+                                    if "ordered_qty" in orders_df.columns and "filled_qty" in fills_df.columns:
+                                        fills_qty = fills_df.groupby("order_id")["filled_qty"].sum()
+                                        orders_qty = orders_df.set_index("order_id")["ordered_qty"]
+                                        common_ids = sorted(all_order_ids & set(fills_qty.index) & set(orders_qty.index))
+                                        raw_fully_filled = sum(
+                                            1 for oid in common_ids
+                                            if float(fills_qty.get(oid, 0)) >= float(orders_qty.get(oid, 1))
+                                        )
+                                        raw_partial = sum(
+                                            1 for oid in common_ids
+                                            if 0 < float(fills_qty.get(oid, 0)) < float(orders_qty.get(oid, 1))
+                                        )
+                                        raw_unfilled = len(common_ids) - raw_fully_filled - raw_partial
+                                        raw_no_fill = len(all_order_ids - set(fills_qty.index))
+                                        total_failed = raw_unfilled + raw_no_fill
+                                        # Cross-validate against metrics
+                                        metrics_partial = int(metrics_data.get("partial_fill_count", -1))
+                                        metrics_failed = int(metrics_data.get("failed_order_count", -1))
+                                        if metrics_partial >= 0 and raw_partial != metrics_partial:
+                                            blockers.append(
+                                                f"capacity_partial_fill_raw_vs_metrics:{label}:"
+                                                f"raw_derived={raw_partial}:metrics={metrics_partial}"
+                                            )
+                                        if metrics_failed >= 0 and total_failed != metrics_failed:
+                                            blockers.append(
+                                                f"capacity_failed_orders_raw_vs_metrics:{label}:"
+                                                f"raw_derived={total_failed}:metrics={metrics_failed}"
+                                            )
+                                        # Cross-validate against cell
+                                        cell_partial = int(cell.get("partial_fill_count", -1))
+                                        cell_failed = int(cell.get("failed_order_count", -1))
+                                        if cell_partial >= 0 and raw_partial != cell_partial:
+                                            blockers.append(
+                                                f"capacity_partial_fill_raw_vs_cell:{label}:"
+                                                f"raw_derived={raw_partial}:cell={cell_partial}"
+                                            )
+                                        if cell_failed >= 0 and total_failed != cell_failed:
+                                            blockers.append(
+                                                f"capacity_failed_orders_raw_vs_cell:{label}:"
+                                                f"raw_derived={total_failed}:cell={cell_failed}"
+                                            )
+                                else:
+                                    # Fallback: no order_id columns, use simple row counts
+                                    blockers.append(f"capacity_orders_missing_order_id_columns:{label}")
+
                                 # P0-9: Cross-check fill/fail/partial counts
                                 raw_fill_count = len(fills_df)
                                 if raw_fill_count != int(metrics_data["fill_count"]):
