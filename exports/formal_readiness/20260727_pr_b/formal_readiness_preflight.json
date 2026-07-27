@@ -1,0 +1,18 @@
+{
+  "blocking_checks": [
+    "frozen_package"
+  ],
+  "checks": [
+    {
+      "actual": "missing",
+      "check": "frozen_package",
+      "passed": false,
+      "required": "immutable PIT package generated from read-only sources"
+    }
+  ],
+  "evidence_sha256": "55d683f2a096dd62caecf7e8b751f230b0811cbaa8938cb78c97eccf86cc7895",
+  "package": "exports/formal_readiness/input_not_available",
+  "ready_for_formal_run": false,
+  "schema_version": "formal_readiness_v1",
+  "status": "BLOCKED"
+}
