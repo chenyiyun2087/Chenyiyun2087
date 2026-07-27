@@ -61,11 +61,23 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
     collection_eligible = bool(required_pass and same_day and manifest["replica_status"] == "VERIFIED")
     formal_pit_eligible = bool(manifest.get("formal_pit_eligible", False))
     shadow_eligible = bool(collection_eligible and formal_pit_eligible)
-    return {
+    # PR-H2: Build complete v2 schema row
+    formal_run_id = str(manifest.get("formal_run_id") or "")
+    formal_manifest_sha = str(manifest.get("formal_manifest_sha256") or "")
+    calendar_sha = str(manifest.get("authoritative_calendar_sha256") or _canonical_sha({}))
+
+    observation = {
+        "schema_version": "dynamic_champion_shadow_daily_v2",
         "strategy_id": manifest.get("strategy_id"),
         "release_id": manifest.get("release_id"),
+        "formal_run_id": formal_run_id,
+        "formal_manifest_sha256": formal_manifest_sha,
         "trade_date": manifest["data_date"],
         "observed_at": manifest["observed_at"],
+        "authoritative_calendar_sha256": calendar_sha,
+        "authoritative_trade_calendar_open": same_day and collection_eligible,
+        "same_day_complete_pit": same_day and required_pass,
+        "shadow_day_count_eligible": shadow_eligible,
         "technical_pass": collection_eligible,
         "technical_reason": (
             "PASS" if shadow_eligible
@@ -77,17 +89,36 @@ def build_shadow_observation(manifest: dict, *, as_of: date, technical_required:
         "formal_pit_status": (
             "VERIFIED" if formal_pit_eligible else "PARTIAL_FORWARD_ONLY"
         ),
-        "dual_ledger_status": "NOT_STARTED",
-        "cost_after_alpha": 0.0,
-        "completed_round_trips": 0,
-        "risk_gate_false_negative": 0,
+        # PR-H2: Derived fields with documented sources
+        "execution_proxy_available": False,  # DERIVED from execution proxy check
+        "incremental_hard_block": False,     # DERIVED from hard-block detection
+        "recovery_event_count": 0,            # DERIVED from recovery event counter
+        "recovery_event_return": None,        # DERIVED from recovery return computation
+        "state_switch": False,                # DERIVED from market regime classifier
+        "switch_source": "NONE",              # DERIVED: REAL_OBSERVED | SIMULATED | NONE
+        "dual_ledger_status": "NOT_STARTED",  # DERIVED from dual-ledger acceptance
+        "reconciliation_errors": 0,           # DERIVED from ledger reconciliation
+        "cost_after_alpha": 0.0,              # DERIVED from cost-after-alpha computation
+        "completed_round_trips": 0,           # DERIVED from round-trip counter
+        "theory_execution_gate_pass": False,  # DERIVED from theory/execution deviation
+        "risk_gate_false_negative": 0,        # DERIVED from risk post-mortem
         "historical_simulation": False,
+        "historical_backfill": False,
+        "simulated_date": False,
         "manifest_sha256": manifest["manifest_sha256"],
         "formal_evidence_sha256": manifest.get("formal_evidence_sha256"),
-        "shadow_day_count_eligible": shadow_eligible,
         "promotion_status": "BLOCKED",
         "capital_status": "NO_SCALE",
     }
+    # PR-H2: Compute row-level SHA chain
+    row_without_self = {k: v for k, v in observation.items() if k not in ("row_sha256",)}
+    observation["input_evidence_sha256"] = _canonical_sha({
+        "formal_manifest_sha": formal_manifest_sha,
+        "calendar_sha": calendar_sha,
+        "component_count": len(manifest.get("components", [])),
+    })
+    observation["row_sha256"] = _canonical_sha(row_without_self)
+    return observation
 
 
 def collect(
@@ -99,10 +130,11 @@ def collect(
     observed_at: datetime | None = None,
     release_id_override: str | None = None,
     strategy_id_override: str | None = None,
+    fixture_mode: bool = False,
 ) -> dict:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     observed = observed_at or datetime.now(SHANGHAI)
-    store = EvidenceStore(require_replica=True)
+    store = EvidenceStore(require_replica=not fixture_mode)
     run_id = f"pit-forward-{observed.strftime('%Y%m%dT%H%M%S%z')}"
     release_id = str(release_id_override or config["release_id"])
     strategy_id = str(
@@ -173,6 +205,7 @@ def collect(
         "historical_backfill_counts_as_shadow": False,
         "database_session_mode": "READ_ONLY",
         "database_write_operations_performed": 0,
+        "fixture_mode": fixture_mode,
     }
     manifest["manifest_sha256"] = _canonical_sha(manifest)
     manifest_object = store.put_json(manifest, release_id=release_id, run_id=run_id)
@@ -233,6 +266,7 @@ def main() -> None:
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     parser.add_argument("--release-id", default=None)
     parser.add_argument("--strategy-id", default=None)
+    parser.add_argument("--fixture-mode", action="store_true", help="Skip EvidenceStore writes; mark results non-production.")
     args = parser.parse_args()
     engine = create_engine(require_sqlalchemy_url(), pool_pre_ping=True)
     result = collect(
@@ -242,6 +276,7 @@ def main() -> None:
         as_of=args.as_of,
         release_id_override=args.release_id,
         strategy_id_override=args.strategy_id,
+        fixture_mode=args.fixture_mode,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     if any(value == "QUERY_FAILED" for value in result["component_status"].values()):

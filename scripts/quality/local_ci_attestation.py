@@ -120,17 +120,52 @@ def run_attestation(
 ) -> dict[str, Any]:
     head = _git("rev-parse", "HEAD")
     tree_status = _git("status", "--porcelain")
+    # PR-H3: Capture diff SHA and untracked files
+    diff_sha = _sha_text(_git("diff", "HEAD") or "")
+    untracked = [
+        line[3:] for line in _git("ls-files", "--others", "--exclude-standard").split("\n")
+        if line.strip()
+    ] if _git("ls-files", "--others", "--exclude-standard").strip() else []
     checks = [
         _run(name, command)
         for name, command in build_commands(python, targets, full=full)
     ]
+    # PR-H3: Post-run worktree check
+    tree_status_after = _git("status", "--porcelain")
+    head_after = _git("rev-parse", "HEAD")
+    diff_sha_after = _sha_text(_git("diff", "HEAD") or "")
+
+    all_tests_passed = all(item["passed"] for item in checks)
+    worktree_clean_before = not bool(tree_status)
+    worktree_clean_after = not bool(tree_status_after)
+    head_unchanged = head == head_after
+    credential_ok = not any(
+        "credential" in item.get("name", "").lower() and not item["passed"]
+        for item in checks
+    )
+
+    # PR-H3: Classify attestation
+    if not all_tests_passed:
+        attestation_status = "FAIL"
+    elif not (worktree_clean_before and worktree_clean_after and head_unchanged):
+        attestation_status = "DEVELOPMENT_PASS"
+    else:
+        attestation_status = "RELEASE_PASS"
+
     payload: dict[str, Any] = {
-        "schema_version": "local_ci_attestation_v1",
-        "status": "PASS" if all(item["passed"] for item in checks) else "FAIL",
+        "schema_version": "local_ci_attestation_v2",
+        "status": attestation_status,
+        "all_tests_passed": all_tests_passed,
         "scope": "LOCAL_REPRODUCIBLE_FALLBACK",
         "hosted_ci_status": "UNAVAILABLE_BILLING",
-        "git_commit_sha": head,
-        "git_tree_clean_before_run": not bool(tree_status),
+        "git_commit_sha_before": head,
+        "git_commit_sha_after": head_after,
+        "git_tree_clean_before": worktree_clean_before,
+        "git_tree_clean_after": worktree_clean_after,
+        "git_head_unchanged": head_unchanged,
+        "git_diff_sha256_before": diff_sha,
+        "git_diff_sha256_after": diff_sha_after,
+        "untracked_files": untracked,
         "python_executable": python,
         "python_version": platform.python_version(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
