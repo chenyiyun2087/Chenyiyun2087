@@ -9,6 +9,12 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from runtime.release_registry import load_release_registry
+from runtime.acceptance_config import (
+    PORTFOLIO_RISK_REF,
+    canonical_sha,
+    load_acceptance_config,
+    materialize_portfolio_risk_budget,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -84,30 +90,11 @@ class CandidatePoolConfig(_StrictModel):
 
 
 class PortfolioRiskBudgetConfig(_StrictModel):
-    max_total_exposure: float
-    system_hard_max_total_exposure: float = 0.85
-    champion_default_exposure: float
-    max_single_position_weight_pct_nav: float
-    max_single_industry_weight_pct_nav: float
-    max_correlated_theme_weight_pct_nav: float
-    max_top2_risk_contribution_pct: float
-    max_daily_new_position_pct_nav: float
-    max_daily_turnover_pct_nav: float
-    max_attack_pool_budget_share: float
+    acceptance_ref: str = PORTFOLIO_RISK_REF
 
     @model_validator(mode="after")
     def validate_exposure_caps(self) -> "PortfolioRiskBudgetConfig":
-        if self.max_total_exposure > 0.50:
-            raise ValueError("current approved exposure cannot exceed 50%")
-        if self.system_hard_max_total_exposure != 0.85:
-            raise ValueError("system hard exposure cap must remain 85%")
-        if (
-            self.max_single_position_weight_pct_nav != 15
-            or self.max_single_industry_weight_pct_nav != 30
-            or self.max_correlated_theme_weight_pct_nav != 40
-            or self.max_top2_risk_contribution_pct != 45
-        ):
-            raise ValueError("portfolio caps must remain 15/30/40/45")
+        materialize_portfolio_risk_budget(self.acceptance_ref)
         return self
 
 
@@ -442,11 +429,31 @@ def load_production_config() -> dict[str, object]:
     payload = yaml.safe_load(raw_text) or {}
     parsed = ProductionConfigFile.model_validate(payload)
     config = parsed.production.model_dump(mode="python")
+    risk_reference = str(config["portfolio_risk_budget"]["acceptance_ref"])
+    config["portfolio_risk_budget"] = materialize_portfolio_risk_budget(
+        risk_reference
+    )
+    config["portfolio_risk_budget"]["acceptance_ref"] = risk_reference
+    acceptance = load_acceptance_config()
+    config["account_currency"] = acceptance["account_currency"]
+    config["runtime_config_sha"] = canonical_sha(
+        {
+            "production": config,
+            "acceptance": acceptance,
+        }
+    )
     config["config_path"] = str(CONFIG_PATH)
-    config["config_sha"] = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16]
+    config["production_strategy_file_sha"] = hashlib.sha256(
+        raw_text.encode("utf-8")
+    ).hexdigest()
     registry = load_release_registry()
     if config["release_id"] != registry.active_production_release_id:
         raise ValueError("production release_id must match active_production_release_id")
+    active_release = registry.releases[str(config["primary_strategy"])]
+    # `config_sha` remains the immutable economic identity of the approved
+    # release.  `runtime_config_sha` identifies the current materialized
+    # configuration and is linked by the PR-A equivalence attestation.
+    config["config_sha"] = active_release.config_sha
     canary = config["live_canary"]
     if canary["candidate_strategy"] != config["primary_strategy"]:
         raise ValueError("live_canary candidate_strategy must match the current primary_strategy")

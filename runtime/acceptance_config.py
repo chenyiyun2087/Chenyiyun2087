@@ -1,0 +1,100 @@
+"""Typed access to the canonical production acceptance configuration.
+
+`config/production_acceptance.yaml` is the single source of truth for account
+currency, promotion thresholds, and portfolio risk limits.  Operational
+configuration files may reference these values but must not redefine them.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ACCEPTANCE_PATH = PROJECT_ROOT / "config" / "production_acceptance.yaml"
+PORTFOLIO_RISK_REF = (
+    "config/production_acceptance.yaml#acceptance.portfolio_risk_controls"
+)
+
+
+def canonical_sha(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+@lru_cache(maxsize=1)
+def load_acceptance_config(path: Path = ACCEPTANCE_PATH) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing production acceptance config: {path}")
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    acceptance = payload.get("acceptance")
+    if not isinstance(acceptance, dict):
+        raise ValueError("production acceptance config must define acceptance")
+    if acceptance.get("account_currency") != "CNY":
+        raise ValueError("production account currency must remain CNY")
+    controls = acceptance.get("portfolio_risk_controls")
+    if not isinstance(controls, dict):
+        raise ValueError("portfolio_risk_controls missing from acceptance config")
+    expected = {
+        "max_single_position_weight_pct_nav": 15,
+        "max_single_industry_weight_pct_nav": 30,
+        "max_correlated_theme_weight_pct_nav": 40,
+        "max_top2_risk_contribution_pct": 45,
+    }
+    for key, value in expected.items():
+        if float(controls.get(key, -1)) != value:
+            raise ValueError(f"canonical portfolio risk limit changed: {key}")
+    return acceptance
+
+
+def materialize_portfolio_risk_budget(reference: str) -> dict[str, float]:
+    if reference != PORTFOLIO_RISK_REF:
+        raise ValueError(f"unsupported acceptance reference: {reference}")
+    controls = load_acceptance_config()["portfolio_risk_controls"]
+    return {
+        "max_total_exposure": float(
+            controls["current_approved_total_exposure_pct_nav"]
+        )
+        / 100.0,
+        "system_hard_max_total_exposure": float(
+            controls["system_hard_max_total_exposure_pct_nav"]
+        )
+        / 100.0,
+        "champion_default_exposure": float(
+            controls["champion_default_exposure_pct_nav"]
+        )
+        / 100.0,
+        "max_single_position_weight_pct_nav": float(
+            controls["max_single_position_weight_pct_nav"]
+        ),
+        "max_single_industry_weight_pct_nav": float(
+            controls["max_single_industry_weight_pct_nav"]
+        ),
+        "max_correlated_theme_weight_pct_nav": float(
+            controls["max_correlated_theme_weight_pct_nav"]
+        ),
+        "max_top2_risk_contribution_pct": float(
+            controls["max_top2_risk_contribution_pct"]
+        ),
+        "max_daily_new_position_pct_nav": float(
+            controls["max_daily_new_position_pct_nav"]
+        ),
+        "max_daily_turnover_pct_nav": float(
+            controls["max_daily_turnover_pct_nav"]
+        ),
+        "max_attack_pool_budget_share": float(
+            controls["max_attack_pool_budget_share_pct"]
+        )
+        / 100.0,
+    }

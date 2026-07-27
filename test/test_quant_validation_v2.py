@@ -54,7 +54,13 @@ def test_fixed_capital_release_permissions_fail_closed():
 
     from scripts.ops.verify_release_freeze import verify
     frozen = verify(ROOT / "config" / "release_freeze" / "prod-fixed-v2-20260720-01.json")
-    assert frozen["status"] == "PASS"
+    assert frozen["freeze_manifest_status"] == "PASS"
+    assert frozen["checkout_status"] == "BLOCKED"
+    assert frozen["status"] == "BLOCKED"
+    assert set(frozen["checkout_mismatches"]) == {
+        "config/production_acceptance.yaml",
+        "config/production_strategy.yaml",
+    }
 
 
 def test_readiness_requires_bounded_candidates_and_reasoned_zero_orders():

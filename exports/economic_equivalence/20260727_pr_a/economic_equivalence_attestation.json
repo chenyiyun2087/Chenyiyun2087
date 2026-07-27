@@ -1,0 +1,45 @@
+{
+  "attestation_sha256": "97f5fc324f00193b4ee9a2cf60aa018e9ce9022f80a8e52c1d2ac3cf1dcffefb",
+  "blocking_reasons": [
+    "replay_directory_missing",
+    "web_benchmark_evidence_missing"
+  ],
+  "capital_effect": "NONE",
+  "commit_chain": {
+    "candidate_commit": "aaea8a95d62b3121309c5453a3d383546c28d4ca",
+    "pre_refactor_baseline": "c37b2eb7",
+    "release_origin": "ea535ebd6167a273923d1decb6b879fc2949a95a"
+  },
+  "currency": "CNY",
+  "production_route_changed": false,
+  "release_id": "prod-fixed-v2-20260720-01",
+  "replay_scopes": [
+    {
+      "blocking_reasons": [
+        "replay_directory_missing"
+      ],
+      "domains": [],
+      "expected_trade_days": 615,
+      "scope": "frozen_account_615d",
+      "status": "BLOCKED"
+    },
+    {
+      "blocking_reasons": [
+        "replay_directory_missing"
+      ],
+      "domains": [],
+      "expected_trade_days": 10,
+      "scope": "latest_10_complete_production_days",
+      "status": "BLOCKED"
+    }
+  ],
+  "schema_version": "economic_equivalence_v1",
+  "status": "BLOCKED",
+  "web_benchmark": {
+    "blocking_reasons": [
+      "web_benchmark_evidence_missing"
+    ],
+    "endpoints": [],
+    "status": "BLOCKED"
+  }
+}
