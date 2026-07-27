@@ -202,7 +202,7 @@ def test_execution_grid_covers_all_capital_and_cost_scenarios(tmp_path):
         output_dir=str(tmp_path), start_date="2013-01-01", end_date="2026-07-17",
         strategy="production_governed_vol_position", dry_run=True, skip_stress=False,
     ))
-    assert result["scenario_count"] == 50
+    assert result["scenario_count"] == 25
     assert {item["account_size"] for item in result["scenarios"]} == {500000, 1500000, 3000000, 5000000, 10000000}
     assert all(item["status"] == "DRY_RUN" for item in result["scenarios"])
 
@@ -262,8 +262,24 @@ def test_full_history_acceptance_requires_all_25_real_scenarios():
             "white_reality_check", "profit_concentration",
         )},
         "results": [
-            {"account_size": size, "scenario": scenario, "max_drawdown": -0.20,
-             "cumulative_return": 0.01, "artifact_sha256": "a" * 64}
+            {
+                "account_size": size,
+                "scenario": scenario,
+                "max_order_adv_ratio": 0.005,
+                "expected_impact_bps_p95": 20,
+                "realized_slippage_bps": 10,
+                "turnover": 1.0,
+                "capital_utilization": 0.7,
+                "partial_fill_count": 0,
+                "delayed_fill_count": 0,
+                "failed_order_count": 0,
+                "order_count": 100,
+                "failure_rate": 0.0,
+                "max_drawdown": -0.20,
+                "drawdown_widening": 0.0,
+                "cumulative_return": 0.01,
+                "artifact_sha256": "a" * 64,
+            }
             for size in ACCOUNT_SIZES for scenario in SCENARIOS
         ],
     }
