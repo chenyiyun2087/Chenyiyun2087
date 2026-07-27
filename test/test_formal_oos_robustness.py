@@ -21,6 +21,7 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
         "admission_candidate_strategy_id": "production_governed_vol_position",
         "strategy_ids": ["production_governed_vol_position"],
         "git_commit_sha_before": "f" * 40,
+        "oos_generator_git_sha": "a" * 40,
     }
     # Compute manifest_sha256 from content excluding self (matching evaluator)
     manifest_sha = _hashlib.sha256(
@@ -146,7 +147,7 @@ def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
         "acceptance_config_sha256": hashlib.sha256(
             (Path(__file__).resolve().parents[1] / "config" / "production_acceptance.yaml").read_bytes()
         ).hexdigest(),
-        "analysis_generator_git_sha": "f" * 40,
+        "analysis_generator_git_sha": "a" * 40,  # matches formal.oos_generator_git_sha
         "input_files": {
             name: {"sha256": hashlib.sha256((package / name).read_bytes()).hexdigest()}
             for name in ("folds.json", "oos_returns.csv", "configuration_returns.csv",

@@ -21,6 +21,7 @@ def _package(tmp_path):
         "frozen_bundle_sha256": "e" * 64,
         "fixture_mode": False,
         "admission_candidate_strategy_id": "production_governed_vol_position",
+        "capacity_generator_git_sha": "a" * 40,
         "strategy_ids": ["production_governed_vol_position"],
     }
     manifest_sha_val = hashlib.sha256(
@@ -83,7 +84,7 @@ def _package(tmp_path):
                 "adv_limit_type": "stress" if scenario.startswith(("EXTREME", "CONSERVATIVE")) else "base",
                 "cost_rate": float(_cost),
                 "slippage_bps": int(_slippage),
-                "generator_git_sha": "a" * 40,
+                "generator_git_sha": "a" * 40,  # matches formal.capacity_generator_git_sha
                 "files": art_files,
             }
             manifest_self = hashlib.sha256(

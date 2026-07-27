@@ -187,7 +187,7 @@ def evaluate(
                 blockers.append(f"slippage_mismatch:{label}")
             if int(specification["slippage_bps"]) <= 0:
                 blockers.append(f"zero_slippage_forbidden:{label}")
-        CELL_DISCRETE = {"order_count", "fill_count", "failed_order_count", "partial_fill_count", "delayed_fill_count"}
+        CELL_DISCRETE = {"order_count", "failed_order_count", "partial_fill_count", "delayed_fill_count"}
         for field in REQUIRED_METRICS:
             if field in CELL_DISCRETE:
                 if not _is_non_negative_integer(cell.get(field)):
@@ -265,6 +265,12 @@ def evaluate(
                             blockers.append(f"capacity_artifact_missing_generator_sha:{label}")
                         elif len(gen_sha) != 40 or any(c not in "0123456789abcdef" for c in gen_sha):
                             blockers.append(f"capacity_artifact_invalid_generator_sha:{label}")
+                        else:
+                            formal_cap_gen = str(formal.get("capacity_generator_git_sha") or "")
+                            if not formal_cap_gen:
+                                blockers.append(f"capacity_formal_missing_capacity_generator_sha:{label}")
+                            elif gen_sha != formal_cap_gen:
+                                blockers.append(f"capacity_artifact_generator_sha_mismatch:{label}")
                                         # P0-12: _capacity_artifact_root only allowed via explicit CLI arg, not manifest
                         # Verify artifact_sha256 matches the manifest's self-hash (MANDATORY)
                         manifest_files = art_manifest.get("files") or {}
@@ -377,7 +383,13 @@ def evaluate(
                                         blockers.append(f"capacity_metrics_not_integer:{label}:{mf}")
                                     elif int(v) < 0:
                                         blockers.append(f"capacity_metrics_negative:{label}:{mf}")
-                            if not any(f"capacity_metrics_missing_or_invalid:{label}" in b for b in blockers):
+                            # P0-1: Only reconcile when metrics AND cell discrete fields are all valid
+                            cell_metrics_valid = all(
+                                _is_number(cell.get(f)) and (f not in CELL_DISCRETE or _is_non_negative_integer(cell.get(f)))
+                                for f in REQUIRED_METRICS
+                            )
+                            metrics_all_valid = not any(f"capacity_metrics_missing_or_invalid:{label}" in b for b in blockers)
+                            if metrics_all_valid and cell_metrics_valid:
                                 # P0-8: Three-way exact match — raw orders == metrics == cell
                                 raw_order_count = len(orders_df)
                                 metrics_order_count = int(metrics_data["order_count"])

@@ -442,14 +442,19 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
             return _blocked(formal_manifest, analysis_package, ["formal_manifest_missing_git_commit_sha"])
         if str(fconfig.get("code_git_sha")) != formal_git:
             return _blocked(formal_manifest, analysis_package, [f"model_config_code_sha_mismatch:{fid}"])
-        # selected_at must be <= validation_end
+        # selected_at must be valid and <= validation_end
         try:
             sel_at = pd.Timestamp(str(fconfig["selected_at"]))
+        except (ValueError, TypeError):
+            return _blocked(formal_manifest, analysis_package, [f"model_config_invalid_selected_at:{fid}"])
+        if pd.isna(sel_at):
+            return _blocked(formal_manifest, analysis_package, [f"model_config_nat_selected_at:{fid}"])
+        try:
             val_end = pd.Timestamp(fold_map_temp[fid].validation_end)
             if sel_at > val_end:
                 return _blocked(formal_manifest, analysis_package, [f"model_config_selected_after_validation:{fid}"])
         except (ValueError, KeyError):
-            pass
+            return _blocked(formal_manifest, analysis_package, [f"model_config_invalid_validation_end:{fid}"])
 
     returns = pd.read_csv(analysis_package / "oos_returns.csv")
     required_return_columns = {
@@ -486,6 +491,10 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         returns["parameter_selected_at"], errors="coerce"
     )
     # P0-7: Re-check duplicates after datetime normalization (different string formats)
+    if returns["trade_date"].isna().any():
+        return _blocked(formal_manifest, analysis_package, ["oos_invalid_trade_date"])
+    if returns["parameter_selected_at"].isna().any():
+        return _blocked(formal_manifest, analysis_package, ["oos_invalid_parameter_selected_at"])
     if returns.duplicated(["fold_id", "trade_date"]).any():
         return _blocked(formal_manifest, analysis_package, ["oos_duplicate_fold_date_after_normalization"])
     # P0-3: Populate fold model_config_sha from selected_model_config
@@ -549,8 +558,16 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         actual_accept_sha = _sha(ACCEPTANCE_PATH)
         if am_accept != actual_accept_sha:
             manifest_blockers.append("analysis_manifest_acceptance_config_sha_mismatch")
-    if not analysis_manifest.get("analysis_generator_git_sha"):
+    # P0-5: Generator SHA must bind to formal manifest trust root
+    am_gen_sha = str(analysis_manifest.get("analysis_generator_git_sha") or "")
+    if not am_gen_sha:
         manifest_blockers.append("analysis_manifest_missing_generator_git_sha")
+    else:
+        formal_oos_gen = str(formal.get("oos_generator_git_sha") or "")
+        if not formal_oos_gen:
+            manifest_blockers.append("formal_manifest_missing_oos_generator_git_sha")
+        elif am_gen_sha != formal_oos_gen:
+            manifest_blockers.append("analysis_manifest_generator_sha_mismatch")
     # Self-hash: analysis_manifest must have manifest_sha256 that validates
     am_self_sha = str(analysis_manifest.get("manifest_sha256") or "")
     if not am_self_sha:
