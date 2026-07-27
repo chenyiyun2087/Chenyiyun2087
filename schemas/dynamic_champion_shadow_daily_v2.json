@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Dynamic Champion Shadow Daily v2",
+  "description": "Unified schema for forward PIT collector output and shadow lifecycle evaluator input. Every field required by the lifecycle evaluator MUST be present; no field may be freely filled by the caller when a derivation rule exists.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "strategy_id",
+    "release_id",
+    "formal_run_id",
+    "formal_manifest_sha256",
+    "trade_date",
+    "observed_at",
+    "authoritative_calendar_sha256",
+    "authoritative_trade_calendar_open",
+    "same_day_complete_pit",
+    "shadow_day_count_eligible",
+    "technical_pass",
+    "execution_proxy_available",
+    "incremental_hard_block",
+    "recovery_event_count",
+    "recovery_event_return",
+    "state_switch",
+    "switch_source",
+    "dual_ledger_status",
+    "reconciliation_errors",
+    "cost_after_alpha",
+    "completed_round_trips",
+    "theory_execution_gate_pass",
+    "risk_gate_false_negative",
+    "input_evidence_sha256",
+    "row_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "dynamic_champion_shadow_daily_v2"
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "Strategy identity — must match formal manifest"
+    },
+    "release_id": {
+      "type": "string",
+      "description": "Release identity — must match formal manifest"
+    },
+    "formal_run_id": {
+      "type": "string",
+      "description": "Formal run identifier this shadow day is bound to"
+    },
+    "formal_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the formal run manifest"
+    },
+    "trade_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Authoritative SSE trading date (YYYY-MM-DD)"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when this observation was collected"
+    },
+    "authoritative_calendar_sha256": {
+      "type": "string",
+      "description": "SHA-256 of the frozen authoritative trade calendar used"
+    },
+    "authoritative_trade_calendar_open": {
+      "type": "boolean",
+      "description": "DERIVED: true when this date is an open SSE trading day per frozen calendar"
+    },
+    "same_day_complete_pit": {
+      "type": "boolean",
+      "description": "DERIVED: true when data_date equals observed date AND all technical components captured"
+    },
+    "shadow_day_count_eligible": {
+      "type": "boolean",
+      "description": "DERIVED: true when same_day_complete_pit AND formal PIT eligible AND replica verified"
+    },
+    "technical_pass": {
+      "type": "boolean",
+      "description": "DERIVED: from component collection status + replica verification"
+    },
+    "execution_proxy_available": {
+      "type": "boolean",
+      "description": "DERIVED: from execution proxy availability check"
+    },
+    "incremental_hard_block": {
+      "type": "boolean",
+      "description": "DERIVED: true when a hard-block condition was detected"
+    },
+    "recovery_event_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "DERIVED: number of recovery events triggered this day"
+    },
+    "recovery_event_return": {
+      "type": ["number", "null"],
+      "description": "DERIVED: return of recovery events this day, or null if none"
+    },
+    "state_switch": {
+      "type": "boolean",
+      "description": "DERIVED: true when market regime state changed this day"
+    },
+    "switch_source": {
+      "type": "string",
+      "enum": ["REAL_OBSERVED", "SIMULATED", "NONE"],
+      "description": "DERIVED: source of state switch — only REAL_OBSERVED counts"
+    },
+    "dual_ledger_status": {
+      "type": "string",
+      "enum": ["NOT_STARTED", "VERIFIED", "BLOCKED"],
+      "description": "DERIVED: from dual-ledger acceptance result"
+    },
+    "reconciliation_errors": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "DERIVED: count of ledger reconciliation errors this day"
+    },
+    "cost_after_alpha": {
+      "type": "number",
+      "description": "DERIVED: total cost after alpha for this day"
+    },
+    "completed_round_trips": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "DERIVED: number of completed round trips this day"
+    },
+    "theory_execution_gate_pass": {
+      "type": "boolean",
+      "description": "DERIVED: from theory/execution deviation analysis"
+    },
+    "risk_gate_false_negative": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "DERIVED: from risk post-mortem review"
+    },
+    "input_evidence_sha256": {
+      "type": "string",
+      "description": "SHA-256 binding: formal_manifest_sha + component SHAs + observed_at"
+    },
+    "row_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the entire row (excluding row_sha256 itself), for chain integrity"
+    }
+  }
+}

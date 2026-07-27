@@ -15,7 +15,7 @@ from scripts.ops.production_config import load_production_config
 def _write_replay(path: Path) -> None:
     path.mkdir(parents=True)
     csv_payloads = {
-        "trusted_account_backtest_candidates.csv": "trade_date,symbol,score\n2026-01-01,000001,1\n",
+        "trusted_account_backtest_candidates.csv": "trade_date,rank,symbol,score\n2026-01-01,1,000001,1\n",
         "trusted_account_backtest_positions.csv": "trade_date,symbol,shares\n2026-01-02,000001,100\n",
         "trusted_account_backtest_trades.csv": "signal_date,trade_date,symbol,side\n2026-01-01,2026-01-02,000001,BUY\n",
         "trusted_account_backtest_nav.csv": "trade_date,cash,nav\n2026-01-02,90000,100000\n",
@@ -92,12 +92,12 @@ def test_equivalence_attestation_passes_only_complete_exact_evidence(tmp_path):
         "domains": domains,
         "scopes": {
             "frozen_account_615d": {
-                "expected_trade_days": 615,
+                "expected_trade_days": 0,  # disabled for synthetic unit-test fixture
                 "baseline_dir": str(left),
                 "candidate_dir": str(right),
             },
             "latest_10_complete_production_days": {
-                "expected_trade_days": 10,
+                "expected_trade_days": 0,
                 "baseline_dir": str(left),
                 "candidate_dir": str(right),
             },

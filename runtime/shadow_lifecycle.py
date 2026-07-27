@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Iterable, Mapping
 
 
@@ -140,6 +140,31 @@ def evaluate_shadow_lifecycle(
             rejection_reasons.append(str(reason))
             continue
         accepted.append(row)
+
+    # PR-H2: Consecutive calendar day check for technical shadow
+    # The 20 technical days must be CONSECUTIVE real trading days (no gaps > 5 calendar days)
+    if len(accepted) >= TECHNICAL_DAYS:
+        tech_candidates = accepted[:TECHNICAL_DAYS]
+        for i in range(1, len(tech_candidates)):
+            prev_date = date.fromisoformat(str(tech_candidates[i - 1].get("trade_date", "")))
+            curr_date = date.fromisoformat(str(tech_candidates[i].get("trade_date", "")))
+            if (curr_date - prev_date) > timedelta(days=5):
+                blockers.append("TECHNICAL_SHADOW_NOT_CONSECUTIVE")
+                break
+
+    # PR-H2: Reset on identity change — detect strategy/release/formal_run_id shifts
+    identity_keys = ("strategy_id", "release_id", "formal_run_id")
+    last_identity: dict[str, Any] | None = None
+    reset_index: int | None = None
+    for idx, row in enumerate(accepted):
+        current = {k: str(row.get(k) or "") for k in identity_keys}
+        if last_identity is not None and current != last_identity:
+            reset_index = idx
+            break
+        last_identity = current
+    if reset_index is not None:
+        blockers.append(f"IDENTITY_CHANGE_RESET_AT_INDEX_{reset_index}")
+        accepted = accepted[:reset_index]
 
     technical = accepted[:TECHNICAL_DAYS]
     economic = accepted[TECHNICAL_DAYS : TECHNICAL_DAYS + ECONOMIC_DAYS]

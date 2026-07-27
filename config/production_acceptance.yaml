@@ -122,6 +122,11 @@ acceptance:
       - "expected_impact > 3% ADV"
     stress_max_dd_widening_base: 0.08                    # DD can widen 8 pct in stress
     stress_max_dd_widening_extreme: 0.15                 # DD can widen 15 pct in extreme
+    max_realized_slippage_bps: 50                        # PR-H1: max realized slippage in bps (base)
+    max_realized_slippage_bps_stress: 150                # PR-H1: max realized slippage in bps (stress)
+    max_turnover_ratio: 50                               # PR-H1: max turnover
+    max_partial_fill_ratio: 0.05                         # PR-H1: max 5% partial fills
+    max_delayed_fill_ratio: 0.05                         # PR-H1: max 5% delayed fills
 
   # -----------------------------------------------------------------------
   # L1→L2: Shadow

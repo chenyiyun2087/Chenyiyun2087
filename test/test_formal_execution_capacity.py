@@ -12,10 +12,26 @@ from scripts.research.run_full_history_strict_backtest import (
 
 def _package(tmp_path):
     formal = tmp_path / "formal.json"
-    formal.write_text(
-        json.dumps({"status": "VERIFIED", "formal_run_id": "formal-fixture"}),
-        encoding="utf-8",
-    )
+    # Create dummy artifact directories under tmp_path
+    capacity_root = tmp_path / "capacity_artifacts"
+    for size in ACCOUNT_SIZES:
+        for scenario, _cost, _slippage in EXECUTION_SCENARIOS:
+            adir = capacity_root / "formal-fixture" / str(size) / scenario
+            adir.mkdir(parents=True, exist_ok=True)
+            (adir / "execution_metrics.json").write_text("{}")
+            (adir / "nav.csv").write_text("nav\n1.0")
+            (adir / "artifact_manifest.json").write_text("{}")
+    formal_payload = {
+        "status": "VERIFIED",
+        "formal_run_id": "formal-fixture",
+        "frozen_bundle_sha256": "e" * 64,
+        "_capacity_artifact_root": str(capacity_root),
+    }
+    manifest_sha = hashlib.sha256(
+        json.dumps(formal_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    formal_payload["manifest_sha256"] = manifest_sha
+    formal.write_text(json.dumps(formal_payload), encoding="utf-8")
     cells = []
     for size in ACCOUNT_SIZES:
         for scenario, cost, slippage in EXECUTION_SCENARIOS:

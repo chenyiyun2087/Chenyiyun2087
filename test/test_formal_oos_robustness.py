@@ -10,11 +10,19 @@ from scripts.research.formal_oos_robustness import FACTORS, Fold, evaluate
 
 
 def _package(root: Path, *, contaminated: bool = False) -> tuple[Path, Path]:
+    import hashlib as _hashlib
     formal = root / "formal.json"
-    formal.write_text(
-        json.dumps({"status": "VERIFIED", "formal_run_id": "formal-fixture"}),
-        encoding="utf-8",
-    )
+    formal_payload = {
+        "status": "VERIFIED",
+        "formal_run_id": "formal-fixture",
+        "frozen_bundle_sha256": "e" * 64,
+    }
+    # Compute manifest_sha256 from content excluding self (matching evaluator)
+    manifest_sha = _hashlib.sha256(
+        json.dumps(formal_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    formal_payload["manifest_sha256"] = manifest_sha
+    formal.write_text(json.dumps(formal_payload), encoding="utf-8")
     package = root / "analysis"
     package.mkdir()
     dates = pd.bdate_range("2024-01-02", periods=180)

@@ -295,8 +295,20 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     if not formal_manifest.is_file():
         return _blocked(formal_manifest, analysis_package, ["formal_manifest_missing"])
     formal = json.loads(formal_manifest.read_text(encoding="utf-8"))
+    # PR-H1: Reject fake manifests — must have full SHA chain, not just status=VERIFIED
     if formal.get("status") != "VERIFIED":
         return _blocked(formal_manifest, analysis_package, ["formal_run_not_verified"])
+    if not formal.get("manifest_sha256"):
+        return _blocked(formal_manifest, analysis_package, ["formal_manifest_incomplete_no_self_sha"])
+    if not formal.get("frozen_bundle_sha256"):
+        return _blocked(formal_manifest, analysis_package, ["formal_manifest_incomplete_no_frozen_bundle"])
+    # Verify manifest integrity: re-compute canonical SHA (excluding self-sha field)
+    manifest_without_self = {k: v for k, v in formal.items() if k != "manifest_sha256"}
+    computed_manifest_sha = hashlib.sha256(
+        json.dumps(manifest_without_self, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if formal.get("manifest_sha256") != computed_manifest_sha:
+        return _blocked(formal_manifest, analysis_package, ["formal_manifest_sha_mismatch"])
     missing = [
         name for name in REQUIRED_PACKAGE_FILES if not (analysis_package / name).is_file()
     ]
@@ -415,6 +427,8 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         "positive_oos_window_ratio": positive_ratio
         >= float(thresholds["min_positive_window_ratio"]),
         "oos_calmar": oos_calmar >= float(thresholds["min_oos_calmar"]),
+        "oos_max_drawdown": oos_drawdown >= float(thresholds.get("max_oos_drawdown", -0.35)),
+        "oos_window_coverage": len(folds) > 0 and set(fold_map) == set(returns["fold_id"].astype(str)),
         "max_single_window_profit_contribution": concentration[
             "max_single_oos_window_profit_share"
         ]
@@ -442,6 +456,46 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
         ]
         <= float(acceptance["full_history"]["max_single_year_profit_contribution"]),
     }
+    # PR-H1: Baseline comparison gates (champion vs production/random/reverse)
+    champion_col = None
+    for col in pivot.columns:
+        if "champion" in str(col).lower() or "candidate" in str(col).lower():
+            champion_col = str(col)
+            break
+    if champion_col and pivot.shape[1] >= 3:
+        champ_returns = pivot[champion_col].astype(float)
+        other_cols = [c for c in pivot.columns if c != champion_col]
+        # Champion vs production baseline calmar improvement
+        for col in other_cols:
+            col_lower = str(col).lower()
+            if "production" in col_lower or "baseline" in col_lower:
+                base_returns = pivot[col].astype(float)
+                base_annual = _annualized(base_returns)
+                base_dd = _max_drawdown(base_returns)
+                base_calmar = base_annual / abs(base_dd) if base_dd < 0 else 0.0
+                calmar_improvement = (oos_calmar - base_calmar) / abs(base_calmar) if base_calmar != 0 else 0.0
+                gates["challenger_calmar_improvement"] = (
+                    calmar_improvement >= float(thresholds.get("challenger_min_calmar_improvement_pct", 10)) / 100.0
+                )
+                break
+        # Random baseline win ratio
+        random_cols = [c for c in other_cols if "random" in str(c).lower()]
+        if random_cols:
+            random_col = random_cols[0]
+            random_returns = pivot[random_col].astype(float)
+            random_win = float((champ_returns > random_returns).mean())
+            gates["random_baseline_win_ratio"] = (
+                random_win >= float(thresholds.get("min_random_baseline_win_ratio", 0.60))
+            )
+        # Reverse baseline win ratio
+        reverse_cols = [c for c in other_cols if "reverse" in str(c).lower()]
+        if reverse_cols:
+            reverse_col = reverse_cols[0]
+            reverse_returns = pivot[reverse_col].astype(float)
+            reverse_win = float((champ_returns > reverse_returns).mean())
+            gates["reverse_baseline_win_ratio"] = (
+                reverse_win >= float(thresholds.get("min_reverse_baseline_win_ratio", 0.60))
+            )
     economic_passed = all(gates.values())
     payload: dict[str, Any] = {
         "schema_version": "formal_oos_robustness_v1",

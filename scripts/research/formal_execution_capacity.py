@@ -155,6 +155,23 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
             character not in "0123456789abcdef" for character in artifact_sha
         ):
             blockers.append(f"artifact_sha256_invalid:{label}")
+        # PR-H1: Verify artifact directory actually exists and files match SHAs
+        formal_run_id = str(formal.get("formal_run_id") or "")
+        if formal_run_id:
+            artifact_base = Path(
+                str(formal.get("_capacity_artifact_root") or "")
+                or str(PROJECT_ROOT / "exports" / "execution_capacity")
+            )
+            artifact_dir = (
+                artifact_base / formal_run_id / str(cell["account_size"]) / str(cell["scenario"])
+            )
+            if not artifact_dir.is_dir():
+                blockers.append(f"capacity_artifact_dir_missing:{label}")
+            else:
+                for req_file in ("execution_metrics.json", "nav.csv", "artifact_manifest.json"):
+                    fpath = artifact_dir / req_file
+                    if not fpath.is_file():
+                        blockers.append(f"capacity_artifact_file_missing:{label}:{req_file}")
         if all(_is_number(cell.get(field)) for field in (
             "failed_order_count",
             "order_count",
@@ -207,8 +224,11 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                 matrix_path,
                 [f"drawdown_widening_mismatch:{label}"],
             )
+        # PR-H1: Stress ADV uses 3% from config, base uses 1%
+        stress_adv_limit = float(acceptance.get("max_single_order_adv_ratio_stress", 0.03))
+        base_adv_limit = float(acceptance["max_single_order_adv_ratio_base"])
         limits = {
-            "adv": float(acceptance["max_single_order_adv_ratio_base"]),
+            "adv": stress_adv_limit if scenario.startswith("EXTREME") else base_adv_limit,
             "impact": float(acceptance["max_expected_impact_bps_p95"]),
             "failure": (
                 float(acceptance["max_unfilled_order_ratio_stress"])
@@ -221,6 +241,16 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
                 else float(acceptance["stress_max_dd_widening_base"])
             ),
         }
+        # PR-H1: Compute derived ratios
+        order_count_val = int(cell.get("order_count", 0))
+        partial_fill_ratio = (
+            float(cell.get("partial_fill_count", 0)) / order_count_val
+            if order_count_val > 0 else 0.0
+        )
+        delayed_fill_ratio = (
+            float(cell.get("delayed_fill_count", 0)) / order_count_val
+            if order_count_val > 0 else 0.0
+        )
         checks = {
             "adv_limit": float(cell["max_order_adv_ratio"]) <= limits["adv"],
             "impact_limit": (
@@ -233,6 +263,18 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
             "capital_utilization": 0.0
             <= float(cell["capital_utilization"])
             <= 1.0,
+            "realized_slippage": float(cell.get("realized_slippage_bps", 0))
+            <= float(
+                acceptance.get("max_realized_slippage_bps_stress", 150)
+                if scenario.startswith("EXTREME")
+                else acceptance.get("max_realized_slippage_bps", 50)
+            ),
+            "turnover": float(cell.get("turnover", 0))
+            <= float(acceptance.get("max_turnover_ratio", 50)),
+            "partial_fill_ratio": partial_fill_ratio
+            <= float(acceptance.get("max_partial_fill_ratio", 0.05)),
+            "delayed_fill_ratio": delayed_fill_ratio
+            <= float(acceptance.get("max_delayed_fill_ratio", 0.05)),
             "extreme_positive_return": (
                 float(cell["cumulative_return"]) > 0
                 if scenario.startswith("EXTREME")

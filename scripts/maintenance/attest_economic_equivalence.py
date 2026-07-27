@@ -97,6 +97,16 @@ def _compare_scope(
         else:
             left_sha, left_rows = canonical_file(left)
             right_sha, right_rows = canonical_file(right)
+            # PR-H3: Require explicit rank column in candidates CSV
+            if relative.endswith("candidates.csv") or "candidates" in domain.lower():
+                try:
+                    import csv as _csv
+                    with open(left, newline="", encoding="utf-8-sig") as f:
+                        reader = _csv.DictReader(f)
+                        if reader.fieldnames and "rank" not in reader.fieldnames:
+                            result["blocking_reasons"].append(f"{domain}:missing_rank_column")
+                except Exception:
+                    pass
             row.update(
                 {
                     "baseline_sha256": left_sha,
@@ -109,6 +119,22 @@ def _compare_scope(
             if not row["equal"]:
                 result["blocking_reasons"].append(f"{domain}:economic_diff")
         result["domains"].append(row)
+    # PR-H3: Enforce expected_trade_days (check trading-domain row counts, not report files)
+    expected_days = int(scope.get("expected_trade_days", 0))
+    if expected_days > 0:
+        for domain_entry in result["domains"]:
+            domain_name = domain_entry.get("domain", "")
+            # Only check CSV domains (not report JSON)
+            if domain_name in ("nav", "candidates", "trades", "positions"):
+                actual_rows = domain_entry.get("candidate_rows") or domain_entry.get("baseline_rows")
+                if actual_rows is not None and isinstance(actual_rows, int) and actual_rows > 0:
+                    if actual_rows != expected_days:
+                        result["blocking_reasons"].append(
+                            f"trade_day_count_mismatch:{domain_name}:expected={expected_days}:actual={actual_rows}"
+                        )
+                        result["status"] = "BLOCKED"
+                    break  # Check first matching domain only
+
     if not result["blocking_reasons"] and len(result["domains"]) == len(domains):
         result["status"] = "PASS"
     else:
