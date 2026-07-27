@@ -6,6 +6,12 @@ baseline_strategy_id: production_governed_vol_position
 acceptance_config: config/production_acceptance.yaml
 release_registry: config/strategy_release_registry.yaml
 approved_backtest_snapshot: exports/signal_research/20260618_213002_059138_trusted_account_backtest
+upgrade_evidence:
+  pr_a_equivalence: exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json
+  pr_b_formal_readiness: exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json
+  pr_c_formal_run: exports/formal_runs/20260727_pr_c/formal_run_precheck.json
+  pr_d_oos_robustness: exports/formal_oos/20260727_pr_d/formal_oos_robustness.json
+  pr_e_execution_capacity: exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json
 
 current_lane: RESEARCH_REVALIDATION
 production_route_mutation_allowed: false

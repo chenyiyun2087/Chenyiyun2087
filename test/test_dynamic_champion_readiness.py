@@ -1,4 +1,7 @@
+import json
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -8,8 +11,10 @@ from scripts.ops.evaluate_dynamic_champion_readiness import (
     GateResult,
     decide,
     fifo_round_trips,
+    load_upgrade_evidence,
     load_program,
     load_shadow_status,
+    write_assessment,
 )
 from scripts.research.run_full_history_strict_backtest import (
     EXECUTION_SCENARIOS,
@@ -257,3 +262,47 @@ def test_forward_shadow_observation_preserves_release_identity_and_never_counts_
     assert result["collection_observation_eligible"] is True
     assert result["shadow_day_count_eligible"] is False
     assert result["formal_pit_status"] == "PARTIAL_FORWARD_ONLY"
+
+
+def test_upgrade_evidence_is_loaded_as_business_status_not_file_success():
+    program = load_program(PROGRAM)
+    evidence = load_upgrade_evidence(program)
+
+    assert [row["phase"] for row in evidence["rows"]] == [
+        "PR-A",
+        "PR-B",
+        "PR-C",
+        "PR-D",
+        "PR-E",
+    ]
+    assert all(row["status"] == "BLOCKED" for row in evidence["rows"])
+    assert all(len(row["evidence_sha256"]) == 64 for row in evidence["rows"])
+
+
+def test_readiness_artifact_is_blocked_utf8_cny_and_source_consistent(tmp_path):
+    output = tmp_path / "readiness"
+    result = write_assessment(
+        program_path=PROGRAM,
+        output_dir=output,
+        generated_at=datetime(2026, 7, 27, 8, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    artifact = json.loads((output / "artifact.json").read_text(encoding="utf-8"))
+    text = (output / "artifact.json").read_text(encoding="utf-8")
+
+    assert result["decision"] == "NO_GO"
+    assert result["allowed_capital_cny"] == 0
+    assert artifact["snapshot"]["status"] == "blocked"
+    assert artifact["snapshot"]["accessIssues"]
+    assert len(artifact["snapshot"]["datasets"]["upgrade_evidence"]) == 5
+    assert "PR-A至PR-E工程与业务证据" in text
+    assert "人民币元" in text
+    assert "US$" not in text
+    assert "�" not in text
+
+    from scripts.ops.validate_readiness_artifact import validate
+
+    validation = validate(output)
+    assert validation["status"] == "PASS"
+    assert validation["monthly_rows"] == len(
+        artifact["snapshot"]["datasets"]["monthly_returns"]
+    )

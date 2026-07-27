@@ -120,6 +120,51 @@ def load_program(path: Path = DEFAULT_PROGRAM) -> dict[str, Any]:
     return payload
 
 
+def load_upgrade_evidence(program: dict[str, Any]) -> dict[str, Any]:
+    """Load PR-A–E evidence without inferring success from file existence."""
+    configured = program.get("upgrade_evidence") or {}
+    rows: list[dict[str, Any]] = []
+    payloads: dict[str, dict[str, Any]] = {}
+    for evidence_id, configured_path in configured.items():
+        parts = str(evidence_id).split("_", 2)
+        path = PROJECT_ROOT / str(configured_path)
+        payload: dict[str, Any] = {}
+        status = "MISSING"
+        detail = "evidence_file_missing"
+        sha256 = ""
+        if path.exists():
+            sha256 = _sha256(path)
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                status = "INVALID"
+                detail = "evidence_json_invalid"
+            else:
+                status = str(payload.get("status") or "UNKNOWN")
+                reasons = (
+                    payload.get("blockers")
+                    or payload.get("blocking_reasons")
+                    or ([payload["reason"]] if payload.get("reason") else [])
+                )
+                detail = "; ".join(str(reason) for reason in reasons) or status
+        payloads[str(evidence_id)] = payload
+        rows.append(
+            {
+                "phase": (
+                    f"PR-{parts[1].upper()}"
+                    if len(parts) > 1 and parts[0] == "pr"
+                    else str(evidence_id)
+                ),
+                "scope": str(evidence_id),
+                "status": status,
+                "detail": detail,
+                "evidence": str(configured_path),
+                "evidence_sha256": sha256,
+            }
+        )
+    return {"rows": rows, "payloads": payloads}
+
+
 def fifo_round_trips(trades: pd.DataFrame, strategy_id: str) -> pd.DataFrame:
     """Pair buys and sells FIFO and allocate both-side costs per share."""
     scoped = trades[trades["strategy"].astype(str).eq(strategy_id)].copy()
@@ -613,12 +658,19 @@ def build_gates(
     metrics: dict[str, Any],
     registry: dict[str, Any],
     shadow: dict[str, Any],
+    upgrade_evidence: dict[str, Any] | None = None,
     report_generated: bool = False,
 ) -> list[GateResult]:
     full_history = acceptance["full_history"]
     rolling_oos = acceptance["rolling_oos"]
     strict = acceptance["strict_ledger"]
     shadow_cfg = program["shadow"]
+    evidence_payloads = (upgrade_evidence or {}).get("payloads", {})
+    equivalence = evidence_payloads.get("pr_a_equivalence", {})
+    preflight = evidence_payloads.get("pr_b_formal_readiness", {})
+    formal_run = evidence_payloads.get("pr_c_formal_run", {})
+    oos = evidence_payloads.get("pr_d_oos_robustness", {})
+    capacity = evidence_payloads.get("pr_e_execution_capacity", {})
     sample_start = str(metrics["sample_start"])
     sample_end = str(metrics["sample_end"])
     full_history_pass = (
@@ -629,16 +681,15 @@ def build_gates(
     walk_forward_pass = (
         registry.get("walk_forward_passed") is True
         and registry.get("walk_forward_status") == "PASSED"
+        and oos.get("status") == "PASS"
     )
     strict_pass = (
         registry.get("research_status") == "PASSED_REVALIDATION"
         and registry.get("hash_ready") is True
+        and formal_run.get("status") == "VERIFIED"
     )
-    statistical_pass = False  # Requires formal DSR/PBO/bootstrap/factor package.
-    stress_pass = (
-        metrics.get("slippage_rate", 0) >= acceptance["execution"]["base_slippage_bps"] / 10_000
-        and False  # All configured account/cost/slippage scenarios are required.
-    )
+    statistical_pass = oos.get("status") == "PASS"
+    stress_pass = capacity.get("status") == "PASS"
     disabled_pass = (
         shadow["strategy_match"]
         and shadow["release_match"]
@@ -659,17 +710,36 @@ def build_gates(
             "release_identity",
             "数据与发布身份",
             "Git、配置、数据、日历、公司行动及生命周期快照哈希完整",
-            "完整" if registry.get("identity_passed") else "存在PENDING或身份不匹配",
-            bool(registry.get("identity_passed")),
+            (
+                "Release注册、经济等价和Formal预检均通过"
+                if (
+                    registry.get("identity_passed")
+                    and equivalence.get("status") == "PASS"
+                    and preflight.get("status") == "READY_FOR_FORMAL_RUN"
+                )
+                else (
+                    f"registry={registry.get('status') or registry.get('research_status')}; "
+                    f"PR-A={equivalence.get('status', 'MISSING')}; "
+                    f"PR-B={preflight.get('status', 'MISSING')}"
+                )
+            ),
+            bool(
+                registry.get("identity_passed")
+                and equivalence.get("status") == "PASS"
+                and preflight.get("status") == "READY_FOR_FORMAL_RUN"
+            ),
             True,
-            str(program["release_registry"]),
+            str(program.get("upgrade_evidence", {}).get("pr_a_equivalence") or program["release_registry"]),
             "生成并冻结缺失快照，绑定新的不可变release证据包。",
         ),
         GateResult(
             "full_history",
             "长周期回测",
             f"{full_history['min_start_date']}至最新完整交易日，覆盖率≥{float(full_history['min_trade_day_coverage']):.0%}",
-            f"{sample_start}至{sample_end}，{metrics['trading_days']}个交易日",
+            (
+                f"{sample_start}至{sample_end}，{metrics['trading_days']}个交易日；"
+                f"PR-C={formal_run.get('status', 'MISSING')}"
+            ),
             full_history_pass,
             True,
             str(program["approved_backtest_snapshot"]),
@@ -679,17 +749,23 @@ def build_gates(
             "rolling_oos",
             "Walk-forward",
             f"12/3/3滚动OOS；正窗口≥{float(rolling_oos['min_positive_window_ratio']):.0%}",
-            f"status={registry.get('walk_forward_status')}; passed_windows={registry.get('walk_forward_windows_passed')}",
+            (
+                f"registry={registry.get('walk_forward_status')}; "
+                f"PR-D={oos.get('status', 'MISSING')}"
+            ),
             walk_forward_pass,
             True,
-            str(program["release_registry"]),
+            str(program.get("upgrade_evidence", {}).get("pr_d_oos_robustness") or program["release_registry"]),
             "在冻结样本上完成带purge/embargo的滚动OOS，测试窗不得继续调参。",
         ),
         GateResult(
             "strict_ledger",
             "严格账本",
             f"{strict['required_status']}；T+1、订单守恒、持仓错配均为0",
-            str(registry.get("research_status") or "UNKNOWN"),
+            (
+                f"registry={registry.get('research_status') or 'UNKNOWN'}; "
+                f"PR-C={formal_run.get('status', 'MISSING')}"
+            ),
             strict_pass,
             True,
             str(program["release_registry"]),
@@ -699,20 +775,26 @@ def build_gates(
             "statistical_robustness",
             "统计稳健性",
             "DSR≥95%、PBO≤20%、Bootstrap下界非负并完成因子归因",
-            "未发现与该release绑定的正式统计稳健性证据包",
+            (
+                f"PR-D={oos.get('status', 'MISSING')}; "
+                f"technical_complete={oos.get('technical_evidence_complete', False)}"
+            ),
             statistical_pass,
             True,
-            "config/production_acceptance.yaml",
+            str(program.get("upgrade_evidence", {}).get("pr_d_oos_robustness") or "config/production_acceptance.yaml"),
             "对完整OOS收益运行DSR、CPCV-PBO、Block Bootstrap和七因子归因。",
         ),
         GateResult(
             "execution_stress",
             "成本、滑点与容量",
             "5档资金规模和全部成本/滑点压力场景通过",
-            f"当前冻结回测滑点={metrics.get('slippage_rate', 0):.2%}，无完整容量矩阵",
+            (
+                f"当前冻结回测滑点={metrics.get('slippage_rate', 0):.2%}；"
+                f"PR-E={capacity.get('status', 'MISSING')}"
+            ),
             stress_pass,
             True,
-            str(program["approved_backtest_snapshot"]),
+            str(program.get("upgrade_evidence", {}).get("pr_e_execution_capacity") or program["approved_backtest_snapshot"]),
             "按50万至1000万元及全部成本/滑点组合重跑并保存拒单、冲击和回撤扩张。",
         ),
         GateResult(
@@ -838,6 +920,7 @@ def build_artifact(
     analysis: dict[str, Any],
     gates: list[GateResult],
     decision: ReadinessDecision,
+    upgrade_evidence: dict[str, Any],
     generated_at: str,
     gate_matrix_path: str,
 ) -> dict[str, Any]:
@@ -865,6 +948,7 @@ def build_artifact(
     )
     top_stock = analysis["stock_attribution"].head(12).copy()
     quality = analysis["data_quality"].copy()
+    upgrade_frame = pd.DataFrame(upgrade_evidence["rows"])
     source_run = str(program["approved_backtest_snapshot"])
     backtest_source = _source(
         "source_backtest",
@@ -919,6 +1003,7 @@ def build_artifact(
             "config/production_acceptance.yaml",
             "config/strategy_release_registry.yaml",
             "config/dynamic_champion_live_program.yaml",
+            *[str(path) for path in program.get("upgrade_evidence", {}).values()],
         ],
     )
     title = str(program["report"]["site_title"])
@@ -1077,6 +1162,21 @@ def build_artifact(
         ],
         "tables": [
             {
+                "id": "table_upgrade_evidence",
+                "title": "PR-A至PR-E工程与业务证据",
+                "description": "工程实现可以通过，但业务证据只有明确PASS才可用于准入。",
+                "dataset": "upgrade_evidence",
+                "columns": [
+                    {"field": "phase", "label": "阶段", "type": "text"},
+                    {"field": "scope", "label": "范围", "type": "text"},
+                    {"field": "status", "label": "证据状态", "type": "text"},
+                    {"field": "detail", "label": "阻塞或结论", "type": "text"},
+                    {"field": "evidence_sha256", "label": "证据SHA-256", "type": "text"},
+                ],
+                "defaultSort": {"field": "phase", "direction": "asc"},
+                "sourceId": "source_governance",
+            },
+            {
                 "id": "table_gate_matrix",
                 "title": "实盘准入门禁明细",
                 "description": "每项均给出要求、当前证据和修复动作。",
@@ -1213,6 +1313,16 @@ def build_artifact(
             {
                 "type": "markdown",
                 "body": (
+                    "## PR-A至PR-E工程已合并，但不等于业务证据通过\n\n"
+                    "Release等价、Formal预检、不可变回测、OOS稳健性和容量矩阵的"
+                    "失败关闭基础设施均已进入主干。当前正式PIT输入仍未冻结，所以下游"
+                    "证据按依赖链保持BLOCKED；这不会被本地测试通过或代码合并替代。"
+                ),
+            },
+            {"type": "table", "tableId": "table_upgrade_evidence"},
+            {
+                "type": "markdown",
+                "body": (
                     "## 回测收益可观，但尚不足以支持实盘放行\n\n"
                     "冻结回测提供了研究价值，但样本起点、滑点、容量压力、正式OOS与严格数据快照均未满足中心生产验收配置。"
                     "因此收益只能作为继续复验的理由，不能作为投入资金的依据。"
@@ -1298,7 +1408,11 @@ def build_artifact(
         block.setdefault("id", f"block_{index:02d}")
     snapshot = {
         "version": 1,
-        "status": "ready",
+        "status": (
+            "blocked"
+            if any(row["status"] in {"BLOCKED", "MISSING", "INVALID", "UNKNOWN"} for row in upgrade_evidence["rows"])
+            else "ready"
+        ),
         "generatedAt": generated_at,
         "datasets": {
             "headline": _records(headline),
@@ -1313,8 +1427,22 @@ def build_artifact(
             "stock_attribution": _records(top_stock),
             "data_quality": _records(quality),
             "capital_ladder": _records(ladder),
+            "upgrade_evidence": _records(upgrade_frame),
         },
     }
+    if snapshot["status"] == "blocked":
+        snapshot["accessIssues"] = [
+            {
+                "id": "formal_evidence_unavailable",
+                "scope": "dynamic_champion_formal_readiness",
+                "sourceId": "source_governance",
+                "dataset": "upgrade_evidence",
+                "message": (
+                    "正式PIT、不可变Formal Run、OOS与容量所需业务数据尚未完整加载；"
+                    "报告保留冻结回测供研究复核，但资金结论为NO_GO。"
+                ),
+            }
+        ]
     return {
         "surface": "report",
         "manifest": manifest,
@@ -1329,6 +1457,7 @@ def markdown_report(
     analysis: dict[str, Any],
     gates: list[GateResult],
     decision: ReadinessDecision,
+    upgrade_evidence: dict[str, Any],
     generated_at: str,
 ) -> str:
     metrics = analysis["metrics"]
@@ -1351,6 +1480,22 @@ def markdown_report(
         "成本容量压力和80个真实Shadow交易日。",
         "- **当前生产路由不变。** 动态评分冠军保持研究/阻塞状态，不继承既有本金例外，"
         "券商API保持关闭。",
+        "",
+        "## PR-A至PR-E升级证据",
+        "",
+        "| 阶段 | 范围 | 业务证据状态 | 阻塞或结论 |",
+        "|---|---|---|---|",
+    ]
+    for row in upgrade_evidence["rows"]:
+        lines.append(
+            f"| {row['phase']} | `{row['scope']}` | {row['status']} | "
+            f"{row['detail']} |"
+        )
+    lines.extend(
+        [
+        "",
+        "代码与本地CI通过只证明失败关闭基础设施可用；业务证据在正式PIT输入"
+        "缺失时仍保持BLOCKED，不能用于放行资金。",
         "",
         "## 绩效与风险概览",
         "",
@@ -1387,7 +1532,8 @@ def markdown_report(
         "",
         "| 月份 | 月度收益 | 累计收益 |",
         "|---|---:|---:|",
-    ]
+        ]
+    )
     for row in analysis["monthly"].to_dict(orient="records"):
         lines.append(
             f"| {row['month']} | {float(row['monthly_return']):.2%} | "
@@ -1466,6 +1612,7 @@ def write_assessment(
         yaml.safe_load(acceptance_path.read_text(encoding="utf-8")) or {}
     )["acceptance"]
     analysis = analyze_backtest(run_dir, str(program["strategy_id"]))
+    upgrade_evidence = load_upgrade_evidence(program)
     registry = load_registry_status(
         registry_path, str(program["strategy_id"]), str(program["release_id"])
     )
@@ -1478,6 +1625,7 @@ def write_assessment(
         metrics=analysis["metrics"],
         registry=registry,
         shadow=shadow,
+        upgrade_evidence=upgrade_evidence,
         report_generated=False,
     )
     # Report generation itself is deterministic and is marked passed in the final package.
@@ -1508,6 +1656,7 @@ def write_assessment(
         analysis=analysis,
         gates=gates,
         decision=decision,
+        upgrade_evidence=upgrade_evidence,
         generated_at=generated_iso,
         gate_matrix_path=_relative(output_dir / "gate_matrix.csv"),
     )
@@ -1516,6 +1665,7 @@ def write_assessment(
         analysis=analysis,
         gates=gates,
         decision=decision,
+        upgrade_evidence=upgrade_evidence,
         generated_at=generated_iso,
     )
     frames = {
@@ -1531,6 +1681,7 @@ def write_assessment(
         "capital_ladder.csv": pd.DataFrame(program["capital_ladder"]).assign(
             status="BLOCKED"
         ),
+        "upgrade_evidence.csv": pd.DataFrame(upgrade_evidence["rows"]),
     }
     for filename, frame in frames.items():
         frame.to_csv(output_dir / filename, index=False)
@@ -1548,6 +1699,7 @@ def write_assessment(
         "metrics": analysis["metrics"],
         "registry": registry,
         "shadow": shadow,
+        "upgrade_evidence": upgrade_evidence["rows"],
         "gates": [asdict(gate) for gate in gates],
         "file_manifest": analysis["file_manifest"],
         "git_commit_sha": subprocess.run(
