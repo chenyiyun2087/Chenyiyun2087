@@ -478,8 +478,12 @@ def evaluate(
                                     blockers.append(f"capacity_fills_zero_symbol:{label}")
                                 # Status: validate terminal order status enum
                                 VALID_STATUSES = {"SUBMITTED", "FILLED", "PARTIALLY_FILLED", "REJECTED", "CANCELLED", "EXPIRED", "UNFILLED"}
-                                raw_statuses = set(orders_df["status"].astype("string").str.strip().str.upper().unique())
-                                unknown_statuses = raw_statuses - VALID_STATUSES
+                                status_col = orders_df["status"].astype("string").str.strip().str.upper()
+                                if status_col.isna().any() or status_col.eq("").any():
+                                    blockers.append(f"capacity_orders_empty_status:{label}")
+                                # Handle NA separately to avoid sorted(pd.NA, str) crash
+                                status_set = set(str(x) for x in status_col.dropna().unique() if str(x) and str(x) != "<NA>")
+                                unknown_statuses = status_set - VALID_STATUSES
                                 if unknown_statuses:
                                     blockers.append(f"capacity_orders_unknown_status:{label}:{sorted(unknown_statuses)}")
                                 orders_df["side"] = orders_df["side"].astype("string").str.strip().str.upper()

@@ -15,6 +15,16 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# PR-I must verify the exact frozen five-strategy set
+FORMAL_STRATEGIES = frozenset({
+    "production_governed_vol_position",
+    "production_governed_vol_position_v1_2b_dynamic_score",
+    "production_governed_vol_position_v1_2b_gate_tuned",
+    "production_governed_vol_position_v1_2b_execution_safe_uplift",
+    "production_governed_vol_position_v1_2b_strict_precommit_uplift",
+})
+
 DEFAULT_SOURCES = {
     "pr_a_equivalence": PROJECT_ROOT
     / "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
@@ -84,9 +94,10 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
         "pr_a_equivalence": lambda p: p.get("status") == "PASS",
         "pr_b_formal_readiness": lambda p: p.get("status") == "READY_FOR_FORMAL_RUN",
         "pr_c_formal_run": lambda p: p.get("status") == "VERIFIED"
-        and bool(p.get("dual_ledger_results"))
-        and len(p.get("dual_ledger_results", [])) == 5
-        and len({item.get("strategy") for item in p.get("dual_ledger_results", [])}) == 5
+        and isinstance(p.get("dual_ledger_results"), list)
+        and len(p.get("dual_ledger_results", [])) == len(FORMAL_STRATEGIES)
+        and {item.get("strategy") for item in p.get("dual_ledger_results", [])} == FORMAL_STRATEGIES
+        and set(p.get("strategy_ids") or []) == FORMAL_STRATEGIES
         and all(
             item.get("status") == "VERIFIED"
             for item in p.get("dual_ledger_results", [])
@@ -156,6 +167,26 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
                     "passed": False,
                     "actual": f"computed={computed[:16]}... != declared={declared_sha[:16]}...",
                     "required": f"{hash_field} matches canonical self-hash",
+                })
+
+    # PR-D/E must bind to PR-C's formal_manifest_sha256
+    pr_c_manifest_sha = payloads.get("pr_c_formal_run", {}).get("manifest_sha256")
+    if pr_c_manifest_sha:
+        for pr_key in ("pr_d_oos_robustness", "pr_e_execution_capacity"):
+            bound = str(payloads.get(pr_key, {}).get("formal_manifest_sha256") or "")
+            if not bound:
+                checks.append({
+                    "check": f"{pr_key}_formal_manifest_binding",
+                    "passed": False,
+                    "actual": "missing",
+                    "required": "must bind to PR-C formal_manifest_sha256",
+                })
+            elif bound != pr_c_manifest_sha:
+                checks.append({
+                    "check": f"{pr_key}_formal_manifest_binding",
+                    "passed": False,
+                    "actual": f"bound={bound[:16]}... != pr_c={pr_c_manifest_sha[:16]}...",
+                    "required": "PR-D/E formal_manifest_sha256 must equal PR-C manifest_sha256",
                 })
 
     # P0: Compute technical_complete ONCE after ALL checks (not before)
