@@ -1,0 +1,14 @@
+{
+  "project_id": "appgprj_6a6634470b248191a257a252717d0ce7",
+  "version_number": 2,
+  "source_commit_sha": "1f3c255c9bf1d755b5dd5f8de00d91674bd62c17",
+  "deployment_id": "appgdep_6a66efb7f72c8191993c587934d065a5",
+  "status": "succeeded",
+  "url": "https://dynamic-champion-readiness-20260727.supo2087.chatgpt.site",
+  "access": "OWNER_ONLY",
+  "snapshot_status": "blocked",
+  "decision": "NO_GO",
+  "allowed_capital_cny": 0,
+  "live_utf8_check": "PASS",
+  "live_currency_check": "CNY_ONLY"
+}

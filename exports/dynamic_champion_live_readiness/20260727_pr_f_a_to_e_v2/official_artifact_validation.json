@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "validation_type": "artifact",
+  "surface": "report",
+  "manifest_title": "动态评分冠军策略实盘准入全面评估",
+  "dataset_count": 11,
+  "source_count": 2,
+  "snapshot_status": "blocked",
+  "message": "Artifact payload is valid. Follow the selected delivery surface for rendering or export."
+}
