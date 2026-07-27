@@ -2916,17 +2916,17 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     _validate_strict_execution_arguments(args)
     requested_strategies = set(_parse_strategies(args.strategies))
     raw_ledger_strategies = {"production_governed_vol_position", "production_governed_vol_position_v1_2b_gate_tuned", PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME}
-    champion_evidence_strategies = {
-        "baseline_full_liquidity_detail_vol_position",
-        "baseline_full_liquidity_detail_market_gate",
-        "baseline_full_liquidity",
-        "tiered_liquidity_then_bs_v2",
-        ADAPTIVE_MARKET_STYLE_STRATEGY_NAME,
+    formal_strategies = {
+        "production_governed_vol_position",
+        "production_governed_vol_position_v1_2b_dynamic_score",
+        "production_governed_vol_position_v1_2b_gate_tuned",
+        "production_governed_vol_position_v1_2b_execution_safe_uplift",
+        PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME,
     }
     formal_evidence_required = bool(getattr(args, "require_verified_evidence", False))
     requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies) or formal_evidence_required
-    if formal_evidence_required and not champion_evidence_strategies <= requested_strategies:
-        raise ValueError("formal champion evidence requires all four leaf strategies and adaptive_market_style")
+    if formal_evidence_required and requested_strategies != formal_strategies:
+        raise ValueError("formal evidence requires the exact governed five-strategy set")
     if formal_evidence_required and not all((getattr(args, "scores_snapshot", None), getattr(args, "prices_snapshot", None))):
         raise ValueError("formal champion evidence requires immutable score and price snapshots")
     if requires_frozen_inputs and not all((args.corporate_action_snapshot, args.corporate_action_manifest, args.security_lifecycle_snapshot, args.security_lifecycle_manifest)):
@@ -3032,7 +3032,45 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         factor_weights = pd.DataFrame()
     market_env = build_market_environment(scores, prices)
     scores = attach_market_environment(scores, market_env)
-    calendar = sorted(prices["trade_date"].dropna().unique().tolist())
+    if formal_evidence_required and not getattr(args, "trade_calendar_snapshot", None):
+        raise ValueError("formal evidence requires authoritative trade calendar snapshot")
+    if getattr(args, "trade_calendar_snapshot", None):
+        calendar_frame = pd.read_csv(args.trade_calendar_snapshot)
+        required_calendar_columns = {"cal_date", "exchange", "is_open", "source"}
+        if missing := sorted(required_calendar_columns - set(calendar_frame.columns)):
+            raise RuntimeError(
+                "trade calendar snapshot missing fields:" + ",".join(missing)
+            )
+        if not calendar_frame["exchange"].astype(str).eq("SSE").all():
+            raise RuntimeError("trade calendar snapshot must be SSE")
+        if not calendar_frame["source"].astype(str).eq(
+            "tushare_stock.dim_trade_cal"
+        ).all():
+            raise RuntimeError("trade calendar snapshot source is not authoritative")
+        calendar = sorted(
+            pd.to_datetime(
+                calendar_frame.loc[
+                    pd.to_numeric(
+                        calendar_frame["is_open"], errors="coerce"
+                    ).eq(1),
+                    "cal_date",
+                ],
+                errors="coerce",
+            )
+            .dropna()
+            .dt.date.unique()
+            .tolist()
+        )
+        price_dates = set(prices["trade_date"].dropna().unique().tolist())
+        if not price_dates <= set(calendar):
+            raise RuntimeError("price dates fall outside authoritative calendar")
+    else:
+        calendar = sorted(prices["trade_date"].dropna().unique().tolist())
+    provenance["input_snapshot_hashes"]["trade_calendar"] = (
+        _sha256_file(Path(args.trade_calendar_snapshot))
+        if getattr(args, "trade_calendar_snapshot", None)
+        else None
+    )
     if requires_frozen_inputs:
         _validate_corporate_action_pit(corporate_actions_by_date, calendar)
     price_lookup_columns = [
@@ -4089,6 +4127,11 @@ def main() -> None:
     parser.add_argument("--corporate-action-manifest", default=None)
     parser.add_argument("--security-lifecycle-snapshot", default=None)
     parser.add_argument("--security-lifecycle-manifest", default=None)
+    parser.add_argument(
+        "--trade-calendar-snapshot",
+        default=None,
+        help="Immutable SSE open calendar frozen from tushare_stock.dim_trade_cal",
+    )
     parser.add_argument("--strict-cap-profile", choices=["no_cap", "extreme_only", "high_v1_plus_5pct", "strict_cap"], default="strict_cap")
     parser.add_argument(
         "--risk-profile",

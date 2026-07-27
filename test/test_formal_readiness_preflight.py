@@ -83,21 +83,25 @@ def _build_package(root: Path) -> dict:
             }
             for symbol in symbols
         ],
-        "corporate_actions.csv": [
+        "strict_corporate_actions.csv": [
             {
-                "event_date": dates[0],
+                "event_id": "000001:none",
+                "effective_date": dates[0],
                 "symbol": "000001",
                 "action_type": "NONE",
-                "publish_date": dates[0],
+                "source_event_id": "000001:none",
+                "as_of_timestamp": available,
+                "source_complete": True,
+                "event_hash": "a" * 64,
                 "available_at": available,
             }
         ],
-        "security_lifecycle.csv": [
+        "strict_security_lifecycle.csv": [
             {
                 "symbol": symbol,
-                "effective_from": dates[0],
-                "list_date": "2000-01-01",
-                "delist_date": "",
+                "trade_date": dates[0],
+                "is_listed": 1,
+                "is_suspended": 0,
                 "available_at": available,
             }
             for symbol in symbols
@@ -116,10 +120,25 @@ def _build_package(root: Path) -> dict:
         "scores.csv",
         "prices.csv",
         "adjustment_factors.csv",
-        "corporate_actions.csv",
-        "security_lifecycle.csv",
+        "strict_corporate_actions.csv",
+        "strict_security_lifecycle.csv",
         "initial_account.json",
     ]
+    strict_manifest = {
+        "snapshot_schema_version": "strict_corporate_lifecycle_snapshot_v2",
+        "dataset_version": "fixture",
+        "generated_at": "2013-01-04T15:00:00+08:00",
+        "source_sha256": "b" * 64,
+        "snapshot_sha256": _sha(root / "strict_corporate_actions.csv"),
+        "lifecycle_source_sha256": "c" * 64,
+        "lifecycle_snapshot_sha256": _sha(
+            root / "strict_security_lifecycle.csv"
+        ),
+    }
+    (root / "strict_snapshot_manifest.json").write_text(
+        json.dumps(strict_manifest), encoding="utf-8"
+    )
+    object_names.append("strict_snapshot_manifest.json")
     manifest = {
         "calendar_source": "tushare_stock.dim_trade_cal",
         "coverage_start": "2013-01-01",

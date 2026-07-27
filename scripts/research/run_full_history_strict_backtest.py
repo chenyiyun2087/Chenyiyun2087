@@ -76,6 +76,7 @@ def build_backtest_command(
     corporate_action_manifest: str | None = None,
     security_lifecycle_snapshot: str | None = None,
     security_lifecycle_manifest: str | None = None,
+    trade_calendar_snapshot: str | None = None,
     require_verified_evidence: bool = True,
 ) -> list[str]:
     """Build the subprocess command for the trusted strategy account backtest."""
@@ -99,6 +100,7 @@ def build_backtest_command(
         "--corporate-action-manifest": corporate_action_manifest,
         "--security-lifecycle-snapshot": security_lifecycle_snapshot,
         "--security-lifecycle-manifest": security_lifecycle_manifest,
+        "--trade-calendar-snapshot": trade_calendar_snapshot,
     }
     for flag, value in optional_paths.items():
         if value:
@@ -157,6 +159,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "corporate_action_manifest": getattr(args, "corporate_action_manifest", None),
         "security_lifecycle_snapshot": getattr(args, "security_lifecycle_snapshot", None),
         "security_lifecycle_manifest": getattr(args, "security_lifecycle_manifest", None),
+        "trade_calendar_snapshot": getattr(args, "trade_calendar_snapshot", None),
     }
     missing_snapshots = [name for name, value in snapshot_values.items() if not value]
     if missing_snapshots and not args.dry_run:
@@ -236,6 +239,7 @@ def main() -> None:
     parser.add_argument("--corporate-action-manifest")
     parser.add_argument("--security-lifecycle-snapshot")
     parser.add_argument("--security-lifecycle-manifest")
+    parser.add_argument("--trade-calendar-snapshot")
     _args = parser.parse_args()
     run(_args)
 

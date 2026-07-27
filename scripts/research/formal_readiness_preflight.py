@@ -181,8 +181,8 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
         "scores.csv": "trade_date",
         "prices.csv": "trade_date",
         "adjustment_factors.csv": "trade_date",
-        "corporate_actions.csv": "event_date",
-        "security_lifecycle.csv": "effective_from",
+        "strict_corporate_actions.csv": "effective_date",
+        "strict_security_lifecycle.csv": "trade_date",
     }
     for filename, business_column in business_columns.items():
         passed, invalid = _pit_visible(frames[filename], business_column)
@@ -241,7 +241,9 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
         )
     )
 
-    lifecycle_symbols = set(frames["security_lifecycle.csv"]["symbol"].astype(str))
+    lifecycle_symbols = set(
+        frames["strict_security_lifecycle.csv"]["symbol"].astype(str)
+    )
     universe_symbols = set(universe["symbol"].astype(str))
     missing_lifecycle = sorted(universe_symbols - lifecycle_symbols)
     checks.append(
