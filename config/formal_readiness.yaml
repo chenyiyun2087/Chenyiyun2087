@@ -19,8 +19,9 @@ required_objects:
   - scores.csv
   - prices.csv
   - adjustment_factors.csv
-  - corporate_actions.csv
-  - security_lifecycle.csv
+  - strict_corporate_actions.csv
+  - strict_security_lifecycle.csv
+  - strict_snapshot_manifest.json
   - initial_account.json
   - source_manifest.json
 primary_keys:
@@ -29,5 +30,5 @@ primary_keys:
   scores.csv: [trade_date, symbol, strategy]
   prices.csv: [trade_date, symbol]
   adjustment_factors.csv: [trade_date, symbol]
-  corporate_actions.csv: [event_date, symbol, action_type, publish_date]
-  security_lifecycle.csv: [symbol, effective_from]
+  strict_corporate_actions.csv: [event_id]
+  strict_security_lifecycle.csv: [symbol, trade_date]
