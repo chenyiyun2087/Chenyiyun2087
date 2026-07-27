@@ -1,0 +1,32 @@
+schema_version: economic_equivalence_v1
+release_id: prod-fixed-v2-20260720-01
+currency: CNY
+commit_chain:
+  release_origin: ea535ebd6167a273923d1decb6b879fc2949a95a
+  pre_refactor_baseline: c37b2eb7
+  candidate_commit: AUTO
+scopes:
+  frozen_account_615d:
+    expected_trade_days: 615
+    baseline_dir:
+    candidate_dir:
+  latest_10_complete_production_days:
+    expected_trade_days: 10
+    baseline_dir:
+    candidate_dir:
+  web_benchmark:
+    required_rounds: 3
+    samples_per_endpoint_per_round: 20
+    max_p95_regression_ratio: 0.10
+    baseline_json:
+    candidate_json:
+domains:
+  candidates: trusted_account_backtest_candidates.csv
+  ranking: trusted_account_backtest_candidates.csv
+  weights: trusted_account_backtest_positions.csv
+  orders: trusted_account_backtest_trades.csv
+  t_plus_1: trusted_account_backtest_trades.csv
+  risk_decisions: trusted_account_backtest_report.json
+  cash: trusted_account_backtest_nav.csv
+  positions: trusted_account_backtest_positions.csv
+  nav: trusted_account_backtest_nav.csv

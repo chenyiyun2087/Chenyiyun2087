@@ -948,9 +948,9 @@ def build_artifact(
                 "dataset": "headline",
                 "metrics": [
                     {
-                        "label": "允许资金",
+                        "label": "允许资金（人民币元）",
                         "field": "allowed_capital_cny",
-                        "format": "currency",
+                        "format": "number",
                     }
                 ],
                 "sourceId": "source_governance",
@@ -1129,8 +1129,8 @@ def build_artifact(
                     {"field": "win_rate", "label": "胜率", "type": "percent"},
                     {
                         "field": "net_pnl",
-                        "label": "净收益",
-                        "type": "currency",
+                        "label": "净收益（人民币元）",
+                        "type": "number",
                         "movement": True,
                     },
                     {
@@ -1163,7 +1163,11 @@ def build_artifact(
                 "dataset": "capital_ladder",
                 "columns": [
                     {"field": "stage", "label": "阶段", "type": "text"},
-                    {"field": "capital_cny", "label": "资金", "type": "currency"},
+                    {
+                        "field": "capital_cny",
+                        "label": "资金（人民币元）",
+                        "type": "number",
+                    },
                     {
                         "field": "min_real_trading_days",
                         "label": "最低真实交易日",

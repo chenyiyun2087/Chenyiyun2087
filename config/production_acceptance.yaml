@@ -6,6 +6,10 @@
 # Every gate below must pass before advancing to the next lane.
 
 acceptance:
+  # Canonical account/reporting currency.  Rendering layers must use an
+  # explicit CNY label instead of a locale-dependent generic currency format.
+  account_currency: CNY
+
   # -----------------------------------------------------------------------
   # L0→L1: Research → Manual Production
   # -----------------------------------------------------------------------
@@ -183,6 +187,7 @@ acceptance:
   portfolio_risk_controls:
     current_approved_total_exposure_pct_nav: 50
     system_hard_max_total_exposure_pct_nav: 85
+    champion_default_exposure_pct_nav: 50
     max_single_position_weight_pct_nav: 15
     max_single_industry_weight_pct_nav: 30
     max_correlated_theme_weight_pct_nav: 40
@@ -190,6 +195,7 @@ acceptance:
     max_daily_new_position_pct_nav: 30
     max_daily_turnover_pct_nav: 50
     max_single_order_adv_ratio: 0.01
+    max_attack_pool_budget_share_pct: 35
     auto_hold_cash_on_unfilled_buy: true
     ban_new_high_risk_on_consecutive_sell_failure: true
     ban_full_position_in_single_market_regime: true
