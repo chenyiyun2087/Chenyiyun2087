@@ -56,7 +56,8 @@ python -m scripts.quality.regression_baseline compare \
 ## 迁移优先级
 
 1. 严格执行账本与订单状态机（已落地样例）。
-2. `chenyiyunSelected` 的固定选股输入 → TopN、权重、订单与 NAV 基线。
+2. 动态评分冠军冻结输出 → 候选、排序、权重、订单、严格账本、NAV、
+   准入门禁与 Artifact 内容寻址基线（已落地）。
 3. `ScoreRank` M1/M2/M6/M7 的固定事件数据 → 评分、候选、回测和调仓基线。
 4. 生产日间管线的容器化端到端 fixture（MySQL + 固定交易日历 + 脱敏快照）。
 
@@ -66,3 +67,5 @@ python -m scripts.quality.regression_baseline compare \
 - baseline 文件的变更必须触发 `golden-regression`，并由至少一名策略/风控负责人复核。
 - `metadata.fixture_id`、关键数据摘要和所有不变量必须相同；任何变化都需要新版本 baseline。
 - 收益类指标可设置审慎容差；订单、风控、公司行为、T+1 以及反未来函数约束不得设置宽松容差。
+- `dynamic_champion_full_chain.vN.json` 不允许原地覆盖；必须显式创建新版本，
+  填写授权来源与变更原因。CI 只能校验，不能生成或接受新基线。

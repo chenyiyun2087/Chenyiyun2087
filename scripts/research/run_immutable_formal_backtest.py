@@ -5,11 +5,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import shutil
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -17,6 +22,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.research.run_dual_ledger_acceptance import run as run_dual_ledger
 from scripts.research.run_full_history_strict_backtest import build_backtest_command
+from scripts.research.formal_readiness_preflight import evaluate_package
+from runtime.formal_evidence_binding import (
+    check_clean_worktree,
+    compute_formal_run_id,
+    freeze_inputs,
+    head_unchanged,
+    validate_package_reality,
+)
+
 FORMAL_STRATEGIES = (
     "production_governed_vol_position",
     "production_governed_vol_position_v1_2b_dynamic_score",
@@ -24,6 +38,9 @@ FORMAL_STRATEGIES = (
     "production_governed_vol_position_v1_2b_execution_safe_uplift",
     "production_governed_vol_position_v1_2b_strict_precommit_uplift",
 )
+
+DEFAULT_CONFIG = PROJECT_ROOT / "config" / "formal_readiness.yaml"
+EXECUTION_MODEL_VERSION = "strict_t1_open_precommit_v1"
 
 
 def _sha(path: Path) -> str:
@@ -37,10 +54,14 @@ def _git_sha() -> str:
 
 
 def _blocked(
-    preflight: Path, output_root: Path, reason: str, preflight_payload: dict[str, Any]
+    preflight: Path,
+    output_root: Path,
+    reason: str,
+    preflight_payload: dict[str, Any],
+    **extra: Any,
 ) -> dict[str, Any]:
-    payload = {
-        "schema_version": "immutable_formal_run_v1",
+    payload: dict[str, Any] = {
+        "schema_version": "immutable_formal_run_v2",
         "status": "BLOCKED",
         "formal_run_started": False,
         "reason": reason,
@@ -48,6 +69,7 @@ def _blocked(
         "preflight_status": preflight_payload.get("status"),
         "preflight_evidence_sha256": preflight_payload.get("evidence_sha256"),
     }
+    payload.update(extra)
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "formal_run_precheck.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -63,30 +85,173 @@ def run(
     output_root: Path,
     end_date: str,
     dry_run: bool,
+    config_path: Path | None = None,
+    acceptance_config_path: Path | None = None,
+    fixture_mode: bool = False,
 ) -> dict[str, Any]:
+    # ------------------------------------------------------------------
+    # 3.6  Clean worktree — before (skipped in fixture mode)
+    # ------------------------------------------------------------------
+    git_sha_before: str
+    tree_clean_before: bool
+    if fixture_mode:
+        git_sha_before = _git_sha()
+        tree_clean_before = True  # fixture mode assumes clean
+    else:
+        git_sha_before, tree_clean_before = check_clean_worktree(PROJECT_ROOT)
+        if not tree_clean_before:
+            return _blocked(
+                preflight,
+                output_root,
+                "dirty_worktree_before_run",
+                json.loads(preflight.read_text(encoding="utf-8")),
+                git_commit_sha_before=git_sha_before,
+                git_tree_clean_before=tree_clean_before,
+            )
+
+    # ------------------------------------------------------------------
+    # Load config and preflight payload
+    # ------------------------------------------------------------------
+    cfg_path = config_path or DEFAULT_CONFIG
+    acc_path = acceptance_config_path or (
+        PROJECT_ROOT / "config" / "production_acceptance.yaml"
+    )
+    config = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
     preflight_payload = json.loads(preflight.read_text(encoding="utf-8"))
+
+    # Basic preflight status check
     if preflight_payload.get("status") != "READY_FOR_FORMAL_RUN":
+        return _blocked(
+            preflight, output_root, "preflight_not_ready", preflight_payload,
+            git_commit_sha_before=git_sha_before,
+            git_tree_clean_before=tree_clean_before,
+        )
+
+    # ------------------------------------------------------------------
+    # 3.3  Input package re-validation (TOCTOU)
+    # ------------------------------------------------------------------
+    if not validate_package_reality(package):
         return _blocked(
             preflight,
             output_root,
-            "preflight_not_ready",
+            "FORMAL_INPUT_REVALIDATION_FAILED",
             preflight_payload,
+            revalidation_detail="package_reality_check_failed",
+            git_commit_sha_before=git_sha_before,
+            git_tree_clean_before=tree_clean_before,
         )
+
+    rechecked = evaluate_package(package.resolve(), config)
+    if rechecked.get("status") != config.get("success_status", "READY_FOR_FORMAL_RUN"):
+        return _blocked(
+            preflight,
+            output_root,
+            "FORMAL_INPUT_REVALIDATION_FAILED",
+            preflight_payload,
+            revalidation_status=rechecked.get("status"),
+            revalidation_blocking_checks=rechecked.get("blocking_checks"),
+            git_commit_sha_before=git_sha_before,
+            git_tree_clean_before=tree_clean_before,
+        )
+
+    if rechecked.get("evidence_sha256") != preflight_payload.get("evidence_sha256"):
+        return _blocked(
+            preflight,
+            output_root,
+            "EVIDENCE_SHA256_MISMATCH",
+            preflight_payload,
+            revalidation_detail="evidence_sha256_diverged",
+            revalidated_sha=rechecked.get("evidence_sha256"),
+            git_commit_sha_before=git_sha_before,
+            git_tree_clean_before=tree_clean_before,
+        )
+
+    # Preflight file integrity is verified implicitly by evidence_sha match above:
+    # if the preflight file were swapped, its embedded evidence_sha wouldn't match
+    # the re-validated package evidence_sha.
+    preflight_file_sha = _sha(preflight)
+
+    # Package identity
     if Path(preflight_payload.get("package", "")).resolve() != package.resolve():
         return _blocked(
             preflight,
             output_root,
             "preflight_package_identity_mismatch",
             preflight_payload,
+            git_commit_sha_before=git_sha_before,
+            git_tree_clean_before=tree_clean_before,
         )
-    code_sha = _git_sha()
+
+    # ------------------------------------------------------------------
+    # Compute identity hashes
+    # ------------------------------------------------------------------
     input_sha = str(preflight_payload["evidence_sha256"])
-    run_id = f"formal-{input_sha[:16]}-{code_sha[:12]}"
+    readiness_config_sha = _sha(cfg_path)
+    acceptance_config_sha = _sha(acc_path) if acc_path.exists() else "CONFIG_MISSING"
+    required_objects = [str(n) for n in config.get("required_objects", [])]
+
+    # ------------------------------------------------------------------
+    # 3.4  Freeze inputs into the formal run directory
+    # ------------------------------------------------------------------
+    # Create a preliminary run_dir so we can freeze into it.
+    # Use a temp run_id for the directory; we'll compute the final id after freezing.
+    temp_run_dir = output_root / f"_freezing_{input_sha[:16]}"
+    # Ensure uniqueness even across retries
+    suffix = 0
+    while temp_run_dir.exists():
+        suffix += 1
+        temp_run_dir = output_root / f"_freezing_{input_sha[:16]}_{suffix}"
+    temp_run_dir.mkdir(parents=True)
+
+    frozen_inputs_dir = temp_run_dir / "frozen_inputs"
+    try:
+        per_file_bindings = freeze_inputs(package, frozen_inputs_dir, required_objects)
+    except FileNotFoundError as exc:
+        shutil.rmtree(temp_run_dir, ignore_errors=True)
+        return _blocked(
+            preflight,
+            output_root,
+            "FROZEN_INPUT_MISSING",
+            preflight_payload,
+            missing_file=str(exc),
+            git_commit_sha_before=git_sha_before,
+            git_tree_clean_before=tree_clean_before,
+        )
+
+    # Hash each frozen file and compute bundle SHA
+    frozen_bundle_hasher = hashlib.sha256()
+    for name in sorted(per_file_bindings):
+        frozen_bundle_hasher.update(name.encode())
+        frozen_bundle_hasher.update(per_file_bindings[name]["sha256"].encode())
+    frozen_bundle_sha = frozen_bundle_hasher.hexdigest()
+
+    # ------------------------------------------------------------------
+    # 3.7  Enhanced formal run ID
+    # ------------------------------------------------------------------
+    run_id = compute_formal_run_id(
+        evidence_sha256=input_sha,
+        git_sha=git_sha_before,
+        acceptance_config_sha=acceptance_config_sha,
+        readiness_config_sha=readiness_config_sha,
+        frozen_bundle_sha=frozen_bundle_sha,
+        start_date="2013-01-01",
+        end_date=end_date,
+        strategy_ids=list(FORMAL_STRATEGIES),
+    )
+
+    # Rename temp dir to final run_dir
     run_dir = output_root / run_id
     if run_dir.exists():
+        shutil.rmtree(temp_run_dir, ignore_errors=True)
         raise FileExistsError(f"immutable_formal_run_exists:{run_id}")
-    run_dir.mkdir(parents=True)
+    temp_run_dir.rename(run_dir)
+    frozen_inputs_dir = run_dir / "frozen_inputs"
+
     account_output = run_dir / "account_backtest"
+
+    # ------------------------------------------------------------------
+    # Build backtest command pointing at frozen_inputs/
+    # ------------------------------------------------------------------
     command = build_backtest_command(
         "2013-01-01",
         end_date,
@@ -95,14 +260,21 @@ def run(
         slippage_bps=10,
         initial_cash=500_000,
         output_dir=str(account_output),
-        scores_snapshot=str(package / "scores.csv"),
-        prices_snapshot=str(package / "prices.csv"),
-        corporate_action_snapshot=str(package / "strict_corporate_actions.csv"),
-        corporate_action_manifest=str(package / "strict_snapshot_manifest.json"),
-        security_lifecycle_snapshot=str(package / "strict_security_lifecycle.csv"),
-        security_lifecycle_manifest=str(package / "strict_snapshot_manifest.json"),
-        trade_calendar_snapshot=str(package / "trade_calendar.csv"),
+        scores_snapshot=str(frozen_inputs_dir / "scores.csv"),
+        prices_snapshot=str(frozen_inputs_dir / "prices.csv"),
+        tradable_universe_snapshot=str(frozen_inputs_dir / "tradable_universe.csv"),
+        adjustment_factor_snapshot=str(frozen_inputs_dir / "adjustment_factors.csv"),
+        corporate_action_snapshot=str(frozen_inputs_dir / "strict_corporate_actions.csv"),
+        corporate_action_manifest=str(frozen_inputs_dir / "strict_snapshot_manifest.json"),
+        security_lifecycle_snapshot=str(frozen_inputs_dir / "strict_security_lifecycle.csv"),
+        security_lifecycle_manifest=str(frozen_inputs_dir / "strict_snapshot_manifest.json"),
+        trade_calendar_snapshot=str(frozen_inputs_dir / "trade_calendar.csv"),
+        formal_mode=True,
     )
+
+    # ------------------------------------------------------------------
+    # Execute backtest (or dry-run)
+    # ------------------------------------------------------------------
     ledger_results: list[dict[str, Any]] = []
     status = "DRY_RUN"
     return_code: int | None = None
@@ -142,8 +314,27 @@ def run(
                 and all(item["status"] == "VERIFIED" for item in ledger_results)
                 else "LEDGER_BLOCKED"
             )
+
+    # ------------------------------------------------------------------
+    # 3.6  Clean worktree — after (skipped in fixture mode)
+    # ------------------------------------------------------------------
+    git_tree_clean_after = tree_clean_before
+    git_sha_after = git_sha_before
+    if not dry_run and not fixture_mode:
+        git_sha_after, git_tree_clean_after_candidate = check_clean_worktree(PROJECT_ROOT)
+        git_tree_clean_after = git_tree_clean_after_candidate
+        if not git_tree_clean_after:
+            if status == "VERIFIED":
+                status = "WORKTREE_POSTRUN_DIRTY"
+        if not head_unchanged(git_sha_before, PROJECT_ROOT):
+            if status == "VERIFIED":
+                status = "HEAD_CHANGED_DURING_RUN"
+
+    # ------------------------------------------------------------------
+    # 3.5  Expanded formal run manifest
+    # ------------------------------------------------------------------
     manifest: dict[str, Any] = {
-        "schema_version": "immutable_formal_run_v1",
+        "schema_version": "immutable_formal_run_v2",
         "formal_run_id": run_id,
         "status": status,
         "dry_run": dry_run,
@@ -154,16 +345,24 @@ def run(
         "period_end": end_date,
         "cost_rate_one_way": 0.00075,
         "slippage_bps_one_way": 10,
-        "git_commit_sha": code_sha,
+        "git_commit_sha_before": git_sha_before,
+        "git_commit_sha_after": git_sha_after,
+        "git_tree_clean_before": tree_clean_before,
+        "git_tree_clean_after": git_tree_clean_after,
+        "execution_model_version": EXECUTION_MODEL_VERSION,
         "preflight_path": str(preflight),
-        "preflight_file_sha256": _sha(preflight),
+        "preflight_file_sha256": preflight_file_sha,
         "preflight_evidence_sha256": input_sha,
-        "source_manifest_sha256": _sha(package / "source_manifest.json"),
+        "formal_readiness_config_sha256": readiness_config_sha,
+        "acceptance_config_sha256": acceptance_config_sha,
+        "frozen_bundle_sha256": frozen_bundle_sha,
+        "input_objects": per_file_bindings,
         "command": command,
         "return_code": return_code,
         "dual_ledger_results": ledger_results,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "immutable": True,
+        "fixture_mode": fixture_mode,
     }
     manifest["manifest_sha256"] = hashlib.sha256(
         json.dumps(
@@ -187,8 +386,24 @@ def main() -> int:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--end-date", required=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--fixture-mode", action="store_true", help="Skip worktree checks for testing; results marked non-production.")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--acceptance-config",
+        type=Path,
+        default=PROJECT_ROOT / "config" / "production_acceptance.yaml",
+    )
     args = parser.parse_args()
-    result = run(**vars(args))
+    result = run(
+        preflight=args.preflight,
+        package=args.package,
+        output_root=args.output_root,
+        end_date=args.end_date,
+        dry_run=args.dry_run,
+        config_path=args.config,
+        acceptance_config_path=args.acceptance_config,
+        fixture_mode=args.fixture_mode,
+    )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result["status"] in {"DRY_RUN", "VERIFIED"} else 2
 

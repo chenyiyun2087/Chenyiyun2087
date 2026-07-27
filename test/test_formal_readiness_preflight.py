@@ -204,3 +204,72 @@ def test_future_visible_score_fails_closed(tmp_path):
     result = evaluate_package(tmp_path, _config())
     assert result["status"] == "BLOCKED"
     assert "pit_visibility:scores.csv" in result["blocking_checks"]
+
+
+# ------------------------------------------------------------------
+# PR-H0 new coverage + legality tests
+# ------------------------------------------------------------------
+
+
+def test_universe_price_coverage_must_be_complete(tmp_path):
+    _build_package(tmp_path)
+    # Remove one symbol from prices → coverage gap
+    prices = pd.read_csv(tmp_path / "prices.csv", dtype={"symbol": str})
+    prices = prices[prices["symbol"] != "000002"]
+    prices.to_csv(tmp_path / "prices.csv", index=False)
+    result = evaluate_package(tmp_path, _config())
+    assert result["status"] == "BLOCKED"
+    assert "universe_price_coverage" in result["blocking_checks"]
+
+
+def test_universe_adjustment_coverage_must_be_complete(tmp_path):
+    _build_package(tmp_path)
+    adj = pd.read_csv(tmp_path / "adjustment_factors.csv", dtype={"symbol": str})
+    adj = adj[adj["symbol"] != "000001"]
+    adj.to_csv(tmp_path / "adjustment_factors.csv", index=False)
+    result = evaluate_package(tmp_path, _config())
+    assert result["status"] == "BLOCKED"
+    assert "universe_adjustment_coverage" in result["blocking_checks"]
+
+
+def test_lifecycle_daily_coverage_must_be_complete(tmp_path):
+    _build_package(tmp_path)
+    lifecycle = pd.read_csv(
+        tmp_path / "strict_security_lifecycle.csv", dtype={"symbol": str}
+    )
+    lifecycle = lifecycle[lifecycle["symbol"] != "000002"]
+    lifecycle.to_csv(tmp_path / "strict_security_lifecycle.csv", index=False)
+    result = evaluate_package(tmp_path, _config())
+    assert result["status"] == "BLOCKED"
+    assert "lifecycle_daily_coverage" in result["blocking_checks"]
+
+
+def test_invalid_ohlc_blocks_formal_readiness(tmp_path):
+    _build_package(tmp_path)
+    prices = pd.read_csv(tmp_path / "prices.csv", dtype={"symbol": str})
+    prices.loc[0, "open"] = 0.0  # invalid
+    prices.to_csv(tmp_path / "prices.csv", index=False)
+    result = evaluate_package(tmp_path, _config())
+    assert result["status"] == "BLOCKED"
+    assert "ohlc_legal:open" in result["blocking_checks"]
+
+
+def test_non_positive_adjustment_factor_blocks(tmp_path):
+    _build_package(tmp_path)
+    adj = pd.read_csv(tmp_path / "adjustment_factors.csv", dtype={"symbol": str})
+    adj.loc[0, "adj_factor"] = -0.5
+    adj.to_csv(tmp_path / "adjustment_factors.csv", index=False)
+    result = evaluate_package(tmp_path, _config())
+    assert result["status"] == "BLOCKED"
+    assert "adj_factor_positive" in result["blocking_checks"]
+
+
+def test_duplicate_price_rows_block(tmp_path):
+    _build_package(tmp_path)
+    prices = pd.read_csv(tmp_path / "prices.csv", dtype={"symbol": str})
+    dup_row = prices.iloc[[0]].copy()
+    prices = pd.concat([prices, dup_row], ignore_index=True)
+    prices.to_csv(tmp_path / "prices.csv", index=False)
+    result = evaluate_package(tmp_path, _config())
+    assert result["status"] == "BLOCKED"
+    assert "duplicate_price_rows" in result["blocking_checks"]

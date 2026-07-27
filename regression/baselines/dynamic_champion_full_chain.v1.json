@@ -1,0 +1,113 @@
+{
+  "baseline_id": "dynamic-champion-full-chain.v1",
+  "baseline_version": "v1",
+  "expected": {
+    "content_set_sha256": "25ed5b7e1593dd2135a4059d21c108de6048d10e09c2d96d08f47c956287cb93",
+    "domains": {
+      "artifact": {
+        "semantic_sha256": "206430c5e0f4a6d2996e94bdb99a9029550b3e4166b40827894599326aa73173",
+        "source": "artifact.json",
+        "source_sha256": "a74709a0fe77642c0aa424005217eb6e47e452025ca8d1864754522135e73643"
+      },
+      "candidates": {
+        "columns": [
+          "signal_date",
+          "execution_date",
+          "strategy",
+          "rank",
+          "symbol"
+        ],
+        "order_sensitive": true,
+        "row_count": 15325,
+        "semantic_sha256": "7f25cc0656919d268ff9432d6e135175ed60a7e7d9c9e5c2965a0d0d7975e671",
+        "source": "trusted_account_backtest_candidates.csv",
+        "source_sha256": "4db0bfa983518cab12f6db3d7ec86c52412c87222dbed49e53766e2f00c47b16"
+      },
+      "gate_conclusion": {
+        "semantic_sha256": "a7e993694c3c6ba237012512e2010ac3f5dffeb35cb9d1b188f6fc900e637c4e",
+        "source": "readiness.json",
+        "source_sha256": "d2ead736634cad516cfc48d60bbb0fa120701f99e5fbb39388f1a5dbba61c177"
+      },
+      "ledger": {
+        "dual_ledger_verified": true,
+        "event_row_count": 4,
+        "semantic_sha256": "3d296dcfcfdaf1265c16642baba12554ca3d8b96a5d470a10f993f62affbdb9a",
+        "source": "regression/baselines/strict_ledger_core.v1.json",
+        "source_sha256": "017c3236ecad45fbc1f42b90e7e7c8ee110f72d2b454731a1d9882913dd0d4eb"
+      },
+      "nav": {
+        "columns": [
+          "strategy",
+          "trade_date",
+          "cash",
+          "market_value",
+          "total_equity",
+          "nav",
+          "position_count",
+          "gross_exposure"
+        ],
+        "order_sensitive": true,
+        "row_count": 3075,
+        "semantic_sha256": "e5f984a7dc8298aacdfb98a1c9afbc6d44b2cc86fea01f98fb067588ad6e91ff",
+        "source": "trusted_account_backtest_nav.csv",
+        "source_sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
+      },
+      "orders": {
+        "columns": [
+          "strategy",
+          "trade_date",
+          "symbol",
+          "side",
+          "price",
+          "shares",
+          "gross_amount",
+          "cost",
+          "reason"
+        ],
+        "order_sensitive": true,
+        "row_count": 3053,
+        "semantic_sha256": "172476b5633813dc4a1cebd12b8a1b3f2c86fe15587764a6c82805c02632c0a9",
+        "source": "trusted_account_backtest_trades.csv",
+        "source_sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e"
+      },
+      "ranking": {
+        "columns": [
+          "signal_date",
+          "strategy",
+          "rank",
+          "symbol",
+          "rank_score",
+          "pattern_adjusted_rank_score"
+        ],
+        "order_sensitive": true,
+        "row_count": 15325,
+        "semantic_sha256": "8a929f84257a3a6b3a7945fb83778860a2e4b4e21ca2317c19df8c12a30a65ef",
+        "source": "trusted_account_backtest_candidates.csv",
+        "source_sha256": "4db0bfa983518cab12f6db3d7ec86c52412c87222dbed49e53766e2f00c47b16"
+      },
+      "weights": {
+        "columns": [
+          "signal_date",
+          "strategy",
+          "rank",
+          "symbol",
+          "raw_effective_weight",
+          "adjusted_target_weight"
+        ],
+        "order_sensitive": true,
+        "row_count": 15325,
+        "semantic_sha256": "c406a34bf9f95e4c6841163cc11430a9b42d3fa0d6bcc827da2d397467dcb2b3",
+        "source": "trusted_account_backtest_candidates.csv",
+        "source_sha256": "4db0bfa983518cab12f6db3d7ec86c52412c87222dbed49e53766e2f00c47b16"
+      }
+    },
+    "schema_version": "dynamic_champion_content_golden_v1"
+  },
+  "metadata": {
+    "approved_by": "User authorization: implement PR-A through PR-I without intermediate review",
+    "change_reason": "Initial PR-H content-addressed baseline for frozen dynamic champion research and readiness evidence",
+    "production_semantics_changed": false,
+    "update_policy": "new_version_only_no_overwrite"
+  },
+  "schema_version": "dynamic_champion_content_golden_v1"
+}
