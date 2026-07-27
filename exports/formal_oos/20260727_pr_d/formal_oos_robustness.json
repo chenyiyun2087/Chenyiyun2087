@@ -1,0 +1,12 @@
+{
+  "analysis_package": "exports/formal_oos/input_not_available",
+  "blockers": [
+    "formal_run_not_verified"
+  ],
+  "economic_gates_passed": false,
+  "evidence_sha256": "63d551530312335ee985ebb57c0f2e38ccd3f668ca889c119834a625fc075652",
+  "formal_manifest": "exports/formal_runs/20260727_pr_c/formal_run_precheck.json",
+  "schema_version": "formal_oos_robustness_v1",
+  "status": "BLOCKED",
+  "technical_evidence_complete": false
+}

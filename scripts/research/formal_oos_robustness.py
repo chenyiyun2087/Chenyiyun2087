@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import NormalDist
@@ -20,10 +21,13 @@ import numpy as np
 import pandas as pd
 import yaml
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from scripts.research.statistical_robustness import compute_cpcv_pbo
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ACCEPTANCE_PATH = PROJECT_ROOT / "config" / "production_acceptance.yaml"
 FACTORS = (
     "market_beta",
