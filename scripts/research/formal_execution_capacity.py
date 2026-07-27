@@ -458,6 +458,22 @@ def evaluate(
                                 overfill_oids = [oid for oid in common_overfill if fills_qty[oid] > orders_qty.get(oid, 0) * 1.001]
                                 if overfill_oids:
                                     blockers.append(f"capacity_overfill_orders:{label}:count={len(overfill_oids)}")
+                                # Canonicalize symbol/side before cross-validation
+                                orders_df["symbol"] = orders_df["symbol"].astype("string").str.strip().str.zfill(6)
+                                fills_df["symbol"] = fills_df["symbol"].astype("string").str.strip().str.zfill(6)
+                                orders_df["side"] = orders_df["side"].astype("string").str.strip().str.upper()
+                                fills_df["side"] = fills_df["side"].astype("string").str.strip().str.upper()
+                                VALID_SIDES = {"BUY", "SELL"}
+                                if orders_df["symbol"].eq("").any() or orders_df["symbol"].isna().any():
+                                    blockers.append(f"capacity_orders_empty_symbol:{label}")
+                                if fills_df["symbol"].eq("").any() or fills_df["symbol"].isna().any():
+                                    blockers.append(f"capacity_fills_empty_symbol:{label}")
+                                bad_side_o = set(orders_df["side"].unique()) - VALID_SIDES
+                                bad_side_f = set(fills_df["side"].unique()) - VALID_SIDES
+                                if bad_side_o:
+                                    blockers.append(f"capacity_orders_invalid_side:{label}:{bad_side_o}")
+                                if bad_side_f:
+                                    blockers.append(f"capacity_fills_invalid_side:{label}:{bad_side_f}")
                                 # P0-7: Symbol/Side must match between orders and fills
                                 oid_sym = orders_df.set_index("order_id")[["symbol", "side"]]
                                 fid_sym = fills_df.set_index("fill_id")[["order_id", "symbol", "side"]].rename(
@@ -478,20 +494,23 @@ def evaluate(
                                 raw_fully_filled = sum(1 for oid in common_oids if fills_qty[oid] >= orders_qty.get(oid, 1) * 0.999)
                                 raw_partial = sum(1 for oid in common_oids if 0 < fills_qty[oid] < orders_qty.get(oid, 1) * 0.999)
                                 total_failed_from_raw = len(no_fill_oids)
-                                # P0-6: Derive delayed_fill from raw timestamps
+                                # P0-6: Derive delayed_fill from raw timestamps — fail-closed
                                 raw_delayed_count = 0
-                                try:
-                                    orders_time = orders_df.set_index("order_id")["submitted_at"]
-                                    fills_time = fills_df.groupby("order_id")["filled_at"].min()
-                                    common_time = sorted(set(orders_time.index) & set(fills_time.index))
-                                    submitted = pd.to_datetime(orders_time[common_time], utc=True, errors="coerce")
-                                    first_filled = pd.to_datetime(fills_time[common_time], utc=True, errors="coerce")
-                                    valid = submitted.notna() & first_filled.notna()
-                                    latency = (first_filled[valid] - submitted[valid]).dt.total_seconds()
-                                    max_latency_seconds = float(acceptance.get("execution", {}).get("max_fill_latency_seconds", 300))
-                                    raw_delayed_count = int((latency > max_latency_seconds).sum())
-                                except (ValueError, KeyError, pd.errors.OutOfBoundsDatetime):
-                                    pass
+                                orders_df["submitted_ts"] = pd.to_datetime(orders_df["submitted_at"], utc=True, errors="coerce")
+                                fills_df["filled_ts"] = pd.to_datetime(fills_df["filled_at"], utc=True, errors="coerce")
+                                if orders_df["submitted_ts"].isna().any():
+                                    blockers.append(f"capacity_orders_invalid_submitted_at:{label}")
+                                if fills_df["filled_ts"].isna().any():
+                                    blockers.append(f"capacity_fills_invalid_filled_at:{label}")
+                                if not orders_df["submitted_ts"].isna().any() and not fills_df["filled_ts"].isna().any():
+                                    first_fill = fills_df.groupby("order_id")["filled_ts"].min()
+                                    submitted_by_order = orders_df.set_index("order_id")["submitted_ts"]
+                                    common = sorted(set(first_fill.index) & set(submitted_by_order.index))
+                                    latency_s = (first_fill[common] - submitted_by_order[common]).dt.total_seconds()
+                                    if (latency_s < 0).any():
+                                        blockers.append(f"capacity_negative_fill_latency:{label}")
+                                    max_latency_seconds = float(acceptance.get("max_fill_latency_seconds", 300))
+                                    raw_delayed_count = int((latency_s > max_latency_seconds).sum())
                                 # Cross-validate delayed_fill against metrics and cell
                                 md = int(metrics_data.get("delayed_fill_count", -1))
                                 cd = int(cell.get("delayed_fill_count", -1))

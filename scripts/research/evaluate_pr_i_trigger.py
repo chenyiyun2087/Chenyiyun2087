@@ -107,16 +107,12 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
             }
         )
 
-    technical_complete = not missing_keys and len(payloads) == len(expected) and all(
-        item["passed"] for item in checks
-    )
     # P0-2: Cross-validate formal_run_id — ALL must be present and identical
     run_ids: list[str | None] = []
     for pr_key in ("pr_c_formal_run", "pr_d_oos_robustness", "pr_e_execution_capacity"):
         rid = payloads.get(pr_key, {}).get("formal_run_id")
         run_ids.append(str(rid) if isinstance(rid, str) and rid else None)
     if any(x is None for x in run_ids):
-        technical_complete = False
         checks.append({
             "check": "pr_cross_formal_run_id_consistency",
             "passed": False,
@@ -124,7 +120,6 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
             "required": "PR-C/PR-D/PR-E must all have formal_run_id",
         })
     elif len(set(run_ids)) != 1:
-        technical_complete = False
         checks.append({
             "check": "pr_cross_formal_run_id_consistency",
             "passed": False,
@@ -132,30 +127,39 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
             "required": "PR-C/PR-D/PR-E must share the same formal_run_id",
         })
 
-    # P0-3: Verify evidence self-hash integrity for PR-C/D/E
-    for pr_key in ("pr_c_formal_run", "pr_d_oos_robustness", "pr_e_execution_capacity"):
+    # P0-3: Verify self-hash integrity for PR-C (manifest_sha256) and PR-D/E (evidence_sha256)
+    HASH_FIELDS = {
+        "pr_c_formal_run": "manifest_sha256",
+        "pr_d_oos_robustness": "evidence_sha256",
+        "pr_e_execution_capacity": "evidence_sha256",
+    }
+    for pr_key, hash_field in HASH_FIELDS.items():
         p = payloads.get(pr_key, {})
-        declared_sha = str(p.get("evidence_sha256") or "")
+        declared_sha = str(p.get(hash_field) or "")
         if not declared_sha or len(declared_sha) != 64:
             checks.append({
-                "check": f"{pr_key}_evidence_sha256",
+                "check": f"{pr_key}_{hash_field}",
                 "passed": False,
                 "actual": "missing_or_invalid",
-                "required": "valid 64-char evidence_sha256",
+                "required": f"valid 64-char {hash_field}",
             })
         else:
-            # Verify self-hash: recompute SHA from payload excluding evidence_sha256
-            payload_without_sha = {k: v for k, v in p.items() if k != "evidence_sha256"}
+            payload_without_sha = {k: v for k, v in p.items() if k != hash_field}
             computed = hashlib.sha256(
                 json.dumps(payload_without_sha, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             if computed != declared_sha:
                 checks.append({
-                    "check": f"{pr_key}_evidence_sha256",
+                    "check": f"{pr_key}_{hash_field}",
                     "passed": False,
                     "actual": f"computed={computed[:16]}... != declared={declared_sha[:16]}...",
-                    "required": "evidence_sha256 matches canonical self-hash",
+                    "required": f"{hash_field} matches canonical self-hash",
                 })
+
+    # P0: Compute technical_complete ONCE after ALL checks (not before)
+    technical_complete = not missing_keys and len(payloads) == len(expected) and all(
+        item["passed"] for item in checks
+    )
 
     oos = payloads.get("pr_d_oos_robustness", {})
     capacity = payloads.get("pr_e_execution_capacity", {})

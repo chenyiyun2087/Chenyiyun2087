@@ -12,10 +12,10 @@ def _write(path: Path, payload: dict) -> Path:
     return path
 
 
-def _signed(payload: dict) -> dict:
-    """Add canonical evidence_sha256 self-hash."""
+def _signed(payload: dict, hash_field: str = "evidence_sha256") -> dict:
+    """Add canonical self-hash."""
     result = dict(payload)
-    result["evidence_sha256"] = hashlib.sha256(
+    result[hash_field] = hashlib.sha256(
         json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return result
@@ -38,7 +38,7 @@ def _technical_sources(tmp_path: Path, *, economics_passed: bool) -> dict[str, P
                 "dual_ledger_results": [
                     {"strategy": f"s{i}", "status": "VERIFIED"} for i in range(5)
                 ],
-            }),
+            }, hash_field="manifest_sha256"),
         ),
         "pr_d_oos_robustness": _write(
             tmp_path / "d.json",
