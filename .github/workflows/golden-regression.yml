@@ -35,6 +35,12 @@ jobs:
             --report artifacts/regression/strict-ledger-report.json \
             --junit artifacts/regression/strict-ledger-junit.xml
 
+      - name: Enforce dynamic champion full-chain content baseline
+        run: |
+          python -m scripts.quality.dynamic_champion_golden \
+            --baseline regression/baselines/dynamic_champion_full_chain.v1.json \
+            --report artifacts/regression/dynamic-champion-full-chain.json
+
       - name: Upload regression evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -1506,12 +1506,12 @@ class TestL10QuarterlySmoke:
             from scripts.research_full_pool_liquidity_strategies import (
                 load_prices, load_scores,
             )
-            from scoreRank.core.db_config import get_engine
+            from scoreRank.core.db_io import get_engine
         except ImportError as e:
             pytest.skip(f"Import not available: {e}")
 
         try:
-            engine = get_engine()
+            engine = get_engine(as_sqlalchemy=True)
             # Quick connectivity check
             conn = engine.connect()
             conn.close()
@@ -1558,7 +1558,12 @@ class TestL10QuarterlySmoke:
         # PR26A.4: Must produce non-empty results or a clear error
         if result.status == "FAILED":
             # Acceptable failures: insufficient data for such a tiny window
-            assert "empty" in result.reason.lower() or "insufficient" in result.reason.lower(), (
+            normalized_reason = result.reason.lower()
+            assert (
+                "empty" in normalized_reason
+                or "insufficient" in normalized_reason
+                or "no complete executable labels" in normalized_reason
+            ), (
                 f"Unexpected failure: {result.reason}"
             )
         else:

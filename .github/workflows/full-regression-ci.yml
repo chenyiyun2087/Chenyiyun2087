@@ -50,17 +50,9 @@ jobs:
           done
       - name: Setup test schema
         run: |
-          mysql -h 127.0.0.1 -u root -ptest_password -e "CREATE DATABASE IF NOT EXISTS chenyiyun"
-          mysql -h 127.0.0.1 -u root -ptest_password order_test_db << 'SQL'
-          CREATE TABLE IF NOT EXISTS chenyiyun.dim_trade_cal (
-            cal_date DATE PRIMARY KEY, exchange VARCHAR(8), is_open TINYINT(1)
-          );
-          INSERT INTO chenyiyun.dim_trade_cal (cal_date, exchange, is_open) VALUES
-            ('2026-06-19','SSE',1),('2026-06-22','SSE',1),('2026-06-23','SSE',1),
-            ('2026-06-24','SSE',1),('2026-06-25','SSE',1),('2026-06-26','SSE',1),
-            ('2026-06-29','SSE',1),('2026-06-30','SSE',1)
-          ON DUPLICATE KEY UPDATE is_open=VALUES(is_open);
-          SQL
+          python scripts/quality/seed_ci_mysql.py \
+            --db-url mysql+pymysql://root:test_password@127.0.0.1:3306/order_test_db \
+            --allow-ci-fixture
       - name: Production core tests
         run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py test/test_production_health_order_gating.py -v
       - name: PR18 Independent Oracle and Evidence tests
@@ -76,6 +68,8 @@ jobs:
       - name: PR26A.5 unit tests (non-database)
         run: python -m pytest test/test_pr26a4_upgrade.py -v -m "not integration"
       - name: PR26A.5 quarterly smoke test (database)
+        env:
+          CHENYIYUN_DB_URL: mysql+pymysql://root:test_password@127.0.0.1:3306/chenyiyun
         run: python -m pytest test/test_pr26a4_upgrade.py::TestL10QuarterlySmoke -v -m integration
       - name: Statistical robustness tests
         run: |
