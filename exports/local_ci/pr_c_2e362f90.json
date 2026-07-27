@@ -1,0 +1,82 @@
+{
+  "attestation_sha256": "38f1f7ea2f32fa14a828fbd64dc3f1a983c5cc32c40a734f793edbb0b7259c68",
+  "checks": [
+    {
+      "command": [
+        ".venv-ci311/bin/python",
+        "-m",
+        "compileall",
+        "-q",
+        "runtime",
+        "scripts/ops",
+        "scripts/research",
+        "web"
+      ],
+      "duration_seconds": 0.086,
+      "name": "compile_production_modules",
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_tail": "",
+      "passed": true,
+      "return_code": 0
+    },
+    {
+      "command": [
+        ".venv-ci311/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "test/test_trusted_production_closure.py",
+        "test/test_p0_trustworthiness.py",
+        "test/test_production_config_consistency.py",
+        "test/test_production_health_order_gating.py",
+        "test/test_quant_validation_v2.py",
+        "regression/tests"
+      ],
+      "duration_seconds": 2.182,
+      "name": "fast_gate",
+      "output_sha256": "bc0d7df19edae8f365131990e1a4c618f5d6618b5b7006e93be08ece33d24f61",
+      "output_tail": "........................................................................ [ 94%]\n....                                                                     [100%]\n=============================== warnings summary ===============================\ntest/test_production_health_order_gating.py::TestDatabaseCredentialSafety::test_empty_root_password_rejected\n  /Volumes/extension/projects/Chenyiyun2087/test/test_production_health_order_gating.py:215: RuntimeWarning: Using MySQL root with empty password. Set CHENYIYUN_DB_PASSWORD or CHENYIYUN_DB_URL for production use.\n    assert not validate_db_credentials(), \"Empty root password must be rejected\"\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n76 passed, 1 warning in 1.89s\n",
+      "passed": true,
+      "return_code": 0
+    },
+    {
+      "command": [
+        ".venv-ci311/bin/python",
+        "scripts/ops/check_no_hardcoded_db_credentials.py"
+      ],
+      "duration_seconds": 2.606,
+      "name": "credential_scan",
+      "output_sha256": "eac1123bf43d60c1a145b869a135053b6c5f75cf15e357686d50aef19858530e",
+      "output_tail": "OK: no literal database credentials in Git-visible Python/JSON files\n",
+      "passed": true,
+      "return_code": 0
+    },
+    {
+      "command": [
+        ".venv-ci311/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "test/test_immutable_formal_runner.py",
+        "test/test_formal_readiness_preflight.py",
+        "test/test_strict_execution_ledger.py",
+        "test/test_replay_strict_execution_ledger.py"
+      ],
+      "duration_seconds": 0.668,
+      "name": "pr_targeted_tests",
+      "output_sha256": "7c60b198769b4c5f84dfca87420545a94986e04d5421dd92aff21086ca243cdc",
+      "output_tail": "..........................                                               [100%]\n26 passed in 0.46s\n",
+      "passed": true,
+      "return_code": 0
+    }
+  ],
+  "generated_at": "2026-07-27T05:19:36.836300+00:00",
+  "git_commit_sha": "2e362f9008c1f65f4116feb9b56f06c4500a5a2f",
+  "git_tree_clean_before_run": true,
+  "hosted_ci_status": "UNAVAILABLE_BILLING",
+  "python_executable": ".venv-ci311/bin/python",
+  "python_version": "3.11.15",
+  "schema_version": "local_ci_attestation_v1",
+  "scope": "LOCAL_REPRODUCIBLE_FALLBACK",
+  "status": "PASS"
+}
