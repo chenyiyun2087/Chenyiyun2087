@@ -54,6 +54,15 @@ def _canonical_sha(payload: Any) -> str:
     ).hexdigest()
 
 
+def _sha(path: Path) -> str:
+    """SHA-256 of a single file (streaming, 1 MiB chunks)."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _is_number(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
@@ -168,10 +177,51 @@ def evaluate(formal_manifest: Path, matrix_path: Path) -> dict[str, Any]:
             if not artifact_dir.is_dir():
                 blockers.append(f"capacity_artifact_dir_missing:{label}")
             else:
-                for req_file in ("execution_metrics.json", "nav.csv", "artifact_manifest.json"):
-                    fpath = artifact_dir / req_file
-                    if not fpath.is_file():
-                        blockers.append(f"capacity_artifact_file_missing:{label}:{req_file}")
+                # P0-12: Deep artifact verification — read manifest, verify SHAs, require orders+fills
+                artifact_manifest_path = artifact_dir / "artifact_manifest.json"
+                if not artifact_manifest_path.is_file():
+                    blockers.append(f"capacity_artifact_manifest_missing:{label}")
+                else:
+                    try:
+                        art_manifest = json.loads(artifact_manifest_path.read_text(encoding="utf-8"))
+                        # Verify formal_run_id in artifact manifest matches
+                        art_run_id = str(art_manifest.get("formal_run_id") or "")
+                        if art_run_id and art_run_id != formal_run_id:
+                            blockers.append(f"capacity_artifact_run_id_mismatch:{label}")
+                        # Verify artifact_sha256 matches the manifest's self-hash
+                        manifest_files = art_manifest.get("files") or {}
+                        manifest_self_sha = str(art_manifest.get("manifest_sha256") or "")
+                        if manifest_self_sha:
+                            manifest_content = {k: v for k, v in art_manifest.items() if k != "manifest_sha256"}
+                            computed_manifest_sha = hashlib.sha256(
+                                json.dumps(manifest_content, sort_keys=True, separators=(",", ":")).encode()
+                            ).hexdigest()
+                            if computed_manifest_sha != manifest_self_sha:
+                                blockers.append(f"capacity_artifact_manifest_sha_mismatch:{label}")
+                            if artifact_sha != manifest_self_sha:
+                                blockers.append(f"capacity_artifact_sha_vs_manifest_mismatch:{label}")
+                        # Require orders.csv and fills.csv
+                        for req_file in ("execution_metrics.json", "nav.csv", "orders.csv", "fills.csv"):
+                            fpath = artifact_dir / req_file
+                            if not fpath.is_file():
+                                blockers.append(f"capacity_artifact_file_missing:{label}:{req_file}")
+                            elif req_file in manifest_files:
+                                declared_file_sha = str(manifest_files[req_file].get("sha256") or "")
+                                if declared_file_sha:
+                                    actual_file_sha = _sha(fpath)
+                                    if actual_file_sha != declared_file_sha:
+                                        blockers.append(
+                                            f"capacity_artifact_file_sha_mismatch:{label}:{req_file}"
+                                        )
+                        # Recompute partial_fill_ratio from actual data
+                        if "partial_fill_count" in manifest_files:
+                            pf_count = int(cell.get("partial_fill_count", 0))
+                            expected_pf_ratio = pf_count / order_count if order_count > 0 else 0.0
+                            actual_pf_ratio = float(cell.get("partial_fill_count", 0)) / order_count if order_count > 0 else 0.0
+                            if not math.isclose(actual_pf_ratio, expected_pf_ratio, rel_tol=0, abs_tol=1e-9):
+                                blockers.append(f"capacity_partial_fill_ratio_recomputation_mismatch:{label}")
+                    except (json.JSONDecodeError, OSError) as exc:
+                        blockers.append(f"capacity_artifact_manifest_read_error:{label}:{type(exc).__name__}")
         if all(_is_number(cell.get(field)) for field in (
             "failed_order_count",
             "order_count",

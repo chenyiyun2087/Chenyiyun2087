@@ -348,6 +348,38 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     )]
     if not folds:
         return _blocked(formal_manifest, analysis_package, ["oos_folds_missing"])
+
+    # P0-8: Validate selected_model_config.json if present — binds actual model params per fold
+    selected_config_path = analysis_package / "selected_model_config.json"
+    selected_configs: dict[str, dict[str, Any]] = {}
+    if selected_config_path.is_file():
+        selected_raw = json.loads(selected_config_path.read_text(encoding="utf-8"))
+        selected_folds = selected_raw.get("folds") or {}
+        fold_map_temp = {f.fold_id: f for f in folds}
+        for fid, fconfig in selected_folds.items():
+            if fid not in fold_map_temp:
+                return _blocked(
+                    formal_manifest, analysis_package,
+                    [f"selected_model_config_unknown_fold:{fid}"],
+                )
+            declared_sha = str(fconfig.get("model_config_sha256") or "")
+            if not declared_sha or len(declared_sha) != 64:
+                return _blocked(
+                    formal_manifest, analysis_package,
+                    [f"selected_model_config_invalid_sha:{fid}"],
+                )
+            # Recompute SHA from the config (excluding self-sha)
+            config_without_sha = {k: v for k, v in fconfig.items() if k != "model_config_sha256"}
+            computed = hashlib.sha256(
+                json.dumps(config_without_sha, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            if computed != declared_sha:
+                return _blocked(
+                    formal_manifest, analysis_package,
+                    [f"selected_model_config_sha_mismatch:{fid}"],
+                )
+            selected_configs[fid] = fconfig
+
     returns = pd.read_csv(analysis_package / "oos_returns.csv")
     required_return_columns = {
         "fold_id",
@@ -366,6 +398,14 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
             analysis_package,
             [f"oos_return_column_missing:{name}" for name in absent],
         )
+    # P0-8: If selected_model_config present, validate per-row model_config_sha matches
+    if selected_configs and "model_config_sha" in returns.columns:
+        for fid, fconfig in selected_configs.items():
+            expected_sha = str(fconfig.get("model_config_sha256") or "")
+            row_shas = set(returns.loc[returns["fold_id"] == fid, "model_config_sha"].astype(str))
+            if row_shas and row_shas != {expected_sha}:
+                contamination.append(f"model_config_sha_row_mismatch:{fid}")
+
     returns["trade_date"] = pd.to_datetime(returns["trade_date"], errors="coerce")
     returns["parameter_selected_at"] = pd.to_datetime(
         returns["parameter_selected_at"], errors="coerce"

@@ -12,15 +12,34 @@ from scripts.research.run_full_history_strict_backtest import (
 
 def _package(tmp_path):
     formal = tmp_path / "formal.json"
-    # Create dummy artifact directories under tmp_path
+    # P0-12: Create artifact directories with proper manifest, orders, fills
     capacity_root = tmp_path / "capacity_artifacts"
     for size in ACCOUNT_SIZES:
         for scenario, _cost, _slippage in EXECUTION_SCENARIOS:
             adir = capacity_root / "formal-fixture" / str(size) / scenario
             adir.mkdir(parents=True, exist_ok=True)
             (adir / "execution_metrics.json").write_text("{}")
-            (adir / "nav.csv").write_text("nav\n1.0")
-            (adir / "artifact_manifest.json").write_text("{}")
+            (adir / "nav.csv").write_text("trade_date,nav\n2024-01-01,1.0\n")
+            (adir / "orders.csv").write_text("symbol,side,shares\n000001,BUY,100\n")
+            (adir / "fills.csv").write_text("symbol,side,shares,price\n000001,BUY,100,10.0\n")
+            # Build proper artifact manifest with file SHAs
+            art_files = {}
+            for fname in ("execution_metrics.json", "nav.csv", "orders.csv", "fills.csv"):
+                art_files[fname] = {
+                    "sha256": hashlib.sha256((adir / fname).read_bytes()).hexdigest()
+                }
+            art_manifest_content = {
+                "schema_version": "capacity_artifact_manifest_v1",
+                "formal_run_id": "formal-fixture",
+                "account_size": size,
+                "scenario": scenario,
+                "files": art_files,
+            }
+            manifest_self = hashlib.sha256(
+                json.dumps(art_manifest_content, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            art_manifest_content["manifest_sha256"] = manifest_self
+            (adir / "artifact_manifest.json").write_text(json.dumps(art_manifest_content))
     formal_payload = {
         "status": "VERIFIED",
         "formal_run_id": "formal-fixture",
@@ -57,7 +76,12 @@ def _package(tmp_path):
                     "max_drawdown": -0.2,
                     "drawdown_widening": 0.0,
                     "artifact_sha256": hashlib.sha256(
-                        f"{size}:{scenario}".encode()
+                        json.dumps(
+                            {k: v for k, v in json.loads(
+                                (capacity_root / "formal-fixture" / str(size) / scenario / "artifact_manifest.json").read_text()
+                            ).items() if k != "manifest_sha256"},
+                            sort_keys=True, separators=(",", ":")
+                        ).encode()
                     ).hexdigest(),
                 }
             )
