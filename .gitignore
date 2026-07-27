@@ -23,6 +23,7 @@ __pycache__/
 /.agents/
 /.claude/
 /.codex/
+/.venv-ci311/
 /.env
 /.env.*
 !/.env.example

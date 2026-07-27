@@ -58,6 +58,7 @@ def test_fixed_capital_release_permissions_fail_closed():
     assert frozen["checkout_status"] == "BLOCKED"
     assert frozen["status"] == "BLOCKED"
     assert set(frozen["checkout_mismatches"]) == {
+        "config/pit_snapshot.yaml",
         "config/production_acceptance.yaml",
         "config/production_strategy.yaml",
     }
