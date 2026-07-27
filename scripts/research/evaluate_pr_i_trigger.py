@@ -21,7 +21,7 @@ DEFAULT_SOURCES = {
     "pr_b_formal_readiness": PROJECT_ROOT
     / "exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
     "pr_c_formal_run": PROJECT_ROOT
-    / "exports/formal_runs/20260727_pr_c/formal_run_precheck.json",
+    / "exports/formal_runs/20260727_pr_c/formal_run_manifest.json",
     "pr_d_oos_robustness": PROJECT_ROOT
     / "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
     "pr_e_execution_capacity": PROJECT_ROOT
@@ -85,6 +85,8 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
         "pr_b_formal_readiness": lambda p: p.get("status") == "READY_FOR_FORMAL_RUN",
         "pr_c_formal_run": lambda p: p.get("status") == "VERIFIED"
         and bool(p.get("dual_ledger_results"))
+        and len(p.get("dual_ledger_results", [])) == 5
+        and len({item.get("strategy") for item in p.get("dual_ledger_results", [])}) == 5
         and all(
             item.get("status") == "VERIFIED"
             for item in p.get("dual_ledger_results", [])
@@ -146,7 +148,7 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
         else:
             payload_without_sha = {k: v for k, v in p.items() if k != hash_field}
             computed = hashlib.sha256(
-                json.dumps(payload_without_sha, sort_keys=True, separators=(",", ":")).encode()
+                json.dumps(payload_without_sha, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
             ).hexdigest()
             if computed != declared_sha:
                 checks.append({

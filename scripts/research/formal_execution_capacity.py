@@ -458,16 +458,33 @@ def evaluate(
                                 overfill_oids = [oid for oid in common_overfill if fills_qty[oid] > orders_qty.get(oid, 0) * 1.001]
                                 if overfill_oids:
                                     blockers.append(f"capacity_overfill_orders:{label}:count={len(overfill_oids)}")
-                                # Canonicalize symbol/side before cross-validation
-                                orders_df["symbol"] = orders_df["symbol"].astype("string").str.strip().str.zfill(6)
-                                fills_df["symbol"] = fills_df["symbol"].astype("string").str.strip().str.zfill(6)
+                                # Canonicalize symbol: strip, check empty BEFORE zfill, validate 6-digit
+                                orders_sym = orders_df["symbol"].astype("string").str.strip()
+                                fills_sym = fills_df["symbol"].astype("string").str.strip()
+                                if orders_sym.isna().any() or orders_sym.eq("").any():
+                                    blockers.append(f"capacity_orders_empty_symbol:{label}")
+                                if fills_sym.isna().any() or fills_sym.eq("").any():
+                                    blockers.append(f"capacity_fills_empty_symbol:{label}")
+                                orders_df["symbol"] = orders_sym.str.zfill(6)
+                                fills_df["symbol"] = fills_sym.str.zfill(6)
+                                import re as _re
+                                if not orders_df["symbol"].str.fullmatch(_re.compile(r"\d{6}")).all():
+                                    blockers.append(f"capacity_orders_invalid_symbol_format:{label}")
+                                if not fills_df["symbol"].str.fullmatch(_re.compile(r"\d{6}")).all():
+                                    blockers.append(f"capacity_fills_invalid_symbol_format:{label}")
+                                if orders_df["symbol"].eq("000000").any():
+                                    blockers.append(f"capacity_orders_zero_symbol:{label}")
+                                if fills_df["symbol"].eq("000000").any():
+                                    blockers.append(f"capacity_fills_zero_symbol:{label}")
+                                # Status: validate terminal order status enum
+                                VALID_STATUSES = {"SUBMITTED", "FILLED", "PARTIALLY_FILLED", "REJECTED", "CANCELLED", "EXPIRED", "UNFILLED"}
+                                raw_statuses = set(orders_df["status"].astype("string").str.strip().str.upper().unique())
+                                unknown_statuses = raw_statuses - VALID_STATUSES
+                                if unknown_statuses:
+                                    blockers.append(f"capacity_orders_unknown_status:{label}:{sorted(unknown_statuses)}")
                                 orders_df["side"] = orders_df["side"].astype("string").str.strip().str.upper()
                                 fills_df["side"] = fills_df["side"].astype("string").str.strip().str.upper()
                                 VALID_SIDES = {"BUY", "SELL"}
-                                if orders_df["symbol"].eq("").any() or orders_df["symbol"].isna().any():
-                                    blockers.append(f"capacity_orders_empty_symbol:{label}")
-                                if fills_df["symbol"].eq("").any() or fills_df["symbol"].isna().any():
-                                    blockers.append(f"capacity_fills_empty_symbol:{label}")
                                 bad_side_o = set(orders_df["side"].unique()) - VALID_SIDES
                                 bad_side_f = set(fills_df["side"].unique()) - VALID_SIDES
                                 if bad_side_o:
@@ -509,7 +526,12 @@ def evaluate(
                                     latency_s = (first_fill[common] - submitted_by_order[common]).dt.total_seconds()
                                     if (latency_s < 0).any():
                                         blockers.append(f"capacity_negative_fill_latency:{label}")
-                                    max_latency_seconds = float(acceptance.get("max_fill_latency_seconds", 300))
+                                    raw_lt = acceptance.get("max_fill_latency_seconds")
+                                    if not isinstance(raw_lt, (int, float)) or isinstance(raw_lt, bool) or not math.isfinite(float(raw_lt)) or float(raw_lt) < 0:
+                                        blockers.append(f"capacity_invalid_max_fill_latency_seconds:{label}")
+                                        max_latency_seconds = 300.0  # won't be used (blocker present)
+                                    else:
+                                        max_latency_seconds = float(raw_lt)
                                     raw_delayed_count = int((latency_s > max_latency_seconds).sum())
                                 # Cross-validate delayed_fill against metrics and cell
                                 md = int(metrics_data.get("delayed_fill_count", -1))
