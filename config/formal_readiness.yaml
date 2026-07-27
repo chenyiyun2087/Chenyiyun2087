@@ -1,0 +1,33 @@
+schema_version: formal_readiness_v1
+success_status: READY_FOR_FORMAL_RUN
+minimum_start_date: "2013-01-01"
+minimum_score_coverage: 0.98
+authoritative_calendar:
+  source: tushare_stock.dim_trade_cal
+  exchange: SSE
+  date_column: cal_date
+  open_column: is_open
+strategies:
+  - production_governed_vol_position
+  - production_governed_vol_position_v1_2b_dynamic_score
+  - production_governed_vol_position_v1_2b_gate_tuned
+  - production_governed_vol_position_v1_2b_execution_safe_uplift
+  - production_governed_vol_position_v1_2b_strict_precommit_uplift
+required_objects:
+  - trade_calendar.csv
+  - tradable_universe.csv
+  - scores.csv
+  - prices.csv
+  - adjustment_factors.csv
+  - corporate_actions.csv
+  - security_lifecycle.csv
+  - initial_account.json
+  - source_manifest.json
+primary_keys:
+  trade_calendar.csv: [cal_date, exchange]
+  tradable_universe.csv: [trade_date, symbol]
+  scores.csv: [trade_date, symbol, strategy]
+  prices.csv: [trade_date, symbol]
+  adjustment_factors.csv: [trade_date, symbol]
+  corporate_actions.csv: [event_date, symbol, action_type, publish_date]
+  security_lifecycle.csv: [symbol, effective_from]
