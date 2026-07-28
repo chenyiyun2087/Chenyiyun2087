@@ -323,7 +323,10 @@ def _blocked(
 def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     if not formal_manifest.is_file():
         return _blocked(formal_manifest, analysis_package, ["formal_manifest_missing"])
-    formal = json.loads(formal_manifest.read_text(encoding="utf-8"))
+    try:
+        formal = json.loads(formal_manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return _blocked(formal_manifest, analysis_package, [f"formal_manifest_invalid:{type(exc).__name__}"])
     # PR-H1: Reject fake manifests — must have full SHA chain, not just status=VERIFIED
     if formal.get("status") != "VERIFIED":
         return _blocked(formal_manifest, analysis_package, ["formal_run_not_verified"])
@@ -350,9 +353,11 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
             analysis_package,
             [f"analysis_object_missing:{name}" for name in missing],
         )
-    folds = [Fold(**item) for item in json.loads(
-        (analysis_package / "folds.json").read_text(encoding="utf-8")
-    )]
+    try:
+        folds_raw = json.loads((analysis_package / "folds.json").read_text(encoding="utf-8"))
+        folds = [Fold(**item) for item in folds_raw]
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        return _blocked(formal_manifest, analysis_package, [f"folds_json_invalid:{type(exc).__name__}"])
     if not folds:
         return _blocked(formal_manifest, analysis_package, ["oos_folds_missing"])
 

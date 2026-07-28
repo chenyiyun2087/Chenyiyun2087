@@ -491,6 +491,19 @@ def evaluate(
                                 unknown_statuses = status_set - VALID_STATUSES
                                 if unknown_statuses:
                                     blockers.append(f"capacity_orders_unknown_status:{label}:{sorted(unknown_statuses)}")
+                                # Status↔fill consistency: verify terminal status matches raw fill outcome
+                                status_by_oid = orders_df.set_index("order_id")["status"].str.strip().str.upper()
+                                filled_oids = set(fills_df["order_id"].unique())
+                                sample_oids = sorted(set(orders_df["order_id"]))[:50]  # sample check first 50
+                                for oid in sample_oids:
+                                    s = str(status_by_oid.get(oid, ""))
+                                    has_fill = oid in filled_oids
+                                    if s in ("FILLED", "PARTIALLY_FILLED") and not has_fill:
+                                        blockers.append(f"capacity_status_fill_mismatch:{label}:{oid}:status={s}:no_fill")
+                                        break
+                                    if s in ("REJECTED", "CANCELLED", "EXPIRED", "UNFILLED") and has_fill:
+                                        blockers.append(f"capacity_status_fill_mismatch:{label}:{oid}:status={s}:has_fill")
+                                        break
                                 orders_df["side"] = orders_df["side"].astype("string").str.strip().str.upper()
                                 fills_df["side"] = fills_df["side"].astype("string").str.strip().str.upper()
                                 VALID_SIDES = {"BUY", "SELL"}

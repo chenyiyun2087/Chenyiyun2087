@@ -23,20 +23,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.research.run_dual_ledger_acceptance import run as run_dual_ledger
 from scripts.research.run_full_history_strict_backtest import build_backtest_command
 from scripts.research.formal_readiness_preflight import evaluate_package
+from runtime.formal_contract import FORMAL_STRATEGIES
 from runtime.formal_evidence_binding import (
     check_clean_worktree,
     compute_formal_run_id,
     freeze_inputs,
     head_unchanged,
     validate_package_reality,
-)
-
-FORMAL_STRATEGIES = (
-    "production_governed_vol_position",
-    "production_governed_vol_position_v1_2b_dynamic_score",
-    "production_governed_vol_position_v1_2b_gate_tuned",
-    "production_governed_vol_position_v1_2b_execution_safe_uplift",
-    "production_governed_vol_position_v1_2b_strict_precommit_uplift",
 )
 
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "formal_readiness.yaml"

@@ -179,7 +179,6 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
 
     # PR-D/E must bind to PR-C's formal_manifest_sha256, frozen_bundle_sha256, acceptance_config_sha256
     BINDING_FIELDS = ("formal_manifest_sha256", "frozen_bundle_sha256", "acceptance_config_sha256")
-    pr_c_hash_field = "manifest_sha256"  # PR-C uses manifest_sha256, PR-D/E use formal_manifest_sha256
     pr_c_binding = {
         "formal_manifest_sha256": payloads.get("pr_c_formal_run", {}).get("manifest_sha256"),
         "frozen_bundle_sha256": payloads.get("pr_c_formal_run", {}).get("frozen_bundle_sha256"),
