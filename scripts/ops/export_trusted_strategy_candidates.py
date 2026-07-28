@@ -2172,7 +2172,7 @@ def _write_production_risk_decision(
             shadow_status VARCHAR(32) NULL,
             shadow_fail_streak INT NULL,
             shadow_worst_action VARCHAR(32) NULL,
-            config_sha VARCHAR(32) NULL,
+            config_sha VARCHAR(64) NULL,
             output_json_path VARCHAR(512) NULL,
             create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -2200,6 +2200,21 @@ def _write_production_risk_decision(
         existing_cols = _columns_for_table(engine, table)
         if "risk_governor_version" not in existing_cols:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN risk_governor_version VARCHAR(32) NULL AFTER risk_decision"))
+        schema_name, table_name = table.split(".", 1) if "." in table else (None, table)
+        config_sha_length = conn.execute(
+            text(
+                """
+                SELECT character_maximum_length
+                FROM information_schema.columns
+                WHERE table_schema = COALESCE(:schema_name, DATABASE())
+                  AND table_name = :table_name
+                  AND column_name = 'config_sha'
+                """
+            ),
+            {"schema_name": schema_name, "table_name": table_name},
+        ).scalar()
+        if config_sha_length is not None and int(config_sha_length) < 64:
+            conn.execute(text(f"ALTER TABLE {table} MODIFY COLUMN config_sha VARCHAR(64) NULL"))
         result = conn.execute(
             text(
                 f"""

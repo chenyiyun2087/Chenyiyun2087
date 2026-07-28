@@ -404,6 +404,14 @@ def test_score_recovery_evidence_requires_complete_core_fields():
     assert "STR_TO_DATE" in cursor.calls[0][0]
 
 
+def test_shadow_recovery_evidence_requires_target_execution_date():
+    cursor = FakeCursor([{"c": 1}])
+    evidence = _recovered_artifact(cursor, "trusted_strategy_shadow_monitor", "20260727")
+    assert evidence and "影子盘日级结果 1 行" in evidence
+    assert "execution_date=STR_TO_DATE" in cursor.calls[0][0]
+    assert cursor.calls[0][1] == ("20260727",)
+
+
 def test_replay_required_jobs_enqueue_as_replay(monkeypatch):
     monkeypatch.setattr(
         web_app,

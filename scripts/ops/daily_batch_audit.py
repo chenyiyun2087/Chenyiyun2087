@@ -200,6 +200,33 @@ def _recovered_artifact(cursor, task_name: str, business_date: str) -> str | Non
         if candidate_count > 0 and signal_count > 0:
             return f"补跑产物已核验：生产候选 {candidate_count} 行，每日信号 {signal_count} 行"
         return None
+    if task_name == "trusted_strategy_shadow_monitor":
+        cursor.execute(
+            """SELECT COUNT(*) AS c
+               FROM chenyiyun.ads_trusted_strategy_shadow_daily
+               WHERE execution_date=STR_TO_DATE(%s, '%%Y%%m%%d')""",
+            (business_date,),
+        )
+        row = cursor.fetchone() or {}
+        count = int(row.get("c") or 0)
+        if count > 0:
+            return f"补跑产物已核验：影子盘日级结果 {count} 行"
+        return None
+    if task_name == "trusted_strategy_performance_review":
+        review_root = PROJECT_ROOT / "exports" / "production_strategy_reviews"
+        for report_path in sorted(review_root.glob("*/strategy_performance_review.json"), reverse=True):
+            try:
+                payload = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            params = payload.get("params") or {}
+            outputs = payload.get("outputs") or {}
+            review_date = str(params.get("review_date") or "").replace("-", "")
+            json_path = Path(str(outputs.get("json_path") or report_path))
+            markdown_path = Path(str(outputs.get("markdown_path") or ""))
+            if review_date == business_date and json_path.is_file() and markdown_path.is_file():
+                return f"补跑产物已核验：收益复盘 {report_path.parent.name}"
+        return None
     if task_name == "sina_score":
         cursor.execute(
             """SELECT COUNT(*) AS c,
