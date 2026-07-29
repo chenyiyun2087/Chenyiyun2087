@@ -97,15 +97,20 @@ def replay_orders(
 
     actions = corporate_actions.copy() if corporate_actions is not None else pd.DataFrame()
     if not actions.empty:
-        needed = {"trade_date", "symbol", "cash_per_share", "share_ratio"}
+        needed = {"trade_date", "symbol", "action_type"}
         missing = sorted(needed - set(actions.columns))
         if missing:
             raise ValueError(f"oracle_corporate_actions_missing:{','.join(missing)}")
+        if "cash_per_share" not in actions:
+            actions["cash_per_share"] = 0
+        if "share_ratio" not in actions:
+            actions["share_ratio"] = actions.get("stock_ratio", 0)
         actions["trade_date"] = actions["trade_date"].astype(str)
         actions["symbol"] = actions["symbol"].astype(str)
 
     cash = _money(initial_capital)
     holdings: dict[str, int] = {}
+    unit_costs: dict[str, Decimal] = {}
     trade_rows: list[dict[str, object]] = []
     position_rows: list[dict[str, object]] = []
     nav_rows: list[dict[str, object]] = []
@@ -125,18 +130,65 @@ def replay_orders(
                     if required > cash:
                         raise RuntimeError(f"oracle_rights_cash_insufficient:{symbol}:{trade_date}")
                     cash -= required
-                    holdings[symbol] = shares + rights
+                    new_shares = shares + rights
+                    prior_cost = unit_costs.get(symbol, Decimal("0")) * Decimal(shares)
+                    holdings[symbol] = new_shares
+                    if new_shares:
+                        unit_costs[symbol] = (prior_cost + required) / Decimal(new_shares)
                 elif action_type == "delist_cash_settlement":
                     settlement = _decimal_or_zero(getattr(action, "settlement_price", 0))
                     cash += _money(Decimal(shares) * settlement)
                     holdings.pop(symbol, None)
+                    unit_costs.pop(symbol, None)
+                elif action_type == "delist_writeoff":
+                    holdings.pop(symbol, None)
+                    unit_costs.pop(symbol, None)
+                elif action_type == "share_conversion":
+                    ratio = _decimal_or_zero(
+                        getattr(action, "split_ratio", getattr(action, "share_ratio", 0))
+                    )
+                    new_symbol = str(getattr(action, "new_ts_code", "") or "").split(".")[0]
+                    if shares and (ratio <= 0 or not new_symbol):
+                        raise ValueError(f"oracle_invalid_share_conversion:{symbol}:{trade_date}")
+                    converted = int(
+                        (Decimal(shares) * ratio).to_integral_value(rounding=ROUND_HALF_UP)
+                    )
+                    old_total_cost = unit_costs.get(symbol, Decimal("0")) * Decimal(shares)
+                    holdings.pop(symbol, None)
+                    unit_costs.pop(symbol, None)
+                    if converted:
+                        existing = holdings.get(new_symbol, 0)
+                        existing_total = unit_costs.get(new_symbol, Decimal("0")) * Decimal(existing)
+                        holdings[new_symbol] = existing + converted
+                        unit_costs[new_symbol] = (
+                            existing_total + old_total_cost
+                        ) / Decimal(existing + converted)
                 elif action_type in {"rename", "st_change"}:
                     pass
                 else:
                     cash += _money(Decimal(shares) * _decimal_or_zero(action.cash_per_share))
-                    ratio = _decimal_or_zero(action.share_ratio)
-                    if shares and ratio:
-                        holdings[symbol] = int((Decimal(shares) * (Decimal("1") + ratio)).to_integral_value(rounding=ROUND_HALF_UP))
+                    ratio = _decimal_or_zero(getattr(action, "share_ratio", 0))
+                    if action_type == "split_merge":
+                        multiplier = Decimal("1") + _decimal_or_zero(
+                            getattr(action, "split_ratio", 0)
+                        )
+                    else:
+                        multiplier = Decimal("1") + ratio
+                    if shares and multiplier != Decimal("1"):
+                        if multiplier <= 0:
+                            raise ValueError(f"oracle_invalid_share_multiplier:{symbol}:{trade_date}")
+                        new_shares = int(
+                            (Decimal(shares) * multiplier).to_integral_value(
+                                rounding=ROUND_HALF_UP
+                            )
+                        )
+                        holdings[symbol] = new_shares
+                        if new_shares:
+                            unit_costs[symbol] = (
+                                unit_costs.get(symbol, Decimal("0"))
+                                * Decimal(shares)
+                                / Decimal(new_shares)
+                            )
 
         day_orders = order_frame[order_frame["execution_date"].eq(trade_date)].sort_values("order_id")
         for order in day_orders.itertuples(index=False):
@@ -174,7 +226,14 @@ def replay_orders(
                     rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_cash"})
                     continue
                 cash -= required
-                holdings[symbol] = holdings.get(symbol, 0) + shares
+                prior_shares = holdings.get(symbol, 0)
+                new_shares = prior_shares + shares
+                unit_costs[symbol] = (
+                    unit_costs.get(symbol, Decimal("0")) * Decimal(prior_shares)
+                    + notional
+                    + fee
+                ) / Decimal(new_shares)
+                holdings[symbol] = new_shares
             else:
                 if holdings.get(symbol, 0) < shares:
                     rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_shares"})
@@ -183,6 +242,7 @@ def replay_orders(
                 holdings[symbol] -= shares
                 if holdings[symbol] == 0:
                     del holdings[symbol]
+                    unit_costs.pop(symbol, None)
             trade_rows.append({
                 "order_id": order_id, "trade_date": trade_date, "symbol": symbol,
                 "side": side, "filled_shares": shares, "filled_price": float(open_price),
@@ -198,7 +258,7 @@ def replay_orders(
             close_price = Decimal(str(close_value))
             value = _money(close_price * Decimal(shares))
             market_value += value
-            position_rows.append({"trade_date": trade_date, "symbol": symbol, "shares": shares, "close_price": float(close_price), "market_value": float(value)})
+            position_rows.append({"trade_date": trade_date, "symbol": symbol, "shares": shares, "unit_cost": float(unit_costs.get(symbol, Decimal("0"))), "close_price": float(close_price), "market_value": float(value)})
         nav = cash + market_value
         nav_rows.append({"trade_date": trade_date, "cash": float(cash), "market_value": float(market_value), "nav": float(nav)})
 

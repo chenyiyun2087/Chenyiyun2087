@@ -139,6 +139,59 @@ def test_independent_ledger_and_reconciliation():
     assert mismatch.first_divergence_at == "2026-07-20"
 
 
+def test_independent_ledger_applies_share_conversion_and_preserves_cost_basis():
+    orders = pd.DataFrame(
+        [
+            {
+                "order_id": "buy-old",
+                "execution_date": "2026-07-20",
+                "symbol": "000001",
+                "side": "BUY",
+                "shares": 100,
+                "cost_rate": 0,
+            }
+        ]
+    )
+    market = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-07-20", "symbol": "000001",
+                "raw_open": 10, "raw_close": 10, "prev_raw_close": 10,
+                "is_tradable": True, "is_suspended": False, "is_listed": True,
+                "is_st": False, "price_tick": 0.01,
+            },
+            {
+                "trade_date": "2026-07-21", "symbol": "000002",
+                "raw_open": 5, "raw_close": 5, "prev_raw_close": 5,
+                "is_tradable": True, "is_suspended": False, "is_listed": True,
+                "is_st": False, "price_tick": 0.01,
+            },
+        ]
+    )
+    actions = pd.DataFrame(
+        [
+            {
+                "trade_date": "2026-07-21",
+                "symbol": "000001",
+                "action_type": "share_conversion",
+                "cash_per_share": 0,
+                "share_ratio": 0,
+                "split_ratio": 2,
+                "new_ts_code": "000002.SZ",
+            }
+        ]
+    )
+    result = replay_orders(
+        orders, market, initial_capital=10_000, corporate_actions=actions
+    )
+    converted = result.positions[
+        result.positions["trade_date"].eq("2026-07-21")
+    ].iloc[0]
+    assert converted["symbol"] == "000002"
+    assert converted["shares"] == 200
+    assert converted["unit_cost"] == pytest.approx(5.0)
+
+
 def test_open_execution_falls_back_to_five_minute_vwap_and_then_cash():
     bars = pd.DataFrame([
         {"timestamp": "2026-07-20 09:31:00", "price": 10.1, "volume": 100},

@@ -175,6 +175,7 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
             "at least one authoritative open date",
         )
     )
+    manifest_end = str(manifest.get("coverage_end") or "")
 
     business_columns = {
         "trade_calendar.csv": "cal_date",
@@ -233,12 +234,16 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
     )
     common_dates = set.intersection(*strategy_dates) if strategy_dates else set()
     missing_common = sorted(open_dates - common_dates)
+    extra_common = sorted(common_dates - open_dates)
     checks.append(
         Check(
             "five_strategy_common_dates",
-            not missing_common,
-            f"common={len(common_dates)};missing_open_dates={len(missing_common)}",
-            "all authoritative open dates shared by five strategies",
+            not missing_common and not extra_common,
+            (
+                f"common={len(common_dates)};missing_open_dates={len(missing_common)};"
+                f"extra_dates={len(extra_common)}"
+            ),
+            "five-strategy date intersection exactly equals authoritative open dates",
         )
     )
 
@@ -273,10 +278,86 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
             ),
         ]
     )
+    actions = frames["strict_corporate_actions.csv"].copy()
+    action_complete = actions.get(
+        "source_complete", pd.Series(False, index=actions.index)
+    ).astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
+    checks.append(
+        Check(
+            "corporate_action_rows_complete",
+            bool(action_complete.all()),
+            f"incomplete_rows={int((~action_complete).sum())}",
+            "all atomic events source_complete=true",
+        )
+    )
+    allowed_actions = {
+        "NONE",
+        "dividend_cash",
+        "stock_bonus",
+        "split_merge",
+        "rights_subscription",
+        "share_conversion",
+        "delist_cash_settlement",
+        "delist_writeoff",
+    }
+    action_types = actions.get(
+        "action_type", pd.Series("", index=actions.index)
+    ).astype(str)
+    unknown_actions = int((~action_types.isin(allowed_actions)).sum())
+    invalid_economics = pd.Series(False, index=actions.index)
+    requirements = {
+        "dividend_cash": ("cash_per_share", lambda value: value > 0),
+        "stock_bonus": ("stock_ratio", lambda value: value > 0),
+        "split_merge": ("split_ratio", lambda value: value > 0),
+        "rights_subscription": ("rights_ratio", lambda value: value > 0),
+        "share_conversion": ("split_ratio", lambda value: value > 0),
+        "delist_cash_settlement": (
+            "settlement_price",
+            lambda value: value >= 0,
+        ),
+    }
+    for event_type, (column, predicate) in requirements.items():
+        scoped = action_types.eq(event_type)
+        values = pd.to_numeric(
+            actions.get(column, pd.Series(np.nan, index=actions.index)),
+            errors="coerce",
+        )
+        invalid_economics |= scoped & (values.isna() | ~values.map(
+            lambda value: predicate(value) if pd.notna(value) else False
+        ))
+    rights_price = pd.to_numeric(
+        actions.get("rights_price", pd.Series(np.nan, index=actions.index)),
+        errors="coerce",
+    )
+    invalid_economics |= action_types.eq("rights_subscription") & (
+        rights_price.isna() | rights_price.lt(0)
+    )
+    if "new_ts_code" in actions:
+        invalid_economics |= action_types.eq("share_conversion") & actions[
+            "new_ts_code"
+        ].fillna("").astype(str).str.strip().isin({"", "nan"})
+    elif action_types.eq("share_conversion").any():
+        invalid_economics |= action_types.eq("share_conversion")
+    checks.extend(
+        [
+            Check(
+                "corporate_action_types",
+                unknown_actions == 0,
+                f"unknown_rows={unknown_actions}",
+                "known atomic economic event types",
+            ),
+            Check(
+                "corporate_action_economic_parameters",
+                not bool(invalid_economics.any()),
+                f"invalid_rows={int(invalid_economics.sum())}",
+                "required economic terms are finite and valid",
+            ),
+        ]
+    )
     account = json.loads((package / "initial_account.json").read_text(encoding="utf-8"))
     account_ok = (
         account.get("currency") == "CNY"
-        and float(account.get("initial_cash_cny") or 0) > 0
+        and float(account.get("initial_cash_cny") or 0) == 500_000
         and not account.get("positions")
     )
     checks.append(
@@ -284,7 +365,7 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
             "initial_account_state",
             account_ok,
             json.dumps(account, ensure_ascii=False, sort_keys=True),
-            "CNY, positive initial cash, empty positions",
+            "CNY 500,000 initial cash, empty positions",
         )
     )
 
@@ -293,6 +374,25 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
     prices_frame["trade_date"] = pd.to_datetime(
         prices_frame["trade_date"], errors="coerce"
     ).dt.strftime("%Y-%m-%d")
+    latest_open_date = max(open_dates) if open_dates else ""
+    latest_price_date = (
+        str(prices_frame["trade_date"].dropna().max())
+        if not prices_frame["trade_date"].dropna().empty
+        else ""
+    )
+    checks.append(
+        Check(
+            "dynamic_complete_end_date",
+            bool(latest_open_date)
+            and latest_price_date == latest_open_date
+            and manifest_end == latest_open_date,
+            (
+                f"calendar={latest_open_date};prices={latest_price_date};"
+                f"manifest={manifest_end}"
+            ),
+            "calendar latest open date = price max date = manifest coverage_end",
+        )
+    )
     universe_price_missing: set[tuple[str, str]] = set()
     for trade_date_val in sorted(universe["trade_date"].unique()):
         day_universe = set(

@@ -62,11 +62,17 @@ def _primary_replay(orders: pd.DataFrame, market: pd.DataFrame, corporate_action
                     action_type=str(row.get("action_type") or "dividend_cash"),
                     source_event_id=str(row.get("source_event_id") or f"{row['symbol']}:{trade_date}"),
                     cash_per_share=float(row.get("cash_per_share") or 0),
-                    stock_ratio=float(row.get("share_ratio") or 0),
+                    stock_ratio=float(row.get("stock_ratio") or row.get("share_ratio") or 0),
                     rights_ratio=float(row.get("rights_ratio") or 0),
                     rights_price=float(row["rights_price"]) if pd.notna(row.get("rights_price")) else None,
-                    split_ratio=float(row.get("share_ratio") or 0),
+                    split_ratio=float(row.get("split_ratio") or row.get("share_ratio") or 0),
                     settlement_price=float(row["settlement_price"]) if pd.notna(row.get("settlement_price")) else None,
+                    new_ts_code=(
+                        str(row.get("new_ts_code"))
+                        if pd.notna(row.get("new_ts_code"))
+                        and str(row.get("new_ts_code")).strip()
+                        else None
+                    ),
                     event_hash=str(row.get("event_hash") or ""),
                 ))
         if day_actions:

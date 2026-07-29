@@ -22,7 +22,10 @@ CANCELLED_T1_CLOSE = "CANCELLED_T1_CLOSE"
 # Compatibility alias for callers importing the old public constant.
 CANCELLED = CANCELLED_T1_CLOSE
 CORPORATE_ACTION_FREEZE = "CORPORATE_ACTION_FREEZE"
-ATOMIC_ACTION_TYPES = {"dividend_cash", "stock_bonus", "split_merge", "rights_subscription", "delist_cash_settlement"}
+ATOMIC_ACTION_TYPES = {
+    "dividend_cash", "stock_bonus", "split_merge", "rights_subscription",
+    "share_conversion", "delist_cash_settlement", "delist_writeoff",
+}
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,7 @@ class CorporateAction:
     rights_price: float | None = None
     split_ratio: float = 0.0
     settlement_price: float | None = None
+    new_ts_code: str | None = None
     source_complete: bool = True
     source_reason: str = ""
     event_hash: str = ""
@@ -92,7 +96,7 @@ class ExecutionLedger:
         if len(identities) != len(set(identities)) or any(identity in self.applied_corporate_action_ids for identity in identities):
             self.freeze(actions[0].ex_date if actions else "", "duplicate_corporate_action_atomic_event")
             raise RuntimeError("duplicate_corporate_action_atomic_event")
-        for action in sorted(actions, key=lambda value: ({"dividend_cash": 20, "split_merge": 30, "stock_bonus": 40, "rights_subscription": 50, "delist_cash_settlement": 60}.get(value.action_type, 999), value.source_event_id)):
+        for action in sorted(actions, key=lambda value: ({"dividend_cash": 20, "split_merge": 30, "stock_bonus": 40, "rights_subscription": 50, "share_conversion": 55, "delist_cash_settlement": 60, "delist_writeoff": 70}.get(value.action_type, 999), value.source_event_id)):
             if action.action_type not in ATOMIC_ACTION_TYPES:
                 self.freeze(action.ex_date, "unknown_corporate_action_type")
                 raise RuntimeError(f"unknown_corporate_action_type:{action.action_type}")
@@ -133,6 +137,41 @@ class ExecutionLedger:
                              event_timestamp=f"{action.ex_date}T09:25:00+08:00", cash_delta=cash_delta,
                              share_delta=-held, action_type=action.action_type, source_event_id=action.source_event_id,
                              source_reason=action.source_reason, event_hash=action.event_hash)
+                self.applied_corporate_action_ids.add(action.event_hash or f"{action.symbol}:{action.ex_date}:{action.source_event_id}:{action.action_type}")
+                continue
+            if action.action_type == "delist_writeoff":
+                self.shares[action.symbol] = 0
+                self._append(
+                    "corporate_action", order_status="APPLIED",
+                    symbol=action.symbol, ex_date=action.ex_date,
+                    event_timestamp=f"{action.ex_date}T09:25:00+08:00",
+                    cash_delta=0.0, share_delta=-held,
+                    action_type=action.action_type,
+                    source_event_id=action.source_event_id,
+                    source_reason=action.source_reason, event_hash=action.event_hash,
+                )
+                self.applied_corporate_action_ids.add(action.event_hash or f"{action.symbol}:{action.ex_date}:{action.source_event_id}:{action.action_type}")
+                continue
+            if action.action_type == "share_conversion":
+                ratio = float(action.split_ratio)
+                new_symbol = str(action.new_ts_code or "").split(".")[0].zfill(6)
+                if ratio <= 0 or not new_symbol.isdigit():
+                    raise RuntimeError(
+                        f"share_conversion_requires_terms:{action.symbol}:{action.ex_date}"
+                    )
+                converted = int(round(held * ratio))
+                self.shares[action.symbol] = 0
+                self.shares[new_symbol] = int(self.shares.get(new_symbol, 0)) + converted
+                self._append(
+                    "corporate_action", order_status="APPLIED",
+                    symbol=action.symbol, new_symbol=new_symbol,
+                    ex_date=action.ex_date,
+                    event_timestamp=f"{action.ex_date}T09:25:00+08:00",
+                    cash_delta=0.0, share_delta=-held,
+                    converted_shares=converted, action_type=action.action_type,
+                    source_event_id=action.source_event_id,
+                    source_reason=action.source_reason, event_hash=action.event_hash,
+                )
                 self.applied_corporate_action_ids.add(action.event_hash or f"{action.symbol}:{action.ex_date}:{action.source_event_id}:{action.action_type}")
                 continue
             if action.action_type == "dividend_cash":

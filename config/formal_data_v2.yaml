@@ -1,0 +1,8 @@
+strict_market_data_v2: false
+strict_lifecycle_v2: false
+strict_corporate_actions_v2: false
+formal_package_v2: false
+mode: shadow
+rollback:
+  action: disable_all_v2_flags
+  preserves_frozen_packages: true

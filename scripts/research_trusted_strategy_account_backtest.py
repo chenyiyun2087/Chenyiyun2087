@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scoreRank.core.db_config import build_sqlalchemy_url
+from runtime.formal_contract import FORMAL_STRATEGIES
 from scripts.ops.production_config import load_production_config
 from scripts.ops.production_risk_governor import (
     build_risk_governor_decision,
@@ -611,6 +612,12 @@ def _load_corporate_action_snapshot(path: str | Path, manifest_path: str | Path)
             stock_ratio=_safe_float(row.get("stock_ratio"), 0.0), rights_ratio=_safe_float(row.get("rights_ratio"), 0.0),
             rights_price=_safe_float(row.get("rights_price"), np.nan), split_ratio=_safe_float(row.get("split_ratio"), 0.0),
             settlement_price=_safe_float(row.get("settlement_price"), np.nan), source_complete=str(row.get("source_complete")).strip().lower() in {"1", "true", "t", "yes", "y"},
+            new_ts_code=(
+                str(row.get("new_ts_code"))
+                if pd.notna(row.get("new_ts_code"))
+                and str(row.get("new_ts_code")).strip()
+                else None
+            ),
             source_reason=str(row.get("source_reason") or ""), event_hash=str(row.get("event_hash")),
         )
         if not np.isfinite(action.rights_price or np.nan):
@@ -1804,6 +1811,51 @@ def _score_day_frame(scores: pd.DataFrame, day_indices: dict[object, object], si
     return scores.iloc[indices].copy()
 
 
+def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
+    """Collapse the formal strategy-keyed score cube for shared preparation.
+
+    The package keeps one explicit row per strategy for coverage governance,
+    while the backtest preparation path requires one security/date row with
+    named ranking columns. Source features must be identical across the five
+    strategy rows; disagreement is a hard integrity failure.
+    """
+
+    if "strategy" not in scores.columns:
+        return scores
+    keys = ["trade_date", "symbol"]
+    expected = set(FORMAL_STRATEGIES)
+    actual = set(scores["strategy"].astype(str).unique())
+    if actual != expected:
+        raise ValueError(
+            "formal_score_snapshot_strategy_set_mismatch:"
+            f"missing={sorted(expected - actual)};extra={sorted(actual - expected)}"
+        )
+    if scores.duplicated([*keys, "strategy"]).any():
+        raise ValueError("formal_score_snapshot_duplicate_key")
+    excluded = {"strategy", "score", "score_path", "available_at"}
+    feature_columns = [column for column in scores.columns if column not in {*keys, *excluded}]
+    for column in feature_columns:
+        counts = scores.groupby(keys, dropna=False)[column].nunique(dropna=False)
+        if counts.gt(1).any():
+            raise ValueError(f"formal_score_snapshot_feature_mismatch:{column}")
+    base = (
+        scores.sort_values([*keys, "strategy"])
+        .drop_duplicates(keys)
+        .drop(columns=["strategy", "score", "score_path"], errors="ignore")
+    )
+    if "source_score" in base.columns:
+        base["score"] = pd.to_numeric(base.pop("source_score"), errors="coerce")
+    pivot = scores.pivot(index=keys, columns="strategy", values="score")
+    base = base.set_index(keys)
+    base["liquidity_detail_score"] = pd.to_numeric(
+        pivot[FORMAL_STRATEGIES[0]], errors="coerce"
+    )
+    base["dynamic_factor_score"] = pd.to_numeric(
+        pivot[FORMAL_STRATEGIES[1]], errors="coerce"
+    )
+    return base.reset_index()
+
+
 def _build_targets_cache(
     scores: pd.DataFrame,
     day_indices: dict[object, object],
@@ -2960,6 +3012,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     if getattr(args, "scores_snapshot", None):
         scores = pd.read_csv(args.scores_snapshot)
         scores["trade_date"] = pd.to_datetime(scores["trade_date"], errors="coerce").dt.date
+        scores = _normalize_formal_score_snapshot(scores)
     else:
         scores = load_scores(
             engine,

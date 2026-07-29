@@ -74,6 +74,24 @@ def test_delisting_settlement_converts_position_to_cash():
     assert ledger.shares["000001"] == 0
 
 
+def test_share_conversion_and_explicit_delist_writeoff_are_atomic():
+    ledger = ExecutionLedger(cash=0.0, shares={"000001": 100, "000003": 50})
+    ledger.apply_corporate_actions(
+        [
+            CorporateAction(
+                "000001", "2026-01-02", action_type="share_conversion",
+                split_ratio=1.5, new_ts_code="000002.SZ",
+            ),
+            CorporateAction(
+                "000003", "2026-01-02", action_type="delist_writeoff",
+            ),
+        ]
+    )
+    assert ledger.shares["000001"] == 0
+    assert ledger.shares["000002"] == 150
+    assert ledger.shares["000003"] == 0
+
+
 def test_reconciliation_compares_equity_not_cash():
     ledger = ExecutionLedger(cash=500.0, shares={"000001": 100}, expected_equity=1_500.0)
     assert ledger.reconciliation_error_bps({"000001": 10.0}) == 0.0

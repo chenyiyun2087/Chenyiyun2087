@@ -15,11 +15,19 @@ from pathlib import Path
 import pandas as pd
 
 REQUIRED = {"symbol", "action_type", "effective_date", "source_event_id", "as_of_timestamp", "source_complete"}
-OPTIONAL = ["announcement_date", "ex_date", "cash_per_share", "stock_ratio", "rights_ratio", "rights_price", "split_ratio", "settlement_price", "source_reason"]
+OPTIONAL = ["announcement_date", "ex_date", "cash_per_share", "stock_ratio", "rights_ratio", "rights_price", "split_ratio", "settlement_price", "new_ts_code", "source_reason"]
 SNAPSHOT_SCHEMA_VERSION = "strict_corporate_lifecycle_snapshot_v2"
 # Cash entitlement is based on pre-adjustment shares.  Rights then sees the
 # deterministic post split/bonus share count.
-ATOMIC_TYPES = {"dividend_cash": 20, "split_merge": 30, "stock_bonus": 40, "rights_subscription": 50, "delist_cash_settlement": 60}
+ATOMIC_TYPES = {
+    "dividend_cash": 20,
+    "split_merge": 30,
+    "stock_bonus": 40,
+    "rights_subscription": 50,
+    "share_conversion": 55,
+    "delist_cash_settlement": 60,
+    "delist_writeoff": 70,
+}
 ECONOMIC_FIELDS = {"cash_per_share", "stock_ratio", "rights_ratio", "rights_price", "split_ratio", "settlement_price"}
 
 
@@ -49,6 +57,14 @@ def _atomic_rows(row: pd.Series) -> list[dict]:
     rights = pd.to_numeric(row.get("rights_ratio"), errors="coerce")
     if raw_type == "delist_cash_settlement":
         add(raw_type, settlement_price=row.get("settlement_price"))
+    elif raw_type == "delist_writeoff":
+        add(raw_type)
+    elif raw_type == "share_conversion":
+        add(
+            raw_type,
+            split_ratio=row.get("split_ratio"),
+            new_ts_code=row.get("new_ts_code"),
+        )
     elif raw_type == "rights_subscription":
         add(raw_type, rights_ratio=row.get("rights_ratio"), rights_price=row.get("rights_price"))
     elif raw_type == "split_merge":
