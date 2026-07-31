@@ -31,7 +31,7 @@ def _file_sha(path: Path) -> str:
 def audit_pit_factor_sources(
     output_dir: Path,
     *,
-    profile_name: str = "alpha_v4_7",
+    profile_name: str = "formal_v5_0",
     processed_dir: Path = PROJECT_ROOT / "data/processed",
 ) -> dict[str, Any]:
     profile = load_validation_profile(profile_name)
@@ -116,7 +116,7 @@ def audit_pit_factor_sources(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--profile", default="alpha_v4_7")
+    parser.add_argument("--profile", default="formal_v5_0")
     args = parser.parse_args()
     print(
         json.dumps(

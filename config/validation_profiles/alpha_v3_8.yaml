@@ -1,0 +1,371 @@
+_meta:
+  frozen_at: '2026-07-31T12:40:34.628011Z'
+  immutable: true
+  original_alias_of: alpha_v4_7
+  superseded_by: formal_v5_0
+  warning: This profile is frozen. Do not modify. Historical replays must use this
+    exact version.
+alpha_proof:
+  benchmark_gate_policy: primary_excess_and_all_required_complete
+  market_regime_factor: market_regime
+  max_single_positive_year_alpha_contribution: 0.6
+  max_unexplained_variance_ratio: 0.1
+  min_aligned_trading_days: 252
+  min_alpha_tstat: 2.0
+  min_daily_coverage: 0.95
+  min_positive_alpha_year_ratio: 0.6
+  min_stability_year_months: 9
+  min_stability_year_trading_days: 126
+  min_valid_stability_years: 3
+  require_environment_lock_hash: true
+  require_factor_compute_manifest: true
+  require_factor_semantic_definition: true
+  require_factor_source_manifest: true
+  require_full_rank_regression: true
+  require_timezone_aware_availability: true
+  residual_label: regression_alpha
+  schema_version: alpha_v4_0_proof_v1
+  stability_years:
+  - 2023
+  - 2024
+  - 2025
+  - 2026
+  stock_selection_requires_independent_evidence: true
+  timezone: Asia/Shanghai
+  unexplained_variance_warning_ratio: 0.05
+  worst_year_alpha_floor: -0.1
+attribution:
+  closure_tolerance: 1.0e-06
+  required_factors:
+  - market_beta
+  - size
+  - volatility
+  - liquidity
+  - industry
+  - momentum
+  - value
+  - market_regime
+benchmarks:
+  primary: 000300.SH
+  require_point_in_time_series: true
+  required:
+  - 000300.SH
+  - 000905.SH
+  - 000852.SH
+  secondary: 000905.SH
+capital_readiness_simulation:
+  evidence_ttl_days:
+    E0: 0
+    E1: 30
+    E2: 30
+    E3: 180
+    E4: 30
+  tiers:
+  - capital_cny: 0
+    label: RESEARCH_ONLY
+    required_gates: []
+    required_levels: {}
+    tier: T0
+  - capital_cny: 0
+    label: PAPER
+    required_gates:
+    - research_replay
+    - replay_diff
+    - correctness_synthetic_suite
+    - failure_injection
+    - execution_simulation
+    required_levels:
+      correctness_synthetic_suite: E1
+      execution_simulation: E2
+      failure_injection: E1
+      replay_diff: E1
+      research_replay: E1
+    tier: T1
+  - capital_cny: 50000
+    label: CANARY_50000
+    required_gates:
+    - core_history
+    - benchmark_excess
+    - alpha_attribution
+    - factor_ic
+    - alpha_proof_guard
+    - factor_compute_lineage
+    - walk_forward
+    - execution_cost_stress
+    - economic_shadow
+    - manual_approval
+    required_levels:
+      alpha_attribution: E3
+      alpha_proof_guard: E3
+      benchmark_excess: E3
+      core_history: E3
+      economic_shadow: E4
+      execution_cost_stress: E3
+      factor_compute_lineage: E3
+      factor_ic: E3
+      walk_forward: E3
+    tier: T2
+  - capital_cny: 500000
+    label: CONTROLLED_SCALE_500000
+    required_gates:
+    - manual_canary_live
+    - economic_shadow
+    - manual_approval
+    required_levels:
+      economic_shadow: E4
+      manual_canary_live: E4
+    tier: T3
+  - capital_cny: 1000000
+    label: EXPANDED_SCALE
+    required_gates:
+    - scaled_live_operation
+    - manual_canary_live
+    - manual_approval
+    required_levels:
+      manual_canary_live: E4
+      scaled_live_operation: E4
+    tier: T4
+  turnover_zscore_warning: 3.0
+  volatility_warning_ratio: 1.5
+core_period:
+  end_date_policy: latest_complete_trading_day
+  legacy_extension_required: false
+  legacy_extension_start_date: '2013-01-01'
+  min_start_date: '2018-01-01'
+  min_trade_day_coverage: 0.98
+economic_alpha_qualification:
+  diagnostic_evidence_authorizes_production: false
+  min_information_ratio: 0.5
+  min_market_regimes: 3
+  min_median_rank_ic: 0.0
+  min_trading_days: 252
+  min_universe_coverage: 0.95
+  require_complete_universe_status: true
+  require_corporate_action_semantics: true
+  require_cost_adjusted_net_return: true
+  require_factor_overlap_matrix: true
+  require_field_definition_hash: true
+  require_financial_revision_chain: true
+  require_formal_pit: true
+  require_industry_neutralization: true
+  require_pit_data_adapter: true
+  require_release_scoped_pit_source_manifest: true
+  require_security_lifecycle_transition: true
+  require_t_plus_1_factor_ledger: true
+  require_time_holdout: true
+  require_top_bottom_portfolio_evidence: true
+  short_leg_requires_borrow_evidence: true
+  synthetic_evidence_cannot_satisfy_historical_gate: true
+  synthetic_evidence_levels:
+  - S0
+  - S1
+  - S2
+  - S3
+  target_trading_days: 504
+evidence_acquisition:
+  benchmark_min_aligned_days: 252
+  benchmark_min_coverage: 0.95
+  discovery_patterns:
+    benchmark:
+    - exports/signal_research/**/*benchmark*.csv
+    factor:
+    - data/processed/bs_training_dataset*.parquet
+    pit:
+    - exports/pit_forward/runs/**/*.json
+  factor_min_coverage: 0.95
+  forbid_backfilled_model_fields_without_pit: true
+  max_candidates_per_kind: 25
+  refresh_priorities:
+    benchmark: 1
+    factor: 2
+    pit: 3
+    shadow: 4
+  require_release_strategy_match: true
+  require_timezone_aware_availability: true
+  required_benchmark_codes:
+  - 000300.SH
+  - 000905.SH
+  - 000852.SH
+  schema_version: alpha_v4_1_acquisition_v1
+  snapshot_copy_max_bytes: 536870912
+evidence_production:
+  benchmark_available_time: 16:00:00+08:00
+  benchmark_provider: tencent_public_index_kline
+  benchmark_provider_endpoint: https://web.ifzq.gtimg.cn/appstock/app/kline/kline
+  benchmark_start_date: '2018-01-01'
+  factor_builder_requires_formal_pit: true
+  pit_minimum_components:
+  - listing_lifecycle
+  - st_status
+  - suspension
+  - financial_announcement_time
+  request_timeout_seconds: 20
+  required_output_columns:
+  - benchmark
+  - trade_date
+  - nav
+  - available_at
+  - close
+  - source
+  - source_sha256
+  - release_id
+  - strategy_id
+  schema_version: alpha_v4_2_production_v1
+evidence_version: alpha_v4_7_pit_data_adapter_v1
+execution:
+  execution_evidence_layers:
+  - SIMULATION
+  - PAPER
+  - LIVE
+  fill_timing: T_PLUS_1_OPEN
+  min_execution_stress_score: 80
+  require_limit_up_down_handling: true
+  require_unfilled_position_freeze: true
+  signal_timing: T_CLOSE
+  stress_evidence_layer: SIMULATION
+  stress_scenarios:
+  - limit_up_buy_blocked
+  - limit_down_sell_blocked
+  - one_day_fill_delay
+  - slippage_2x
+factor_ic:
+  horizons:
+  - 5
+  - 10
+  - 20
+  - 60
+  min_coverage: 0.95
+  min_information_ratio: 0.3
+  min_mean_rank_ic: 0.02
+  research_disable_below_mean_rank_ic: 0.01
+performance:
+  max_drawdown: -0.25
+  min_annualized_excess_return: 0.15
+  min_annualized_return: 0.25
+  min_sharpe_ratio: 1.0
+  research_target_annualized_return: 0.3
+promotion:
+  require_execution_stress: true
+  require_factor_attribution: true
+  require_factor_ic: true
+  require_formal_pit: true
+  require_walk_forward: true
+  research_pass_does_not_authorize_capital: true
+regime_attribution:
+  min_aligned_trading_days_per_state: 63
+  required_states:
+  - FREEZE
+  - RISK_OFF
+  - NEUTRAL
+  - RISK_ON
+  - BROAD_RISK_ON
+replay_audit:
+  annual_anchor_days_per_year: 10
+  capital_minimum_evidence_level: E3
+  correctness_sample_size: 100
+  correctness_sampling_policy: DETERMINISTIC_STRATIFIED
+  event_sample_quotas:
+    DELISTING: 10
+    ORDINARY: 30
+    PRICE_LIMIT: 20
+    ST_CHANGE: 20
+    SUSPENSION_RESUMPTION: 20
+  event_sampling_policy: EVENT_STRATIFIED_PLUS_ANNUAL_ANCHORS
+  evidence_strength_levels:
+    E0: missing_or_blocked
+    E1: code_test_or_replay
+    E2: simulation_or_paper
+    E3: release_scoped_historical_real_data
+    E4: release_scoped_live_or_shadow_trading
+  portfolio_accounting_tolerance_cny: 0.01
+  portfolio_state_weight_tolerance: 1.0e-06
+  replay_diff_max_rows: 100
+  require_alpha_claim_registry: true
+  require_capital_decision_firewall: true
+  require_capital_gate_simulator: true
+  require_capital_tier_engine: true
+  require_claim_lifecycle: true
+  require_correctness_gap_report: true
+  require_correctness_synthetic_suite: true
+  require_dependency_graph_v2: true
+  require_engineering_readiness_score: true
+  require_environment_fingerprint: true
+  require_event_correctness_coverage: true
+  require_evidence_contract_matrix: true
+  require_evidence_expiration: true
+  require_evidence_issue_tracker: true
+  require_evidence_promotion_workflow: true
+  require_evidence_strength_report: true
+  require_exact_attribution_sha: true
+  require_exact_input_snapshot: true
+  require_exact_nav_sha: true
+  require_exact_risk_sha: true
+  require_exact_trade_sha: true
+  require_failure_coverage_matrix: true
+  require_independent_reviewer_simulation: true
+  require_investment_readiness_report: true
+  require_portfolio_accounting_reconciliation: true
+  require_portfolio_state_audit: true
+  require_replay_diff_severity: true
+  require_research_production_contract: true
+  require_runtime_determinism_manifest: true
+  require_strategy_health_monitor: true
+  require_structured_replay_diff: true
+  required_failure_injections:
+  - factor_pipeline_hash_mismatch
+  - factor_timezone_missing
+  - factor_available_after_signal
+  - benchmark_end_date_mismatch
+  - input_snapshot_sha_mismatch
+  - corporate_action_lookahead
+  - t_day_execution_violation
+  - portfolio_weight_lookahead
+  - financial_announcement_lookahead
+  - suspended_security_fill
+  - limit_queue_impossible_fill
+  - delisting_survivorship_bias
+  - adjustment_factor_future_leak
+  - universe_survivorship_bias
+  - financial_revision_after_release
+  - duplicate_timestamp_order
+  - auction_price_leak
+  - order_queue_priority_leak
+  - provider_semantic_change
+  - numeric_precision_drift
+  runtime_determinism:
+    locale: C.UTF-8
+    numpy_seed: 2087
+    python_hash_seed: '0'
+    random_seed: 2087
+    record_container_image_digest: true
+    record_dependency_lock_sha256: true
+    require_cpu_fingerprint: true
+    require_filesystem_encoding: true
+    require_kernel_version: true
+    thread_count: 1
+  shadow_minimum_evidence_level: E4
+schema_version: alpha_v3_acceptance_v1
+stress:
+  capacity_account_sizes_cny:
+  - 50000
+  - 100000
+  - 500000
+  - 1000000
+  - 5000000
+  cost_multipliers:
+  - 1.0
+  - 2.0
+  initial_capital_cny: 500000
+  slippage_bps:
+  - 20
+  - 50
+  - 100
+  universe_drop_ratios:
+  - 0.1
+  - 0.2
+  universe_drop_seeds:
+  - 1103
+  - 2087
+  - 3141
+  - 4099
+  - 7919

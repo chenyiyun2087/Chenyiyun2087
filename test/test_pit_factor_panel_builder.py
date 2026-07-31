@@ -135,7 +135,7 @@ def test_pit_factor_panel_builder_passes_qualified_long_fixture(
         adjustment_path=paths["adjustment"],
         source_manifest_path=manifest,
         output_dir=tmp_path / "output",
-        profile_name="alpha_v4_7",
+        profile_name="formal_v5_0",
     )
     assert result["status"] == "PASS"
     assert result["panel_qualified"] is True
@@ -162,7 +162,7 @@ def test_pit_factor_panel_builder_blocks_late_availability(tmp_path: Path):
         adjustment_path=paths["adjustment"],
         source_manifest_path=manifest,
         output_dir=tmp_path / "output",
-        profile_name="alpha_v4_7",
+        profile_name="formal_v5_0",
     )
     assert result["status"] == "BLOCKED"
     assert result["panel_qualified"] is False
@@ -178,7 +178,7 @@ def test_pit_factor_panel_builder_blocks_missing_inputs(tmp_path: Path):
         adjustment_path=None,
         source_manifest_path=None,
         output_dir=tmp_path / "output",
-        profile_name="alpha_v4_7",
+        profile_name="formal_v5_0",
     )
     assert result["status"] == "BLOCKED"
     assert result["automatic_short_panel_fallback"] is False
@@ -218,7 +218,7 @@ def test_file_adapter_builds_synthetic_manifest_without_e3(tmp_path: Path):
         adjustment_path=paths["adjustment"],
         source_manifest_path=manifest,
         output_dir=tmp_path / "builder_output",
-        profile_name="alpha_v4_7",
+        profile_name="formal_v5_0",
     )
     assert result["status"] == "PASS"
     assert result["evidence_level"] == "E0"

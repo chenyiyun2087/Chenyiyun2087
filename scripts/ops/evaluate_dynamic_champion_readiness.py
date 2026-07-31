@@ -126,7 +126,7 @@ def load_program(path: Path = DEFAULT_PROGRAM) -> dict[str, Any]:
         "alpha_v4_4",
         "alpha_v4_5",
         "alpha_v4_6",
-        "alpha_v4_7",
+        "formal_v5_0",
     }:
         raise ValueError(f"unsupported_validation_profile:{profile_name}")
     return payload

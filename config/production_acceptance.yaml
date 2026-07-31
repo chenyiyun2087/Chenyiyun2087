@@ -342,23 +342,13 @@ acceptance:
         require_factor_ic: true
         require_execution_stress: true
         research_pass_does_not_authorize_capital: true
-    # Read-only compatibility aliases. New validation runs must name alpha_v4_7.
-    alpha_v4_6: *alpha_v4_7
-    alpha_v4_5: *alpha_v4_7
-    alpha_v4_4: *alpha_v4_7
-    alpha_v4_3: *alpha_v4_7
-    alpha_v4_2: *alpha_v4_7
-    alpha_v4_1: *alpha_v4_7
-    alpha_v4_0: *alpha_v4_7
-    alpha_v3_9: *alpha_v4_7
-    alpha_v3_8: *alpha_v4_7
-    alpha_v3_7: *alpha_v4_7
-    alpha_v3_6: *alpha_v4_7
-    alpha_v3_5: *alpha_v4_7
-    alpha_v3_4: *alpha_v4_7
-    alpha_v3_3: *alpha_v4_7
-    alpha_v3_2: *alpha_v4_7
-    alpha_v3: *alpha_v4_7
+    # ── Formal Evidence Backbone v5.0 ──
+    # Historical profiles are frozen in config/validation_profiles/.
+    # Each profile is an independent, immutable YAML file.
+    # New validation runs must use: formal_v5_0
+    # Historical replays must use the EXACT profile version from that era.
+    formal_v5_0: *alpha_v4_7
+    # ── End v5.0 profiles ──
 
   # -----------------------------------------------------------------------
   # L0→L1: Research → Manual Production

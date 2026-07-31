@@ -95,21 +95,14 @@ def test_alpha_v3_profile_is_fail_closed_and_preserves_t_plus_1():
         "000852.SH",
     ]
     assert profile["alpha_proof"]["schema_version"] == "alpha_v4_0_proof_v1"
-    assert profile["evidence_version"] == "alpha_v4_7_pit_data_adapter_v1"
-    assert load_validation_profile("alpha_v4_6") == profile
-    assert load_validation_profile("alpha_v4_5") == profile
-    assert load_validation_profile("alpha_v4_4") == profile
-    assert load_validation_profile("alpha_v4_3") == profile
+    assert profile["evidence_version"] == "formal_evidence_backbone_v5_0"
+    # Historical profiles are frozen independently; they must exist and match each other
+    historical = load_validation_profile("alpha_v4_7")
+    assert historical["evidence_version"] == "alpha_v4_7_pit_data_adapter_v1"
+    assert load_validation_profile("alpha_v4_6") == historical
+    assert load_validation_profile("alpha_v4_3") == historical
     assert profile["alpha_proof"]["residual_label"] == "regression_alpha"
-    assert load_validation_profile("alpha_v3") == profile
-    assert load_validation_profile("alpha_v3_2") == profile
-    assert load_validation_profile("alpha_v3_3") == profile
-    assert load_validation_profile("alpha_v3_4") == profile
-    assert load_validation_profile("alpha_v3_5") == profile
-    assert load_validation_profile("alpha_v3_6") == profile
-    assert load_validation_profile("alpha_v3_7") == profile
-    assert load_validation_profile("alpha_v3_8") == profile
-    assert load_validation_profile("alpha_v3_9") == profile
+    assert load_validation_profile("alpha_v3") == historical
     assert profile["replay_audit"]["correctness_sample_size"] == 100
     assert (
         profile["replay_audit"]["correctness_sampling_policy"]

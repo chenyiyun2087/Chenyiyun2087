@@ -153,7 +153,7 @@ def build_pit_factor_panel(
     adjustment_path: Path | None,
     source_manifest_path: Path | None,
     output_dir: Path,
-    profile_name: str = "alpha_v4_7",
+    profile_name: str = "formal_v5_0",
     adapter_report_path: Path | None = None,
     fixture_mode: bool = False,
 ) -> dict[str, Any]:
@@ -639,7 +639,7 @@ def main() -> None:
     parser.add_argument("--source-manifest", type=Path)
     parser.add_argument("--adapter-report", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--profile", default="alpha_v4_7")
+    parser.add_argument("--profile", default="formal_v5_0")
     parser.add_argument("--fixture-mode", action="store_true", default=False)
     args = parser.parse_args()
     result = build_pit_factor_panel(

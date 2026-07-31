@@ -2278,7 +2278,7 @@ def write_validation_package(
     *,
     program_path: Path = DEFAULT_PROGRAM,
     output_dir: Path,
-    profile_name: str = "alpha_v4_7",
+    profile_name: str = "formal_v5_0",
     release_id: str | None = None,
     strategy: str | None = None,
     start_date: str | None = None,
@@ -2979,7 +2979,7 @@ def write_validation_package(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--program", type=Path, default=DEFAULT_PROGRAM)
-    parser.add_argument("--profile", default="alpha_v4_7")
+    parser.add_argument("--profile", default="formal_v5_0")
     parser.add_argument("--release-id")
     parser.add_argument("--strategy")
     parser.add_argument("--start-date")

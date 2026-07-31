@@ -208,7 +208,7 @@ def build_factor_challenger_lab(
     factor_dir: Path,
     output_dir: Path,
     *,
-    profile_name: str = "alpha_v4_7",
+    profile_name: str = "formal_v5_0",
 ) -> dict[str, Any]:
     profile = load_validation_profile(profile_name)
     panel_path = factor_dir / "factor_panel.csv"
@@ -387,7 +387,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--factor-dir", type=Path, default=DEFAULT_FACTOR_DIR)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--profile", default="alpha_v4_7")
+    parser.add_argument("--profile", default="formal_v5_0")
     args = parser.parse_args()
     report = build_factor_challenger_lab(
         args.factor_dir, args.output_dir, profile_name=args.profile

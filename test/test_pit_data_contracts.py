@@ -198,7 +198,7 @@ class TestMissingAvailableAtBlocks:
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest,
             output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         assert result["status"] == "BLOCKED"
         assert any("missing_available_at:market_available_at" in b for b in result["blockers"])
@@ -215,7 +215,7 @@ class TestMissingAvailableAtBlocks:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         assert result["status"] == "BLOCKED"
         assert any("missing_available_at:financial_available_at" in b for b in result["blockers"])
@@ -237,7 +237,7 @@ class TestPbNotFilled:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         assert result["status"] == "BLOCKED"
         # With ALL pb NaN, value factor coverage must be 0
@@ -258,7 +258,7 @@ class TestPlaceholderFieldDefinitionHash:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         assert result["status"] == "BLOCKED"
         assert any("field_definition_hash_is_placeholder" in b for b in result["blockers"])
@@ -275,7 +275,7 @@ class TestPlaceholderFieldDefinitionHash:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
+            profile_name="formal_v5_0", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("field_definition_hash_is_placeholder" in b for b in result["blockers"])
@@ -299,7 +299,7 @@ class TestConstantSemanticColumns:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
+            profile_name="formal_v5_0", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("security_status_transition_constant" in b for b in result["blockers"])
@@ -319,7 +319,7 @@ class TestConstantSemanticColumns:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
+            profile_name="formal_v5_0", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("corporate_action_type_constant" in b for b in result["blockers"])
@@ -343,7 +343,7 @@ class TestMarketRegimeDiversity:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
+            profile_name="formal_v5_0", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("market_regime_diversity" in b for b in result["blockers"])
@@ -366,7 +366,7 @@ class TestManifestIntegrity:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         assert result["status"] == "BLOCKED"
         assert any("source_manifest_sha_mismatch:market" in b for b in result["blockers"])
@@ -385,7 +385,7 @@ class TestManifestIntegrity:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         assert result["status"] == "BLOCKED"
         assert any("source_manifest_sha_mismatch:market" in b for b in result["blockers"])
@@ -403,7 +403,7 @@ class TestTargetDaysWarning:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         # 30 synthetic dates < 252, so blocked by the min_days check, not the target
         assert result["status"] == "BLOCKED"
@@ -425,7 +425,7 @@ class TestNoShortPanelFallback:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         assert result["automatic_short_panel_fallback"] is False
 
@@ -455,7 +455,7 @@ class TestConfigShaMandatory:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
+            profile_name="formal_v5_0", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("adapter_config_path_missing" in b for b in result["blockers"])
@@ -486,7 +486,7 @@ class TestConfigShaMandatory:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
+            profile_name="formal_v5_0", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("adapter_report_has_blockers" in b for b in result["blockers"])
@@ -504,7 +504,7 @@ class TestExceptionHandling:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         assert result["status"] == "BLOCKED"
         assert any("unhandled_exception" in b for b in result["blockers"])
@@ -522,7 +522,7 @@ class TestAdjFactorMomentum:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output1",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         # Run with adj_factor=0.5 (simulated stock split)
         adj = pd.read_parquet(paths["adjustment"])
@@ -534,7 +534,7 @@ class TestAdjFactorMomentum:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest2, output_dir=tmp_path / "output2",
-            profile_name="alpha_v4_7",
+            profile_name="formal_v5_0",
         )
         # Both should be BLOCKED (short history), but the test proves adj_factor is read
         assert result1["status"] == "BLOCKED"

@@ -38,7 +38,7 @@ def test_dynamic_champion_program_is_fail_closed_and_uses_requested_ladder():
     assert program["target_capital_cny"] == 500_000
     assert program["canary_enabled"] is False
     assert program["broker_api_enabled"] is False
-    assert program["validation_profile"] == "alpha_v4_7"
+    assert program["validation_profile"] == "formal_v5_0"
     assert program["alpha_v3_evidence"].endswith("promotion_gate_report.json")
     assert [row["capital_cny"] for row in program["capital_ladder"]] == [
         50_000,

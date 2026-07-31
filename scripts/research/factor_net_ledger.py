@@ -130,7 +130,7 @@ def build_factor_net_ledger(
     source_path: Path,
     output_dir: Path,
     *,
-    profile_name: str = "alpha_v4_7",
+    profile_name: str = "formal_v5_0",
 ) -> dict[str, Any]:
     profile = load_validation_profile(profile_name)
     acceptance = load_acceptance_config()
@@ -376,7 +376,7 @@ def main() -> None:
     parser.add_argument("--factor-dir", type=Path, default=DEFAULT_FACTOR_DIR)
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--profile", default="alpha_v4_7")
+    parser.add_argument("--profile", default="formal_v5_0")
     args = parser.parse_args()
     result = build_factor_net_ledger(
         args.factor_dir, args.source, args.output_dir, profile_name=args.profile

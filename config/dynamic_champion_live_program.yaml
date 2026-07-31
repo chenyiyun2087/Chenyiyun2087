@@ -6,7 +6,7 @@ baseline_strategy_id: production_governed_vol_position
 acceptance_config: config/production_acceptance.yaml
 release_registry: config/strategy_release_registry.yaml
 approved_backtest_snapshot: exports/signal_research/20260618_213002_059138_trusted_account_backtest
-validation_profile: alpha_v4_7
+validation_profile: formal_v5_0
 alpha_v3_evidence: exports/alpha_v3_validation/20260730_alpha_v3/promotion_gate_report.json
 upgrade_evidence:
   pr_a_equivalence: exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json

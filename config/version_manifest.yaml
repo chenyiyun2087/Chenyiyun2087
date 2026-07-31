@@ -1,0 +1,10 @@
+# Chenyiyun2087 Formal Evidence Backbone v5.0
+# Six-dimensional version identity.  Each dimension is independently versioned.
+# Historical profiles must reference the versions that were active at their time.
+
+strategy_version: "champion_v1_2b"
+data_contract_version: "pit_data_v5_0"
+field_semantic_version: "ashare_semantics_v1"
+factor_formula_version: "factor_set_v3"
+execution_model_version: "strict_t1_open_precommit_v2"
+acceptance_profile_version: "formal_acceptance_v5_0"
