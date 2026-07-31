@@ -258,9 +258,9 @@ def build_pit_factor_panel(
         "adjustment_available_at",
     ]
     for column in availability_columns:
-        panel[column] = panel[column].fillna(
-            panel["trade_date"].dt.strftime("%Y-%m-%d") + "T15:30:00+08:00"
-        )
+        missing = panel[column].isna()
+        if missing.any():
+            blockers.append(f"missing_available_at:{column}:{int(missing.sum())}")
         parsed = pd.to_datetime(panel[column], errors="coerce", utc=True)
         panel[column] = parsed
         if parsed.isna().any():
@@ -271,7 +271,8 @@ def build_pit_factor_panel(
         utc=True,
     )
     panel["signal_time"] = signal_time
-    panel["pb"] = pd.to_numeric(panel["pb"], errors="coerce").fillna(0.0)
+    pb_numeric = pd.to_numeric(panel["pb"], errors="coerce")
+    panel["pb"] = pb_numeric
     for column in availability_columns:
         if (panel[column] > signal_time).any():
             blockers.append(f"available_after_signal:{column}")
@@ -369,6 +370,23 @@ def build_pit_factor_panel(
     min_days = int(profile["economic_alpha_qualification"]["min_trading_days"])
     if unique_dates < min_days:
         blockers.append(f"history_below_{min_days}_days")
+    target_days = int(profile["economic_alpha_qualification"].get("target_trading_days", 504))
+    target_met = unique_dates >= target_days
+    min_regimes = int(profile["economic_alpha_qualification"].get("min_market_regimes", 3))
+    if evidence_origin == "HISTORICAL_REAL":
+        regime_values = qualified["market_regime"].dropna().unique()
+        if len(regime_values) < min_regimes:
+            blockers.append(f"market_regime_diversity_below_{min_regimes}:found_{len(regime_values)}")
+    fdh = str(manifest.get("field_definition_hash") or "")
+    if evidence_origin == "HISTORICAL_REAL":
+        if fdh.startswith("matCHANGEME") or len(fdh) != 64:
+            blockers.append("field_definition_hash_is_placeholder")
+        if qualified["security_status_transition"].dropna().nunique() <= 1:
+            blockers.append("security_status_transition_constant_or_missing")
+        if qualified["corporate_action_type"].dropna().nunique() <= 1:
+            blockers.append("corporate_action_type_constant_or_missing")
+    elif fdh.startswith("matCHANGEME"):
+        blockers.append("field_definition_hash_is_placeholder")
     output_dir.mkdir(parents=True, exist_ok=True)
     coverage_path = output_dir / "complete_universe_coverage.csv"
     daily_coverage.to_csv(coverage_path, index=False)

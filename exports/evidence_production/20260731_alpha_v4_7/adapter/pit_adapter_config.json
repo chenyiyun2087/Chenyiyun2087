@@ -5,7 +5,12 @@
   "provider": "tushare_stock_mysql_local",
   "retrieved_at": "2026-07-31T12:00:00+08:00",
   "schema_semantic_version": "alpha_v4_7_pit_v1",
-  "field_definition_hash": "matCHANGEME",
+  "field_definition_hash": "fa59738c533645fae7f028b5aa5456b463d2d08dca7c0d040fec680a6633c1ca",
+  "evidence_attestation": {
+    "data_source_version": "tushare_stock_mysql_local_snapshot_20260731",
+    "revision_chain_proof": "dwd_financial_statement_versioned.version_no",
+    "availability_time_proof": "available_at_column_per_source_table"
+  },
   "sources": {
     "market": {
       "version": "2026-07-31T12:00:00+08:00",

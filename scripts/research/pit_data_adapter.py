@@ -99,6 +99,14 @@ def build_pit_adapter_manifest(
         blockers.append("adapter_type_invalid")
     if origin not in {"SYNTHETIC", "HISTORICAL_REAL"}:
         blockers.append("evidence_origin_invalid")
+    if origin == "HISTORICAL_REAL":
+        attestation = config.get("evidence_attestation") or {}
+        if not isinstance(attestation, dict):
+            blockers.append("evidence_attestation_missing_or_invalid")
+        else:
+            for req in ("data_source_version", "revision_chain_proof", "availability_time_proof"):
+                if not str(attestation.get(req) or ""):
+                    blockers.append(f"evidence_attestation_missing:{req}")
     for field in (
         "release",
         "provider",
@@ -108,6 +116,12 @@ def build_pit_adapter_manifest(
     ):
         if not str(config.get(field) or ""):
             blockers.append(f"adapter_metadata_missing:{field}")
+    fdh = str(config.get("field_definition_hash") or "")
+    if origin == "HISTORICAL_REAL":
+        if fdh.startswith("matCHANGEME") or len(fdh) != 64:
+            blockers.append("field_definition_hash_is_placeholder")
+    elif fdh.startswith("matCHANGEME"):
+        blockers.append("field_definition_hash_is_placeholder")
     retrieved_at = pd.to_datetime(
         config.get("retrieved_at"), errors="coerce", utc=True
     )
@@ -162,6 +176,8 @@ def build_pit_adapter_manifest(
         expected_schema = str(
             (source_config.get(name) or {}).get("expected_schema_hash") or ""
         )
+        if origin == "HISTORICAL_REAL" and not expected_schema:
+            blockers.append(f"source_schema_hash_missing:{name}")
         actual_schema = _schema_hash(frame)
         if expected_schema and expected_schema != actual_schema:
             blockers.append(f"source_schema_hash_mismatch:{name}")
