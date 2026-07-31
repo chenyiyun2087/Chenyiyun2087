@@ -6,8 +6,9 @@ on:
     paths:
       - 'runtime/**'
       - 'scripts/research/build_formal_scores.py'
-      - 'scripts/research/build_formal_package_v4.py'
-      - 'scripts/research/formal_readiness_v4.py'
+      - 'scripts/research/build_formal_package.py'
+      - 'scripts/research/pit_semantic_audit.py'
+      - 'scripts/research/run_formal_admission_pipeline.py'
       - 'scripts/research/run_formal_pit_pipeline.py'
       - 'scripts/research/pit_data_adapter.py'
       - 'scripts/research/pit_factor_panel_builder.py'
@@ -22,13 +23,15 @@ on:
       - 'test/test_formal_backbone_e2e.py'
       - 'test/test_formal_evidence_binding.py'
       - 'test/test_formal_pit_orchestrator_e2e.py'
+      - 'test/test_formal_admission_e2e.py'
       - '.github/workflows/formal-evidence-backbone.yml'
   pull_request:
     paths:
       - 'runtime/**'
       - 'scripts/research/build_formal_scores.py'
-      - 'scripts/research/build_formal_package_v4.py'
-      - 'scripts/research/formal_readiness_v4.py'
+      - 'scripts/research/build_formal_package.py'
+      - 'scripts/research/pit_semantic_audit.py'
+      - 'scripts/research/run_formal_admission_pipeline.py'
       - 'scripts/research/run_formal_pit_pipeline.py'
       - 'scripts/research/pit_data_adapter.py'
       - 'scripts/research/pit_factor_panel_builder.py'
@@ -43,6 +46,7 @@ on:
       - 'test/test_formal_backbone_e2e.py'
       - 'test/test_formal_evidence_binding.py'
       - 'test/test_formal_pit_orchestrator_e2e.py'
+      - 'test/test_formal_admission_e2e.py'
       - '.github/workflows/formal-evidence-backbone.yml'
 
 jobs:
@@ -75,6 +79,16 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements-ci.lock.txt pydantic
       - run: python -m pytest test/test_formal_pit_orchestrator_e2e.py -v --tb=short
+
+  admission-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic pyarrow
+      - run: python -m pytest test/test_formal_admission_e2e.py -v --tb=short
 
   formal-score-equivalence:
     runs-on: ubuntu-latest
@@ -175,7 +189,7 @@ jobs:
 
   full-regression:
     runs-on: ubuntu-latest
-    needs: [evidence-contract, pr-chain-completeness, formal-score-equivalence, artifact-seal-v2, orchestrator-e2e, seal-registry-corruption]
+    needs: [evidence-contract, pr-chain-completeness, formal-score-equivalence, artifact-seal-v2, orchestrator-e2e, admission-e2e, seal-registry-corruption]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -188,6 +202,7 @@ jobs:
             test/test_pr_chain_complete.py \
             test/test_formal_evidence_binding.py \
             test/test_formal_pit_orchestrator_e2e.py \
+            test/test_formal_admission_e2e.py \
             -v --tb=short
 
   secret-scan:
