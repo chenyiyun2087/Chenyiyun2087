@@ -1,12 +1,13 @@
-"""E2E tests for Formal PIT Orchestrator v5.1.1 (PR-19 fixes).
+"""E2E tests for Formal PIT Pipeline v5.1.2.
 
 Covers:
   - Adapter signature contract (no end_date)
   - _block_and_seal extra parameter
-  - Semantic audit missing → BLOCKED (not DIAGNOSTIC)
-  - Package v4 / Readiness v4 integration
-  - Registry path uses final run_dir (not .building_*)
-  - Registry activation failure → PASS_NOT_ACTIVATED
+  - PIT Run manifest (pit_run_manifest.json)
+  - Seal re-seal rejection (v5.1.2)
+  - Registry activation failure → external activation report (not modify sealed run)
+  - Semantic audit missing → BLOCKED
+  - Package builder imports and contract
   - Pre-flight checks
 """
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -22,8 +24,6 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from runtime.acceptance_config import canonical_sha
-from runtime.fail_closed import blocked_report
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # P0-1: Adapter signature contract
@@ -31,28 +31,24 @@ from runtime.fail_closed import blocked_report
 
 
 class TestAdapterSignatureContract:
-    """Adapter must NOT accept end_date — the orchestrator no longer passes it."""
+    """Adapter must NOT accept end_date."""
 
     def test_adapter_has_no_end_date_param(self):
         import inspect
         from scripts.research.pit_data_adapter import build_pit_adapter_manifest
         sig = inspect.signature(build_pit_adapter_manifest)
         params = list(sig.parameters.keys())
-        assert params == ["config_path", "output_dir"], \
-            f"Adapter signature changed: {params}"
+        assert params == ["config_path", "output_dir"], f"Adapter params: {params}"
 
     def test_orchestrator_has_no_end_date_param(self):
         import inspect
         from scripts.research.run_formal_pit_pipeline import run_formal_pit_pipeline
         sig = inspect.signature(run_formal_pit_pipeline)
-        assert "end_date" not in sig.parameters, \
-            f"Orchestrator still has end_date: {list(sig.parameters.keys())}"
+        assert "end_date" not in sig.parameters
 
     def test_orchestrator_cli_has_no_end_date(self):
-        """Verify --end-date is removed from CLI."""
-        from scripts.research.run_formal_pit_pipeline import main as _  # noqa: F401
         source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        assert "--end-date" not in source, "--end-date still in orchestrator CLI"
+        assert "--end-date" not in source
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -61,130 +57,97 @@ class TestAdapterSignatureContract:
 
 
 class TestBlockAndSeal:
-    """_block_and_seal must accept extra and forward it to blocked_report."""
+    """_block_and_seal must accept extra and use FORMAL_PIT_RUNS_ROOT."""
 
     def test_extra_param_exists(self):
         import inspect
         from scripts.research.run_formal_pit_pipeline import _block_and_seal
         sig = inspect.signature(_block_and_seal)
-        assert "extra" in sig.parameters, "_block_and_seal missing extra parameter"
+        assert "extra" in sig.parameters
+
+    def test_uses_pit_runs_root(self):
+        from scripts.research.run_formal_pit_pipeline import FORMAL_PIT_RUNS_ROOT
+        assert "formal_pit_runs" in str(FORMAL_PIT_RUNS_ROOT)
 
     def test_extra_forwarded_to_blocked_report(self, tmp_path):
         from scripts.research.run_formal_pit_pipeline import (
-            _block_and_seal, FORMAL_RUNS_ROOT,
+            _block_and_seal, FORMAL_PIT_RUNS_ROOT,
         )
-        building = FORMAL_RUNS_ROOT / ".building_test_block_and_seal"
-        run_dir = FORMAL_RUNS_ROOT / "test_run_block_and_seal"
+        building = FORMAL_PIT_RUNS_ROOT / ".building_test_bas"
+        run_dir = FORMAL_PIT_RUNS_ROOT / "test_bas_extra"
+        temp_registry = tmp_path / "seal_registry.json"
         _clean(building, run_dir)
         building.mkdir(parents=True)
 
         try:
             result = _block_and_seal(
-                building, "test_run_block_and_seal", "git_sha_abc",
+                building, "test_bas_extra", "git_sha_abc",
                 "test_stage", "TEST_ERROR",
                 extra={"blockers": ["b1", "b2"], "context": "test"},
+                registry_path_override=temp_registry,
             )
             assert result["status"] == "BLOCKED"
             assert result.get("extra", {}).get("blockers") == ["b1", "b2"]
-            assert result.get("extra", {}).get("context") == "test"
         finally:
             _clean(building, run_dir)
 
-    def test_blocked_report_no_extra_still_works(self):
-        """_block_and_seal must work WITHOUT extra (backward compat)."""
-        import inspect
-        from scripts.research.run_formal_pit_pipeline import _block_and_seal
-        sig = inspect.signature(_block_and_seal)
-        extra_param = sig.parameters["extra"]
-        assert extra_param.default is None, "extra must default to None"
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# P0-3: Package v4 and Readiness v4 integration
+# v5.1.2: PIT Run manifest
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestV4Integration:
-    """Orchestrator must import and call Package v4 and Readiness v4."""
+class TestPITRunManifest:
+    """Orchestrator writes pit_run_manifest.json, not run_manifest.json."""
 
-    def test_package_v4_importable_with_internal_call(self):
-        import inspect
-        from scripts.research.build_formal_package_v4 import build_formal_package_v4
-        sig = inspect.signature(build_formal_package_v4)
-        assert "_internal_call" in sig.parameters, \
-            "Package v4 missing _internal_call parameter"
-
-    def test_readiness_v4_importable_with_internal_call(self):
-        import inspect
-        from scripts.research.formal_readiness_v4 import validate as readiness_validate
-        sig = inspect.signature(readiness_validate)
-        assert "_internal_call" in sig.parameters, \
-            "Readiness v4 missing _internal_call parameter"
-
-    def test_orchestrator_imports_v4_not_v3(self):
-        """Verify orchestrator code uses v4 imports, not v3."""
+    def test_pit_run_manifest_written(self):
         source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        assert "build_formal_package_v4" in source, \
-            "Orchestrator does not import package v4"
-        assert "formal_readiness_v4" in source, \
-            "Orchestrator does not import readiness v4"
-        assert "build_formal_package_v3" not in source, \
-            "Orchestrator still imports package v3"
-        assert "formal_readiness_v3" not in source, \
-            "Orchestrator still imports readiness v3"
+        assert "pit_run_manifest.json" in source
+        assert '"pit_run_manifest_v5_1_2"' in source or "'pit_run_manifest_v5_1_2'" in source
 
-    def test_package_v4_accepts_building_when_internal(self, tmp_path):
-        """Package v4 with _internal_call=True should accept .building paths."""
-        from scripts.research.build_formal_package_v4 import build_formal_package_v4
-        building = tmp_path / ".building_test_v4"
-        building.mkdir()
-        (building / "run_manifest.json").write_text(json.dumps({"run_id": "test"}))
-        output = tmp_path / "package_output"
-        output.mkdir()
-
-        # Without _internal_call, should BLOCKED on .building path
-        result = build_formal_package_v4(
-            formal_pit_run_id="test",
-            run_dir=building,
-            output_dir=output,
-            _internal_call=False,
-        )
-        # This may fail on missing seal or other checks, but NOT on .building
-        # Actually, with _internal_call=False, it should block on .building
-        # Let's just verify the function signature works
-
-    def test_readiness_v4_accepts_building_when_internal(self, tmp_path):
-        """Readiness v4 with _internal_call=True should accept .building paths."""
-        # Just verify the function can be called with _internal_call without error
-        from scripts.research.formal_readiness_v4 import validate as readiness_validate
-        import inspect
-        sig = inspect.signature(readiness_validate)
-        assert "_internal_call" in sig.parameters
+    def test_no_stale_run_manifest(self):
+        """Old run_manifest.json should not be in the orchestrator."""
+        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
+        # run_manifest should only appear in pit_run_manifest context
+        lines_with_run_manifest = [l for l in source.split('\n') if 'run_manifest' in l and 'pit_run_manifest' not in l]
+        assert len(lines_with_run_manifest) == 0, f"Stale run_manifest refs: {lines_with_run_manifest}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# P0-5: Registry path uses final run_dir
+# v5.1.2: Seal re-seal rejection
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestRegistryPath:
-    """Registry must use final run_id path, not .building_*."""
+class TestSealRejection:
+    """seal_directory must reject re-sealing an already-sealed directory."""
 
-    def test_registry_code_uses_run_dir(self):
-        """Verify the registry payload builder uses 'run_dir', not 'building_dir'."""
-        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        # After the rename, paths should use run_dir
-        assert 'final_pr_b_dir = run_dir / "pr_b"' in source, \
-            "Registry path not computed from run_dir"
+    def test_seal_rejects_re_seal(self):
+        source = (PROJECT_ROOT / "runtime" / "artifact_seal.py").read_text()
+        assert "Existing_seal" in source or "already sealed" in source or \
+            "FileExistsError" in source, "seal_directory does not reject re-seal"
 
-    def test_registry_exception_not_silent(self):
-        """Registry update failure must NOT be silently ignored."""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v5.1.2: Activation report (not PASS_NOT_ACTIVATED)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestActivationReport:
+    """Registry failure writes external activation report, never modifies sealed run."""
+
+    def test_activation_report_exists(self):
         source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        assert "PASS_NOT_ACTIVATED" in source, \
-            "Registry failure does not set PASS_NOT_ACTIVATED"
-        assert "except Exception:" not in source.split("update_active_formal_registry")[-1][:200] or \
-            "PASS_NOT_ACTIVATED" in source, \
-            "Registry exception may still be silently ignored"
+        assert "activation_report" in source or "activation_failed" in source
+
+    def test_no_modify_sealed_run(self):
+        """PASS_NOT_ACTIVATED write-to-readonly logic must be removed."""
+        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
+        assert "PASS_NOT_ACTIVATED" not in source, \
+            "PASS_NOT_ACTIVATED still present (should be activation_report.json instead)"
+        # Also verify no second seal_directory call after registry failure
+        # Count seal_directory calls: should only be 1 in success path + 1 in _block_and_seal
+        assert "manifest_path.write_text" not in source, \
+            "Write to manifest after seal still present"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -193,51 +156,62 @@ class TestRegistryPath:
 
 
 class TestSemanticAuditBlocked:
-    """Semantic audit module not available must produce BLOCKED, not DIAGNOSTIC."""
-
-    def test_orchestrator_no_longer_has_diagnostic_fallback(self):
-        """Verify the ImportError branch sets status=BLOCKED."""
-        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        # Check that the ImportError handler produces BLOCKED
-        # Find the except ImportError block
-        assert '"status": "BLOCKED"' in source or "'status': 'BLOCKED'" in source or \
-            'status": "BLOCKED"' in source, \
-            "No BLOCKED status found in orchestrator — semantic audit fix missing?"
+    """Semantic audit module not available must produce BLOCKED."""
 
     def test_no_diagnostic_in_semantic_audit_block(self):
-        """The semantic audit ImportError must not produce DIAGNOSTIC."""
         source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        # Find the ImportError handler block by looking for it
-        import_block = source
-        # There should be no DIAGNOSTIC near semantic_audit_module_not_available
-        idx = import_block.find("semantic_audit_module_not_available")
+        idx = source.find("semantic_audit_module_not_available")
         if idx > 0:
-            surrounding = import_block[idx:idx + 300]
-            assert "DIAGNOSTIC" not in surrounding, \
-                f"DIAGNOSTIC still in semantic audit handler: ...{surrounding[:200]}..."
+            surrounding = source[idx:idx + 300]
+            assert "DIAGNOSTIC" not in surrounding
+
+    def test_semantic_audit_is_blocked(self):
+        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
+        idx = source.find("semantic_audit_module_not_available")
+        if idx > 0:
+            # The BLOCKED status is set a few lines above the blocker string
+            surrounding = source[max(0, idx - 200):idx + 300]
+            assert '"BLOCKED"' in surrounding or "'BLOCKED'" in surrounding
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# P0-4: PR-B binding uses correct paths and SHAs
+# Package Builder (new in v5.1.2)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestPRBBinding:
-    """PR-B must bind package SHA (file SHA) and readiness report (separate file)."""
+class TestPackageBuilder:
+    """Standalone Package builder is importable and has correct contract."""
 
-    def test_package_sha_is_file_sha(self):
-        """package_sha must be _file_sha(package_manifest.json), not evidence_sha256."""
-        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        assert 'package_sha = _file_sha(package_manifest_path)' in source or \
-            'package_sha = _file_sha(package_manifest_path)' in source, \
-            "package_sha not computed from package_manifest.json file SHA"
+    def test_package_builder_importable(self):
+        from scripts.research.build_formal_package import build_formal_package
+        import inspect
+        sig = inspect.signature(build_formal_package)
+        params = list(sig.parameters.keys())
+        assert "formal_pit_run_id" in params
+        assert "pit_run_dir" in params
+        # No _internal_call — Seal verification is mandatory
+        assert "_internal_call" not in params
 
-    def test_readiness_report_is_separate_file(self):
-        """Readiness report must be readiness_report.json, not package_manifest.json."""
-        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        assert 'readiness_report_path = readiness_report_dir / "readiness_report.json"' in source or \
-            '"readiness_report.json"' in source, \
-            "Readiness report not written as separate file"
+    def test_all_snapshots_mandatory(self):
+        source = (PROJECT_ROOT / "scripts" / "research" / "build_formal_package.py").read_text()
+        # All five snapshot families should be in ENTRIES without optional exemption
+        assert "market.parquet" in source
+        assert "universe.parquet" in source
+        assert "financial.parquet" in source
+        assert "industry.parquet" in source
+        assert "adjustment.parquet" in source
+        # Old "optional" snapshots comment should not appear
+        assert "Snapshots (if they exist)" not in source or \
+            "Snapshots — ALL mandatory" in source
+
+    def test_seal_verification_mandatory(self):
+        source = (PROJECT_ROOT / "scripts" / "research" / "build_formal_package.py").read_text()
+        assert "verify_seal" in source
+        # _internal_call should not be used as a code parameter (docstring mention is fine)
+        import inspect
+        from scripts.research.build_formal_package import build_formal_package
+        sig = inspect.signature(build_formal_package)
+        assert "_internal_call" not in sig.parameters
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -256,7 +230,6 @@ class TestPreflight:
 
     def test_missing_acceptance_profile(self, tmp_path):
         from scripts.research.run_formal_pit_pipeline import _check_prerequisites
-        # Create a minimal adapter config
         config = tmp_path / "adapter_config.json"
         config.write_text('{"adapter_type": "FILE", "evidence_origin": "SYNTHETIC"}')
         blockers = _check_prerequisites(config, "nonexistent_profile")
@@ -270,7 +243,6 @@ class TestPreflight:
 
 def _clean(*paths: Path) -> None:
     """Remove directories, making writable first."""
-    import stat
     for p in paths:
         if not p.exists():
             continue

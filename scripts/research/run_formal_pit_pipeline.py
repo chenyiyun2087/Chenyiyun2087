@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""Formal PIT Pipeline — single, immutable entry point for evidence production.
+"""Formal PIT Pipeline — single, immutable entry point for PIT evidence production.
 
 This is the ONLY path that can produce formal PIT evidence in the
-Chenyiyun2087 Formal Evidence Backbone v5.1.  Individual Adapter, Builder,
+Chenyiyun2087 Formal Evidence Backbone.  Individual Adapter, Builder,
 or Auditor components may only produce diagnostic evidence when invoked
 directly.  Formal qualification requires this orchestrator.
 
-Complete pipeline:
+v5.1.2: PIT Run is separated from Formal Package.  This pipeline produces
+a sealed, immutable PIT Run containing Adapter snapshots, Factor Panel, and
+Formal Scores.  The Formal Package is built separately from a verified PIT Run.
+
+Pipeline:
   Stage 0: Identity Lock
   Stage 1: Adapter
   Stage 2: Semantic Audit
   Stage 3: Factor Builder
   Stage 4: Score Builder
-  Stage 5: Package Builder
-  Stage 6: Readiness
-  Stage 7: PR-B Binding
-  Stage 8: Seal
-  Stage 9: Atomic Publish
+  Stage 5: Write pit_run_manifest.json
+  Stage 6: Seal
+  Stage 7: Atomic Publish
 
 Run identity is content-addressed from all inputs.  The output directory
 is atomically published from .building/ → formal_pit_run_id/.  Reusing
@@ -51,11 +53,10 @@ from runtime.formal_evidence_contract import (
     compute_formal_pit_run_id,
     update_active_formal_registry,
 )
-from runtime.pr_chain_binding import bind_pr_b
 from scripts.research.pit_data_adapter import build_pit_adapter_manifest
 from scripts.research.pit_factor_panel_builder import build_pit_factor_panel
 
-FORMAL_RUNS_ROOT = PROJECT_ROOT / "exports" / "formal_evidence_runs"
+FORMAL_PIT_RUNS_ROOT = PROJECT_ROOT / "exports" / "formal_pit_runs"
 
 # ── Identity files whose SHAs replace pending_pr_5 ──
 DEPENDENCY_LOCK_PATH = PROJECT_ROOT / "requirements.lock.txt"
@@ -174,14 +175,19 @@ def _block_and_seal(
     *,
     exception: Exception | None = None,
     extra: dict[str, Any] | None = None,
+    registry_path_override: Path | None = None,
 ) -> dict[str, Any]:
-    """Write blocked run manifest, seal, atomically publish, and return BLOCKED."""
-    _write_run_manifest(
+    """Write blocked run manifest, seal, atomically publish, and return BLOCKED.
+
+    registry_path_override enables test isolation for seal registration.
+    """
+    _write_pit_run_manifest(
         building_dir, run_id, "unknown", "BLOCKED", [error_code],
         strategy_set="unknown",
     )
-    seal_directory(building_dir, run_id=run_id, git_commit_sha=git_sha)
-    run_dir = FORMAL_RUNS_ROOT / run_id
+    seal_directory(building_dir, run_id=run_id, git_commit_sha=git_sha,
+                   registry_path_override=registry_path_override)
+    run_dir = FORMAL_PIT_RUNS_ROOT / run_id
     if not run_dir.exists():
         building_dir.rename(run_dir)
     return blocked_report(
@@ -235,8 +241,8 @@ def run_formal_pit_pipeline(
         database_snapshot_identity=db_snapshot_id,
     )
 
-    run_dir = FORMAL_RUNS_ROOT / run_id
-    building_dir = FORMAL_RUNS_ROOT / f".building_{run_id[:16]}"
+    run_dir = FORMAL_PIT_RUNS_ROOT / run_id
+    building_dir = FORMAL_PIT_RUNS_ROOT / f".building_{run_id[:16]}"
 
     # ── Pre-run: check run ID not reused ──
     if run_dir.exists() or building_dir.exists():
@@ -382,114 +388,55 @@ def run_formal_pit_pipeline(
                                extra={"blockers": score_result.get("blockers", [])})
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Stage 5: Package Builder (v4)
+    # Stage 5: Write pit_run_manifest
     # ═══════════════════════════════════════════════════════════════════════
-    package_dir = building_dir / "package"
-    package_dir.mkdir()
-    try:
-        from scripts.research.build_formal_package_v4 import build_formal_package_v4
-        package_result = build_formal_package_v4(
-            formal_pit_run_id=run_id,
-            run_dir=building_dir,
-            output_dir=package_dir,
-            _internal_call=True,
-        )
-    except Exception as exc:
-        return _block_and_seal(building_dir, run_id, git_sha, "package_builder",
-                               f"package_exception:{type(exc).__name__}", exception=exc)
-
-    _write_stage_report(package_dir, "package_builder", package_result)
-
-    if package_result.get("status") != "PASS":
-        return _block_and_seal(building_dir, run_id, git_sha, "package_builder",
-                               "package_builder_not_pass",
-                               extra={"blockers": package_result.get("blockers", [])})
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # Stage 6: Readiness (v4)
-    # ═══════════════════════════════════════════════════════════════════════
-    try:
-        from scripts.research.formal_readiness_v4 import validate as readiness_validate
-        readiness_result = readiness_validate(
-            formal_pit_run_id=run_id,
-            package_dir=package_dir,
-            release_id=release_id,
-            strategy_set=strategy_set,
-            git_commit_sha=git_sha,
-            acceptance_profile_sha=profile_sha,
-            _internal_call=True,
-        )
-    except Exception as exc:
-        return _block_and_seal(building_dir, run_id, git_sha, "readiness",
-                               f"readiness_exception:{type(exc).__name__}", exception=exc)
-
-    # Write readiness report as a standalone artifact (P0-4 fix)
-    readiness_report_dir = building_dir / "readiness"
-    readiness_report_path = readiness_report_dir / "readiness_report.json"
-    readiness_report_dir.mkdir(parents=True, exist_ok=True)
-    readiness_report_path.write_text(
-        json.dumps(readiness_result, ensure_ascii=False, indent=2, sort_keys=True))
-
-    _write_stage_report(readiness_report_dir, "readiness", readiness_result)
-
-    if readiness_result.get("status") != "PASS":
-        return _block_and_seal(building_dir, run_id, git_sha, "readiness",
-                               "readiness_not_pass",
-                               extra={"blockers": readiness_result.get("blockers", [])})
+    scores_sha = score_result.get("score_sha256", "")
+    pit_run_manifest = {
+        "schema_version": "pit_run_manifest_v5_1_2",
+        "formal_pit_run_id": run_id,
+        "release_id": release_id,
+        "strategy_set": strategy_set,
+        "status": "PASS",
+        "blockers": [],
+        "git_commit_sha": git_sha,
+        "adapter_config_sha256": _file_sha(config_dir / "adapter_config.json"),
+        "factor_panel_sha256": _file_sha(factor_panel_path),
+        "scores_sha256": scores_sha,
+        "scores_path": str((scores_dir / "formal_scores.parquet").relative_to(building_dir)),
+        "factor_panel_path": str(factor_panel_path.relative_to(building_dir)),
+        "evidence_status": EvidenceStatus().as_dict(),
+        "capital_authority": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    pit_run_manifest["content_sha256"] = canonical_sha(
+        {k: v for k, v in pit_run_manifest.items() if k != "content_sha256"}
+    )
+    (building_dir / "pit_run_manifest.json").write_text(
+        json.dumps(pit_run_manifest, ensure_ascii=False, indent=2, sort_keys=True))
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Stage 7: PR-B Binding
+    # Stage 6: Seal
     # ═══════════════════════════════════════════════════════════════════════
-    pr_b_dir = building_dir / "pr_b"
-    pr_b_dir.mkdir()
-    try:
-        # P0-4 fix: package_sha = sha256(package_manifest.json bytes)
-        package_manifest_path = package_dir / "package_manifest.json"
-        package_sha = _file_sha(package_manifest_path)
-        pr_b_result = bind_pr_b(
-            formal_pit_run_id=run_id,
-            package_sha256=package_sha,
-            readiness_report_path=readiness_report_path,
-            output_dir=pr_b_dir,
-            release_id=release_id,
-            strategy_set=strategy_set,
-        )
-    except Exception as exc:
-        return _block_and_seal(building_dir, run_id, git_sha, "pr_b_binding",
-                               f"pr_b_exception:{type(exc).__name__}", exception=exc)
-
-    _write_stage_report(pr_b_dir, "pr_b_binding", pr_b_result)
-
-    if pr_b_result.get("status") != "PASS":
-        return _block_and_seal(building_dir, run_id, git_sha, "pr_b_binding",
-                               "pr_b_binding_not_pass",
-                               extra={"blockers": pr_b_result.get("blockers", [])})
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # Stage 8: Write manifest + Seal
-    # ═══════════════════════════════════════════════════════════════════════
-    _write_run_manifest(building_dir, run_id, release_id, "PASS", [],
-                        strategy_set=strategy_set)
     seal_directory(building_dir, run_id=run_id, git_commit_sha=git_sha)
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Stage 9: Atomic Publish
+    # Stage 7: Atomic Publish
     # ═══════════════════════════════════════════════════════════════════════
     building_dir.rename(run_dir)
 
-    # Update the active formal evidence registry
-    # P0-5 fix: use run_dir (final name) not building_dir for paths
-    final_pr_b_dir = run_dir / "pr_b"
+    # ── Register in active formal evidence registry ──
+    # PR-B/C/D/E paths are set by downstream Package/Runner/OOS/Capacity,
+    # not by this PIT Run pipeline.
     registry_payload = {
         "schema_version": "formal_evidence_registry_v1",
         "formal_pit_run_id": run_id,
-        "formal_run_id": None,  # Set by PR-C
-        "pr_a_path": None,       # Set by PR-A equivalence
-        "pr_b_path": str(final_pr_b_dir.relative_to(PROJECT_ROOT) / "pr_b_binding.json"),
-        "pr_c_path": None,       # Set by PR-C
-        "pr_d_path": None,       # Set by PR-D
-        "pr_e_path": None,       # Set by PR-E
-        "pr_i_path": None,       # Set by PR-I
+        "formal_run_id": None,
+        "pr_a_path": None,
+        "pr_b_path": None,
+        "pr_c_path": None,
+        "pr_d_path": None,
+        "pr_e_path": None,
+        "pr_i_path": None,
         "seal_manifest_sha256": _file_sha(run_dir / "seal_manifest.json"),
         "capital_authority": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -498,30 +445,32 @@ def run_formal_pit_pipeline(
     try:
         update_active_formal_registry(registry_payload)
     except Exception as reg_exc:
-        # P0-5 fix: registry activation failure must NOT be silently ignored.
-        # The run is downgraded to PASS_NOT_ACTIVATED.
-        manifest_path = run_dir / "run_manifest.json"
-        manifest = json.loads(manifest_path.read_text())
-        manifest["status"] = "PASS_NOT_ACTIVATED"
-        manifest["registry_error"] = f"{type(reg_exc).__name__}: {reg_exc}"
-        manifest["content_sha256"] = canonical_sha(
-            {k: v for k, v in manifest.items() if k != "content_sha256"}
-        )
-        manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
-        seal_directory(run_dir, run_id=run_id, git_commit_sha=git_sha)
+        # v5.1.2: Registry activation failure writes external activation report.
+        # The sealed PIT Run is never modified.
+        activation_report = {
+            "schema_version": "activation_report_v5_1_2",
+            "formal_pit_run_id": run_id,
+            "status": "ACTIVATION_FAILED",
+            "error": f"{type(reg_exc).__name__}: {reg_exc}",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
+        reg_dir.mkdir(parents=True, exist_ok=True)
+        (reg_dir / f"activation_failed_{run_id[:16]}.json").write_text(
+            json.dumps(activation_report, ensure_ascii=False, indent=2, sort_keys=True))
 
-    return json.loads((run_dir / "run_manifest.json").read_text())
+    return json.loads((run_dir / "pit_run_manifest.json").read_text())
 
 
-def _write_run_manifest(
+def _write_pit_run_manifest(
     run_dir: Path, run_id: str, release_id: str,
     status: str, blockers: list[str],
     strategy_set: str = "unknown",
 ) -> dict[str, Any]:
+    """Write pit_run_manifest.json — the PIT Run's own manifest."""
     manifest = {
-        "schema_version": "formal_evidence_backbone_v5_1",
-        "run_id": run_id,
+        "schema_version": "pit_run_manifest_v5_1_2",
+        "formal_pit_run_id": run_id,
         "release_id": release_id,
         "strategy_set": strategy_set,
         "status": status,
@@ -533,7 +482,7 @@ def _write_run_manifest(
     manifest["content_sha256"] = canonical_sha(
         {k: v for k, v in manifest.items() if k != "content_sha256"}
     )
-    (run_dir / "run_manifest.json").write_text(
+    (run_dir / "pit_run_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
     return manifest
 

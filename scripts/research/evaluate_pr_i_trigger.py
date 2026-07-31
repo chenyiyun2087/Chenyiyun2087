@@ -72,13 +72,23 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
+# v5.1.2: Required evidence layers for formal PR-I evaluation
+DEFAULT_SOURCES = {
+    "pr_a_equivalence",
+    "pr_b_formal_readiness",
+    "pr_c_formal_run",
+    "pr_d_oos_robustness",
+    "pr_e_execution_capacity",
+}
+
+
 def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
     """Evaluate PR-I trigger using the v5.1 verify_pr_i_chain().
 
-    v5.1.1: Delegates to verify_pr_i_chain() for consistent, artifact-backed
-    chain verification.  The old per-key status_rules, dual_ledger_results,
-    and manual cross-validation are replaced by the single formal chain
-    verifier.
+    v5.1.2: Splits chain_status (technical) from alpha_redesign_trigger
+    (economic decision).  Guards against None paths that would crash
+    verify_pr_i_chain.  Capital Firewall requires chain_status == PASS,
+    NOT PR_I_TRIGGERED.
     """
     from runtime.pr_chain_binding import verify_pr_i_chain
 
@@ -88,13 +98,30 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
         if path is not None and path.is_file():
             source_manifest[key] = {"path": _display_path(path), "sha256": _sha(path)}
 
-    # Map source keys to PR-B/C/D/E paths for verify_pr_i_chain
+    # Map source keys to PR-B/C/D/E paths
     pr_b_path = sources.get("pr_b_formal_readiness")
     pr_c_path = sources.get("pr_c_formal_run")
     pr_d_path = sources.get("pr_d_oos_robustness")
     pr_e_path = sources.get("pr_e_execution_capacity")
 
-    # Run the formal chain verifier
+    # v5.1.2: Guard against None paths — don't pass None to verify_pr_i_chain
+    path_blockers: list[str] = []
+    for label, path in [("pr_b", pr_b_path), ("pr_c", pr_c_path),
+                         ("pr_d", pr_d_path), ("pr_e", pr_e_path)]:
+        if path is None or not path.is_file():
+            path_blockers.append(f"{label}_missing_or_not_a_file")
+
+    if path_blockers:
+        return _build_pr_i_report(
+            pr_chain_status="BLOCKED",
+            blockers=path_blockers,
+            economic_status="UNDETERMINED",
+            alpha_redesign_trigger="NOT_TRIGGERED",
+            technical_evidence_complete=False,
+            source_manifest=source_manifest,
+        )
+
+    # Run the formal chain verifier (all paths are valid at this point)
     chain_result = verify_pr_i_chain(
         pr_b_path=pr_b_path,
         pr_c_path=pr_c_path,
@@ -102,31 +129,28 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
         pr_e_path=pr_e_path,
     )
 
-    # Convert to the existing output format for backward compatibility
     chain_passed = chain_result["status"] == "PASS"
     blockers = sorted(chain_result.get("blockers", []))
 
-    # Check if all required layers exist (PR-A is optional for PR-I trigger)
+    # Check if all required layers exist
     missing_keys = []
-    expected = set(DEFAULT_SOURCES)
-    for key in sorted(expected):
+    for key in sorted(DEFAULT_SOURCES):
         path = sources.get(key)
         if path is None or not path.is_file():
             missing_keys.append(key)
 
     technical_complete = chain_passed and not missing_keys
-    economic_failed = False  # verify_pr_i_chain returns PASS for ECONOMIC_FAILED
 
-    # Re-check: if chain passed but some D/E had ECONOMIC_FAILED status,
-    # we need to look at the actual binding files
-    if chain_passed and pr_d_path and pr_d_path.is_file():
+    # v5.1.2: Split economic decision from chain status
+    economic_failed = False
+    if chain_passed and pr_d_path.is_file():
         try:
             pr_d = json.loads(pr_d_path.read_text(encoding="utf-8"))
             if pr_d.get("status") == "ECONOMIC_FAILED":
                 economic_failed = True
         except (OSError, json.JSONDecodeError):
             pass
-    if chain_passed and pr_e_path and pr_e_path.is_file():
+    if chain_passed and pr_e_path.is_file():
         try:
             pr_e = json.loads(pr_e_path.read_text(encoding="utf-8"))
             if pr_e.get("status") == "ECONOMIC_FAILED":
@@ -134,33 +158,42 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
         except (OSError, json.JSONDecodeError):
             pass
 
-    decision = (
-        "PR_I_TRIGGERED"
-        if technical_complete and economic_failed
-        else "PR_I_NOT_TRIGGERED"
+    return _build_pr_i_report(
+        pr_chain_status="PASS" if chain_passed else "BLOCKED",
+        blockers=blockers + missing_keys,
+        economic_status="ECONOMIC_FAILED" if economic_failed else "PASS",
+        alpha_redesign_trigger="TRIGGERED" if economic_failed else "NOT_TRIGGERED",
+        technical_evidence_complete=technical_complete,
+        source_manifest=source_manifest,
     )
 
+
+def _build_pr_i_report(
+    *,
+    pr_chain_status: str,
+    blockers: list[str],
+    economic_status: str,
+    alpha_redesign_trigger: str,
+    technical_evidence_complete: bool,
+    source_manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Build standardized PR-I evaluation report with split semantics.
+
+    v5.1.2: Capital Firewall requires pr_chain_status == PASS AND
+    economic_status == PASS.  alpha_redesign_trigger is a separate
+    research decision signal, NOT a capital gate condition.
+    """
     result: dict[str, Any] = {
-        "schema_version": "dynamic_champion_pr_i_trigger_v1",
-        "decision": decision,
-        "technical_evidence_complete": technical_complete,
-        "economic_failure_only": economic_failed,
+        "schema_version": "pr_i_evaluation_v5_1_2",
+        "pr_chain_status": pr_chain_status,
+        "economic_status": economic_status,
+        "alpha_redesign_trigger": alpha_redesign_trigger,
+        "capital_chain_ready": pr_chain_status == "PASS" and economic_status == "PASS",
+        "technical_evidence_complete": technical_evidence_complete,
         "alpha_modified": False,
         "current_allowed_risk_capital_cny": 0,
         "broker_api_enabled": False,
-        "checks": [
-            {
-                "check": "pr_i_chain_verification",
-                "passed": chain_passed,
-                "actual": chain_result["status"],
-                "required": "PASS",
-            },
-            *([
-                {"check": k, "passed": False, "actual": "MISSING", "required": "present"}
-                for k in missing_keys
-            ]),
-        ],
-        "blockers": blockers + missing_keys,
+        "blockers": sorted(set(blockers)),
         "source_manifest": source_manifest,
     }
     result["evidence_sha256"] = hashlib.sha256(

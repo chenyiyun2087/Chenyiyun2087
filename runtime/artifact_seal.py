@@ -54,11 +54,17 @@ def _register_seal(
     if registry_path.exists():
         try:
             registry = json.loads(registry_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            registry = {"schema_version": "seal_registry_v1", "entries": {}}
+        except (OSError, json.JSONDecodeError) as exc:
+            # v5.1.2: Registry corruption is fatal — do NOT reset to empty
+            raise ValueError(
+                f"Seal registry at {registry_path} is corrupted or unreadable: {exc}. "
+                f"Manual repair required before new seals can be registered."
+            ) from exc
 
     if not isinstance(registry, dict):
-        registry = {"schema_version": "seal_registry_v1", "entries": {}}
+        raise ValueError(
+            f"Seal registry at {registry_path} is not a JSON object. Manual repair required."
+        )
     if "entries" not in registry:
         registry["entries"] = {}
 
@@ -98,6 +104,14 @@ def seal_directory(
     """
     if not run_dir.is_dir():
         raise NotADirectoryError(f"Not a directory: {run_dir}")
+
+    # ── v5.1.2: Reject re-sealing ──
+    existing_seal = run_dir / "seal_manifest.json"
+    if existing_seal.exists():
+        raise FileExistsError(
+            f"Directory already sealed — seal_manifest.json exists at {existing_seal}. "
+            f"Sealed artifacts are immutable and must not be re-sealed."
+        )
 
     # ── Symlink detection ──
     for path in run_dir.rglob("*"):

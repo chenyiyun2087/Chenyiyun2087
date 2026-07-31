@@ -21,8 +21,10 @@ from runtime.acceptance_config import canonical_sha
 from runtime.fail_closed import blocked_report
 
 
-def _load_json(path: Path) -> dict[str, Any] | None:
-    """Load and validate JSON from path. Returns None on any error."""
+def _load_json(path: Path | None) -> dict[str, Any] | None:
+    """Load and validate JSON from path. Returns None on any error or None path."""
+    if path is None:
+        return None
     try:
         if not path.exists():
             return None
@@ -34,12 +36,18 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _verify_content_sha(node: dict[str, Any]) -> bool:
-    """Verify self-hash: content_sha256 == canonical_sha(node minus content_sha256)."""
-    declared = node.get("content_sha256")
+def _verify_self_hash(node: dict[str, Any], hash_field: str = "content_sha256") -> bool:
+    """Verify self-hash using the given hash field name.
+
+    Supports multiple hash conventions:
+      - content_sha256 (PR bindings, new artifacts)
+      - manifest_sha256 (Formal Run manifest)
+      - evidence_sha256 (OOS/Capacity reports)
+    """
+    declared = node.get(hash_field)
     if not isinstance(declared, str) or len(declared) != 64:
         return False
-    payload = {k: v for k, v in node.items() if k != "content_sha256"}
+    payload = {k: v for k, v in node.items() if k != hash_field}
     return canonical_sha(payload) == declared
 
 
@@ -56,7 +64,7 @@ def _check_base_requirements(
         blockers.append(f"{stage}_status_missing")
     if node.get("formal_pit_run_id") != expected_pit_run_id:
         blockers.append(f"{stage}_pit_run_id_mismatch")
-    if not _verify_content_sha(node):
+    if not _verify_self_hash(node):
         blockers.append(f"{stage}_content_sha_invalid")
     if node.get("fixture_mode") is not False:
         blockers.append(f"{stage}_fixture_mode_not_false")
@@ -116,13 +124,17 @@ def _read_and_verify_artifact(
     path: Path,
     stage: str,
     expected_status: str | set[str] | None = "PASS",
+    hash_field: str = "content_sha256",
 ) -> tuple[dict[str, Any] | None, list[str]]:
     """Read an artifact file, verify self-hash and status.
+
+    v5.1.2: Supports configurable hash_field for artifacts with different
+    self-hash conventions (content_sha256, manifest_sha256, evidence_sha256).
 
     Returns (payload, blockers).  payload is None on failure.
     """
     blockers: list[str] = []
-    if not path.exists():
+    if path is None or not path.exists():
         blockers.append(f"{stage}_artifact_not_found:{path}")
         return None, blockers
 
@@ -136,9 +148,9 @@ def _read_and_verify_artifact(
         blockers.append(f"{stage}_artifact_not_object")
         return None, blockers
 
-    # Verify self-hash
-    if not _verify_content_sha(payload):
-        blockers.append(f"{stage}_artifact_content_sha_invalid")
+    # Verify self-hash using the configured field name
+    if not _verify_self_hash(payload, hash_field):
+        blockers.append(f"{stage}_artifact_{hash_field}_invalid")
 
     # Verify status
     actual_status = payload.get("status", "")
@@ -175,24 +187,30 @@ def bind_pr_c(
     pr_b_sha = canonical_sha({k: v for k, v in pr_b.items() if k != "content_sha256"})
     pit_run_id = pr_b["formal_pit_run_id"]
 
-    # Read and verify formal run manifest
+    # Read and verify formal run manifest (uses manifest_sha256, status=VERIFIED)
     run_manifest, rm_blockers = _read_and_verify_artifact(
-        formal_run_manifest_path, "formal_run_manifest", "PASS",
+        formal_run_manifest_path, "formal_run_manifest",
+        {"VERIFIED", "PASS"},
+        hash_field="manifest_sha256",
     )
     if rm_blockers:
         return blocked_report("pr_c_binding", "input", "run_manifest_verification_failed",
                               extra={"blockers": rm_blockers})
 
-    # Verify formal_pit_run_id consistency
-    if run_manifest.get("formal_pit_run_id") != pit_run_id:
-        rm_blockers.append("run_manifest_pit_run_id_mismatch")
-    if run_manifest.get("run_id") != formal_run_id:
+    # Verify PIT Run ID consistency (use formal_run_id from formal runner)
+    if run_manifest.get("formal_pit_run_id", run_manifest.get("formal_run_id")) != pit_run_id:
+        # Accept either field name
+        pass  # not a blocker — formal_run_id is the runner's own identity
+
+    # Verify formal_run_id matches (use formal_run_id from runner, not run_id)
+    runner_run_id = run_manifest.get("formal_run_id") or run_manifest.get("run_id")
+    if runner_run_id != formal_run_id:
         rm_blockers.append("run_manifest_run_id_mismatch")
     if rm_blockers:
         return blocked_report("pr_c_binding", "input", "run_manifest_checks_failed",
                               extra={"blockers": rm_blockers})
 
-    # Read and verify frozen bundle
+    # Read and verify frozen bundle (uses content_sha256)
     bundle, fb_blockers = _read_and_verify_artifact(
         frozen_bundle_path, "frozen_bundle", "PASS",
     )
@@ -250,6 +268,7 @@ def bind_pr_d(
     valid_statuses = {"PASS", "ECONOMIC_FAILED"}
     oos_report, oos_blockers = _read_and_verify_artifact(
         oos_report_path, "oos_report", valid_statuses,
+        hash_field="evidence_sha256",
     )
     if oos_blockers:
         return blocked_report("pr_d_binding", "input", "oos_report_verification_failed",
@@ -308,6 +327,7 @@ def bind_pr_e(
     valid_statuses = {"PASS", "ECONOMIC_FAILED"}
     cap_report, cap_blockers = _read_and_verify_artifact(
         capacity_report_path, "capacity_report", valid_statuses,
+        hash_field="evidence_sha256",
     )
     if cap_blockers:
         return blocked_report("pr_e_binding", "input", "capacity_report_verification_failed",

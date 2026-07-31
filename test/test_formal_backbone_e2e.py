@@ -101,13 +101,15 @@ class TestE2EHappyPath:
             "schema_version": "pr_chain_binding_v5_1",
             "status": "PASS",
             "formal_pit_run_id": run_id,
+            "formal_run_id": formal_run_id,
             "run_id": formal_run_id,
             "fixture_mode": False,
             "capital_authority": False,
         }
-        formal_run_manifest["content_sha256"] = canonical_sha(
-            {k: v for k, v in formal_run_manifest.items() if k != "content_sha256"}
+        formal_run_manifest["manifest_sha256"] = canonical_sha(
+            {k: v for k, v in formal_run_manifest.items() if k != "manifest_sha256"}
         )
+        
         formal_run_manifest_path.write_text(json.dumps(formal_run_manifest))
 
         frozen_bundle_path = run_dir / "frozen_bundle.json"
@@ -142,8 +144,8 @@ class TestE2EHappyPath:
             "fixture_mode": False,
             "capital_authority": False,
         }
-        oos_report["content_sha256"] = canonical_sha(
-            {k: v for k, v in oos_report.items() if k != "content_sha256"}
+        oos_report["evidence_sha256"] = canonical_sha(
+            {k: v for k, v in oos_report.items() if k != "evidence_sha256"}
         )
         oos_report_path.write_text(json.dumps(oos_report))
 
@@ -165,8 +167,8 @@ class TestE2EHappyPath:
             "fixture_mode": False,
             "capital_authority": False,
         }
-        cap_report["content_sha256"] = canonical_sha(
-            {k: v for k, v in cap_report.items() if k != "content_sha256"}
+        cap_report["evidence_sha256"] = canonical_sha(
+            {k: v for k, v in cap_report.items() if k != "evidence_sha256"}
         )
         cap_report_path.write_text(json.dumps(cap_report))
 
@@ -279,11 +281,13 @@ class TestMutationDetection:
         formal_run_manifest_path = run_dir / "formal_run_manifest.json"
         formal_run_manifest = {
             "schema_version": "pr_chain_binding_v5_1", "status": "PASS",
-            "formal_pit_run_id": "run_x", "run_id": "run_x_c",
+            "formal_pit_run_id": "run_x", "formal_run_id": "run_x_c",
+            "run_id": "run_x_c",
             "fixture_mode": False, "capital_authority": False,
         }
-        formal_run_manifest["content_sha256"] = canonical_sha(
-            {k: v for k, v in formal_run_manifest.items() if k != "content_sha256"})
+        formal_run_manifest["manifest_sha256"] = canonical_sha(
+            {k: v for k, v in formal_run_manifest.items() if k != "manifest_sha256"})
+        
         formal_run_manifest_path.write_text(json.dumps(formal_run_manifest))
 
         frozen_bundle_path = run_dir / "frozen_bundle.json"
@@ -307,8 +311,8 @@ class TestMutationDetection:
             "formal_pit_run_id": "run_x", "formal_run_id": "run_x_c",
             "fixture_mode": False, "capital_authority": False,
         }
-        oos_report["content_sha256"] = canonical_sha(
-            {k: v for k, v in oos_report.items() if k != "content_sha256"})
+        oos_report["evidence_sha256"] = canonical_sha(
+            {k: v for k, v in oos_report.items() if k != "evidence_sha256"})
         oos_report_path.write_text(json.dumps(oos_report))
         bind_pr_d(pr_c_binding_path=pr_c_dir / "pr_c_binding.json",
                   oos_report_path=oos_report_path, output_dir=pr_d_dir, fixture_mode=False)
@@ -319,8 +323,8 @@ class TestMutationDetection:
             "formal_pit_run_id": "run_x", "formal_run_id": "run_x_c",
             "fixture_mode": False, "capital_authority": False,
         }
-        cap_report["content_sha256"] = canonical_sha(
-            {k: v for k, v in cap_report.items() if k != "content_sha256"})
+        cap_report["evidence_sha256"] = canonical_sha(
+            {k: v for k, v in cap_report.items() if k != "evidence_sha256"})
         cap_report_path.write_text(json.dumps(cap_report))
         bind_pr_e(pr_c_binding_path=pr_c_dir / "pr_c_binding.json",
                   capacity_report_path=cap_report_path, output_dir=pr_e_dir, fixture_mode=False)

@@ -48,19 +48,21 @@ def _build_complete_chain(tmp_path: Path, pit_run_id: str = "test_pit_run_001"):
         strategy_set="champion_v1_2b",
     )
 
-    # PR-C: create real artifact files
+    # PR-C: create real artifact files with correct hash conventions
     formal_run_id = f"formal-{pit_run_id}"
     formal_run_manifest_path = run_dir / "formal_run_manifest.json"
     formal_run_manifest = {
         "schema_version": "pr_chain_binding_v5_1",
-        "status": "PASS",
+        "status": "PASS",  # v5.1.2: also accepts VERIFIED
         "formal_pit_run_id": pit_run_id,
+        "formal_run_id": formal_run_id,
         "run_id": formal_run_id,
         "fixture_mode": False,
         "capital_authority": False,
     }
-    formal_run_manifest["content_sha256"] = canonical_sha(
-        {k: v for k, v in formal_run_manifest.items() if k != "content_sha256"}
+    # Use manifest_sha256 as the self-hash (no content_sha256 copy — breaks verification)
+    formal_run_manifest["manifest_sha256"] = canonical_sha(
+        {k: v for k, v in formal_run_manifest.items() if k != "manifest_sha256"}
     )
     formal_run_manifest_path.write_text(json.dumps(formal_run_manifest))
 
@@ -86,7 +88,7 @@ def _build_complete_chain(tmp_path: Path, pit_run_id: str = "test_pit_run_001"):
         output_dir=pr_c_dir,
     )
 
-    # PR-D: create real OOS report
+    # PR-D: create real OOS report (uses evidence_sha256)
     oos_report_path = run_dir / "oos_report.json"
     oos_report = {
         "schema_version": "pr_chain_binding_v5_1",
@@ -96,8 +98,8 @@ def _build_complete_chain(tmp_path: Path, pit_run_id: str = "test_pit_run_001"):
         "fixture_mode": False,
         "capital_authority": False,
     }
-    oos_report["content_sha256"] = canonical_sha(
-        {k: v for k, v in oos_report.items() if k != "content_sha256"}
+    oos_report["evidence_sha256"] = canonical_sha(
+        {k: v for k, v in oos_report.items() if k != "evidence_sha256"}
     )
     oos_report_path.write_text(json.dumps(oos_report))
 
@@ -109,7 +111,7 @@ def _build_complete_chain(tmp_path: Path, pit_run_id: str = "test_pit_run_001"):
         fixture_mode=False,
     )
 
-    # PR-E: create real capacity report
+    # PR-E: create real capacity report (uses evidence_sha256)
     capacity_report_path = run_dir / "capacity_report.json"
     capacity_report = {
         "schema_version": "pr_chain_binding_v5_1",
@@ -119,8 +121,8 @@ def _build_complete_chain(tmp_path: Path, pit_run_id: str = "test_pit_run_001"):
         "fixture_mode": False,
         "capital_authority": False,
     }
-    capacity_report["content_sha256"] = canonical_sha(
-        {k: v for k, v in capacity_report.items() if k != "content_sha256"}
+    capacity_report["evidence_sha256"] = canonical_sha(
+        {k: v for k, v in capacity_report.items() if k != "evidence_sha256"}
     )
     capacity_report_path.write_text(json.dumps(capacity_report))
 
@@ -186,8 +188,8 @@ class TestCompleteChainHappyPath:
             "fixture_mode": False,
             "capital_authority": False,
         }
-        oos_report["content_sha256"] = canonical_sha(
-            {k: v for k, v in oos_report.items() if k != "content_sha256"}
+        oos_report["evidence_sha256"] = canonical_sha(
+            {k: v for k, v in oos_report.items() if k != "evidence_sha256"}
         )
         oos_report_path.write_text(json.dumps(oos_report))
 
@@ -209,8 +211,8 @@ class TestCompleteChainHappyPath:
             "fixture_mode": False,
             "capital_authority": False,
         }
-        capacity_report["content_sha256"] = canonical_sha(
-            {k: v for k, v in capacity_report.items() if k != "content_sha256"}
+        capacity_report["evidence_sha256"] = canonical_sha(
+            {k: v for k, v in capacity_report.items() if k != "evidence_sha256"}
         )
         capacity_report_path.write_text(json.dumps(capacity_report))
 
@@ -559,8 +561,8 @@ class TestFixtureMode:
             "fixture_mode": True,
             "capital_authority": False,
         }
-        oos_report["content_sha256"] = canonical_sha(
-            {k: v for k, v in oos_report.items() if k != "content_sha256"}
+        oos_report["evidence_sha256"] = canonical_sha(
+            {k: v for k, v in oos_report.items() if k != "evidence_sha256"}
         )
         oos_report_path.write_text(json.dumps(oos_report))
 
@@ -592,8 +594,8 @@ class TestFixtureMode:
             "fixture_mode": True,
             "capital_authority": False,
         }
-        cap_report["content_sha256"] = canonical_sha(
-            {k: v for k, v in cap_report.items() if k != "content_sha256"}
+        cap_report["evidence_sha256"] = canonical_sha(
+            {k: v for k, v in cap_report.items() if k != "evidence_sha256"}
         )
         cap_report_path.write_text(json.dumps(cap_report))
 

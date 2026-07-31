@@ -1,46 +1,5 @@
 {
-  "entries": {
-    "e2e_test_215fd7bae2e355c5": {
-      "artifact_tree_sha256": "4a52afddb9432dce981765625479cc5aedaa1b7a49752f22979a3845f66541ac",
-      "registered_at": "2026-07-31T22:38:11.599697+00:00",
-      "registered_by": "test",
-      "run_id": "e2e_test_215fd7bae2e355c5",
-      "seal_manifest_file_sha256": "2f7fa33c8628c6ca8c72415b3690031574cf0d127a514a2721ca82ef05c9231e",
-      "status": "ACTIVE"
-    },
-    "seal_1": {
-      "artifact_tree_sha256": "0c6358b4f06f462a598efa3709846d713e36e18020a196032bbc56a7ccd0d7f3",
-      "registered_at": "2026-07-31T22:38:11.677053+00:00",
-      "registered_by": "test",
-      "run_id": "seal_1",
-      "seal_manifest_file_sha256": "db5e80a29de3533c3e05160944177802d4f22d32b285eec20c0070a292ebc768",
-      "status": "ACTIVE"
-    },
-    "test_run_block_and_seal": {
-      "artifact_tree_sha256": "e8e06f8525a9d3ff9a1a5ede3039421e576d4bc6134dbd097afd776246798d01",
-      "registered_at": "2026-07-31T22:40:02.035136+00:00",
-      "registered_by": "git_sha_abc",
-      "run_id": "test_run_block_and_seal",
-      "seal_manifest_file_sha256": "604f7b559258f9b228e4585870804c80332bc9e0860aab5e190b813b6da75600",
-      "status": "ACTIVE"
-    },
-    "test_run_id_123": {
-      "artifact_tree_sha256": "05a926b90d358a63b608d617afb6a2a05f4607853bcf65cf1216f5ef6fda167c",
-      "registered_at": "2026-07-31T22:33:25.977754+00:00",
-      "registered_by": "abc123def",
-      "run_id": "test_run_id_123",
-      "seal_manifest_file_sha256": "b19872b4802dd1cc7307d0271dac94fe985ab89ad3394dcb02b368da84b90ff9",
-      "status": "ACTIVE"
-    },
-    "test_run_p19_verify": {
-      "artifact_tree_sha256": "9f3433fede66d95bb245fecb89162df17842268c2e868e605abea4b756e1c938",
-      "registered_at": "2026-07-31T22:33:33.371989+00:00",
-      "registered_by": "abc123def",
-      "run_id": "test_run_p19_verify",
-      "seal_manifest_file_sha256": "55fe1ed3139d94a254127bac19fd4bc46025f3b26c4c10e42f182f2e01b1423a",
-      "status": "ACTIVE"
-    }
-  },
+  "entries": {},
   "schema_version": "seal_registry_v1",
-  "updated_at": "2026-07-31T22:40:02.035138+00:00"
+  "updated_at": "2026-08-01T00:00:00.000000+00:00"
 }
