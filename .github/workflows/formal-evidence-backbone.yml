@@ -4,47 +4,45 @@ on:
   push:
     branches: [main]
     paths:
-      - 'runtime/pr_chain_binding.py'
-      - 'runtime/formal_evidence_contract.py'
-      - 'runtime/formal_contract.py'
-      - 'runtime/artifact_seal.py'
-      - 'runtime/fail_closed.py'
-      - 'runtime/acceptance_config.py'
+      - 'runtime/**'
       - 'scripts/research/build_formal_scores.py'
-      - 'scripts/research/build_formal_package_v3.py'
       - 'scripts/research/build_formal_package_v4.py'
-      - 'scripts/research/formal_readiness_v3.py'
       - 'scripts/research/formal_readiness_v4.py'
       - 'scripts/research/run_formal_pit_pipeline.py'
       - 'scripts/research/pit_data_adapter.py'
       - 'scripts/research/pit_factor_panel_builder.py'
       - 'scripts/research/evaluate_pr_i_trigger.py'
       - 'scripts/research/capital_firewall.py'
+      - 'scripts/ops/evaluate_dynamic_champion_readiness.py'
+      - 'config/strategy_definitions/**'
+      - 'config/factor_registry.yaml'
+      - 'config/dynamic_champion_live_program.yaml'
+      - 'exports/formal_evidence_registry/**'
       - 'test/test_pr_chain_complete.py'
       - 'test/test_formal_backbone_e2e.py'
       - 'test/test_formal_evidence_binding.py'
+      - 'test/test_formal_pit_orchestrator_e2e.py'
       - '.github/workflows/formal-evidence-backbone.yml'
   pull_request:
     paths:
-      - 'runtime/pr_chain_binding.py'
-      - 'runtime/formal_evidence_contract.py'
-      - 'runtime/formal_contract.py'
-      - 'runtime/artifact_seal.py'
-      - 'runtime/fail_closed.py'
-      - 'runtime/acceptance_config.py'
+      - 'runtime/**'
       - 'scripts/research/build_formal_scores.py'
-      - 'scripts/research/build_formal_package_v3.py'
       - 'scripts/research/build_formal_package_v4.py'
-      - 'scripts/research/formal_readiness_v3.py'
       - 'scripts/research/formal_readiness_v4.py'
       - 'scripts/research/run_formal_pit_pipeline.py'
       - 'scripts/research/pit_data_adapter.py'
       - 'scripts/research/pit_factor_panel_builder.py'
       - 'scripts/research/evaluate_pr_i_trigger.py'
       - 'scripts/research/capital_firewall.py'
+      - 'scripts/ops/evaluate_dynamic_champion_readiness.py'
+      - 'config/strategy_definitions/**'
+      - 'config/factor_registry.yaml'
+      - 'config/dynamic_champion_live_program.yaml'
+      - 'exports/formal_evidence_registry/**'
       - 'test/test_pr_chain_complete.py'
       - 'test/test_formal_backbone_e2e.py'
       - 'test/test_formal_evidence_binding.py'
+      - 'test/test_formal_pit_orchestrator_e2e.py'
       - '.github/workflows/formal-evidence-backbone.yml'
 
 jobs:
@@ -68,6 +66,16 @@ jobs:
       - run: pip install -r requirements-ci.lock.txt pydantic
       - run: python -m pytest test/test_pr_chain_complete.py -v --tb=short
 
+  orchestrator-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic
+      - run: python -m pytest test/test_formal_pit_orchestrator_e2e.py -v --tb=short
+
   formal-score-equivalence:
     runs-on: ubuntu-latest
     steps:
@@ -77,8 +85,11 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements-ci.lock.txt pydantic scipy pyarrow
       - run: python -c "
+        import numpy as np, random
+        np.random.seed(42)
+        random.seed(42)
         from scripts.research.build_formal_scores import build_formal_scores, check_economic_equivalence
-        import pandas as pd, numpy as np, tempfile, os
+        import pandas as pd, tempfile, os
         tmp = tempfile.mkdtemp()
         panel = pd.DataFrame({
             'trade_date': pd.date_range('2023-01-04', periods=30, freq='B'),
@@ -117,6 +128,40 @@ jobs:
       - run: pip install -r requirements-ci.lock.txt pydantic
       - run: python -m pytest test/test_formal_backbone_e2e.py -v --tb=short -k "test_seal"
 
+  seal-registry-corruption:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic
+      - run: python -c "
+        '''v2.1: verify_seal must TAMPERED on missing/corrupt/damaged registry.'''
+        import json, tempfile, stat
+        from pathlib import Path
+        from runtime.artifact_seal import seal_directory, verify_seal
+        tmp = Path(tempfile.mkdtemp())
+        run_dir = tmp / 'seal_corrupt_test'
+        run_dir.mkdir()
+        (run_dir / 'data.txt').write_text('hello')
+        reg_path = tmp / 'seal_registry.json'
+        seal_directory(run_dir, run_id='corrupt_test', git_commit_sha='test',
+                       registry_path_override=reg_path)
+        # Verify with correct registry
+        v = verify_seal(run_dir, registry_path_override=reg_path)
+        assert v['status'] == 'VERIFIED', f'Expected VERIFIED, got {v}'
+        # Corrupt registry → TAMPERED
+        reg_path.write_text('{not valid json')
+        v2 = verify_seal(run_dir, registry_path_override=reg_path)
+        assert v2['status'] == 'TAMPERED', f'Expected TAMPERED on corrupt, got {v2}'
+        # Missing registry → TAMPERED
+        reg_missing = tmp / 'nonexistent.json'
+        v3 = verify_seal(run_dir, registry_path_override=reg_missing)
+        assert v3['status'] == 'TAMPERED', f'Expected TAMPERED on missing, got {v3}'
+        print('Seal registry corruption tests PASS')
+      "
+
   mutation-suite:
     runs-on: ubuntu-latest
     needs: [pr-chain-completeness]
@@ -130,14 +175,20 @@ jobs:
 
   full-regression:
     runs-on: ubuntu-latest
-    needs: [evidence-contract, pr-chain-completeness, formal-score-equivalence, artifact-seal-v2]
+    needs: [evidence-contract, pr-chain-completeness, formal-score-equivalence, artifact-seal-v2, orchestrator-e2e, seal-registry-corruption]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install -r requirements-ci.lock.txt pydantic scipy pyarrow
-      - run: python -m pytest test/test_formal_backbone_e2e.py test/test_pr_chain_complete.py test/test_formal_evidence_binding.py -v --tb=short
+      - run: |
+          python -m pytest \
+            test/test_formal_backbone_e2e.py \
+            test/test_pr_chain_complete.py \
+            test/test_formal_evidence_binding.py \
+            test/test_formal_pit_orchestrator_e2e.py \
+            -v --tb=short
 
   secret-scan:
     runs-on: ubuntu-latest

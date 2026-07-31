@@ -47,8 +47,14 @@ def validate(
     fixture_mode: bool = False,
     git_commit_sha: str = "",
     acceptance_profile_sha: str = "",
+    _internal_call: bool = False,
 ) -> dict[str, Any]:
-    """Run all readiness checks. Returns PASS or BLOCKED."""
+    """Run all readiness checks. Returns PASS or BLOCKED.
+
+    _internal_call=True relaxes checks that are only relevant for
+    standalone CLI usage (e.g. .building path check).
+    Set only by the formal PIT orchestrator.
+    """
     blockers: list[str] = []
 
     # ═══════════════════════════════════════════════════════════════════
@@ -91,7 +97,7 @@ def validate(
     for p in package_dir.rglob("*"):
         if p.is_symlink():
             blockers.append(f"symlink_forbidden:{p.relative_to(package_dir)}")
-    if ".building" in str(package_dir):
+    if not _internal_call and ".building" in str(package_dir):
         blockers.append(".building_in_path")
 
     # ═══════════════════════════════════════════════════════════════════

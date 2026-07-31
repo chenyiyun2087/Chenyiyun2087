@@ -173,11 +173,12 @@ def _block_and_seal(
     error_code: str,
     *,
     exception: Exception | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write blocked run manifest, seal, atomically publish, and return BLOCKED."""
     _write_run_manifest(
-        building_dir, run_id, "BLOCKED", [error_code],
-        release_id="unknown", strategy_set="unknown",
+        building_dir, run_id, "unknown", "BLOCKED", [error_code],
+        strategy_set="unknown",
     )
     seal_directory(building_dir, run_id=run_id, git_commit_sha=git_sha)
     run_dir = FORMAL_RUNS_ROOT / run_id
@@ -186,6 +187,7 @@ def _block_and_seal(
     return blocked_report(
         "formal_pit_orchestrator", stage_name, error_code,
         exception=exception,
+        extra=extra,
     )
 
 
@@ -195,7 +197,6 @@ def run_formal_pit_pipeline(
     strategy_set: str,
     adapter_config_path: Path,
     acceptance_profile: str = "formal_v5_0",
-    end_date: str | None = None,
 ) -> dict[str, Any]:
     """Execute the complete formal PIT pipeline. Returns run manifest."""
     blockers = _check_prerequisites(adapter_config_path, acceptance_profile)
@@ -284,7 +285,7 @@ def run_formal_pit_pipeline(
     adapter_dir.mkdir()
     try:
         adapter_result = build_pit_adapter_manifest(
-            adapter_config_path, adapter_dir, end_date=end_date,
+            config_dir / "adapter_config.json", adapter_dir,
         )
     except Exception as exc:
         return _block_and_seal(building_dir, run_id, git_sha, "adapter",
@@ -310,9 +311,9 @@ def run_formal_pit_pipeline(
         from scripts.research.pit_factor_panel_audit import run_semantic_audit
         audit_result = run_semantic_audit(snapshots_dir, manifest_path)
     except ImportError:
-        # Semantic audit module not available — produce a diagnostic note
+        # Semantic audit module not available — BLOCKED for formal historical data
         audit_result = {
-            "status": "DIAGNOSTIC",
+            "status": "BLOCKED",
             "component": "semantic_audit",
             "blockers": ["semantic_audit_module_not_available"],
         }
@@ -381,17 +382,17 @@ def run_formal_pit_pipeline(
                                extra={"blockers": score_result.get("blockers", [])})
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Stage 5: Package Builder
+    # Stage 5: Package Builder (v4)
     # ═══════════════════════════════════════════════════════════════════════
     package_dir = building_dir / "package"
     package_dir.mkdir()
     try:
-        from scripts.research.build_formal_package_v3 import build_formal_package_v3
-        package_result = build_formal_package_v3(
+        from scripts.research.build_formal_package_v4 import build_formal_package_v4
+        package_result = build_formal_package_v4(
             formal_pit_run_id=run_id,
-            scores_path=scores_dir / "formal_scores.parquet",
-            factor_panel_path=factor_panel_path,
+            run_dir=building_dir,
             output_dir=package_dir,
+            _internal_call=True,
         )
     except Exception as exc:
         return _block_and_seal(building_dir, run_id, git_sha, "package_builder",
@@ -405,21 +406,31 @@ def run_formal_pit_pipeline(
                                extra={"blockers": package_result.get("blockers", [])})
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Stage 6: Readiness
+    # Stage 6: Readiness (v4)
     # ═══════════════════════════════════════════════════════════════════════
     try:
-        from scripts.research.formal_readiness_v3 import validate as readiness_validate
+        from scripts.research.formal_readiness_v4 import validate as readiness_validate
         readiness_result = readiness_validate(
             formal_pit_run_id=run_id,
             package_dir=package_dir,
             release_id=release_id,
             strategy_set=strategy_set,
+            git_commit_sha=git_sha,
+            acceptance_profile_sha=profile_sha,
+            _internal_call=True,
         )
     except Exception as exc:
         return _block_and_seal(building_dir, run_id, git_sha, "readiness",
                                f"readiness_exception:{type(exc).__name__}", exception=exc)
 
-    _write_stage_report(building_dir, "readiness", readiness_result)
+    # Write readiness report as a standalone artifact (P0-4 fix)
+    readiness_report_dir = building_dir / "readiness"
+    readiness_report_path = readiness_report_dir / "readiness_report.json"
+    readiness_report_dir.mkdir(parents=True, exist_ok=True)
+    readiness_report_path.write_text(
+        json.dumps(readiness_result, ensure_ascii=False, indent=2, sort_keys=True))
+
+    _write_stage_report(readiness_report_dir, "readiness", readiness_result)
 
     if readiness_result.get("status") != "PASS":
         return _block_and_seal(building_dir, run_id, git_sha, "readiness",
@@ -432,11 +443,13 @@ def run_formal_pit_pipeline(
     pr_b_dir = building_dir / "pr_b"
     pr_b_dir.mkdir()
     try:
-        package_sha = readiness_result.get("evidence_sha256", "")
+        # P0-4 fix: package_sha = sha256(package_manifest.json bytes)
+        package_manifest_path = package_dir / "package_manifest.json"
+        package_sha = _file_sha(package_manifest_path)
         pr_b_result = bind_pr_b(
             formal_pit_run_id=run_id,
             package_sha256=package_sha,
-            readiness_report_path=package_dir / "package_manifest.json",
+            readiness_report_path=readiness_report_path,
             output_dir=pr_b_dir,
             release_id=release_id,
             strategy_set=strategy_set,
@@ -465,26 +478,38 @@ def run_formal_pit_pipeline(
     building_dir.rename(run_dir)
 
     # Update the active formal evidence registry
+    # P0-5 fix: use run_dir (final name) not building_dir for paths
+    final_pr_b_dir = run_dir / "pr_b"
+    registry_payload = {
+        "schema_version": "formal_evidence_registry_v1",
+        "formal_pit_run_id": run_id,
+        "formal_run_id": None,  # Set by PR-C
+        "pr_a_path": None,       # Set by PR-A equivalence
+        "pr_b_path": str(final_pr_b_dir.relative_to(PROJECT_ROOT) / "pr_b_binding.json"),
+        "pr_c_path": None,       # Set by PR-C
+        "pr_d_path": None,       # Set by PR-D
+        "pr_e_path": None,       # Set by PR-E
+        "pr_i_path": None,       # Set by PR-I
+        "seal_manifest_sha256": _file_sha(run_dir / "seal_manifest.json"),
+        "capital_authority": False,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": git_sha,
+    }
     try:
-        registry_payload = {
-            "schema_version": "formal_evidence_registry_v1",
-            "formal_pit_run_id": run_id,
-            "formal_run_id": None,  # Set by PR-C
-            "pr_a_path": None,       # Set by PR-A equivalence
-            "pr_b_path": str(pr_b_dir.relative_to(PROJECT_ROOT) / "pr_b_binding.json"),
-            "pr_c_path": None,       # Set by PR-C
-            "pr_d_path": None,       # Set by PR-D
-            "pr_e_path": None,       # Set by PR-E
-            "pr_i_path": None,       # Set by PR-I
-            "seal_manifest_sha256": _file_sha(run_dir / "seal_manifest.json"),
-            "capital_authority": False,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "updated_by": git_sha,
-        }
         update_active_formal_registry(registry_payload)
-    except Exception:
-        # Registry update failure is non-fatal for the run itself
-        pass
+    except Exception as reg_exc:
+        # P0-5 fix: registry activation failure must NOT be silently ignored.
+        # The run is downgraded to PASS_NOT_ACTIVATED.
+        manifest_path = run_dir / "run_manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["status"] = "PASS_NOT_ACTIVATED"
+        manifest["registry_error"] = f"{type(reg_exc).__name__}: {reg_exc}"
+        manifest["content_sha256"] = canonical_sha(
+            {k: v for k, v in manifest.items() if k != "content_sha256"}
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
+        seal_directory(run_dir, run_id=run_id, git_commit_sha=git_sha)
 
     return json.loads((run_dir / "run_manifest.json").read_text())
 
@@ -519,15 +544,12 @@ def main() -> None:
     parser.add_argument("--strategy-set", default="champion_v1_2b")
     parser.add_argument("--adapter-config", type=Path, required=True)
     parser.add_argument("--acceptance-profile", default="formal_v5_0")
-    parser.add_argument("--end-date", default=None,
-                        help="End date for data queries (YYYY-MM-DD). Must propagate to all SQL.")
     args = parser.parse_args()
     result = run_formal_pit_pipeline(
         release_id=args.release_id,
         strategy_set=args.strategy_set,
         adapter_config_path=args.adapter_config,
         acceptance_profile=args.acceptance_profile,
-        end_date=args.end_date,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     if result.get("status") == "BLOCKED":

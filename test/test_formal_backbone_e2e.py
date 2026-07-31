@@ -94,38 +94,96 @@ class TestE2EHappyPath:
         )
         assert pr_b["status"] == "PASS"
 
+        # Create real artifact files for PR-C binding
+        formal_run_id = run_id + "_c"
+        formal_run_manifest_path = run_dir / "formal_run_manifest.json"
+        formal_run_manifest = {
+            "schema_version": "pr_chain_binding_v5_1",
+            "status": "PASS",
+            "formal_pit_run_id": run_id,
+            "run_id": formal_run_id,
+            "fixture_mode": False,
+            "capital_authority": False,
+        }
+        formal_run_manifest["content_sha256"] = canonical_sha(
+            {k: v for k, v in formal_run_manifest.items() if k != "content_sha256"}
+        )
+        formal_run_manifest_path.write_text(json.dumps(formal_run_manifest))
+
+        frozen_bundle_path = run_dir / "frozen_bundle.json"
+        frozen_bundle = {
+            "schema_version": "pr_chain_binding_v5_1",
+            "status": "PASS",
+            "formal_pit_run_id": run_id,
+            "fixture_mode": False,
+            "capital_authority": False,
+        }
+        frozen_bundle["content_sha256"] = canonical_sha(
+            {k: v for k, v in frozen_bundle.items() if k != "content_sha256"}
+        )
+        frozen_bundle_path.write_text(json.dumps(frozen_bundle))
+
         pr_c = bind_pr_c(
             pr_b_binding_path=run_dir / "pr_b" / "pr_b_binding.json",
-            formal_run_id=run_id + "_c",
-            formal_run_manifest_sha256=canonical_sha({"run": run_id}),
-            frozen_bundle_sha256=canonical_sha({"frozen": True}),
+            formal_run_id=formal_run_id,
+            formal_run_manifest_path=formal_run_manifest_path,
+            frozen_bundle_path=frozen_bundle_path,
             output_dir=run_dir / "pr_c",
         )
         assert pr_c["status"] == "PASS"
 
         # ── PR-D (OOS) ──
+        oos_report_path = run_dir / "oos_report.json"
+        oos_report = {
+            "schema_version": "pr_chain_binding_v5_1",
+            "status": "PASS",
+            "formal_pit_run_id": run_id,
+            "formal_run_id": formal_run_id,
+            "fixture_mode": False,
+            "capital_authority": False,
+        }
+        oos_report["content_sha256"] = canonical_sha(
+            {k: v for k, v in oos_report.items() if k != "content_sha256"}
+        )
+        oos_report_path.write_text(json.dumps(oos_report))
+
         pr_d = bind_pr_d(
             pr_c_binding_path=run_dir / "pr_c" / "pr_c_binding.json",
+            oos_report_path=oos_report_path,
             output_dir=run_dir / "pr_d",
-            oos_result="PASS",
-            oos_manifest_sha256=canonical_sha({"oos": "synthetic"}),
             fixture_mode=False,
         )
         assert pr_d["status"] == "PASS"
 
         # ── PR-E (Capacity) ──
+        cap_report_path = run_dir / "capacity_report.json"
+        cap_report = {
+            "schema_version": "pr_chain_binding_v5_1",
+            "status": "PASS",
+            "formal_pit_run_id": run_id,
+            "formal_run_id": formal_run_id,
+            "fixture_mode": False,
+            "capital_authority": False,
+        }
+        cap_report["content_sha256"] = canonical_sha(
+            {k: v for k, v in cap_report.items() if k != "content_sha256"}
+        )
+        cap_report_path.write_text(json.dumps(cap_report))
+
         pr_e = bind_pr_e(
             pr_c_binding_path=run_dir / "pr_c" / "pr_c_binding.json",
+            capacity_report_path=cap_report_path,
             output_dir=run_dir / "pr_e",
-            capacity_result="PASS",
             fixture_mode=False,
         )
         assert pr_e["status"] == "PASS"
 
-        # ── Seal ──
-        seal = seal_directory(run_dir, run_id=run_id, git_commit_sha="test")
+        # ── Seal (v2.1: use temp registry for test isolation) ──
+        temp_registry = tmp_path / "seal_registry.json"
+        seal = seal_directory(run_dir, run_id=run_id, git_commit_sha="test",
+                              registry_path_override=temp_registry)
         assert seal["file_count"] > 0
-        verified = verify_seal(run_dir)
+        verified = verify_seal(run_dir, registry_path_override=temp_registry)
         assert verified["status"] == "VERIFIED"
 
         # ── PR-I: Complete chain must PASS ──
@@ -216,10 +274,56 @@ class TestMutationDetection:
 
         pr_b = bind_pr_b(formal_pit_run_id="run_x", package_sha256="", readiness_report_path=readiness_path, output_dir=pr_b_dir, release_id="rel", strategy_set="strat")
         pr_b_path = pr_b_dir / "pr_b_binding.json"
-        pr_c = bind_pr_c(pr_b_binding_path=pr_b_path, formal_run_id="run_x_c", formal_run_manifest_sha256=canonical_sha({"x":1}), frozen_bundle_sha256=canonical_sha({"y":2}), output_dir=pr_c_dir)
-        # Create valid PR-D and PR-E
-        bind_pr_d(pr_c_binding_path=pr_c_dir / "pr_c_binding.json", output_dir=pr_d_dir, oos_result="PASS", oos_manifest_sha256=canonical_sha({"oos":"ok"}), fixture_mode=False)
-        bind_pr_e(pr_c_binding_path=pr_c_dir / "pr_c_binding.json", output_dir=pr_e_dir, capacity_result="PASS", fixture_mode=False)
+
+        # Create real artifact files for PR-C
+        formal_run_manifest_path = run_dir / "formal_run_manifest.json"
+        formal_run_manifest = {
+            "schema_version": "pr_chain_binding_v5_1", "status": "PASS",
+            "formal_pit_run_id": "run_x", "run_id": "run_x_c",
+            "fixture_mode": False, "capital_authority": False,
+        }
+        formal_run_manifest["content_sha256"] = canonical_sha(
+            {k: v for k, v in formal_run_manifest.items() if k != "content_sha256"})
+        formal_run_manifest_path.write_text(json.dumps(formal_run_manifest))
+
+        frozen_bundle_path = run_dir / "frozen_bundle.json"
+        frozen_bundle = {
+            "schema_version": "pr_chain_binding_v5_1", "status": "PASS",
+            "formal_pit_run_id": "run_x",
+            "fixture_mode": False, "capital_authority": False,
+        }
+        frozen_bundle["content_sha256"] = canonical_sha(
+            {k: v for k, v in frozen_bundle.items() if k != "content_sha256"})
+        frozen_bundle_path.write_text(json.dumps(frozen_bundle))
+
+        pr_c = bind_pr_c(pr_b_binding_path=pr_b_path, formal_run_id="run_x_c",
+                         formal_run_manifest_path=formal_run_manifest_path,
+                         frozen_bundle_path=frozen_bundle_path, output_dir=pr_c_dir)
+
+        # Create valid PR-D and PR-E with real artifact files
+        oos_report_path = run_dir / "oos_report.json"
+        oos_report = {
+            "schema_version": "pr_chain_binding_v5_1", "status": "PASS",
+            "formal_pit_run_id": "run_x", "formal_run_id": "run_x_c",
+            "fixture_mode": False, "capital_authority": False,
+        }
+        oos_report["content_sha256"] = canonical_sha(
+            {k: v for k, v in oos_report.items() if k != "content_sha256"})
+        oos_report_path.write_text(json.dumps(oos_report))
+        bind_pr_d(pr_c_binding_path=pr_c_dir / "pr_c_binding.json",
+                  oos_report_path=oos_report_path, output_dir=pr_d_dir, fixture_mode=False)
+
+        cap_report_path = run_dir / "capacity_report.json"
+        cap_report = {
+            "schema_version": "pr_chain_binding_v5_1", "status": "PASS",
+            "formal_pit_run_id": "run_x", "formal_run_id": "run_x_c",
+            "fixture_mode": False, "capital_authority": False,
+        }
+        cap_report["content_sha256"] = canonical_sha(
+            {k: v for k, v in cap_report.items() if k != "content_sha256"})
+        cap_report_path.write_text(json.dumps(cap_report))
+        bind_pr_e(pr_c_binding_path=pr_c_dir / "pr_c_binding.json",
+                  capacity_report_path=cap_report_path, output_dir=pr_e_dir, fixture_mode=False)
         # Tamper PR-B
         data = json.loads(pr_b_path.read_text())
         data["release_id"] = "tampered"
@@ -250,15 +354,17 @@ class TestMutationDetection:
         run_dir = tmp_path / "seal_test"
         run_dir.mkdir()
         (run_dir / "test.txt").write_text("original")
-        seal_directory(run_dir, run_id="seal_1", git_commit_sha="test")
-        assert verify_seal(run_dir)["status"] == "VERIFIED"
+        temp_registry = tmp_path / "seal_registry.json"
+        seal_directory(run_dir, run_id="seal_1", git_commit_sha="test",
+                       registry_path_override=temp_registry)
+        assert verify_seal(run_dir, registry_path_override=temp_registry)["status"] == "VERIFIED"
         # Tamper — make writable first
         import stat
         for p in run_dir.rglob("*"):
             if p.is_file():
                 p.chmod(stat.S_IRUSR | stat.S_IWUSR)
         (run_dir / "test.txt").write_text("tampered")
-        assert verify_seal(run_dir)["status"] == "TAMPERED"
+        assert verify_seal(run_dir, registry_path_override=temp_registry)["status"] == "TAMPERED"
 
     def test_blocked_report_has_required_fields(self, tmp_path):
         from runtime.fail_closed import blocked_report

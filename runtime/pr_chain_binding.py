@@ -102,31 +102,120 @@ def bind_pr_b(
     return pr_b
 
 
+def _file_sha(path: Path) -> str:
+    """Compute SHA-256 of file bytes."""
+    import hashlib
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_and_verify_artifact(
+    path: Path,
+    stage: str,
+    expected_status: str | set[str] | None = "PASS",
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Read an artifact file, verify self-hash and status.
+
+    Returns (payload, blockers).  payload is None on failure.
+    """
+    blockers: list[str] = []
+    if not path.exists():
+        blockers.append(f"{stage}_artifact_not_found:{path}")
+        return None, blockers
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        blockers.append(f"{stage}_artifact_unreadable:{type(exc).__name__}")
+        return None, blockers
+
+    if not isinstance(payload, dict):
+        blockers.append(f"{stage}_artifact_not_object")
+        return None, blockers
+
+    # Verify self-hash
+    if not _verify_content_sha(payload):
+        blockers.append(f"{stage}_artifact_content_sha_invalid")
+
+    # Verify status
+    actual_status = payload.get("status", "")
+    if expected_status is not None:
+        if isinstance(expected_status, set):
+            if actual_status not in expected_status:
+                blockers.append(f"{stage}_artifact_status_invalid:{actual_status}")
+        elif actual_status != expected_status:
+            blockers.append(f"{stage}_artifact_status_not_{expected_status}:{actual_status}")
+
+    return payload, blockers
+
+
 def bind_pr_c(
     *,
     pr_b_binding_path: Path,
     formal_run_id: str,
-    formal_run_manifest_sha256: str,
-    frozen_bundle_sha256: str,
+    formal_run_manifest_path: Path,
+    frozen_bundle_path: Path,
     output_dir: Path,
 ) -> dict[str, Any]:
-    """Create PR-C binding: formal run must reference PR-B."""
-    if not pr_b_binding_path.exists():
-        return blocked_report("pr_c_binding", "input", "pr_b_binding_not_found")
+    """Create PR-C binding: formal run must reference PR-B.
 
-    pr_b = json.loads(pr_b_binding_path.read_text(encoding="utf-8"))
+    v5.1.1: Accepts real artifact paths, not bare SHA strings.
+    Reads, verifies, and records file SHAs from actual files.
+    """
+    pr_b, b_blockers = _read_and_verify_artifact(
+        pr_b_binding_path, "pr_b_input", "PASS",
+    )
+    if b_blockers:
+        return blocked_report("pr_c_binding", "input", "pr_b_verification_failed",
+                              extra={"blockers": b_blockers})
+
     pr_b_sha = canonical_sha({k: v for k, v in pr_b.items() if k != "content_sha256"})
+    pit_run_id = pr_b["formal_pit_run_id"]
+
+    # Read and verify formal run manifest
+    run_manifest, rm_blockers = _read_and_verify_artifact(
+        formal_run_manifest_path, "formal_run_manifest", "PASS",
+    )
+    if rm_blockers:
+        return blocked_report("pr_c_binding", "input", "run_manifest_verification_failed",
+                              extra={"blockers": rm_blockers})
+
+    # Verify formal_pit_run_id consistency
+    if run_manifest.get("formal_pit_run_id") != pit_run_id:
+        rm_blockers.append("run_manifest_pit_run_id_mismatch")
+    if run_manifest.get("run_id") != formal_run_id:
+        rm_blockers.append("run_manifest_run_id_mismatch")
+    if rm_blockers:
+        return blocked_report("pr_c_binding", "input", "run_manifest_checks_failed",
+                              extra={"blockers": rm_blockers})
+
+    # Read and verify frozen bundle
+    bundle, fb_blockers = _read_and_verify_artifact(
+        frozen_bundle_path, "frozen_bundle", "PASS",
+    )
+    if fb_blockers:
+        return blocked_report("pr_c_binding", "input", "frozen_bundle_verification_failed",
+                              extra={"blockers": fb_blockers})
+
+    # Compute file SHAs
+    run_manifest_file_sha = _file_sha(formal_run_manifest_path)
+    frozen_bundle_file_sha = _file_sha(frozen_bundle_path)
 
     pr_c = {
         "schema_version": "pr_chain_binding_v5_1",
         "stage": "PR_C",
         "status": "PASS",
-        "formal_pit_run_id": pr_b.get("formal_pit_run_id"),
+        "formal_pit_run_id": pit_run_id,
         "formal_run_id": formal_run_id,
         "pr_b_file_sha256": pr_b_sha,
         "pr_b_evidence_sha256": pr_b.get("readiness_evidence_sha256"),
-        "formal_run_manifest_sha256": formal_run_manifest_sha256,
-        "frozen_bundle_sha256": frozen_bundle_sha256,
+        "formal_run_manifest_sha256": run_manifest_file_sha,
+        "formal_run_manifest_path": str(formal_run_manifest_path),
+        "frozen_bundle_sha256": frozen_bundle_file_sha,
+        "frozen_bundle_path": str(frozen_bundle_path),
         "fixture_mode": False,
         "capital_authority": False,
     }
@@ -142,25 +231,49 @@ def bind_pr_c(
 def bind_pr_d(
     *,
     pr_c_binding_path: Path,
+    oos_report_path: Path,
     output_dir: Path,
-    oos_result: str = "PASS",
-    oos_manifest_sha256: str = "",
     fixture_mode: bool = False,
 ) -> dict[str, Any]:
-    """Create PR-D binding: OOS must reference PR-C."""
-    if not pr_c_binding_path.exists():
-        return blocked_report("pr_d_binding", "input", "pr_c_binding_not_found")
+    """Create PR-D binding: OOS must reference PR-C.
 
-    pr_c = json.loads(pr_c_binding_path.read_text(encoding="utf-8"))
+    v5.1.1: Accepts real OOS report path, not bare SHA string.
+    Reads, verifies, and records file SHA from actual file.
+    """
+    pr_c, c_blockers = _read_and_verify_artifact(
+        pr_c_binding_path, "pr_c_input", "PASS",
+    )
+    if c_blockers:
+        return blocked_report("pr_d_binding", "input", "pr_c_verification_failed",
+                              extra={"blockers": c_blockers})
+
+    valid_statuses = {"PASS", "ECONOMIC_FAILED"}
+    oos_report, oos_blockers = _read_and_verify_artifact(
+        oos_report_path, "oos_report", valid_statuses,
+    )
+    if oos_blockers:
+        return blocked_report("pr_d_binding", "input", "oos_report_verification_failed",
+                              extra={"blockers": oos_blockers})
+
+    # Verify formal_pit_run_id consistency
+    pit_run_id = pr_c["formal_pit_run_id"]
+    if oos_report.get("formal_pit_run_id") != pit_run_id:
+        oos_blockers.append("oos_report_pit_run_id_mismatch")
+    if oos_blockers:
+        return blocked_report("pr_d_binding", "input", "oos_checks_failed",
+                              extra={"blockers": oos_blockers})
+
+    oos_report_file_sha = _file_sha(oos_report_path)
 
     pr_d = {
         "schema_version": "pr_chain_binding_v5_1",
         "stage": "PR_D",
-        "status": oos_result,
-        "formal_pit_run_id": pr_c.get("formal_pit_run_id"),
+        "status": oos_report["status"],
+        "formal_pit_run_id": pit_run_id,
         "formal_run_id": pr_c.get("formal_run_id"),
         "pr_c_manifest_sha256": pr_c.get("formal_run_manifest_sha256"),
-        "oos_manifest_sha256": oos_manifest_sha256,
+        "oos_manifest_sha256": oos_report_file_sha,
+        "oos_report_path": str(oos_report_path),
         "fixture_mode": fixture_mode,
         "capital_authority": False,
     }
@@ -176,23 +289,49 @@ def bind_pr_d(
 def bind_pr_e(
     *,
     pr_c_binding_path: Path,
+    capacity_report_path: Path,
     output_dir: Path,
-    capacity_result: str = "PASS",
     fixture_mode: bool = False,
 ) -> dict[str, Any]:
-    """Create PR-E binding: Capacity must reference PR-C."""
-    if not pr_c_binding_path.exists():
-        return blocked_report("pr_e_binding", "input", "pr_c_binding_not_found")
+    """Create PR-E binding: Capacity must reference PR-C.
 
-    pr_c = json.loads(pr_c_binding_path.read_text(encoding="utf-8"))
+    v5.1.1: Accepts real capacity report path, not bare status string.
+    Reads, verifies, and records file SHA from actual file.
+    """
+    pr_c, c_blockers = _read_and_verify_artifact(
+        pr_c_binding_path, "pr_c_input", "PASS",
+    )
+    if c_blockers:
+        return blocked_report("pr_e_binding", "input", "pr_c_verification_failed",
+                              extra={"blockers": c_blockers})
+
+    valid_statuses = {"PASS", "ECONOMIC_FAILED"}
+    cap_report, cap_blockers = _read_and_verify_artifact(
+        capacity_report_path, "capacity_report", valid_statuses,
+    )
+    if cap_blockers:
+        return blocked_report("pr_e_binding", "input", "capacity_report_verification_failed",
+                              extra={"blockers": cap_blockers})
+
+    # Verify formal_pit_run_id consistency
+    pit_run_id = pr_c["formal_pit_run_id"]
+    if cap_report.get("formal_pit_run_id") != pit_run_id:
+        cap_blockers.append("capacity_report_pit_run_id_mismatch")
+    if cap_blockers:
+        return blocked_report("pr_e_binding", "input", "capacity_checks_failed",
+                              extra={"blockers": cap_blockers})
+
+    capacity_report_file_sha = _file_sha(capacity_report_path)
 
     pr_e = {
         "schema_version": "pr_chain_binding_v5_1",
         "stage": "PR_E",
-        "status": capacity_result,
-        "formal_pit_run_id": pr_c.get("formal_pit_run_id"),
+        "status": cap_report["status"],
+        "formal_pit_run_id": pit_run_id,
         "formal_run_id": pr_c.get("formal_run_id"),
         "pr_c_manifest_sha256": pr_c.get("formal_run_manifest_sha256"),
+        "capacity_manifest_sha256": capacity_report_file_sha,
+        "capacity_report_path": str(capacity_report_path),
         "fixture_mode": fixture_mode,
         "capital_authority": False,
     }

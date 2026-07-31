@@ -61,17 +61,22 @@ def build_formal_package_v4(
     run_dir: Path,
     output_dir: Path,
     initial_account_cny: float = 500_000.0,
+    _internal_call: bool = False,
 ) -> dict[str, Any]:
     """Build a complete formal package from a sealed PIT run directory.
 
     All inputs must live under run_dir.  No external paths allowed.
+
+    _internal_call=True relaxes checks that are only relevant for
+    standalone CLI usage (e.g. .building path, seal existence).
+    Set only by the formal PIT orchestrator.
     """
     blockers: list[str] = []
 
     # ── Pre-flight: run_dir checks ──
     if not run_dir.is_dir():
         return blocked_report("formal_package_v4", "input", "run_dir_not_found")
-    if ".building" in str(run_dir):
+    if not _internal_call and ".building" in str(run_dir):
         return blocked_report("formal_package_v4", "input", "run_dir_in_building")
 
     # Check for symlinks anywhere under run_dir
@@ -79,9 +84,10 @@ def build_formal_package_v4(
         if p.is_symlink():
             blockers.append(f"symlink_forbidden:{p.relative_to(run_dir)}")
 
-    # Verify seal exists
+    # Verify seal exists (relaxed for internal orchestrator calls — seal
+    # happens after package build in the pipeline)
     seal_path = run_dir / "seal_manifest.json"
-    if not seal_path.exists():
+    if not _internal_call and not seal_path.exists():
         blockers.append("seal_manifest_not_found_in_run_dir")
 
     # Verify run manifest

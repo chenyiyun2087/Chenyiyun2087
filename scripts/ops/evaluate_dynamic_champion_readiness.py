@@ -133,13 +133,76 @@ def load_program(path: Path = DEFAULT_PROGRAM) -> dict[str, Any]:
 
 
 def load_upgrade_evidence(program: dict[str, Any]) -> dict[str, Any]:
-    """Load PR-A–E evidence without inferring success from file existence."""
+    """Load PR-A–E evidence from Active Registry (primary) with fallback to
+    deprecated date-stamped paths.
+
+    v5.1.1: The Active Registry at formal_evidence_registry_path is the
+    single source of truth.  Legacy upgrade_evidence paths are read only
+    when the Registry has no entry for a given PR layer.
+    """
+    # ── Primary: Active Registry ──
+    registry_path_str = program.get("formal_evidence_registry_path", "")
+    registry_path = PROJECT_ROOT / registry_path_str if registry_path_str else None
+    registry_sources: dict[str, str] = {}
+    if registry_path and registry_path.exists():
+        try:
+            reg = json.loads(registry_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            reg = {}
+        if isinstance(reg, dict) and reg.get("formal_pit_run_id"):
+            # Map Registry fields to upgrade_evidence keys
+            REGISTRY_MAP = {
+                "pr_a_equivalence": "pr_a_path",
+                "pr_b_formal_readiness": "pr_b_path",
+                "pr_c_formal_run": "pr_c_path",
+                "pr_d_oos_robustness": "pr_d_path",
+                "pr_e_execution_capacity": "pr_e_path",
+                "pr_i_chain_verification": "pr_i_path",
+            }
+            for evidence_id, registry_field in REGISTRY_MAP.items():
+                val = reg.get(registry_field)
+                if isinstance(val, str) and val:
+                    registry_sources[evidence_id] = val
+
+    # ── Build evidence rows (Registry first, then deprecated fallback) ──
+    # Known evidence IDs in canonical order
+    EVIDENCE_IDS = [
+        "pr_a_equivalence", "pr_b_formal_readiness", "pr_c_formal_run",
+        "pr_d_oos_robustness", "pr_e_execution_capacity",
+    ]
     configured = program.get("upgrade_evidence") or {}
     rows: list[dict[str, Any]] = []
     payloads: dict[str, dict[str, Any]] = {}
-    for evidence_id, configured_path in configured.items():
+
+    for evidence_id in EVIDENCE_IDS:
         parts = str(evidence_id).split("_", 2)
-        path = PROJECT_ROOT / str(configured_path)
+        # Use Registry path if available, otherwise configured (non-deprecated) path
+        effective_path_str = registry_sources.get(evidence_id)
+        source_label = "registry"
+        if not effective_path_str:
+            # Fall back to configured path (skip _DEPRECATED_ keys)
+            configured_path = configured.get(evidence_id)
+            if not configured_path:
+                # Try deprecated key as last resort
+                deprecated_key = f"_DEPRECATED_{evidence_id}"
+                configured_path = configured.get(deprecated_key)
+                source_label = "deprecated"
+            else:
+                source_label = "configured"
+            effective_path_str = str(configured_path) if configured_path else ""
+
+        if not effective_path_str:
+            rows.append({
+                "phase": f"PR-{parts[1].upper()}" if len(parts) > 1 else evidence_id,
+                "scope": evidence_id, "status": "MISSING",
+                "detail": "no_evidence_path_configured",
+                "evidence": "", "evidence_sha256": "",
+                "evidence_source": "none",
+            })
+            payloads[evidence_id] = {}
+            continue
+
+        path = PROJECT_ROOT / effective_path_str
         payload: dict[str, Any] = {}
         status = "MISSING"
         detail = "evidence_file_missing"
@@ -160,21 +223,13 @@ def load_upgrade_evidence(program: dict[str, Any]) -> dict[str, Any]:
                     or ([payload["reason"]] if payload.get("reason") else [])
                 )
                 detail = "; ".join(str(reason) for reason in reasons) or status
-        payloads[str(evidence_id)] = payload
-        rows.append(
-            {
-                "phase": (
-                    f"PR-{parts[1].upper()}"
-                    if len(parts) > 1 and parts[0] == "pr"
-                    else str(evidence_id)
-                ),
-                "scope": str(evidence_id),
-                "status": status,
-                "detail": detail,
-                "evidence": str(configured_path),
-                "evidence_sha256": sha256,
-            }
-        )
+        payloads[evidence_id] = payload
+        rows.append({
+            "phase": f"PR-{parts[1].upper()}" if len(parts) > 1 and parts[0] == "pr" else evidence_id,
+            "scope": evidence_id, "status": status, "detail": detail,
+            "evidence": effective_path_str, "evidence_sha256": sha256,
+            "evidence_source": source_label,
+        })
     v3_path = PROJECT_ROOT / str(program.get("alpha_v3_evidence") or "")
     if str(program.get("alpha_v3_evidence") or "") and v3_path.exists():
         try:

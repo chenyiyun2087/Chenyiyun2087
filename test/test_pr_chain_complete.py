@@ -48,36 +48,87 @@ def _build_complete_chain(tmp_path: Path, pit_run_id: str = "test_pit_run_001"):
         strategy_set="champion_v1_2b",
     )
 
-    # PR-C
+    # PR-C: create real artifact files
     formal_run_id = f"formal-{pit_run_id}"
-    manifest_sha = canonical_sha({"run": pit_run_id})
-    bundle_sha = canonical_sha({"frozen": True})
+    formal_run_manifest_path = run_dir / "formal_run_manifest.json"
+    formal_run_manifest = {
+        "schema_version": "pr_chain_binding_v5_1",
+        "status": "PASS",
+        "formal_pit_run_id": pit_run_id,
+        "run_id": formal_run_id,
+        "fixture_mode": False,
+        "capital_authority": False,
+    }
+    formal_run_manifest["content_sha256"] = canonical_sha(
+        {k: v for k, v in formal_run_manifest.items() if k != "content_sha256"}
+    )
+    formal_run_manifest_path.write_text(json.dumps(formal_run_manifest))
+
+    frozen_bundle_path = run_dir / "frozen_bundle.json"
+    frozen_bundle = {
+        "schema_version": "pr_chain_binding_v5_1",
+        "status": "PASS",
+        "formal_pit_run_id": pit_run_id,
+        "fixture_mode": False,
+        "capital_authority": False,
+    }
+    frozen_bundle["content_sha256"] = canonical_sha(
+        {k: v for k, v in frozen_bundle.items() if k != "content_sha256"}
+    )
+    frozen_bundle_path.write_text(json.dumps(frozen_bundle))
+
     pr_c_dir = run_dir / "pr_c"
     bind_pr_c(
         pr_b_binding_path=pr_b_dir / "pr_b_binding.json",
         formal_run_id=formal_run_id,
-        formal_run_manifest_sha256=manifest_sha,
-        frozen_bundle_sha256=bundle_sha,
+        formal_run_manifest_path=formal_run_manifest_path,
+        frozen_bundle_path=frozen_bundle_path,
         output_dir=pr_c_dir,
     )
 
-    # PR-D
+    # PR-D: create real OOS report
+    oos_report_path = run_dir / "oos_report.json"
+    oos_report = {
+        "schema_version": "pr_chain_binding_v5_1",
+        "status": "PASS",
+        "formal_pit_run_id": pit_run_id,
+        "formal_run_id": formal_run_id,
+        "fixture_mode": False,
+        "capital_authority": False,
+    }
+    oos_report["content_sha256"] = canonical_sha(
+        {k: v for k, v in oos_report.items() if k != "content_sha256"}
+    )
+    oos_report_path.write_text(json.dumps(oos_report))
+
     pr_d_dir = run_dir / "pr_d"
-    oos_sha = canonical_sha({"oos": "pass"})
     bind_pr_d(
         pr_c_binding_path=pr_c_dir / "pr_c_binding.json",
+        oos_report_path=oos_report_path,
         output_dir=pr_d_dir,
-        oos_result="PASS",
-        oos_manifest_sha256=oos_sha,
         fixture_mode=False,
     )
 
-    # PR-E
+    # PR-E: create real capacity report
+    capacity_report_path = run_dir / "capacity_report.json"
+    capacity_report = {
+        "schema_version": "pr_chain_binding_v5_1",
+        "status": "PASS",
+        "formal_pit_run_id": pit_run_id,
+        "formal_run_id": formal_run_id,
+        "fixture_mode": False,
+        "capital_authority": False,
+    }
+    capacity_report["content_sha256"] = canonical_sha(
+        {k: v for k, v in capacity_report.items() if k != "content_sha256"}
+    )
+    capacity_report_path.write_text(json.dumps(capacity_report))
+
     pr_e_dir = run_dir / "pr_e"
     bind_pr_e(
         pr_c_binding_path=pr_c_dir / "pr_c_binding.json",
+        capacity_report_path=capacity_report_path,
         output_dir=pr_e_dir,
-        capacity_result="PASS",
         fixture_mode=False,
     )
 
@@ -126,21 +177,48 @@ class TestCompleteChainHappyPath:
         paths, run_dir = _build_complete_chain(tmp_path)
 
         # Rebuild PR-D with ECONOMIC_FAILED
+        oos_report_path = run_dir / "oos_report_econ.json"
+        oos_report = {
+            "schema_version": "pr_chain_binding_v5_1",
+            "status": "ECONOMIC_FAILED",
+            "formal_pit_run_id": "test_pit_run_001",
+            "formal_run_id": "formal-test_pit_run_001",
+            "fixture_mode": False,
+            "capital_authority": False,
+        }
+        oos_report["content_sha256"] = canonical_sha(
+            {k: v for k, v in oos_report.items() if k != "content_sha256"}
+        )
+        oos_report_path.write_text(json.dumps(oos_report))
+
         pr_d_dir = run_dir / "pr_d"
         bind_pr_d(
             pr_c_binding_path=paths["pr_c"],
+            oos_report_path=oos_report_path,
             output_dir=pr_d_dir,
-            oos_result="ECONOMIC_FAILED",
-            oos_manifest_sha256=canonical_sha({"oos": "econ_fail"}),
             fixture_mode=False,
         )
 
         # Rebuild PR-E with ECONOMIC_FAILED
+        capacity_report_path = run_dir / "capacity_report_econ.json"
+        capacity_report = {
+            "schema_version": "pr_chain_binding_v5_1",
+            "status": "ECONOMIC_FAILED",
+            "formal_pit_run_id": "test_pit_run_001",
+            "formal_run_id": "formal-test_pit_run_001",
+            "fixture_mode": False,
+            "capital_authority": False,
+        }
+        capacity_report["content_sha256"] = canonical_sha(
+            {k: v for k, v in capacity_report.items() if k != "content_sha256"}
+        )
+        capacity_report_path.write_text(json.dumps(capacity_report))
+
         pr_e_dir = run_dir / "pr_e"
         bind_pr_e(
             pr_c_binding_path=paths["pr_c"],
+            capacity_report_path=capacity_report_path,
             output_dir=pr_e_dir,
-            capacity_result="ECONOMIC_FAILED",
             fixture_mode=False,
         )
 
@@ -471,12 +549,26 @@ class TestFixtureMode:
 
     def test_pr_d_fixture_mode_true(self, tmp_path):
         paths, run_dir = _build_complete_chain(tmp_path)
+        # Create OOS report with fixture_mode=True
+        oos_report_path = run_dir / "oos_fixture.json"
+        oos_report = {
+            "schema_version": "pr_chain_binding_v5_1",
+            "status": "PASS",
+            "formal_pit_run_id": "test_pit_run_001",
+            "formal_run_id": "formal-test_pit_run_001",
+            "fixture_mode": True,
+            "capital_authority": False,
+        }
+        oos_report["content_sha256"] = canonical_sha(
+            {k: v for k, v in oos_report.items() if k != "content_sha256"}
+        )
+        oos_report_path.write_text(json.dumps(oos_report))
+
         pr_d_dir = run_dir / "pr_d_fixture"
         bind_pr_d(
             pr_c_binding_path=paths["pr_c"],
+            oos_report_path=oos_report_path,
             output_dir=pr_d_dir,
-            oos_result="PASS",
-            oos_manifest_sha256=canonical_sha({"oos": "ok"}),
             fixture_mode=True,
         )
         result = verify_pr_i_chain(
@@ -490,11 +582,26 @@ class TestFixtureMode:
 
     def test_pr_e_fixture_mode_true(self, tmp_path):
         paths, run_dir = _build_complete_chain(tmp_path)
+        # Create capacity report with fixture_mode=True
+        cap_report_path = run_dir / "cap_fixture.json"
+        cap_report = {
+            "schema_version": "pr_chain_binding_v5_1",
+            "status": "PASS",
+            "formal_pit_run_id": "test_pit_run_001",
+            "formal_run_id": "formal-test_pit_run_001",
+            "fixture_mode": True,
+            "capital_authority": False,
+        }
+        cap_report["content_sha256"] = canonical_sha(
+            {k: v for k, v in cap_report.items() if k != "content_sha256"}
+        )
+        cap_report_path.write_text(json.dumps(cap_report))
+
         pr_e_dir = run_dir / "pr_e_fixture"
         bind_pr_e(
             pr_c_binding_path=paths["pr_c"],
+            capacity_report_path=cap_report_path,
             output_dir=pr_e_dir,
-            capacity_result="PASS",
             fixture_mode=True,
         )
         result = verify_pr_i_chain(

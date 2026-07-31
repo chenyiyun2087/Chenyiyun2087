@@ -19,7 +19,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-from runtime.formal_contract import FORMAL_STRATEGIES, FORMAL_STRATEGY_SET, canonical_sha
+from runtime.acceptance_config import canonical_sha
 
 DEFAULT_REGISTRY_PATH = PROJECT_ROOT / "exports" / "formal_evidence_registry" / "active_formal_run.json"
 
@@ -73,194 +73,73 @@ def _display_path(path: Path) -> str:
 
 
 def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
-    expected = set(DEFAULT_SOURCES)
-    missing_keys = sorted(expected - set(sources))
-    checks: list[dict[str, Any]] = []
-    payloads: dict[str, dict[str, Any]] = {}
+    """Evaluate PR-I trigger using the v5.1 verify_pr_i_chain().
+
+    v5.1.1: Delegates to verify_pr_i_chain() for consistent, artifact-backed
+    chain verification.  The old per-key status_rules, dual_ledger_results,
+    and manual cross-validation are replaced by the single formal chain
+    verifier.
+    """
+    from runtime.pr_chain_binding import verify_pr_i_chain
+
+    # Build source manifest for audit trail
     source_manifest: dict[str, Any] = {}
+    for key, path in sorted(sources.items()):
+        if path is not None and path.is_file():
+            source_manifest[key] = {"path": _display_path(path), "sha256": _sha(path)}
+
+    # Map source keys to PR-B/C/D/E paths for verify_pr_i_chain
+    pr_b_path = sources.get("pr_b_formal_readiness")
+    pr_c_path = sources.get("pr_c_formal_run")
+    pr_d_path = sources.get("pr_d_oos_robustness")
+    pr_e_path = sources.get("pr_e_execution_capacity")
+
+    # Run the formal chain verifier
+    chain_result = verify_pr_i_chain(
+        pr_b_path=pr_b_path,
+        pr_c_path=pr_c_path,
+        pr_d_path=pr_d_path,
+        pr_e_path=pr_e_path,
+    )
+
+    # Convert to the existing output format for backward compatibility
+    chain_passed = chain_result["status"] == "PASS"
+    blockers = sorted(chain_result.get("blockers", []))
+
+    # Check if all required layers exist (PR-A is optional for PR-I trigger)
+    missing_keys = []
+    expected = set(DEFAULT_SOURCES)
     for key in sorted(expected):
         path = sources.get(key)
         if path is None or not path.is_file():
-            checks.append(
-                {
-                    "check": key,
-                    "passed": False,
-                    "actual": "MISSING",
-                    "required": "technical evidence present and verified",
-                }
-            )
-            continue
+            missing_keys.append(key)
+
+    technical_complete = chain_passed and not missing_keys
+    economic_failed = False  # verify_pr_i_chain returns PASS for ECONOMIC_FAILED
+
+    # Re-check: if chain passed but some D/E had ECONOMIC_FAILED status,
+    # we need to look at the actual binding files
+    if chain_passed and pr_d_path and pr_d_path.is_file():
         try:
-            payload = _load(path)
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            checks.append(
-                {
-                    "check": key,
-                    "passed": False,
-                    "actual": f"INVALID:{exc}",
-                    "required": "valid JSON technical evidence",
-                }
-            )
-            continue
-        payloads[key] = payload
-        source_manifest[key] = {"path": _display_path(path), "sha256": _sha(path)}
+            pr_d = json.loads(pr_d_path.read_text(encoding="utf-8"))
+            if pr_d.get("status") == "ECONOMIC_FAILED":
+                economic_failed = True
+        except (OSError, json.JSONDecodeError):
+            pass
+    if chain_passed and pr_e_path and pr_e_path.is_file():
+        try:
+            pr_e = json.loads(pr_e_path.read_text(encoding="utf-8"))
+            if pr_e.get("status") == "ECONOMIC_FAILED":
+                economic_failed = True
+        except (OSError, json.JSONDecodeError):
+            pass
 
-    status_rules = {
-        "pr_a_equivalence": lambda p: p.get("status") == "PASS",
-        "pr_b_formal_readiness": lambda p: p.get("status") == "READY_FOR_FORMAL_RUN",
-        "pr_c_formal_run": lambda p: (
-            p.get("status") == "VERIFIED"
-            and isinstance(p.get("dual_ledger_results"), list)
-            and len(p.get("dual_ledger_results", [])) == len(FORMAL_STRATEGIES)
-            and all(isinstance(item, dict) for item in p.get("dual_ledger_results", []))
-            and all(isinstance(item.get("strategy"), str) and item.get("strategy") for item in p.get("dual_ledger_results", []))
-            and {item["strategy"] for item in p.get("dual_ledger_results", [])} == FORMAL_STRATEGY_SET
-            and isinstance(p.get("strategy_ids"), list)
-            and len(p.get("strategy_ids") or []) == len(FORMAL_STRATEGIES)
-            and len(p.get("strategy_ids") or []) == len(set(p.get("strategy_ids") or []))
-            and all(isinstance(s, str) and s for s in p.get("strategy_ids", []))
-            and set(p.get("strategy_ids") or []) == FORMAL_STRATEGY_SET
-            and all(
-                item.get("status") == "VERIFIED"
-                for item in p.get("dual_ledger_results", [])
-            )
-        ),
-        "pr_d_oos_robustness": lambda p: bool(p.get("technical_evidence_complete"))
-        and p.get("status") in ("PASS", "ECONOMIC_FAILED"),
-        "pr_e_execution_capacity": lambda p: bool(p.get("technical_evidence_complete"))
-        and p.get("status") in {"PASS", "ECONOMIC_FAILED"},
-    }
-    for key, rule in status_rules.items():
-        if key not in payloads:
-            continue
-        passed = bool(rule(payloads[key]))
-        checks.append(
-            {
-                "check": key,
-                "passed": passed,
-                "actual": payloads[key].get("status", "UNKNOWN"),
-                "required": "technical evidence complete",
-            }
-        )
-
-    # P0-2: Cross-validate formal_run_id — ALL must be present and identical
-    run_ids: list[str | None] = []
-    for pr_key in ("pr_c_formal_run", "pr_d_oos_robustness", "pr_e_execution_capacity"):
-        rid = payloads.get(pr_key, {}).get("formal_run_id")
-        run_ids.append(str(rid) if isinstance(rid, str) and rid else None)
-    if any(x is None for x in run_ids):
-        checks.append({
-            "check": "pr_cross_formal_run_id_consistency",
-            "passed": False,
-            "actual": f"missing_ids={[pr for pr, rid in zip(('PR-C','PR-D','PR-E'), run_ids) if rid is None]}",
-            "required": "PR-C/PR-D/PR-E must all have formal_run_id",
-        })
-    elif len(set(run_ids)) != 1:
-        checks.append({
-            "check": "pr_cross_formal_run_id_consistency",
-            "passed": False,
-            "actual": f"mismatched_ids={sorted(set(run_ids))}",
-            "required": "PR-C/PR-D/PR-E must share the same formal_run_id",
-        })
-
-    # P0-3: Verify self-hash integrity for PR-C (manifest_sha256) and PR-D/E (evidence_sha256)
-    HASH_FIELDS = {
-        "pr_c_formal_run": "manifest_sha256",
-        "pr_d_oos_robustness": "evidence_sha256",
-        "pr_e_execution_capacity": "evidence_sha256",
-    }
-    for pr_key, hash_field in HASH_FIELDS.items():
-        p = payloads.get(pr_key, {})
-        declared_sha = str(p.get(hash_field) or "")
-        if not declared_sha or len(declared_sha) != 64:
-            checks.append({
-                "check": f"{pr_key}_{hash_field}",
-                "passed": False,
-                "actual": "missing_or_invalid",
-                "required": f"valid 64-char {hash_field}",
-            })
-        else:
-            payload_without_sha = {k: v for k, v in p.items() if k != hash_field}
-            try:
-                computed = canonical_sha(payload_without_sha)
-            except (TypeError, ValueError) as exc:
-                checks.append({
-                    "check": f"{pr_key}_{hash_field}",
-                    "passed": False,
-                    "actual": f"non_canonical_payload:{type(exc).__name__}",
-                    "required": "finite canonical JSON payload",
-                })
-                continue
-            if computed != declared_sha:
-                checks.append({
-                    "check": f"{pr_key}_{hash_field}",
-                    "passed": False,
-                    "actual": f"computed={computed[:16]}... != declared={declared_sha[:16]}...",
-                    "required": f"{hash_field} matches canonical self-hash",
-                })
-
-    # PR-D/E must bind to PR-C's formal_manifest_sha256, frozen_bundle_sha256, acceptance_config_sha256
-    BINDING_FIELDS = ("formal_manifest_sha256", "frozen_bundle_sha256", "acceptance_config_sha256")
-    pr_c_binding = {
-        "formal_manifest_sha256": payloads.get("pr_c_formal_run", {}).get("manifest_sha256"),
-        "frozen_bundle_sha256": payloads.get("pr_c_formal_run", {}).get("frozen_bundle_sha256"),
-        "acceptance_config_sha256": payloads.get("pr_c_formal_run", {}).get("acceptance_config_sha256"),
-    }
-    if pr_c_binding["formal_manifest_sha256"]:
-        for pr_key in ("pr_d_oos_robustness", "pr_e_execution_capacity"):
-            p_pr = payloads.get(pr_key, {})
-            for field in BINDING_FIELDS:
-                bound = str(p_pr.get(field) or "")
-                expected_val = str(pr_c_binding[field] or "")
-                if not bound:
-                    checks.append({
-                        "check": f"{pr_key}_{field}_binding",
-                        "passed": False, "actual": "missing",
-                        "required": f"must bind to PR-C {field}",
-                    })
-                elif not expected_val:
-                    checks.append({
-                        "check": f"{pr_key}_{field}_binding",
-                        "passed": False, "actual": "pr_c_missing",
-                        "required": f"PR-C missing {field}",
-                    })
-                elif bound != expected_val:
-                    checks.append({
-                        "check": f"{pr_key}_{field}_binding",
-                        "passed": False,
-                        "actual": f"bound={bound[:16]}... != pr_c={expected_val[:16]}...",
-                        "required": f"PR-D/E {field} must equal PR-C value",
-                    })
-
-    # P0: Compute technical_complete ONCE after ALL checks (not before)
-    technical_complete = not missing_keys and len(payloads) == len(expected) and all(
-        item["passed"] for item in checks
-    )
-
-    oos = payloads.get("pr_d_oos_robustness", {})
-    capacity = payloads.get("pr_e_execution_capacity", {})
-    economic_failed = (
-        technical_complete
-        and (
-            oos.get("economic_gates_passed") is False
-            or capacity.get("economic_gates_passed") is False
-        )
-    )
     decision = (
         "PR_I_TRIGGERED"
         if technical_complete and economic_failed
         else "PR_I_NOT_TRIGGERED"
     )
-    blockers = sorted(
-        {
-            item["check"]
-            for item in checks
-            if not item["passed"]
-        }
-        | set(missing_keys)
-    )
-    if technical_complete and not economic_failed:
-        blockers.append("economic_failure_not_established")
+
     result: dict[str, Any] = {
         "schema_version": "dynamic_champion_pr_i_trigger_v1",
         "decision": decision,
@@ -269,8 +148,19 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
         "alpha_modified": False,
         "current_allowed_risk_capital_cny": 0,
         "broker_api_enabled": False,
-        "checks": checks,
-        "blockers": blockers,
+        "checks": [
+            {
+                "check": "pr_i_chain_verification",
+                "passed": chain_passed,
+                "actual": chain_result["status"],
+                "required": "PASS",
+            },
+            *([
+                {"check": k, "passed": False, "actual": "MISSING", "required": "present"}
+                for k in missing_keys
+            ]),
+        ],
+        "blockers": blockers + missing_keys,
         "source_manifest": source_manifest,
     }
     result["evidence_sha256"] = hashlib.sha256(
