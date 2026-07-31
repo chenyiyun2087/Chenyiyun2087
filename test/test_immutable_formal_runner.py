@@ -14,6 +14,8 @@ from scripts.research.run_immutable_formal_backtest import (
 
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 def _touch_package(root: Path) -> None:
     root.mkdir()
@@ -306,15 +308,20 @@ def test_formal_runner_rejects_dirty_worktree(tmp_path):
         }),
         encoding="utf-8",
     )
-    # Run WITHOUT fixture_mode — should detect dirty worktree
-    result = run(
-        preflight=preflight, package=package,
-        output_root=tmp_path / "runs", end_date="2013-01-04",
-        dry_run=True, fixture_mode=False,
-    )
-    # The repo currently has uncommitted changes, so this should block
-    assert result["status"] == "BLOCKED"
-    assert "dirty_worktree" in result["reason"]
+    # Create a dirty file (outside exports/reports) to trigger the block
+    dirty_file = PROJECT_ROOT / "_test_dirty_worktree_temp.txt"
+    dirty_file.write_text("dirty", encoding="utf-8")
+    try:
+        # Run WITHOUT fixture_mode — should detect dirty worktree
+        result = run(
+            preflight=preflight, package=package,
+            output_root=tmp_path / "runs", end_date="2013-01-04",
+            dry_run=True, fixture_mode=False,
+        )
+        assert result["status"] == "BLOCKED"
+        assert "dirty_worktree" in result["reason"]
+    finally:
+        dirty_file.unlink(missing_ok=True)
 
 
 def test_formal_runner_freezes_all_input_objects(tmp_path):
