@@ -1,0 +1,32 @@
+{
+  "aligned_trading_days": 114,
+  "alpha_annualized": 1.4455004104738851,
+  "alpha_daily": 0.0035549139653238684,
+  "alpha_tstat": 1.6977367551400537,
+  "blockers": [
+    "partial_factor_model",
+    "history_below_252_days",
+    "industry_and_regime_factors_missing",
+    "formal_pit_missing"
+  ],
+  "factor_exposures": {
+    "liquidity": 0.7110018547051741,
+    "momentum": 0.3399699046727592,
+    "size": 0.5434350743645918,
+    "value": -0.1450107272242545,
+    "volatility": 0.1127450757489288
+  },
+  "factors": [
+    "size",
+    "volatility",
+    "liquidity",
+    "momentum",
+    "value"
+  ],
+  "formal_evidence": false,
+  "r_squared": 0.1675741810828726,
+  "regression_rank": 6,
+  "schema_version": "alpha_v4_3_partial_attribution_v1",
+  "status": "BLOCKED",
+  "unexplained_variance_ratio": 0.8324258189171274
+}

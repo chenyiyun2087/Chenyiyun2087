@@ -1,0 +1,345 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-30T16:32:58+08:00",
+  "program": {
+    "schema_version": "1.0",
+    "program_id": "dynamic-champion-500k-v1",
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "baseline_strategy_id": "production_governed_vol_position",
+    "acceptance_config": "config/production_acceptance.yaml",
+    "release_registry": "config/strategy_release_registry.yaml",
+    "approved_backtest_snapshot": "exports/signal_research/20260618_213002_059138_trusted_account_backtest",
+    "validation_profile": "alpha_v3",
+    "alpha_v3_evidence": "exports/alpha_v3_validation/20260730_alpha_v3/promotion_gate_report.json",
+    "upgrade_evidence": {
+      "pr_a_equivalence": "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
+      "pr_b_formal_readiness": "exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+      "pr_c_formal_run": "exports/formal_runs/20260727_pr_c/formal_run_precheck.json",
+      "pr_d_oos_robustness": "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+      "pr_e_execution_capacity": "exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json"
+    },
+    "current_lane": "RESEARCH_REVALIDATION",
+    "production_route_mutation_allowed": false,
+    "canary_enabled": false,
+    "broker_api_enabled": false,
+    "manual_confirmation_required": true,
+    "target_capital_cny": 500000,
+    "capital_ladder": [
+      {
+        "stage": "CANARY_10",
+        "capital_cny": 50000,
+        "min_real_trading_days": 60,
+        "min_completed_round_trips": 30
+      },
+      {
+        "stage": "CANARY_25",
+        "capital_cny": 125000,
+        "min_real_trading_days": 60,
+        "min_completed_round_trips": 30
+      },
+      {
+        "stage": "CANARY_50",
+        "capital_cny": 250000,
+        "min_real_trading_days": 60,
+        "min_completed_round_trips": 30
+      },
+      {
+        "stage": "CANARY_100",
+        "capital_cny": 500000,
+        "min_real_trading_days": 60,
+        "min_completed_round_trips": 30
+      }
+    ],
+    "shadow": {
+      "disabled_min_real_trading_days": 20,
+      "economic_min_real_trading_days": 60,
+      "economic_min_completed_round_trips": 30,
+      "historical_backfill_counts": false,
+      "require_formal_pit": true
+    },
+    "report": {
+      "raw_output_root": "exports/dynamic_champion_live_readiness",
+      "docs_summary": "docs/03_backtest_reports/2026-07-27_动态评分冠军策略_实盘准入全面评估.md",
+      "site_title": "动态评分冠军策略实盘准入全面评估",
+      "site_slug": "dynamic-champion-live-readiness-20260727"
+    }
+  },
+  "decision": {
+    "decision": "NO_GO",
+    "allowed_capital_cny": 0.0,
+    "current_lane": "RESEARCH_REVALIDATION",
+    "next_lane": "SHADOW_DISABLED",
+    "blocking_gates": [
+      "release_identity",
+      "full_history",
+      "rolling_oos",
+      "strict_ledger",
+      "statistical_robustness",
+      "execution_stress",
+      "disabled_shadow",
+      "economic_shadow",
+      "manual_approval"
+    ],
+    "warning_gates": []
+  },
+  "metrics": {
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+    "sample_start": "2023-11-30",
+    "sample_end": "2026-06-17",
+    "trading_days": 615,
+    "initial_cash": 500000.0,
+    "final_equity": 786125.9141375006,
+    "total_return": 0.5722518282750011,
+    "annualized_return": 0.2040853773852058,
+    "annualized_volatility": 0.2666421462499717,
+    "downside_volatility": 0.18923413784872284,
+    "sharpe_ratio": 0.7509842663964442,
+    "max_drawdown": -0.25516812512420484,
+    "daily_var_95": -0.026104634664897312,
+    "daily_cvar_95": -0.03909099319044765,
+    "closed_round_trips": 306,
+    "trade_win_rate": 0.5130718954248366,
+    "avg_trade_return": 0.01763723705573523,
+    "median_trade_return": 0.002268214771475193,
+    "payoff_ratio": 1.3572551415942025,
+    "profit_factor": 1.3851830808001278,
+    "avg_holding_calendar_days": 15.140522875816993,
+    "max_consecutive_losses": 7,
+    "total_cost": 25550.1458625,
+    "turnover": 70.37185822470708,
+    "slippage_rate": 0.0,
+    "trade_cost_rate": 0.00075,
+    "positive_month_ratio": 0.53125,
+    "best_month": "2025-08",
+    "best_month_return": 0.17127577022949758,
+    "worst_month": "2024-08",
+    "worst_month_return": -0.10394828950568757,
+    "max_drawdown_days": 379,
+    "recovery_days": 113,
+    "drawdown_peak_date": "2024-05-20",
+    "drawdown_trough_date": "2025-06-03",
+    "drawdown_recovery_date": "2025-09-24"
+  },
+  "registry": {
+    "identity_passed": false,
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "role": "CHAMPION_BENCHMARK",
+    "research_status": "FAILED_REVALIDATION",
+    "walk_forward_status": "FAILED",
+    "walk_forward_passed": false,
+    "walk_forward_windows_passed": 0,
+    "promotion_status": "BLOCKED",
+    "capital_status": "NO_EXTERNAL_SCALE",
+    "hashes": {
+      "git_commit_sha": "3f389235e7af85b64d02d708912ab266016acf2d",
+      "config_sha": "a2106d3b8ef6d1d1524f2072ce90fb550ef466436bcc2a2ec9d5b12e54ae8ed4",
+      "data_snapshot_sha": "417334bebdc1b53b6a1c8efd735429931613692cddbb2ad73bc0b691869a9ab2",
+      "calendar_snapshot_sha": "PENDING_PR1_SNAPSHOT",
+      "corporate_action_snapshot_sha": "PENDING_PR1_SNAPSHOT",
+      "lifecycle_snapshot_sha": "PENDING_PR1_SNAPSHOT"
+    },
+    "hash_ready": false
+  },
+  "shadow": {
+    "strategy_match": false,
+    "release_match": false,
+    "disabled_real_trading_days": 0,
+    "economic_real_trading_days": 0,
+    "completed_round_trips": 0,
+    "reconciliation_errors": null,
+    "cost_after_alpha_positive": false,
+    "promotion_ready": false,
+    "canary_ready": false,
+    "source": "未提供",
+    "reason": "missing_release_scoped_shadow_evidence"
+  },
+  "upgrade_evidence": [
+    {
+      "phase": "PR-A",
+      "scope": "pr_a_equivalence",
+      "status": "BLOCKED",
+      "detail": "replay_directory_missing; web_benchmark_evidence_missing",
+      "evidence": "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
+      "evidence_sha256": "f3ab1f59b3e4a4c3a6b3cfbf83ba08a3b1123e97c5b2f66b0e35fbe789a1d6ea"
+    },
+    {
+      "phase": "PR-B",
+      "scope": "pr_b_formal_readiness",
+      "status": "BLOCKED",
+      "detail": "frozen_package",
+      "evidence": "exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+      "evidence_sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+    },
+    {
+      "phase": "PR-C",
+      "scope": "pr_c_formal_run",
+      "status": "BLOCKED",
+      "detail": "preflight_not_ready",
+      "evidence": "exports/formal_runs/20260727_pr_c/formal_run_precheck.json",
+      "evidence_sha256": "522055380698e8600f4f664bf59b9dd9368ae1709bd4ea666d28d462e5b86bb9"
+    },
+    {
+      "phase": "PR-D",
+      "scope": "pr_d_oos_robustness",
+      "status": "BLOCKED",
+      "detail": "formal_run_not_verified",
+      "evidence": "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+      "evidence_sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+    },
+    {
+      "phase": "PR-E",
+      "scope": "pr_e_execution_capacity",
+      "status": "BLOCKED",
+      "detail": "formal_run_not_verified",
+      "evidence": "exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json",
+      "evidence_sha256": "aafb14b8b08cea213bd515d960e08215954facfaab12493299fcb5e9c063dd36"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "release_identity",
+      "category": "数据与发布身份",
+      "required": "Git、配置、数据、日历、公司行动及生命周期快照哈希完整",
+      "actual": "registry=FAILED_REVALIDATION; PR-A=BLOCKED; PR-B=BLOCKED",
+      "passed": false,
+      "blocking": true,
+      "evidence": "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
+      "remediation": "生成并冻结缺失快照，绑定新的不可变release证据包。"
+    },
+    {
+      "gate": "full_history",
+      "category": "长周期回测",
+      "required": "2018-01-01至最新完整交易日，覆盖率≥98%",
+      "actual": "2023-11-30至2026-06-17，615个交易日；PR-C=BLOCKED",
+      "passed": false,
+      "blocking": true,
+      "evidence": "exports/signal_research/20260618_213002_059138_trusted_account_backtest",
+      "remediation": "使用正式PIT快照从2018年重跑全部市场状态和基础/压力场景；更早数据仅作可选扩展证据。"
+    },
+    {
+      "gate": "rolling_oos",
+      "category": "Walk-forward",
+      "required": "12/3/3滚动OOS；正窗口≥60%",
+      "actual": "registry=FAILED; PR-D=BLOCKED",
+      "passed": false,
+      "blocking": true,
+      "evidence": "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+      "remediation": "在冻结样本上完成带purge/embargo的滚动OOS，测试窗不得继续调参。"
+    },
+    {
+      "gate": "strict_ledger",
+      "category": "严格账本",
+      "required": "VERIFIED；T+1、订单守恒、持仓错配均为0",
+      "actual": "registry=FAILED_REVALIDATION; PR-C=BLOCKED",
+      "passed": false,
+      "blocking": true,
+      "evidence": "config/strategy_release_registry.yaml",
+      "remediation": "补齐公司行动和生命周期快照，生成逐release对账指标并通过严格账本Gate。"
+    },
+    {
+      "gate": "statistical_robustness",
+      "category": "统计稳健性",
+      "required": "DSR≥95%、PBO≤20%、Bootstrap下界非负并完成因子归因",
+      "actual": "alpha_v3 attribution=BLOCKED; factor_ic=BLOCKED",
+      "passed": false,
+      "blocking": true,
+      "evidence": "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+      "remediation": "对完整OOS收益运行DSR、CPCV-PBO、Block Bootstrap和七因子归因。"
+    },
+    {
+      "gate": "execution_stress",
+      "category": "成本、滑点与容量",
+      "required": "5档资金规模和全部成本/滑点压力场景通过",
+      "actual": "alpha_v3 execution_stress=BLOCKED",
+      "passed": false,
+      "blocking": true,
+      "evidence": "exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json",
+      "remediation": "按50万至1000万元及全部成本/滑点组合重跑并保存拒单、冲击和回撤扩张。"
+    },
+    {
+      "gate": "disabled_shadow",
+      "category": "技术Shadow",
+      "required": "连续20个真实交易日",
+      "actual": "0日；missing_release_scoped_shadow_evidence",
+      "passed": false,
+      "blocking": true,
+      "evidence": "未提供",
+      "remediation": "从同日正式PIT快照开始累计，历史回填不得计数。"
+    },
+    {
+      "gate": "economic_shadow",
+      "category": "经济Shadow",
+      "required": "60个额外交易日、30个闭环",
+      "actual": "0日、0个闭环",
+      "passed": false,
+      "blocking": true,
+      "evidence": "未提供",
+      "remediation": "技术Shadow通过后再累计成本后Alpha、成交偏差和逐日对账证据。"
+    },
+    {
+      "gate": "comprehensive_report",
+      "category": "评估报告",
+      "required": "完整报告通过校验并给出唯一资本结论",
+      "actual": "已生成；Artifact与UTF-8校验结果随证据包归档",
+      "passed": true,
+      "blocking": true,
+      "evidence": "exports/dynamic_champion_live_readiness",
+      "remediation": "发布前完成Artifact与UTF-8校验。"
+    },
+    {
+      "gate": "manual_approval",
+      "category": "人工审批",
+      "required": "与当前release及证据SHA绑定的Canary审批",
+      "actual": "缺失",
+      "passed": false,
+      "blocking": true,
+      "evidence": "docs/04_live_trading/CANARY_RUNBOOK.md",
+      "remediation": "仅在其余门禁全部通过后记录人工审批。"
+    },
+    {
+      "gate": "broker_api_boundary",
+      "category": "执行边界",
+      "required": "broker_api_enabled=false，所有订单人工确认",
+      "actual": "broker_api_enabled=false",
+      "passed": true,
+      "blocking": true,
+      "evidence": "config/dynamic_champion_live_program.yaml",
+      "remediation": "保持人工订单草案、成交文件导入和离线对账。"
+    }
+  ],
+  "file_manifest": [
+    {
+      "file": "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_summary.csv",
+      "sha256": "d5d8076548d8c25bd4ebe6ed183ea211aa20030bddfb05fb86902eae53a7d3cb",
+      "bytes": 3867
+    },
+    {
+      "file": "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+      "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711",
+      "bytes": 1743245
+    },
+    {
+      "file": "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+      "sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e",
+      "bytes": 489040
+    },
+    {
+      "file": "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_positions.csv",
+      "sha256": "ae79356e6fdc5b972077e04c5efc4cd248c3a6c28e23c2299ba76ae60205b4e8",
+      "bytes": 2097518
+    },
+    {
+      "file": "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_candidates.csv",
+      "sha256": "4db0bfa983518cab12f6db3d7ec86c52412c87222dbed49e53766e2f00c47b16",
+      "bytes": 7553956
+    },
+    {
+      "file": "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_report.json",
+      "sha256": "417334bebdc1b53b6a1c8efd735429931613692cddbb2ad73bc0b691869a9ab2",
+      "bytes": 26288
+    }
+  ],
+  "git_commit_sha": "9200f1f7d532c116560bfddb011bb3a5cc378ad6",
+  "assessment_sha256": "2eda047b23a4635bbb0c017139827a1b5ba01a2965618bf17aff4301decaffe2"
+}

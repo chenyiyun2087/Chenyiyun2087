@@ -21,6 +21,7 @@ TRANSIENT_FAILURE_MARKERS = (
     "deadlock", "lock wait timeout", "connection reset", "connection refused",
     "lost connection", "server has gone away", "temporarily unavailable",
     "timed out", "timeout", "(1205", "(1213", "(2006", "(2013",
+    "too many open files", "errno 24", "emfile",
 )
 DATA_READINESS_FAILURE_MARKERS = (
     "qfq 在", "无数据，检查导入或日期对齐", "loading data for 0 stocks",
@@ -70,6 +71,7 @@ def execute_subprocess(
             process = subprocess.Popen(
                 command, stdout=stdout_handle, stderr=stderr_handle,
                 cwd=str(cwd), env=dict(env),
+                close_fds=True,
             )
             while True:
                 try:

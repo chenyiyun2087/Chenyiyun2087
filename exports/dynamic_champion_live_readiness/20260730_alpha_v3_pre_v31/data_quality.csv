@@ -1,0 +1,6 @@
+check,status,actual,severity
+策略身份,PASS,production_governed_vol_position_v1_2b_dynamic_score,critical
+NAV日期重复,PASS,0,critical
+NAV缺失或非有限值,PASS,0,critical
+交易日期缺失,PASS,0,critical
+回测滑点,LIMIT,0.0,high

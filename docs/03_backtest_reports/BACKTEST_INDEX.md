@@ -1,5 +1,76 @@
 # 回测报告索引
 
+> 2026-07-31 Alpha v4.7 PIT Data Adapter：新增文件与只读 MySQL 两类适配器，
+> 统一 market/universe/financial/industry/adjustment 五类快照的内容 SHA、
+> schema hash、semantic version、field definition hash、provider 和 retrieval
+> time。合成完整 PIT 验证改为 `S3`，不再冒充 E3；只有
+> `HISTORICAL_REAL` manifest 才可能满足真实历史门禁。财务修订、公司行动和
+> 证券状态迁移合同已补齐。当前真实运行因 adapter config 和数据库/冻结文件
+> 缺失保持 `E0 / BLOCKED`；统一 reference/replay SHA 为
+> `158987f5bb42b983a50befdb41a1403538624bdf8c333e7919f7fa7571541931`。
+> 详见 `docs/tasks/2026-07-31_Alpha_v4.7_PIT_Data_Adapter升级.md`。
+
+> 2026-07-31 Alpha v4.6 Long Horizon Evidence：新增可运行的 PIT Factor
+> Panel Builder，要求 market/universe/industry/adjustment 四类冻结快照及
+> release-scoped SHA manifest，验证 `available_at <= signal_time`、重复键为0、
+> 每日股票池覆盖率≥95%和至少252日。272日合成夹具去除20日预热后成功生成
+> 252日面板；16:00数据对15:30信号正确失败。当前工作区没有正式四类输入，
+> 真实构建固定 `E0 / BLOCKED` 且禁止回退短面板。统一 reference/replay SHA
+> 为 `88d07f5dabfd31b3e0231d353b18bb022dbd0fb9b9da9f299e39f6b32d331a75`，
+> 资金继续 `NO_SCALE / 0元`。实施记录见
+> `docs/tasks/2026-07-31_Alpha_v4.6_Long_Horizon_Evidence升级.md`。
+
+> 2026-07-31 Alpha v4.5 Net Alpha Validation：新增 PIT 数据源审计和显式
+> `T日15:30成组 / T+1日09:30开盘执行` 的因子账本，比较日/5日/20日调仓、
+> 五档成本、70/30时间留出及 Top 组合重叠。基准成本下低波日频合成长短累计
+> +7.72%，但后 30% 留出为 -0.41%，极端成本后为 -20.15%；更重要的是，
+> 入选组合累计发现 883 个后续开盘价缺失，证明当前短面板不是完整可投资股票池，
+> 所有收益指标只能作为有偏诊断。统一 reference/replay SHA 为
+> `50e22f757def5ce60d52aea28f5777f2e3c504ff9c329ff2762487f3ed959779`，
+> 结论继续 `BLOCKED / NO_SCALE / 0元`。实施记录见
+> `docs/tasks/2026-07-31_Alpha_v4.5_Net_Alpha_Validation升级.md`。
+
+> 2026-07-31 Alpha v4.4 Economic Validation：新增独立 Factor Challenger
+> Lab，对规模、低波动、流动性、动量、价值及低波动+价值组合输出同样本
+> Top/Bottom 多空收益、IC 衰减、换手、回撤和分状态结果。78 日完整样本中，
+> 低波动多空累计 +12.66%、Sharpe 1.72；价值 +5.62%、Sharpe 0.81；组合
+> +4.99%、Sharpe 0.68。仅覆盖两个状态且缺正式 PIT、行业中性和 252 日历史，
+> 因此全部固定为 `E2 / BLOCKED`，不构成 Alpha 声明；统一重放 SHA 为
+> `50a5888cf675ea7bc340e2211ce294dcff5802674387cc52e7f894b67806d723`。
+> 实施记录见 `docs/tasks/2026-07-31_Alpha_v4.4_Economic_Validation升级.md`。
+
+> 2026-07-30 Alpha v3.8 Evidence-to-Decision：新增事件分层与年度 anchor、
+> 组合状态审计、证据合同矩阵、缺口责任追踪、非授权资金门禁模拟，并将
+> Engineering/Evidence/Investment 分数严格分离为 85/21/0。20/20 故障注入
+> 检出；正式证据仍缺，结论保持 `BLOCKED / NO_SCALE / 0元`。摘要见
+> `2026-07-30_Alpha_v3_回测摘要.md`。
+
+> 2026-07-30 Alpha v3.3 Evidence Audit：新增因子冻结源文件 SHA/版本、年度
+> 9个月覆盖与最差 Alpha 门禁、Residual 双阈值、5/10/20/60日因子联动、
+> 容量曲线和分状态归因。正式输入缺失时仍为 `BLOCKED / NO_SCALE / 0元`。
+> 摘要见 `2026-07-30_Alpha_v3_回测摘要.md`。
+
+> 2026-07-30 Alpha v3.2 Proof Guard 2.0：统一验证新增逐因子
+> `available_at <= signal_time`、未解释方差不超过 5%、2023–2026 年度 Alpha
+> 稳定性及三基准 95% 覆盖率/末日一致保护。没有正式因子、基准、PIT、成交和
+> Shadow 证据时继续 `BLOCKED / NO_SCALE`，允许新增资金 0 元。摘要见
+> `2026-07-30_Alpha_v3_回测摘要.md`。
+
+> 2026-07-30 Alpha v3.1 证明层：依据独立评估新增沪深300、中证500、中证1000
+> 三基准超额、IR、Beta、年化Alpha，以及满秩日频八因子归因闭合。当前冻结包
+> 缺少正式基准和因子面板，新报告按设计保持 `BLOCKED`，没有改变20.37%年化、
+> -25.52%回撤、0.82 Sharpe或0元资金结论。工程记录见
+> `docs/tasks/2026-07-30_Alpha_v3.1证明层升级.md`。
+
+> 2026-07-30 Alpha v3 生产线升级：新增统一 `alpha_v3` 验收档案和六份
+> release-scoped 证据报告，核心历史口径改为 2018+，固定 50 万元、T 日信号/T+1
+> 开盘执行。当前冻结账本实际覆盖 2023-11-30 至 2026-06-17，累计收益 +57.23%、
+> 年化 +20.37%、最大回撤 -25.52%、Sharpe 0.82，未通过年化、回撤和 Sharpe
+> 门槛；基准、PIT、归因、IC、Walk-forward、成交真实性和真实 Shadow 也不完整。
+> 结论为 `BLOCKED / NO_SCALE`，允许新增风险资金 0 元。详见
+> `2026-07-30_Alpha_v3_回测摘要.md`，原始证据位于
+> `exports/alpha_v3_validation/20260730_alpha_v3/`。
+
 > 2026-07-27 动态评分冠军实盘准入全面评估：基于冻结账户回测和当前治理证据，
 > `production_governed_vol_position_v1_2b_dynamic_score` 的累计收益为+57.23%、
 > 年化+20.41%、最大回撤-25.52%，但样本仅覆盖2023-11-30至2026-06-17，
@@ -138,6 +209,132 @@
 | `baseline_full_score` | 50 万 | 2025-06-03 至 2026-05-29 | 653,208 | +32.55% | -40.87% | 综合分兜底基准 | `exports/signal_research/20260601_221903_213811_trusted_account_backtest/` |
 
 ## 文件说明
+
+### 2026-07-30 Alpha v3.4 Replay Audit
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 区间：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 实际结果：年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- Replay 与故障注入通过；因子计算 manifest、涨跌停/成交状态、PIT 和 Shadow
+  仍缺失，结论为 `BLOCKED / NO_SCALE / 0元`。
+- 证据：`exports/alpha_v3_validation/20260730_alpha_v3_4_replay/`
+- 确定性 SHA：
+  `49c02bb7723c85f342f3a4bf7c4652dbce31554d62ea9129c785af8347463e8c`
+
+### 2026-07-30 Alpha v3.5 Replay Diff & Audit Intelligence
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 区间：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 实际结果：年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- reference/replay 的 metadata、NAV、交易、归因和风险差异均为 0；故障注入
+  v2 通过。执行输出严格限定为 `SIMULATION`，不替代真实 Shadow。
+- 正式数据和成交证据仍缺失，结论为 `BLOCKED / NO_SCALE / 0元`。
+- 证据：`exports/alpha_v3_validation/20260730_alpha_v3_5_replay/`
+- 确定性 SHA：
+  `165e47d3977aac09e5e504b7354a515e6ef1c90e814e4a46c2ae1317db5c6525`
+
+### 2026-07-30 Alpha v3.6 Research Correctness Audit
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 区间：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 实际结果：年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- 固定种子抽样 100 个交易日；Replay 五层零差异；Failure Injection v3 的
+  12 项污染均被识别。
+- 历史交易缺正式正确性字段和研究—生产信号合同，正确性审计按设计
+  `BLOCKED`；资金结论保持 `NO_SCALE / 0元`。
+- 证据：`exports/alpha_v3_validation/20260730_alpha_v3_6_replay/`
+- 确定性 SHA：
+  `2197483bced5fefe3db7a8a26f8f30a3da14ee2a640c4157e40f4ef978b67576`
+
+### 2026-07-30 Alpha v3.7 Correctness Evidence Closure
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 区间：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 实际结果：年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- Replay 五层零差异；确定性分层抽样、9 个合成正确性场景和 16 项故障注入
+  已形成 CI 闭环。
+- 工程 readiness score 为 85/100，明确不是投资评分；真实正确性、Alpha、
+  成交和 Shadow 仍阻断，结论为 `BLOCKED / NO_SCALE / 0元`。
+- 证据：`exports/alpha_v3_validation/20260730_alpha_v3_7_replay/`
+- 确定性 SHA：
+  `d1f09f4b39fdbd96629ffa6ef3fe0ec84afbc44bf4dcc325d9d9fd4c45fcebff`
+
+### 2026-07-30 Alpha v3.8 Evidence-to-Decision Control Plane
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 区间：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 实际结果：年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- Replay 五层零差异；20/20 故障注入检出。工程、证据、投资评分分别为
+  85/21/0，三者不可互相替代。
+- 事件分类、组合状态、正式 Alpha 与真实 Shadow 证据仍缺，结论为
+  `BLOCKED / NO_SCALE / 0元`。
+- 证据：`exports/alpha_v3_validation/20260730_alpha_v3_8_replay/`
+- 确定性 SHA：
+  `07706da0c33e01482322a0595a7d4a54a7d32565528e3d665d39a9d21ecc7a51`
+
+### 2026-07-30 Alpha v3.9 Evidence Governance & Capital Firewall
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 区间：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 实际结果：年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- 新增 E0–E4 证据等级、组合会计闭合、Failure Coverage Matrix、Capital
+  Firewall 和 Alpha Claim Registry。
+- 当前仅允许 `RESEARCH_STRATEGY` 声明；有效允许资金为 0，结论为
+  `BLOCKED / NO_SCALE`。
+- 证据：`exports/alpha_v3_validation/20260730_alpha_v3_9_replay/`
+- 确定性 SHA：
+  `78316942ab59b99d11aa317cf4269d57f7dffd58f258f96844f4ead5cd0706d3`
+
+### 2026-07-30 Alpha v4.0 Capital Readiness Simulation Framework
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 区间：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 实际结果：年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- 新增证据有效期、T0–T4 资金阶梯、Claim 生命周期、健康监控和独立投委会
+  材料模拟；全部没有资本或券商权限。
+- 当前最高模拟层级 `T0`、最高声明 `RESEARCH_STRATEGY`，结论为
+  `BLOCKED / NO_SCALE / 0元`。
+- 证据：`exports/alpha_v3_validation/20260730_alpha_v4_0_replay/`
+- 确定性 SHA：
+  `4e5f6259e9690a1ae7e278747a8ada38cb081a0d7916e108c329aaec9d37ed47`
+
+### 2026-07-30 Alpha v4.1 Evidence Acquisition Pipeline
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 区间：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 实际结果：年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- 发现 19 个基准候选、5 个因子集、12 个 PIT 记录和 1 个执行文件；资格审查
+  未得到三指数日频、因子时点、正式 PIT 或 Shadow 的合格 E3/E4 输入。
+- 快照资产为空，适配器失败关闭；结论为 `BLOCKED / NO_SCALE / 0元`。
+- 证据：`exports/alpha_v3_validation/20260730_alpha_v4_1_reference/`
+- 确定性 SHA：
+  `baf066ceab2da9f6a6297fd7e2c878d31197efd5fca48bfaabc2a98d69215502`
+
+### 2026-07-30 Alpha v4.2 Evidence Production Pipeline
+
+- 策略：`production_governed_vol_position_v1_2b_dynamic_score`
+- 策略样本：2023-11-30 至 2026-06-17；初始资金 50 万元；T 日信号/T+1 开盘。
+- 三基准数据：2018-01-02 至 2026-06-17，各 2,050 日，共 6,150 行；资格和
+  完整性均通过。
+- 沪深300/中证500/中证1000年化超额分别为 4.86%/0.13%/4.16%，均低于
+  15% 硬门槛；实际策略年化 20.37%、最大回撤 -25.52%、Sharpe 0.82。
+- 因子/IC、正式 PIT、真实执行与 Shadow 仍缺，结论为
+  `BLOCKED / NO_SCALE / 0元`。
+- 生产证据：`exports/evidence_production/20260730_alpha_v4_2/`
+- 验证证据：`exports/alpha_v3_validation/20260730_alpha_v4_2_reference/`
+- 确定性 SHA：
+  `117bf80b6fffa093bbf7b87e139f1c688132d1992a55627b6c55bf1c0c745e08`
+
+### 2026-07-31 Alpha v4.3 Factor Evidence & Attribution
+
+- 源股票面板 138 日；5/10/20/60 日完整案例 78 日、435 股、32,554 行。
+- 低波动 5/10/20/60 日 Rank IC 均通过；低估值四个期限均通过；小盘仅
+  60 日通过。流动性四期限均为负，动量覆盖与短中期 IC 不合格。
+- 五因子部分回归仅解释 16.76% 方差，Alpha t-stat 1.70；行业、正式 PIT
+  和 252 日历史缺失，因此不构成正式 Alpha。
+- 证据：`exports/alpha_v3_validation/20260731_alpha_v4_3_reference/`
+- 确定性 SHA：
+  `aa8d992599eff70b3382ee5752d4a857903bc5aa89683daca489b40e2e0abd5b`
 
 - `trusted_account_backtest_summary.csv`：账户级回测汇总。
 - `trusted_account_backtest_nav.csv`：净值曲线。

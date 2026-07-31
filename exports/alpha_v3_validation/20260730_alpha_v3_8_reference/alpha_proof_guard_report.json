@@ -1,0 +1,405 @@
+{
+  "alpha_stability": {
+    "blockers": [
+      "factor_return_panel_missing_or_incomplete",
+      "factor_returns_missing"
+    ],
+    "rows": [],
+    "schema_version": "alpha_v3_5_alpha_stability_v1",
+    "score": 0.0,
+    "status": "BLOCKED"
+  },
+  "blockers": [
+    "benchmark_safeguard",
+    "factor_returns_availability",
+    "factor_panel_availability",
+    "residual_audit",
+    "alpha_stability",
+    "factor_lineage",
+    "factor_effectiveness",
+    "regime_conditional_attribution"
+  ],
+  "capital_authorized": false,
+  "components": {
+    "alpha_stability": "BLOCKED",
+    "benchmark_safeguard": "BLOCKED",
+    "factor_effectiveness": "BLOCKED",
+    "factor_lineage": "BLOCKED",
+    "factor_panel_availability": "BLOCKED",
+    "factor_returns_availability": "BLOCKED",
+    "regime_conditional_attribution": "BLOCKED",
+    "residual_audit": "BLOCKED"
+  },
+  "content_sha256": "550a6420bf532d890faa99e9ce1a5e25a6a3e08f2d277eb130fea94e8f1c0ee3",
+  "factor_effectiveness": {
+    "blockers": [
+      "factor_effectiveness_column_missing:fwd_10d_return",
+      "factor_effectiveness_column_missing:fwd_20d_return",
+      "factor_effectiveness_column_missing:fwd_5d_return",
+      "factor_effectiveness_column_missing:fwd_60d_return",
+      "factor_effectiveness_column_missing:industry",
+      "factor_effectiveness_column_missing:liquidity",
+      "factor_effectiveness_column_missing:market_beta",
+      "factor_effectiveness_column_missing:market_regime",
+      "factor_effectiveness_column_missing:momentum",
+      "factor_effectiveness_column_missing:portfolio_weight",
+      "factor_effectiveness_column_missing:size",
+      "factor_effectiveness_column_missing:symbol",
+      "factor_effectiveness_column_missing:trade_date",
+      "factor_effectiveness_column_missing:value",
+      "factor_effectiveness_column_missing:volatility",
+      "factor_effectiveness_panel_missing",
+      "factor_lineage_not_verified"
+    ],
+    "decay": [],
+    "economic_status": "NOT_EVALUATED",
+    "rows": [],
+    "schema_version": "alpha_v3_5_factor_effectiveness_v1",
+    "status": "BLOCKED"
+  },
+  "factor_lineage": {
+    "blockers": [
+      "factor_source_manifest_schema_invalid",
+      "factor_source_manifest_not_pass",
+      "factor_source_manifest_factors_missing",
+      "market_beta:source_entry_missing",
+      "market_beta:data_version_missing",
+      "market_beta:source_snapshot_sha_invalid",
+      "market_beta:source_snapshot_missing",
+      "market_beta:factor_returns_missing",
+      "market_beta:factor_panel_missing",
+      "size:source_entry_missing",
+      "size:data_version_missing",
+      "size:source_snapshot_sha_invalid",
+      "size:source_snapshot_missing",
+      "size:factor_returns_missing",
+      "size:factor_panel_missing",
+      "volatility:source_entry_missing",
+      "volatility:data_version_missing",
+      "volatility:source_snapshot_sha_invalid",
+      "volatility:source_snapshot_missing",
+      "volatility:factor_returns_missing",
+      "volatility:factor_panel_missing",
+      "liquidity:source_entry_missing",
+      "liquidity:data_version_missing",
+      "liquidity:source_snapshot_sha_invalid",
+      "liquidity:source_snapshot_missing",
+      "liquidity:factor_returns_missing",
+      "liquidity:factor_panel_missing",
+      "industry:source_entry_missing",
+      "industry:data_version_missing",
+      "industry:source_snapshot_sha_invalid",
+      "industry:source_snapshot_missing",
+      "industry:factor_returns_missing",
+      "industry:factor_panel_missing",
+      "momentum:source_entry_missing",
+      "momentum:data_version_missing",
+      "momentum:source_snapshot_sha_invalid",
+      "momentum:source_snapshot_missing",
+      "momentum:factor_returns_missing",
+      "momentum:factor_panel_missing",
+      "value:source_entry_missing",
+      "value:data_version_missing",
+      "value:source_snapshot_sha_invalid",
+      "value:source_snapshot_missing",
+      "value:factor_returns_missing",
+      "value:factor_panel_missing",
+      "market_regime:source_entry_missing",
+      "market_regime:data_version_missing",
+      "market_regime:source_snapshot_sha_invalid",
+      "market_regime:source_snapshot_missing",
+      "market_regime:factor_returns_missing",
+      "market_regime:factor_panel_missing"
+    ],
+    "manifest_status": "MISSING",
+    "rows": [
+      {
+        "blockers": [
+          "source_entry_missing",
+          "data_version_missing",
+          "source_snapshot_sha_invalid",
+          "source_snapshot_missing",
+          "factor_returns_missing",
+          "factor_panel_missing"
+        ],
+        "data_version": null,
+        "factor": "market_beta",
+        "source_snapshot_path": null,
+        "source_snapshot_sha256": null,
+        "status": "BLOCKED"
+      },
+      {
+        "blockers": [
+          "source_entry_missing",
+          "data_version_missing",
+          "source_snapshot_sha_invalid",
+          "source_snapshot_missing",
+          "factor_returns_missing",
+          "factor_panel_missing"
+        ],
+        "data_version": null,
+        "factor": "size",
+        "source_snapshot_path": null,
+        "source_snapshot_sha256": null,
+        "status": "BLOCKED"
+      },
+      {
+        "blockers": [
+          "source_entry_missing",
+          "data_version_missing",
+          "source_snapshot_sha_invalid",
+          "source_snapshot_missing",
+          "factor_returns_missing",
+          "factor_panel_missing"
+        ],
+        "data_version": null,
+        "factor": "volatility",
+        "source_snapshot_path": null,
+        "source_snapshot_sha256": null,
+        "status": "BLOCKED"
+      },
+      {
+        "blockers": [
+          "source_entry_missing",
+          "data_version_missing",
+          "source_snapshot_sha_invalid",
+          "source_snapshot_missing",
+          "factor_returns_missing",
+          "factor_panel_missing"
+        ],
+        "data_version": null,
+        "factor": "liquidity",
+        "source_snapshot_path": null,
+        "source_snapshot_sha256": null,
+        "status": "BLOCKED"
+      },
+      {
+        "blockers": [
+          "source_entry_missing",
+          "data_version_missing",
+          "source_snapshot_sha_invalid",
+          "source_snapshot_missing",
+          "factor_returns_missing",
+          "factor_panel_missing"
+        ],
+        "data_version": null,
+        "factor": "industry",
+        "source_snapshot_path": null,
+        "source_snapshot_sha256": null,
+        "status": "BLOCKED"
+      },
+      {
+        "blockers": [
+          "source_entry_missing",
+          "data_version_missing",
+          "source_snapshot_sha_invalid",
+          "source_snapshot_missing",
+          "factor_returns_missing",
+          "factor_panel_missing"
+        ],
+        "data_version": null,
+        "factor": "momentum",
+        "source_snapshot_path": null,
+        "source_snapshot_sha256": null,
+        "status": "BLOCKED"
+      },
+      {
+        "blockers": [
+          "source_entry_missing",
+          "data_version_missing",
+          "source_snapshot_sha_invalid",
+          "source_snapshot_missing",
+          "factor_returns_missing",
+          "factor_panel_missing"
+        ],
+        "data_version": null,
+        "factor": "value",
+        "source_snapshot_path": null,
+        "source_snapshot_sha256": null,
+        "status": "BLOCKED"
+      },
+      {
+        "blockers": [
+          "source_entry_missing",
+          "data_version_missing",
+          "source_snapshot_sha_invalid",
+          "source_snapshot_missing",
+          "factor_returns_missing",
+          "factor_panel_missing"
+        ],
+        "data_version": null,
+        "factor": "market_regime",
+        "source_snapshot_path": null,
+        "source_snapshot_sha256": null,
+        "status": "BLOCKED"
+      }
+    ],
+    "schema_version": "alpha_v3_5_factor_lineage_v1",
+    "status": "BLOCKED"
+  },
+  "factor_panel_availability": {
+    "blockers": [
+      "factor_panel_missing"
+    ],
+    "checked_rows": 0,
+    "panel": "factor_panel",
+    "schema_version": "alpha_v3_5_factor_availability_v1",
+    "status": "BLOCKED",
+    "violations": []
+  },
+  "factor_returns_availability": {
+    "blockers": [
+      "factor_returns_missing"
+    ],
+    "checked_rows": 0,
+    "panel": "factor_returns",
+    "schema_version": "alpha_v3_5_factor_availability_v1",
+    "status": "BLOCKED",
+    "violations": []
+  },
+  "generated_at": "2026-07-30T22:54:41.707836+08:00",
+  "provenance": {
+    "code_files": {
+      "runtime/acceptance_config.py": "c647f269cef2af6817a89cf29b0d369fb5997edf4c65f7b0ba12c955184dc5a0",
+      "scripts/ops/evaluate_dynamic_champion_readiness.py": "9f23f7113a8fcbcc055ad28893da9fd6a51c44a715fa2282ef77bf6d26ba5f48",
+      "scripts/ops/market_regime.py": "ff87a782de07e258e95997d574168a192d678f8c03ecc71bead43e9a3eb75f20",
+      "scripts/research/alpha_proof.py": "80ec014bd711c2df7ef8030265a0a8fedf8176eb9b7185aeb3463cd50c5bb124",
+      "scripts/research/correctness_audit.py": "50943da7ff949cec51af1c1b0fc4b21581cc3c647a8f732915bfd9eac64edf92",
+      "scripts/research/evidence_control.py": "ed88db50e61a8f6a4d716f71a3a79bc85bb6ad070f9b9ca433dc4ae8e03930e4",
+      "scripts/research/replay_diff.py": "c75b76e5da7ad9190fc6c4cab86388b5354f22848256f675342499cd9e81d5b6",
+      "scripts/research/run_alpha_v3_validation.py": "2c2f9f42fe04cac174eb8416270f56ab2a643d25e1287ce1f84655609bdb0dcd"
+    },
+    "code_snapshot_sha256": "7746599648115301e94cf5569e32d97f2c8584fedab6d176effec37fda7a2acb",
+    "config_sha256": "4a7abae485980090a98f6126f68a1917b5c2f7ab14cc73a49da73be5a4db73a2",
+    "cost_model": {
+      "cost_multipliers": [
+        1.0,
+        2.0
+      ],
+      "slippage_bps": [
+        20,
+        50,
+        100
+      ]
+    },
+    "environment_lock_hash": "c7971afaf0346b7693fccd426a3a650154c59a1fddc331dfc057b6d417840186",
+    "evidence_version": "alpha_v3_8_evidence_v1",
+    "execution_model": {
+      "execution_evidence_layers": [
+        "SIMULATION",
+        "PAPER",
+        "LIVE"
+      ],
+      "fill_timing": "T_PLUS_1_OPEN",
+      "min_execution_stress_score": 80,
+      "require_limit_up_down_handling": true,
+      "require_unfilled_position_freeze": true,
+      "signal_timing": "T_CLOSE",
+      "stress_evidence_layer": "SIMULATION",
+      "stress_scenarios": [
+        "limit_up_buy_blocked",
+        "limit_down_sell_blocked",
+        "one_day_fill_delay",
+        "slippage_2x"
+      ]
+    },
+    "git_head": "9200f1f7d532c116560bfddb011bb3a5cc378ad6",
+    "initial_capital_cny": 500000.0,
+    "input_files": {
+      "acceptance_config": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/production_acceptance.yaml",
+        "sha256": "4a7abae485980090a98f6126f68a1917b5c2f7ab14cc73a49da73be5a4db73a2"
+      },
+      "attribution_evidence": {
+        "path": "",
+        "sha256": ""
+      },
+      "benchmark_nav": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_compute_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_panel": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_returns": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_source_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "nav": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+        "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
+      },
+      "pit_manifest": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+        "sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+      },
+      "program": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/dynamic_champion_live_program.yaml",
+        "sha256": "9a5082319aa9a61b01c2bab818618da16937926be3e2ff28701f0c3de9727fb8"
+      },
+      "replay_reference": {
+        "path": "",
+        "sha256": ""
+      },
+      "research_production_contract": {
+        "path": "",
+        "sha256": ""
+      },
+      "selection_attribution": {
+        "path": "",
+        "sha256": ""
+      },
+      "shadow_status": {
+        "path": "",
+        "sha256": ""
+      },
+      "trades": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+        "sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e"
+      },
+      "walk_forward": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+        "sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+      }
+    },
+    "input_snapshot_sha256": "a61a4ce70441e50522f4af4d7f0dd6678b20a41fb940a2beb0d3637285ef9eaa",
+    "profile": "alpha_v3_8",
+    "profile_schema_version": "alpha_v3_acceptance_v1",
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "sample_end_requested": null,
+    "sample_range_actual": {
+      "end": "2026-06-17",
+      "start": "2023-11-30",
+      "trading_days": 615
+    },
+    "sample_start_requested": "2018-01-01",
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+  },
+  "regime_conditional_attribution": {
+    "blockers": [
+      "market_regime_state_missing"
+    ],
+    "rows": [],
+    "schema_version": "alpha_v3_5_regime_attribution_v1",
+    "status": "BLOCKED"
+  },
+  "residual_audit": {
+    "max_unexplained_variance_ratio": 0.1,
+    "residual_mean": null,
+    "residual_std": null,
+    "residual_tstat": null,
+    "unexplained_residual_return": null,
+    "unexplained_variance_ratio": null
+  },
+  "schema_version": "alpha_v3_5_guard_v1",
+  "status": "BLOCKED"
+}

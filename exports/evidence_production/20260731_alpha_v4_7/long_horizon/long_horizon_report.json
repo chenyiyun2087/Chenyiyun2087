@@ -1,0 +1,120 @@
+{
+  "blockers": [],
+  "capital_authority": false,
+  "content_sha256": "3d4f4ba2461b8b51ba170f5340d791aa9592702adbfa029df002085e5169421a",
+  "panel_source": "E3 PIT panel (1,573 trading days)",
+  "rolling_config": {
+    "cost_bps": 17.5,
+    "rebalance_days": 20,
+    "step_days": 126,
+    "window_days": 504
+  },
+  "rolling_ic_summary": [
+    {
+      "factor": "volatility",
+      "horizon": 5,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "volatility",
+      "horizon": 20,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "volatility",
+      "horizon": 60,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "value",
+      "horizon": 5,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "value",
+      "horizon": 20,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "value",
+      "horizon": 60,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "size",
+      "horizon": 5,
+      "pass_rate": 0.8888888888888888,
+      "windows": 9
+    },
+    {
+      "factor": "size",
+      "horizon": 20,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "size",
+      "horizon": 60,
+      "pass_rate": 1.0,
+      "windows": 9
+    }
+  ],
+  "rolling_sharpe_summary": [
+    {
+      "factor": "volatility",
+      "mean_sharpe": 1.5745,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "value",
+      "mean_sharpe": 1.7711,
+      "pass_rate": 1.0,
+      "windows": 9
+    },
+    {
+      "factor": "size",
+      "mean_sharpe": 1.8533,
+      "pass_rate": 1.0,
+      "windows": 9
+    }
+  ],
+  "schema_version": "alpha_v4_6_long_horizon_evidence_v1",
+  "stability": {
+    "size": {
+      "ic_60d_mean": 0.0793,
+      "ic_60d_std": 0.0338,
+      "ic_window_pass_rate": 1.0,
+      "n_ic_windows": 9,
+      "n_sharpe_windows": 9,
+      "sharpe_mean": 1.8533,
+      "sharpe_window_pass_rate": 1.0
+    },
+    "value": {
+      "ic_60d_mean": 0.1132,
+      "ic_60d_std": 0.031,
+      "ic_window_pass_rate": 1.0,
+      "n_ic_windows": 9,
+      "n_sharpe_windows": 9,
+      "sharpe_mean": 1.7711,
+      "sharpe_window_pass_rate": 1.0
+    },
+    "volatility": {
+      "ic_60d_mean": 0.1269,
+      "ic_60d_std": 0.0431,
+      "ic_window_pass_rate": 1.0,
+      "n_ic_windows": 9,
+      "n_sharpe_windows": 9,
+      "sharpe_mean": 1.5745,
+      "sharpe_window_pass_rate": 1.0
+    }
+  },
+  "status": "PASS",
+  "whole_panel_qualifies": true
+}

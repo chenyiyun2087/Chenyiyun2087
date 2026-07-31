@@ -1,0 +1,270 @@
+{
+  "capital_authority": false,
+  "content_sha256": "b3d07591fb869b4fff322a5e64ce81169de461febfbc63ebfb00c09e5fe2fb89",
+  "fully_covered_category_count": 4,
+  "generated_at": "2026-07-31T01:22:17.086656+08:00",
+  "promotion_eligible": false,
+  "provenance": {
+    "code_files": {
+      "runtime/acceptance_config.py": "f59da03143e1f911d2690d2f90d55ae5b7e5224b3f8a872fd9ab04ee072a8ad9",
+      "scripts/ops/evaluate_dynamic_champion_readiness.py": "e98eee5ab017eb99c5413224aee5f7e90d818252b9186182ae5a39a376a712bd",
+      "scripts/ops/market_regime.py": "ff87a782de07e258e95997d574168a192d678f8c03ecc71bead43e9a3eb75f20",
+      "scripts/research/alpha_proof.py": "80ec014bd711c2df7ef8030265a0a8fedf8176eb9b7185aeb3463cd50c5bb124",
+      "scripts/research/capital_firewall.py": "4b37bd3b05d7e332addd352f14a9c3a81841fb1292b03b800bb0f85f644f1266",
+      "scripts/research/capital_readiness.py": "1ffeb6a9074e1b48f505eba8edd3cf8101e20259b9ba345d0e03892780ef80e5",
+      "scripts/research/correctness_audit.py": "af2e6254c6857a7aec4600b012d33552d400b4366faade20a4cc95292146cee8",
+      "scripts/research/evidence_acquisition.py": "1203a8814df86420622c8dc707fb959eb903336b6192306427ce8c63406637a3",
+      "scripts/research/evidence_control.py": "abd0831e1a2d4326cd11e31e0a5715fb56b00b0338c21173dd4adfcab11c21a0",
+      "scripts/research/evidence_production.py": "33e4b2727859c5cb5b9007437ed108a672e6b7373c8c41530a98eb0453327b4a",
+      "scripts/research/factor_challenger_lab.py": "a463f1ef299cd734175a01bebd29061b11790f9c24b197302e5c65adf7fb06f4",
+      "scripts/research/factor_evidence.py": "6762eba146126745aa156a7bf9442d71af4234aa573e39dd0ab34eb29ab41835",
+      "scripts/research/factor_net_ledger.py": "5a2c272823f10789437a53ab68cfbc365ad8231db915193ae9fc22db59d73746",
+      "scripts/research/pit_data_adapter.py": "10d62b1677ad755e71c898bac29d0b916d9e6541c078a127f0af2815dd4cfaac",
+      "scripts/research/pit_factor_panel_audit.py": "9d1228efe4ef467b3fd93ff4ec2ad345a4bd68caa3ca7619d45c0f1942bb76de",
+      "scripts/research/pit_factor_panel_builder.py": "2fd9ad25aee6e445dfa29bd49b09b55dac684a620e28ec09f797db87d54fe5c7",
+      "scripts/research/replay_diff.py": "c75b76e5da7ad9190fc6c4cab86388b5354f22848256f675342499cd9e81d5b6",
+      "scripts/research/run_alpha_v3_validation.py": "bf41e52b658a3ef5a0a45856d3f96b07ec9c8ad0b9beea07909e8f1c5871aa71"
+    },
+    "code_snapshot_sha256": "da6cbeb745b49f174a6f9737ce7e2cb7ed743658ea11ae69134371132a664934",
+    "config_sha256": "1623dea964e56dba51ade9f5fe5f0e87253844932d1dd47784d4e7beedc5c786",
+    "cost_model": {
+      "cost_multipliers": [
+        1.0,
+        2.0
+      ],
+      "slippage_bps": [
+        20,
+        50,
+        100
+      ]
+    },
+    "environment_lock_hash": "c7971afaf0346b7693fccd426a3a650154c59a1fddc331dfc057b6d417840186",
+    "evidence_version": "alpha_v4_7_pit_data_adapter_v1",
+    "execution_model": {
+      "execution_evidence_layers": [
+        "SIMULATION",
+        "PAPER",
+        "LIVE"
+      ],
+      "fill_timing": "T_PLUS_1_OPEN",
+      "min_execution_stress_score": 80,
+      "require_limit_up_down_handling": true,
+      "require_unfilled_position_freeze": true,
+      "signal_timing": "T_CLOSE",
+      "stress_evidence_layer": "SIMULATION",
+      "stress_scenarios": [
+        "limit_up_buy_blocked",
+        "limit_down_sell_blocked",
+        "one_day_fill_delay",
+        "slippage_2x"
+      ]
+    },
+    "git_head": "9200f1f7d532c116560bfddb011bb3a5cc378ad6",
+    "initial_capital_cny": 500000.0,
+    "input_files": {
+      "acceptance_config": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/production_acceptance.yaml",
+        "sha256": "1623dea964e56dba51ade9f5fe5f0e87253844932d1dd47784d4e7beedc5c786"
+      },
+      "attribution_evidence": {
+        "path": "",
+        "sha256": ""
+      },
+      "benchmark_builder_manifest": {
+        "path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/benchmark_evidence_manifest.json",
+        "sha256": "7d5d6de516f95f62f4a44f377a6ada724b5b862a2df61177fb104a14f50fee8c"
+      },
+      "benchmark_nav": {
+        "path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/benchmark_nav_daily.csv",
+        "sha256": "a008a312cd5ef3f49b6a1869a66b954f9e288a12ada2db9f39e0bbfedf25c407"
+      },
+      "evidence_production_report": {
+        "path": "exports/evidence_production/20260730_alpha_v4_2/evidence_production_report.json",
+        "sha256": "1a8949ed64110b3a5f75b7a4effa75eb6934061765fca3fb27f690456ce6d48f"
+      },
+      "factor_builder_report": {
+        "path": "exports/evidence_production/20260731_alpha_v4_7/factors/factor_evidence_manifest.json",
+        "sha256": "dcc9111b82c7db0c03505feb15eb0e788b24a02cd424b05e177a0ad823619923"
+      },
+      "factor_compute_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_panel": {
+        "path": "exports/evidence_production/20260731_alpha_v4_7/factors/factor_panel.csv",
+        "sha256": "21cb35c8ac5655576b11152be8c72c1d91442bcfc4cf15bef47143cae20a315b"
+      },
+      "factor_returns": {
+        "path": "exports/evidence_production/20260731_alpha_v4_7/factors/factor_returns.csv",
+        "sha256": "f885ab6eed3c8bbfcefdce4aa7d890173a2e6c4b03b746e51bc02185e410b990"
+      },
+      "factor_source_manifest": {
+        "path": "exports/evidence_production/20260731_alpha_v4_7/factors/factor_source_manifest.json",
+        "sha256": "4e3a46e36c54c7fc2fa2bf2678f33ab7ac77778295f7d8d9ad416275f76db520"
+      },
+      "nav": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+        "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
+      },
+      "pit_builder_report": {
+        "path": "exports/evidence_production/20260731_alpha_v4_7/pit_builder/pit_factor_panel_builder_report.json",
+        "sha256": "11a0e25dceecfb92fc6a0e5b0596257d9e78aadb0bb300a29bfbbfba4b2e2c84"
+      },
+      "pit_manifest": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+        "sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+      },
+      "program": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/dynamic_champion_live_program.yaml",
+        "sha256": "84e24523c8acb20367e8e5ca416f477ba649aa8dae0e5e745f0411b9f51487e3"
+      },
+      "replay_reference": {
+        "path": "",
+        "sha256": ""
+      },
+      "research_production_contract": {
+        "path": "",
+        "sha256": ""
+      },
+      "selection_attribution": {
+        "path": "",
+        "sha256": ""
+      },
+      "shadow_status": {
+        "path": "",
+        "sha256": ""
+      },
+      "trades": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+        "sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e"
+      },
+      "walk_forward": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+        "sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+      }
+    },
+    "input_snapshot_sha256": "115df3c782586e77a38ca1dbdea73c4fbffc96f45ac52436a07fbc619e4f3cf6",
+    "profile": "alpha_v4_7",
+    "profile_schema_version": "alpha_v3_acceptance_v1",
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "sample_end_requested": null,
+    "sample_range_actual": {
+      "end": "2026-06-17",
+      "start": "2023-11-30",
+      "trading_days": 615
+    },
+    "sample_start_requested": "2018-01-01",
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+  },
+  "risk_category_count": 6,
+  "rows": [
+    {
+      "coverage_ratio": 1.0,
+      "failed_cases": [],
+      "missing_cases": [],
+      "passed_cases": [
+        "factor_available_after_signal",
+        "factor_timezone_missing",
+        "input_snapshot_sha_mismatch",
+        "provider_semantic_change"
+      ],
+      "required_cases": [
+        "factor_available_after_signal",
+        "factor_timezone_missing",
+        "input_snapshot_sha_mismatch",
+        "provider_semantic_change"
+      ],
+      "risk_category": "DATA_LEAKAGE",
+      "status": "PASS"
+    },
+    {
+      "coverage_ratio": 1.0,
+      "failed_cases": [],
+      "missing_cases": [],
+      "passed_cases": [
+        "limit_queue_impossible_fill",
+        "portfolio_weight_lookahead",
+        "suspended_security_fill",
+        "t_day_execution_violation"
+      ],
+      "required_cases": [
+        "limit_queue_impossible_fill",
+        "portfolio_weight_lookahead",
+        "suspended_security_fill",
+        "t_day_execution_violation"
+      ],
+      "risk_category": "EXECUTION_LEAKAGE",
+      "status": "PASS"
+    },
+    {
+      "coverage_ratio": 1.0,
+      "failed_cases": [],
+      "missing_cases": [],
+      "passed_cases": [
+        "duplicate_timestamp_order",
+        "numeric_precision_drift"
+      ],
+      "required_cases": [
+        "duplicate_timestamp_order",
+        "numeric_precision_drift"
+      ],
+      "risk_category": "ACCOUNTING_LEAKAGE",
+      "status": "PASS"
+    },
+    {
+      "coverage_ratio": 0.6666666666666666,
+      "failed_cases": [],
+      "missing_cases": [
+        "bid_ask_spread_integrity"
+      ],
+      "passed_cases": [
+        "auction_price_leak",
+        "order_queue_priority_leak"
+      ],
+      "required_cases": [
+        "auction_price_leak",
+        "bid_ask_spread_integrity",
+        "order_queue_priority_leak"
+      ],
+      "risk_category": "MARKET_MICROSTRUCTURE",
+      "status": "PARTIAL"
+    },
+    {
+      "coverage_ratio": 0.75,
+      "failed_cases": [],
+      "missing_cases": [
+        "dividend_split_accounting"
+      ],
+      "passed_cases": [
+        "adjustment_factor_future_leak",
+        "corporate_action_lookahead",
+        "financial_revision_after_release"
+      ],
+      "required_cases": [
+        "adjustment_factor_future_leak",
+        "corporate_action_lookahead",
+        "dividend_split_accounting",
+        "financial_revision_after_release"
+      ],
+      "risk_category": "CORPORATE_ACTION",
+      "status": "PARTIAL"
+    },
+    {
+      "coverage_ratio": 1.0,
+      "failed_cases": [],
+      "missing_cases": [],
+      "passed_cases": [
+        "delisting_survivorship_bias",
+        "universe_survivorship_bias"
+      ],
+      "required_cases": [
+        "delisting_survivorship_bias",
+        "universe_survivorship_bias"
+      ],
+      "risk_category": "SURVIVORSHIP",
+      "status": "PASS"
+    }
+  ],
+  "schema_version": "alpha_v4_0_failure_coverage_matrix_v1",
+  "status": "PARTIAL"
+}

@@ -1,0 +1,5 @@
+stage,capital_cny,min_real_trading_days,min_completed_round_trips,status
+CANARY_10,50000,60,30,BLOCKED
+CANARY_25,125000,60,30,BLOCKED
+CANARY_50,250000,60,30,BLOCKED
+CANARY_100,500000,60,30,BLOCKED

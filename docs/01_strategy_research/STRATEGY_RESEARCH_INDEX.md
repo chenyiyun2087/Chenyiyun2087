@@ -2,6 +2,7 @@
 
 | 主题 | 目录/文件 | 当前状态 | 最新结论 |
 |---|---|---|---|
+| Alpha v3–v4.7 生产线 | `docs/01_strategy_research/2026-07-30_Alpha_v3生产线升级.md` | 三基准 E3、短因子 E2、T+1 净账本、PIT builder 与文件/MySQL adapter 已实现，Alpha 仍阻断 | v4.7 将合成验证严格标为 S3、真实历史仍为 E0，并把财务修订、公司行动、证券生命周期和字段语义版本纳入五类输入合同。当前缺 adapter config/只读数据库/真实冻结文件，Alpha 算法迭代冻结，保持 `BLOCKED / NO_SCALE / 0元`。 |
 | Quant Research Validation V2 | `docs/01_strategy_research/2026-07-20_Quant_Research_Validation_V2.md` | 工程完成，真实证据阻断 | 严格 Train/Validation/Test、因子三层、精确消融、PIT V2、执行真实性和 20+60 日 Shadow 已形成 fail-closed 合同；没有新增 Alpha 或扩资结论。 |
 | 可信生产闭环 | `docs/01_strategy_research/2026-07-20_可信生产闭环升级.md` | 工程实现，正式证据阻断 | 统一身份、PIT、双账本、NAV 风险、人工执行和 12/3/3 赛马；未产生新收益结论，保持 `BLOCKED / NO_SCALE`。 |
 | 三个月冠军策略轮动 | `docs/01_strategy_research/2026-07-13_三个月冠军策略轮动研究实施.md` | v1.1研究实现，数据源阻断 | 63日冠军、126日确认、财报季加严、失效/成本/置信度保护及顺序晋级状态机；数据库凭证、严格账本或真实影子证据缺失时 fail closed。 |
@@ -38,3 +39,59 @@
 - 将行业研究迁入 `industry/`。
 - 将资产配置和筛选方法迁入 `portfolio/`、`screening_framework/`。
 - 将每次重要回测摘要同步到 `docs/03_backtest_reports/BACKTEST_INDEX.md`。
+
+## 2026-07-30 Alpha v3.6 Research Correctness Audit
+
+- 方法与结果：`../tasks/2026-07-30_Alpha_v3.6_Correctness_Audit升级.md`
+- 在确定性 Replay 之上新增固定种子抽样、不变量与研究—生产信号合同审计。
+- 缺少正式交易字段与真实 Shadow 时继续 `BLOCKED / NO_SCALE / 0元`。
+
+## 2026-07-30 Alpha v3.7 Correctness Evidence Closure
+
+- 方法与结果：`../tasks/2026-07-30_Alpha_v3.7_Correctness_Evidence_Closure升级.md`
+- 新增正确性缺口修复清单、确定性分层抽样、合成 CI 套件、依赖图 v2 和工程专用
+  readiness score。
+- 9/9 合成场景及 16/16 故障注入通过；真实正确性与资金继续
+  `BLOCKED / NO_SCALE / 0元`。
+
+## 2026-07-30 Alpha v3.8 Evidence-to-Decision Control Plane
+
+- 方法与结果：`../tasks/2026-07-30_Alpha_v3.8_Evidence_to_Decision升级.md`
+- 新增事件/年度 anchor 覆盖、组合状态审计、证据合同矩阵、Issue Tracker 和
+  只模拟人工复核资格的 Capital Gate Simulator。
+- Engineering / Evidence / Investment 分数分别为 85/21/0，明确不可替代；
+  20/20 故障注入通过，资金继续 `BLOCKED / NO_SCALE / 0元`。
+
+## 2026-07-30 Alpha v3.9 Evidence Governance & Capital Firewall
+
+- 方法与结果：
+  `../tasks/2026-07-30_Alpha_v3.9_Evidence_Governance_Capital_Firewall升级.md`
+- 新增 E0–E4 证据强度、影响范围、资金防火墙、证据晋级工作流和 Alpha
+  Claim Registry。
+- replay 重复运行 SHA 一致；真实 Alpha、执行与 Shadow 未闭合，资金继续
+  `BLOCKED / NO_SCALE / 0元`。
+
+## 2026-07-30 Alpha v4.1 Evidence Acquisition Pipeline
+
+- 方法与结果：
+  `../tasks/2026-07-30_Alpha_v4.1_Evidence_Acquisition_Pipeline升级.md`
+- 新增有界数据发现、资格审查、合格资产冻结、现有证明链接入适配器和刷新队列。
+- 本地候选均未满足三指数日频、因子时点、正式 PIT 或真实 Shadow 合同；
+  不生成虚假 E3/E4，资金继续 `BLOCKED / NO_SCALE / 0元`。
+
+## 2026-07-30 Alpha v4.2 Evidence Production Pipeline
+
+- 方法与结果：
+  `../tasks/2026-07-30_Alpha_v4.2_Evidence_Production_Pipeline升级.md`
+- 通过公共指数源按年分块生产并冻结三基准 2018–2026 日线，保留原始响应、
+  source SHA、schema SHA 和 release/strategy 绑定。
+- 三基准资格和完整性通过，但当前策略年化超额远低于 15%；因子、PIT 和
+  Shadow 仍阻断，资金继续 `BLOCKED / NO_SCALE / 0元`。
+
+## 2026-07-31 Alpha v4.3 Factor Evidence & Attribution
+
+- 方法与结果：`../tasks/2026-07-31_Alpha_v4.3_Factor_Attribution升级.md`
+- 从实际后续复权收盘价生成 5/10/20/60 日评价标签；低波动、低估值在 78 日
+  完整样本中表现最稳定，流动性和动量多数期限为负 IC。
+- 因样本不足、行业/PIT 缺失和 83.24% 未解释方差，仅为 E2 诊断，资金继续
+  `BLOCKED / NO_SCALE / 0元`。

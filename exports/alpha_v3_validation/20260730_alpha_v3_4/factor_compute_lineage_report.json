@@ -1,0 +1,390 @@
+{
+  "blockers": [
+    "factor_compute_manifest_factors_missing",
+    "factor_compute_manifest_not_pass",
+    "factor_compute_manifest_schema_invalid",
+    "factor_source_lineage_not_verified",
+    "industry:code_file_missing",
+    "industry:code_sha_invalid",
+    "industry:compute_entry_missing",
+    "industry:config_file_missing",
+    "industry:config_sha_invalid",
+    "industry:created_at_timezone_missing_or_invalid",
+    "industry:factor_formula_version_missing",
+    "industry:factor_pipeline_hash_invalid",
+    "industry:input_sha_invalid",
+    "liquidity:code_file_missing",
+    "liquidity:code_sha_invalid",
+    "liquidity:compute_entry_missing",
+    "liquidity:config_file_missing",
+    "liquidity:config_sha_invalid",
+    "liquidity:created_at_timezone_missing_or_invalid",
+    "liquidity:factor_formula_version_missing",
+    "liquidity:factor_pipeline_hash_invalid",
+    "liquidity:input_sha_invalid",
+    "market_beta:code_file_missing",
+    "market_beta:code_sha_invalid",
+    "market_beta:compute_entry_missing",
+    "market_beta:config_file_missing",
+    "market_beta:config_sha_invalid",
+    "market_beta:created_at_timezone_missing_or_invalid",
+    "market_beta:factor_formula_version_missing",
+    "market_beta:factor_pipeline_hash_invalid",
+    "market_beta:input_sha_invalid",
+    "market_regime:code_file_missing",
+    "market_regime:code_sha_invalid",
+    "market_regime:compute_entry_missing",
+    "market_regime:config_file_missing",
+    "market_regime:config_sha_invalid",
+    "market_regime:created_at_timezone_missing_or_invalid",
+    "market_regime:factor_formula_version_missing",
+    "market_regime:factor_pipeline_hash_invalid",
+    "market_regime:input_sha_invalid",
+    "momentum:code_file_missing",
+    "momentum:code_sha_invalid",
+    "momentum:compute_entry_missing",
+    "momentum:config_file_missing",
+    "momentum:config_sha_invalid",
+    "momentum:created_at_timezone_missing_or_invalid",
+    "momentum:factor_formula_version_missing",
+    "momentum:factor_pipeline_hash_invalid",
+    "momentum:input_sha_invalid",
+    "size:code_file_missing",
+    "size:code_sha_invalid",
+    "size:compute_entry_missing",
+    "size:config_file_missing",
+    "size:config_sha_invalid",
+    "size:created_at_timezone_missing_or_invalid",
+    "size:factor_formula_version_missing",
+    "size:factor_pipeline_hash_invalid",
+    "size:input_sha_invalid",
+    "value:code_file_missing",
+    "value:code_sha_invalid",
+    "value:compute_entry_missing",
+    "value:config_file_missing",
+    "value:config_sha_invalid",
+    "value:created_at_timezone_missing_or_invalid",
+    "value:factor_formula_version_missing",
+    "value:factor_pipeline_hash_invalid",
+    "value:input_sha_invalid",
+    "volatility:code_file_missing",
+    "volatility:code_sha_invalid",
+    "volatility:compute_entry_missing",
+    "volatility:config_file_missing",
+    "volatility:config_sha_invalid",
+    "volatility:created_at_timezone_missing_or_invalid",
+    "volatility:factor_formula_version_missing",
+    "volatility:factor_pipeline_hash_invalid",
+    "volatility:input_sha_invalid"
+  ],
+  "content_sha256": "218d0a9fa9caa2a0852f4cd4f3a99ec090f8b0a8bfca717a2344bd1b77db8a93",
+  "generated_at": "2026-07-30T21:43:32.248701+08:00",
+  "provenance": {
+    "code_files": {
+      "runtime/acceptance_config.py": "5c193af007e0c97f605332e1534aab469b65c99a1135f9f3fc113600c2622f06",
+      "scripts/ops/evaluate_dynamic_champion_readiness.py": "9f23f7113a8fcbcc055ad28893da9fd6a51c44a715fa2282ef77bf6d26ba5f48",
+      "scripts/ops/market_regime.py": "ff87a782de07e258e95997d574168a192d678f8c03ecc71bead43e9a3eb75f20",
+      "scripts/research/alpha_proof.py": "166d67c28541a98f45443313024b0db19b62da27cfe8a7ccb5c936d980fc1081",
+      "scripts/research/run_alpha_v3_validation.py": "a7df2745e272a8f871e458d1bde184a958aa5e18ce222023c2bd574e6c736990"
+    },
+    "code_snapshot_sha256": "71de0f93ebc86cff56b865e399e4c50d1cfc77500e91a16c94ec01e77b910d65",
+    "config_sha256": "a53405f5a909dfcdeac926b69e806e6a3f7c3e44a30e485f4056049551d05897",
+    "cost_model": {
+      "cost_multipliers": [
+        1.0,
+        2.0
+      ],
+      "slippage_bps": [
+        20,
+        50,
+        100
+      ]
+    },
+    "evidence_version": "alpha_v3_4_evidence_v1",
+    "execution_model": {
+      "fill_timing": "T_PLUS_1_OPEN",
+      "min_execution_stress_score": 80,
+      "require_limit_up_down_handling": true,
+      "require_unfilled_position_freeze": true,
+      "signal_timing": "T_CLOSE",
+      "stress_scenarios": [
+        "limit_up_buy_blocked",
+        "limit_down_sell_blocked",
+        "one_day_fill_delay",
+        "slippage_2x"
+      ]
+    },
+    "git_head": "9200f1f7d532c116560bfddb011bb3a5cc378ad6",
+    "initial_capital_cny": 500000.0,
+    "input_files": {
+      "acceptance_config": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/production_acceptance.yaml",
+        "sha256": "a53405f5a909dfcdeac926b69e806e6a3f7c3e44a30e485f4056049551d05897"
+      },
+      "attribution_evidence": {
+        "path": "",
+        "sha256": ""
+      },
+      "benchmark_nav": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_compute_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_panel": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_returns": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_source_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "nav": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+        "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
+      },
+      "pit_manifest": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+        "sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+      },
+      "program": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/dynamic_champion_live_program.yaml",
+        "sha256": "9a5082319aa9a61b01c2bab818618da16937926be3e2ff28701f0c3de9727fb8"
+      },
+      "replay_reference": {
+        "path": "",
+        "sha256": ""
+      },
+      "selection_attribution": {
+        "path": "",
+        "sha256": ""
+      },
+      "shadow_status": {
+        "path": "",
+        "sha256": ""
+      },
+      "trades": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+        "sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e"
+      },
+      "walk_forward": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+        "sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+      }
+    },
+    "input_snapshot_sha256": "5d8f6377a9249e5b6c593f7fffb5bd7f78f70fc8ac0349b7b64a254dc16c7b76",
+    "profile": "alpha_v3_4",
+    "profile_schema_version": "alpha_v3_acceptance_v1",
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "sample_end_requested": null,
+    "sample_range_actual": {
+      "end": "2026-06-17",
+      "start": "2023-11-30",
+      "trading_days": 615
+    },
+    "sample_start_requested": "2018-01-01",
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+  },
+  "rows": [
+    {
+      "blockers": [
+        "compute_entry_missing",
+        "factor_formula_version_missing",
+        "code_sha_invalid",
+        "code_file_missing",
+        "config_sha_invalid",
+        "config_file_missing",
+        "input_sha_invalid",
+        "created_at_timezone_missing_or_invalid",
+        "factor_pipeline_hash_invalid"
+      ],
+      "code_path": null,
+      "code_sha": null,
+      "computed_factor_pipeline_hash": "2eb8d2d0c85bcfdaab11d5938ba1c1568645851eb9bb1d66a908cbc36806ad73",
+      "config_path": null,
+      "config_sha": null,
+      "created_at": null,
+      "factor": "market_beta",
+      "factor_formula_version": null,
+      "factor_pipeline_hash": null,
+      "input_sha": null,
+      "status": "BLOCKED"
+    },
+    {
+      "blockers": [
+        "compute_entry_missing",
+        "factor_formula_version_missing",
+        "code_sha_invalid",
+        "code_file_missing",
+        "config_sha_invalid",
+        "config_file_missing",
+        "input_sha_invalid",
+        "created_at_timezone_missing_or_invalid",
+        "factor_pipeline_hash_invalid"
+      ],
+      "code_path": null,
+      "code_sha": null,
+      "computed_factor_pipeline_hash": "0114d52ab768ed3446e1892c6fc74a0aa5f3d3a63f795479e5aa577cbbc857ec",
+      "config_path": null,
+      "config_sha": null,
+      "created_at": null,
+      "factor": "size",
+      "factor_formula_version": null,
+      "factor_pipeline_hash": null,
+      "input_sha": null,
+      "status": "BLOCKED"
+    },
+    {
+      "blockers": [
+        "compute_entry_missing",
+        "factor_formula_version_missing",
+        "code_sha_invalid",
+        "code_file_missing",
+        "config_sha_invalid",
+        "config_file_missing",
+        "input_sha_invalid",
+        "created_at_timezone_missing_or_invalid",
+        "factor_pipeline_hash_invalid"
+      ],
+      "code_path": null,
+      "code_sha": null,
+      "computed_factor_pipeline_hash": "ace430958938ed2d8955a85c5fa600a9f762b6767fedaaa2d6a4e1ccd33d93e3",
+      "config_path": null,
+      "config_sha": null,
+      "created_at": null,
+      "factor": "volatility",
+      "factor_formula_version": null,
+      "factor_pipeline_hash": null,
+      "input_sha": null,
+      "status": "BLOCKED"
+    },
+    {
+      "blockers": [
+        "compute_entry_missing",
+        "factor_formula_version_missing",
+        "code_sha_invalid",
+        "code_file_missing",
+        "config_sha_invalid",
+        "config_file_missing",
+        "input_sha_invalid",
+        "created_at_timezone_missing_or_invalid",
+        "factor_pipeline_hash_invalid"
+      ],
+      "code_path": null,
+      "code_sha": null,
+      "computed_factor_pipeline_hash": "d7d020ad1fd1829fef3b4644451e62ea82da7e441e553e88768a52eb22ad47d8",
+      "config_path": null,
+      "config_sha": null,
+      "created_at": null,
+      "factor": "liquidity",
+      "factor_formula_version": null,
+      "factor_pipeline_hash": null,
+      "input_sha": null,
+      "status": "BLOCKED"
+    },
+    {
+      "blockers": [
+        "compute_entry_missing",
+        "factor_formula_version_missing",
+        "code_sha_invalid",
+        "code_file_missing",
+        "config_sha_invalid",
+        "config_file_missing",
+        "input_sha_invalid",
+        "created_at_timezone_missing_or_invalid",
+        "factor_pipeline_hash_invalid"
+      ],
+      "code_path": null,
+      "code_sha": null,
+      "computed_factor_pipeline_hash": "43d7324be550a4fea470e9624cec6141bc86748a28773efed7917a1e9c543bd7",
+      "config_path": null,
+      "config_sha": null,
+      "created_at": null,
+      "factor": "industry",
+      "factor_formula_version": null,
+      "factor_pipeline_hash": null,
+      "input_sha": null,
+      "status": "BLOCKED"
+    },
+    {
+      "blockers": [
+        "compute_entry_missing",
+        "factor_formula_version_missing",
+        "code_sha_invalid",
+        "code_file_missing",
+        "config_sha_invalid",
+        "config_file_missing",
+        "input_sha_invalid",
+        "created_at_timezone_missing_or_invalid",
+        "factor_pipeline_hash_invalid"
+      ],
+      "code_path": null,
+      "code_sha": null,
+      "computed_factor_pipeline_hash": "7e33bcc7a83af6e7d430f11c943fe48393b0046530c75256ede70492f3b78a5a",
+      "config_path": null,
+      "config_sha": null,
+      "created_at": null,
+      "factor": "momentum",
+      "factor_formula_version": null,
+      "factor_pipeline_hash": null,
+      "input_sha": null,
+      "status": "BLOCKED"
+    },
+    {
+      "blockers": [
+        "compute_entry_missing",
+        "factor_formula_version_missing",
+        "code_sha_invalid",
+        "code_file_missing",
+        "config_sha_invalid",
+        "config_file_missing",
+        "input_sha_invalid",
+        "created_at_timezone_missing_or_invalid",
+        "factor_pipeline_hash_invalid"
+      ],
+      "code_path": null,
+      "code_sha": null,
+      "computed_factor_pipeline_hash": "048d2aaa1c1156d493f3c9b8b78f8214a28cab2f3360324ebb95612562bdce3a",
+      "config_path": null,
+      "config_sha": null,
+      "created_at": null,
+      "factor": "value",
+      "factor_formula_version": null,
+      "factor_pipeline_hash": null,
+      "input_sha": null,
+      "status": "BLOCKED"
+    },
+    {
+      "blockers": [
+        "compute_entry_missing",
+        "factor_formula_version_missing",
+        "code_sha_invalid",
+        "code_file_missing",
+        "config_sha_invalid",
+        "config_file_missing",
+        "input_sha_invalid",
+        "created_at_timezone_missing_or_invalid",
+        "factor_pipeline_hash_invalid"
+      ],
+      "code_path": null,
+      "code_sha": null,
+      "computed_factor_pipeline_hash": "2b9aeb9c1e0e175a8f8fcf1c91aeeac1a3cebb4425709d68374f13db2a7a96a6",
+      "config_path": null,
+      "config_sha": null,
+      "created_at": null,
+      "factor": "market_regime",
+      "factor_formula_version": null,
+      "factor_pipeline_hash": null,
+      "input_sha": null,
+      "status": "BLOCKED"
+    }
+  ],
+  "schema_version": "alpha_v3_4_factor_compute_lineage_v1",
+  "status": "BLOCKED"
+}

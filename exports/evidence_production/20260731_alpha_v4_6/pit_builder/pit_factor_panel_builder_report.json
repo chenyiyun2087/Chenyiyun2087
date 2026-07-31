@@ -1,0 +1,24 @@
+{
+  "automatic_short_panel_fallback": false,
+  "blockers": [
+    "missing_input:adjustment",
+    "missing_input:industry",
+    "missing_input:market",
+    "missing_input:source_manifest",
+    "missing_input:universe"
+  ],
+  "capital_authority": false,
+  "content_sha256": "af7c186ae96e0a21ccc312559ac80bbaa1095b2e979a83ad71a7e43df3230f83",
+  "evidence_level": "E0",
+  "panel_qualified": false,
+  "profile": "alpha_v4_6",
+  "schema_version": "alpha_v4_6_pit_factor_panel_builder_v1",
+  "source_paths": {
+    "adjustment": null,
+    "industry": null,
+    "market": null,
+    "source_manifest": null,
+    "universe": null
+  },
+  "status": "BLOCKED"
+}

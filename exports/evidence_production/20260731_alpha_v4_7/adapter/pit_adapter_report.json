@@ -1,0 +1,13 @@
+{
+  "adapter_ready": true,
+  "blockers": [],
+  "capital_authority": false,
+  "content_sha256": "8bb708bc6f8b80e7413be4dca7925ef04d9d527615ffbb54d20dc3c9af5cb912",
+  "evidence_origin": "HISTORICAL_REAL",
+  "historical_evidence_level": "E1",
+  "manifest_path": "exports/evidence_production/20260731_alpha_v4_7/adapter/pit_source_manifest.json",
+  "manifest_sha256": "ba535209c4d7766a3b72bc6b7f39b2bb22a1d86cd0a2492ace35501416cad8c8",
+  "schema_version": "alpha_v4_7_pit_data_adapter_v1",
+  "status": "PASS",
+  "synthetic_evidence_level": "S0"
+}

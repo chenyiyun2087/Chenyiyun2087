@@ -1,0 +1,135 @@
+{
+  "blockers": [
+    "market_regime_state_missing"
+  ],
+  "content_sha256": "863f4f72a02dacedb0d7d89b1e9e18e3c463482fb01d00dfcb5c361e4d755b33",
+  "generated_at": "2026-07-30T22:22:42.559266+08:00",
+  "provenance": {
+    "code_files": {
+      "runtime/acceptance_config.py": "568e61b97a24ac426cfee34719332a65e01e023e9ed848bb42d37a0ba7848868",
+      "scripts/ops/evaluate_dynamic_champion_readiness.py": "9f23f7113a8fcbcc055ad28893da9fd6a51c44a715fa2282ef77bf6d26ba5f48",
+      "scripts/ops/market_regime.py": "ff87a782de07e258e95997d574168a192d678f8c03ecc71bead43e9a3eb75f20",
+      "scripts/research/alpha_proof.py": "80ec014bd711c2df7ef8030265a0a8fedf8176eb9b7185aeb3463cd50c5bb124",
+      "scripts/research/correctness_audit.py": "1a8eb8a400546eea6e4ebf1e78dfc030ca43ac37888690b93ecfe2808d1844ea",
+      "scripts/research/replay_diff.py": "f9d3a6a5992c374e1362310efc8bbd7622026fbadf9001a5ba4b458bc5eeed67",
+      "scripts/research/run_alpha_v3_validation.py": "1d3e9062a115660b0c6e461ec53781cc57cb4c88a84fc4baa2d7593e8e9ef2ad"
+    },
+    "code_snapshot_sha256": "ee320084912447b437afd0d497e2825ecd3a55a714fac6fc8601c939f2084c95",
+    "config_sha256": "bf89a30da0fb3686ef8afae5b4b99899ae7570716ad3f5c992365ce9b25903b8",
+    "cost_model": {
+      "cost_multipliers": [
+        1.0,
+        2.0
+      ],
+      "slippage_bps": [
+        20,
+        50,
+        100
+      ]
+    },
+    "environment_lock_hash": "2883658ff548a05fa52db7f49a3da0d27f30e61412fdf6e03d1cde467e7cc904",
+    "evidence_version": "alpha_v3_6_evidence_v1",
+    "execution_model": {
+      "execution_evidence_layers": [
+        "SIMULATION",
+        "PAPER",
+        "LIVE"
+      ],
+      "fill_timing": "T_PLUS_1_OPEN",
+      "min_execution_stress_score": 80,
+      "require_limit_up_down_handling": true,
+      "require_unfilled_position_freeze": true,
+      "signal_timing": "T_CLOSE",
+      "stress_evidence_layer": "SIMULATION",
+      "stress_scenarios": [
+        "limit_up_buy_blocked",
+        "limit_down_sell_blocked",
+        "one_day_fill_delay",
+        "slippage_2x"
+      ]
+    },
+    "git_head": "9200f1f7d532c116560bfddb011bb3a5cc378ad6",
+    "initial_capital_cny": 500000.0,
+    "input_files": {
+      "acceptance_config": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/production_acceptance.yaml",
+        "sha256": "bf89a30da0fb3686ef8afae5b4b99899ae7570716ad3f5c992365ce9b25903b8"
+      },
+      "attribution_evidence": {
+        "path": "",
+        "sha256": ""
+      },
+      "benchmark_nav": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_compute_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_panel": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_returns": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_source_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "nav": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+        "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
+      },
+      "pit_manifest": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+        "sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+      },
+      "program": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/dynamic_champion_live_program.yaml",
+        "sha256": "9a5082319aa9a61b01c2bab818618da16937926be3e2ff28701f0c3de9727fb8"
+      },
+      "replay_reference": {
+        "path": "exports/alpha_v3_validation/20260730_alpha_v3_6_reference/evidence_manifest.json",
+        "sha256": "07446d282be9ac235c6997e63ed1e1d2af86bd3a5cd1192498831b7eb7c14eb8"
+      },
+      "research_production_contract": {
+        "path": "",
+        "sha256": ""
+      },
+      "selection_attribution": {
+        "path": "",
+        "sha256": ""
+      },
+      "shadow_status": {
+        "path": "",
+        "sha256": ""
+      },
+      "trades": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+        "sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e"
+      },
+      "walk_forward": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+        "sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+      }
+    },
+    "input_snapshot_sha256": "da3e2e673543b630cc29f117baa318c1c0560cbafd8658df524affe0c78710de",
+    "profile": "alpha_v3_6",
+    "profile_schema_version": "alpha_v3_acceptance_v1",
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "sample_end_requested": null,
+    "sample_range_actual": {
+      "end": "2026-06-17",
+      "start": "2023-11-30",
+      "trading_days": 615
+    },
+    "sample_start_requested": "2018-01-01",
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+  },
+  "rows": [],
+  "schema_version": "alpha_v3_5_regime_attribution_v1",
+  "status": "BLOCKED"
+}

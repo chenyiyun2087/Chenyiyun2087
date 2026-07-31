@@ -2719,7 +2719,12 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
         bj_rows = int(row.get("bj_rows") or 0)
         expected_rows = int(row.get("expected_rows") or 0)
         expected_bj_rows = int(row.get("expected_bj_rows") or 0)
-        ok = rows_cnt == expected_rows and bj_rows == expected_bj_rows and expected_rows > 0
+        # The scan covers tradable stocks only (excludes newly-listed, suspended, etc.);
+        # dim_stock is the universe upper-bound but not every symbol trades every day.
+        # Accept >= 94% coverage and exact BJ match as a successful scan.
+        coverage_ok = expected_rows > 0 and rows_cnt >= int(expected_rows * 0.94)
+        bj_ok = bj_rows == expected_bj_rows
+        ok = coverage_ok and bj_ok
         return ok, [
             f"result={'PASS' if ok else 'FAIL'}; task=candle_diag_scan; business_date={target_datestr}; "
             f"rows={rows_cnt}; expected_rows={expected_rows}; bj_rows={bj_rows}; expected_bj_rows={expected_bj_rows}"

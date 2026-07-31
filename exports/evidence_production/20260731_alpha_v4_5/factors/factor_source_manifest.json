@@ -1,0 +1,53 @@
+{
+  "blockers": [
+    "formal_history_below_252_dates",
+    "industry_classification_missing",
+    "market_regime_not_cross_sectional_for_ic",
+    "formal_pit_manifest_missing",
+    "source_duplicate_symbol_dates_deduplicated:124"
+  ],
+  "factors": {
+    "industry": {
+      "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+      "source_snapshot_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "source_snapshot_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47"
+    },
+    "liquidity": {
+      "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+      "source_snapshot_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "source_snapshot_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47"
+    },
+    "market_beta": {
+      "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+      "source_snapshot_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "source_snapshot_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47"
+    },
+    "market_regime": {
+      "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+      "source_snapshot_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "source_snapshot_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47"
+    },
+    "momentum": {
+      "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+      "source_snapshot_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "source_snapshot_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47"
+    },
+    "size": {
+      "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+      "source_snapshot_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "source_snapshot_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47"
+    },
+    "value": {
+      "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+      "source_snapshot_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "source_snapshot_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47"
+    },
+    "volatility": {
+      "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+      "source_snapshot_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "source_snapshot_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47"
+    }
+  },
+  "schema_version": "alpha_v3_5_factor_source_manifest_v1",
+  "status": "BLOCKED"
+}

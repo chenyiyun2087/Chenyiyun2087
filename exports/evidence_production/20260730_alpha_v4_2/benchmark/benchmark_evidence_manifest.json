@@ -1,0 +1,238 @@
+{
+  "aligned_trading_days": 2050,
+  "automatic_promotion_allowed": false,
+  "availability_semantics": "public_daily_index_close_available_after_trade_date_market_close;retrieval_time_recorded_separately",
+  "blockers": [],
+  "capital_authority": false,
+  "content_sha256": "1d24b9c51e47f140e4773eed379bd482e62cc981d2a6d8e15f9c9bdc229d1991",
+  "end_date": "2026-06-17",
+  "evidence_level_candidate": "E3",
+  "normalized_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/benchmark_nav_daily.csv",
+  "normalized_schema_sha256": "365db562eb39ac9bdaf3d52cb6ad39963e15fb43eb02036b67f3b3ad278b27bb",
+  "normalized_sha256": "a008a312cd5ef3f49b6a1869a66b954f9e288a12ada2db9f39e0bbfedf25c407",
+  "release_id": "champion-v1-2b-dynamic-score-20260618",
+  "retrieved_at": "2026-07-31T00:20:06.850183+08:00",
+  "row_count": 6150,
+  "schema_version": "alpha_v4_2_benchmark_builder_v1",
+  "source_files": [
+    {
+      "benchmark": "000300.SH",
+      "first_trade_date": "2018-01-02",
+      "last_trade_date": "2026-06-17",
+      "raw_assets": [
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2018.json",
+          "raw_sha256": "81c948dbae6cf6afe018f0393db15a0fc0e3abaeb46e49308012f93e4a98ea4f",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2018-01-01%2C2018-12-31%2C640",
+          "year": 2018
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2019.json",
+          "raw_sha256": "973d63413698d2e6cd4c599978b991032c71e483d0303f63a68973c909d77d25",
+          "rows": 244,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2019-01-01%2C2019-12-31%2C640",
+          "year": 2019
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2020.json",
+          "raw_sha256": "166f35f1bb768a599ac3d3f89bb677d87697bfa24a6560aa1a9400bb73ba577f",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2020-01-01%2C2020-12-31%2C640",
+          "year": 2020
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2021.json",
+          "raw_sha256": "2e63a12e5059a101fa7018c35912cfbbc8e488b7d450694666153c4ce50d6967",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2021-01-01%2C2021-12-31%2C640",
+          "year": 2021
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2022.json",
+          "raw_sha256": "acf7abdbb965cb9d95c78992554dcc97d625d80491568a3a3508adf24cb30e2e",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2022-01-01%2C2022-12-31%2C640",
+          "year": 2022
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2023.json",
+          "raw_sha256": "ceef23f338be61efc254bf038b2fa64d78557fc91a55a7c3226d71c154785dc9",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2023-01-01%2C2023-12-31%2C640",
+          "year": 2023
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2024.json",
+          "raw_sha256": "cd79bd168450eb73253798ea6ced2c5eff81d59cdea54fce07923da3973d5987",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2024-01-01%2C2024-12-31%2C640",
+          "year": 2024
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2025.json",
+          "raw_sha256": "3a1c48a8759a73d43fb06c8da35bd67c0f4db0b1079fb5a69c9167833e46ea50",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2025-01-01%2C2025-12-31%2C640",
+          "year": 2025
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000300_SH_2026.json",
+          "raw_sha256": "14e19cf686521faa011ce3d0eaa804c4ad68978a64a1169e61afb90de875e621",
+          "rows": 108,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000300%2Cday%2C2026-01-01%2C2026-06-17%2C640",
+          "year": 2026
+        }
+      ],
+      "rows": 2050,
+      "source_bundle_sha256": "7a1004dce21d2b15bbfa54898e12001a1c17d5fee83f661bc864ecccf385ef9a"
+    },
+    {
+      "benchmark": "000905.SH",
+      "first_trade_date": "2018-01-02",
+      "last_trade_date": "2026-06-17",
+      "raw_assets": [
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2018.json",
+          "raw_sha256": "f806fbbff4dc14249607ceaea95c55c03e1c2fe28eff3d3ac028075bc019c105",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2018-01-01%2C2018-12-31%2C640",
+          "year": 2018
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2019.json",
+          "raw_sha256": "48b5facbd9a3db8c9204ff71e6cb8d427624cbaf45ce71aef1df0a75defadab2",
+          "rows": 244,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2019-01-01%2C2019-12-31%2C640",
+          "year": 2019
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2020.json",
+          "raw_sha256": "9e0e8d2bb776a427f3b31d7788039e98a7ba03ef61ed55f5f70c0a73f278a0e6",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2020-01-01%2C2020-12-31%2C640",
+          "year": 2020
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2021.json",
+          "raw_sha256": "2839ff3d420ea6ec2d8a3d326f6e5dc3ee992cf63833d36b59491a6778696a53",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2021-01-01%2C2021-12-31%2C640",
+          "year": 2021
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2022.json",
+          "raw_sha256": "99dd849a49a957544aa2fdec906d90dd833c9198e0cf09523cc5a94105570bce",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2022-01-01%2C2022-12-31%2C640",
+          "year": 2022
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2023.json",
+          "raw_sha256": "7e0f77f404bdd07019e0fe2e5f2e9b602f4615a7dec50df37a5168769cc6f573",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2023-01-01%2C2023-12-31%2C640",
+          "year": 2023
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2024.json",
+          "raw_sha256": "706d8b0f40a7c519e31f525e7a0aec36a73ae6c99a43356bd3002f4a5ea49863",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2024-01-01%2C2024-12-31%2C640",
+          "year": 2024
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2025.json",
+          "raw_sha256": "3075f26442f54d127818b002b1983fb46a4b88f42b796ba17a7a33d599cc17ef",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2025-01-01%2C2025-12-31%2C640",
+          "year": 2025
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000905_SH_2026.json",
+          "raw_sha256": "400be1839c57d8b936c7475c02fe4310f5a9f26de45c8c56633b206b7bd09922",
+          "rows": 108,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000905%2Cday%2C2026-01-01%2C2026-06-17%2C640",
+          "year": 2026
+        }
+      ],
+      "rows": 2050,
+      "source_bundle_sha256": "422231caefa62997c4c55aa35e32bb5bb756104aaf2718cd8523a199d1ea6477"
+    },
+    {
+      "benchmark": "000852.SH",
+      "first_trade_date": "2018-01-02",
+      "last_trade_date": "2026-06-17",
+      "raw_assets": [
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2018.json",
+          "raw_sha256": "5245c24856130c97fc4e2941e8b63a7d856388fcb759c2cf5a51aa2f7aed7a77",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2018-01-01%2C2018-12-31%2C640",
+          "year": 2018
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2019.json",
+          "raw_sha256": "52499edfd04e839d67b99edb9bfbb9e09dafc29c2a3e6c581ac0d00e67f8e390",
+          "rows": 244,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2019-01-01%2C2019-12-31%2C640",
+          "year": 2019
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2020.json",
+          "raw_sha256": "6c65b604e123c915417e568982044b29baf1c7347f8e3e0806f038e203d6d15e",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2020-01-01%2C2020-12-31%2C640",
+          "year": 2020
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2021.json",
+          "raw_sha256": "a0fab8476fe30678590ded91d63bddf76468a1170c0e16efd5345049a508e82c",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2021-01-01%2C2021-12-31%2C640",
+          "year": 2021
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2022.json",
+          "raw_sha256": "761c0ed726a9eef1a1e8ab0598080cc999ef0e054f374611701e032aeec3dfe0",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2022-01-01%2C2022-12-31%2C640",
+          "year": 2022
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2023.json",
+          "raw_sha256": "4a123cabead5be7df82db8026c798b4862b2b6ea36b7e72a141f76ca8485d470",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2023-01-01%2C2023-12-31%2C640",
+          "year": 2023
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2024.json",
+          "raw_sha256": "72ce4c826f11b0e373c60c1b73e13fc4522f6399faf6dbfaac32e471301b2172",
+          "rows": 242,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2024-01-01%2C2024-12-31%2C640",
+          "year": 2024
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2025.json",
+          "raw_sha256": "c03504dec618ce83bcafea5422243e758fc248194d4107a76916f83af9f5da66",
+          "rows": 243,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2025-01-01%2C2025-12-31%2C640",
+          "year": 2025
+        },
+        {
+          "raw_path": "exports/evidence_production/20260730_alpha_v4_2/benchmark/raw/000852_SH_2026.json",
+          "raw_sha256": "4fa3dd9dd68ec55fe6fc0f6fb5523f725542b82db4a044dd6ebb400d9f7e8e9c",
+          "rows": 108,
+          "url": "https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param=sh000852%2Cday%2C2026-01-01%2C2026-06-17%2C640",
+          "year": 2026
+        }
+      ],
+      "rows": 2050,
+      "source_bundle_sha256": "4d719bcecce04b50dec40110b1522f8c8c74763a834c022317dee542ac2634cb"
+    }
+  ],
+  "start_date": "2018-01-01",
+  "status": "PRODUCED",
+  "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+}

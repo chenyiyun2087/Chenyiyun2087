@@ -66,7 +66,7 @@ meta_allocator:
     trade_cost_rate: 0.00075       # 万7.5 佣金
     slippage_rate: 0.0             # bps (strict_precommit 使用 raw prices)
     min_trade_value: 500.0
-    initial_cash: 10_000_000.0     # 1000万初始资金
+    initial_cash: 500_000.0        # alpha_v3统一以50万元验证容量
     max_total_positions: 5
     max_single_stock_pct: 0.15     # 单股权重上限 (占NAV)
     max_industry_pct: 0.30         # 行业权重上限 (占NAV)

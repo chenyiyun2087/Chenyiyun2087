@@ -1,0 +1,77 @@
+{
+  "blockers": [
+    "no_local_source_can_produce_formal_factor_or_ic_evidence"
+  ],
+  "capital_authority": false,
+  "evidence_level_candidate": "E0",
+  "outputs": [],
+  "rows": [
+    {
+      "blockers": [
+        "formal_factor_columns_missing",
+        "factor_time_contract_missing",
+        "factor_history_too_short",
+        "formal_pit_source_not_proven"
+      ],
+      "file_sha256": "a87688d549abd6f27b4b183ee9aa148518666bce7610009d5288ca2f34fcdca8",
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset.parquet",
+      "rows": 61364,
+      "status": "BLOCKED",
+      "unique_dates": 138
+    },
+    {
+      "blockers": [
+        "formal_factor_columns_missing",
+        "factor_time_contract_missing",
+        "factor_history_too_short",
+        "formal_pit_source_not_proven"
+      ],
+      "file_sha256": "66485f199413e3477e4e95eaba7b1f29a69712acc0a055f757e42d892b2816ee",
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v2.parquet",
+      "rows": 60932,
+      "status": "BLOCKED",
+      "unique_dates": 137
+    },
+    {
+      "blockers": [
+        "formal_factor_columns_missing",
+        "factor_time_contract_missing",
+        "factor_history_too_short",
+        "formal_pit_source_not_proven"
+      ],
+      "file_sha256": "b1462ff543b11176f3a3845b43b320badbcae05cfa111356c1058adf047fa824",
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v3.parquet",
+      "rows": 60932,
+      "status": "BLOCKED",
+      "unique_dates": 137
+    },
+    {
+      "blockers": [
+        "formal_factor_columns_missing",
+        "factor_time_contract_missing",
+        "factor_history_too_short",
+        "formal_pit_source_not_proven"
+      ],
+      "file_sha256": "de74d6554464e5063697ae07979a91665a4e391f4259a900303254dea9b378f9",
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v4.parquet",
+      "rows": 61364,
+      "status": "BLOCKED",
+      "unique_dates": 138
+    },
+    {
+      "blockers": [
+        "formal_factor_columns_missing",
+        "factor_time_contract_missing",
+        "factor_history_too_short",
+        "formal_pit_source_not_proven"
+      ],
+      "file_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47",
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+      "rows": 61364,
+      "status": "BLOCKED",
+      "unique_dates": 138
+    }
+  ],
+  "schema_version": "alpha_v4_2_factor_builder_v1",
+  "status": "BLOCKED"
+}

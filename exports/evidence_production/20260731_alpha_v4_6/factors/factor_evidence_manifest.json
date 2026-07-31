@@ -1,0 +1,78 @@
+{
+  "automatic_promotion_allowed": false,
+  "blockers": [
+    "formal_history_below_252_dates",
+    "industry_classification_missing",
+    "market_regime_not_cross_sectional_for_ic",
+    "formal_pit_manifest_missing",
+    "source_duplicate_symbol_dates_deduplicated:124"
+  ],
+  "capital_authority": false,
+  "content_sha256": "5f6ccad781aa54827fc5a9bbfce5ca96eb5863849953c95584ea52c29d5d22cc",
+  "data_version": "bs_training_v5_partial_0ba71a29b1f1",
+  "evidence_level": "E2",
+  "factor_coverage": {
+    "industry": 0.0,
+    "liquidity": 1.0,
+    "market_beta": 0.8904589297782146,
+    "market_regime": 1.0,
+    "momentum": 0.7563433065061129,
+    "size": 1.0,
+    "value": 0.9944707255636788,
+    "volatility": 1.0
+  },
+  "factor_returns_path": "exports/evidence_production/20260731_alpha_v4_6/factors/factor_returns.csv",
+  "factor_returns_sha256": "f885ab6eed3c8bbfcefdce4aa7d890173a2e6c4b03b746e51bc02185e410b990",
+  "forward_return_coverage": {
+    "10": 1.0,
+    "20": 1.0,
+    "5": 1.0,
+    "60": 1.0
+  },
+  "panel_path": "exports/evidence_production/20260731_alpha_v4_6/factors/factor_panel.csv",
+  "panel_sha256": "21cb35c8ac5655576b11152be8c72c1d91442bcfc4cf15bef47143cae20a315b",
+  "partial_attribution": {
+    "aligned_trading_days": 114,
+    "alpha_annualized": 1.4455004104738851,
+    "alpha_daily": 0.0035549139653238684,
+    "alpha_tstat": 1.6977367551400537,
+    "blockers": [
+      "partial_factor_model",
+      "history_below_252_days",
+      "industry_and_regime_factors_missing",
+      "formal_pit_missing"
+    ],
+    "factor_exposures": {
+      "liquidity": 0.7110018547051741,
+      "momentum": 0.3399699046727592,
+      "size": 0.5434350743645918,
+      "value": -0.1450107272242545,
+      "volatility": 0.1127450757489288
+    },
+    "factors": [
+      "size",
+      "volatility",
+      "liquidity",
+      "momentum",
+      "value"
+    ],
+    "formal_evidence": false,
+    "r_squared": 0.1675741810828726,
+    "regression_rank": 6,
+    "schema_version": "alpha_v4_6_partial_attribution_v1",
+    "status": "BLOCKED",
+    "unexplained_variance_ratio": 0.8324258189171274
+  },
+  "partial_attribution_path": "exports/evidence_production/20260731_alpha_v4_6/factors/partial_attribution_report.json",
+  "partial_attribution_sha256": "46b5ea347ca552d959e832e2a3b3399ae7ae5ee8cdeb3a009f9e330f99b38fa4",
+  "rows": 32554,
+  "sample_end": "2026-03-16",
+  "sample_start": "2025-08-11",
+  "schema_version": "alpha_v4_6_factor_evidence_builder_v1",
+  "source_path": "/Volumes/extension/projects/Chenyiyun2087/data/processed/bs_training_dataset_v5.parquet",
+  "source_sha256": "0ba71a29b1f137fdb6ace576c6dd99125ed9addadf00512d75b61ea36cb43c47",
+  "source_unique_dates": 138,
+  "status": "PARTIAL",
+  "symbols": 435,
+  "unique_dates": 78
+}

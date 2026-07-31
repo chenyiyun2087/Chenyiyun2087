@@ -1,0 +1,29 @@
+{
+  "blockers": [
+    "formal_pit_eligible_false",
+    "release_mismatch",
+    "strategy_mismatch",
+    "component_missing:listing_lifecycle",
+    "component_missing:suspension"
+  ],
+  "capital_authority": false,
+  "evidence_level_candidate": "E0",
+  "observed_components": {
+    "financial_announcement_time": true,
+    "listing_lifecycle": false,
+    "st_status": true,
+    "suspension": false
+  },
+  "release_id": "champion-v1-2b-dynamic-score-20260618",
+  "required_components": [
+    "listing_lifecycle",
+    "st_status",
+    "suspension",
+    "financial_announcement_time"
+  ],
+  "schema_version": "alpha_v4_2_pit_minimum_builder_v1",
+  "source_path": "/Volumes/extension/projects/Chenyiyun2087/exports/pit_forward/runs/20260728/pit-forward-20260728T215958+0800.json",
+  "source_sha256": "edc2efdd8f8b87897b5df1fd3963c0d4492f6dc341ecc1f29d8defab59635f4a",
+  "status": "BLOCKED",
+  "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+}

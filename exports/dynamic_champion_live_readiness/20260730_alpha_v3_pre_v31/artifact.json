@@ -1,0 +1,6279 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "动态评分冠军策略实盘准入全面评估",
+    "description": "动态评分冠军从研究复验到50万元分级实盘的统一数据与门禁评估。",
+    "generatedAt": "2026-07-30T16:37:58+08:00",
+    "sources": [
+      {
+        "id": "source_backtest",
+        "label": "动态评分冠军冻结账户回测",
+        "path": "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+        "query": {
+          "description": "读取冻结账户级NAV与成交，按策略身份过滤并计算月度、年度、滚动收益、回撤和FIFO闭环交易。",
+          "engine": "DuckDB",
+          "language": "sql",
+          "sql": "SELECT * FROM read_csv_auto('exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv', header=true) WHERE strategy='production_governed_vol_position_v1_2b_dynamic_score';",
+          "executed_at": "2026-07-30T16:37:58+08:00",
+          "tables_used": [
+            "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+            "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+            "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_summary.csv"
+          ],
+          "filters": [
+            "策略：production_governed_vol_position_v1_2b_dynamic_score",
+            "冻结样本：2023-11-30至2026-06-17",
+            "T日信号、T+1开盘执行",
+            "未平仓交易不进入闭环胜率分母"
+          ],
+          "metric_definitions": [
+            "月度收益 = 当月月末NAV / 上月月末NAV - 1；首月相对初始NAV=1",
+            "最大回撤 = NAV / 历史峰值NAV - 1 的最小值",
+            "闭环胜率 = 净收益大于0的FIFO闭环交易数 / 全部FIFO闭环交易数",
+            "VaR/CVaR使用日收益左尾5%分位及其以下均值"
+          ]
+        }
+      },
+      {
+        "id": "source_governance",
+        "label": "生产验收配置与发布注册表",
+        "path": "config/production_acceptance.yaml",
+        "query": {
+          "description": "将中心生产门禁、动态冠军release状态和本次证据覆盖逐项对照；缺失证据按失败处理。",
+          "engine": "DuckDB",
+          "language": "sql",
+          "sql": "SELECT * FROM read_csv_auto('exports/dynamic_champion_live_readiness/20260730_alpha_v3/gate_matrix.csv', header=true);",
+          "executed_at": "2026-07-30T16:37:58+08:00",
+          "tables_used": [
+            "config/production_acceptance.yaml",
+            "config/strategy_release_registry.yaml",
+            "config/dynamic_champion_live_program.yaml",
+            "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
+            "exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+            "exports/formal_runs/20260727_pr_c/formal_run_precheck.json",
+            "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+            "exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json"
+          ],
+          "filters": [
+            "program_id：dynamic-champion-500k-v1",
+            "release_id：champion-v1-2b-dynamic-score-20260618",
+            "缺失、身份不匹配、PENDING或历史模拟证据均不得通过"
+          ],
+          "metric_definitions": [
+            "GO要求全部阻塞门禁通过，允许首阶段资金固定为5万元",
+            "CONDITIONAL_GO仅表示离线门禁通过但真实Shadow或审批未完成，允许资金仍为0",
+            "NO_GO表示至少一个离线可信度或执行门禁失败，允许资金为0"
+          ]
+        }
+      }
+    ],
+    "cards": [
+      {
+        "id": "card_decision",
+        "description": "当前证据对应的唯一资金放行结论。",
+        "dataset": "headline",
+        "metrics": [
+          {
+            "label": "准入结论",
+            "field": "decision"
+          }
+        ],
+        "sourceId": "source_governance"
+      },
+      {
+        "id": "card_allowed_capital",
+        "description": "在当前证据和人工审批状态下允许投入的新增风险资金。",
+        "dataset": "headline",
+        "metrics": [
+          {
+            "label": "允许资金（人民币元）",
+            "field": "allowed_capital_cny",
+            "format": "number"
+          }
+        ],
+        "sourceId": "source_governance"
+      },
+      {
+        "id": "card_total_return",
+        "description": "冻结账户回测累计收益，不代表真实券商成交业绩。",
+        "dataset": "headline",
+        "metrics": [
+          {
+            "label": "回测累计收益",
+            "field": "total_return",
+            "format": "percent"
+          },
+          {
+            "label": "年化",
+            "field": "annualized_return",
+            "format": "percent",
+            "signed": true
+          }
+        ],
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "card_max_drawdown",
+        "description": "冻结账户回测NAV相对历史峰值的最大跌幅。",
+        "dataset": "headline",
+        "metrics": [
+          {
+            "label": "最大回撤",
+            "field": "max_drawdown",
+            "format": "percent",
+            "signed": true
+          }
+        ],
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "card_blockers",
+        "description": "尚未通过的资金放行硬门禁数量。",
+        "dataset": "headline",
+        "metrics": [
+          {
+            "label": "阻塞门禁",
+            "field": "blocking_gate_count",
+            "format": "number"
+          }
+        ],
+        "sourceId": "source_governance"
+      }
+    ],
+    "charts": [
+      {
+        "id": "chart_monthly_returns",
+        "title": "冻结回测月度组合收益",
+        "description": "2023-11-30至2026-06-17；按月末NAV环比计算。",
+        "type": "bar",
+        "dataset": "monthly_returns",
+        "encodings": {
+          "x": {
+            "field": "month",
+            "type": "temporal"
+          },
+          "y": {
+            "field": "monthly_return",
+            "type": "quantitative",
+            "format": "percent"
+          }
+        },
+        "options": {
+          "orientation": "vertical",
+          "grouping": "single"
+        },
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "chart_nav",
+        "title": "冻结回测组合净值",
+        "description": "账户NAV按初始净值归一化为1。",
+        "type": "line",
+        "dataset": "nav_series",
+        "encodings": {
+          "x": {
+            "field": "trade_date",
+            "type": "temporal"
+          },
+          "y": {
+            "field": "nav",
+            "type": "quantitative"
+          }
+        },
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "chart_drawdown",
+        "title": "冻结回测组合回撤",
+        "description": "相对历史净值峰值的跌幅；0表示处于历史新高。",
+        "type": "line",
+        "dataset": "drawdown_series",
+        "encodings": {
+          "x": {
+            "field": "trade_date",
+            "type": "temporal"
+          },
+          "y": {
+            "field": "drawdown",
+            "type": "quantitative",
+            "format": "percent"
+          }
+        },
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "chart_annual_returns",
+        "title": "冻结回测年度组合收益",
+        "description": "首年相对初始NAV=1，其余年度按年末NAV环比计算。",
+        "type": "bar",
+        "dataset": "annual_returns",
+        "encodings": {
+          "x": {
+            "field": "year",
+            "type": "nominal"
+          },
+          "y": {
+            "field": "annual_return",
+            "type": "quantitative",
+            "format": "percent"
+          }
+        },
+        "options": {
+          "orientation": "vertical",
+          "grouping": "single"
+        },
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "chart_gate_status",
+        "title": "实盘准入门禁状态",
+        "description": "1表示通过，0表示阻塞；缺失证据按阻塞处理。",
+        "type": "bar",
+        "dataset": "gate_matrix",
+        "encodings": {
+          "x": {
+            "field": "gate",
+            "type": "nominal"
+          },
+          "y": {
+            "field": "pass_value",
+            "type": "quantitative"
+          }
+        },
+        "options": {
+          "orientation": "horizontal",
+          "grouping": "single"
+        },
+        "sourceId": "source_governance"
+      }
+    ],
+    "tables": [
+      {
+        "id": "table_upgrade_evidence",
+        "title": "PR-A至PR-E工程与业务证据",
+        "description": "工程实现可以通过，但业务证据只有明确PASS才可用于准入。",
+        "dataset": "upgrade_evidence",
+        "columns": [
+          {
+            "field": "phase",
+            "label": "阶段",
+            "type": "text"
+          },
+          {
+            "field": "scope",
+            "label": "范围",
+            "type": "text"
+          },
+          {
+            "field": "status",
+            "label": "证据状态",
+            "type": "text"
+          },
+          {
+            "field": "detail",
+            "label": "阻塞或结论",
+            "type": "text"
+          },
+          {
+            "field": "evidence_sha256",
+            "label": "证据SHA-256",
+            "type": "text"
+          }
+        ],
+        "defaultSort": {
+          "field": "phase",
+          "direction": "asc"
+        },
+        "sourceId": "source_governance"
+      },
+      {
+        "id": "table_gate_matrix",
+        "title": "实盘准入门禁明细",
+        "description": "每项均给出要求、当前证据和修复动作。",
+        "dataset": "gate_matrix",
+        "columns": [
+          {
+            "field": "category",
+            "label": "类别",
+            "type": "text"
+          },
+          {
+            "field": "gate",
+            "label": "门禁",
+            "type": "text"
+          },
+          {
+            "field": "status",
+            "label": "状态",
+            "type": "text"
+          },
+          {
+            "field": "required",
+            "label": "要求",
+            "type": "text"
+          },
+          {
+            "field": "actual",
+            "label": "当前证据",
+            "type": "text"
+          },
+          {
+            "field": "remediation",
+            "label": "下一步",
+            "type": "text"
+          }
+        ],
+        "defaultSort": {
+          "field": "status",
+          "direction": "asc"
+        },
+        "sourceId": "source_governance"
+      },
+      {
+        "id": "table_monthly_returns",
+        "title": "月度收益明细",
+        "description": "精确列示月末NAV、月度收益与累计收益。",
+        "dataset": "monthly_returns",
+        "columns": [
+          {
+            "field": "month",
+            "label": "月份",
+            "type": "text"
+          },
+          {
+            "field": "month_end_nav",
+            "label": "月末NAV",
+            "type": "number"
+          },
+          {
+            "field": "monthly_return",
+            "label": "月度收益",
+            "type": "percent",
+            "movement": true
+          },
+          {
+            "field": "cumulative_return",
+            "label": "累计收益",
+            "type": "percent",
+            "movement": true
+          }
+        ],
+        "defaultSort": {
+          "field": "month",
+          "direction": "asc"
+        },
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "table_stock_attribution",
+        "title": "个股闭环收益贡献",
+        "description": "按FIFO闭环交易净收益排序；仅显示前12项用于报告阅读。",
+        "dataset": "stock_attribution",
+        "columns": [
+          {
+            "field": "symbol",
+            "label": "代码",
+            "type": "text"
+          },
+          {
+            "field": "name",
+            "label": "名称",
+            "type": "text"
+          },
+          {
+            "field": "industry",
+            "label": "行业",
+            "type": "text"
+          },
+          {
+            "field": "closed_trades",
+            "label": "闭环数",
+            "type": "number"
+          },
+          {
+            "field": "win_rate",
+            "label": "胜率",
+            "type": "percent"
+          },
+          {
+            "field": "net_pnl",
+            "label": "净收益（人民币元）",
+            "type": "number",
+            "movement": true
+          },
+          {
+            "field": "positive_profit_share",
+            "label": "正收益贡献占比",
+            "type": "percent"
+          }
+        ],
+        "defaultSort": {
+          "field": "net_pnl",
+          "direction": "desc"
+        },
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "table_data_quality",
+        "title": "数据质量检查",
+        "description": "关键身份、唯一性、完整性与执行假设检查。",
+        "dataset": "data_quality",
+        "columns": [
+          {
+            "field": "check",
+            "label": "检查",
+            "type": "text"
+          },
+          {
+            "field": "status",
+            "label": "状态",
+            "type": "text"
+          },
+          {
+            "field": "actual",
+            "label": "结果",
+            "type": "text"
+          },
+          {
+            "field": "severity",
+            "label": "严重度",
+            "type": "text"
+          }
+        ],
+        "defaultSort": {
+          "field": "severity",
+          "direction": "asc"
+        },
+        "sourceId": "source_backtest"
+      },
+      {
+        "id": "table_capital_ladder",
+        "title": "资金分级路径",
+        "description": "只有上一阶段满足真实交易日、闭环数和人工审批后才能进入下一阶段。",
+        "dataset": "capital_ladder",
+        "columns": [
+          {
+            "field": "stage",
+            "label": "阶段",
+            "type": "text"
+          },
+          {
+            "field": "capital_cny",
+            "label": "资金（人民币元）",
+            "type": "number"
+          },
+          {
+            "field": "min_real_trading_days",
+            "label": "最低真实交易日",
+            "type": "number"
+          },
+          {
+            "field": "min_completed_round_trips",
+            "label": "最低闭环数",
+            "type": "number"
+          },
+          {
+            "field": "status",
+            "label": "当前状态",
+            "type": "text"
+          }
+        ],
+        "defaultSort": {
+          "field": "capital_cny",
+          "direction": "asc"
+        },
+        "sourceId": "source_governance"
+      }
+    ],
+    "blocks": [
+      {
+        "type": "markdown",
+        "body": "# 动态评分冠军策略实盘准入全面评估",
+        "id": "block_01"
+      },
+      {
+        "type": "markdown",
+        "body": "## Executive Summary\n\n- **当前结论：NO_GO。** 当前存在关键可信度与执行证据缺口，允许新增风险资金为0元。\n- **历史回测有正收益，但证据范围不足。** 冻结样本累计收益 57.2%、年化 20.4%、最大回撤 -25.5%，但只覆盖 2023-11-30 至 2026-06-17，未达到alpha_v3自2018年以来的核心验证要求。\n- **当前允许新增风险资金为 0 元。** 仍有 9 个硬门禁未通过，不能启用Canary。\n- **实施边界保持不变。** 当前生产底座继续运行，动态评分冠军不继承既有本金例外，券商API持续关闭。",
+        "id": "block_02"
+      },
+      {
+        "type": "metric-strip",
+        "cardIds": [
+          "card_decision",
+          "card_allowed_capital",
+          "card_total_return",
+          "card_max_drawdown",
+          "card_blockers"
+        ],
+        "id": "block_03"
+      },
+      {
+        "type": "markdown",
+        "body": "## PR-A至PR-E工程已合并，但不等于业务证据通过\n\nRelease等价、Formal预检、不可变回测、OOS稳健性和容量矩阵的失败关闭基础设施均已进入主干。当前正式PIT输入仍未冻结，所以下游证据按依赖链保持BLOCKED；这不会被本地测试通过或代码合并替代。",
+        "id": "block_04"
+      },
+      {
+        "type": "table",
+        "tableId": "table_upgrade_evidence",
+        "id": "block_05"
+      },
+      {
+        "type": "markdown",
+        "body": "## 回测收益可观，但尚不足以支持实盘放行\n\n冻结回测提供了研究价值，但样本起点、滑点、容量压力、正式OOS与严格数据快照均未满足中心生产验收配置。因此收益只能作为继续复验的理由，不能作为投入资金的依据。",
+        "id": "block_06"
+      },
+      {
+        "type": "chart",
+        "chartId": "chart_monthly_returns",
+        "id": "block_07"
+      },
+      {
+        "type": "table",
+        "tableId": "table_monthly_returns",
+        "id": "block_08"
+      },
+      {
+        "type": "markdown",
+        "body": "## 回撤与年度分布显示需要跨周期复验\n\n现有样本经历的市场状态有限；正式结论必须补齐2015年以来各类牛熊、风格切换和流动性冲击阶段。",
+        "id": "block_09"
+      },
+      {
+        "type": "chart",
+        "chartId": "chart_nav",
+        "id": "block_10"
+      },
+      {
+        "type": "chart",
+        "chartId": "chart_drawdown",
+        "id": "block_11"
+      },
+      {
+        "type": "chart",
+        "chartId": "chart_annual_returns",
+        "id": "block_12"
+      },
+      {
+        "type": "markdown",
+        "body": "## 盈利来源需要进一步去集中化验证\n\n个股贡献按闭环净收益归集。正式稳健性验收还必须加入单股、单行业、单月贡献上限和剔除前五大赢家压力测试。",
+        "id": "block_13"
+      },
+      {
+        "type": "table",
+        "tableId": "table_stock_attribution",
+        "id": "block_14"
+      },
+      {
+        "type": "markdown",
+        "body": "## 当前门禁仍是NO-GO，而不是等待自动开启\n\n系统按fail-closed处理缺失、身份不匹配和PENDING证据。真实Shadow只能从同日正式PIT快照开始累计，历史回填不计入80个交易日。",
+        "id": "block_15"
+      },
+      {
+        "type": "chart",
+        "chartId": "chart_gate_status",
+        "id": "block_16"
+      },
+      {
+        "type": "table",
+        "tableId": "table_gate_matrix",
+        "id": "block_17"
+      },
+      {
+        "type": "markdown",
+        "body": "## 资金必须按5万、12.5万、25万、50万逐级验证\n\n每一级至少运行60个真实交易日并完成30个闭环交易；任何账本、执行、数据或风险硬门槛失败都回退上一阶段。",
+        "id": "block_18"
+      },
+      {
+        "type": "table",
+        "tableId": "table_capital_ladder",
+        "id": "block_19"
+      },
+      {
+        "type": "markdown",
+        "body": "## 数据质量仍有高优先级缺口\n\n当前冻结文件可读取且策略身份明确，但执行滑点为0，正式公司行动、生命周期、日历与统计稳健性证据尚未完整绑定到release。",
+        "id": "block_20"
+      },
+      {
+        "type": "table",
+        "tableId": "table_data_quality",
+        "id": "block_21"
+      },
+      {
+        "type": "markdown",
+        "body": "## 建议的下一步\n\n1. 冻结2018年至今的正式PIT输入，补齐公司行动与证券生命周期快照；更早数据仅作扩展证据。\n2. 完成12/3/3 Walk-forward、DSR/PBO/Bootstrap、因子归因和全部成本容量矩阵。\n3. 严格账本达到VERIFIED后，从零资金技术Shadow开始累计真实交易日。\n4. 只有报告更新为GO并绑定人工审批，才允许首阶段5万元人工Canary。",
+        "id": "block_22"
+      },
+      {
+        "type": "markdown",
+        "body": "## Further Questions\n\n- 2018年以来数据源的PIT可用性是否足以做到无不可解释覆盖缺口？\n- 在10–100bp滑点和不同账户规模下，成本后Alpha还能保留多少？\n- 真实Shadow中的恢复事件是否足够频繁，能在合理时间内形成30个独立样本？",
+        "id": "block_23"
+      },
+      {
+        "type": "markdown",
+        "body": "## Caveats and Assumptions\n\n- 本报告是已保存回测与治理证据的发布快照，不是实时数据库或券商账户连接。\n- 回测不是实盘业绩；未完成的真实Shadow和Canary样本不会被历史模拟替代。\n- 缺失证据按失败处理，NO_GO不会自动随日期推移转为GO。\n- 所有真实订单继续要求人工确认，系统不启用券商API自动报单。",
+        "id": "block_24"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "status": "blocked",
+    "generatedAt": "2026-07-30T16:37:58+08:00",
+    "datasets": {
+      "headline": [
+        {
+          "decision": "NO_GO",
+          "allowed_capital_cny": 0.0,
+          "total_return": 0.5722518282750011,
+          "annualized_return": 0.2040853773852058,
+          "max_drawdown": -0.25516812512420484,
+          "trade_win_rate": 0.5130718954248366,
+          "closed_round_trips": 306,
+          "sample_trading_days": 615,
+          "blocking_gate_count": 9
+        }
+      ],
+      "monthly_returns": [
+        {
+          "month": "2023-11",
+          "month_end_nav": 1.007815854925,
+          "monthly_return": 0.007815854925000032,
+          "positive": true,
+          "cumulative_return": 0.007815854925000032
+        },
+        {
+          "month": "2023-12",
+          "month_end_nav": 0.970901158935,
+          "monthly_return": -0.03662841362298985,
+          "positive": false,
+          "cumulative_return": -0.029098841065000047
+        },
+        {
+          "month": "2024-01",
+          "month_end_nav": 0.929416025895,
+          "monthly_return": -0.04272848235705651,
+          "positive": false,
+          "cumulative_return": -0.07058397410499995
+        },
+        {
+          "month": "2024-02",
+          "month_end_nav": 0.953449239595,
+          "monthly_return": 0.025858402513402767,
+          "positive": true,
+          "cumulative_return": -0.04655076040499995
+        },
+        {
+          "month": "2024-03",
+          "month_end_nav": 1.020458486115,
+          "monthly_return": 0.07028087467819844,
+          "positive": true,
+          "cumulative_return": 0.020458486114999896
+        },
+        {
+          "month": "2024-04",
+          "month_end_nav": 1.0165370560800002,
+          "monthly_return": -0.0038428119206779243,
+          "positive": false,
+          "cumulative_return": 0.016537056080000223
+        },
+        {
+          "month": "2024-05",
+          "month_end_nav": 0.99327995996,
+          "monthly_return": -0.022878748965320495,
+          "positive": false,
+          "cumulative_return": -0.0067200400400000415
+        },
+        {
+          "month": "2024-06",
+          "month_end_nav": 0.993039401485,
+          "monthly_return": -0.0002421859744453636,
+          "positive": false,
+          "cumulative_return": -0.006960598514999972
+        },
+        {
+          "month": "2024-07",
+          "month_end_nav": 0.9533970227050004,
+          "monthly_return": -0.03992024759613577,
+          "positive": false,
+          "cumulative_return": -0.046602977294999626
+        },
+        {
+          "month": "2024-08",
+          "month_end_nav": 0.8542930329750004,
+          "monthly_return": -0.10394828950568757,
+          "positive": false,
+          "cumulative_return": -0.14570696702499963
+        },
+        {
+          "month": "2024-09",
+          "month_end_nav": 0.9108914653950004,
+          "monthly_return": 0.06625177806132987,
+          "positive": true,
+          "cumulative_return": -0.08910853460499957
+        },
+        {
+          "month": "2024-10",
+          "month_end_nav": 0.9381972802450004,
+          "monthly_return": 0.029977023484525578,
+          "positive": true,
+          "cumulative_return": -0.061802719754999624
+        },
+        {
+          "month": "2024-11",
+          "month_end_nav": 0.8950247096700005,
+          "monthly_return": -0.04601651644494842,
+          "positive": false,
+          "cumulative_return": -0.10497529032999953
+        },
+        {
+          "month": "2024-12",
+          "month_end_nav": 0.8467348912400007,
+          "monthly_return": -0.053953614808919026,
+          "positive": false,
+          "cumulative_return": -0.15326510875999932
+        },
+        {
+          "month": "2025-01",
+          "month_end_nav": 0.8196087630150006,
+          "monthly_return": -0.03203615264427717,
+          "positive": false,
+          "cumulative_return": -0.18039123698499937
+        },
+        {
+          "month": "2025-02",
+          "month_end_nav": 0.8256136271050004,
+          "monthly_return": 0.007326500595125962,
+          "positive": true,
+          "cumulative_return": -0.1743863728949996
+        },
+        {
+          "month": "2025-03",
+          "month_end_nav": 0.8316191717200004,
+          "monthly_return": 0.007274037658581811,
+          "positive": true,
+          "cumulative_return": -0.16838082827999956
+        },
+        {
+          "month": "2025-04",
+          "month_end_nav": 0.8145435247000007,
+          "monthly_return": -0.020533012706624998,
+          "positive": false,
+          "cumulative_return": -0.1854564752999993
+        },
+        {
+          "month": "2025-05",
+          "month_end_nav": 0.7852880456000008,
+          "monthly_return": -0.035916409882178923,
+          "positive": false,
+          "cumulative_return": -0.21471195439999924
+        },
+        {
+          "month": "2025-06",
+          "month_end_nav": 0.7853633186100007,
+          "monthly_return": 9.585401232281576e-05,
+          "positive": true,
+          "cumulative_return": -0.21463668138999925
+        },
+        {
+          "month": "2025-07",
+          "month_end_nav": 0.8071598710650006,
+          "monthly_return": 0.027753463828151803,
+          "positive": true,
+          "cumulative_return": -0.19284012893499936
+        },
+        {
+          "month": "2025-08",
+          "month_end_nav": 0.9454067996800006,
+          "monthly_return": 0.17127577022949758,
+          "positive": true,
+          "cumulative_return": -0.05459320031999937
+        },
+        {
+          "month": "2025-09",
+          "month_end_nav": 1.061837417020001,
+          "monthly_return": 0.12315398765844443,
+          "positive": true,
+          "cumulative_return": 0.061837417020000895
+        },
+        {
+          "month": "2025-10",
+          "month_end_nav": 0.9768122999200008,
+          "monthly_return": -0.08007357410574134,
+          "positive": false,
+          "cumulative_return": -0.02318770007999915
+        },
+        {
+          "month": "2025-11",
+          "month_end_nav": 0.9185002836400008,
+          "monthly_return": -0.05969623466532481,
+          "positive": false,
+          "cumulative_return": -0.0814997163599992
+        },
+        {
+          "month": "2025-12",
+          "month_end_nav": 1.0045200205800011,
+          "monthly_return": 0.09365237928844783,
+          "positive": true,
+          "cumulative_return": 0.004520020580001116
+        },
+        {
+          "month": "2026-01",
+          "month_end_nav": 1.1601074540800012,
+          "monthly_return": 0.15488733953770795,
+          "positive": true,
+          "cumulative_return": 0.16010745408000115
+        },
+        {
+          "month": "2026-02",
+          "month_end_nav": 1.2522602590800012,
+          "monthly_return": 0.07943471501360189,
+          "positive": true,
+          "cumulative_return": 0.25226025908000116
+        },
+        {
+          "month": "2026-03",
+          "month_end_nav": 1.1730616167150012,
+          "monthly_return": -0.06324455462891143,
+          "positive": false,
+          "cumulative_return": 0.1730616167150012
+        },
+        {
+          "month": "2026-04",
+          "month_end_nav": 1.243535511365001,
+          "monthly_return": 0.060076890800802474,
+          "positive": true,
+          "cumulative_return": 0.24353551136500107
+        },
+        {
+          "month": "2026-05",
+          "month_end_nav": 1.4132186947750012,
+          "monthly_return": 0.13645222179762495,
+          "positive": true,
+          "cumulative_return": 0.41321869477500117
+        },
+        {
+          "month": "2026-06",
+          "month_end_nav": 1.572251828275001,
+          "monthly_return": 0.11253257127717209,
+          "positive": true,
+          "cumulative_return": 0.5722518282750011
+        }
+      ],
+      "annual_returns": [
+        {
+          "year": "2023",
+          "year_end_nav": 0.970901158935,
+          "annual_return": -0.029098841065000047
+        },
+        {
+          "year": "2024",
+          "year_end_nav": 0.8467348912400007,
+          "annual_return": -0.1278876500994186
+        },
+        {
+          "year": "2025",
+          "year_end_nav": 1.0045200205800011,
+          "annual_return": 0.18634537323592748
+        },
+        {
+          "year": "2026",
+          "year_end_nav": 1.572251828275001,
+          "annual_return": 0.5651771951416127
+        }
+      ],
+      "rolling_returns": [
+        {
+          "window": "3个月",
+          "trading_days": 63,
+          "return": 0.2534360648634588,
+          "end_date": "2026-06-17"
+        },
+        {
+          "window": "6个月",
+          "trading_days": 126,
+          "return": 0.7339442250948551,
+          "end_date": "2026-06-17"
+        },
+        {
+          "window": "12个月",
+          "trading_days": 252,
+          "return": 1.0252873424353606,
+          "end_date": "2026-06-17"
+        }
+      ],
+      "nav_series": [
+        {
+          "trade_date": "2023-11-30",
+          "nav": 1.007815854925
+        },
+        {
+          "trade_date": "2023-12-01",
+          "nav": 0.999938614925
+        },
+        {
+          "trade_date": "2023-12-04",
+          "nav": 0.993209714925
+        },
+        {
+          "trade_date": "2023-12-05",
+          "nav": 0.981617994925
+        },
+        {
+          "trade_date": "2023-12-06",
+          "nav": 0.994052574925
+        },
+        {
+          "trade_date": "2023-12-07",
+          "nav": 0.984455114925
+        },
+        {
+          "trade_date": "2023-12-08",
+          "nav": 0.993491154925
+        },
+        {
+          "trade_date": "2023-12-11",
+          "nav": 0.993943374925
+        },
+        {
+          "trade_date": "2023-12-12",
+          "nav": 0.986914594925
+        },
+        {
+          "trade_date": "2023-12-13",
+          "nav": 0.970386234925
+        },
+        {
+          "trade_date": "2023-12-14",
+          "nav": 0.96886063044
+        },
+        {
+          "trade_date": "2023-12-15",
+          "nav": 0.96609427044
+        },
+        {
+          "trade_date": "2023-12-18",
+          "nav": 0.9685488304400002
+        },
+        {
+          "trade_date": "2023-12-19",
+          "nav": 0.97086227044
+        },
+        {
+          "trade_date": "2023-12-20",
+          "nav": 0.96904279044
+        },
+        {
+          "trade_date": "2023-12-21",
+          "nav": 0.96994147044
+        },
+        {
+          "trade_date": "2023-12-22",
+          "nav": 0.96444659044
+        },
+        {
+          "trade_date": "2023-12-25",
+          "nav": 0.9613105104400002
+        },
+        {
+          "trade_date": "2023-12-26",
+          "nav": 0.96089491044
+        },
+        {
+          "trade_date": "2023-12-27",
+          "nav": 0.96476219044
+        },
+        {
+          "trade_date": "2023-12-28",
+          "nav": 0.96775677221
+        },
+        {
+          "trade_date": "2023-12-29",
+          "nav": 0.970901158935
+        },
+        {
+          "trade_date": "2024-01-02",
+          "nav": 0.956617638935
+        },
+        {
+          "trade_date": "2024-01-03",
+          "nav": 0.952939678935
+        },
+        {
+          "trade_date": "2024-01-04",
+          "nav": 0.957902438935
+        },
+        {
+          "trade_date": "2024-01-05",
+          "nav": 0.947640378935
+        },
+        {
+          "trade_date": "2024-01-08",
+          "nav": 0.949422718935
+        },
+        {
+          "trade_date": "2024-01-09",
+          "nav": 0.946089578935
+        },
+        {
+          "trade_date": "2024-01-10",
+          "nav": 0.942591818935
+        },
+        {
+          "trade_date": "2024-01-11",
+          "nav": 0.945271018935
+        },
+        {
+          "trade_date": "2024-01-12",
+          "nav": 0.943639533645
+        },
+        {
+          "trade_date": "2024-01-15",
+          "nav": 0.94617615384
+        },
+        {
+          "trade_date": "2024-01-16",
+          "nav": 0.94600871384
+        },
+        {
+          "trade_date": "2024-01-17",
+          "nav": 0.94395967384
+        },
+        {
+          "trade_date": "2024-01-18",
+          "nav": 0.95369887384
+        },
+        {
+          "trade_date": "2024-01-19",
+          "nav": 0.94008169384
+        },
+        {
+          "trade_date": "2024-01-22",
+          "nav": 0.92288145384
+        },
+        {
+          "trade_date": "2024-01-23",
+          "nav": 0.9230308538400002
+        },
+        {
+          "trade_date": "2024-01-24",
+          "nav": 0.92612467384
+        },
+        {
+          "trade_date": "2024-01-25",
+          "nav": 0.95195937384
+        },
+        {
+          "trade_date": "2024-01-26",
+          "nav": 0.9531937443950002
+        },
+        {
+          "trade_date": "2024-01-29",
+          "nav": 0.941504705895
+        },
+        {
+          "trade_date": "2024-01-30",
+          "nav": 0.933429205895
+        },
+        {
+          "trade_date": "2024-01-31",
+          "nav": 0.929416025895
+        },
+        {
+          "trade_date": "2024-02-01",
+          "nav": 0.926706445895
+        },
+        {
+          "trade_date": "2024-02-02",
+          "nav": 0.924255385895
+        },
+        {
+          "trade_date": "2024-02-05",
+          "nav": 0.917160845895
+        },
+        {
+          "trade_date": "2024-02-06",
+          "nav": 0.933802585895
+        },
+        {
+          "trade_date": "2024-02-07",
+          "nav": 0.935907925895
+        },
+        {
+          "trade_date": "2024-02-08",
+          "nav": 0.948298585895
+        },
+        {
+          "trade_date": "2024-02-19",
+          "nav": 0.947884570335
+        },
+        {
+          "trade_date": "2024-02-20",
+          "nav": 0.946606639595
+        },
+        {
+          "trade_date": "2024-02-21",
+          "nav": 0.936439159595
+        },
+        {
+          "trade_date": "2024-02-22",
+          "nav": 0.941455119595
+        },
+        {
+          "trade_date": "2024-02-23",
+          "nav": 0.943495319595
+        },
+        {
+          "trade_date": "2024-02-26",
+          "nav": 0.945931399595
+        },
+        {
+          "trade_date": "2024-02-27",
+          "nav": 0.959121199595
+        },
+        {
+          "trade_date": "2024-02-28",
+          "nav": 0.942964199595
+        },
+        {
+          "trade_date": "2024-02-29",
+          "nav": 0.953449239595
+        },
+        {
+          "trade_date": "2024-03-01",
+          "nav": 0.960350039595
+        },
+        {
+          "trade_date": "2024-03-04",
+          "nav": 0.979478488565
+        },
+        {
+          "trade_date": "2024-03-05",
+          "nav": 0.967714511005
+        },
+        {
+          "trade_date": "2024-03-06",
+          "nav": 0.970798651005
+        },
+        {
+          "trade_date": "2024-03-07",
+          "nav": 0.956418991005
+        },
+        {
+          "trade_date": "2024-03-08",
+          "nav": 0.979420551005
+        },
+        {
+          "trade_date": "2024-03-11",
+          "nav": 0.994995791005
+        },
+        {
+          "trade_date": "2024-03-12",
+          "nav": 0.985709991005
+        },
+        {
+          "trade_date": "2024-03-13",
+          "nav": 0.980774551005
+        },
+        {
+          "trade_date": "2024-03-14",
+          "nav": 0.975850671005
+        },
+        {
+          "trade_date": "2024-03-15",
+          "nav": 0.981049631005
+        },
+        {
+          "trade_date": "2024-03-18",
+          "nav": 0.98485877553
+        },
+        {
+          "trade_date": "2024-03-19",
+          "nav": 0.982428286115
+        },
+        {
+          "trade_date": "2024-03-20",
+          "nav": 0.980266106115
+        },
+        {
+          "trade_date": "2024-03-21",
+          "nav": 0.988830326115
+        },
+        {
+          "trade_date": "2024-03-22",
+          "nav": 0.977670526115
+        },
+        {
+          "trade_date": "2024-03-25",
+          "nav": 0.996014786115
+        },
+        {
+          "trade_date": "2024-03-26",
+          "nav": 0.983473406115
+        },
+        {
+          "trade_date": "2024-03-27",
+          "nav": 0.985335306115
+        },
+        {
+          "trade_date": "2024-03-28",
+          "nav": 1.0029837461150002
+        },
+        {
+          "trade_date": "2024-03-29",
+          "nav": 1.020458486115
+        },
+        {
+          "trade_date": "2024-04-01",
+          "nav": 1.023923709295
+        },
+        {
+          "trade_date": "2024-04-02",
+          "nav": 1.01708814624
+        },
+        {
+          "trade_date": "2024-04-03",
+          "nav": 1.0098566862400002
+        },
+        {
+          "trade_date": "2024-04-08",
+          "nav": 1.01924418624
+        },
+        {
+          "trade_date": "2024-04-09",
+          "nav": 1.01475774624
+        },
+        {
+          "trade_date": "2024-04-10",
+          "nav": 1.01927032624
+        },
+        {
+          "trade_date": "2024-04-11",
+          "nav": 1.01331682624
+        },
+        {
+          "trade_date": "2024-04-12",
+          "nav": 1.00912384624
+        },
+        {
+          "trade_date": "2024-04-15",
+          "nav": 1.02061048624
+        },
+        {
+          "trade_date": "2024-04-16",
+          "nav": 1.01861204624
+        },
+        {
+          "trade_date": "2024-04-17",
+          "nav": 1.02889189517
+        },
+        {
+          "trade_date": "2024-04-18",
+          "nav": 1.03103339608
+        },
+        {
+          "trade_date": "2024-04-19",
+          "nav": 1.03121085608
+        },
+        {
+          "trade_date": "2024-04-22",
+          "nav": 1.02842511608
+        },
+        {
+          "trade_date": "2024-04-23",
+          "nav": 1.0172321960800002
+        },
+        {
+          "trade_date": "2024-04-24",
+          "nav": 1.02135981608
+        },
+        {
+          "trade_date": "2024-04-25",
+          "nav": 1.0236020760800002
+        },
+        {
+          "trade_date": "2024-04-26",
+          "nav": 1.02360619608
+        },
+        {
+          "trade_date": "2024-04-29",
+          "nav": 1.0230219560800002
+        },
+        {
+          "trade_date": "2024-04-30",
+          "nav": 1.0165370560800002
+        },
+        {
+          "trade_date": "2024-05-06",
+          "nav": 1.0230234981950002
+        },
+        {
+          "trade_date": "2024-05-07",
+          "nav": 1.0149384150150005
+        },
+        {
+          "trade_date": "2024-05-08",
+          "nav": 1.0113143150150004
+        },
+        {
+          "trade_date": "2024-05-09",
+          "nav": 1.027216035015
+        },
+        {
+          "trade_date": "2024-05-10",
+          "nav": 1.024958575015
+        },
+        {
+          "trade_date": "2024-05-13",
+          "nav": 1.0376521550150002
+        },
+        {
+          "trade_date": "2024-05-14",
+          "nav": 1.0365383150150005
+        },
+        {
+          "trade_date": "2024-05-15",
+          "nav": 1.0390379950150002
+        },
+        {
+          "trade_date": "2024-05-16",
+          "nav": 1.0353141950150002
+        },
+        {
+          "trade_date": "2024-05-17",
+          "nav": 1.038905455015
+        },
+        {
+          "trade_date": "2024-05-20",
+          "nav": 1.0419824013700003
+        },
+        {
+          "trade_date": "2024-05-21",
+          "nav": 1.0243995799600003
+        },
+        {
+          "trade_date": "2024-05-22",
+          "nav": 1.0182512599600002
+        },
+        {
+          "trade_date": "2024-05-23",
+          "nav": 1.01329301996
+        },
+        {
+          "trade_date": "2024-05-24",
+          "nav": 1.00053171996
+        },
+        {
+          "trade_date": "2024-05-27",
+          "nav": 1.01556699996
+        },
+        {
+          "trade_date": "2024-05-28",
+          "nav": 1.0069284799600002
+        },
+        {
+          "trade_date": "2024-05-29",
+          "nav": 1.0152328799600003
+        },
+        {
+          "trade_date": "2024-05-30",
+          "nav": 0.99458191996
+        },
+        {
+          "trade_date": "2024-05-31",
+          "nav": 0.99327995996
+        },
+        {
+          "trade_date": "2024-06-03",
+          "nav": 0.9861150319650002
+        },
+        {
+          "trade_date": "2024-06-04",
+          "nav": 0.997153752545
+        },
+        {
+          "trade_date": "2024-06-05",
+          "nav": 0.9988200725450002
+        },
+        {
+          "trade_date": "2024-06-06",
+          "nav": 1.002244012545
+        },
+        {
+          "trade_date": "2024-06-07",
+          "nav": 1.007987672545
+        },
+        {
+          "trade_date": "2024-06-11",
+          "nav": 1.002157272545
+        },
+        {
+          "trade_date": "2024-06-12",
+          "nav": 1.013246052545
+        },
+        {
+          "trade_date": "2024-06-13",
+          "nav": 1.007359712545
+        },
+        {
+          "trade_date": "2024-06-14",
+          "nav": 0.990385752545
+        },
+        {
+          "trade_date": "2024-06-17",
+          "nav": 0.9936296125450002
+        },
+        {
+          "trade_date": "2024-06-18",
+          "nav": 0.99290336113
+        },
+        {
+          "trade_date": "2024-06-19",
+          "nav": 0.990692701485
+        },
+        {
+          "trade_date": "2024-06-20",
+          "nav": 0.982772841485
+        },
+        {
+          "trade_date": "2024-06-21",
+          "nav": 0.986630081485
+        },
+        {
+          "trade_date": "2024-06-24",
+          "nav": 0.979968081485
+        },
+        {
+          "trade_date": "2024-06-25",
+          "nav": 0.977401061485
+        },
+        {
+          "trade_date": "2024-06-26",
+          "nav": 0.998842661485
+        },
+        {
+          "trade_date": "2024-06-27",
+          "nav": 0.991509881485
+        },
+        {
+          "trade_date": "2024-06-28",
+          "nav": 0.993039401485
+        },
+        {
+          "trade_date": "2024-07-01",
+          "nav": 0.995112241485
+        },
+        {
+          "trade_date": "2024-07-02",
+          "nav": 0.991525647
+        },
+        {
+          "trade_date": "2024-07-03",
+          "nav": 0.9885150620950002
+        },
+        {
+          "trade_date": "2024-07-04",
+          "nav": 0.987123102095
+        },
+        {
+          "trade_date": "2024-07-05",
+          "nav": 0.9859194220950002
+        },
+        {
+          "trade_date": "2024-07-08",
+          "nav": 0.992846102095
+        },
+        {
+          "trade_date": "2024-07-09",
+          "nav": 0.998143222095
+        },
+        {
+          "trade_date": "2024-07-10",
+          "nav": 0.994093782095
+        },
+        {
+          "trade_date": "2024-07-11",
+          "nav": 0.9935469420950002
+        },
+        {
+          "trade_date": "2024-07-12",
+          "nav": 0.9976485620950002
+        },
+        {
+          "trade_date": "2024-07-15",
+          "nav": 1.0018896220950002
+        },
+        {
+          "trade_date": "2024-07-16",
+          "nav": 1.00403945015
+        },
+        {
+          "trade_date": "2024-07-17",
+          "nav": 0.9924476259150002
+        },
+        {
+          "trade_date": "2024-07-18",
+          "nav": 0.9941697756350002
+        },
+        {
+          "trade_date": "2024-07-19",
+          "nav": 0.9789364756350002
+        },
+        {
+          "trade_date": "2024-07-22",
+          "nav": 0.997657755635
+        },
+        {
+          "trade_date": "2024-07-23",
+          "nav": 0.9788382956350002
+        },
+        {
+          "trade_date": "2024-07-24",
+          "nav": 0.9635481556350002
+        },
+        {
+          "trade_date": "2024-07-25",
+          "nav": 0.9715888556350002
+        },
+        {
+          "trade_date": "2024-07-26",
+          "nav": 0.9720589356350002
+        },
+        {
+          "trade_date": "2024-07-29",
+          "nav": 0.9689867556350004
+        },
+        {
+          "trade_date": "2024-07-30",
+          "nav": 0.9548246998250004
+        },
+        {
+          "trade_date": "2024-07-31",
+          "nav": 0.9533970227050004
+        },
+        {
+          "trade_date": "2024-08-01",
+          "nav": 0.9565041275050002
+        },
+        {
+          "trade_date": "2024-08-02",
+          "nav": 0.9514704875050004
+        },
+        {
+          "trade_date": "2024-08-05",
+          "nav": 0.9390524075050004
+        },
+        {
+          "trade_date": "2024-08-06",
+          "nav": 0.9368740475050004
+        },
+        {
+          "trade_date": "2024-08-07",
+          "nav": 0.9495013075050004
+        },
+        {
+          "trade_date": "2024-08-08",
+          "nav": 0.9340949275050002
+        },
+        {
+          "trade_date": "2024-08-09",
+          "nav": 0.9309507075050004
+        },
+        {
+          "trade_date": "2024-08-12",
+          "nav": 0.9274512875050004
+        },
+        {
+          "trade_date": "2024-08-13",
+          "nav": 0.9289536675050004
+        },
+        {
+          "trade_date": "2024-08-14",
+          "nav": 0.9247692343100004
+        },
+        {
+          "trade_date": "2024-08-15",
+          "nav": 0.9156879733100004
+        },
+        {
+          "trade_date": "2024-08-16",
+          "nav": 0.9025087933100004
+        },
+        {
+          "trade_date": "2024-08-19",
+          "nav": 0.9171274933100004
+        },
+        {
+          "trade_date": "2024-08-20",
+          "nav": 0.9129849733100004
+        },
+        {
+          "trade_date": "2024-08-21",
+          "nav": 0.9126069533100004
+        },
+        {
+          "trade_date": "2024-08-22",
+          "nav": 0.9053490733100004
+        },
+        {
+          "trade_date": "2024-08-23",
+          "nav": 0.8930288333100004
+        },
+        {
+          "trade_date": "2024-08-26",
+          "nav": 0.8900948333100004
+        },
+        {
+          "trade_date": "2024-08-27",
+          "nav": 0.8857522133100002
+        },
+        {
+          "trade_date": "2024-08-28",
+          "nav": 0.8819656229050004
+        },
+        {
+          "trade_date": "2024-08-29",
+          "nav": 0.8638389529750002
+        },
+        {
+          "trade_date": "2024-08-30",
+          "nav": 0.8542930329750004
+        },
+        {
+          "trade_date": "2024-09-02",
+          "nav": 0.8617586329750004
+        },
+        {
+          "trade_date": "2024-09-03",
+          "nav": 0.8482097929750003
+        },
+        {
+          "trade_date": "2024-09-04",
+          "nav": 0.8455327129750002
+        },
+        {
+          "trade_date": "2024-09-05",
+          "nav": 0.8426053329750004
+        },
+        {
+          "trade_date": "2024-09-06",
+          "nav": 0.8431224329750002
+        },
+        {
+          "trade_date": "2024-09-09",
+          "nav": 0.8398926129750004
+        },
+        {
+          "trade_date": "2024-09-10",
+          "nav": 0.8458770729750004
+        },
+        {
+          "trade_date": "2024-09-11",
+          "nav": 0.8433736612100006
+        },
+        {
+          "trade_date": "2024-09-12",
+          "nav": 0.8424721967450005
+        },
+        {
+          "trade_date": "2024-09-13",
+          "nav": 0.8438438167450005
+        },
+        {
+          "trade_date": "2024-09-18",
+          "nav": 0.8463360767450004
+        },
+        {
+          "trade_date": "2024-09-19",
+          "nav": 0.8483116767450005
+        },
+        {
+          "trade_date": "2024-09-20",
+          "nav": 0.8468551767450005
+        },
+        {
+          "trade_date": "2024-09-23",
+          "nav": 0.8502149367450005
+        },
+        {
+          "trade_date": "2024-09-24",
+          "nav": 0.8590822167450004
+        },
+        {
+          "trade_date": "2024-09-25",
+          "nav": 0.8644550567450004
+        },
+        {
+          "trade_date": "2024-09-26",
+          "nav": 0.8746044767450005
+        },
+        {
+          "trade_date": "2024-09-27",
+          "nav": 0.8847996159100006
+        },
+        {
+          "trade_date": "2024-09-30",
+          "nav": 0.9108914653950004
+        },
+        {
+          "trade_date": "2024-10-08",
+          "nav": 0.9372555253950006
+        },
+        {
+          "trade_date": "2024-10-09",
+          "nav": 0.9007284853950004
+        },
+        {
+          "trade_date": "2024-10-10",
+          "nav": 0.9041885253950006
+        },
+        {
+          "trade_date": "2024-10-11",
+          "nav": 0.8870574853950005
+        },
+        {
+          "trade_date": "2024-10-14",
+          "nav": 0.8929300253950005
+        },
+        {
+          "trade_date": "2024-10-15",
+          "nav": 0.8834309253950006
+        },
+        {
+          "trade_date": "2024-10-16",
+          "nav": 0.8812313053950006
+        },
+        {
+          "trade_date": "2024-10-17",
+          "nav": 0.8790427053950005
+        },
+        {
+          "trade_date": "2024-10-18",
+          "nav": 0.8935779718950004
+        },
+        {
+          "trade_date": "2024-10-21",
+          "nav": 0.9117842802450004
+        },
+        {
+          "trade_date": "2024-10-22",
+          "nav": 0.9124475202450004
+        },
+        {
+          "trade_date": "2024-10-23",
+          "nav": 0.8928509602450004
+        },
+        {
+          "trade_date": "2024-10-24",
+          "nav": 0.9013280802450006
+        },
+        {
+          "trade_date": "2024-10-25",
+          "nav": 0.8958181602450005
+        },
+        {
+          "trade_date": "2024-10-28",
+          "nav": 0.9081839202450004
+        },
+        {
+          "trade_date": "2024-10-29",
+          "nav": 0.9148265202450004
+        },
+        {
+          "trade_date": "2024-10-30",
+          "nav": 0.9361697202450004
+        },
+        {
+          "trade_date": "2024-10-31",
+          "nav": 0.9381972802450004
+        },
+        {
+          "trade_date": "2024-11-01",
+          "nav": 0.9102790586600006
+        },
+        {
+          "trade_date": "2024-11-04",
+          "nav": 0.9093751738100004
+        },
+        {
+          "trade_date": "2024-11-05",
+          "nav": 0.9377441538100004
+        },
+        {
+          "trade_date": "2024-11-06",
+          "nav": 0.9306506938100004
+        },
+        {
+          "trade_date": "2024-11-07",
+          "nav": 0.9331498738100004
+        },
+        {
+          "trade_date": "2024-11-08",
+          "nav": 0.9279512738100004
+        },
+        {
+          "trade_date": "2024-11-11",
+          "nav": 0.9312946538100004
+        },
+        {
+          "trade_date": "2024-11-12",
+          "nav": 0.9238529538100004
+        },
+        {
+          "trade_date": "2024-11-13",
+          "nav": 0.9224613938100004
+        },
+        {
+          "trade_date": "2024-11-14",
+          "nav": 0.9103828538100004
+        },
+        {
+          "trade_date": "2024-11-15",
+          "nav": 0.9184003073600002
+        },
+        {
+          "trade_date": "2024-11-18",
+          "nav": 0.8872412848500004
+        },
+        {
+          "trade_date": "2024-11-19",
+          "nav": 0.8862162848500004
+        },
+        {
+          "trade_date": "2024-11-20",
+          "nav": 0.9054465248500004
+        },
+        {
+          "trade_date": "2024-11-21",
+          "nav": 0.9077649248500004
+        },
+        {
+          "trade_date": "2024-11-22",
+          "nav": 0.8929303848500003
+        },
+        {
+          "trade_date": "2024-11-25",
+          "nav": 0.8906458248500004
+        },
+        {
+          "trade_date": "2024-11-26",
+          "nav": 0.8732542248500004
+        },
+        {
+          "trade_date": "2024-11-27",
+          "nav": 0.8950384248500003
+        },
+        {
+          "trade_date": "2024-11-28",
+          "nav": 0.8874253848500002
+        },
+        {
+          "trade_date": "2024-11-29",
+          "nav": 0.8950247096700005
+        },
+        {
+          "trade_date": "2024-12-02",
+          "nav": 0.9152408855600004
+        },
+        {
+          "trade_date": "2024-12-03",
+          "nav": 0.9211634855600004
+        },
+        {
+          "trade_date": "2024-12-04",
+          "nav": 0.9262977855600004
+        },
+        {
+          "trade_date": "2024-12-05",
+          "nav": 0.9382958855600004
+        },
+        {
+          "trade_date": "2024-12-06",
+          "nav": 0.9408267855600004
+        },
+        {
+          "trade_date": "2024-12-09",
+          "nav": 0.9192204855600004
+        },
+        {
+          "trade_date": "2024-12-10",
+          "nav": 0.9158092855600004
+        },
+        {
+          "trade_date": "2024-12-11",
+          "nav": 0.8910749855600004
+        },
+        {
+          "trade_date": "2024-12-12",
+          "nav": 0.9112964855600004
+        },
+        {
+          "trade_date": "2024-12-13",
+          "nav": 0.8847982599350007
+        },
+        {
+          "trade_date": "2024-12-16",
+          "nav": 0.8745098005000006
+        },
+        {
+          "trade_date": "2024-12-17",
+          "nav": 0.8726855205000006
+        },
+        {
+          "trade_date": "2024-12-18",
+          "nav": 0.8663008005000006
+        },
+        {
+          "trade_date": "2024-12-19",
+          "nav": 0.8658756405000007
+        },
+        {
+          "trade_date": "2024-12-20",
+          "nav": 0.8660668005000006
+        },
+        {
+          "trade_date": "2024-12-23",
+          "nav": 0.8567388005000006
+        },
+        {
+          "trade_date": "2024-12-24",
+          "nav": 0.8531118205000006
+        },
+        {
+          "trade_date": "2024-12-25",
+          "nav": 0.8450596805000007
+        },
+        {
+          "trade_date": "2024-12-26",
+          "nav": 0.8618825805000007
+        },
+        {
+          "trade_date": "2024-12-27",
+          "nav": 0.8606828576700007
+        },
+        {
+          "trade_date": "2024-12-30",
+          "nav": 0.8735535112400007
+        },
+        {
+          "trade_date": "2024-12-31",
+          "nav": 0.8467348912400007
+        },
+        {
+          "trade_date": "2025-01-02",
+          "nav": 0.8137543912400007
+        },
+        {
+          "trade_date": "2025-01-03",
+          "nav": 0.7890941512400007
+        },
+        {
+          "trade_date": "2025-01-06",
+          "nav": 0.7842980912400007
+        },
+        {
+          "trade_date": "2025-01-07",
+          "nav": 0.8020132912400008
+        },
+        {
+          "trade_date": "2025-01-08",
+          "nav": 0.7970306112400007
+        },
+        {
+          "trade_date": "2025-01-09",
+          "nav": 0.8056465912400008
+        },
+        {
+          "trade_date": "2025-01-10",
+          "nav": 0.8266974512400008
+        },
+        {
+          "trade_date": "2025-01-13",
+          "nav": 0.8128795015600007
+        },
+        {
+          "trade_date": "2025-01-14",
+          "nav": 0.8244709950150007
+        },
+        {
+          "trade_date": "2025-01-15",
+          "nav": 0.8195527430150006
+        },
+        {
+          "trade_date": "2025-01-16",
+          "nav": 0.8274557830150007
+        },
+        {
+          "trade_date": "2025-01-17",
+          "nav": 0.8274294830150006
+        },
+        {
+          "trade_date": "2025-01-20",
+          "nav": 0.8283316230150006
+        },
+        {
+          "trade_date": "2025-01-21",
+          "nav": 0.8240854030150006
+        },
+        {
+          "trade_date": "2025-01-22",
+          "nav": 0.8242247430150006
+        },
+        {
+          "trade_date": "2025-01-23",
+          "nav": 0.8183137830150007
+        },
+        {
+          "trade_date": "2025-01-24",
+          "nav": 0.8241407030150005
+        },
+        {
+          "trade_date": "2025-01-27",
+          "nav": 0.8196087630150006
+        },
+        {
+          "trade_date": "2025-02-05",
+          "nav": 0.8301428565650005
+        },
+        {
+          "trade_date": "2025-02-06",
+          "nav": 0.8391942667650005
+        },
+        {
+          "trade_date": "2025-02-07",
+          "nav": 0.8379902867650005
+        },
+        {
+          "trade_date": "2025-02-10",
+          "nav": 0.8371692067650005
+        },
+        {
+          "trade_date": "2025-02-11",
+          "nav": 0.8340192067650005
+        },
+        {
+          "trade_date": "2025-02-12",
+          "nav": 0.8354796467650005
+        },
+        {
+          "trade_date": "2025-02-13",
+          "nav": 0.8288038867650005
+        },
+        {
+          "trade_date": "2025-02-14",
+          "nav": 0.8328506467650004
+        },
+        {
+          "trade_date": "2025-02-17",
+          "nav": 0.8401948867650004
+        },
+        {
+          "trade_date": "2025-02-18",
+          "nav": 0.8377423667650005
+        },
+        {
+          "trade_date": "2025-02-19",
+          "nav": 0.8588328576950004
+        },
+        {
+          "trade_date": "2025-02-20",
+          "nav": 0.8535649071050004
+        },
+        {
+          "trade_date": "2025-02-21",
+          "nav": 0.8679501271050004
+        },
+        {
+          "trade_date": "2025-02-24",
+          "nav": 0.8542557471050003
+        },
+        {
+          "trade_date": "2025-02-25",
+          "nav": 0.8507208271050004
+        },
+        {
+          "trade_date": "2025-02-26",
+          "nav": 0.8509862271050003
+        },
+        {
+          "trade_date": "2025-02-27",
+          "nav": 0.8434709071050005
+        },
+        {
+          "trade_date": "2025-02-28",
+          "nav": 0.8256136271050004
+        },
+        {
+          "trade_date": "2025-03-03",
+          "nav": 0.8246267071050004
+        },
+        {
+          "trade_date": "2025-03-04",
+          "nav": 0.8276733471050004
+        },
+        {
+          "trade_date": "2025-03-05",
+          "nav": 0.8228087255150005
+        },
+        {
+          "trade_date": "2025-03-06",
+          "nav": 0.8287805263050004
+        },
+        {
+          "trade_date": "2025-03-07",
+          "nav": 0.8331828137250005
+        },
+        {
+          "trade_date": "2025-03-10",
+          "nav": 0.8363709337250004
+        },
+        {
+          "trade_date": "2025-03-11",
+          "nav": 0.8385208737250004
+        },
+        {
+          "trade_date": "2025-03-12",
+          "nav": 0.8378276337250004
+        },
+        {
+          "trade_date": "2025-03-13",
+          "nav": 0.8214471137250005
+        },
+        {
+          "trade_date": "2025-03-14",
+          "nav": 0.8363760937250004
+        },
+        {
+          "trade_date": "2025-03-17",
+          "nav": 0.8481709537250004
+        },
+        {
+          "trade_date": "2025-03-18",
+          "nav": 0.8526964137250005
+        },
+        {
+          "trade_date": "2025-03-19",
+          "nav": 0.8513677152050004
+        },
+        {
+          "trade_date": "2025-03-20",
+          "nav": 0.8506431352050005
+        },
+        {
+          "trade_date": "2025-03-21",
+          "nav": 0.8453132517200005
+        },
+        {
+          "trade_date": "2025-03-24",
+          "nav": 0.8556786517200005
+        },
+        {
+          "trade_date": "2025-03-25",
+          "nav": 0.8375823717200005
+        },
+        {
+          "trade_date": "2025-03-26",
+          "nav": 0.8351175917200004
+        },
+        {
+          "trade_date": "2025-03-27",
+          "nav": 0.8264679917200005
+        },
+        {
+          "trade_date": "2025-03-28",
+          "nav": 0.8277052917200005
+        },
+        {
+          "trade_date": "2025-03-31",
+          "nav": 0.8316191717200004
+        },
+        {
+          "trade_date": "2025-04-01",
+          "nav": 0.8267810517200006
+        },
+        {
+          "trade_date": "2025-04-02",
+          "nav": 0.8231206858950005
+        },
+        {
+          "trade_date": "2025-04-03",
+          "nav": 0.8205403058950006
+        },
+        {
+          "trade_date": "2025-04-07",
+          "nav": 0.7868781603500007
+        },
+        {
+          "trade_date": "2025-04-08",
+          "nav": 0.7917431203500007
+        },
+        {
+          "trade_date": "2025-04-09",
+          "nav": 0.7896061003500007
+        },
+        {
+          "trade_date": "2025-04-10",
+          "nav": 0.7931529803500006
+        },
+        {
+          "trade_date": "2025-04-11",
+          "nav": 0.7955365403500007
+        },
+        {
+          "trade_date": "2025-04-14",
+          "nav": 0.8062944003500007
+        },
+        {
+          "trade_date": "2025-04-15",
+          "nav": 0.8078339403500006
+        },
+        {
+          "trade_date": "2025-04-16",
+          "nav": 0.8119981203500006
+        },
+        {
+          "trade_date": "2025-04-17",
+          "nav": 0.8114619527450008
+        },
+        {
+          "trade_date": "2025-04-18",
+          "nav": 0.8084833127450007
+        },
+        {
+          "trade_date": "2025-04-21",
+          "nav": 0.8236942047000007
+        },
+        {
+          "trade_date": "2025-04-22",
+          "nav": 0.8075939647000007
+        },
+        {
+          "trade_date": "2025-04-23",
+          "nav": 0.8020641247000008
+        },
+        {
+          "trade_date": "2025-04-24",
+          "nav": 0.7921094647000008
+        },
+        {
+          "trade_date": "2025-04-25",
+          "nav": 0.8085007247000007
+        },
+        {
+          "trade_date": "2025-04-28",
+          "nav": 0.8102688647000007
+        },
+        {
+          "trade_date": "2025-04-29",
+          "nav": 0.8099520447000007
+        },
+        {
+          "trade_date": "2025-04-30",
+          "nav": 0.8145435247000007
+        },
+        {
+          "trade_date": "2025-05-06",
+          "nav": 0.8386752298800008
+        },
+        {
+          "trade_date": "2025-05-07",
+          "nav": 0.8297485898800008
+        },
+        {
+          "trade_date": "2025-05-08",
+          "nav": 0.8287385404500008
+        },
+        {
+          "trade_date": "2025-05-09",
+          "nav": 0.8250376604500008
+        },
+        {
+          "trade_date": "2025-05-12",
+          "nav": 0.8305090604500008
+        },
+        {
+          "trade_date": "2025-05-13",
+          "nav": 0.8227198204500008
+        },
+        {
+          "trade_date": "2025-05-14",
+          "nav": 0.8305835404500008
+        },
+        {
+          "trade_date": "2025-05-15",
+          "nav": 0.8126202204500008
+        },
+        {
+          "trade_date": "2025-05-16",
+          "nav": 0.8129057804500007
+        },
+        {
+          "trade_date": "2025-05-19",
+          "nav": 0.8069272604500007
+        },
+        {
+          "trade_date": "2025-05-20",
+          "nav": 0.8044049022900008
+        },
+        {
+          "trade_date": "2025-05-21",
+          "nav": 0.8150405422900007
+        },
+        {
+          "trade_date": "2025-05-22",
+          "nav": 0.8039380056000007
+        },
+        {
+          "trade_date": "2025-05-23",
+          "nav": 0.8078769456000008
+        },
+        {
+          "trade_date": "2025-05-26",
+          "nav": 0.8044164056000007
+        },
+        {
+          "trade_date": "2025-05-27",
+          "nav": 0.8019720456000008
+        },
+        {
+          "trade_date": "2025-05-28",
+          "nav": 0.7922397056000007
+        },
+        {
+          "trade_date": "2025-05-29",
+          "nav": 0.7957883656000008
+        },
+        {
+          "trade_date": "2025-05-30",
+          "nav": 0.7852880456000008
+        },
+        {
+          "trade_date": "2025-06-03",
+          "nav": 0.7761017056000007
+        },
+        {
+          "trade_date": "2025-06-04",
+          "nav": 0.7763104994200009
+        },
+        {
+          "trade_date": "2025-06-05",
+          "nav": 0.7791424994200008
+        },
+        {
+          "trade_date": "2025-06-06",
+          "nav": 0.7775741600500008
+        },
+        {
+          "trade_date": "2025-06-09",
+          "nav": 0.8033901070500007
+        },
+        {
+          "trade_date": "2025-06-10",
+          "nav": 0.7966901070500007
+        },
+        {
+          "trade_date": "2025-06-11",
+          "nav": 0.7921561070500007
+        },
+        {
+          "trade_date": "2025-06-12",
+          "nav": 0.8036021070500007
+        },
+        {
+          "trade_date": "2025-06-13",
+          "nav": 0.8062401070500007
+        },
+        {
+          "trade_date": "2025-06-16",
+          "nav": 0.8118821070500007
+        },
+        {
+          "trade_date": "2025-06-17",
+          "nav": 0.8151861070500007
+        },
+        {
+          "trade_date": "2025-06-18",
+          "nav": 0.8317673000500008
+        },
+        {
+          "trade_date": "2025-06-19",
+          "nav": 0.7896253000500008
+        },
+        {
+          "trade_date": "2025-06-20",
+          "nav": 0.7867902817500008
+        },
+        {
+          "trade_date": "2025-06-23",
+          "nav": 0.7931836786100007
+        },
+        {
+          "trade_date": "2025-06-24",
+          "nav": 0.7988211586100007
+        },
+        {
+          "trade_date": "2025-06-25",
+          "nav": 0.7965226386100008
+        },
+        {
+          "trade_date": "2025-06-26",
+          "nav": 0.7961199986100008
+        },
+        {
+          "trade_date": "2025-06-27",
+          "nav": 0.7835643986100007
+        },
+        {
+          "trade_date": "2025-06-30",
+          "nav": 0.7853633186100007
+        },
+        {
+          "trade_date": "2025-07-01",
+          "nav": 0.7845587586100008
+        },
+        {
+          "trade_date": "2025-07-02",
+          "nav": 0.7815775296100008
+        },
+        {
+          "trade_date": "2025-07-03",
+          "nav": 0.7801606316100007
+        },
+        {
+          "trade_date": "2025-07-04",
+          "nav": 0.7813213372100007
+        },
+        {
+          "trade_date": "2025-07-07",
+          "nav": 0.7832257126700007
+        },
+        {
+          "trade_date": "2025-07-08",
+          "nav": 0.7999797126700008
+        },
+        {
+          "trade_date": "2025-07-09",
+          "nav": 0.7999257126700008
+        },
+        {
+          "trade_date": "2025-07-10",
+          "nav": 0.7961977126700007
+        },
+        {
+          "trade_date": "2025-07-11",
+          "nav": 0.7941917126700008
+        },
+        {
+          "trade_date": "2025-07-14",
+          "nav": 0.7921197126700007
+        },
+        {
+          "trade_date": "2025-07-15",
+          "nav": 0.8004057126700007
+        },
+        {
+          "trade_date": "2025-07-16",
+          "nav": 0.7951097126700007
+        },
+        {
+          "trade_date": "2025-07-17",
+          "nav": 0.8103830486700008
+        },
+        {
+          "trade_date": "2025-07-18",
+          "nav": 0.8091284470250008
+        },
+        {
+          "trade_date": "2025-07-21",
+          "nav": 0.8103303745250006
+        },
+        {
+          "trade_date": "2025-07-22",
+          "nav": 0.8098193345250007
+        },
+        {
+          "trade_date": "2025-07-23",
+          "nav": 0.8133002945250007
+        },
+        {
+          "trade_date": "2025-07-24",
+          "nav": 0.8195121145250007
+        },
+        {
+          "trade_date": "2025-07-25",
+          "nav": 0.8145382145250006
+        },
+        {
+          "trade_date": "2025-07-28",
+          "nav": 0.8152355145250008
+        },
+        {
+          "trade_date": "2025-07-29",
+          "nav": 0.8204287345250006
+        },
+        {
+          "trade_date": "2025-07-30",
+          "nav": 0.8116456145250007
+        },
+        {
+          "trade_date": "2025-07-31",
+          "nav": 0.8071598710650006
+        },
+        {
+          "trade_date": "2025-08-01",
+          "nav": 0.8041186195200006
+        },
+        {
+          "trade_date": "2025-08-04",
+          "nav": 0.8041649635200006
+        },
+        {
+          "trade_date": "2025-08-05",
+          "nav": 0.8042562035200007
+        },
+        {
+          "trade_date": "2025-08-06",
+          "nav": 0.8050571235200006
+        },
+        {
+          "trade_date": "2025-08-07",
+          "nav": 0.8034472435200006
+        },
+        {
+          "trade_date": "2025-08-08",
+          "nav": 0.8011927635200006
+        },
+        {
+          "trade_date": "2025-08-11",
+          "nav": 0.8049253635200005
+        },
+        {
+          "trade_date": "2025-08-12",
+          "nav": 0.8086288835200006
+        },
+        {
+          "trade_date": "2025-08-13",
+          "nav": 0.8082317235200007
+        },
+        {
+          "trade_date": "2025-08-14",
+          "nav": 0.8286043771100006
+        },
+        {
+          "trade_date": "2025-08-15",
+          "nav": 0.8434585788100006
+        },
+        {
+          "trade_date": "2025-08-18",
+          "nav": 0.8795609466800006
+        },
+        {
+          "trade_date": "2025-08-19",
+          "nav": 0.9014291066800006
+        },
+        {
+          "trade_date": "2025-08-20",
+          "nav": 0.8785464266800006
+        },
+        {
+          "trade_date": "2025-08-21",
+          "nav": 0.8690016266800007
+        },
+        {
+          "trade_date": "2025-08-22",
+          "nav": 0.8866095866800007
+        },
+        {
+          "trade_date": "2025-08-25",
+          "nav": 0.9213010666800008
+        },
+        {
+          "trade_date": "2025-08-26",
+          "nav": 0.9532927866800006
+        },
+        {
+          "trade_date": "2025-08-27",
+          "nav": 0.9271007466800006
+        },
+        {
+          "trade_date": "2025-08-28",
+          "nav": 0.9787154606800008
+        },
+        {
+          "trade_date": "2025-08-29",
+          "nav": 0.9454067996800006
+        },
+        {
+          "trade_date": "2025-09-01",
+          "nav": 0.9683735831600008
+        },
+        {
+          "trade_date": "2025-09-02",
+          "nav": 0.9364540111600008
+        },
+        {
+          "trade_date": "2025-09-03",
+          "nav": 0.9293840111600008
+        },
+        {
+          "trade_date": "2025-09-04",
+          "nav": 0.8807920111600007
+        },
+        {
+          "trade_date": "2025-09-05",
+          "nav": 0.8972620111600007
+        },
+        {
+          "trade_date": "2025-09-08",
+          "nav": 0.9324040111600008
+        },
+        {
+          "trade_date": "2025-09-09",
+          "nav": 0.9081560111600008
+        },
+        {
+          "trade_date": "2025-09-10",
+          "nav": 0.9118840111600008
+        },
+        {
+          "trade_date": "2025-09-11",
+          "nav": 0.9337072734850008
+        },
+        {
+          "trade_date": "2025-09-12",
+          "nav": 0.9391503734850006
+        },
+        {
+          "trade_date": "2025-09-15",
+          "nav": 0.9317974226700008
+        },
+        {
+          "trade_date": "2025-09-16",
+          "nav": 0.9328202121700008
+        },
+        {
+          "trade_date": "2025-09-17",
+          "nav": 0.9349227721700007
+        },
+        {
+          "trade_date": "2025-09-18",
+          "nav": 0.9509102521700008
+        },
+        {
+          "trade_date": "2025-09-19",
+          "nav": 0.9609624921700006
+        },
+        {
+          "trade_date": "2025-09-22",
+          "nav": 1.0022060721700008
+        },
+        {
+          "trade_date": "2025-09-23",
+          "nav": 1.0322860521700008
+        },
+        {
+          "trade_date": "2025-09-24",
+          "nav": 1.054165872170001
+        },
+        {
+          "trade_date": "2025-09-25",
+          "nav": 1.0538583928600007
+        },
+        {
+          "trade_date": "2025-09-26",
+          "nav": 1.0275083128600009
+        },
+        {
+          "trade_date": "2025-09-29",
+          "nav": 1.0437308115200008
+        },
+        {
+          "trade_date": "2025-09-30",
+          "nav": 1.061837417020001
+        },
+        {
+          "trade_date": "2025-10-09",
+          "nav": 1.0754741370200007
+        },
+        {
+          "trade_date": "2025-10-10",
+          "nav": 1.0287516970200008
+        },
+        {
+          "trade_date": "2025-10-13",
+          "nav": 1.028489377020001
+        },
+        {
+          "trade_date": "2025-10-14",
+          "nav": 0.9989967770200008
+        },
+        {
+          "trade_date": "2025-10-15",
+          "nav": 1.0018550970200009
+        },
+        {
+          "trade_date": "2025-10-16",
+          "nav": 0.9976151770200008
+        },
+        {
+          "trade_date": "2025-10-17",
+          "nav": 0.9713898593250008
+        },
+        {
+          "trade_date": "2025-10-20",
+          "nav": 0.9711579793250008
+        },
+        {
+          "trade_date": "2025-10-21",
+          "nav": 0.9788971934250008
+        },
+        {
+          "trade_date": "2025-10-22",
+          "nav": 0.9832419092150008
+        },
+        {
+          "trade_date": "2025-10-23",
+          "nav": 0.979666969215001
+        },
+        {
+          "trade_date": "2025-10-24",
+          "nav": 1.0003295892150008
+        },
+        {
+          "trade_date": "2025-10-27",
+          "nav": 1.0108499692150008
+        },
+        {
+          "trade_date": "2025-10-28",
+          "nav": 1.0120795492150008
+        },
+        {
+          "trade_date": "2025-10-29",
+          "nav": 1.0131647692150008
+        },
+        {
+          "trade_date": "2025-10-30",
+          "nav": 1.0098123892150008
+        },
+        {
+          "trade_date": "2025-10-31",
+          "nav": 0.9768122999200008
+        },
+        {
+          "trade_date": "2025-11-03",
+          "nav": 0.9837855399200008
+        },
+        {
+          "trade_date": "2025-11-04",
+          "nav": 0.9923962600400008
+        },
+        {
+          "trade_date": "2025-11-05",
+          "nav": 0.9884461432700008
+        },
+        {
+          "trade_date": "2025-11-06",
+          "nav": 0.9786945432700008
+        },
+        {
+          "trade_date": "2025-11-07",
+          "nav": 0.9937236632700008
+        },
+        {
+          "trade_date": "2025-11-10",
+          "nav": 1.0016722232700008
+        },
+        {
+          "trade_date": "2025-11-11",
+          "nav": 1.0143627832700008
+        },
+        {
+          "trade_date": "2025-11-12",
+          "nav": 1.0158603032700009
+        },
+        {
+          "trade_date": "2025-11-13",
+          "nav": 1.038842303270001
+        },
+        {
+          "trade_date": "2025-11-14",
+          "nav": 1.0228891722700009
+        },
+        {
+          "trade_date": "2025-11-17",
+          "nav": 1.022421172270001
+        },
+        {
+          "trade_date": "2025-11-18",
+          "nav": 0.9982286152700008
+        },
+        {
+          "trade_date": "2025-11-19",
+          "nav": 0.990400600270001
+        },
+        {
+          "trade_date": "2025-11-20",
+          "nav": 0.974404600270001
+        },
+        {
+          "trade_date": "2025-11-21",
+          "nav": 0.927089184770001
+        },
+        {
+          "trade_date": "2025-11-24",
+          "nav": 0.9103571847700008
+        },
+        {
+          "trade_date": "2025-11-25",
+          "nav": 0.921351184770001
+        },
+        {
+          "trade_date": "2025-11-26",
+          "nav": 0.913373184770001
+        },
+        {
+          "trade_date": "2025-11-27",
+          "nav": 0.9059091847700008
+        },
+        {
+          "trade_date": "2025-11-28",
+          "nav": 0.9185002836400008
+        },
+        {
+          "trade_date": "2025-12-01",
+          "nav": 0.919299283640001
+        },
+        {
+          "trade_date": "2025-12-02",
+          "nav": 0.9123068411400008
+        },
+        {
+          "trade_date": "2025-12-03",
+          "nav": 0.9055593806400012
+        },
+        {
+          "trade_date": "2025-12-04",
+          "nav": 0.902207280640001
+        },
+        {
+          "trade_date": "2025-12-05",
+          "nav": 0.9067487901400008
+        },
+        {
+          "trade_date": "2025-12-08",
+          "nav": 0.9143822901400008
+        },
+        {
+          "trade_date": "2025-12-09",
+          "nav": 0.9216555701400008
+        },
+        {
+          "trade_date": "2025-12-10",
+          "nav": 0.9231361501400008
+        },
+        {
+          "trade_date": "2025-12-11",
+          "nav": 0.9106677501400008
+        },
+        {
+          "trade_date": "2025-12-12",
+          "nav": 0.9159585736000008
+        },
+        {
+          "trade_date": "2025-12-15",
+          "nav": 0.9060760692200008
+        },
+        {
+          "trade_date": "2025-12-16",
+          "nav": 0.895763709220001
+        },
+        {
+          "trade_date": "2025-12-17",
+          "nav": 0.917401023220001
+        },
+        {
+          "trade_date": "2025-12-18",
+          "nav": 0.9128771832200008
+        },
+        {
+          "trade_date": "2025-12-19",
+          "nav": 0.909511521720001
+        },
+        {
+          "trade_date": "2025-12-22",
+          "nav": 0.936107081720001
+        },
+        {
+          "trade_date": "2025-12-23",
+          "nav": 0.945885561720001
+        },
+        {
+          "trade_date": "2025-12-24",
+          "nav": 0.9499608417200012
+        },
+        {
+          "trade_date": "2025-12-25",
+          "nav": 0.9472856017200012
+        },
+        {
+          "trade_date": "2025-12-26",
+          "nav": 0.9583660812200012
+        },
+        {
+          "trade_date": "2025-12-29",
+          "nav": 0.9653628080800012
+        },
+        {
+          "trade_date": "2025-12-30",
+          "nav": 0.9651828080800012
+        },
+        {
+          "trade_date": "2025-12-31",
+          "nav": 1.0045200205800011
+        },
+        {
+          "trade_date": "2026-01-05",
+          "nav": 1.0390484995800011
+        },
+        {
+          "trade_date": "2026-01-06",
+          "nav": 1.062413039580001
+        },
+        {
+          "trade_date": "2026-01-07",
+          "nav": 1.076659039580001
+        },
+        {
+          "trade_date": "2026-01-08",
+          "nav": 1.115513039580001
+        },
+        {
+          "trade_date": "2026-01-09",
+          "nav": 1.131843039580001
+        },
+        {
+          "trade_date": "2026-01-12",
+          "nav": 1.203667039580001
+        },
+        {
+          "trade_date": "2026-01-13",
+          "nav": 1.203435893080001
+        },
+        {
+          "trade_date": "2026-01-14",
+          "nav": 1.2905496050800012
+        },
+        {
+          "trade_date": "2026-01-15",
+          "nav": 1.219017605080001
+        },
+        {
+          "trade_date": "2026-01-16",
+          "nav": 1.127405696080001
+        },
+        {
+          "trade_date": "2026-01-19",
+          "nav": 1.129553630080001
+        },
+        {
+          "trade_date": "2026-01-20",
+          "nav": 1.1334408700800012
+        },
+        {
+          "trade_date": "2026-01-21",
+          "nav": 1.1321008700800013
+        },
+        {
+          "trade_date": "2026-01-22",
+          "nav": 1.1359368700800012
+        },
+        {
+          "trade_date": "2026-01-23",
+          "nav": 1.1474868700800012
+        },
+        {
+          "trade_date": "2026-01-26",
+          "nav": 1.1651068700800011
+        },
+        {
+          "trade_date": "2026-01-27",
+          "nav": 1.1527573810800011
+        },
+        {
+          "trade_date": "2026-01-28",
+          "nav": 1.1807652210800013
+        },
+        {
+          "trade_date": "2026-01-29",
+          "nav": 1.1991972210800013
+        },
+        {
+          "trade_date": "2026-01-30",
+          "nav": 1.1601074540800012
+        },
+        {
+          "trade_date": "2026-02-02",
+          "nav": 1.0929696715800012
+        },
+        {
+          "trade_date": "2026-02-03",
+          "nav": 1.1037535405800012
+        },
+        {
+          "trade_date": "2026-02-04",
+          "nav": 1.0929575405800012
+        },
+        {
+          "trade_date": "2026-02-05",
+          "nav": 1.053991540580001
+        },
+        {
+          "trade_date": "2026-02-06",
+          "nav": 1.0455155405800012
+        },
+        {
+          "trade_date": "2026-02-09",
+          "nav": 1.0603895405800012
+        },
+        {
+          "trade_date": "2026-02-10",
+          "nav": 1.0588308680800014
+        },
+        {
+          "trade_date": "2026-02-11",
+          "nav": 1.0734327715800012
+        },
+        {
+          "trade_date": "2026-02-12",
+          "nav": 1.0725587715800011
+        },
+        {
+          "trade_date": "2026-02-13",
+          "nav": 1.0383934715800012
+        },
+        {
+          "trade_date": "2026-02-24",
+          "nav": 1.080160466080001
+        },
+        {
+          "trade_date": "2026-02-25",
+          "nav": 1.1643022590800012
+        },
+        {
+          "trade_date": "2026-02-26",
+          "nav": 1.2137082590800012
+        },
+        {
+          "trade_date": "2026-02-27",
+          "nav": 1.2522602590800012
+        },
+        {
+          "trade_date": "2026-03-02",
+          "nav": 1.2373502590800012
+        },
+        {
+          "trade_date": "2026-03-03",
+          "nav": 1.1377682590800011
+        },
+        {
+          "trade_date": "2026-03-04",
+          "nav": 1.136084259080001
+        },
+        {
+          "trade_date": "2026-03-05",
+          "nav": 1.1458301825800012
+        },
+        {
+          "trade_date": "2026-03-06",
+          "nav": 1.1430001825800011
+        },
+        {
+          "trade_date": "2026-03-09",
+          "nav": 1.1474672098200014
+        },
+        {
+          "trade_date": "2026-03-10",
+          "nav": 1.1856841698200014
+        },
+        {
+          "trade_date": "2026-03-11",
+          "nav": 1.1814173508200012
+        },
+        {
+          "trade_date": "2026-03-12",
+          "nav": 1.1634107108200014
+        },
+        {
+          "trade_date": "2026-03-13",
+          "nav": 1.1946115108200013
+        },
+        {
+          "trade_date": "2026-03-16",
+          "nav": 1.2543534308200013
+        },
+        {
+          "trade_date": "2026-03-17",
+          "nav": 1.2501827908200012
+        },
+        {
+          "trade_date": "2026-03-18",
+          "nav": 1.3065545508200012
+        },
+        {
+          "trade_date": "2026-03-19",
+          "nav": 1.2485140158200012
+        },
+        {
+          "trade_date": "2026-03-20",
+          "nav": 1.2126652958200013
+        },
+        {
+          "trade_date": "2026-03-23",
+          "nav": 1.1783300808450012
+        },
+        {
+          "trade_date": "2026-03-24",
+          "nav": 1.1887338708450013
+        },
+        {
+          "trade_date": "2026-03-25",
+          "nav": 1.215366536715001
+        },
+        {
+          "trade_date": "2026-03-26",
+          "nav": 1.2069459567150012
+        },
+        {
+          "trade_date": "2026-03-27",
+          "nav": 1.1974867567150012
+        },
+        {
+          "trade_date": "2026-03-30",
+          "nav": 1.1952945367150012
+        },
+        {
+          "trade_date": "2026-03-31",
+          "nav": 1.1730616167150012
+        },
+        {
+          "trade_date": "2026-04-01",
+          "nav": 1.2084351567150011
+        },
+        {
+          "trade_date": "2026-04-02",
+          "nav": 1.1902824567150012
+        },
+        {
+          "trade_date": "2026-04-03",
+          "nav": 1.1998502567150011
+        },
+        {
+          "trade_date": "2026-04-07",
+          "nav": 1.207334295365001
+        },
+        {
+          "trade_date": "2026-04-08",
+          "nav": 1.2265227853650014
+        },
+        {
+          "trade_date": "2026-04-09",
+          "nav": 1.2717103138650012
+        },
+        {
+          "trade_date": "2026-04-10",
+          "nav": 1.2624123138650014
+        },
+        {
+          "trade_date": "2026-04-13",
+          "nav": 1.2460823138650012
+        },
+        {
+          "trade_date": "2026-04-14",
+          "nav": 1.2533583138650013
+        },
+        {
+          "trade_date": "2026-04-15",
+          "nav": 1.2470603138650014
+        },
+        {
+          "trade_date": "2026-04-16",
+          "nav": 1.2071023138650012
+        },
+        {
+          "trade_date": "2026-04-17",
+          "nav": 1.2276603138650013
+        },
+        {
+          "trade_date": "2026-04-20",
+          "nav": 1.2597923138650011
+        },
+        {
+          "trade_date": "2026-04-21",
+          "nav": 1.2592440133650011
+        },
+        {
+          "trade_date": "2026-04-22",
+          "nav": 1.2858722108650011
+        },
+        {
+          "trade_date": "2026-04-23",
+          "nav": 1.289215511365001
+        },
+        {
+          "trade_date": "2026-04-24",
+          "nav": 1.2702255113650012
+        },
+        {
+          "trade_date": "2026-04-27",
+          "nav": 1.267077511365001
+        },
+        {
+          "trade_date": "2026-04-28",
+          "nav": 1.252793511365001
+        },
+        {
+          "trade_date": "2026-04-29",
+          "nav": 1.274235511365001
+        },
+        {
+          "trade_date": "2026-04-30",
+          "nav": 1.243535511365001
+        },
+        {
+          "trade_date": "2026-05-06",
+          "nav": 1.2681875113650012
+        },
+        {
+          "trade_date": "2026-05-07",
+          "nav": 1.284327511365001
+        },
+        {
+          "trade_date": "2026-05-08",
+          "nav": 1.2758783788650012
+        },
+        {
+          "trade_date": "2026-05-11",
+          "nav": 1.2846138848650013
+        },
+        {
+          "trade_date": "2026-05-12",
+          "nav": 1.2742397773650014
+        },
+        {
+          "trade_date": "2026-05-13",
+          "nav": 1.3067060623650013
+        },
+        {
+          "trade_date": "2026-05-14",
+          "nav": 1.2869880623650014
+        },
+        {
+          "trade_date": "2026-05-15",
+          "nav": 1.263066062365001
+        },
+        {
+          "trade_date": "2026-05-18",
+          "nav": 1.2759700623650012
+        },
+        {
+          "trade_date": "2026-05-19",
+          "nav": 1.2954660623650014
+        },
+        {
+          "trade_date": "2026-05-20",
+          "nav": 1.3160380623650012
+        },
+        {
+          "trade_date": "2026-05-21",
+          "nav": 1.3158560623650013
+        },
+        {
+          "trade_date": "2026-05-22",
+          "nav": 1.3530860623650014
+        },
+        {
+          "trade_date": "2026-05-25",
+          "nav": 1.3941420623650014
+        },
+        {
+          "trade_date": "2026-05-26",
+          "nav": 1.4095217022750013
+        },
+        {
+          "trade_date": "2026-05-27",
+          "nav": 1.4123122147750011
+        },
+        {
+          "trade_date": "2026-05-28",
+          "nav": 1.420426214775001
+        },
+        {
+          "trade_date": "2026-05-29",
+          "nav": 1.4132186947750012
+        },
+        {
+          "trade_date": "2026-06-01",
+          "nav": 1.383756214775001
+        },
+        {
+          "trade_date": "2026-06-02",
+          "nav": 1.4223075252750013
+        },
+        {
+          "trade_date": "2026-06-03",
+          "nav": 1.4342335252750014
+        },
+        {
+          "trade_date": "2026-06-04",
+          "nav": 1.4557475252750014
+        },
+        {
+          "trade_date": "2026-06-05",
+          "nav": 1.428420345275001
+        },
+        {
+          "trade_date": "2026-06-08",
+          "nav": 1.3819855252750013
+        },
+        {
+          "trade_date": "2026-06-09",
+          "nav": 1.4393037227750012
+        },
+        {
+          "trade_date": "2026-06-10",
+          "nav": 1.426354322775001
+        },
+        {
+          "trade_date": "2026-06-11",
+          "nav": 1.4525876952750012
+        },
+        {
+          "trade_date": "2026-06-12",
+          "nav": 1.418175695275001
+        },
+        {
+          "trade_date": "2026-06-15",
+          "nav": 1.4869936952750011
+        },
+        {
+          "trade_date": "2026-06-16",
+          "nav": 1.5434878882750012
+        },
+        {
+          "trade_date": "2026-06-17",
+          "nav": 1.572251828275001
+        }
+      ],
+      "drawdown_series": [
+        {
+          "trade_date": "2023-11-30",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2023-12-01",
+          "drawdown": -0.007816150104709596
+        },
+        {
+          "trade_date": "2023-12-04",
+          "drawdown": -0.014492865862967608
+        },
+        {
+          "trade_date": "2023-12-05",
+          "drawdown": -0.02599468927976889
+        },
+        {
+          "trade_date": "2023-12-06",
+          "drawdown": -0.0136565424454691
+        },
+        {
+          "trade_date": "2023-12-07",
+          "drawdown": -0.023179571829358148
+        },
+        {
+          "trade_date": "2023-12-08",
+          "drawdown": -0.014213608498018782
+        },
+        {
+          "trade_date": "2023-12-11",
+          "drawdown": -0.013764895573142644
+        },
+        {
+          "trade_date": "2023-12-12",
+          "drawdown": -0.020739165689703798
+        },
+        {
+          "trade_date": "2023-12-13",
+          "drawdown": -0.037139344273151464
+        },
+        {
+          "trade_date": "2023-12-14",
+          "drawdown": -0.03865311732756871
+        },
+        {
+          "trade_date": "2023-12-15",
+          "drawdown": -0.04139802353883881
+        },
+        {
+          "trade_date": "2023-12-18",
+          "drawdown": -0.03896249924339801
+        },
+        {
+          "trade_date": "2023-12-19",
+          "drawdown": -0.036667000528335714
+        },
+        {
+          "trade_date": "2023-12-20",
+          "drawdown": -0.038472370022284985
+        },
+        {
+          "trade_date": "2023-12-21",
+          "drawdown": -0.037580659502343905
+        },
+        {
+          "trade_date": "2023-12-22",
+          "drawdown": -0.043032925383206466
+        },
+        {
+          "trade_date": "2023-12-25",
+          "drawdown": -0.046144684326742125
+        },
+        {
+          "trade_date": "2023-12-26",
+          "drawdown": -0.04655706124854708
+        },
+        {
+          "trade_date": "2023-12-27",
+          "drawdown": -0.04271977293729323
+        },
+        {
+          "trade_date": "2023-12-28",
+          "drawdown": -0.03974841487087055
+        },
+        {
+          "trade_date": "2023-12-29",
+          "drawdown": -0.03662841362298985
+        },
+        {
+          "trade_date": "2024-01-02",
+          "drawdown": -0.050801161481836554
+        },
+        {
+          "trade_date": "2024-01-03",
+          "drawdown": -0.054450598015332696
+        },
+        {
+          "trade_date": "2024-01-04",
+          "drawdown": -0.04952632541558344
+        },
+        {
+          "trade_date": "2024-01-05",
+          "drawdown": -0.05970880066624695
+        },
+        {
+          "trade_date": "2024-01-08",
+          "drawdown": -0.05794028314264377
+        },
+        {
+          "trade_date": "2024-01-09",
+          "drawdown": -0.061247573838371094
+        },
+        {
+          "trade_date": "2024-01-10",
+          "drawdown": -0.064718207866311
+        },
+        {
+          "trade_date": "2024-01-11",
+          "drawdown": -0.0620597857082279
+        },
+        {
+          "trade_date": "2024-01-12",
+          "drawdown": -0.06367861843647615
+        },
+        {
+          "trade_date": "2024-01-15",
+          "drawdown": -0.061161670342631425
+        },
+        {
+          "trade_date": "2024-01-16",
+          "drawdown": -0.06132781180506397
+        },
+        {
+          "trade_date": "2024-01-17",
+          "drawdown": -0.06336096100586952
+        },
+        {
+          "trade_date": "2024-01-18",
+          "drawdown": -0.053697290849852086
+        },
+        {
+          "trade_date": "2024-01-19",
+          "drawdown": -0.06720886633604384
+        },
+        {
+          "trade_date": "2024-01-22",
+          "drawdown": -0.08427571432811076
+        },
+        {
+          "trade_date": "2024-01-23",
+          "drawdown": -0.08412747296112877
+        },
+        {
+          "trade_date": "2024-01-24",
+          "drawdown": -0.08105764628110501
+        },
+        {
+          "trade_date": "2024-01-25",
+          "drawdown": -0.055423300607983395
+        },
+        {
+          "trade_date": "2024-01-26",
+          "drawdown": -0.05419850289422645
+        },
+        {
+          "trade_date": "2024-01-29",
+          "drawdown": -0.06579689008259826
+        },
+        {
+          "trade_date": "2024-01-30",
+          "drawdown": -0.07380976263321015
+        },
+        {
+          "trade_date": "2024-01-31",
+          "drawdown": -0.07779181945478952
+        },
+        {
+          "trade_date": "2024-02-01",
+          "drawdown": -0.08048038600864849
+        },
+        {
+          "trade_date": "2024-02-02",
+          "drawdown": -0.08291243744743271
+        },
+        {
+          "trade_date": "2024-02-05",
+          "drawdown": -0.08995195757934016
+        },
+        {
+          "trade_date": "2024-02-06",
+          "drawdown": -0.07343927828512675
+        },
+        {
+          "trade_date": "2024-02-07",
+          "drawdown": -0.07135026570439429
+        },
+        {
+          "trade_date": "2024-02-08",
+          "drawdown": -0.059055698259905975
+        },
+        {
+          "trade_date": "2024-02-19",
+          "drawdown": -0.05946650302942502
+        },
+        {
+          "trade_date": "2024-02-20",
+          "drawdown": -0.06073452310844529
+        },
+        {
+          "trade_date": "2024-02-21",
+          "drawdown": -0.0708231518498107
+        },
+        {
+          "trade_date": "2024-02-22",
+          "drawdown": -0.06584609182888723
+        },
+        {
+          "trade_date": "2024-02-23",
+          "drawdown": -0.06382171407175041
+        },
+        {
+          "trade_date": "2024-02-26",
+          "drawdown": -0.0614045264594546
+        },
+        {
+          "trade_date": "2024-02-27",
+          "drawdown": -0.04831701653832765
+        },
+        {
+          "trade_date": "2024-02-28",
+          "drawdown": -0.06434871510810491
+        },
+        {
+          "trade_date": "2024-02-29",
+          "drawdown": -0.053944989121098796
+        },
+        {
+          "trade_date": "2024-03-01",
+          "drawdown": -0.04709770648878353
+        },
+        {
+          "trade_date": "2024-03-04",
+          "drawdown": -0.02811760325214263
+        },
+        {
+          "trade_date": "2024-03-05",
+          "drawdown": -0.03979034833003714
+        },
+        {
+          "trade_date": "2024-03-06",
+          "drawdown": -0.03673012657927954
+        },
+        {
+          "trade_date": "2024-03-07",
+          "drawdown": -0.050998268849248074
+        },
+        {
+          "trade_date": "2024-03-08",
+          "drawdown": -0.02817509149239683
+        },
+        {
+          "trade_date": "2024-03-11",
+          "drawdown": -0.012720641233565533
+        },
+        {
+          "trade_date": "2024-03-12",
+          "drawdown": -0.02193442761589126
+        },
+        {
+          "trade_date": "2024-03-13",
+          "drawdown": -0.026831592088827017
+        },
+        {
+          "trade_date": "2024-03-14",
+          "drawdown": -0.031717286212349594
+        },
+        {
+          "trade_date": "2024-03-15",
+          "drawdown": -0.026558645400544867
+        },
+        {
+          "trade_date": "2024-03-18",
+          "drawdown": -0.022779041709666714
+        },
+        {
+          "trade_date": "2024-03-19",
+          "drawdown": -0.025190682093297
+        },
+        {
+          "trade_date": "2024-03-20",
+          "drawdown": -0.027336093866126232
+        },
+        {
+          "trade_date": "2024-03-21",
+          "drawdown": -0.018838291456937717
+        },
+        {
+          "trade_date": "2024-03-22",
+          "drawdown": -0.029911544517468802
+        },
+        {
+          "trade_date": "2024-03-25",
+          "drawdown": -0.01170954867630869
+        },
+        {
+          "trade_date": "2024-03-26",
+          "drawdown": -0.024153667250860544
+        },
+        {
+          "trade_date": "2024-03-27",
+          "drawdown": -0.02230620673423822
+        },
+        {
+          "trade_date": "2024-03-28",
+          "drawdown": -0.004794634641225648
+        },
+        {
+          "trade_date": "2024-03-29",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2024-04-01",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2024-04-02",
+          "drawdown": -0.00667585191450093
+        },
+        {
+          "trade_date": "2024-04-03",
+          "drawdown": -0.01373835074556995
+        },
+        {
+          "trade_date": "2024-04-08",
+          "drawdown": -0.004570187224419375
+        },
+        {
+          "trade_date": "2024-04-09",
+          "drawdown": -0.008951802728848879
+        },
+        {
+          "trade_date": "2024-04-10",
+          "drawdown": -0.0045446579786729835
+        },
+        {
+          "trade_date": "2024-04-11",
+          "drawdown": -0.01035905601043563
+        },
+        {
+          "trade_date": "2024-04-12",
+          "drawdown": -0.014454068130905995
+        },
+        {
+          "trade_date": "2024-04-15",
+          "drawdown": -0.0032358104660757947
+        },
+        {
+          "trade_date": "2024-04-16",
+          "drawdown": -0.0051875574388812185
+        },
+        {
+          "trade_date": "2024-04-17",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2024-04-18",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2024-04-19",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2024-04-22",
+          "drawdown": -0.002701426176397681
+        },
+        {
+          "trade_date": "2024-04-23",
+          "drawdown": -0.013555578781567212
+        },
+        {
+          "trade_date": "2024-04-24",
+          "drawdown": -0.00955288624234174
+        },
+        {
+          "trade_date": "2024-04-25",
+          "drawdown": -0.007378490979937369
+        },
+        {
+          "trade_date": "2024-04-26",
+          "drawdown": -0.007374495676769732
+        },
+        {
+          "trade_date": "2024-04-29",
+          "drawdown": -0.007941052939578919
+        },
+        {
+          "trade_date": "2024-04-30",
+          "drawdown": -0.01422967952042331
+        },
+        {
+          "trade_date": "2024-05-06",
+          "drawdown": -0.007939557498573002
+        },
+        {
+          "trade_date": "2024-05-07",
+          "drawdown": -0.015779935761010888
+        },
+        {
+          "trade_date": "2024-05-08",
+          "drawdown": -0.019294347948035973
+        },
+        {
+          "trade_date": "2024-05-09",
+          "drawdown": -0.0038739129261941008
+        },
+        {
+          "trade_date": "2024-05-10",
+          "drawdown": -0.006063048142032734
+        },
+        {
+          "trade_date": "2024-05-13",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2024-05-14",
+          "drawdown": -0.001073423299529086
+        },
+        {
+          "trade_date": "2024-05-15",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2024-05-16",
+          "drawdown": -0.0035838920403927776
+        },
+        {
+          "trade_date": "2024-05-17",
+          "drawdown": -0.0001275603015827853
+        },
+        {
+          "trade_date": "2024-05-20",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2024-05-21",
+          "drawdown": -0.01687439383513778
+        },
+        {
+          "trade_date": "2024-05-22",
+          "drawdown": -0.022774992532309857
+        },
+        {
+          "trade_date": "2024-05-23",
+          "drawdown": -0.027533460615341787
+        },
+        {
+          "trade_date": "2024-05-24",
+          "drawdown": -0.039780596443376615
+        },
+        {
+          "trade_date": "2024-05-27",
+          "drawdown": -0.025351101300049916
+        },
+        {
+          "trade_date": "2024-05-28",
+          "drawdown": -0.033641567615644075
+        },
+        {
+          "trade_date": "2024-05-29",
+          "drawdown": -0.025671759306903463
+        },
+        {
+          "trade_date": "2024-05-30",
+          "drawdown": -0.04549067368861326
+        },
+        {
+          "trade_date": "2024-05-31",
+          "drawdown": -0.04674017655765228
+        },
+        {
+          "trade_date": "2024-06-03",
+          "drawdown": -0.0536164232059444
+        },
+        {
+          "trade_date": "2024-06-04",
+          "drawdown": -0.043022462534932915
+        },
+        {
+          "trade_date": "2024-06-05",
+          "drawdown": -0.04142328005564222
+        },
+        {
+          "trade_date": "2024-06-06",
+          "drawdown": -0.038137293655585824
+        },
+        {
+          "trade_date": "2024-06-07",
+          "drawdown": -0.03262505084568024
+        },
+        {
+          "trade_date": "2024-06-11",
+          "drawdown": -0.038220538823532935
+        },
+        {
+          "trade_date": "2024-06-12",
+          "drawdown": -0.0275785356712529
+        },
+        {
+          "trade_date": "2024-06-13",
+          "drawdown": -0.03322770977655509
+        },
+        {
+          "trade_date": "2024-06-14",
+          "drawdown": -0.04951777377157318
+        },
+        {
+          "trade_date": "2024-06-17",
+          "drawdown": -0.046404611787517536
+        },
+        {
+          "trade_date": "2024-06-18",
+          "drawdown": -0.04710160188451462
+        },
+        {
+          "trade_date": "2024-06-19",
+          "drawdown": -0.04922319207845016
+        },
+        {
+          "trade_date": "2024-06-20",
+          "drawdown": -0.05682395384715855
+        },
+        {
+          "trade_date": "2024-06-21",
+          "drawdown": -0.05312212549100925
+        },
+        {
+          "trade_date": "2024-06-24",
+          "drawdown": -0.05951570756230018
+        },
+        {
+          "trade_date": "2024-06-25",
+          "drawdown": -0.0619793000343275
+        },
+        {
+          "trade_date": "2024-06-26",
+          "drawdown": -0.04140160124420533
+        },
+        {
+          "trade_date": "2024-06-27",
+          "drawdown": -0.04843893699033586
+        },
+        {
+          "trade_date": "2024-06-28",
+          "drawdown": -0.04697104271689223
+        },
+        {
+          "trade_date": "2024-07-01",
+          "drawdown": -0.04498171929139627
+        },
+        {
+          "trade_date": "2024-07-02",
+          "drawdown": -0.04842380668201274
+        },
+        {
+          "trade_date": "2024-07-03",
+          "drawdown": -0.05131309243294435
+        },
+        {
+          "trade_date": "2024-07-04",
+          "drawdown": -0.05264896912161976
+        },
+        {
+          "trade_date": "2024-07-05",
+          "drawdown": -0.05380415177961595
+        },
+        {
+          "trade_date": "2024-07-08",
+          "drawdown": -0.04715655390186613
+        },
+        {
+          "trade_date": "2024-07-09",
+          "drawdown": -0.042072859596630985
+        },
+        {
+          "trade_date": "2024-07-10",
+          "drawdown": -0.04595914404315882
+        },
+        {
+          "trade_date": "2024-07-11",
+          "drawdown": -0.04648395137126804
+        },
+        {
+          "trade_date": "2024-07-12",
+          "drawdown": -0.042547589303533306
+        },
+        {
+          "trade_date": "2024-07-15",
+          "drawdown": -0.03847740539790889
+        },
+        {
+          "trade_date": "2024-07-16",
+          "drawdown": -0.036414195834893914
+        },
+        {
+          "trade_date": "2024-07-17",
+          "drawdown": -0.04753897512076177
+        },
+        {
+          "trade_date": "2024-07-18",
+          "drawdown": -0.045886212350742195
+        },
+        {
+          "trade_date": "2024-07-19",
+          "drawdown": -0.060505749091450345
+        },
+        {
+          "trade_date": "2024-07-22",
+          "drawdown": -0.04253876617946917
+        },
+        {
+          "trade_date": "2024-07-23",
+          "drawdown": -0.06059997333158229
+        },
+        {
+          "trade_date": "2024-07-24",
+          "drawdown": -0.07527405993793623
+        },
+        {
+          "trade_date": "2024-07-25",
+          "drawdown": -0.06755732692072969
+        },
+        {
+          "trade_date": "2024-07-26",
+          "drawdown": -0.06710618686367886
+        },
+        {
+          "trade_date": "2024-07-29",
+          "drawdown": -0.07005458598823278
+        },
+        {
+          "trade_date": "2024-07-30",
+          "drawdown": -0.08364603992390351
+        },
+        {
+          "trade_date": "2024-07-31",
+          "drawdown": -0.08501619465792098
+        },
+        {
+          "trade_date": "2024-08-01",
+          "drawdown": -0.0820342778847446
+        },
+        {
+          "trade_date": "2024-08-02",
+          "drawdown": -0.08686510803444925
+        },
+        {
+          "trade_date": "2024-08-05",
+          "drawdown": -0.09878285250275565
+        },
+        {
+          "trade_date": "2024-08-06",
+          "drawdown": -0.10087344443322965
+        },
+        {
+          "trade_date": "2024-08-07",
+          "drawdown": -0.0887549480139066
+        },
+        {
+          "trade_date": "2024-08-08",
+          "drawdown": -0.10354059120686632
+        },
+        {
+          "trade_date": "2024-08-09",
+          "drawdown": -0.10655812777549334
+        },
+        {
+          "trade_date": "2024-08-12",
+          "drawdown": -0.10991655301895142
+        },
+        {
+          "trade_date": "2024-08-13",
+          "drawdown": -0.1084747052506736
+        },
+        {
+          "trade_date": "2024-08-14",
+          "drawdown": -0.11249054389583535
+        },
+        {
+          "trade_date": "2024-08-15",
+          "drawdown": -0.12120591278120219
+        },
+        {
+          "trade_date": "2024-08-16",
+          "drawdown": -0.13385409185089858
+        },
+        {
+          "trade_date": "2024-08-19",
+          "drawdown": -0.11982439232739484
+        },
+        {
+          "trade_date": "2024-08-20",
+          "drawdown": -0.1238000064976087
+        },
+        {
+          "trade_date": "2024-08-21",
+          "drawdown": -0.1241627957342627
+        },
+        {
+          "trade_date": "2024-08-22",
+          "drawdown": -0.13112824926827382
+        },
+        {
+          "trade_date": "2024-08-23",
+          "drawdown": -0.14295209579754464
+        },
+        {
+          "trade_date": "2024-08-26",
+          "drawdown": -0.1457678823176839
+        },
+        {
+          "trade_date": "2024-08-27",
+          "drawdown": -0.14993553428022233
+        },
+        {
+          "trade_date": "2024-08-28",
+          "drawdown": -0.15356955957663931
+        },
+        {
+          "trade_date": "2024-08-29",
+          "drawdown": -0.17096588978928695
+        },
+        {
+          "trade_date": "2024-08-30",
+          "drawdown": -0.18012719614863515
+        },
+        {
+          "trade_date": "2024-09-02",
+          "drawdown": -0.17296239183890372
+        },
+        {
+          "trade_date": "2024-09-03",
+          "drawdown": -0.18596533697711926
+        },
+        {
+          "trade_date": "2024-09-04",
+          "drawdown": -0.1885345550334705
+        },
+        {
+          "trade_date": "2024-09-05",
+          "drawdown": -0.19134398827932086
+        },
+        {
+          "trade_date": "2024-09-06",
+          "drawdown": -0.1908477227000558
+        },
+        {
+          "trade_date": "2024-09-09",
+          "drawdown": -0.19394741036824792
+        },
+        {
+          "trade_date": "2024-09-10",
+          "drawdown": -0.18820406960536018
+        },
+        {
+          "trade_date": "2024-09-11",
+          "drawdown": -0.19060661667497325
+        },
+        {
+          "trade_date": "2024-09-12",
+          "drawdown": -0.19147176033173252
+        },
+        {
+          "trade_date": "2024-09-13",
+          "drawdown": -0.19015540412629506
+        },
+        {
+          "trade_date": "2024-09-18",
+          "drawdown": -0.18776355950711232
+        },
+        {
+          "trade_date": "2024-09-19",
+          "drawdown": -0.18586755819518752
+        },
+        {
+          "trade_date": "2024-09-20",
+          "drawdown": -0.18726537450963288
+        },
+        {
+          "trade_date": "2024-09-23",
+          "drawdown": -0.18404098224006815
+        },
+        {
+          "trade_date": "2024-09-24",
+          "drawdown": -0.175530972869141
+        },
+        {
+          "trade_date": "2024-09-25",
+          "drawdown": -0.17037460939031845
+        },
+        {
+          "trade_date": "2024-09-26",
+          "drawdown": -0.1606341185848542
+        },
+        {
+          "trade_date": "2024-09-27",
+          "drawdown": -0.15084975068037187
+        },
+        {
+          "trade_date": "2024-09-30",
+          "drawdown": -0.12580916510935436
+        },
+        {
+          "trade_date": "2024-10-08",
+          "drawdown": -0.10050733662805111
+        },
+        {
+          "trade_date": "2024-10-09",
+          "drawdown": -0.13556266957031038
+        },
+        {
+          "trade_date": "2024-10-10",
+          "drawdown": -0.13224203767148857
+        },
+        {
+          "trade_date": "2024-10-11",
+          "drawdown": -0.14868285277304516
+        },
+        {
+          "trade_date": "2024-10-14",
+          "drawdown": -0.14304692265342045
+        },
+        {
+          "trade_date": "2024-10-15",
+          "drawdown": -0.15216329543237583
+        },
+        {
+          "trade_date": "2024-10-16",
+          "drawdown": -0.154274290778466
+        },
+        {
+          "trade_date": "2024-10-17",
+          "drawdown": -0.15637471013019644
+        },
+        {
+          "trade_date": "2024-10-18",
+          "drawdown": -0.14242508249647734
+        },
+        {
+          "trade_date": "2024-10-21",
+          "drawdown": -0.12495232256688327
+        },
+        {
+          "trade_date": "2024-10-22",
+          "drawdown": -0.1243158050987111
+        },
+        {
+          "trade_date": "2024-10-23",
+          "drawdown": -0.14312280219792728
+        },
+        {
+          "trade_date": "2024-10-24",
+          "drawdown": -0.13498723293221382
+        },
+        {
+          "trade_date": "2024-10-25",
+          "drawdown": -0.14027515333543328
+        },
+        {
+          "trade_date": "2024-10-28",
+          "drawdown": -0.12840762084760882
+        },
+        {
+          "trade_date": "2024-10-29",
+          "drawdown": -0.12203265713299483
+        },
+        {
+          "trade_date": "2024-10-30",
+          "drawdown": -0.10154939371900829
+        },
+        {
+          "trade_date": "2024-10-31",
+          "drawdown": -0.09960352592188038
+        },
+        {
+          "trade_date": "2024-11-01",
+          "drawdown": -0.1263968974301638
+        },
+        {
+          "trade_date": "2024-11-04",
+          "drawdown": -0.12726436395245033
+        },
+        {
+          "trade_date": "2024-11-05",
+          "drawdown": -0.10003839548820326
+        },
+        {
+          "trade_date": "2024-11-06",
+          "drawdown": -0.10684605365083011
+        },
+        {
+          "trade_date": "2024-11-07",
+          "drawdown": -0.1044475678446265
+        },
+        {
+          "trade_date": "2024-11-08",
+          "drawdown": -0.10943671160863333
+        },
+        {
+          "trade_date": "2024-11-11",
+          "drawdown": -0.1062280393742423
+        },
+        {
+          "trade_date": "2024-11-12",
+          "drawdown": -0.11336990663631463
+        },
+        {
+          "trade_date": "2024-11-13",
+          "drawdown": -0.11470539944134706
+        },
+        {
+          "trade_date": "2024-11-14",
+          "drawdown": -0.12629728427943943
+        },
+        {
+          "trade_date": "2024-11-15",
+          "drawdown": -0.11860286109200513
+        },
+        {
+          "trade_date": "2024-11-18",
+          "drawdown": -0.14850645876220747
+        },
+        {
+          "trade_date": "2024-11-19",
+          "drawdown": -0.14949016059695286
+        },
+        {
+          "trade_date": "2024-11-20",
+          "drawdown": -0.1310347241378379
+        },
+        {
+          "trade_date": "2024-11-21",
+          "drawdown": -0.12880973454401012
+        },
+        {
+          "trade_date": "2024-11-22",
+          "drawdown": -0.14304657768118367
+        },
+        {
+          "trade_date": "2024-11-25",
+          "drawdown": -0.14523909071882812
+        },
+        {
+          "trade_date": "2024-11-26",
+          "drawdown": -0.16192996762532252
+        },
+        {
+          "trade_date": "2024-11-27",
+          "drawdown": -0.1410234724951187
+        },
+        {
+          "trade_date": "2024-11-28",
+          "drawdown": -0.1483297763155964
+        },
+        {
+          "trade_date": "2024-11-29",
+          "drawdown": -0.1410366350782697
+        },
+        {
+          "trade_date": "2024-12-02",
+          "drawdown": -0.12163498696653607
+        },
+        {
+          "trade_date": "2024-12-03",
+          "drawdown": -0.11595101380901152
+        },
+        {
+          "trade_date": "2024-12-04",
+          "drawdown": -0.11102357934058915
+        },
+        {
+          "trade_date": "2024-12-05",
+          "drawdown": -0.09950889350306935
+        },
+        {
+          "trade_date": "2024-12-06",
+          "drawdown": -0.09707996572398947
+        },
+        {
+          "trade_date": "2024-12-09",
+          "drawdown": -0.11781572860404588
+        },
+        {
+          "trade_date": "2024-12-10",
+          "drawdown": -0.12108948831007826
+        },
+        {
+          "trade_date": "2024-12-11",
+          "drawdown": -0.14482722127704517
+        },
+        {
+          "trade_date": "2024-12-12",
+          "drawdown": -0.12542046356845737
+        },
+        {
+          "trade_date": "2024-12-13",
+          "drawdown": -0.15085105202192817
+        },
+        {
+          "trade_date": "2024-12-16",
+          "drawdown": -0.16072498023940374
+        },
+        {
+          "trade_date": "2024-12-17",
+          "drawdown": -0.16247575836924677
+        },
+        {
+          "trade_date": "2024-12-18",
+          "drawdown": -0.16860323229932983
+        },
+        {
+          "trade_date": "2024-12-19",
+          "drawdown": -0.1690112622232911
+        },
+        {
+          "trade_date": "2024-12-20",
+          "drawdown": -0.1688278042303839
+        },
+        {
+          "trade_date": "2024-12-23",
+          "drawdown": -0.17777997078111984
+        },
+        {
+          "trade_date": "2024-12-24",
+          "drawdown": -0.18126081651827552
+        },
+        {
+          "trade_date": "2024-12-25",
+          "drawdown": -0.1889885286076668
+        },
+        {
+          "trade_date": "2024-12-26",
+          "drawdown": -0.17284343827036242
+        },
+        {
+          "trade_date": "2024-12-27",
+          "drawdown": -0.17399482319627146
+        },
+        {
+          "trade_date": "2024-12-30",
+          "drawdown": -0.16164273975121746
+        },
+        {
+          "trade_date": "2024-12-31",
+          "drawdown": -0.18738081360422965
+        },
+        {
+          "trade_date": "2025-01-02",
+          "drawdown": -0.21903249980990558
+        },
+        {
+          "trade_date": "2025-01-03",
+          "drawdown": -0.242699156720403
+        },
+        {
+          "trade_date": "2025-01-06",
+          "drawdown": -0.2473019791804505
+        },
+        {
+          "trade_date": "2025-01-07",
+          "drawdown": -0.23030054040690873
+        },
+        {
+          "trade_date": "2025-01-08",
+          "drawdown": -0.23508246378051734
+        },
+        {
+          "trade_date": "2025-01-09",
+          "drawdown": -0.22681362930819637
+        },
+        {
+          "trade_date": "2025-01-10",
+          "drawdown": -0.2066109272545702
+        },
+        {
+          "trade_date": "2025-01-13",
+          "drawdown": -0.21987213940348205
+        },
+        {
+          "trade_date": "2025-01-14",
+          "drawdown": -0.2087476775701924
+        },
+        {
+          "trade_date": "2025-01-15",
+          "drawdown": -0.21346776880545082
+        },
+        {
+          "trade_date": "2025-01-16",
+          "drawdown": -0.20588314934392338
+        },
+        {
+          "trade_date": "2025-01-17",
+          "drawdown": -0.20590838969343928
+        },
+        {
+          "trade_date": "2025-01-20",
+          "drawdown": -0.20504259771958844
+        },
+        {
+          "trade_date": "2025-01-21",
+          "drawdown": -0.20911773372420528
+        },
+        {
+          "trade_date": "2025-01-22",
+          "drawdown": -0.20898400785722637
+        },
+        {
+          "trade_date": "2025-01-23",
+          "drawdown": -0.21465681000074444
+        },
+        {
+          "trade_date": "2025-01-24",
+          "drawdown": -0.20906466181058447
+        },
+        {
+          "trade_date": "2025-01-27",
+          "drawdown": -0.2134140059012728
+        },
+        {
+          "trade_date": "2025-02-05",
+          "drawdown": -0.20330434038662526
+        },
+        {
+          "trade_date": "2025-02-06",
+          "drawdown": -0.19461761958587165
+        },
+        {
+          "trade_date": "2025-02-07",
+          "drawdown": -0.19577309015660016
+        },
+        {
+          "trade_date": "2025-02-10",
+          "drawdown": -0.1965610881102321
+        },
+        {
+          "trade_date": "2025-02-11",
+          "drawdown": -0.1995841717974981
+        },
+        {
+          "trade_date": "2025-02-12",
+          "drawdown": -0.19818257422917085
+        },
+        {
+          "trade_date": "2025-02-13",
+          "drawdown": -0.2045893618977752
+        },
+        {
+          "trade_date": "2025-02-14",
+          "drawdown": -0.20070564947165426
+        },
+        {
+          "trade_date": "2025-02-17",
+          "drawdown": -0.19365731545915676
+        },
+        {
+          "trade_date": "2025-02-18",
+          "drawdown": -0.19601102123842462
+        },
+        {
+          "trade_date": "2025-02-19",
+          "drawdown": -0.17577028502035597
+        },
+        {
+          "trade_date": "2025-02-20",
+          "drawdown": -0.1808259851771663
+        },
+        {
+          "trade_date": "2025-02-21",
+          "drawdown": -0.16702035853598096
+        },
+        {
+          "trade_date": "2025-02-24",
+          "drawdown": -0.18016297973763917
+        },
+        {
+          "trade_date": "2025-02-25",
+          "drawdown": -0.18355547465439803
+        },
+        {
+          "trade_date": "2025-02-26",
+          "drawdown": -0.18330076785738214
+        },
+        {
+          "trade_date": "2025-02-27",
+          "drawdown": -0.19051328890391672
+        },
+        {
+          "trade_date": "2025-02-28",
+          "drawdown": -0.20765108314739078
+        },
+        {
+          "trade_date": "2025-03-03",
+          "drawdown": -0.20859823925933896
+        },
+        {
+          "trade_date": "2025-03-04",
+          "drawdown": -0.20567435110537946
+        },
+        {
+          "trade_date": "2025-03-05",
+          "drawdown": -0.21034297274774494
+        },
+        {
+          "trade_date": "2025-03-06",
+          "drawdown": -0.2046117811439826
+        },
+        {
+          "trade_date": "2025-03-07",
+          "drawdown": -0.20038686581507492
+        },
+        {
+          "trade_date": "2025-03-10",
+          "drawdown": -0.19732719801664755
+        },
+        {
+          "trade_date": "2025-03-11",
+          "drawdown": -0.1952638810189964
+        },
+        {
+          "trade_date": "2025-03-12",
+          "drawdown": -0.19592918976038065
+        },
+        {
+          "trade_date": "2025-03-13",
+          "drawdown": -0.21164972398289994
+        },
+        {
+          "trade_date": "2025-03-14",
+          "drawdown": -0.19732224591765501
+        },
+        {
+          "trade_date": "2025-03-17",
+          "drawdown": -0.18600261135905582
+        },
+        {
+          "trade_date": "2025-03-18",
+          "drawdown": -0.18165948618338112
+        },
+        {
+          "trade_date": "2025-03-19",
+          "drawdown": -0.1829346502535737
+        },
+        {
+          "trade_date": "2025-03-20",
+          "drawdown": -0.1836300362783735
+        },
+        {
+          "trade_date": "2025-03-21",
+          "drawdown": -0.18874517399854251
+        },
+        {
+          "trade_date": "2025-03-24",
+          "drawdown": -0.17879740522013365
+        },
+        {
+          "trade_date": "2025-03-25",
+          "drawdown": -0.19616456994019693
+        },
+        {
+          "trade_date": "2025-03-26",
+          "drawdown": -0.19853004175311761
+        },
+        {
+          "trade_date": "2025-03-27",
+          "drawdown": -0.2068311416456181
+        },
+        {
+          "trade_date": "2025-03-28",
+          "drawdown": -0.20564369356744205
+        },
+        {
+          "trade_date": "2025-03-31",
+          "drawdown": -0.20188750728746852
+        },
+        {
+          "trade_date": "2025-04-01",
+          "drawdown": -0.20653069511255906
+        },
+        {
+          "trade_date": "2025-04-02",
+          "drawdown": -0.21004358153001434
+        },
+        {
+          "trade_date": "2025-04-03",
+          "drawdown": -0.2125199957157119
+        },
+        {
+          "trade_date": "2025-04-07",
+          "drawdown": -0.24482586335871714
+        },
+        {
+          "trade_date": "2025-04-08",
+          "drawdown": -0.24015691694119257
+        },
+        {
+          "trade_date": "2025-04-09",
+          "drawdown": -0.24220783449718042
+        },
+        {
+          "trade_date": "2025-04-10",
+          "drawdown": -0.23880386145950105
+        },
+        {
+          "trade_date": "2025-04-11",
+          "drawdown": -0.23651633722025656
+        },
+        {
+          "trade_date": "2025-04-14",
+          "drawdown": -0.22619192100568752
+        },
+        {
+          "trade_date": "2025-04-15",
+          "drawdown": -0.22471441044699114
+        },
+        {
+          "trade_date": "2025-04-16",
+          "drawdown": -0.22071800897751814
+        },
+        {
+          "trade_date": "2025-04-17",
+          "drawdown": -0.22123257391095175
+        },
+        {
+          "trade_date": "2025-04-18",
+          "drawdown": -0.22409120184563058
+        },
+        {
+          "trade_date": "2025-04-21",
+          "drawdown": -0.20949317030978065
+        },
+        {
+          "trade_date": "2025-04-22",
+          "drawdown": -0.22494471726377074
+        },
+        {
+          "trade_date": "2025-04-23",
+          "drawdown": -0.23025175507240292
+        },
+        {
+          "trade_date": "2025-04-24",
+          "drawdown": -0.23980533293217443
+        },
+        {
+          "trade_date": "2025-04-25",
+          "drawdown": -0.22407449143384528
+        },
+        {
+          "trade_date": "2025-04-28",
+          "drawdown": -0.22237759137327295
+        },
+        {
+          "trade_date": "2025-04-29",
+          "drawdown": -0.22268164641257437
+        },
+        {
+          "trade_date": "2025-04-30",
+          "drawdown": -0.21827516124165114
+        },
+        {
+          "trade_date": "2025-05-06",
+          "drawdown": -0.1951157440113105
+        },
+        {
+          "trade_date": "2025-05-07",
+          "drawdown": -0.20368272171483337
+        },
+        {
+          "trade_date": "2025-05-08",
+          "drawdown": -0.20465207535139374
+        },
+        {
+          "trade_date": "2025-05-09",
+          "drawdown": -0.20820384359156174
+        },
+        {
+          "trade_date": "2025-05-12",
+          "drawdown": -0.20295289118314663
+        },
+        {
+          "trade_date": "2025-05-13",
+          "drawdown": -0.2104282957482897
+        },
+        {
+          "trade_date": "2025-05-14",
+          "drawdown": -0.20288141204885213
+        },
+        {
+          "trade_date": "2025-05-15",
+          "drawdown": -0.22012097384603968
+        },
+        {
+          "trade_date": "2025-05-16",
+          "drawdown": -0.21984691931342526
+        },
+        {
+          "trade_date": "2025-05-19",
+          "drawdown": -0.22558455940421707
+        },
+        {
+          "trade_date": "2025-05-20",
+          "drawdown": -0.22800528950165777
+        },
+        {
+          "trade_date": "2025-05-21",
+          "drawdown": -0.21779816893415482
+        },
+        {
+          "trade_date": "2025-05-22",
+          "drawdown": -0.228453374507111
+        },
+        {
+          "trade_date": "2025-05-23",
+          "drawdown": -0.22467313791691423
+        },
+        {
+          "trade_date": "2025-05-26",
+          "drawdown": -0.22799424967028947
+        },
+        {
+          "trade_date": "2025-05-27",
+          "drawdown": -0.23034012422324357
+        },
+        {
+          "trade_date": "2025-05-28",
+          "drawdown": -0.23968033955433177
+        },
+        {
+          "trade_date": "2025-05-29",
+          "drawdown": -0.2362746582344416
+        },
+        {
+          "trade_date": "2025-05-30",
+          "drawdown": -0.24635191096557618
+        },
+        {
+          "trade_date": "2025-06-03",
+          "drawdown": -0.25516812512420484
+        },
+        {
+          "trade_date": "2025-06-04",
+          "drawdown": -0.25496774379365095
+        },
+        {
+          "trade_date": "2025-06-05",
+          "drawdown": -0.25224984760243274
+        },
+        {
+          "trade_date": "2025-06-06",
+          "drawdown": -0.253754997178796
+        },
+        {
+          "trade_date": "2025-06-09",
+          "drawdown": -0.22897919773529574
+        },
+        {
+          "trade_date": "2025-06-10",
+          "drawdown": -0.23540924875265545
+        },
+        {
+          "trade_date": "2025-06-11",
+          "drawdown": -0.23976056984410443
+        },
+        {
+          "trade_date": "2025-06-12",
+          "drawdown": -0.22877573940459728
+        },
+        {
+          "trade_date": "2025-06-13",
+          "drawdown": -0.2262440267801502
+        },
+        {
+          "trade_date": "2025-06-16",
+          "drawdown": -0.2208293479980692
+        },
+        {
+          "trade_date": "2025-06-17",
+          "drawdown": -0.21765846910831455
+        },
+        {
+          "trade_date": "2025-06-18",
+          "drawdown": -0.20174534718015236
+        },
+        {
+          "trade_date": "2025-06-19",
+          "drawdown": -0.2421894083702374
+        },
+        {
+          "trade_date": "2025-06-20",
+          "drawdown": -0.24491020125145346
+        },
+        {
+          "trade_date": "2025-06-23",
+          "drawdown": -0.23877440005980777
+        },
+        {
+          "trade_date": "2025-06-24",
+          "drawdown": -0.2333640591628906
+        },
+        {
+          "trade_date": "2025-06-25",
+          "drawdown": -0.23556996973966982
+        },
+        {
+          "trade_date": "2025-06-26",
+          "drawdown": -0.23595638701453991
+        },
+        {
+          "trade_date": "2025-06-27",
+          "drawdown": -0.2480061106792506
+        },
+        {
+          "trade_date": "2025-06-30",
+          "drawdown": -0.24627967077236268
+        },
+        {
+          "trade_date": "2025-07-01",
+          "drawdown": -0.24705181433154577
+        },
+        {
+          "trade_date": "2025-07-02",
+          "drawdown": -0.24991292695310274
+        },
+        {
+          "trade_date": "2025-07-03",
+          "drawdown": -0.2512727368674902
+        },
+        {
+          "trade_date": "2025-07-04",
+          "drawdown": -0.25015879713254463
+        },
+        {
+          "trade_date": "2025-07-07",
+          "drawdown": -0.24833115066030464
+        },
+        {
+          "trade_date": "2025-07-08",
+          "drawdown": -0.23225218428047723
+        },
+        {
+          "trade_date": "2025-07-09",
+          "drawdown": -0.23230400857225897
+        },
+        {
+          "trade_date": "2025-07-10",
+          "drawdown": -0.23588180412341075
+        },
+        {
+          "trade_date": "2025-07-11",
+          "drawdown": -0.2378069805921903
+        },
+        {
+          "trade_date": "2025-07-14",
+          "drawdown": -0.23979549786203658
+        },
+        {
+          "trade_date": "2025-07-15",
+          "drawdown": -0.23184334820086605
+        },
+        {
+          "trade_date": "2025-07-16",
+          "drawdown": -0.23692596763190132
+        },
+        {
+          "trade_date": "2025-07-17",
+          "drawdown": -0.22226800797738266
+        },
+        {
+          "trade_date": "2025-07-18",
+          "drawdown": -0.22347206060183245
+        },
+        {
+          "trade_date": "2025-07-21",
+          "drawdown": -0.22231855983404636
+        },
+        {
+          "trade_date": "2025-07-22",
+          "drawdown": -0.2228090095761226
+        },
+        {
+          "trade_date": "2025-07-23",
+          "drawdown": -0.219468300562781
+        },
+        {
+          "trade_date": "2025-07-24",
+          "drawdown": -0.2135067603373102
+        },
+        {
+          "trade_date": "2025-07-25",
+          "drawdown": -0.21828025746495872
+        },
+        {
+          "trade_date": "2025-07-28",
+          "drawdown": -0.21761105230459976
+        },
+        {
+          "trade_date": "2025-07-29",
+          "drawdown": -0.21262707177558904
+        },
+        {
+          "trade_date": "2025-07-30",
+          "drawdown": -0.2210563120280653
+        },
+        {
+          "trade_date": "2025-07-31",
+          "drawdown": -0.22536132087860083
+        },
+        {
+          "trade_date": "2025-08-01",
+          "drawdown": -0.2282800376832238
+        },
+        {
+          "trade_date": "2025-08-04",
+          "drawdown": -0.22823556092436592
+        },
+        {
+          "trade_date": "2025-08-05",
+          "drawdown": -0.22814799706543676
+        },
+        {
+          "trade_date": "2025-08-06",
+          "drawdown": -0.22737934684740346
+        },
+        {
+          "trade_date": "2025-08-07",
+          "drawdown": -0.22892436334469102
+        },
+        {
+          "trade_date": "2025-08-08",
+          "drawdown": -0.23108800833239518
+        },
+        {
+          "trade_date": "2025-08-11",
+          "drawdown": -0.2275057981193509
+        },
+        {
+          "trade_date": "2025-08-12",
+          "drawdown": -0.22395149624714017
+        },
+        {
+          "trade_date": "2025-08-13",
+          "drawdown": -0.22433265431610339
+        },
+        {
+          "trade_date": "2025-08-14",
+          "drawdown": -0.20478083313062667
+        },
+        {
+          "trade_date": "2025-08-15",
+          "drawdown": -0.19052512048090275
+        },
+        {
+          "trade_date": "2025-08-18",
+          "drawdown": -0.15587734924932295
+        },
+        {
+          "trade_date": "2025-08-19",
+          "drawdown": -0.13489027694248956
+        },
+        {
+          "trade_date": "2025-08-20",
+          "drawdown": -0.1568509933326262
+        },
+        {
+          "trade_date": "2025-08-21",
+          "drawdown": -0.16601122481777442
+        },
+        {
+          "trade_date": "2025-08-22",
+          "drawdown": -0.14911270524887488
+        },
+        {
+          "trade_date": "2025-08-25",
+          "drawdown": -0.11581897595518653
+        },
+        {
+          "trade_date": "2025-08-26",
+          "drawdown": -0.08511623092039788
+        },
+        {
+          "trade_date": "2025-08-27",
+          "drawdown": -0.11025297024110303
+        },
+        {
+          "trade_date": "2025-08-28",
+          "drawdown": -0.06071785915656158
+        },
+        {
+          "trade_date": "2025-08-29",
+          "drawdown": -0.09268448446252253
+        },
+        {
+          "trade_date": "2025-09-01",
+          "drawdown": -0.07064305319669362
+        },
+        {
+          "trade_date": "2025-09-02",
+          "drawdown": -0.10127655713882555
+        },
+        {
+          "trade_date": "2025-09-03",
+          "drawdown": -0.10806170052580055
+        },
+        {
+          "trade_date": "2025-09-04",
+          "drawdown": -0.15469588545647817
+        },
+        {
+          "trade_date": "2025-09-05",
+          "drawdown": -0.13888947646305827
+        },
+        {
+          "trade_date": "2025-09-08",
+          "drawdown": -0.10516337902245343
+        },
+        {
+          "trade_date": "2025-09-09",
+          "drawdown": -0.12843440545065288
+        },
+        {
+          "trade_date": "2025-09-10",
+          "drawdown": -0.12485660989950109
+        },
+        {
+          "trade_date": "2025-09-11",
+          "drawdown": -0.10391262630025144
+        },
+        {
+          "trade_date": "2025-09-12",
+          "drawdown": -0.0986888336595666
+        },
+        {
+          "trade_date": "2025-09-15",
+          "drawdown": -0.10574552752054944
+        },
+        {
+          "trade_date": "2025-09-16",
+          "drawdown": -0.10476394712278525
+        },
+        {
+          "trade_date": "2025-09-17",
+          "drawdown": -0.10274610114262717
+        },
+        {
+          "trade_date": "2025-09-18",
+          "drawdown": -0.08740277098755
+        },
+        {
+          "trade_date": "2025-09-19",
+          "drawdown": -0.07775554471311086
+        },
+        {
+          "trade_date": "2025-09-22",
+          "drawdown": -0.038173705378998224
+        },
+        {
+          "trade_date": "2025-09-23",
+          "drawdown": -0.009305674632556826
+        },
+        {
+          "trade_date": "2025-09-24",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2025-09-25",
+          "drawdown": -0.0002916801976972083
+        },
+        {
+          "trade_date": "2025-09-26",
+          "drawdown": -0.025287822356765743
+        },
+        {
+          "trade_date": "2025-09-29",
+          "drawdown": -0.00989887922336119
+        },
+        {
+          "trade_date": "2025-09-30",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2025-10-09",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2025-10-10",
+          "drawdown": -0.043443573761301035
+        },
+        {
+          "trade_date": "2025-10-13",
+          "drawdown": -0.04368748478711759
+        },
+        {
+          "trade_date": "2025-10-14",
+          "drawdown": -0.07111036645837787
+        },
+        {
+          "trade_date": "2025-10-15",
+          "drawdown": -0.06845263634510879
+        },
+        {
+          "trade_date": "2025-10-16",
+          "drawdown": -0.07239500915915742
+        },
+        {
+          "trade_date": "2025-10-17",
+          "drawdown": -0.09677989838361334
+        },
+        {
+          "trade_date": "2025-10-20",
+          "drawdown": -0.09699550561396708
+        },
+        {
+          "trade_date": "2025-10-21",
+          "drawdown": -0.0897994105768104
+        },
+        {
+          "trade_date": "2025-10-22",
+          "drawdown": -0.08575959628426166
+        },
+        {
+          "trade_date": "2025-10-23",
+          "drawdown": -0.0890836557636514
+        },
+        {
+          "trade_date": "2025-10-24",
+          "drawdown": -0.06987108775410977
+        },
+        {
+          "trade_date": "2025-10-27",
+          "drawdown": -0.060089002218189136
+        },
+        {
+          "trade_date": "2025-10-28",
+          "drawdown": -0.05894571112668323
+        },
+        {
+          "trade_date": "2025-10-29",
+          "drawdown": -0.05793664920446262
+        },
+        {
+          "trade_date": "2025-10-30",
+          "drawdown": -0.061053767398758674
+        },
+        {
+          "trade_date": "2025-10-31",
+          "drawdown": -0.09173799136944294
+        },
+        {
+          "trade_date": "2025-11-03",
+          "drawdown": -0.08525411624872459
+        },
+        {
+          "trade_date": "2025-11-04",
+          "drawdown": -0.07724767534642718
+        },
+        {
+          "trade_date": "2025-11-05",
+          "drawdown": -0.08092058261032964
+        },
+        {
+          "trade_date": "2025-11-06",
+          "drawdown": -0.08998783924099152
+        },
+        {
+          "trade_date": "2025-11-07",
+          "drawdown": -0.07601342601926242
+        },
+        {
+          "trade_date": "2025-11-10",
+          "drawdown": -0.06862267646388542
+        },
+        {
+          "trade_date": "2025-11-11",
+          "drawdown": -0.05682270883736129
+        },
+        {
+          "trade_date": "2025-11-12",
+          "drawdown": -0.05543028111785375
+        },
+        {
+          "trade_date": "2025-11-13",
+          "drawdown": -0.034061101507751546
+        },
+        {
+          "trade_date": "2025-11-14",
+          "drawdown": -0.04889468090390903
+        },
+        {
+          "trade_date": "2025-11-17",
+          "drawdown": -0.049329837811816324
+        },
+        {
+          "trade_date": "2025-11-18",
+          "drawdown": -0.07182462050090499
+        },
+        {
+          "trade_date": "2025-11-19",
+          "drawdown": -0.07910328460870986
+        },
+        {
+          "trade_date": "2025-11-20",
+          "drawdown": -0.09397672456359607
+        },
+        {
+          "trade_date": "2025-11-21",
+          "drawdown": -0.13797166025875351
+        },
+        {
+          "trade_date": "2025-11-24",
+          "drawdown": -0.15352944953889602
+        },
+        {
+          "trade_date": "2025-11-25",
+          "drawdown": -0.14330698149288312
+        },
+        {
+          "trade_date": "2025-11-26",
+          "drawdown": -0.15072510502127046
+        },
+        {
+          "trade_date": "2025-11-27",
+          "drawdown": -0.15766529980892185
+        },
+        {
+          "trade_date": "2025-11-28",
+          "drawdown": -0.14595781337425195
+        },
+        {
+          "trade_date": "2025-12-01",
+          "drawdown": -0.14521488523446968
+        },
+        {
+          "trade_date": "2025-12-02",
+          "drawdown": -0.1517166152708379
+        },
+        {
+          "trade_date": "2025-12-03",
+          "drawdown": -0.1579905555430754
+        },
+        {
+          "trade_date": "2025-12-04",
+          "drawdown": -0.161107413387085
+        },
+        {
+          "trade_date": "2025-12-05",
+          "drawdown": -0.15688461588440983
+        },
+        {
+          "trade_date": "2025-12-08",
+          "drawdown": -0.14978681619100997
+        },
+        {
+          "trade_date": "2025-12-09",
+          "drawdown": -0.14302395714155547
+        },
+        {
+          "trade_date": "2025-12-10",
+          "drawdown": -0.14164728061439835
+        },
+        {
+          "trade_date": "2025-12-11",
+          "drawdown": -0.15324067888480986
+        },
+        {
+          "trade_date": "2025-12-12",
+          "drawdown": -0.14832115243793487
+        },
+        {
+          "trade_date": "2025-12-15",
+          "drawdown": -0.15751012690028976
+        },
+        {
+          "trade_date": "2025-12-16",
+          "drawdown": -0.16709879076958
+        },
+        {
+          "trade_date": "2025-12-17",
+          "drawdown": -0.14697993039423496
+        },
+        {
+          "trade_date": "2025-12-18",
+          "drawdown": -0.15118629839908104
+        },
+        {
+          "trade_date": "2025-12-19",
+          "drawdown": -0.15431576603028363
+        },
+        {
+          "trade_date": "2025-12-22",
+          "drawdown": -0.12958661719766473
+        },
+        {
+          "trade_date": "2025-12-23",
+          "drawdown": -0.12049436693947169
+        },
+        {
+          "trade_date": "2025-12-24",
+          "drawdown": -0.116705080094051
+        },
+        {
+          "trade_date": "2025-12-25",
+          "drawdown": -0.1191925783126625
+        },
+        {
+          "trade_date": "2025-12-26",
+          "drawdown": -0.10888969968584339
+        },
+        {
+          "trade_date": "2025-12-29",
+          "drawdown": -0.10238398595535148
+        },
+        {
+          "trade_date": "2025-12-30",
+          "drawdown": -0.10255135399685433
+        },
+        {
+          "trade_date": "2025-12-31",
+          "drawdown": -0.06597473058404202
+        },
+        {
+          "trade_date": "2026-01-05",
+          "drawdown": -0.033869375549030245
+        },
+        {
+          "trade_date": "2026-01-06",
+          "drawdown": -0.012144501657836426
+        },
+        {
+          "trade_date": "2026-01-07",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-01-08",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-01-09",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-01-12",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-01-13",
+          "drawdown": -0.00019203524928346205
+        },
+        {
+          "trade_date": "2026-01-14",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-01-15",
+          "drawdown": -0.055427547859011495
+        },
+        {
+          "trade_date": "2026-01-16",
+          "drawdown": -0.12641428764753826
+        },
+        {
+          "trade_date": "2026-01-19",
+          "drawdown": -0.12474993163088832
+        },
+        {
+          "trade_date": "2026-01-20",
+          "drawdown": -0.12173785058828546
+        },
+        {
+          "trade_date": "2026-01-21",
+          "drawdown": -0.12277616790264922
+        },
+        {
+          "trade_date": "2026-01-22",
+          "drawdown": -0.11980379087436588
+        },
+        {
+          "trade_date": "2026-01-23",
+          "drawdown": -0.11085411551548341
+        },
+        {
+          "trade_date": "2026-01-26",
+          "drawdown": -0.09720101769526623
+        },
+        {
+          "trade_date": "2026-01-27",
+          "drawdown": -0.10677018803276317
+        },
+        {
+          "trade_date": "2026-01-28",
+          "drawdown": -0.08506793041341043
+        },
+        {
+          "trade_date": "2026-01-29",
+          "drawdown": -0.0707856432952354
+        },
+        {
+          "trade_date": "2026-01-30",
+          "drawdown": -0.10107488351206295
+        },
+        {
+          "trade_date": "2026-02-02",
+          "drawdown": -0.15309751188351406
+        },
+        {
+          "trade_date": "2026-02-03",
+          "drawdown": -0.1447414836010279
+        },
+        {
+          "trade_date": "2026-02-04",
+          "drawdown": -0.15310691175466384
+        },
+        {
+          "trade_date": "2026-02-05",
+          "drawdown": -0.1833002494199638
+        },
+        {
+          "trade_date": "2026-02-06",
+          "drawdown": -0.18986799386514885
+        },
+        {
+          "trade_date": "2026-02-09",
+          "drawdown": -0.17834267167571005
+        },
+        {
+          "trade_date": "2026-02-10",
+          "drawdown": -0.1795504303653911
+        },
+        {
+          "trade_date": "2026-02-11",
+          "drawdown": -0.16823594586783897
+        },
+        {
+          "trade_date": "2026-02-12",
+          "drawdown": -0.16891317671317774
+        },
+        {
+          "trade_date": "2026-02-13",
+          "drawdown": -0.19538662637021909
+        },
+        {
+          "trade_date": "2026-02-24",
+          "drawdown": -0.16302289983418194
+        },
+        {
+          "trade_date": "2026-02-25",
+          "drawdown": -0.09782448152558532
+        },
+        {
+          "trade_date": "2026-02-26",
+          "drawdown": -0.05954156717225645
+        },
+        {
+          "trade_date": "2026-02-27",
+          "drawdown": -0.02966902306527497
+        },
+        {
+          "trade_date": "2026-03-02",
+          "drawdown": -0.04122224034674138
+        },
+        {
+          "trade_date": "2026-03-03",
+          "drawdown": -0.11838471407732454
+        },
+        {
+          "trade_date": "2026-03-04",
+          "drawdown": -0.11968958449328626
+        },
+        {
+          "trade_date": "2026-03-05",
+          "drawdown": -0.11213782246752824
+        },
+        {
+          "trade_date": "2026-03-06",
+          "drawdown": -0.11433068664637147
+        },
+        {
+          "trade_date": "2026-03-09",
+          "drawdown": -0.11086934953664962
+        },
+        {
+          "trade_date": "2026-03-10",
+          "drawdown": -0.08125641575280573
+        },
+        {
+          "trade_date": "2026-03-11",
+          "drawdown": -0.08456261877143023
+        },
+        {
+          "trade_date": "2026-03-12",
+          "drawdown": -0.09851530988002466
+        },
+        {
+          "trade_date": "2026-03-13",
+          "drawdown": -0.07433894356509663
+        },
+        {
+          "trade_date": "2026-03-16",
+          "drawdown": -0.028047100334245623
+        },
+        {
+          "trade_date": "2026-03-17",
+          "drawdown": -0.031278777740199826
+        },
+        {
+          "trade_date": "2026-03-18",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-03-19",
+          "drawdown": -0.04442258837457136
+        },
+        {
+          "trade_date": "2026-03-20",
+          "drawdown": -0.07186018749930834
+        },
+        {
+          "trade_date": "2026-03-23",
+          "drawdown": -0.0981393925684354
+        },
+        {
+          "trade_date": "2026-03-24",
+          "drawdown": -0.09017662515587654
+        },
+        {
+          "trade_date": "2026-03-25",
+          "drawdown": -0.06979273391055119
+        },
+        {
+          "trade_date": "2026-03-26",
+          "drawdown": -0.0762376083283205
+        },
+        {
+          "trade_date": "2026-03-27",
+          "drawdown": -0.08347741319836088
+        },
+        {
+          "trade_date": "2026-03-30",
+          "drawdown": -0.08515527655173105
+        },
+        {
+          "trade_date": "2026-03-31",
+          "drawdown": -0.10217172640914152
+        },
+        {
+          "trade_date": "2026-04-01",
+          "drawdown": -0.07509781665328841
+        },
+        {
+          "trade_date": "2026-04-02",
+          "drawdown": -0.08899138121100791
+        },
+        {
+          "trade_date": "2026-04-03",
+          "drawdown": -0.08166845696418246
+        },
+        {
+          "trade_date": "2026-04-07",
+          "drawdown": -0.07594038487924515
+        },
+        {
+          "trade_date": "2026-04-08",
+          "drawdown": -0.06125405587143029
+        },
+        {
+          "trade_date": "2026-04-09",
+          "drawdown": -0.02666879613494244
+        },
+        {
+          "trade_date": "2026-04-10",
+          "drawdown": -0.033785223071854054
+        },
+        {
+          "trade_date": "2026-04-13",
+          "drawdown": -0.04628374446137529
+        },
+        {
+          "trade_date": "2026-04-14",
+          "drawdown": -0.04071489929112693
+        },
+        {
+          "trade_date": "2026-04-15",
+          "drawdown": -0.045535210847232443
+        },
+        {
+          "trade_date": "2026-04-16",
+          "drawdown": -0.07611793697598246
+        },
+        {
+          "trade_date": "2026-04-17",
+          "drawdown": -0.06038342364311189
+        },
+        {
+          "trade_date": "2026-04-20",
+          "drawdown": -0.035790497171091507
+        },
+        {
+          "trade_date": "2026-04-21",
+          "drawdown": -0.03621015090820945
+        },
+        {
+          "trade_date": "2026-04-22",
+          "drawdown": -0.015829679627245352
+        },
+        {
+          "trade_date": "2026-04-23",
+          "drawdown": -0.013270811727009835
+        },
+        {
+          "trade_date": "2026-04-24",
+          "drawdown": -0.027805222087512238
+        },
+        {
+          "trade_date": "2026-04-27",
+          "drawdown": -0.030214612493771553
+        },
+        {
+          "trade_date": "2026-04-28",
+          "drawdown": -0.041147183193583015
+        },
+        {
+          "trade_date": "2026-04-29",
+          "drawdown": -0.024736081195168236
+        },
+        {
+          "trade_date": "2026-04-30",
+          "drawdown": -0.04823299525875058
+        },
+        {
+          "trade_date": "2026-05-06",
+          "drawdown": -0.029365049802873244
+        },
+        {
+          "trade_date": "2026-05-07",
+          "drawdown": -0.01701194905413661
+        },
+        {
+          "trade_date": "2026-05-08",
+          "drawdown": -0.02347867675004267
+        },
+        {
+          "trade_date": "2026-05-11",
+          "drawdown": -0.016792766854801244
+        },
+        {
+          "trade_date": "2026-05-12",
+          "drawdown": -0.0247328161190965
+        },
+        {
+          "trade_date": "2026-05-13",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-05-14",
+          "drawdown": -0.015089851166919965
+        },
+        {
+          "trade_date": "2026-05-15",
+          "drawdown": -0.033396952273272884
+        },
+        {
+          "trade_date": "2026-05-18",
+          "drawdown": -0.023521739804567177
+        },
+        {
+          "trade_date": "2026-05-19",
+          "drawdown": -0.00860178147460089
+        },
+        {
+          "trade_date": "2026-05-20",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-05-21",
+          "drawdown": -0.00013829387249852942
+        },
+        {
+          "trade_date": "2026-05-22",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-05-25",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-05-26",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-05-27",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-05-28",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-05-29",
+          "drawdown": -0.00507419528380193
+        },
+        {
+          "trade_date": "2026-06-01",
+          "drawdown": -0.025816194898802713
+        },
+        {
+          "trade_date": "2026-06-02",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-06-03",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-06-04",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-06-05",
+          "drawdown": -0.018771922689573506
+        },
+        {
+          "trade_date": "2026-06-08",
+          "drawdown": -0.05066950052761787
+        },
+        {
+          "trade_date": "2026-06-09",
+          "drawdown": -0.0112957791200049
+        },
+        {
+          "trade_date": "2026-06-10",
+          "drawdown": -0.020191140283372766
+        },
+        {
+          "trade_date": "2026-06-11",
+          "drawdown": -0.0021705892987201603
+        },
+        {
+          "trade_date": "2026-06-12",
+          "drawdown": -0.025809303706631925
+        },
+        {
+          "trade_date": "2026-06-15",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-06-16",
+          "drawdown": 0.0
+        },
+        {
+          "trade_date": "2026-06-17",
+          "drawdown": 0.0
+        }
+      ],
+      "gate_matrix": [
+        {
+          "gate": "release_identity",
+          "category": "数据与发布身份",
+          "required": "Git、配置、数据、日历、公司行动及生命周期快照哈希完整",
+          "actual": "registry=FAILED_REVALIDATION; PR-A=BLOCKED; PR-B=BLOCKED",
+          "passed": false,
+          "blocking": true,
+          "evidence": "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
+          "remediation": "生成并冻结缺失快照，绑定新的不可变release证据包。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "full_history",
+          "category": "长周期回测",
+          "required": "2018-01-01至最新完整交易日，覆盖率≥98%",
+          "actual": "2023-11-30至2026-06-17，615个交易日；PR-C=BLOCKED",
+          "passed": false,
+          "blocking": true,
+          "evidence": "exports/signal_research/20260618_213002_059138_trusted_account_backtest",
+          "remediation": "使用正式PIT快照从2018年重跑全部市场状态和基础/压力场景；更早数据仅作可选扩展证据。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "rolling_oos",
+          "category": "Walk-forward",
+          "required": "12/3/3滚动OOS；正窗口≥60%",
+          "actual": "registry=FAILED; PR-D=BLOCKED",
+          "passed": false,
+          "blocking": true,
+          "evidence": "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+          "remediation": "在冻结样本上完成带purge/embargo的滚动OOS，测试窗不得继续调参。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "strict_ledger",
+          "category": "严格账本",
+          "required": "VERIFIED；T+1、订单守恒、持仓错配均为0",
+          "actual": "registry=FAILED_REVALIDATION; PR-C=BLOCKED",
+          "passed": false,
+          "blocking": true,
+          "evidence": "config/strategy_release_registry.yaml",
+          "remediation": "补齐公司行动和生命周期快照，生成逐release对账指标并通过严格账本Gate。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "statistical_robustness",
+          "category": "统计稳健性",
+          "required": "DSR≥95%、PBO≤20%、Bootstrap下界非负并完成因子归因",
+          "actual": "alpha_v3 attribution=BLOCKED; factor_ic=BLOCKED",
+          "passed": false,
+          "blocking": true,
+          "evidence": "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+          "remediation": "对完整OOS收益运行DSR、CPCV-PBO、Block Bootstrap和七因子归因。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "execution_stress",
+          "category": "成本、滑点与容量",
+          "required": "5档资金规模和全部成本/滑点压力场景通过",
+          "actual": "alpha_v3 execution_stress=BLOCKED",
+          "passed": false,
+          "blocking": true,
+          "evidence": "exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json",
+          "remediation": "按50万至1000万元及全部成本/滑点组合重跑并保存拒单、冲击和回撤扩张。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "disabled_shadow",
+          "category": "技术Shadow",
+          "required": "连续20个真实交易日",
+          "actual": "0日；missing_release_scoped_shadow_evidence",
+          "passed": false,
+          "blocking": true,
+          "evidence": "未提供",
+          "remediation": "从同日正式PIT快照开始累计，历史回填不得计数。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "economic_shadow",
+          "category": "经济Shadow",
+          "required": "60个额外交易日、30个闭环",
+          "actual": "0日、0个闭环",
+          "passed": false,
+          "blocking": true,
+          "evidence": "未提供",
+          "remediation": "技术Shadow通过后再累计成本后Alpha、成交偏差和逐日对账证据。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "comprehensive_report",
+          "category": "评估报告",
+          "required": "完整报告通过校验并给出唯一资本结论",
+          "actual": "已生成；Artifact与UTF-8校验结果随证据包归档",
+          "passed": true,
+          "blocking": true,
+          "evidence": "exports/dynamic_champion_live_readiness",
+          "remediation": "发布前完成Artifact与UTF-8校验。",
+          "status": "PASS",
+          "pass_value": 1
+        },
+        {
+          "gate": "manual_approval",
+          "category": "人工审批",
+          "required": "与当前release及证据SHA绑定的Canary审批",
+          "actual": "缺失",
+          "passed": false,
+          "blocking": true,
+          "evidence": "docs/04_live_trading/CANARY_RUNBOOK.md",
+          "remediation": "仅在其余门禁全部通过后记录人工审批。",
+          "status": "BLOCKED",
+          "pass_value": 0
+        },
+        {
+          "gate": "broker_api_boundary",
+          "category": "执行边界",
+          "required": "broker_api_enabled=false，所有订单人工确认",
+          "actual": "broker_api_enabled=false",
+          "passed": true,
+          "blocking": true,
+          "evidence": "config/dynamic_champion_live_program.yaml",
+          "remediation": "保持人工订单草案、成交文件导入和离线对账。",
+          "status": "PASS",
+          "pass_value": 1
+        }
+      ],
+      "stock_attribution": [
+        {
+          "symbol": "600410",
+          "name": "华胜天成",
+          "industry": "软件服务",
+          "closed_trades": 3,
+          "wins": 2,
+          "net_pnl": 76184.50899999999,
+          "avg_net_return": 0.24008084585955616,
+          "win_rate": 0.6666666666666666,
+          "positive_profit_share": 0.10590600132968811
+        },
+        {
+          "symbol": "001309",
+          "name": "德明利",
+          "industry": "半导体",
+          "closed_trades": 2,
+          "wins": 2,
+          "net_pnl": 44167.12842500002,
+          "avg_net_return": 0.13504066200672935,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.061397835637512055
+        },
+        {
+          "symbol": "002465",
+          "name": "海格通信",
+          "industry": "通信设备",
+          "closed_trades": 1,
+          "wins": 1,
+          "net_pnl": 36414.322,
+          "avg_net_return": 0.43263855622089153,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.05062046451138369
+        },
+        {
+          "symbol": "300136",
+          "name": "信维通信",
+          "industry": "元器件",
+          "closed_trades": 1,
+          "wins": 1,
+          "net_pnl": 33508.78199999999,
+          "avg_net_return": 0.5584796999999999,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.0465814003086668
+        },
+        {
+          "symbol": "300548",
+          "name": "长芯博创",
+          "industry": "通信设备",
+          "closed_trades": 2,
+          "wins": 2,
+          "net_pnl": 31988.143104999992,
+          "avg_net_return": 0.22065656487901458,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.044467521950064454
+        },
+        {
+          "symbol": "600183",
+          "name": "生益科技",
+          "industry": "元器件",
+          "closed_trades": 1,
+          "wins": 1,
+          "net_pnl": 29790.664749999993,
+          "avg_net_return": 0.3194812138728323,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.04141275204157045
+        },
+        {
+          "symbol": "600118",
+          "name": "中国卫星",
+          "industry": "航空",
+          "closed_trades": 2,
+          "wins": 2,
+          "net_pnl": 27431.675,
+          "avg_net_return": 0.780931603773585,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.03813346108229919
+        },
+        {
+          "symbol": "002475",
+          "name": "立讯精密",
+          "industry": "元器件",
+          "closed_trades": 2,
+          "wins": 2,
+          "net_pnl": 27098.627909999996,
+          "avg_net_return": 0.13063869748408594,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.037670483949291886
+        },
+        {
+          "symbol": "600584",
+          "name": "长电科技",
+          "industry": "半导体",
+          "closed_trades": 5,
+          "wins": 4,
+          "net_pnl": 25321.56272000001,
+          "avg_net_return": 0.25526160163452777,
+          "win_rate": 0.8,
+          "positive_profit_share": 0.035200140951149296
+        },
+        {
+          "symbol": "300058",
+          "name": "蓝色光标",
+          "industry": "广告包装",
+          "closed_trades": 2,
+          "wins": 2,
+          "net_pnl": 20564.78520750001,
+          "avg_net_return": 0.18577306533341204,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.028587624940002523
+        },
+        {
+          "symbol": "300395",
+          "name": "菲利华",
+          "industry": "玻璃",
+          "closed_trades": 2,
+          "wins": 2,
+          "net_pnl": 18365.813749999987,
+          "avg_net_return": 0.11353155447202398,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.025530779432184868
+        },
+        {
+          "symbol": "002812",
+          "name": "恩捷股份",
+          "industry": "电气设备",
+          "closed_trades": 3,
+          "wins": 3,
+          "net_pnl": 17152.638499999997,
+          "avg_net_return": 0.2363970446735395,
+          "win_rate": 1.0,
+          "positive_profit_share": 0.023844314016497233
+        }
+      ],
+      "data_quality": [
+        {
+          "check": "策略身份",
+          "status": "PASS",
+          "actual": "production_governed_vol_position_v1_2b_dynamic_score",
+          "severity": "critical"
+        },
+        {
+          "check": "NAV日期重复",
+          "status": "PASS",
+          "actual": 0,
+          "severity": "critical"
+        },
+        {
+          "check": "NAV缺失或非有限值",
+          "status": "PASS",
+          "actual": 0,
+          "severity": "critical"
+        },
+        {
+          "check": "交易日期缺失",
+          "status": "PASS",
+          "actual": 0,
+          "severity": "critical"
+        },
+        {
+          "check": "回测滑点",
+          "status": "LIMIT",
+          "actual": 0.0,
+          "severity": "high"
+        }
+      ],
+      "capital_ladder": [
+        {
+          "stage": "CANARY_10",
+          "capital_cny": 50000,
+          "min_real_trading_days": 60,
+          "min_completed_round_trips": 30,
+          "status": "BLOCKED",
+          "allowed_now_cny": 0
+        },
+        {
+          "stage": "CANARY_25",
+          "capital_cny": 125000,
+          "min_real_trading_days": 60,
+          "min_completed_round_trips": 30,
+          "status": "BLOCKED",
+          "allowed_now_cny": 0
+        },
+        {
+          "stage": "CANARY_50",
+          "capital_cny": 250000,
+          "min_real_trading_days": 60,
+          "min_completed_round_trips": 30,
+          "status": "BLOCKED",
+          "allowed_now_cny": 0
+        },
+        {
+          "stage": "CANARY_100",
+          "capital_cny": 500000,
+          "min_real_trading_days": 60,
+          "min_completed_round_trips": 30,
+          "status": "BLOCKED",
+          "allowed_now_cny": 0
+        }
+      ],
+      "upgrade_evidence": [
+        {
+          "phase": "PR-A",
+          "scope": "pr_a_equivalence",
+          "status": "BLOCKED",
+          "detail": "replay_directory_missing; web_benchmark_evidence_missing",
+          "evidence": "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
+          "evidence_sha256": "f3ab1f59b3e4a4c3a6b3cfbf83ba08a3b1123e97c5b2f66b0e35fbe789a1d6ea"
+        },
+        {
+          "phase": "PR-B",
+          "scope": "pr_b_formal_readiness",
+          "status": "BLOCKED",
+          "detail": "frozen_package",
+          "evidence": "exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+          "evidence_sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+        },
+        {
+          "phase": "PR-C",
+          "scope": "pr_c_formal_run",
+          "status": "BLOCKED",
+          "detail": "preflight_not_ready",
+          "evidence": "exports/formal_runs/20260727_pr_c/formal_run_precheck.json",
+          "evidence_sha256": "522055380698e8600f4f664bf59b9dd9368ae1709bd4ea666d28d462e5b86bb9"
+        },
+        {
+          "phase": "PR-D",
+          "scope": "pr_d_oos_robustness",
+          "status": "BLOCKED",
+          "detail": "formal_run_not_verified",
+          "evidence": "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+          "evidence_sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+        },
+        {
+          "phase": "PR-E",
+          "scope": "pr_e_execution_capacity",
+          "status": "BLOCKED",
+          "detail": "formal_run_not_verified",
+          "evidence": "exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json",
+          "evidence_sha256": "aafb14b8b08cea213bd515d960e08215954facfaab12493299fcb5e9c063dd36"
+        }
+      ]
+    },
+    "accessIssues": [
+      {
+        "id": "formal_evidence_unavailable",
+        "scope": "dynamic_champion_formal_readiness",
+        "sourceId": "source_governance",
+        "dataset": "upgrade_evidence",
+        "message": "正式PIT、不可变Formal Run、OOS与容量所需业务数据尚未完整加载；报告保留冻结回测供研究复核，但资金结论为NO_GO。"
+      }
+    ]
+  },
+  "sources": [
+    {
+      "id": "source_backtest",
+      "label": "动态评分冠军冻结账户回测",
+      "path": "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+      "query": {
+        "description": "读取冻结账户级NAV与成交，按策略身份过滤并计算月度、年度、滚动收益、回撤和FIFO闭环交易。",
+        "engine": "DuckDB",
+        "language": "sql",
+        "sql": "SELECT * FROM read_csv_auto('exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv', header=true) WHERE strategy='production_governed_vol_position_v1_2b_dynamic_score';",
+        "executed_at": "2026-07-30T16:37:58+08:00",
+        "tables_used": [
+          "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+          "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+          "exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_summary.csv"
+        ],
+        "filters": [
+          "策略：production_governed_vol_position_v1_2b_dynamic_score",
+          "冻结样本：2023-11-30至2026-06-17",
+          "T日信号、T+1开盘执行",
+          "未平仓交易不进入闭环胜率分母"
+        ],
+        "metric_definitions": [
+          "月度收益 = 当月月末NAV / 上月月末NAV - 1；首月相对初始NAV=1",
+          "最大回撤 = NAV / 历史峰值NAV - 1 的最小值",
+          "闭环胜率 = 净收益大于0的FIFO闭环交易数 / 全部FIFO闭环交易数",
+          "VaR/CVaR使用日收益左尾5%分位及其以下均值"
+        ]
+      }
+    },
+    {
+      "id": "source_governance",
+      "label": "生产验收配置与发布注册表",
+      "path": "config/production_acceptance.yaml",
+      "query": {
+        "description": "将中心生产门禁、动态冠军release状态和本次证据覆盖逐项对照；缺失证据按失败处理。",
+        "engine": "DuckDB",
+        "language": "sql",
+        "sql": "SELECT * FROM read_csv_auto('exports/dynamic_champion_live_readiness/20260730_alpha_v3/gate_matrix.csv', header=true);",
+        "executed_at": "2026-07-30T16:37:58+08:00",
+        "tables_used": [
+          "config/production_acceptance.yaml",
+          "config/strategy_release_registry.yaml",
+          "config/dynamic_champion_live_program.yaml",
+          "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
+          "exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+          "exports/formal_runs/20260727_pr_c/formal_run_precheck.json",
+          "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+          "exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json"
+        ],
+        "filters": [
+          "program_id：dynamic-champion-500k-v1",
+          "release_id：champion-v1-2b-dynamic-score-20260618",
+          "缺失、身份不匹配、PENDING或历史模拟证据均不得通过"
+        ],
+        "metric_definitions": [
+          "GO要求全部阻塞门禁通过，允许首阶段资金固定为5万元",
+          "CONDITIONAL_GO仅表示离线门禁通过但真实Shadow或审批未完成，允许资金仍为0",
+          "NO_GO表示至少一个离线可信度或执行门禁失败，允许资金为0"
+        ]
+      }
+    }
+  ]
+}

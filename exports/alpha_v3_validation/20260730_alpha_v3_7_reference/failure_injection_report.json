@@ -1,0 +1,199 @@
+{
+  "blockers": [],
+  "cases": [
+    {
+      "case": "factor_pipeline_hash_mismatch",
+      "status": "PASS"
+    },
+    {
+      "case": "factor_timezone_missing",
+      "status": "PASS"
+    },
+    {
+      "case": "factor_available_after_signal",
+      "status": "PASS"
+    },
+    {
+      "case": "benchmark_end_date_mismatch",
+      "status": "PASS"
+    },
+    {
+      "case": "input_snapshot_sha_mismatch",
+      "status": "PASS"
+    },
+    {
+      "case": "corporate_action_lookahead",
+      "status": "PASS"
+    },
+    {
+      "case": "t_day_execution_violation",
+      "status": "PASS"
+    },
+    {
+      "case": "portfolio_weight_lookahead",
+      "status": "PASS"
+    },
+    {
+      "case": "financial_announcement_lookahead",
+      "status": "PASS"
+    },
+    {
+      "case": "suspended_security_fill",
+      "status": "PASS"
+    },
+    {
+      "case": "limit_queue_impossible_fill",
+      "status": "PASS"
+    },
+    {
+      "case": "delisting_survivorship_bias",
+      "status": "PASS"
+    },
+    {
+      "case": "adjustment_factor_future_leak",
+      "status": "PASS"
+    },
+    {
+      "case": "universe_survivorship_bias",
+      "status": "PASS"
+    },
+    {
+      "case": "financial_revision_after_release",
+      "status": "PASS"
+    },
+    {
+      "case": "duplicate_timestamp_order",
+      "status": "PASS"
+    }
+  ],
+  "content_sha256": "4b54960fc08981ab7fbd366b1c906a78e23ce09f5d2a06291504a483e3959826",
+  "generated_at": "2026-07-30T22:37:43.913949+08:00",
+  "promotion_eligible": false,
+  "provenance": {
+    "code_files": {
+      "runtime/acceptance_config.py": "be79be6b7a05e06e3bd40012f43fd48373e2bec0bacb22913ca5bfa97e5b85bc",
+      "scripts/ops/evaluate_dynamic_champion_readiness.py": "9f23f7113a8fcbcc055ad28893da9fd6a51c44a715fa2282ef77bf6d26ba5f48",
+      "scripts/ops/market_regime.py": "ff87a782de07e258e95997d574168a192d678f8c03ecc71bead43e9a3eb75f20",
+      "scripts/research/alpha_proof.py": "80ec014bd711c2df7ef8030265a0a8fedf8176eb9b7185aeb3463cd50c5bb124",
+      "scripts/research/correctness_audit.py": "2f77f74882cccd61170b3540ff226cc31b916c904ffcab8799bb40a005f034f0",
+      "scripts/research/replay_diff.py": "c75b76e5da7ad9190fc6c4cab86388b5354f22848256f675342499cd9e81d5b6",
+      "scripts/research/run_alpha_v3_validation.py": "ca592ae1ae2cf92487e81e623158f86782f8aa963618458bd17aff6b904b01d7"
+    },
+    "code_snapshot_sha256": "58cdd355d76c3e0df957a0ca24e95e549d66b560914ba5610b63dda9520ab02c",
+    "config_sha256": "6b7cef478cd000b50478147420394826caa29ab4b7294574f1c13805607e8682",
+    "cost_model": {
+      "cost_multipliers": [
+        1.0,
+        2.0
+      ],
+      "slippage_bps": [
+        20,
+        50,
+        100
+      ]
+    },
+    "environment_lock_hash": "c7971afaf0346b7693fccd426a3a650154c59a1fddc331dfc057b6d417840186",
+    "evidence_version": "alpha_v3_7_evidence_v1",
+    "execution_model": {
+      "execution_evidence_layers": [
+        "SIMULATION",
+        "PAPER",
+        "LIVE"
+      ],
+      "fill_timing": "T_PLUS_1_OPEN",
+      "min_execution_stress_score": 80,
+      "require_limit_up_down_handling": true,
+      "require_unfilled_position_freeze": true,
+      "signal_timing": "T_CLOSE",
+      "stress_evidence_layer": "SIMULATION",
+      "stress_scenarios": [
+        "limit_up_buy_blocked",
+        "limit_down_sell_blocked",
+        "one_day_fill_delay",
+        "slippage_2x"
+      ]
+    },
+    "git_head": "9200f1f7d532c116560bfddb011bb3a5cc378ad6",
+    "initial_capital_cny": 500000.0,
+    "input_files": {
+      "acceptance_config": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/production_acceptance.yaml",
+        "sha256": "6b7cef478cd000b50478147420394826caa29ab4b7294574f1c13805607e8682"
+      },
+      "attribution_evidence": {
+        "path": "",
+        "sha256": ""
+      },
+      "benchmark_nav": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_compute_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_panel": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_returns": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_source_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "nav": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+        "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
+      },
+      "pit_manifest": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+        "sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+      },
+      "program": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/dynamic_champion_live_program.yaml",
+        "sha256": "9a5082319aa9a61b01c2bab818618da16937926be3e2ff28701f0c3de9727fb8"
+      },
+      "replay_reference": {
+        "path": "",
+        "sha256": ""
+      },
+      "research_production_contract": {
+        "path": "",
+        "sha256": ""
+      },
+      "selection_attribution": {
+        "path": "",
+        "sha256": ""
+      },
+      "shadow_status": {
+        "path": "",
+        "sha256": ""
+      },
+      "trades": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+        "sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e"
+      },
+      "walk_forward": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+        "sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+      }
+    },
+    "input_snapshot_sha256": "de0db102328a92d4e3c49701980b6fa589145e9d57a5d587d8a58421898f9a98",
+    "profile": "alpha_v3_7",
+    "profile_schema_version": "alpha_v3_acceptance_v1",
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "sample_end_requested": null,
+    "sample_range_actual": {
+      "end": "2026-06-17",
+      "start": "2023-11-30",
+      "trading_days": 615
+    },
+    "sample_start_requested": "2018-01-01",
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+  },
+  "schema_version": "alpha_v3_7_failure_injection_pack_v4",
+  "status": "PASS"
+}

@@ -3,10 +3,16 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from scripts.ops import data_readiness_gate
 from scripts.ops.data_readiness_gate import PipelineReadinessGate
-from scripts.ops.market_regime import apply_state_switch_constraints, build_market_regime_decision
+from scripts.ops.market_regime import (
+    apply_state_switch_constraints,
+    build_market_regime_decision,
+    build_regime_observables,
+    classify_raw_regime,
+)
 from scripts.ops.production_config import load_production_config
 from scripts.research_full_pool_liquidity_strategies import build_strategy_specs, filter_strategy_specs
 from strategy_registry import load_all_cards, status_gate
@@ -86,6 +92,40 @@ def test_market_regime_outputs_required_shape():
             "min_hold_days_remaining",
         ]
     ).issubset(decision)
+
+
+def test_market_regime_v3_observables_include_indices_breadth_limits_and_crowding():
+    rows = []
+    for index in range(10):
+        rows.append(
+            {
+            "market_amount_ratio_20": 1.25,
+            "vol_20": 0.02,
+            "market_hs300_ret_20": 0.04,
+            "market_csi1000_ret_20": 0.05,
+            "market_up_ratio": 0.62,
+            "market_limit_up_ratio": 0.02,
+            "market_limit_down_ratio": 0.0,
+            "market_top5_amount_ratio": 0.12,
+            "market_amount_hhi": 0.08,
+                "industry": f"I{index % 5}",
+            }
+        )
+    frame = pd.DataFrame(rows)
+
+    observables = build_regime_observables(frame)
+    regime, reasons = classify_raw_regime(frame)
+
+    assert observables["csi300_ret_20"] == pytest.approx(0.04)
+    assert observables["csi1000_ret_20"] == pytest.approx(0.05)
+    assert observables["breadth_up_ratio"] == pytest.approx(0.62)
+    assert observables["top5_amount_ratio"] == pytest.approx(0.12)
+    assert regime == "strong_risk_on"
+    assert any("amount_hhi=" in reason for reason in reasons)
+
+    frame["market_top5_amount_ratio"] = 0.25
+    crowded_regime, _ = classify_raw_regime(frame)
+    assert crowded_regime == "risk_off"
 
 
 def test_pipeline_readiness_blocks_when_any_critical_link_fails(monkeypatch):

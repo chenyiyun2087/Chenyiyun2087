@@ -117,6 +117,18 @@ def load_program(path: Path = DEFAULT_PROGRAM) -> dict[str, Any]:
         raise ValueError("program_capital_ladder_invalid")
     if bool(payload.get("canary_enabled")) or bool(payload.get("broker_api_enabled")):
         raise ValueError("program_must_start_fail_closed")
+    profile_name = str(payload.get("validation_profile") or "")
+    if profile_name and profile_name not in {
+        "alpha_v3",
+        "alpha_v4_1",
+        "alpha_v4_2",
+        "alpha_v4_3",
+        "alpha_v4_4",
+        "alpha_v4_5",
+        "alpha_v4_6",
+        "alpha_v4_7",
+    }:
+        raise ValueError(f"unsupported_validation_profile:{profile_name}")
     return payload
 
 
@@ -163,6 +175,13 @@ def load_upgrade_evidence(program: dict[str, Any]) -> dict[str, Any]:
                 "evidence_sha256": sha256,
             }
         )
+    v3_path = PROJECT_ROOT / str(program.get("alpha_v3_evidence") or "")
+    if str(program.get("alpha_v3_evidence") or "") and v3_path.exists():
+        try:
+            v3_payload = json.loads(v3_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            v3_payload = {"status": "INVALID", "blocking_gates": ["invalid_json"]}
+        payloads["alpha_v3"] = v3_payload
     return {"rows": rows, "payloads": payloads}
 
 
@@ -662,7 +681,19 @@ def build_gates(
     upgrade_evidence: dict[str, Any] | None = None,
     report_generated: bool = False,
 ) -> list[GateResult]:
+    profile_name = str(program.get("validation_profile") or "")
+    profile = (
+        (acceptance.get("validation_profiles") or {}).get(profile_name)
+        if profile_name
+        else None
+    )
     full_history = acceptance["full_history"]
+    history_period = (profile or {}).get("core_period") or full_history
+    performance = (profile or {}).get("performance") or {
+        "min_annualized_return": full_history["min_annualized_return"],
+        "max_drawdown": full_history["max_drawdown"],
+        "min_sharpe_ratio": -math.inf,
+    }
     rolling_oos = acceptance["rolling_oos"]
     strict = acceptance["strict_ledger"]
     shadow_cfg = program["shadow"]
@@ -672,25 +703,50 @@ def build_gates(
     formal_run = evidence_payloads.get("pr_c_formal_run", {})
     oos = evidence_payloads.get("pr_d_oos_robustness", {})
     capacity = evidence_payloads.get("pr_e_execution_capacity", {})
+    alpha_v3 = evidence_payloads.get("alpha_v3", {})
+    v3_gate_rows = alpha_v3.get("gates") or []
+    v3_gates = {
+        str(row.get("gate")): str(row.get("status") or "BLOCKED")
+        for row in v3_gate_rows
+        if isinstance(row, dict)
+    }
     sample_start = str(metrics["sample_start"])
     sample_end = str(metrics["sample_end"])
     full_history_pass = (
-        sample_start <= str(full_history["min_start_date"])
-        and metrics["max_drawdown"] >= float(full_history["max_drawdown"])
-        and metrics["annualized_return"] >= float(full_history["min_annualized_return"])
+        sample_start <= str(history_period["min_start_date"])
+        and metrics["max_drawdown"] > float(performance["max_drawdown"])
+        and metrics["annualized_return"] > float(performance["min_annualized_return"])
+        and float(metrics.get("sharpe_ratio") or 0.0)
+        > float(performance.get("min_sharpe_ratio", -math.inf))
+        and (not profile or v3_gates.get("core_history") == "PASS")
     )
     walk_forward_pass = (
-        registry.get("walk_forward_passed") is True
-        and registry.get("walk_forward_status") == "PASSED"
-        and oos.get("status") == "PASS"
+        (
+            v3_gates.get("walk_forward") == "PASS"
+            if profile
+            else (
+                registry.get("walk_forward_passed") is True
+                and registry.get("walk_forward_status") == "PASSED"
+                and oos.get("status") == "PASS"
+            )
+        )
     )
     strict_pass = (
         registry.get("research_status") == "PASSED_REVALIDATION"
         and registry.get("hash_ready") is True
         and formal_run.get("status") == "VERIFIED"
     )
-    statistical_pass = oos.get("status") == "PASS"
-    stress_pass = capacity.get("status") == "PASS"
+    statistical_pass = (
+        v3_gates.get("alpha_attribution") == "PASS"
+        and v3_gates.get("factor_ic") == "PASS"
+        if profile
+        else oos.get("status") == "PASS"
+    )
+    stress_pass = (
+        v3_gates.get("execution_stress") == "PASS"
+        if profile
+        else capacity.get("status") == "PASS"
+    )
     disabled_pass = (
         shadow["strategy_match"]
         and shadow["release_match"]
@@ -736,7 +792,7 @@ def build_gates(
         GateResult(
             "full_history",
             "长周期回测",
-            f"{full_history['min_start_date']}至最新完整交易日，覆盖率≥{float(full_history['min_trade_day_coverage']):.0%}",
+            f"{history_period['min_start_date']}至最新完整交易日，覆盖率≥{float(history_period['min_trade_day_coverage']):.0%}",
             (
                 f"{sample_start}至{sample_end}，{metrics['trading_days']}个交易日；"
                 f"PR-C={formal_run.get('status', 'MISSING')}"
@@ -744,7 +800,7 @@ def build_gates(
             full_history_pass,
             True,
             str(program["approved_backtest_snapshot"]),
-            "使用正式PIT快照从2013年重跑全部市场状态和基础/压力场景。",
+            f"使用正式PIT快照从{history_period['min_start_date'][:4]}年重跑全部市场状态和基础/压力场景；更早数据仅作可选扩展证据。",
         ),
         GateResult(
             "rolling_oos",
@@ -777,8 +833,13 @@ def build_gates(
             "统计稳健性",
             "DSR≥95%、PBO≤20%、Bootstrap下界非负并完成因子归因",
             (
-                f"PR-D={oos.get('status', 'MISSING')}; "
-                f"technical_complete={oos.get('technical_evidence_complete', False)}"
+                f"alpha_v3 attribution={v3_gates.get('alpha_attribution', 'MISSING')}; "
+                f"factor_ic={v3_gates.get('factor_ic', 'MISSING')}"
+                if profile
+                else (
+                    f"PR-D={oos.get('status', 'MISSING')}; "
+                    f"technical_complete={oos.get('technical_evidence_complete', False)}"
+                )
             ),
             statistical_pass,
             True,
@@ -790,8 +851,12 @@ def build_gates(
             "成本、滑点与容量",
             "5档资金规模和全部成本/滑点压力场景通过",
             (
-                f"当前冻结回测滑点={metrics.get('slippage_rate', 0):.2%}；"
-                f"PR-E={capacity.get('status', 'MISSING')}"
+                f"alpha_v3 execution_stress={v3_gates.get('execution_stress', 'MISSING')}"
+                if profile
+                else (
+                    f"当前冻结回测滑点={metrics.get('slippage_rate', 0):.2%}；"
+                    f"PR-E={capacity.get('status', 'MISSING')}"
+                )
             ),
             stress_pass,
             True,
@@ -1295,7 +1360,7 @@ def build_artifact(
                     f"- **历史回测有正收益，但证据范围不足。** 冻结样本累计收益"
                     f" {metrics['total_return']:.1%}、年化 {metrics['annualized_return']:.1%}、"
                     f"最大回撤 {metrics['max_drawdown']:.1%}，但只覆盖"
-                    f" {metrics['sample_start']} 至 {metrics['sample_end']}，未达到2013年至今要求。\n"
+                    f" {metrics['sample_start']} 至 {metrics['sample_end']}，未达到alpha_v3自2018年以来的核心验证要求。\n"
                     f"- **当前允许新增风险资金为 {decision.allowed_capital_cny:,.0f} 元。** "
                     f"仍有 {len(decision.blocking_gates)} 个硬门禁未通过，不能启用Canary。\n"
                     "- **实施边界保持不变。** 当前生产底座继续运行，动态评分冠军不继承既有本金例外，券商API持续关闭。"
@@ -1378,7 +1443,7 @@ def build_artifact(
                 "type": "markdown",
                 "body": (
                     "## 建议的下一步\n\n"
-                    "1. 冻结2013年至今的正式PIT输入，补齐公司行动与证券生命周期快照。\n"
+                    "1. 冻结2018年至今的正式PIT输入，补齐公司行动与证券生命周期快照；更早数据仅作扩展证据。\n"
                     "2. 完成12/3/3 Walk-forward、DSR/PBO/Bootstrap、因子归因和全部成本容量矩阵。\n"
                     "3. 严格账本达到VERIFIED后，从零资金技术Shadow开始累计真实交易日。\n"
                     "4. 只有报告更新为GO并绑定人工审批，才允许首阶段5万元人工Canary。"
@@ -1388,7 +1453,7 @@ def build_artifact(
                 "type": "markdown",
                 "body": (
                     "## Further Questions\n\n"
-                    "- 2013年前后数据源的PIT可用性是否足以做到无不可解释覆盖缺口？\n"
+                    "- 2018年以来数据源的PIT可用性是否足以做到无不可解释覆盖缺口？\n"
                     "- 在10–100bp滑点和不同账户规模下，成本后Alpha还能保留多少？\n"
                     "- 真实Shadow中的恢复事件是否足够频繁，能在合理时间内形成30个独立样本？"
                 ),
@@ -1475,7 +1540,7 @@ def markdown_report(
         f"- **冻结回测累计收益 {metrics['total_return']:.2%}、年化"
         f" {metrics['annualized_return']:.2%}、最大回撤 {metrics['max_drawdown']:.2%}。**"
         f" 但样本仅覆盖 {metrics['sample_start']} 至 {metrics['sample_end']}，"
-        "不满足2013年至今的正式长周期门禁。",
+        "不满足alpha_v3自2018年以来的正式核心验证门禁。",
         f"- **仍有 {len(decision.blocking_gates)} 个硬门禁未通过。**"
         " 主要缺口是正式快照、长周期回测、Walk-forward、严格账本、统计稳健性、"
         "成本容量压力和80个真实Shadow交易日。",
@@ -1580,7 +1645,7 @@ def markdown_report(
             "",
             "## 下一步",
             "",
-            "1. 使用正式PIT快照重跑2013年至今的长周期、市场状态和成本容量矩阵。",
+            "1. 使用正式PIT快照重跑2018年至今的核心周期、市场状态和成本容量矩阵。",
             "2. 完成12/3/3 Walk-forward、DSR、CPCV-PBO、Block Bootstrap和七因子归因。",
             "3. 补齐公司行动和证券生命周期快照，使严格账本达到 `VERIFIED`。",
             "4. 从同日正式PIT数据开始累计20日技术Shadow，再累计60日经济Shadow和30个闭环。",

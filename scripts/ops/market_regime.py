@@ -69,20 +69,77 @@ def _industry_top_weight(day_scores: pd.DataFrame) -> float:
     return float(counts.value_counts(normalize=True).iloc[0])
 
 
+def _median_from_columns(
+    frame: pd.DataFrame,
+    columns: tuple[str, ...],
+    default: float | None = None,
+) -> float | None:
+    for column in columns:
+        if column not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce").dropna()
+        if not values.empty:
+            return _safe_float(values.median(), default)
+    return default
+
+
+def build_regime_observables(day_scores: pd.DataFrame) -> dict[str, float | None]:
+    """Materialize the point-in-time observables used by the v3 regime model.
+
+    Candidate rows commonly repeat market-level features.  Medians avoid
+    overweighting duplicated rows while keeping the function deterministic.
+    Missing optional v3 inputs do not become optimistic defaults: the legacy
+    classifier remains available, and missing fields are visible in reasons.
+    """
+    return {
+        "amount_ratio_20": _median_from_columns(
+            day_scores, ("market_amount_ratio_20",), 1.0
+        ),
+        "candidate_vol_20": _median_from_columns(day_scores, ("vol_20",), 0.03),
+        "csi300_ret_20": _median_from_columns(
+            day_scores,
+            ("market_hs300_ret_20", "csi300_ret_20", "hs300_ret_20"),
+        ),
+        "csi1000_ret_20": _median_from_columns(
+            day_scores,
+            ("market_csi1000_ret_20", "csi1000_ret_20"),
+        ),
+        "breadth_up_ratio": _median_from_columns(
+            day_scores,
+            ("market_up_ratio", "breadth_up_ratio", "advance_ratio"),
+        ),
+        "limit_up_ratio": _median_from_columns(
+            day_scores, ("market_limit_up_ratio", "limit_up_ratio")
+        ),
+        "limit_down_ratio": _median_from_columns(
+            day_scores, ("market_limit_down_ratio", "limit_down_ratio")
+        ),
+        "top5_amount_ratio": _median_from_columns(
+            day_scores,
+            ("market_top5_amount_ratio", "top5_amount_ratio", "top5_turnover_share"),
+        ),
+        "amount_hhi": _median_from_columns(
+            day_scores, ("market_amount_hhi", "amount_hhi", "turnover_hhi")
+        ),
+    }
+
+
 def classify_raw_regime(day_scores: pd.DataFrame) -> tuple[str, list[str]]:
     """Classify one signal date from point-in-time daily rows."""
     reasons: list[str] = []
     if day_scores.empty:
         return "risk_off", ["missing_day_scores"]
 
-    amount_ratio = _safe_float(
-        pd.to_numeric(day_scores.get("market_amount_ratio_20", pd.Series(dtype=float)), errors="coerce").median(),
-        1.0,
-    )
-    avg_vol_20 = _safe_float(
-        pd.to_numeric(day_scores.get("vol_20", pd.Series(dtype=float)), errors="coerce").median(),
-        0.03,
-    )
+    observables = build_regime_observables(day_scores)
+    amount_ratio = observables["amount_ratio_20"]
+    avg_vol_20 = observables["candidate_vol_20"]
+    csi300_ret_20 = observables["csi300_ret_20"]
+    csi1000_ret_20 = observables["csi1000_ret_20"]
+    breadth = observables["breadth_up_ratio"]
+    limit_up_ratio = observables["limit_up_ratio"]
+    limit_down_ratio = observables["limit_down_ratio"]
+    top5_amount_ratio = observables["top5_amount_ratio"]
+    amount_hhi = observables["amount_hhi"]
     index_bucket = _mode_text(day_scores.get("index_bucket", pd.Series(dtype=str)), "")
     industry_top_weight = _industry_top_weight(day_scores.head(100))
 
@@ -94,19 +151,49 @@ def classify_raw_regime(day_scores: pd.DataFrame) -> tuple[str, list[str]]:
         reasons.append(f"index_bucket={index_bucket}")
     if industry_top_weight:
         reasons.append(f"top100_industry_weight={industry_top_weight:.2%}")
+    for name, value in (
+        ("csi300_ret_20", csi300_ret_20),
+        ("csi1000_ret_20", csi1000_ret_20),
+        ("breadth_up_ratio", breadth),
+        ("limit_up_ratio", limit_up_ratio),
+        ("limit_down_ratio", limit_down_ratio),
+        ("top5_amount_ratio", top5_amount_ratio),
+        ("amount_hhi", amount_hhi),
+    ):
+        reasons.append(f"{name}={value:.2%}" if value is not None else f"{name}=missing")
 
     weak_index = any(token in index_bucket for token in ("weak", "bear", "defensive", "risk_off"))
     strong_index = any(token in index_bucket for token in ("strong", "bull", "risk_on"))
+    observed_index_returns = [
+        value for value in (csi300_ret_20, csi1000_ret_20) if value is not None
+    ]
+    if observed_index_returns:
+        weak_index = weak_index or all(value <= -0.05 for value in observed_index_returns)
+        strong_index = strong_index or (
+            len(observed_index_returns) == 2
+            and all(value >= 0.02 for value in observed_index_returns)
+        )
     low_liquidity = amount_ratio is not None and amount_ratio < 0.75
     high_liquidity = amount_ratio is not None and amount_ratio >= 1.15
     high_vol = avg_vol_20 is not None and avg_vol_20 >= 0.055
     concentrated = industry_top_weight >= 0.45
+    crowded = (
+        (top5_amount_ratio is not None and top5_amount_ratio >= 0.20)
+        or (amount_hhi is not None and amount_hhi >= 0.15)
+    )
+    weak_breadth = breadth is not None and breadth < 0.30
+    broad_breadth = breadth is not None and breadth >= 0.55
+    limit_down_stress = limit_down_ratio is not None and limit_down_ratio >= 0.05
 
-    if (weak_index and low_liquidity) or (high_vol and low_liquidity):
+    if (
+        limit_down_stress
+        or (weak_index and (low_liquidity or (breadth is not None and breadth < 0.20)))
+        or (high_vol and low_liquidity)
+    ):
         return "stress", [*reasons, "stress_rule=weak_or_high_vol_with_low_liquidity"]
-    if weak_index or low_liquidity or high_vol:
+    if weak_index or low_liquidity or high_vol or weak_breadth or crowded:
         return "risk_off", [*reasons, "risk_off_rule=weak_index_or_liquidity_or_vol"]
-    if strong_index and high_liquidity and not concentrated:
+    if strong_index and high_liquidity and not concentrated and not crowded and (breadth is None or broad_breadth):
         return "strong_risk_on", [*reasons, "strong_rule=trend_and_turnover_confirmed"]
     if strong_index or (amount_ratio is not None and amount_ratio >= 0.95 and not concentrated):
         return "normal_risk_on", [*reasons, "normal_rule=acceptable_trend_or_turnover"]

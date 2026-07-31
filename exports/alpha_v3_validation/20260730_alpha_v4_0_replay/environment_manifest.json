@@ -1,0 +1,216 @@
+{
+  "completeness_warnings": [
+    "cpu_flags_not_exposed",
+    "container_image_digest_not_provided",
+    "dependency_lock_not_found"
+  ],
+  "content_sha256": "71eb4fe8c66366bdda8e2119c7232322f583f22a2d8eefd3fb465de8b0c56352",
+  "environment": {
+    "architecture": "arm64",
+    "container_image_sha256": "NOT_PROVIDED",
+    "cpu_fingerprint": {
+      "architecture": "arm64",
+      "flags": [],
+      "flags_status": "NOT_EXPOSED_BY_HOST",
+      "processor": "arm"
+    },
+    "dependency_lock": {
+      "path": null,
+      "sha256": null
+    },
+    "filesystem_encoding": "utf-8",
+    "kernel_version": "Darwin Kernel Version 25.5.0: Tue Jun  9 22:26:22 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T8132",
+    "os": "Darwin",
+    "os_release": "25.5.0",
+    "packages": {
+      "annotated-types": "0.8.0",
+      "blinker": "1.9.0",
+      "click": "8.4.2",
+      "flask": "3.1.2",
+      "iniconfig": "2.3.0",
+      "itsdangerous": "2.2.0",
+      "jinja2": "3.1.6",
+      "joblib": "1.5.3",
+      "markupsafe": "3.0.3",
+      "numpy": "2.2.6",
+      "packaging": "26.2",
+      "pandas": "2.3.3",
+      "pip": "26.0.1",
+      "pluggy": "1.6.0",
+      "pyarrow": "20.0.0",
+      "pydantic": "2.12.5",
+      "pydantic_core": "2.41.5",
+      "pygments": "2.20.0",
+      "pymysql": "1.1.2",
+      "pytest": "9.0.2",
+      "python-dateutil": "2.9.0.post0",
+      "pytz": "2026.3.post1",
+      "pyyaml": "6.0.3",
+      "scikit-learn": "1.8.0",
+      "scipy": "1.17.1",
+      "setuptools": "82.0.0",
+      "six": "1.17.0",
+      "sqlalchemy": "2.0.46",
+      "tabulate": "0.9.0",
+      "threadpoolctl": "3.6.0",
+      "typing-inspection": "0.4.2",
+      "typing_extensions": "4.16.0",
+      "tzdata": "2026.3",
+      "werkzeug": "3.1.8"
+    },
+    "python_implementation": "CPython",
+    "python_version": "3.11.15",
+    "runtime_determinism": {
+      "blas_backend": "accelerate",
+      "effective_locale": "C/C.UTF-8/C/C/C/C",
+      "effective_thread_env": {
+        "MKL_NUM_THREADS": null,
+        "OMP_NUM_THREADS": null,
+        "OPENBLAS_NUM_THREADS": null
+      },
+      "locale": "C.UTF-8",
+      "numpy_seed": 2087,
+      "python_hash_seed": "0",
+      "random_seed": 2087,
+      "record_container_image_digest": true,
+      "record_dependency_lock_sha256": true,
+      "require_cpu_fingerprint": true,
+      "require_filesystem_encoding": true,
+      "require_kernel_version": true,
+      "thread_count": 1
+    },
+    "timezone": "Asia/Shanghai"
+  },
+  "environment_lock_hash": "c7971afaf0346b7693fccd426a3a650154c59a1fddc331dfc057b6d417840186",
+  "generated_at": "2026-07-30T23:38:29.841436+08:00",
+  "provenance": {
+    "code_files": {
+      "runtime/acceptance_config.py": "4c816634304468c318483777835c9a4beeb7e61aa3908bb648300ccb70d46a4e",
+      "scripts/ops/evaluate_dynamic_champion_readiness.py": "9f23f7113a8fcbcc055ad28893da9fd6a51c44a715fa2282ef77bf6d26ba5f48",
+      "scripts/ops/market_regime.py": "ff87a782de07e258e95997d574168a192d678f8c03ecc71bead43e9a3eb75f20",
+      "scripts/research/alpha_proof.py": "80ec014bd711c2df7ef8030265a0a8fedf8176eb9b7185aeb3463cd50c5bb124",
+      "scripts/research/capital_firewall.py": "4b37bd3b05d7e332addd352f14a9c3a81841fb1292b03b800bb0f85f644f1266",
+      "scripts/research/capital_readiness.py": "1ffeb6a9074e1b48f505eba8edd3cf8101e20259b9ba345d0e03892780ef80e5",
+      "scripts/research/correctness_audit.py": "af2e6254c6857a7aec4600b012d33552d400b4366faade20a4cc95292146cee8",
+      "scripts/research/evidence_control.py": "abd0831e1a2d4326cd11e31e0a5715fb56b00b0338c21173dd4adfcab11c21a0",
+      "scripts/research/replay_diff.py": "c75b76e5da7ad9190fc6c4cab86388b5354f22848256f675342499cd9e81d5b6",
+      "scripts/research/run_alpha_v3_validation.py": "57c0df0c773fc050ed5f4e5a4fe54355b3e541051ac8a3e2e991e6dcd1855449"
+    },
+    "code_snapshot_sha256": "04d16662dd9dbf88eed65aaec373868cfadef5f4499a35cc98adff4e8c95feb2",
+    "config_sha256": "d1150c34482a3ee588d667d5f7dac18c48256153d409f01a3b90de27fd55b254",
+    "cost_model": {
+      "cost_multipliers": [
+        1.0,
+        2.0
+      ],
+      "slippage_bps": [
+        20,
+        50,
+        100
+      ]
+    },
+    "environment_lock_hash": "c7971afaf0346b7693fccd426a3a650154c59a1fddc331dfc057b6d417840186",
+    "evidence_version": "alpha_v4_0_evidence_v1",
+    "execution_model": {
+      "execution_evidence_layers": [
+        "SIMULATION",
+        "PAPER",
+        "LIVE"
+      ],
+      "fill_timing": "T_PLUS_1_OPEN",
+      "min_execution_stress_score": 80,
+      "require_limit_up_down_handling": true,
+      "require_unfilled_position_freeze": true,
+      "signal_timing": "T_CLOSE",
+      "stress_evidence_layer": "SIMULATION",
+      "stress_scenarios": [
+        "limit_up_buy_blocked",
+        "limit_down_sell_blocked",
+        "one_day_fill_delay",
+        "slippage_2x"
+      ]
+    },
+    "git_head": "9200f1f7d532c116560bfddb011bb3a5cc378ad6",
+    "initial_capital_cny": 500000.0,
+    "input_files": {
+      "acceptance_config": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/production_acceptance.yaml",
+        "sha256": "d1150c34482a3ee588d667d5f7dac18c48256153d409f01a3b90de27fd55b254"
+      },
+      "attribution_evidence": {
+        "path": "",
+        "sha256": ""
+      },
+      "benchmark_nav": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_compute_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_panel": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_returns": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_source_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "nav": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+        "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
+      },
+      "pit_manifest": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+        "sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+      },
+      "program": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/dynamic_champion_live_program.yaml",
+        "sha256": "9a5082319aa9a61b01c2bab818618da16937926be3e2ff28701f0c3de9727fb8"
+      },
+      "replay_reference": {
+        "path": "exports/alpha_v3_validation/20260730_alpha_v4_0_reference/evidence_manifest.json",
+        "sha256": "ad0c09c7250c7e567f636938d14ea162783994d4ce5887ec9894a34bc6647bab"
+      },
+      "research_production_contract": {
+        "path": "",
+        "sha256": ""
+      },
+      "selection_attribution": {
+        "path": "",
+        "sha256": ""
+      },
+      "shadow_status": {
+        "path": "",
+        "sha256": ""
+      },
+      "trades": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+        "sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e"
+      },
+      "walk_forward": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+        "sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+      }
+    },
+    "input_snapshot_sha256": "fad628349b48f86338cf473de2e0a7221e153b1eb7b3461c97500c03f9521948",
+    "profile": "alpha_v4_0",
+    "profile_schema_version": "alpha_v3_acceptance_v1",
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "sample_end_requested": null,
+    "sample_range_actual": {
+      "end": "2026-06-17",
+      "start": "2023-11-30",
+      "trading_days": 615
+    },
+    "sample_start_requested": "2018-01-01",
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+  },
+  "schema_version": "alpha_v3_7_environment_manifest_v1",
+  "status": "PASS"
+}

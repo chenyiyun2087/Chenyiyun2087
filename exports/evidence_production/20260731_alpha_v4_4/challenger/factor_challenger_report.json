@@ -1,0 +1,610 @@
+{
+  "allowed_incremental_capital_cny": 0,
+  "blockers": [
+    "challenger_history_below_252_days",
+    "formal_history_below_252_dates",
+    "formal_pit_challenger_manifest_missing",
+    "formal_pit_manifest_missing",
+    "industry_classification_missing",
+    "industry_neutral_challenger_missing",
+    "market_regime_coverage_below_3",
+    "market_regime_not_cross_sectional_for_ic",
+    "source_duplicate_symbol_dates_deduplicated:124"
+  ],
+  "broker_permission": false,
+  "candidates": {
+    "liquidity": {
+      "aligned_one_day_long_short": {
+        "annualized_return": -0.15817209781466135,
+        "annualized_volatility": 0.2789719369920122,
+        "max_drawdown": -0.20129550364500437,
+        "observations": 78,
+        "positive_day_ratio": 0.5384615384615384,
+        "sharpe_zero_rf": -0.47340822527332593,
+        "total_return": -0.051898494978167786
+      },
+      "average_top_quantile_turnover": 0.05763291893758152,
+      "coverage": 1.0,
+      "decay_curve": [
+        {
+          "dates": 78,
+          "horizon_days": 5,
+          "information_ratio": -0.03345394814810439,
+          "mean_bottom_return": 0.01128283578862021,
+          "mean_rank_ic": -0.006166447186182441,
+          "mean_spread_return": -0.0031416152863772695,
+          "mean_top_return": 0.008141220502242938,
+          "median_rank_ic": 0.023508258306631773,
+          "positive_ic_ratio": 0.5512820512820513
+        },
+        {
+          "dates": 78,
+          "horizon_days": 10,
+          "information_ratio": -0.12096977672953343,
+          "mean_bottom_return": 0.017913022209929314,
+          "mean_rank_ic": -0.02221420189045359,
+          "mean_spread_return": -0.004986350510185055,
+          "mean_top_return": 0.012926671699744251,
+          "median_rank_ic": -0.04625113358242722,
+          "positive_ic_ratio": 0.3974358974358974
+        },
+        {
+          "dates": 78,
+          "horizon_days": 20,
+          "information_ratio": -0.4216573630561758,
+          "mean_bottom_return": 0.03395462623076293,
+          "mean_rank_ic": -0.04988688334501534,
+          "mean_spread_return": -0.014214886967383574,
+          "mean_top_return": 0.019739739263379356,
+          "median_rank_ic": -0.05928383276031036,
+          "positive_ic_ratio": 0.2692307692307692
+        },
+        {
+          "dates": 78,
+          "horizon_days": 60,
+          "information_ratio": -0.3815962500227115,
+          "mean_bottom_return": 0.06523848052208144,
+          "mean_rank_ic": -0.03661342787753358,
+          "mean_spread_return": -0.008408829292709637,
+          "mean_top_return": 0.056829651229371794,
+          "median_rank_ic": -0.017776635784908703,
+          "positive_ic_ratio": 0.4230769230769231
+        }
+      ],
+      "diagnostic_signal": "NOT_SUPPORTED",
+      "economic_alpha_status": "BLOCKED",
+      "extended_one_day_long_short": {
+        "annualized_return": 0.33214778847453563,
+        "annualized_volatility": 0.26903142038429373,
+        "max_drawdown": -0.20680340138274766,
+        "observations": 137,
+        "positive_day_ratio": 0.583941605839416,
+        "sharpe_zero_rf": 1.2036023585481102,
+        "total_return": 0.16872683391076548
+      },
+      "extended_sample_warning": "extended one-day metrics use a longer date window and are not directly comparable with the complete-case decay panel",
+      "qualification_checks": {
+        "aligned_long_short_total_return_positive": false,
+        "formal_pit": false,
+        "history_gte_minimum": false,
+        "industry_neutralized": false,
+        "short_horizon_rank_ic_and_ir_support": false,
+        "three_market_regimes": false
+      },
+      "regime_spreads": [
+        {
+          "dates": 56,
+          "market_regime": 0.0,
+          "mean_one_day_spread": 0.0004146158578908348,
+          "positive_day_ratio": 0.5535714285714286
+        },
+        {
+          "dates": 22,
+          "market_regime": 1.0,
+          "mean_one_day_spread": -0.00291347989443842,
+          "positive_day_ratio": 0.5
+        }
+      ],
+      "sample_days": 78
+    },
+    "low_volatility_value": {
+      "aligned_one_day_long_short": {
+        "annualized_return": 0.17053355402160197,
+        "annualized_volatility": 0.29810639456100246,
+        "max_drawdown": -0.11490633510154113,
+        "observations": 78,
+        "positive_day_ratio": 0.46153846153846156,
+        "sharpe_zero_rf": 0.6781409347892865,
+        "total_return": 0.049944723107111066
+      },
+      "average_top_quantile_turnover": 0.070703857551788,
+      "coverage": 0.9944707255636788,
+      "decay_curve": [
+        {
+          "dates": 78,
+          "horizon_days": 5,
+          "information_ratio": 0.48903306478431796,
+          "mean_bottom_return": 0.0018142759309457274,
+          "mean_rank_ic": 0.0939544008409617,
+          "mean_spread_return": 0.007685779057322357,
+          "mean_top_return": 0.009500054988268085,
+          "median_rank_ic": 0.08168101391830221,
+          "positive_ic_ratio": 0.6025641025641025
+        },
+        {
+          "dates": 78,
+          "horizon_days": 10,
+          "information_ratio": 0.7398037114240826,
+          "mean_bottom_return": -0.0011783519214556971,
+          "mean_rank_ic": 0.13043941100222645,
+          "mean_spread_return": 0.018939538541091858,
+          "mean_top_return": 0.017761186619636157,
+          "median_rank_ic": 0.14759653265994882,
+          "positive_ic_ratio": 0.7307692307692307
+        },
+        {
+          "dates": 78,
+          "horizon_days": 20,
+          "information_ratio": 1.4649272390273762,
+          "mean_bottom_return": -0.008734929101868485,
+          "mean_rank_ic": 0.1761586856009129,
+          "mean_spread_return": 0.043304425146121664,
+          "mean_top_return": 0.034569496044253176,
+          "median_rank_ic": 0.18055218169869988,
+          "positive_ic_ratio": 0.8589743589743589
+        },
+        {
+          "dates": 78,
+          "horizon_days": 60,
+          "information_ratio": 1.1246021973919738,
+          "mean_bottom_return": 0.003468782835411306,
+          "mean_rank_ic": 0.10443250622793543,
+          "mean_spread_return": 0.048325894991063136,
+          "mean_top_return": 0.05179467782647444,
+          "median_rank_ic": 0.09580596307597632,
+          "positive_ic_ratio": 0.8589743589743589
+        }
+      ],
+      "diagnostic_signal": "PROMISING_SHORT_SAMPLE",
+      "economic_alpha_status": "BLOCKED",
+      "extended_one_day_long_short": {
+        "annualized_return": -0.13169459574726217,
+        "annualized_volatility": 0.2351541281256673,
+        "max_drawdown": -0.1814073858041012,
+        "observations": 137,
+        "positive_day_ratio": 0.45985401459854014,
+        "sharpe_zero_rf": -0.4831175882363923,
+        "total_return": -0.07389707015792635
+      },
+      "extended_sample_warning": "extended one-day metrics use a longer date window and are not directly comparable with the complete-case decay panel",
+      "qualification_checks": {
+        "aligned_long_short_total_return_positive": true,
+        "formal_pit": false,
+        "history_gte_minimum": false,
+        "industry_neutralized": false,
+        "short_horizon_rank_ic_and_ir_support": true,
+        "three_market_regimes": false
+      },
+      "regime_spreads": [
+        {
+          "dates": 56,
+          "market_regime": 0.0,
+          "mean_one_day_spread": -0.0003933240054607744,
+          "positive_day_ratio": 0.4642857142857143
+        },
+        {
+          "dates": 22,
+          "market_regime": 1.0,
+          "mean_one_day_spread": 0.003845404760615961,
+          "positive_day_ratio": 0.45454545454545453
+        }
+      ],
+      "sample_days": 78
+    },
+    "momentum": {
+      "aligned_one_day_long_short": {
+        "annualized_return": 0.22211816089698333,
+        "annualized_volatility": 0.20063025046611108,
+        "max_drawdown": -0.08302576201929368,
+        "observations": 58,
+        "positive_day_ratio": 0.5862068965517241,
+        "sharpe_zero_rf": 1.0989513571883134,
+        "total_return": 0.04724877974975383
+      },
+      "average_top_quantile_turnover": 0.15323008013989922,
+      "coverage": 0.7563433065061129,
+      "decay_curve": [
+        {
+          "dates": 58,
+          "horizon_days": 5,
+          "information_ratio": -0.2054445412846584,
+          "mean_bottom_return": 0.0010244125550321211,
+          "mean_rank_ic": -0.022396444282213792,
+          "mean_spread_return": 0.006513043327797516,
+          "mean_top_return": 0.007537455882829634,
+          "median_rank_ic": -0.020521357250776084,
+          "positive_ic_ratio": 0.43103448275862066
+        },
+        {
+          "dates": 58,
+          "horizon_days": 10,
+          "information_ratio": -0.07205480108743445,
+          "mean_bottom_return": -0.0008464452971054512,
+          "mean_rank_ic": -0.008312606684742273,
+          "mean_spread_return": 0.0105304486701474,
+          "mean_top_return": 0.00968400337304195,
+          "median_rank_ic": 0.00351047423252086,
+          "positive_ic_ratio": 0.5172413793103449
+        },
+        {
+          "dates": 58,
+          "horizon_days": 20,
+          "information_ratio": -0.2022474201435327,
+          "mean_bottom_return": 0.0014946793396263148,
+          "mean_rank_ic": -0.021600619494352886,
+          "mean_spread_return": 0.02117091154362075,
+          "mean_top_return": 0.022665590883247058,
+          "median_rank_ic": -0.029515980838119786,
+          "positive_ic_ratio": 0.43103448275862066
+        },
+        {
+          "dates": 58,
+          "horizon_days": 60,
+          "information_ratio": 0.936657624759264,
+          "mean_bottom_return": -0.03989840083863715,
+          "mean_rank_ic": 0.05604576334930206,
+          "mean_spread_return": 0.08620643105195878,
+          "mean_top_return": 0.04630803021332164,
+          "median_rank_ic": 0.05210251385339245,
+          "positive_ic_ratio": 0.8103448275862069
+        }
+      ],
+      "diagnostic_signal": "HORIZON_ONLY_OR_CONFLICTING",
+      "economic_alpha_status": "BLOCKED",
+      "extended_one_day_long_short": {
+        "annualized_return": 0.4340699393172791,
+        "annualized_volatility": 0.2139254141521374,
+        "max_drawdown": -0.12876885332085308,
+        "observations": 117,
+        "positive_day_ratio": 0.5982905982905983,
+        "sharpe_zero_rf": 1.793092960930731,
+        "total_return": 0.18220657000435247
+      },
+      "extended_sample_warning": "extended one-day metrics use a longer date window and are not directly comparable with the complete-case decay panel",
+      "qualification_checks": {
+        "aligned_long_short_total_return_positive": true,
+        "formal_pit": false,
+        "history_gte_minimum": false,
+        "industry_neutralized": false,
+        "short_horizon_rank_ic_and_ir_support": false,
+        "three_market_regimes": false
+      },
+      "regime_spreads": [
+        {
+          "dates": 47,
+          "market_regime": 0.0,
+          "mean_one_day_spread": 0.0006708664726668426,
+          "positive_day_ratio": 0.6170212765957447
+        },
+        {
+          "dates": 11,
+          "market_regime": 1.0,
+          "mean_one_day_spread": 0.0017468488052720876,
+          "positive_day_ratio": 0.45454545454545453
+        }
+      ],
+      "sample_days": 58
+    },
+    "size": {
+      "aligned_one_day_long_short": {
+        "annualized_return": -0.08743694967192461,
+        "annualized_volatility": 0.23484382251881386,
+        "max_drawdown": -0.15455200079768572,
+        "observations": 78,
+        "positive_day_ratio": 0.4358974358974359,
+        "sharpe_zero_rf": -0.2763799849087172,
+        "total_return": -0.027923564601074813
+      },
+      "average_top_quantile_turnover": 0.07229109220170568,
+      "coverage": 1.0,
+      "decay_curve": [
+        {
+          "dates": 78,
+          "horizon_days": 5,
+          "information_ratio": -0.08385094155688282,
+          "mean_bottom_return": 0.010166224870405256,
+          "mean_rank_ic": -0.014934170057484288,
+          "mean_spread_return": -0.0003210470993082091,
+          "mean_top_return": 0.009845177771097046,
+          "median_rank_ic": -0.021897545530648432,
+          "positive_ic_ratio": 0.4358974358974359
+        },
+        {
+          "dates": 78,
+          "horizon_days": 10,
+          "information_ratio": -0.040476491027242927,
+          "mean_bottom_return": 0.01666818228558741,
+          "mean_rank_ic": -0.006712144434527929,
+          "mean_spread_return": -0.0017116547351429738,
+          "mean_top_return": 0.014956527550444437,
+          "median_rank_ic": 0.011197217971497048,
+          "positive_ic_ratio": 0.5256410256410257
+        },
+        {
+          "dates": 78,
+          "horizon_days": 20,
+          "information_ratio": 0.12798945736420572,
+          "mean_bottom_return": 0.025147044648269352,
+          "mean_rank_ic": 0.0162284746978415,
+          "mean_spread_return": 0.0029294509431099323,
+          "mean_top_return": 0.028076495591379286,
+          "median_rank_ic": 0.05030692038881697,
+          "positive_ic_ratio": 0.6794871794871795
+        },
+        {
+          "dates": 78,
+          "horizon_days": 60,
+          "information_ratio": 0.48876233334192615,
+          "mean_bottom_return": 0.05010804678227858,
+          "mean_rank_ic": 0.03900743260308808,
+          "mean_spread_return": 0.01908616501653204,
+          "mean_top_return": 0.06919421179881062,
+          "median_rank_ic": 0.03846182924499568,
+          "positive_ic_ratio": 0.6923076923076923
+        }
+      ],
+      "diagnostic_signal": "NOT_SUPPORTED",
+      "economic_alpha_status": "BLOCKED",
+      "extended_one_day_long_short": {
+        "annualized_return": -0.20351760088796766,
+        "annualized_volatility": 0.21685520702924274,
+        "max_drawdown": -0.15754688162947572,
+        "observations": 137,
+        "positive_day_ratio": 0.39416058394160586,
+        "sharpe_zero_rf": -0.9426921187389492,
+        "total_return": -0.11636206208623179
+      },
+      "extended_sample_warning": "extended one-day metrics use a longer date window and are not directly comparable with the complete-case decay panel",
+      "qualification_checks": {
+        "aligned_long_short_total_return_positive": false,
+        "formal_pit": false,
+        "history_gte_minimum": false,
+        "industry_neutralized": false,
+        "short_horizon_rank_ic_and_ir_support": false,
+        "three_market_regimes": false
+      },
+      "regime_spreads": [
+        {
+          "dates": 56,
+          "market_regime": 0.0,
+          "mean_one_day_spread": -0.000837165459761151,
+          "positive_day_ratio": 0.44642857142857145
+        },
+        {
+          "dates": 22,
+          "market_regime": 1.0,
+          "mean_one_day_spread": 0.0012177851122843176,
+          "positive_day_ratio": 0.4090909090909091
+        }
+      ],
+      "sample_days": 78
+    },
+    "value": {
+      "aligned_one_day_long_short": {
+        "annualized_return": 0.1932023256555473,
+        "annualized_volatility": 0.2591807321224553,
+        "max_drawdown": -0.10192256843818714,
+        "observations": 78,
+        "positive_day_ratio": 0.46153846153846156,
+        "sharpe_zero_rf": 0.81007537198907,
+        "total_return": 0.056196776621102895
+      },
+      "average_top_quantile_turnover": 0.042844059106515946,
+      "coverage": 0.9944707255636788,
+      "decay_curve": [
+        {
+          "dates": 78,
+          "horizon_days": 5,
+          "information_ratio": 0.3103137287502211,
+          "mean_bottom_return": 0.003955492295145629,
+          "mean_rank_ic": 0.05672868820160094,
+          "mean_spread_return": 0.006877130351889757,
+          "mean_top_return": 0.010832622647035389,
+          "median_rank_ic": 0.03920005410506229,
+          "positive_ic_ratio": 0.5512820512820513
+        },
+        {
+          "dates": 78,
+          "horizon_days": 10,
+          "information_ratio": 0.5680341976496648,
+          "mean_bottom_return": 0.003293953830667084,
+          "mean_rank_ic": 0.09426015640785826,
+          "mean_spread_return": 0.0154144662604395,
+          "mean_top_return": 0.018708420091106584,
+          "median_rank_ic": 0.12581737790627673,
+          "positive_ic_ratio": 0.717948717948718
+        },
+        {
+          "dates": 78,
+          "horizon_days": 20,
+          "information_ratio": 1.2183979088713484,
+          "mean_bottom_return": 0.0011414803130945879,
+          "mean_rank_ic": 0.13755578477677594,
+          "mean_spread_return": 0.03329956122663454,
+          "mean_top_return": 0.034441041539729135,
+          "median_rank_ic": 0.1558503772955966,
+          "positive_ic_ratio": 0.8717948717948718
+        },
+        {
+          "dates": 78,
+          "horizon_days": 60,
+          "information_ratio": 0.9809727334009115,
+          "mean_bottom_return": 0.011168499838478382,
+          "mean_rank_ic": 0.09646059359643089,
+          "mean_spread_return": 0.055906055512843375,
+          "mean_top_return": 0.06707455535132176,
+          "median_rank_ic": 0.08115285913645848,
+          "positive_ic_ratio": 0.8205128205128205
+        }
+      ],
+      "diagnostic_signal": "PROMISING_SHORT_SAMPLE",
+      "economic_alpha_status": "BLOCKED",
+      "extended_one_day_long_short": {
+        "annualized_return": -0.17898564884180646,
+        "annualized_volatility": 0.2491334720222394,
+        "max_drawdown": -0.1895693328832223,
+        "observations": 137,
+        "positive_day_ratio": 0.40875912408759124,
+        "sharpe_zero_rf": -0.6674847146373583,
+        "total_return": -0.1016683179873662
+      },
+      "extended_sample_warning": "extended one-day metrics use a longer date window and are not directly comparable with the complete-case decay panel",
+      "qualification_checks": {
+        "aligned_long_short_total_return_positive": true,
+        "formal_pit": false,
+        "history_gte_minimum": false,
+        "industry_neutralized": false,
+        "short_horizon_rank_ic_and_ir_support": true,
+        "three_market_regimes": false
+      },
+      "regime_spreads": [
+        {
+          "dates": 56,
+          "market_regime": 0.0,
+          "mean_one_day_spread": -0.0005823260261595677,
+          "positive_day_ratio": 0.5
+        },
+        {
+          "dates": 22,
+          "market_regime": 1.0,
+          "mean_one_day_spread": 0.0044362098239737755,
+          "positive_day_ratio": 0.36363636363636365
+        }
+      ],
+      "sample_days": 78
+    },
+    "volatility": {
+      "aligned_one_day_long_short": {
+        "annualized_return": 0.46987670789853,
+        "annualized_volatility": 0.24107099042800284,
+        "max_drawdown": -0.09703533956997912,
+        "observations": 78,
+        "positive_day_ratio": 0.5641025641025641,
+        "sharpe_zero_rf": 1.7194292675486988,
+        "total_return": 0.1266199150344054
+      },
+      "average_top_quantile_turnover": 0.09951988263582476,
+      "coverage": 1.0,
+      "decay_curve": [
+        {
+          "dates": 78,
+          "horizon_days": 5,
+          "information_ratio": 0.6489354783649467,
+          "mean_bottom_return": 0.0021727019177323493,
+          "mean_rank_ic": 0.09836411464367943,
+          "mean_spread_return": 0.007573372799832372,
+          "mean_top_return": 0.009746074717564722,
+          "median_rank_ic": 0.09476132688302151,
+          "positive_ic_ratio": 0.6794871794871795
+        },
+        {
+          "dates": 78,
+          "horizon_days": 10,
+          "information_ratio": 0.8326526649925334,
+          "mean_bottom_return": -0.0013633678650262465,
+          "mean_rank_ic": 0.11979627349496852,
+          "mean_spread_return": 0.015108793278847146,
+          "mean_top_return": 0.013745425413820898,
+          "median_rank_ic": 0.12652264940986566,
+          "positive_ic_ratio": 0.7692307692307693
+        },
+        {
+          "dates": 78,
+          "horizon_days": 20,
+          "information_ratio": 1.492239983878787,
+          "mean_bottom_return": -0.00334060989797576,
+          "mean_rank_ic": 0.15354444021365216,
+          "mean_spread_return": 0.028698921687041263,
+          "mean_top_return": 0.025358311789065502,
+          "median_rank_ic": 0.17380165945265513,
+          "positive_ic_ratio": 0.8717948717948718
+        },
+        {
+          "dates": 78,
+          "horizon_days": 60,
+          "information_ratio": 1.1399032052102798,
+          "mean_bottom_return": 0.004139147430895733,
+          "mean_rank_ic": 0.08116807623148345,
+          "mean_spread_return": 0.025043702967887955,
+          "mean_top_return": 0.029182850398783666,
+          "median_rank_ic": 0.08954709112395215,
+          "positive_ic_ratio": 0.8205128205128205
+        }
+      ],
+      "diagnostic_signal": "PROMISING_SHORT_SAMPLE",
+      "economic_alpha_status": "BLOCKED",
+      "extended_one_day_long_short": {
+        "annualized_return": -0.08524866375386586,
+        "annualized_volatility": 0.23751851136383575,
+        "max_drawdown": -0.18048763402855517,
+        "observations": 137,
+        "positive_day_ratio": 0.5036496350364964,
+        "sharpe_zero_rf": -0.25649119160699213,
+        "total_return": -0.04728638027016274
+      },
+      "extended_sample_warning": "extended one-day metrics use a longer date window and are not directly comparable with the complete-case decay panel",
+      "qualification_checks": {
+        "aligned_long_short_total_return_positive": true,
+        "formal_pit": false,
+        "history_gte_minimum": false,
+        "industry_neutralized": false,
+        "short_horizon_rank_ic_and_ir_support": true,
+        "three_market_regimes": false
+      },
+      "regime_spreads": [
+        {
+          "dates": 56,
+          "market_regime": 0.0,
+          "mean_one_day_spread": 0.0009624448784552617,
+          "positive_day_ratio": 0.5892857142857143
+        },
+        {
+          "dates": 22,
+          "market_regime": 1.0,
+          "mean_one_day_spread": 0.003381913809911696,
+          "positive_day_ratio": 0.5
+        }
+      ],
+      "sample_days": 78
+    }
+  },
+  "capital_authority": false,
+  "capital_status": "NO_SCALE",
+  "claim": "research_factor_diagnostics_only",
+  "content_sha256": "f265689547d224cc91fb9150723009abaa2f744e71ce769c67cd17e9868b77b2",
+  "economic_alpha_qualification": {
+    "all_required_checks_pass": false,
+    "min_information_ratio": 0.5,
+    "min_market_regimes": 3,
+    "min_trading_days": 252,
+    "observed_market_regimes": 2,
+    "target_trading_days": 504
+  },
+  "evidence_level": "E2",
+  "formal_evidence": false,
+  "profile": "alpha_v4_4",
+  "research_status": "PROMISING_DIAGNOSTICS",
+  "schema_version": "alpha_v4_4_factor_challenger_lab_v1",
+  "source": {
+    "factor_manifest_path": "exports/evidence_production/20260731_alpha_v4_4/factors/factor_evidence_manifest.json",
+    "factor_manifest_sha256": "1c221df7f9a31667954fa8c392a5c1087560791072762bf2be56aa7bab63977a",
+    "factor_panel_path": "exports/evidence_production/20260731_alpha_v4_4/factors/factor_panel.csv",
+    "factor_panel_sha256": "21cb35c8ac5655576b11152be8c72c1d91442bcfc4cf15bef47143cae20a315b",
+    "factor_returns_path": "exports/evidence_production/20260731_alpha_v4_4/factors/factor_returns.csv",
+    "factor_returns_sha256": "f885ab6eed3c8bbfcefdce4aa7d890173a2e6c4b03b746e51bc02185e410b990"
+  },
+  "status": "BLOCKED",
+  "summary_path": "exports/evidence_production/20260731_alpha_v4_4/challenger/factor_challenger_summary.csv",
+  "summary_sha256": "434ab539f838da83ed979fc509fd33ea79481c63503cc5e9fb9788fb3634bd86",
+  "trading_status": "BLOCKED"
+}

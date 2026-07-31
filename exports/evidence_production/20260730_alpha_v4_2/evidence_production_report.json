@@ -1,0 +1,15 @@
+{
+  "benchmark_manifest_sha256": "7d5d6de516f95f62f4a44f377a6ada724b5b862a2df61177fb104a14f50fee8c",
+  "benchmark_status": "PRODUCED",
+  "broker_action_allowed": false,
+  "capital_authority": false,
+  "content_sha256": "6750174212bc879b1833d4ff9bd058af15f41edea83063402cd23da58313b45d",
+  "factor_sha256": "6ea947c4665fce4c5ad77a30330fac38c1e214b9ea6cc808de41186b2cb2a7e5",
+  "factor_status": "BLOCKED",
+  "pit_sha256": "9aba580fb60f31c64302647f197682a192d30b7cdcf3baf3ad82b86766b94d08",
+  "pit_status": "BLOCKED",
+  "release_id": "champion-v1-2b-dynamic-score-20260618",
+  "schema_version": "alpha_v4_2_evidence_production_summary_v1",
+  "status": "PARTIAL",
+  "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+}

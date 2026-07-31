@@ -1,0 +1,108 @@
+{
+  "blockers": [
+    "capacity_column_missing:adv20_cny"
+  ],
+  "content_sha256": "f19ffba3e58d88b7aee1d199149b0b6036084b5041608f270eea2e1f153a2d9f",
+  "generated_at": "2026-07-30T20:22:46.319932+08:00",
+  "promotion_eligible": false,
+  "provenance": {
+    "code_files": {
+      "runtime/acceptance_config.py": "3702968fd52d38fce4d73da246cc3325065296202103869d2ba79eb53da0775d",
+      "scripts/ops/evaluate_dynamic_champion_readiness.py": "9f23f7113a8fcbcc055ad28893da9fd6a51c44a715fa2282ef77bf6d26ba5f48",
+      "scripts/ops/market_regime.py": "ff87a782de07e258e95997d574168a192d678f8c03ecc71bead43e9a3eb75f20",
+      "scripts/research/alpha_proof.py": "b00f17b65704c046119d0ec4cb82d5b2d8756c7eca4da8f96527256449d93df8",
+      "scripts/research/run_alpha_v3_validation.py": "2b2009cfad3f45b32d7866defb9e2de07952c45297b273bad002b067e5296c6f"
+    },
+    "code_snapshot_sha256": "c5aa236704edbc646efe9505655aaac21422b138534a7a967ab5f6d7d2f98f87",
+    "config_sha256": "4e9b1ed0121b05f4b26d9272e06972cf385a1c58d2c823db9a53e6fd114968ae",
+    "cost_model": {
+      "cost_multipliers": [
+        1.0,
+        2.0
+      ],
+      "slippage_bps": [
+        20,
+        50,
+        100
+      ]
+    },
+    "evidence_version": "alpha_v3_3_evidence_v1",
+    "execution_model": {
+      "fill_timing": "T_PLUS_1_OPEN",
+      "require_limit_up_down_handling": true,
+      "require_unfilled_position_freeze": true,
+      "signal_timing": "T_CLOSE"
+    },
+    "git_head": "9200f1f7d532c116560bfddb011bb3a5cc378ad6",
+    "initial_capital_cny": 500000.0,
+    "input_files": {
+      "acceptance_config": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/production_acceptance.yaml",
+        "sha256": "4e9b1ed0121b05f4b26d9272e06972cf385a1c58d2c823db9a53e6fd114968ae"
+      },
+      "attribution_evidence": {
+        "path": "",
+        "sha256": ""
+      },
+      "benchmark_nav": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_panel": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_returns": {
+        "path": "",
+        "sha256": ""
+      },
+      "factor_source_manifest": {
+        "path": "",
+        "sha256": ""
+      },
+      "nav": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_nav.csv",
+        "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
+      },
+      "pit_manifest": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
+        "sha256": "73297989666b2229dfb102ba36ad9c477763896abc0b15107c6cb3561bd618db"
+      },
+      "program": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/config/dynamic_champion_live_program.yaml",
+        "sha256": "9a5082319aa9a61b01c2bab818618da16937926be3e2ff28701f0c3de9727fb8"
+      },
+      "selection_attribution": {
+        "path": "",
+        "sha256": ""
+      },
+      "shadow_status": {
+        "path": "",
+        "sha256": ""
+      },
+      "trades": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/signal_research/20260618_213002_059138_trusted_account_backtest/trusted_account_backtest_trades.csv",
+        "sha256": "fa8497f656b7667518d394eabf083bf71108e8abc3b5adca606fe72738f25e8e"
+      },
+      "walk_forward": {
+        "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
+        "sha256": "e06c5a847a2ca384c7a3ee59d91b78c267ac4d297f1c6d3580b30c983e35e98b"
+      }
+    },
+    "input_snapshot_sha256": "695aa26142937c579b7f12d1a2fd0af01be23cc5f0e8fc3f2e213b24df11d29e",
+    "profile": "alpha_v3_3",
+    "profile_schema_version": "alpha_v3_acceptance_v1",
+    "release_id": "champion-v1-2b-dynamic-score-20260618",
+    "sample_end_requested": null,
+    "sample_range_actual": {
+      "end": "2026-06-17",
+      "start": "2023-11-30",
+      "trading_days": 615
+    },
+    "sample_start_requested": "2018-01-01",
+    "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+  },
+  "rows": [],
+  "schema_version": "alpha_v3_3_capacity_curve_v1",
+  "status": "BLOCKED"
+}
