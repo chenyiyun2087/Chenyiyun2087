@@ -1,0 +1,37 @@
+{
+  "artifact_tree_sha256": "83bf72740a645268e44ac0ebb2ba3b627353ea2bbd68182cfca828b1dde72855",
+  "content_sha256": "fe5c5ec88218146cb3d4c2f97fb9725602353f786d9dbff40679020a30077d67",
+  "file_count": 6,
+  "files": {
+    "adapter/pit_adapter_report.json": {
+      "bytes": 606,
+      "sha256": "dc146a18494ea8345c1eab2b51f97f06b64ea6b0aebb9a10f038f0a3bf1c82a8"
+    },
+    "config/adapter_config.json": {
+      "bytes": 3892,
+      "sha256": "b8735234efb63bd1756aa0fad2b2f851508c1148d879826d757f6a889262fff4"
+    },
+    "identity/acceptance_profile.json": {
+      "bytes": 123,
+      "sha256": "b877b324047feed97efc329d110af16e783a5d11685b416c74e965eb8672c2a0"
+    },
+    "identity/git_manifest.json": {
+      "bytes": 119,
+      "sha256": "ee8d2f2dcdf2570148fddf386a7ce80c5c4e367ee0ee0f66fb64495f4698a4e1"
+    },
+    "identity/version_manifest.json": {
+      "bytes": 300,
+      "sha256": "21689adfb57ea5772b9fe712358f7b7416425373e1f1ffe460abcd89cf55d28e"
+    },
+    "run_manifest.json": {
+      "bytes": 805,
+      "sha256": "03e0f50fb3a761f14946e924ac4191249bbf44a50d574b832f56a7a46b659a0b"
+    }
+  },
+  "fixture_mode": false,
+  "git_commit_sha": "e06db380fd80739682aaf7f8b1387945afbcafa4",
+  "run_id": "d3cf24887a10d0c4499c6b06cd7a10a2b09c019d40ff3be08a05a7d69c20629c",
+  "schema_version": "artifact_tree_seal_v1",
+  "sealed_at": "2026-07-31T14:04:28.303622+00:00",
+  "total_bytes": 5845
+}

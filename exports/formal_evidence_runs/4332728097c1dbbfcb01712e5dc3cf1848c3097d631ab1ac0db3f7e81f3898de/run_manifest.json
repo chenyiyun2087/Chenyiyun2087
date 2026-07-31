@@ -1,0 +1,18 @@
+{
+  "blockers": [
+    "source_schema_hash_mismatch:universe"
+  ],
+  "capital_authority": false,
+  "content_sha256": "3cd52034c99f658fa22d5dd9f3ad0ba99e084460e6e5ca44b88fef8591a2eb09",
+  "created_at": "2026-07-31T13:57:42.671242+00:00",
+  "evidence_status": {
+    "alpha_evidence": "no_valid_economic_evidence",
+    "capital_authority": false,
+    "data_evidence": "no_qualified_data",
+    "execution_evidence": "no_execution_evidence"
+  },
+  "release_id": "formal_v5_0_first",
+  "run_id": "4332728097c1dbbfcb01712e5dc3cf1848c3097d631ab1ac0db3f7e81f3898de",
+  "schema_version": "formal_evidence_backbone_v5_0",
+  "status": "BLOCKED"
+}

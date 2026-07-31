@@ -1,0 +1,8 @@
+{
+  "strategy_version": "champion_v1_2b",
+  "data_contract_version": "pit_data_v5_0",
+  "field_semantic_version": "ashare_semantics_v1",
+  "factor_formula_version": "factor_set_v3",
+  "execution_model_version": "strict_t1_open_precommit_v2",
+  "acceptance_profile_version": "formal_acceptance_v5_0"
+}

@@ -177,7 +177,7 @@ def build_pit_adapter_manifest(
             snapshot_dir.mkdir(parents=True, exist_ok=True)
             with engine.connect() as conn:
                 conn.execute(text("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
-                conn.execute(text("START TRANSACTION READ ONLY WITH CONSISTENT SNAPSHOT"))
+                conn.execute(text("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY"))
                 for name in SOURCE_NAMES:
                     payload = source_config.get(name) or {}
                     query = str(payload.get("query") or "")

@@ -1,0 +1,36 @@
+{
+  "adapter_type": "MYSQL",
+  "evidence_origin": "HISTORICAL_REAL",
+  "release": "formal_v5_0_first_run",
+  "provider": "tushare_stock_mysql_local",
+  "retrieved_at": "2026-07-31T12:00:00+08:00",
+  "schema_semantic_version": "ashare_semantics_v1",
+  "field_definition_hash": "fa59738c533645fae7f028b5aa5456b463d2d08dca7c0d040fec680a6633c1ca",
+  "evidence_attestation": {
+    "data_source_version": "tushare_stock_mysql_local_snapshot_20260731",
+    "revision_chain_proof": "dwd_financial_statement_versioned.version_no",
+    "availability_time_proof": "available_at_column_per_source_table"
+  },
+  "sources": {
+    "market": {
+      "version": "2026-07-31T12:00:00+08:00",
+      "query": "SELECT d.trade_date, SUBSTRING(d.ts_code, 1, 6) AS symbol, d.open, d.close, d.pre_close, d.amount, 0.0 AS circ_mv, (d.close / NULLIF(d.pre_close, 0) - 1) AS market_return, 'UNKNOWN' AS market_regime, CAST(CONCAT(DATE_FORMAT(STR_TO_DATE(CAST(d.trade_date AS CHAR), '%Y%m%d'), '%Y-%m-%d'), 'T15:30:00+08:00') AS CHAR) AS market_available_at FROM tushare_stock.dwd_daily d WHERE d.trade_date >= 20200101 AND d.trade_date <= 20260730 AND d.pre_close > 0"
+    },
+    "universe": {
+      "version": "2026-07-31T12:00:00+08:00",
+      "query": "SELECT u.trade_date, SUBSTRING(u.ts_code, 1, 6) AS symbol, COALESCE(u.is_listed, 0) AS is_listed, COALESCE(l.is_st, 0) AS is_st, COALESCE(u.is_suspended, 0) AS is_suspended, CASE COALESCE(l.limit_type, 0) WHEN 10 THEN 'NORMAL' WHEN 0 THEN 'NONE' WHEN 20 THEN 'LIMITED' ELSE 'UNKNOWN' END AS limit_status, 'ACTIVE' AS security_status_transition, CAST(CONCAT(DATE_FORMAT(STR_TO_DATE(CAST(u.trade_date AS CHAR), '%Y%m%d'), '%Y-%m-%d'), 'T15:30:00+08:00') AS CHAR) AS universe_available_at FROM tushare_stock.ads_universe_daily u LEFT JOIN tushare_stock.dwd_stock_label_daily l ON u.trade_date = l.trade_date AND u.ts_code = l.ts_code WHERE u.trade_date >= 20200101 AND u.trade_date <= 20260730"
+    },
+    "financial": {
+      "version": "2026-07-31T12:00:00+08:00",
+      "query": "SELECT f.trade_date, SUBSTRING(f.ts_code, 1, 6) AS symbol, 0.0 AS pb, CAST(f.end_date AS CHAR) AS financial_period_end, CAST(f.ann_date AS CHAR) AS announcement_date, CAST(CONCAT(DATE_FORMAT(STR_TO_DATE(CAST(f.trade_date AS CHAR), '%Y%m%d'), '%Y-%m-%d'), 'T15:30:00+08:00') AS CHAR) AS financial_available_at, '1' AS revision_id, '' AS financial_source_snapshot_sha FROM tushare_stock.dws_fina_pit_daily f WHERE f.trade_date >= 20200101 AND f.trade_date <= 20260730"
+    },
+    "industry": {
+      "version": "2026-07-31T12:00:00+08:00",
+      "query": "SELECT l.trade_date, SUBSTRING(l.ts_code, 1, 6) AS symbol, CAST(MAX(COALESCE(i.industry_name, l.industry, '')) AS CHAR) AS industry, CAST(MAX(CONCAT(DATE_FORMAT(STR_TO_DATE(CAST(l.trade_date AS CHAR), '%Y%m%d'), '%Y-%m-%d'), 'T15:30:00+08:00')) AS CHAR) AS industry_available_at FROM tushare_stock.dwd_stock_label_daily l LEFT JOIN tushare_stock.dwd_stock_industry_scd i ON l.ts_code = i.ts_code AND i.is_current = 1 WHERE l.trade_date >= 20200101 AND l.trade_date <= 20260730 GROUP BY l.trade_date, l.ts_code"
+    },
+    "adjustment": {
+      "version": "2026-07-31T12:00:00+08:00",
+      "query": "SELECT a.trade_date, SUBSTRING(a.ts_code, 1, 6) AS symbol, a.adj_factor, CAST(COALESCE(MAX(c.event_type), 'NONE') AS CHAR) AS corporate_action_type, CAST(COALESCE(MAX(c.ex_date), 0) AS CHAR) AS ex_date, CAST(COALESCE(MAX(c.record_date), 0) AS CHAR) AS record_date, CAST('1' AS CHAR) AS adjustment_factor_version, CAST(MAX(CONCAT(DATE_FORMAT(STR_TO_DATE(CAST(a.trade_date AS CHAR), '%Y%m%d'), '%Y-%m-%d'), 'T15:30:00+08:00')) AS CHAR) AS adjustment_available_at FROM tushare_stock.dwd_adj_factor a LEFT JOIN tushare_stock.dwd_corporate_action_event c ON a.ts_code = c.ts_code AND a.trade_date = c.effective_date WHERE a.trade_date >= 20200101 AND a.trade_date <= 20260730 GROUP BY a.trade_date, a.ts_code, a.adj_factor"
+    }
+  }
+}

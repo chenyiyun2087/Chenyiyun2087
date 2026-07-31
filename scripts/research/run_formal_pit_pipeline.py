@@ -169,10 +169,11 @@ def run_formal_pit_pipeline(
         return fail_closed("formal_pit_orchestrator", "adapter", exc)
 
     if adapter_result.get("status") != "PASS":
+        _write_run_manifest(building_dir, run_id, release_id, "BLOCKED",
+                            adapter_result.get("blockers", []))
         seal_directory(building_dir, run_id=run_id, git_commit_sha=git_sha)
         building_dir.rename(run_dir)
-        return _write_run_manifest(run_dir, run_id, release_id, "BLOCKED",
-                                   adapter_result.get("blockers", []))
+        return json.loads((run_dir / "run_manifest.json").read_text())
 
     manifest_path = Path(adapter_result["manifest_path"])
     adapter_report_path = adapter_dir / "pit_adapter_report.json"
@@ -195,17 +196,20 @@ def run_formal_pit_pipeline(
             fixture_mode=False,
         )
     except Exception as exc:
+        result = fail_closed("formal_pit_orchestrator", "builder", exc,
+                             output_dir=building_dir)
         seal_directory(building_dir, run_id=run_id, git_commit_sha=git_sha)
         building_dir.rename(run_dir)
-        return fail_closed("formal_pit_orchestrator", "builder", exc)
+        return result
 
-    # ── Seal and publish ──
+    # ── Write manifest, then seal and publish ──
     status = builder_result.get("status", "BLOCKED")
     blockers_list = builder_result.get("blockers", [])
+    _write_run_manifest(building_dir, run_id, release_id, status, blockers_list)
     seal_directory(building_dir, run_id=run_id, git_commit_sha=git_sha)
     building_dir.rename(run_dir)
 
-    return _write_run_manifest(run_dir, run_id, release_id, status, blockers_list)
+    return json.loads((run_dir / "run_manifest.json").read_text())
 
 
 def _write_run_manifest(
