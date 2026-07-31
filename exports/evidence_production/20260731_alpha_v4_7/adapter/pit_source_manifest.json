@@ -1,57 +1,12 @@
 {
-  "adapter_type": "MYSQL",
   "capital_authority": false,
-  "content_sha256": "f2936a646f567a17cfedfb7499aaa39c84a3843763012830b9aa8670083b0305",
-  "evidence_origin": "HISTORICAL_REAL",
-  "field_definition_hash": "matCHANGEME",
-  "historical_evidence_level": "E1",
-  "provider": "tushare_stock_mysql_local",
-  "release": "alpha_v4_7_pit_snapshot_20260731",
-  "retrieved_at": "2026-07-31T04:00:00+00:00",
-  "schema_semantic_version": "alpha_v4_7_pit_v1",
+  "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "evidence_origin": "UNVERIFIED",
+  "historical_evidence_level": "E0",
+  "invalidated_commit": "0f28980c",
+  "invalidated_reason": "Independent review Round 2: field_definition_hash was placeholder, PIT semantics unverified.",
   "schema_version": "alpha_v4_7_pit_source_manifest_v1",
-  "sources": {
-    "adjustment": {
-      "path": "exports/evidence_production/20260731_alpha_v4_7/adapter/snapshots/adjustment.parquet",
-      "provider": "tushare_stock_mysql_local",
-      "rows": 7990837,
-      "schema_hash": "74cfa8602248f427698ad83b547b173fce78914c86d08c71fdab148af7a41b60",
-      "sha256": "6d3e4f02f5e4f657a62964042cdcfa4047914ed1a7b8ecd57127b3a28900ea36",
-      "version": "2026-07-31T12:00:00+08:00"
-    },
-    "financial": {
-      "path": "exports/evidence_production/20260731_alpha_v4_7/adapter/snapshots/financial.parquet",
-      "provider": "tushare_stock_mysql_local",
-      "rows": 7927352,
-      "schema_hash": "264911e47394f6d89f45ca48878f10fa0c5302a1c39b16896debfc91c51e2b5c",
-      "sha256": "2a8eac7005080bf328de83c9327274f8ea20dbea1eb29ed6df7a177c40bad78d",
-      "version": "2026-07-31T12:00:00+08:00"
-    },
-    "industry": {
-      "path": "exports/evidence_production/20260731_alpha_v4_7/adapter/snapshots/industry.parquet",
-      "provider": "tushare_stock_mysql_local",
-      "rows": 7687191,
-      "schema_hash": "ec0156ec04cab08630e882a0a7c30323efd2e3eccfd58a14972e7e34677191cc",
-      "sha256": "2801b3a42fd3a77879d5cf40b21d19a9993f4bf486e689ac65b4d3312570a1e4",
-      "version": "2026-07-31T12:00:00+08:00"
-    },
-    "market": {
-      "path": "exports/evidence_production/20260731_alpha_v4_7/adapter/snapshots/market.parquet",
-      "provider": "tushare_stock_mysql_local",
-      "rows": 8069422,
-      "schema_hash": "1625db45f035fa283ec3265d85f300d05f388c48d5fd45fa9d7f3f7720d29cf1",
-      "sha256": "d3c0977705548ed93bd6a2d30bd8a0b2d6cb8fd1a02c64226acb04f7eada2891",
-      "version": "2026-07-31T12:00:00+08:00"
-    },
-    "universe": {
-      "path": "exports/evidence_production/20260731_alpha_v4_7/adapter/snapshots/universe.parquet",
-      "provider": "tushare_stock_mysql_local",
-      "rows": 7558510,
-      "schema_hash": "2fda6cd28cf4e7e628cd69769198f8b67f0993c81db6def2028c69c3bb61ef39",
-      "sha256": "45359b1c6bd5904a03d72c9eb77f419ca8fc9ee11faca259bebd9ac258b26baf",
-      "version": "2026-07-31T12:00:00+08:00"
-    }
-  },
-  "status": "QUALIFIED",
+  "sources": {},
+  "status": "INVALIDATED",
   "synthetic_evidence_level": "S0"
 }

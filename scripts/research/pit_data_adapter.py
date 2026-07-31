@@ -216,6 +216,9 @@ def build_pit_adapter_manifest(
         ),
         "synthetic_evidence_level": "S1" if origin == "SYNTHETIC" else "S0",
         "capital_authority": False,
+        "adapter_config_sha256": (
+            _file_sha(config_path) if config_path and config_path.exists() else None
+        ),
     }
     manifest["content_sha256"] = canonical_sha(
         {

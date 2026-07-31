@@ -105,8 +105,8 @@
         "sha256": "1c46bfe8e9e0b63a19e6217fa2c01b1ea87857cc4ef7275fda768268a11df711"
       },
       "pit_builder_report": {
-        "path": "exports/evidence_production/20260731_alpha_v4_7/pit_builder/pit_factor_panel_builder_report.json",
-        "sha256": "11a0e25dceecfb92fc6a0e5b0596257d9e78aadb0bb300a29bfbbfba4b2e2c84"
+        "path": "",
+        "sha256": ""
       },
       "pit_manifest": {
         "path": "/Volumes/extension/projects/Chenyiyun2087/exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
@@ -430,5 +430,5 @@
     }
   },
   "schema_version": "alpha_v4_7_evidence_manifest_v1",
-  "status": "BLOCKED"
+  "status": "INVALIDATED"
 }

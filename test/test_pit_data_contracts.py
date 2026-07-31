@@ -232,7 +232,7 @@ class TestPlaceholderFieldDefinitionHash:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="alpha_v4_7", fixture_mode=True,
         )
         assert result["status"] == "BLOCKED"
         assert any("field_definition_hash_is_placeholder" in b for b in result["blockers"])
@@ -253,7 +253,7 @@ class TestConstantSemanticColumns:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="alpha_v4_7", fixture_mode=True,
         )
         assert result["status"] == "BLOCKED"
         assert any("security_status_transition_constant" in b for b in result["blockers"])
@@ -270,7 +270,7 @@ class TestConstantSemanticColumns:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="alpha_v4_7", fixture_mode=True,
         )
         assert result["status"] == "BLOCKED"
         assert any("corporate_action_type_constant" in b for b in result["blockers"])
@@ -291,7 +291,7 @@ class TestMarketRegimeDiversity:
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7",
+            profile_name="alpha_v4_7", fixture_mode=True,
         )
         assert result["status"] == "BLOCKED"
         assert any("market_regime_diversity" in b for b in result["blockers"])

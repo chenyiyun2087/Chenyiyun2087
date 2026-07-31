@@ -150,6 +150,8 @@ def build_pit_factor_panel(
     source_manifest_path: Path | None,
     output_dir: Path,
     profile_name: str = "alpha_v4_7",
+    adapter_report_path: Path | None = None,
+    fixture_mode: bool = False,
 ) -> dict[str, Any]:
     profile = load_validation_profile(profile_name)
     source_paths = {
@@ -207,6 +209,32 @@ def build_pit_factor_panel(
         blockers.append("source_manifest_schema_semantic_version_missing")
     if not str(manifest.get("field_definition_hash") or ""):
         blockers.append("source_manifest_field_definition_hash_missing")
+    # --- Adapter report binding (required for HISTORICAL_REAL, skipped in fixture_mode) ---
+    if evidence_origin == "HISTORICAL_REAL" and not fixture_mode:
+        if adapter_report_path is None or not adapter_report_path.exists():
+            blockers.append("adapter_report_required_for_historical_real")
+        else:
+            adapter = json.loads(adapter_report_path.read_text(encoding="utf-8"))
+            if str(adapter.get("status")) != "PASS":
+                blockers.append("adapter_report_not_pass")
+            if adapter.get("adapter_ready") is not True:
+                blockers.append("adapter_not_ready")
+            if str(adapter.get("historical_evidence_level")) != "E1":
+                blockers.append("adapter_not_historical_e1")
+            actual_manifest_sha = _file_sha(source_manifest_path)
+            if str(adapter.get("manifest_sha256") or "") != actual_manifest_sha:
+                blockers.append("adapter_manifest_sha_mismatch")
+            adapter_config = adapter.get("config_path")
+            if adapter_config and not Path(str(adapter_config)).exists():
+                blockers.append("adapter_config_not_found")
+        # Manifest self-hash integrity
+        manifest_raw = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+        recomputed_content = canonical_sha(
+            {k: v for k, v in manifest_raw.items() if k != "content_sha256"}
+        )
+        if str(manifest_raw.get("content_sha256") or "") != recomputed_content:
+            blockers.append("manifest_content_sha256_invalid")
+    # --- End adapter binding ---
     file_map = {
         "market": market_path,
         "universe": universe_path,
@@ -276,6 +304,26 @@ def build_pit_factor_panel(
     for column in availability_columns:
         if (panel[column] > signal_time).any():
             blockers.append(f"available_after_signal:{column}")
+    # --- Semantic validation (HISTORICAL_REAL only) ---
+    if evidence_origin == "HISTORICAL_REAL":
+        # Market return must be cross-sectionally uniform per trade_date
+        mr_dispersion = panel.groupby("trade_date")["market_return"].nunique()
+        if (mr_dispersion > 1).any():
+            n_bad = int((mr_dispersion > 1).sum())
+            blockers.append(f"market_return_not_cross_sectional:{n_bad}_dates")
+        # Financial time chain: period_end <= announcement <= availability <= signal
+        fin_sub = panel[["financial_period_end", "announcement_date",
+                          "financial_available_at", "trade_date"]].copy()
+        for col in ["financial_period_end", "announcement_date"]:
+            fin_sub[col] = pd.to_datetime(fin_sub[col].astype(str), errors="coerce")
+        fin_sub = fin_sub.dropna(subset=["financial_period_end", "announcement_date"])
+        if not fin_sub.empty:
+            if (fin_sub["financial_period_end"] > fin_sub["announcement_date"]).any():
+                n_bad = int((fin_sub["financial_period_end"] > fin_sub["announcement_date"]).sum())
+                blockers.append(f"financial_period_after_announcement:{n_bad}")
+        # PB non-negative
+        if (panel["pb"].dropna() < 0).any():
+            blockers.append("pb_negative_values_detected")
     listed = panel["is_listed"].fillna(False).astype(bool)
     required_coverage = {
         "market": panel["close"].notna(),
@@ -373,8 +421,8 @@ def build_pit_factor_panel(
     target_days = int(profile["economic_alpha_qualification"].get("target_trading_days", 504))
     target_met = unique_dates >= target_days
     min_regimes = int(profile["economic_alpha_qualification"].get("min_market_regimes", 3))
+    regime_values = qualified["market_regime"].dropna().unique()
     if evidence_origin == "HISTORICAL_REAL":
-        regime_values = qualified["market_regime"].dropna().unique()
         if len(regime_values) < min_regimes:
             blockers.append(f"market_regime_diversity_below_{min_regimes}:found_{len(regime_values)}")
     fdh = str(manifest.get("field_definition_hash") or "")
@@ -387,9 +435,14 @@ def build_pit_factor_panel(
             blockers.append("corporate_action_type_constant_or_missing")
     elif fdh.startswith("matCHANGEME"):
         blockers.append("field_definition_hash_is_placeholder")
+    status = "PASS" if not blockers else "BLOCKED"
+    historical_qualified = (
+        status == "PASS" and evidence_origin == "HISTORICAL_REAL"
+    )
+    synthetic_qualified = (
+        status == "PASS" and evidence_origin == "SYNTHETIC"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
-    coverage_path = output_dir / "complete_universe_coverage.csv"
-    daily_coverage.to_csv(coverage_path, index=False)
     panel_columns = [
         "trade_date",
         "symbol",
@@ -416,15 +469,21 @@ def build_pit_factor_panel(
     qualified["trade_date"] = qualified["trade_date"].dt.date.astype(str)
     for column in ["signal_time", *availability_columns]:
         qualified[column] = qualified[column].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    panel_path = output_dir / "factor_panel_daily.parquet"
-    qualified[panel_columns].to_parquet(panel_path, index=False)
-    status = "PASS" if not blockers else "BLOCKED"
-    historical_qualified = (
-        status == "PASS" and evidence_origin == "HISTORICAL_REAL"
-    )
-    synthetic_qualified = (
-        status == "PASS" and evidence_origin == "SYNTHETIC"
-    )
+    # Only write qualified panel on PASS; BLOCKED writes diagnostic only
+    if status == "PASS":
+        panel_path = output_dir / "factor_panel_daily.parquet"
+        qualified[panel_columns].to_parquet(panel_path, index=False)
+        panel_sha = _file_sha(panel_path)
+    else:
+        diag_dir = output_dir / "UNQUALIFIED_DIAGNOSTIC"
+        diag_dir.mkdir(parents=True, exist_ok=True)
+        panel_path = None
+        panel_sha = None
+        # Optional diagnostic panel for debugging
+        diag_panel_path = diag_dir / "factor_panel_daily.parquet"
+        qualified[panel_columns].to_parquet(diag_panel_path, index=False)
+    coverage_path = output_dir / "complete_universe_coverage.csv"
+    daily_coverage.to_csv(coverage_path, index=False)
     report: dict[str, Any] = {
         "schema_version": "alpha_v4_7_pit_factor_panel_builder_v1",
         "profile": profile_name,
@@ -446,11 +505,20 @@ def build_pit_factor_panel(
         "symbols": int(qualified["symbol"].nunique()),
         "rows": int(len(qualified)),
         "minimum_daily_universe_coverage": min_coverage,
+        "target_trading_days": target_days,
+        "target_trading_days_met": target_met,
+        "core_start_required": "2018-01-01",
+        "core_start_met": (
+            str(qualified["trade_date"].min()) <= "2018-01-01"
+            if not qualified.empty else False
+        ),
+        "market_regime_count": len(regime_values),
+        "market_regime_required": min_regimes,
         "factor_coverage": factor_coverage,
         "source_sha256": source_sha,
         "source_manifest_sha256": _file_sha(source_manifest_path),
-        "panel_path": str(panel_path),
-        "panel_sha256": _file_sha(panel_path),
+        "panel_path": str(panel_path) if panel_path else None,
+        "panel_sha256": panel_sha,
         "coverage_path": str(coverage_path),
         "coverage_sha256": _file_sha(coverage_path),
         "blockers": sorted(set(blockers)),
@@ -475,8 +543,10 @@ def main() -> None:
     parser.add_argument("--industry", type=Path)
     parser.add_argument("--adjustment", type=Path)
     parser.add_argument("--source-manifest", type=Path)
+    parser.add_argument("--adapter-report", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--profile", default="alpha_v4_7")
+    parser.add_argument("--fixture-mode", action="store_true", default=False)
     args = parser.parse_args()
     result = build_pit_factor_panel(
         market_path=args.market,
@@ -487,6 +557,8 @@ def main() -> None:
         source_manifest_path=args.source_manifest,
         output_dir=args.output_dir,
         profile_name=args.profile,
+        adapter_report_path=args.adapter_report,
+        fixture_mode=args.fixture_mode,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 
