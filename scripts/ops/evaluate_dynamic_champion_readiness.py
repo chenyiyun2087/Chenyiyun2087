@@ -176,20 +176,13 @@ def load_upgrade_evidence(program: dict[str, Any]) -> dict[str, Any]:
 
     for evidence_id in EVIDENCE_IDS:
         parts = str(evidence_id).split("_", 2)
-        # Use Registry path if available, otherwise configured (non-deprecated) path
+        # v5.1.3: Registry is the ONLY source.  No deprecated fallback in production.
         effective_path_str = registry_sources.get(evidence_id)
         source_label = "registry"
         if not effective_path_str:
-            # Fall back to configured path (skip _DEPRECATED_ keys)
-            configured_path = configured.get(evidence_id)
-            if not configured_path:
-                # Try deprecated key as last resort
-                deprecated_key = f"_DEPRECATED_{evidence_id}"
-                configured_path = configured.get(deprecated_key)
-                source_label = "deprecated"
-            else:
-                source_label = "configured"
-            effective_path_str = str(configured_path) if configured_path else ""
+            # Registry is active but missing this layer → BLOCKED
+            source_label = "blocked"
+            effective_path_str = ""
 
         if not effective_path_str:
             rows.append({

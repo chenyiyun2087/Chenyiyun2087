@@ -327,8 +327,10 @@ def run(
     # 3.5  Expanded formal run manifest
     # ------------------------------------------------------------------
     manifest: dict[str, Any] = {
-        "schema_version": "immutable_formal_run_v2",
+        "schema_version": "immutable_formal_run_v3",
         "formal_run_id": run_id,
+        "formal_pit_run_id": getattr(args, "pit_run_id", "") or "",
+        "package_id": getattr(args, "package_id", "") or "",
         "status": status,
         "dry_run": dry_run,
         "strategy_ids": list(FORMAL_STRATEGIES),
@@ -357,6 +359,7 @@ def run(
         "immutable": True,
         "fixture_mode": fixture_mode,
     }
+    # Self-hash: manifest_sha256 (legacy) + content_sha256 (v5.1.3)
     manifest["manifest_sha256"] = hashlib.sha256(
         json.dumps(
             manifest,
@@ -365,10 +368,35 @@ def run(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+    manifest["content_sha256"] = manifest["manifest_sha256"]
     (run_dir / "formal_run_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+    # ── v5.1.3: Frozen Bundle Manifest (standalone JSON) ──
+    frozen_bundle_manifest = {
+        "schema_version": "frozen_bundle_manifest_v5_1_3",
+        "status": "PASS",
+        "formal_pit_run_id": manifest["formal_pit_run_id"],
+        "package_id": manifest["package_id"],
+        "formal_run_id": run_id,
+        "frozen_bundle_sha256": frozen_bundle_sha,
+        "input_objects": per_file_bindings,
+        "fixture_mode": fixture_mode,
+        "capital_authority": False,
+    }
+    frozen_bundle_manifest["content_sha256"] = hashlib.sha256(
+        json.dumps(
+            {k: v for k, v in frozen_bundle_manifest.items() if k != "content_sha256"},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    (run_dir / "frozen_bundle_manifest.json").write_text(
+        json.dumps(frozen_bundle_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
     return manifest
 
 
@@ -380,6 +408,8 @@ def main() -> int:
     parser.add_argument("--end-date", required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--fixture-mode", action="store_true", help="Skip worktree checks for testing; results marked non-production.")
+    parser.add_argument("--pit-run-id", default="", help="formal_pit_run_id from PIT Pipeline")
+    parser.add_argument("--package-id", default="", help="package_id from Admission Pipeline")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument(
         "--acceptance-config",

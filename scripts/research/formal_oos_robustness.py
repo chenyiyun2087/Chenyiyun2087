@@ -811,11 +811,13 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
     )
     economic_passed = all(gates.values())
     payload: dict[str, Any] = {
-        "schema_version": "formal_oos_robustness_v1",
+        "schema_version": "formal_oos_robustness_v2",
         "status": "PASS" if economic_passed else "ECONOMIC_FAILED",
         "technical_evidence_complete": True,
         "economic_gates_passed": economic_passed,
+        "formal_pit_run_id": formal.get("formal_pit_run_id", ""),
         "formal_run_id": formal.get("formal_run_id"),
+        "package_id": formal.get("package_id", ""),
         "formal_manifest_sha256": formal.get("manifest_sha256"),
         "frozen_bundle_sha256": formal.get("frozen_bundle_sha256"),
         "acceptance_config_sha256": formal.get("acceptance_config_sha256"),
@@ -843,6 +845,7 @@ def evaluate(formal_manifest: Path, analysis_package: Path) -> dict[str, Any]:
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
+    payload["content_sha256"] = payload["evidence_sha256"]
     return payload
 
 

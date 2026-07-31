@@ -742,12 +742,14 @@ def evaluate(
         )
 
     result = {
-        "schema_version": "formal_execution_capacity_v1",
+        "schema_version": "formal_execution_capacity_v2",
         "status": "PASS" if not gate_failures else "ECONOMIC_FAILED",
         "technical_evidence_complete": True,
         "economic_gates_passed": not gate_failures,
+        "formal_pit_run_id": formal.get("formal_pit_run_id", ""),
         "formal_manifest": str(formal_manifest),
         "formal_run_id": formal_run_id,
+        "package_id": formal.get("package_id", ""),
         "formal_manifest_sha256": formal.get("manifest_sha256"),
         "frozen_bundle_sha256": formal.get("frozen_bundle_sha256"),
         "acceptance_config_sha256": formal.get("acceptance_config_sha256"),
@@ -759,6 +761,7 @@ def evaluate(
         "gates": {"cells": gate_rows},
     }
     result["evidence_sha256"] = _canonical_sha(result)
+    result["content_sha256"] = result["evidence_sha256"]
     return result
 
 
