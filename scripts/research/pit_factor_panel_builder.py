@@ -112,6 +112,10 @@ def _blocked_report(
     blockers: list[str],
     source_paths: dict[str, Path | None],
 ) -> dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # Remove stale PASS artifacts (but NOT source manifest — that belongs to Adapter)
+    for stale_name in ["factor_panel_daily.parquet"]:
+        (output_dir / stale_name).unlink(missing_ok=True)
     report: dict[str, Any] = {
         "schema_version": "alpha_v4_7_pit_factor_panel_builder_v1",
         "profile": profile_name,
@@ -162,6 +166,40 @@ def build_pit_factor_panel(
         "adjustment": adjustment_path,
         "source_manifest": source_manifest_path,
     }
+    try:
+        return _build_pit_factor_panel_impl(
+            market_path=market_path, universe_path=universe_path,
+            financial_path=financial_path, industry_path=industry_path,
+            adjustment_path=adjustment_path,
+            source_manifest_path=source_manifest_path,
+            output_dir=output_dir, profile_name=profile_name,
+            adapter_report_path=adapter_report_path, fixture_mode=fixture_mode,
+            profile=profile, source_paths=source_paths,
+        )
+    except Exception as exc:
+        return _blocked_report(
+            output_dir, profile_name,
+            [f"unhandled_exception:{type(exc).__name__}:{exc}"],
+            source_paths,
+        )
+
+
+def _build_pit_factor_panel_impl(
+    *,
+    market_path: Path | None,
+    universe_path: Path | None,
+    financial_path: Path | None,
+    industry_path: Path | None,
+    adjustment_path: Path | None,
+    source_manifest_path: Path | None,
+    output_dir: Path,
+    profile_name: str,
+    adapter_report_path: Path | None,
+    fixture_mode: bool,
+    profile: dict[str, Any],
+    source_paths: dict[str, Path | None],
+) -> dict[str, Any]:
+    # (body of original build_pit_factor_panel follows, minus the profile load + source_paths init)
     missing = [name for name, path in source_paths.items() if path is None]
     missing.extend(
         name
@@ -234,14 +272,26 @@ def build_pit_factor_panel(
                 blockers.append("adapter_manifest_sha_mismatch")
             if str(adapter.get("manifest_path") or "") != str(source_manifest_path):
                 blockers.append("adapter_manifest_path_mismatch")
-            # Config SHA chain
+            # Config SHA chain — mandatory for HISTORICAL_REAL
+            adapter_config_path = adapter.get("config_path")
+            if not adapter_config_path or not Path(str(adapter_config_path)).exists():
+                blockers.append("adapter_config_path_missing_or_not_found")
             adapter_config_sha = str(adapter.get("config_sha256") or "")
+            if not adapter_config_sha or len(adapter_config_sha) != 64:
+                blockers.append("adapter_config_sha256_missing_or_invalid")
             manifest_config_sha = str(manifest.get("adapter_config_sha256") or "")
+            if not manifest_config_sha:
+                blockers.append("manifest_adapter_config_sha256_missing")
+            if adapter_config_path and Path(str(adapter_config_path)).exists():
+                actual_cfg_sha = _file_sha(Path(str(adapter_config_path)))
+                if adapter_config_sha != actual_cfg_sha:
+                    blockers.append("adapter_config_sha_mismatch_actual_file")
             if adapter_config_sha and manifest_config_sha and adapter_config_sha != manifest_config_sha:
                 blockers.append("adapter_config_sha256_mismatch")
-            adapter_config = adapter.get("config_path")
-            if adapter_config and not Path(str(adapter_config)).exists():
-                blockers.append("adapter_config_not_found")
+            if str(adapter.get("evidence_origin") or "") != evidence_origin:
+                blockers.append("adapter_evidence_origin_mismatch")
+            if adapter.get("blockers") and len(adapter["blockers"]) > 0:
+                blockers.append("adapter_report_has_blockers")
         # Manifest self-hash integrity
         manifest_raw = json.loads(source_manifest_path.read_text(encoding="utf-8"))
         recomputed_content = canonical_sha(
@@ -336,14 +386,17 @@ def build_pit_factor_panel(
             if (fin_sub["financial_period_end"] > fin_sub["announcement_date"]).any():
                 n_bad = int((fin_sub["financial_period_end"] > fin_sub["announcement_date"]).sum())
                 blockers.append(f"financial_period_after_announcement:{n_bad}")
-        # announcement_date <= financial_available_at (compare as strings to avoid tz mismatch)
+        # announcement_date <= financial_available_at (strip tz for comparison)
         fin_sub2 = panel[["announcement_date", "financial_available_at"]].copy()
-        fin_sub2["_ann_str"] = fin_sub2["announcement_date"].astype(str)
-        fin_sub2["_avail_str"] = fin_sub2["financial_available_at"].astype(str)
-        fin_sub2 = fin_sub2.dropna(subset=["_ann_str", "_avail_str"])
-        fin_sub2 = fin_sub2[fin_sub2["_ann_str"].str.len() > 0]
+        fin_sub2["_ann_ts"] = pd.to_datetime(
+            fin_sub2["announcement_date"].astype(str), errors="coerce")
+        if fin_sub2["_ann_ts"].isna().any() and evidence_origin == "HISTORICAL_REAL":
+            n_bad = int(fin_sub2["_ann_ts"].isna().sum())
+            blockers.append(f"financial_announcement_date_unparseable:{n_bad}")
+        fin_sub2 = fin_sub2.dropna(subset=["_ann_ts", "financial_available_at"])
         if not fin_sub2.empty:
-            n_bad = int((fin_sub2["_ann_str"] > fin_sub2["_avail_str"]).sum())
+            fin_avail_naive = fin_sub2["financial_available_at"].dt.tz_localize(None)
+            n_bad = int((fin_sub2["_ann_ts"] > fin_avail_naive).sum())
             if n_bad > 0:
                 blockers.append(f"financial_announcement_after_availability:{n_bad}")
         # PB non-negative
@@ -390,7 +443,12 @@ def build_pit_factor_panel(
         - 1.0
     )
     panel = panel.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
-    panel["momentum_raw"] = panel.groupby("symbol")["close"].pct_change(20)
+    # PIT-adjusted close using adj_factor for corporate-action-aware momentum
+    panel["adj_close"] = (
+        pd.to_numeric(panel["close"], errors="coerce")
+        * pd.to_numeric(panel["adj_factor"], errors="coerce")
+    )
+    panel["momentum_raw"] = panel.groupby("symbol")["adj_close"].pct_change(20)
     panel["volatility_raw"] = panel.groupby("symbol")["ret_1d"].transform(
         lambda values: values.rolling(20, min_periods=10).std()
     )
@@ -473,8 +531,8 @@ def build_pit_factor_panel(
         status == "PASS" and evidence_origin == "SYNTHETIC"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
-    # Remove stale PASS artifacts from prior runs to prevent resurrection
-    for stale_name in ["factor_panel_daily.parquet", "pit_source_manifest.json"]:
+    # Remove stale PASS artifacts from prior runs (NOT pit_source_manifest.json — Adapter's domain)
+    for stale_name in ["factor_panel_daily.parquet"]:
         stale_path = output_dir / stale_name
         if stale_path.exists():
             stale_path.unlink()

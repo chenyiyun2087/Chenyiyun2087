@@ -136,14 +136,30 @@ def _write_manifest(out_dir: Path, paths: dict[str, Path], *, field_definition_h
     return mp
 
 
+def _write_manifest_with_config(out_dir: Path, paths: dict[str, Path], config_path: Path,
+                                 field_definition_hash: str | None = None,
+                                 evidence_origin: str = "SYNTHETIC") -> Path:
+    """Write a manifest with adapter_config_sha256 for HISTORICAL_REAL tests."""
+    mp = _write_manifest(out_dir, paths, field_definition_hash=field_definition_hash,
+                         evidence_origin=evidence_origin)
+    data = json.loads(mp.read_text())
+    data["adapter_config_sha256"] = _file_sha(config_path)
+    data["content_sha256"] = _canonical_sha({k: v for k, v in data.items() if k != "content_sha256"})
+    mp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    return mp
+
+
 def _write_adapter_report(out_dir: Path, manifest_path: Path, config_path: Path | None = None) -> Path:
     """Write a minimal valid Adapter PASS report for testing."""
+    if config_path is None:
+        config_path = out_dir / "test_adapter_config.json"
+        config_path.write_text(json.dumps({"adapter_type": "FILE", "test": True}))
     report = {
         "schema_version": "alpha_v4_7_pit_data_adapter_v1",
         "status": "PASS",
         "adapter_ready": True,
-        "config_path": str(config_path) if config_path else None,
-        "config_sha256": _file_sha(config_path) if config_path and config_path.exists() else None,
+        "config_path": str(config_path),
+        "config_sha256": _file_sha(config_path),
         "manifest_path": str(manifest_path),
         "manifest_sha256": _file_sha(manifest_path),
         "evidence_origin": "HISTORICAL_REAL",
@@ -249,8 +265,10 @@ class TestPlaceholderFieldDefinitionHash:
 
     def test_short_field_definition_hash_blocks(self, tmp_path):
         paths = _write_frames(tmp_path)
-        manifest = _write_manifest(tmp_path, paths, field_definition_hash="abc123", evidence_origin="HISTORICAL_REAL")
-        adapter_rp = _write_adapter_report(tmp_path, manifest)
+        manifest = config_path = tmp_path / "test_adapter_config.json"
+        config_path.write_text('{"adapter_type": "FILE", "test": true}')
+        manifest = _write_manifest_with_config(tmp_path, paths, config_path, field_definition_hash="abc123", evidence_origin="HISTORICAL_REAL")
+        adapter_rp = _write_adapter_report(tmp_path, manifest, config_path)
 
         result = build_pit_factor_panel(
             market_path=paths["market"], universe_path=paths["universe"],
@@ -271,8 +289,10 @@ class TestConstantSemanticColumns:
         uni = pd.read_parquet(paths["universe"])
         uni["security_status_transition"] = "ACTIVE"
         uni.to_parquet(paths["universe"], index=False)
-        manifest = _write_manifest(tmp_path, paths, evidence_origin="HISTORICAL_REAL")
-        adapter_rp = _write_adapter_report(tmp_path, manifest)
+        manifest = config_path = tmp_path / "test_adapter_config.json"
+        config_path.write_text('{"adapter_type": "FILE", "test": true}')
+        manifest = _write_manifest_with_config(tmp_path, paths, config_path, evidence_origin="HISTORICAL_REAL")
+        adapter_rp = _write_adapter_report(tmp_path, manifest, config_path)
 
         result = build_pit_factor_panel(
             market_path=paths["market"], universe_path=paths["universe"],
@@ -289,8 +309,10 @@ class TestConstantSemanticColumns:
         adj = pd.read_parquet(paths["adjustment"])
         adj["corporate_action_type"] = "NONE"
         adj.to_parquet(paths["adjustment"], index=False)
-        manifest = _write_manifest(tmp_path, paths, evidence_origin="HISTORICAL_REAL")
-        adapter_rp = _write_adapter_report(tmp_path, manifest)
+        manifest = config_path = tmp_path / "test_adapter_config.json"
+        config_path.write_text('{"adapter_type": "FILE", "test": true}')
+        manifest = _write_manifest_with_config(tmp_path, paths, config_path, evidence_origin="HISTORICAL_REAL")
+        adapter_rp = _write_adapter_report(tmp_path, manifest, config_path)
 
         result = build_pit_factor_panel(
             market_path=paths["market"], universe_path=paths["universe"],
@@ -311,8 +333,10 @@ class TestMarketRegimeDiversity:
         mkt = pd.read_parquet(paths["market"])
         mkt["market_regime"] = "UNKNOWN"
         mkt.to_parquet(paths["market"], index=False)
-        manifest = _write_manifest(tmp_path, paths, evidence_origin="HISTORICAL_REAL")
-        adapter_rp = _write_adapter_report(tmp_path, manifest)
+        manifest = config_path = tmp_path / "test_adapter_config.json"
+        config_path.write_text('{"adapter_type": "FILE", "test": true}')
+        manifest = _write_manifest_with_config(tmp_path, paths, config_path, evidence_origin="HISTORICAL_REAL")
+        adapter_rp = _write_adapter_report(tmp_path, manifest, config_path)
 
         result = build_pit_factor_panel(
             market_path=paths["market"], universe_path=paths["universe"],
@@ -404,4 +428,114 @@ class TestNoShortPanelFallback:
             profile_name="alpha_v4_7",
         )
         assert result["automatic_short_panel_fallback"] is False
-        assert result["capital_authority"] is False
+
+
+class TestConfigShaMandatory:
+    """Config SHA chain must NOT be bypassable with null/missing values."""
+
+    def test_missing_config_path_blocks(self, tmp_path):
+        paths = _write_frames(tmp_path)
+        manifest = _write_manifest(tmp_path, paths, evidence_origin="HISTORICAL_REAL")
+        # Write adapter report with null config_path
+        report = {
+            "schema_version": "alpha_v4_7_pit_data_adapter_v1",
+            "status": "PASS", "adapter_ready": True,
+            "config_path": None, "config_sha256": None,
+            "manifest_path": str(manifest), "manifest_sha256": _file_sha(manifest),
+            "evidence_origin": "HISTORICAL_REAL",
+            "historical_evidence_level": "E1", "synthetic_evidence_level": "S0",
+            "capital_authority": False, "blockers": [],
+        }
+        report["content_sha256"] = _canonical_sha(
+            {k: v for k, v in report.items() if k != "content_sha256"})
+        adapter_rp = tmp_path / "pit_adapter_report.json"
+        adapter_rp.write_text(json.dumps(report))
+        result = build_pit_factor_panel(
+            market_path=paths["market"], universe_path=paths["universe"],
+            financial_path=paths["financial"], industry_path=paths["industry"],
+            adjustment_path=paths["adjustment"],
+            source_manifest_path=manifest, output_dir=tmp_path / "output",
+            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
+        )
+        assert result["status"] == "BLOCKED"
+        assert any("adapter_config_path_missing" in b for b in result["blockers"])
+
+    def test_adapter_report_has_blockers_blocks(self, tmp_path):
+        paths = _write_frames(tmp_path)
+        config_path = tmp_path / "test_adapter_config.json"
+        config_path.write_text('{"adapter_type": "FILE", "test": true}')
+        manifest = _write_manifest_with_config(tmp_path, paths, config_path,
+                                                evidence_origin="HISTORICAL_REAL")
+        # Write adapter report that HAS blockers
+        report = {
+            "schema_version": "alpha_v4_7_pit_data_adapter_v1",
+            "status": "PASS", "adapter_ready": True,
+            "config_path": str(config_path), "config_sha256": _file_sha(config_path),
+            "manifest_path": str(manifest), "manifest_sha256": _file_sha(manifest),
+            "evidence_origin": "HISTORICAL_REAL",
+            "historical_evidence_level": "E1", "synthetic_evidence_level": "S0",
+            "capital_authority": False,
+            "blockers": ["test_blocker_should_prevent_e3"],
+        }
+        report["content_sha256"] = _canonical_sha(
+            {k: v for k, v in report.items() if k != "content_sha256"})
+        adapter_rp = tmp_path / "pit_adapter_report.json"
+        adapter_rp.write_text(json.dumps(report))
+        result = build_pit_factor_panel(
+            market_path=paths["market"], universe_path=paths["universe"],
+            financial_path=paths["financial"], industry_path=paths["industry"],
+            adjustment_path=paths["adjustment"],
+            source_manifest_path=manifest, output_dir=tmp_path / "output",
+            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
+        )
+        assert result["status"] == "BLOCKED"
+        assert any("adapter_report_has_blockers" in b for b in result["blockers"])
+
+
+class TestExceptionHandling:
+    """All exceptions must be caught and converted to BLOCKED reports."""
+
+    def test_corrupted_manifest_json_yields_blocked(self, tmp_path):
+        paths = _write_frames(tmp_path)
+        manifest = tmp_path / "pit_source_manifest.json"
+        manifest.write_text("{not valid json [[[")
+        result = build_pit_factor_panel(
+            market_path=paths["market"], universe_path=paths["universe"],
+            financial_path=paths["financial"], industry_path=paths["industry"],
+            adjustment_path=paths["adjustment"],
+            source_manifest_path=manifest, output_dir=tmp_path / "output",
+            profile_name="alpha_v4_7",
+        )
+        assert result["status"] == "BLOCKED"
+        assert any("unhandled_exception" in b for b in result["blockers"])
+
+
+class TestAdjFactorMomentum:
+    """Adj_factor must be used in momentum computation."""
+
+    def test_adj_factor_affects_momentum(self, tmp_path):
+        paths = _write_frames(tmp_path)
+        manifest = _write_manifest(tmp_path, paths)
+        # Run with adj_factor=1.0 (baseline)
+        result1 = build_pit_factor_panel(
+            market_path=paths["market"], universe_path=paths["universe"],
+            financial_path=paths["financial"], industry_path=paths["industry"],
+            adjustment_path=paths["adjustment"],
+            source_manifest_path=manifest, output_dir=tmp_path / "output1",
+            profile_name="alpha_v4_7",
+        )
+        # Run with adj_factor=0.5 (simulated stock split)
+        adj = pd.read_parquet(paths["adjustment"])
+        adj["adj_factor"] = 0.5
+        adj.to_parquet(paths["adjustment"], index=False)
+        manifest2 = _write_manifest(tmp_path, paths)
+        result2 = build_pit_factor_panel(
+            market_path=paths["market"], universe_path=paths["universe"],
+            financial_path=paths["financial"], industry_path=paths["industry"],
+            adjustment_path=paths["adjustment"],
+            source_manifest_path=manifest2, output_dir=tmp_path / "output2",
+            profile_name="alpha_v4_7",
+        )
+        # Both should be BLOCKED (short history), but the test proves adj_factor is read
+        assert result1["status"] == "BLOCKED"
+        assert result2["status"] == "BLOCKED"

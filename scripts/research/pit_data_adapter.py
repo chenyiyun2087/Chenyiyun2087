@@ -100,7 +100,12 @@ def build_pit_adapter_manifest(
         return _write_blocked(
             output_dir, ["adapter_config_missing"], config_path
         )
-    config = json.loads(config_path.read_text(encoding="utf-8"))
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return _write_blocked(
+            output_dir, [f"adapter_config_json_error:{type(exc).__name__}:{exc}"], config_path
+        )
     adapter_type = str(config.get("adapter_type") or "").upper()
     origin = str(config.get("evidence_origin") or "")
     blockers: list[str] = []
@@ -140,6 +145,8 @@ def build_pit_adapter_manifest(
     frames: dict[str, pd.DataFrame] = {}
     paths: dict[str, Path] = {}
     if adapter_type == "FILE":
+        import shutil, tempfile
+        freeze_dir = Path(tempfile.mkdtemp(prefix="pit_frozen_sources_"))
         for name in SOURCE_NAMES:
             payload = source_config.get(name) or {}
             path_value = payload.get("path")
@@ -152,8 +159,12 @@ def build_pit_adapter_manifest(
             if not path.exists():
                 blockers.append(f"source_file_missing:{name}")
                 continue
-            paths[name] = path
-            frames[name] = _read_table(path)
+            # Freeze: copy to temp dir before reading (TOCTOU protection)
+            suffix = path.suffix if path.suffix else ".parquet"
+            frozen = freeze_dir / f"{name}{suffix}"
+            shutil.copy2(path, frozen)
+            paths[name] = frozen
+            frames[name] = _read_table(frozen)
     elif adapter_type == "MYSQL":
         db_url = os.getenv("CHENYIYUN_DB_URL")
         if not db_url:
@@ -164,17 +175,21 @@ def build_pit_adapter_manifest(
             engine = create_engine(db_url)
             snapshot_dir = output_dir / "snapshots"
             snapshot_dir.mkdir(parents=True, exist_ok=True)
-            for name in SOURCE_NAMES:
-                payload = source_config.get(name) or {}
-                query = str(payload.get("query") or "")
-                if not _safe_select(query):
-                    blockers.append(f"mysql_query_not_read_only_select:{name}")
-                    continue
-                frame = pd.read_sql(text(query), engine)
-                path = snapshot_dir / f"{name}.parquet"
-                frame.to_parquet(path, index=False)
-                paths[name] = path
-                frames[name] = frame
+            with engine.connect() as conn:
+                conn.execute(text("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+                conn.execute(text("START TRANSACTION READ ONLY WITH CONSISTENT SNAPSHOT"))
+                for name in SOURCE_NAMES:
+                    payload = source_config.get(name) or {}
+                    query = str(payload.get("query") or "")
+                    if not _safe_select(query):
+                        blockers.append(f"mysql_query_not_read_only_select:{name}")
+                        continue
+                    frame = pd.read_sql(text(query), conn)
+                    path = snapshot_dir / f"{name}.parquet"
+                    frame.to_parquet(path, index=False)
+                    paths[name] = path
+                    frames[name] = frame
+                conn.execute(text("COMMIT"))
             engine.dispose()
     for name, frame in frames.items():
         missing_columns = sorted(REQUIRED_COLUMNS[name] - set(frame.columns))
