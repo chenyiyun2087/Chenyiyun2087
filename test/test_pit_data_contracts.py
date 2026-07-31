@@ -136,6 +136,30 @@ def _write_manifest(out_dir: Path, paths: dict[str, Path], *, field_definition_h
     return mp
 
 
+def _write_adapter_report(out_dir: Path, manifest_path: Path, config_path: Path | None = None) -> Path:
+    """Write a minimal valid Adapter PASS report for testing."""
+    report = {
+        "schema_version": "alpha_v4_7_pit_data_adapter_v1",
+        "status": "PASS",
+        "adapter_ready": True,
+        "config_path": str(config_path) if config_path else None,
+        "config_sha256": _file_sha(config_path) if config_path and config_path.exists() else None,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": _file_sha(manifest_path),
+        "evidence_origin": "HISTORICAL_REAL",
+        "historical_evidence_level": "E1",
+        "synthetic_evidence_level": "S0",
+        "capital_authority": False,
+        "blockers": [],
+    }
+    report["content_sha256"] = _canonical_sha(
+        {k: v for k, v in report.items() if k != "content_sha256"}
+    )
+    rp = out_dir / "pit_adapter_report.json"
+    rp.write_text(json.dumps(report, ensure_ascii=False, indent=2))
+    return rp
+
+
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 
@@ -226,13 +250,14 @@ class TestPlaceholderFieldDefinitionHash:
     def test_short_field_definition_hash_blocks(self, tmp_path):
         paths = _write_frames(tmp_path)
         manifest = _write_manifest(tmp_path, paths, field_definition_hash="abc123", evidence_origin="HISTORICAL_REAL")
+        adapter_rp = _write_adapter_report(tmp_path, manifest)
 
         result = build_pit_factor_panel(
             market_path=paths["market"], universe_path=paths["universe"],
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", fixture_mode=True,
+            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("field_definition_hash_is_placeholder" in b for b in result["blockers"])
@@ -247,13 +272,14 @@ class TestConstantSemanticColumns:
         uni["security_status_transition"] = "ACTIVE"
         uni.to_parquet(paths["universe"], index=False)
         manifest = _write_manifest(tmp_path, paths, evidence_origin="HISTORICAL_REAL")
+        adapter_rp = _write_adapter_report(tmp_path, manifest)
 
         result = build_pit_factor_panel(
             market_path=paths["market"], universe_path=paths["universe"],
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", fixture_mode=True,
+            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("security_status_transition_constant" in b for b in result["blockers"])
@@ -264,13 +290,14 @@ class TestConstantSemanticColumns:
         adj["corporate_action_type"] = "NONE"
         adj.to_parquet(paths["adjustment"], index=False)
         manifest = _write_manifest(tmp_path, paths, evidence_origin="HISTORICAL_REAL")
+        adapter_rp = _write_adapter_report(tmp_path, manifest)
 
         result = build_pit_factor_panel(
             market_path=paths["market"], universe_path=paths["universe"],
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", fixture_mode=True,
+            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("corporate_action_type_constant" in b for b in result["blockers"])
@@ -285,13 +312,14 @@ class TestMarketRegimeDiversity:
         mkt["market_regime"] = "UNKNOWN"
         mkt.to_parquet(paths["market"], index=False)
         manifest = _write_manifest(tmp_path, paths, evidence_origin="HISTORICAL_REAL")
+        adapter_rp = _write_adapter_report(tmp_path, manifest)
 
         result = build_pit_factor_panel(
             market_path=paths["market"], universe_path=paths["universe"],
             financial_path=paths["financial"], industry_path=paths["industry"],
             adjustment_path=paths["adjustment"],
             source_manifest_path=manifest, output_dir=tmp_path / "output",
-            profile_name="alpha_v4_7", fixture_mode=True,
+            profile_name="alpha_v4_7", adapter_report_path=adapter_rp,
         )
         assert result["status"] == "BLOCKED"
         assert any("market_regime_diversity" in b for b in result["blockers"])

@@ -209,21 +209,36 @@ def build_pit_factor_panel(
         blockers.append("source_manifest_schema_semantic_version_missing")
     if not str(manifest.get("field_definition_hash") or ""):
         blockers.append("source_manifest_field_definition_hash_missing")
-    # --- Adapter report binding (required for HISTORICAL_REAL, skipped in fixture_mode) ---
+    # --- Fixture mode: forbidden for HISTORICAL_REAL, allowed for SYNTHETIC (S3 only) ---
+    if fixture_mode and evidence_origin == "HISTORICAL_REAL":
+        blockers.append("fixture_mode_forbidden_for_historical_real")
+    # --- Adapter report binding (required for HISTORICAL_REAL) ---
     if evidence_origin == "HISTORICAL_REAL" and not fixture_mode:
         if adapter_report_path is None or not adapter_report_path.exists():
             blockers.append("adapter_report_required_for_historical_real")
         else:
             adapter = json.loads(adapter_report_path.read_text(encoding="utf-8"))
+            # Verify Adapter report self-hash
+            adapter_raw = {k: v for k, v in adapter.items() if k != "content_sha256"}
+            if str(adapter.get("content_sha256") or "") != canonical_sha(adapter_raw):
+                blockers.append("adapter_report_content_sha256_invalid")
             if str(adapter.get("status")) != "PASS":
                 blockers.append("adapter_report_not_pass")
             if adapter.get("adapter_ready") is not True:
                 blockers.append("adapter_not_ready")
             if str(adapter.get("historical_evidence_level")) != "E1":
                 blockers.append("adapter_not_historical_e1")
+            # Manifest path + SHA binding
             actual_manifest_sha = _file_sha(source_manifest_path)
             if str(adapter.get("manifest_sha256") or "") != actual_manifest_sha:
                 blockers.append("adapter_manifest_sha_mismatch")
+            if str(adapter.get("manifest_path") or "") != str(source_manifest_path):
+                blockers.append("adapter_manifest_path_mismatch")
+            # Config SHA chain
+            adapter_config_sha = str(adapter.get("config_sha256") or "")
+            manifest_config_sha = str(manifest.get("adapter_config_sha256") or "")
+            if adapter_config_sha and manifest_config_sha and adapter_config_sha != manifest_config_sha:
+                blockers.append("adapter_config_sha256_mismatch")
             adapter_config = adapter.get("config_path")
             if adapter_config and not Path(str(adapter_config)).exists():
                 blockers.append("adapter_config_not_found")
@@ -321,6 +336,16 @@ def build_pit_factor_panel(
             if (fin_sub["financial_period_end"] > fin_sub["announcement_date"]).any():
                 n_bad = int((fin_sub["financial_period_end"] > fin_sub["announcement_date"]).sum())
                 blockers.append(f"financial_period_after_announcement:{n_bad}")
+        # announcement_date <= financial_available_at (compare as strings to avoid tz mismatch)
+        fin_sub2 = panel[["announcement_date", "financial_available_at"]].copy()
+        fin_sub2["_ann_str"] = fin_sub2["announcement_date"].astype(str)
+        fin_sub2["_avail_str"] = fin_sub2["financial_available_at"].astype(str)
+        fin_sub2 = fin_sub2.dropna(subset=["_ann_str", "_avail_str"])
+        fin_sub2 = fin_sub2[fin_sub2["_ann_str"].str.len() > 0]
+        if not fin_sub2.empty:
+            n_bad = int((fin_sub2["_ann_str"] > fin_sub2["_avail_str"]).sum())
+            if n_bad > 0:
+                blockers.append(f"financial_announcement_after_availability:{n_bad}")
         # PB non-negative
         if (panel["pb"].dropna() < 0).any():
             blockers.append("pb_negative_values_detected")
@@ -420,6 +445,11 @@ def build_pit_factor_panel(
         blockers.append(f"history_below_{min_days}_days")
     target_days = int(profile["economic_alpha_qualification"].get("target_trading_days", 504))
     target_met = unique_dates >= target_days
+    # Core start enforcement (HISTORICAL_REAL only)
+    required_core_start = str(profile.get("core_period", {}).get("min_start_date", "2018-01-01"))
+    sample_start_str = str(qualified["trade_date"].min()) if not qualified.empty else None
+    if evidence_origin == "HISTORICAL_REAL" and sample_start_str and sample_start_str > required_core_start:
+        blockers.append(f"core_start_after_required:{sample_start_str}>{required_core_start}")
     min_regimes = int(profile["economic_alpha_qualification"].get("min_market_regimes", 3))
     regime_values = qualified["market_regime"].dropna().unique()
     if evidence_origin == "HISTORICAL_REAL":
@@ -443,6 +473,11 @@ def build_pit_factor_panel(
         status == "PASS" and evidence_origin == "SYNTHETIC"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Remove stale PASS artifacts from prior runs to prevent resurrection
+    for stale_name in ["factor_panel_daily.parquet", "pit_source_manifest.json"]:
+        stale_path = output_dir / stale_name
+        if stale_path.exists():
+            stale_path.unlink()
     panel_columns = [
         "trade_date",
         "symbol",
@@ -507,9 +542,9 @@ def build_pit_factor_panel(
         "minimum_daily_universe_coverage": min_coverage,
         "target_trading_days": target_days,
         "target_trading_days_met": target_met,
-        "core_start_required": "2018-01-01",
+        "core_start_required": str(profile.get("core_period", {}).get("min_start_date", "2018-01-01")),
         "core_start_met": (
-            str(qualified["trade_date"].min()) <= "2018-01-01"
+            str(qualified["trade_date"].min()) <= str(profile.get("core_period", {}).get("min_start_date", "2018-01-01"))
             if not qualified.empty else False
         ),
         "market_regime_count": len(regime_values),
@@ -524,6 +559,7 @@ def build_pit_factor_panel(
         "blockers": sorted(set(blockers)),
         "capital_authority": False,
         "automatic_short_panel_fallback": False,
+        "execution_mode": "TEST_FIXTURE" if fixture_mode else "PRODUCTION",
     }
     report["content_sha256"] = canonical_sha(
         {key: value for key, value in report.items() if key != "content_sha256"}

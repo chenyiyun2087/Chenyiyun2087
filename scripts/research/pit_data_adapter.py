@@ -77,6 +77,15 @@ def _write_blocked(
         {key: value for key, value in report.items() if key != "content_sha256"}
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Remove stale qualified artifacts from prior runs
+    for stale_name in ["pit_source_manifest.json"]:
+        stale_path = output_dir / stale_name
+        if stale_path.exists():
+            stale_path.unlink()
+    snapshots_dir = output_dir / "snapshots"
+    if snapshots_dir.exists():
+        import shutil
+        shutil.rmtree(snapshots_dir)
     (output_dir / "pit_adapter_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -233,10 +242,13 @@ def build_pit_adapter_manifest(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    config_sha = _file_sha(config_path) if config_path and config_path.exists() else None
     report = {
         "schema_version": "alpha_v4_7_pit_data_adapter_v1",
         "status": "PASS",
         "adapter_ready": True,
+        "config_path": str(config_path) if config_path else None,
+        "config_sha256": config_sha,
         "manifest_path": str(manifest_path),
         "manifest_sha256": _file_sha(manifest_path),
         "evidence_origin": origin,
