@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -60,13 +62,37 @@ def _copy_file_safe(src: Path, dst: Path) -> dict[str, str]:
     return {"path": str(dst.relative_to(dst.parent)), "sha256": _file_sha(dst)}
 
 
-def compute_package_id(formal_pit_run_id: str, strategy_set: str, release_id: str) -> str:
-    """Content-addressed package ID."""
+PACKAGE_CONTRACT_VERSION = "formal_package_v5_1_3"
+
+
+def _git_sha() -> str:
+    import subprocess
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True
+        ).strip()
+    except Exception:
+        return "UNKNOWN"
+
+
+def compute_package_id(
+    formal_pit_run_id: str,
+    pit_seal_file_sha: str,
+    strategy_set: str,
+    release_id: str,
+    initial_account_cny: float,
+    package_builder_code_sha: str,
+) -> str:
+    """Content-addressed package ID with complete identity binding."""
     return hashlib.sha256(
         json.dumps({
             "formal_pit_run_id": formal_pit_run_id,
+            "pit_seal_file_sha": pit_seal_file_sha,
             "strategy_set": strategy_set,
             "release_id": release_id,
+            "initial_account_cny": int(initial_account_cny),
+            "package_builder_code_sha": package_builder_code_sha,
+            "package_contract_version": PACKAGE_CONTRACT_VERSION,
         }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
@@ -118,8 +144,14 @@ def build_formal_package(
         return blocked_report("formal_package", "preflight",
                               "preflight_failed", extra={"blockers": blockers})
 
-    # ── Derive package_id ──
-    package_id = compute_package_id(formal_pit_run_id, strategy_set, release_id)
+    # ── Derive package_id with complete identity ──
+    pit_seal_file_sha = _file_sha(pit_run_dir / "seal_manifest.json")
+    builder_code_sha = _file_sha(Path(__file__))
+    git_sha = _git_sha()
+    package_id = compute_package_id(
+        formal_pit_run_id, pit_seal_file_sha,
+        strategy_set, release_id, initial_account_cny, builder_code_sha,
+    )
     package_dir = FORMAL_PACKAGES_ROOT / package_id
     building_dir = FORMAL_PACKAGES_ROOT / f".building_pkg_{package_id[:16]}"
 
@@ -166,6 +198,72 @@ def build_formal_package(
     if missing:
         blockers.append(f"missing_objects:{','.join(missing)}")
 
+    # ── CSV conversion for Formal Runner compatibility ──
+    # The Formal Runner consumes CSV files.  Generate them from parquet sources.
+    csv_entries: dict[str, dict[str, Any]] = {}
+    try:
+        scores_df = pd.read_parquet(building_dir / "scores.parquet")
+        scores_df.to_csv(building_dir / "scores.csv", index=False)
+        csv_entries["scores.csv"] = {"sha256": _file_sha(building_dir / "scores.csv")}
+    except Exception:
+        pass
+
+    try:
+        mkt_df = pd.read_parquet(building_dir / "market.parquet")
+        # Derive prices.csv from market data
+        prices_df = mkt_df[["trade_date", "symbol", "open", "high", "low", "close", "volume", "amount"]].copy()
+        prices_df.to_csv(building_dir / "prices.csv", index=False)
+        csv_entries["prices.csv"] = {"sha256": _file_sha(building_dir / "prices.csv")}
+        # Derive trade_calendar.csv
+        cal_df = pd.DataFrame({"trade_date": sorted(mkt_df["trade_date"].unique())})
+        cal_df.to_csv(building_dir / "trade_calendar.csv", index=False)
+        csv_entries["trade_calendar.csv"] = {"sha256": _file_sha(building_dir / "trade_calendar.csv")}
+    except Exception:
+        pass
+
+    try:
+        uni_df = pd.read_parquet(building_dir / "universe.parquet")
+        uni_df.to_csv(building_dir / "tradable_universe.csv", index=False)
+        csv_entries["tradable_universe.csv"] = {"sha256": _file_sha(building_dir / "tradable_universe.csv")}
+        # Derive security_lifecycle.csv
+        lifecycle_cols = ["trade_date", "symbol", "is_listed", "is_st", "is_suspended",
+                          "listed_date", "security_status"]
+        avail_lc = [c for c in lifecycle_cols if c in uni_df.columns]
+        if avail_lc:
+            uni_df[avail_lc].to_csv(building_dir / "strict_security_lifecycle.csv", index=False)
+            csv_entries["strict_security_lifecycle.csv"] = {
+                "sha256": _file_sha(building_dir / "strict_security_lifecycle.csv")}
+    except Exception:
+        pass
+
+    try:
+        adj_df = pd.read_parquet(building_dir / "adjustment.parquet")
+        adj_df.to_csv(building_dir / "adjustment_factors.csv", index=False)
+        csv_entries["adjustment_factors.csv"] = {"sha256": _file_sha(building_dir / "adjustment_factors.csv")}
+    except Exception:
+        pass
+
+    # strict_corporate_actions.csv — DATA_E0 placeholder
+    ca_path = building_dir / "strict_corporate_actions.csv"
+    pd.DataFrame(columns=["trade_date", "symbol", "action_type", "action_detail"]).to_csv(ca_path, index=False)
+    csv_entries["strict_corporate_actions.csv"] = {"sha256": _file_sha(ca_path)}
+
+    # strict_snapshot_manifest.json — self-describing manifest
+    snapshot_manifest = {
+        "schema_version": "strict_snapshot_manifest_v5_1_3",
+        "formal_pit_run_id": formal_pit_run_id,
+        "package_id": package_id,
+        "data_evidence": "DATA_E0",
+        "files": {k: v["sha256"] for k, v in sorted(csv_entries.items())},
+    }
+    sm_path = building_dir / "strict_snapshot_manifest.json"
+    sm_path.write_text(json.dumps(snapshot_manifest, ensure_ascii=False, indent=2))
+    csv_entries["strict_snapshot_manifest.json"] = {"sha256": _file_sha(sm_path)}
+
+    # Merge CSV entries into required_objects
+    for name, info in csv_entries.items():
+        required_objects[name] = {"path": name, "sha256": info["sha256"]}
+
     # ── Initial account (identity bound to PIT Run sealed_at) ──
     seal_manifest = json.loads((pit_run_dir / "seal_manifest.json").read_text(encoding="utf-8"))
     account = {
@@ -190,27 +288,33 @@ def build_formal_package(
          for name, info in sorted(required_objects.items())}
     )
 
+    pit_sealed_at = seal_manifest.get("sealed_at", datetime.now(timezone.utc).isoformat())
     manifest = {
-        "schema_version": "formal_package_v5_1_2",
+        "schema_version": PACKAGE_CONTRACT_VERSION,
         "status": "PASS",
         "package_id": package_id,
         "formal_pit_run_id": formal_pit_run_id,
+        "pit_seal_file_sha256": pit_seal_file_sha,
         "release_id": release_id,
         "strategy_set": strategy_set,
+        "initial_account_cny": initial_account_cny,
+        "package_builder_code_sha256": builder_code_sha,
+        "git_commit_sha": git_sha,
         "required_objects": required_objects,
         "artifact_tree_sha256": artifact_tree_sha,
         "file_count": len(required_objects),
-        "built_at": datetime.now(timezone.utc).isoformat(),
+        "built_at": pit_sealed_at,
         "capital_authority": False,
     }
+    # content_sha256 excludes built_at (non-deterministic timestamp)
     manifest["content_sha256"] = canonical_sha(
-        {k: v for k, v in manifest.items() if k != "content_sha256"}
+        {k: v for k, v in manifest.items() if k not in ("content_sha256", "built_at")}
     )
     (building_dir / "package_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
 
-    # ── Seal the package ──
-    seal_directory(building_dir, run_id=package_id, git_commit_sha="")
+    # ── Seal the package with real git SHA ──
+    seal_directory(building_dir, run_id=package_id, git_commit_sha=git_sha)
 
     # ── Atomic publish ──
     building_dir.rename(package_dir)

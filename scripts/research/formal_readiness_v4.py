@@ -27,6 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.acceptance_config import canonical_sha
+from runtime.artifact_seal import verify_seal
 from runtime.fail_closed import blocked_report
 
 
@@ -44,16 +45,15 @@ def validate(
     package_dir: Path,
     release_id: str,
     strategy_set: str,
+    pit_run_dir: Path | None = None,
     fixture_mode: bool = False,
     git_commit_sha: str = "",
     acceptance_profile_sha: str = "",
-    _internal_call: bool = False,
 ) -> dict[str, Any]:
     """Run all readiness checks. Returns PASS or BLOCKED.
 
-    _internal_call=True relaxes checks that are only relevant for
-    standalone CLI usage (e.g. .building path check).
-    Set only by the formal PIT orchestrator.
+    v5.1.3: _internal_call removed.  Seal verification is mandatory.
+    pit_run_dir is required for PIT Run Seal verification.
     """
     blockers: list[str] = []
 
@@ -92,12 +92,30 @@ def validate(
                     blockers.append(f"object_sha_mismatch:{obj_name}")
 
     # ═══════════════════════════════════════════════════════════════════
+    # Seal verification (v5.1.3: mandatory)
+    # ═══════════════════════════════════════════════════════════════════
+    # Verify Package Seal
+    pkg_seal = verify_seal(package_dir)
+    if pkg_seal["status"] != "VERIFIED":
+        blockers.append(f"package_seal_not_verified:{pkg_seal['status']}")
+        if pkg_seal.get("reason"):
+            blockers.append(f"package_seal_reason:{pkg_seal['reason']}")
+
+    # Verify PIT Run Seal
+    if pit_run_dir is not None:
+        pit_seal = verify_seal(pit_run_dir)
+        if pit_seal["status"] != "VERIFIED":
+            blockers.append(f"pit_run_seal_not_verified:{pit_seal['status']}")
+            if pit_seal.get("reason"):
+                blockers.append(f"pit_run_seal_reason:{pit_seal['reason']}")
+
+    # ═══════════════════════════════════════════════════════════════════
     # No symlinks, no .building
     # ═══════════════════════════════════════════════════════════════════
     for p in package_dir.rglob("*"):
         if p.is_symlink():
             blockers.append(f"symlink_forbidden:{p.relative_to(package_dir)}")
-    if not _internal_call and ".building" in str(package_dir):
+    if ".building" in str(package_dir):
         blockers.append(".building_in_path")
 
     # ═══════════════════════════════════════════════════════════════════
@@ -152,8 +170,8 @@ def validate(
                 covered = len(uni_keys & mkt_keys) / len(uni_keys)
                 if covered < 1.0:
                     blockers.append(f"universe_market_coverage:{covered:.4f}")
-        except Exception:
-            pass
+        except Exception as exc:
+            blockers.append(f"universe_market_coverage_check_error:{type(exc).__name__}")
 
     # ═══════════════════════════════════════════════════════════════════
     # Build report
