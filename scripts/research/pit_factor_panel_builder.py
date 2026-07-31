@@ -24,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.acceptance_config import canonical_sha, load_validation_profile
+from runtime.fail_closed import fail_closed
 
 
 SOURCE_NAMES = (
@@ -177,10 +178,9 @@ def build_pit_factor_panel(
             profile=profile, source_paths=source_paths,
         )
     except Exception as exc:
-        return _blocked_report(
-            output_dir, profile_name,
-            [f"unhandled_exception:{type(exc).__name__}:{exc}"],
-            source_paths,
+        return fail_closed(
+            "pit_factor_panel_builder", "build",
+            exc, output_dir=output_dir,
         )
 
 

@@ -507,7 +507,7 @@ class TestExceptionHandling:
             profile_name="formal_v5_0",
         )
         assert result["status"] == "BLOCKED"
-        assert any("unhandled_exception" in b for b in result["blockers"])
+        assert any("unhandled" in b.lower() for b in result.get("blockers", []))
 
 
 class TestAdjFactorMomentum:
