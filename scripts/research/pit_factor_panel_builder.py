@@ -521,6 +521,28 @@ def _build_pit_factor_panel_impl(
             blockers.append("security_status_transition_constant_or_missing")
         if qualified["corporate_action_type"].dropna().nunique() <= 1:
             blockers.append("corporate_action_type_constant_or_missing")
+        # Financial revision chain
+        rev_ids = qualified["revision_id"].dropna()
+        if rev_ids.empty or rev_ids.nunique() <= 1:
+            blockers.append("financial_revision_chain_missing_or_constant")
+        fin_sha = qualified["financial_source_snapshot_sha"].dropna()
+        if not fin_sha.empty:
+            invalid_sha = fin_sha.apply(
+                lambda x: len(str(x)) != 64 or not all(c in "0123456789abcdef" for c in str(x).lower())
+            )
+            if invalid_sha.any():
+                blockers.append(f"financial_source_sha_invalid:{int(invalid_sha.sum())}")
+        # adj_factor must be positive and finite
+        adj = pd.to_numeric(qualified["adj_factor"], errors="coerce").dropna()
+        if not adj.empty:
+            if (adj <= 0).any():
+                blockers.append(f"adj_factor_non_positive:{int((adj<=0).sum())}")
+            if (~np.isfinite(adj)).any():
+                blockers.append("adj_factor_non_finite")
+        # Industry SCD: detect is_current=1 backfill (all industry_available_at identical)
+        ind_avail = qualified["industry_available_at"].dropna()
+        if not ind_avail.empty and ind_avail.nunique() <= 1:
+            blockers.append("industry_scd_suspected_current_backfill")
     elif fdh.startswith("matCHANGEME"):
         blockers.append("field_definition_hash_is_placeholder")
     status = "PASS" if not blockers else "BLOCKED"
