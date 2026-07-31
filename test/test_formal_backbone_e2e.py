@@ -1,6 +1,6 @@
-"""End-to-end + mutation tests for Formal Evidence Backbone v5.0.
+"""End-to-end + mutation tests for Formal Evidence Backbone v5.1.
 
-E2E: adapter → builder → scores → package → readiness → PR chain
+E2E: adapter → builder → scores → package → readiness → PR chain (complete B/C/D/E)
 Mutations: tamper one byte → at least one downstream stage BLOCKED
 """
 
@@ -103,20 +103,39 @@ class TestE2EHappyPath:
         )
         assert pr_c["status"] == "PASS"
 
+        # ── PR-D (OOS) ──
+        pr_d = bind_pr_d(
+            pr_c_binding_path=run_dir / "pr_c" / "pr_c_binding.json",
+            output_dir=run_dir / "pr_d",
+            oos_result="PASS",
+            oos_manifest_sha256=canonical_sha({"oos": "synthetic"}),
+            fixture_mode=False,
+        )
+        assert pr_d["status"] == "PASS"
+
+        # ── PR-E (Capacity) ──
+        pr_e = bind_pr_e(
+            pr_c_binding_path=run_dir / "pr_c" / "pr_c_binding.json",
+            output_dir=run_dir / "pr_e",
+            capacity_result="PASS",
+            fixture_mode=False,
+        )
+        assert pr_e["status"] == "PASS"
+
         # ── Seal ──
         seal = seal_directory(run_dir, run_id=run_id, git_commit_sha="test")
         assert seal["file_count"] > 0
         verified = verify_seal(run_dir)
         assert verified["status"] == "VERIFIED"
 
-        # ── PR-I ──
+        # ── PR-I: Complete chain must PASS ──
         pr_i = verify_pr_i_chain(
             pr_b_path=run_dir / "pr_b" / "pr_b_binding.json",
             pr_c_path=run_dir / "pr_c" / "pr_c_binding.json",
             pr_d_path=run_dir / "pr_d" / "pr_d_binding.json",
             pr_e_path=run_dir / "pr_e" / "pr_e_binding.json",
         )
-        assert pr_i["status"] == "PASS"  # Chain intact where defined
+        assert pr_i["status"] == "PASS", f"Blockers: {pr_i.get('blockers')}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -189,6 +208,8 @@ class TestMutationDetection:
         run_dir.mkdir()
         pr_b_dir = run_dir / "pr_b"; pr_b_dir.mkdir()
         pr_c_dir = run_dir / "pr_c"; pr_c_dir.mkdir()
+        pr_d_dir = run_dir / "pr_d"; pr_d_dir.mkdir()
+        pr_e_dir = run_dir / "pr_e"; pr_e_dir.mkdir()
         # Create valid readiness report
         readiness_path = pr_b_dir / "readiness.json"
         readiness_path.write_text(json.dumps({"status": "PASS", "evidence_sha256": "e"*64}))
@@ -196,16 +217,19 @@ class TestMutationDetection:
         pr_b = bind_pr_b(formal_pit_run_id="run_x", package_sha256="", readiness_report_path=readiness_path, output_dir=pr_b_dir, release_id="rel", strategy_set="strat")
         pr_b_path = pr_b_dir / "pr_b_binding.json"
         pr_c = bind_pr_c(pr_b_binding_path=pr_b_path, formal_run_id="run_x_c", formal_run_manifest_sha256=canonical_sha({"x":1}), frozen_bundle_sha256=canonical_sha({"y":2}), output_dir=pr_c_dir)
+        # Create valid PR-D and PR-E
+        bind_pr_d(pr_c_binding_path=pr_c_dir / "pr_c_binding.json", output_dir=pr_d_dir, oos_result="PASS", oos_manifest_sha256=canonical_sha({"oos":"ok"}), fixture_mode=False)
+        bind_pr_e(pr_c_binding_path=pr_c_dir / "pr_c_binding.json", output_dir=pr_e_dir, capacity_result="PASS", fixture_mode=False)
         # Tamper PR-B
         data = json.loads(pr_b_path.read_text())
         data["release_id"] = "tampered"
         pr_b_path.write_text(json.dumps(data))
-        # PR-I must detect
+        # PR-I must detect the PR-B file SHA mismatch
         pr_i = verify_pr_i_chain(
             pr_b_path=pr_b_path,
             pr_c_path=pr_c_dir / "pr_c_binding.json",
-            pr_d_path=run_dir / "pr_d" / "nonexistent.json",
-            pr_e_path=run_dir / "pr_e" / "nonexistent.json",
+            pr_d_path=pr_d_dir / "pr_d_binding.json",
+            pr_e_path=pr_e_dir / "pr_e_binding.json",
         )
         assert pr_i["status"] == "BLOCKED"
         assert any("pr_b_file_sha_mismatch" in b for b in pr_i["blockers"])

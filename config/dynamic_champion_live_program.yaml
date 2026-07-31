@@ -8,12 +8,18 @@ release_registry: config/strategy_release_registry.yaml
 approved_backtest_snapshot: exports/signal_research/20260618_213002_059138_trusted_account_backtest
 validation_profile: formal_v5_0
 alpha_v3_evidence: exports/alpha_v3_validation/20260730_alpha_v3/promotion_gate_report.json
+formal_evidence_registry_path: exports/formal_evidence_registry/active_formal_run.json
+
+# ── Legacy upgrade_evidence (deprecated v5.0 date-stamped paths) ──
+# These paths have been superseded by formal_evidence_registry_path above.
+# Production code MUST resolve PR-A through PR-E from the registry.
+# The entries below are preserved as historical reference only.
 upgrade_evidence:
-  pr_a_equivalence: exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json
-  pr_b_formal_readiness: exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json
-  pr_c_formal_run: exports/formal_runs/20260727_pr_c/formal_run_precheck.json
-  pr_d_oos_robustness: exports/formal_oos/20260727_pr_d/formal_oos_robustness.json
-  pr_e_execution_capacity: exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json
+  _DEPRECATED_pr_a_equivalence: exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json
+  _DEPRECATED_pr_b_formal_readiness: exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json
+  _DEPRECATED_pr_c_formal_run: exports/formal_runs/20260727_pr_c/formal_run_precheck.json
+  _DEPRECATED_pr_d_oos_robustness: exports/formal_oos/20260727_pr_d/formal_oos_robustness.json
+  _DEPRECATED_pr_e_execution_capacity: exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json
 
 current_lane: RESEARCH_REVALIDATION
 production_route_mutation_allowed: false

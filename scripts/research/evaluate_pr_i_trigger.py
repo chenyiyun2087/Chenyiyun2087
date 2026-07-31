@@ -3,6 +3,9 @@
 PR-I is allowed only when all identity/data/ledger/execution evidence is
 technically complete and the remaining failures are purely economic.  Missing
 or blocked technical evidence always returns ``PR_I_NOT_TRIGGERED``.
+
+Evidence paths are resolved from the formal evidence registry by default.
+Legacy date-stamped paths are no longer supported as defaults.
 """
 
 from __future__ import annotations
@@ -18,18 +21,37 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 from runtime.formal_contract import FORMAL_STRATEGIES, FORMAL_STRATEGY_SET, canonical_sha
 
-DEFAULT_SOURCES = {
-    "pr_a_equivalence": PROJECT_ROOT
-    / "exports/economic_equivalence/20260727_pr_a/economic_equivalence_attestation.json",
-    "pr_b_formal_readiness": PROJECT_ROOT
-    / "exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
-    "pr_c_formal_run": PROJECT_ROOT
-    / "exports/formal_runs/20260727_pr_c/formal_run_manifest.json",
-    "pr_d_oos_robustness": PROJECT_ROOT
-    / "exports/formal_oos/20260727_pr_d/formal_oos_robustness.json",
-    "pr_e_execution_capacity": PROJECT_ROOT
-    / "exports/execution_capacity/20260727_pr_e/formal_execution_capacity.json",
-}
+DEFAULT_REGISTRY_PATH = PROJECT_ROOT / "exports" / "formal_evidence_registry" / "active_formal_run.json"
+
+
+def _load_registry_sources(registry_path: Path) -> dict[str, Path] | None:
+    """Load PR-A through PR-E paths from the formal evidence registry.
+
+    Returns None if the registry is missing, unparseable, or has no active run.
+    """
+    try:
+        reg = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(reg, dict):
+        return None
+
+    mapping = {
+        "pr_a_equivalence": reg.get("pr_a_path"),
+        "pr_b_formal_readiness": reg.get("pr_b_path"),
+        "pr_c_formal_run": reg.get("pr_c_path"),
+        "pr_d_oos_robustness": reg.get("pr_d_path"),
+        "pr_e_execution_capacity": reg.get("pr_e_path"),
+    }
+    # Only return if at least one path is set
+    if not any(v for v in mapping.values()):
+        return None
+
+    return {
+        key: PROJECT_ROOT / val
+        for key, val in mapping.items()
+        if isinstance(val, str) and val
+    }
 
 
 def _sha(path: Path) -> str:
@@ -261,14 +283,24 @@ def evaluate(sources: dict[str, Path]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    for key, default in DEFAULT_SOURCES.items():
-        parser.add_argument(f"--{key.replace('_', '-')}", type=Path, default=default)
+    parser.add_argument("--registry-path", type=Path, default=DEFAULT_REGISTRY_PATH)
+    for key in ("pr_a_equivalence", "pr_b_formal_readiness", "pr_c_formal_run",
+                 "pr_d_oos_robustness", "pr_e_execution_capacity"):
+        parser.add_argument(f"--{key.replace('_', '-')}", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    sources = {
-        key: getattr(args, key)
-        for key in DEFAULT_SOURCES
-    }
+
+    # Resolve sources: CLI overrides take precedence over registry
+    registry_sources = _load_registry_sources(args.registry_path) or {}
+    sources = {}
+    for key in ("pr_a_equivalence", "pr_b_formal_readiness", "pr_c_formal_run",
+                 "pr_d_oos_robustness", "pr_e_execution_capacity"):
+        cli_val = getattr(args, key)
+        if cli_val is not None:
+            sources[key] = cli_val
+        elif key in registry_sources:
+            sources[key] = registry_sources[key]
+
     result = evaluate(sources)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

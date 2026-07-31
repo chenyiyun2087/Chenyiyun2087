@@ -347,3 +347,84 @@ def build_alpha_claim_registry(
             "reports, investment memos, or capital requests."
         ),
     }
+
+
+# ── Decomposed Evidence Capital Firewall (v5.1) ───────────────────────────────
+# This is the PRIMARY capital firewall for the Formal Evidence Backbone v5.1.
+# It consumes decomposed DataEvidence, AlphaEvidence, ExecutionEvidence from
+# the formal evidence contract, plus the PR-I chain result.
+# The old E0-E4 auto-mapping (above) is retained for backward compatibility
+# with alpha_v4_0 consumers but MUST NOT auto-derive capital qualification.
+
+
+def build_decomposed_capital_firewall(
+    *,
+    data_evidence: str,
+    alpha_evidence: str,
+    execution_evidence: str,
+    pr_i_status: str,
+    manual_approval: bool = False,
+) -> dict[str, Any]:
+    """Fail-closed capital firewall consuming decomposed evidence dimensions.
+
+    Minimum capital eligibility rule:
+        DATA_E3  AND  ALPHA_E3  AND  EXEC_E2  AND  PR-I PASS  AND  manual_approval PASS
+
+    Any single dimension missing → capital stays 0 CNY.
+    This function CANNOT auto-derive capital authority — it only gates eligibility.
+    """
+    requirements = [
+        {
+            "dimension": "data_evidence",
+            "required": "DATA_E3",
+            "actual": str(data_evidence),
+            "status": "PASS" if str(data_evidence) == "DataEvidence.E3" else "BLOCKED",
+        },
+        {
+            "dimension": "alpha_evidence",
+            "required": "ALPHA_E3",
+            "actual": str(alpha_evidence),
+            "status": "PASS" if str(alpha_evidence) == "AlphaEvidence.E3" else "BLOCKED",
+        },
+        {
+            "dimension": "execution_evidence",
+            "required": "EXEC_E2",
+            "actual": str(execution_evidence),
+            "status": "PASS" if str(execution_evidence) in ("ExecutionEvidence.E2", "ExecutionEvidence.E3") else "BLOCKED",
+        },
+        {
+            "dimension": "pr_i_chain",
+            "required": "PR_I_TRIGGERED",
+            "actual": str(pr_i_status),
+            "status": "PASS" if str(pr_i_status) == "PR_I_TRIGGERED" else "BLOCKED",
+        },
+        {
+            "dimension": "manual_approval",
+            "required": "PASS",
+            "actual": "PASS" if manual_approval else "BLOCKED",
+            "status": "PASS" if manual_approval else "BLOCKED",
+        },
+    ]
+
+    eligible = all(r["status"] == "PASS" for r in requirements)
+    blocking = [r["dimension"] for r in requirements if r["status"] != "PASS"]
+
+    return {
+        "schema_version": "decomposed_capital_firewall_v5_1",
+        "status": "ELIGIBLE_FOR_SEPARATE_MANUAL_AUTHORIZATION" if eligible else "BLOCKED",
+        "headline_warning": (
+            "SIMULATION ONLY | NO CAPITAL AUTHORITY | NO BROKER ACTION"
+        ),
+        "capital_authority": False,  # NEVER auto-derived
+        "broker_permission": False,
+        "canary_enabled": False,
+        "effective_allowed_capital_cny": 0.0,
+        "requirements": requirements,
+        "blocking_dimensions": blocking,
+        "interpretation": (
+            f"All {len(requirements)} dimensions must PASS. "
+            f"{len(blocking)} dimension(s) blocked: {', '.join(blocking) if blocking else 'none'}. "
+            "A PASS here means only that a separate release-bound human authorization "
+            "may be considered. This function CANNOT enable a broker route or allocate capital."
+        ),
+    }
