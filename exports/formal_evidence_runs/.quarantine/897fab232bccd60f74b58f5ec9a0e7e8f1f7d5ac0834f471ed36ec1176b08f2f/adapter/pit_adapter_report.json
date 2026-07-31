@@ -1,0 +1,13 @@
+{
+  "adapter_ready": false,
+  "blockers": [
+    "source_schema_hash_mismatch:universe"
+  ],
+  "capital_authority": false,
+  "config_path": "exports/formal_evidence_runs/adapter_config_v5_0.json",
+  "content_sha256": "e5067b532454286bfe5881d57e5c0291b2880b9e670e56e8c8b5efdb7fb1bdc3",
+  "historical_evidence_level": "E0",
+  "schema_version": "alpha_v4_7_pit_data_adapter_v1",
+  "status": "BLOCKED",
+  "synthetic_evidence_level": "S0"
+}

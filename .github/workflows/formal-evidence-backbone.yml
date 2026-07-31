@@ -1,0 +1,159 @@
+name: Formal Evidence Backbone
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'runtime/pr_chain_binding.py'
+      - 'runtime/formal_evidence_contract.py'
+      - 'runtime/formal_contract.py'
+      - 'runtime/artifact_seal.py'
+      - 'runtime/fail_closed.py'
+      - 'runtime/acceptance_config.py'
+      - 'scripts/research/build_formal_scores.py'
+      - 'scripts/research/build_formal_package_v3.py'
+      - 'scripts/research/build_formal_package_v4.py'
+      - 'scripts/research/formal_readiness_v3.py'
+      - 'scripts/research/formal_readiness_v4.py'
+      - 'scripts/research/run_formal_pit_pipeline.py'
+      - 'scripts/research/pit_data_adapter.py'
+      - 'scripts/research/pit_factor_panel_builder.py'
+      - 'scripts/research/evaluate_pr_i_trigger.py'
+      - 'scripts/research/capital_firewall.py'
+      - 'test/test_pr_chain_complete.py'
+      - 'test/test_formal_backbone_e2e.py'
+      - 'test/test_formal_evidence_binding.py'
+      - '.github/workflows/formal-evidence-backbone.yml'
+  pull_request:
+    paths:
+      - 'runtime/pr_chain_binding.py'
+      - 'runtime/formal_evidence_contract.py'
+      - 'runtime/formal_contract.py'
+      - 'runtime/artifact_seal.py'
+      - 'runtime/fail_closed.py'
+      - 'runtime/acceptance_config.py'
+      - 'scripts/research/build_formal_scores.py'
+      - 'scripts/research/build_formal_package_v3.py'
+      - 'scripts/research/build_formal_package_v4.py'
+      - 'scripts/research/formal_readiness_v3.py'
+      - 'scripts/research/formal_readiness_v4.py'
+      - 'scripts/research/run_formal_pit_pipeline.py'
+      - 'scripts/research/pit_data_adapter.py'
+      - 'scripts/research/pit_factor_panel_builder.py'
+      - 'scripts/research/evaluate_pr_i_trigger.py'
+      - 'scripts/research/capital_firewall.py'
+      - 'test/test_pr_chain_complete.py'
+      - 'test/test_formal_backbone_e2e.py'
+      - 'test/test_formal_evidence_binding.py'
+      - '.github/workflows/formal-evidence-backbone.yml'
+
+jobs:
+  evidence-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic
+      - run: python -m pytest test/test_formal_evidence_binding.py -v --tb=short
+
+  pr-chain-completeness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic
+      - run: python -m pytest test/test_pr_chain_complete.py -v --tb=short
+
+  formal-score-equivalence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic scipy pyarrow
+      - run: python -c "
+        from scripts.research.build_formal_scores import build_formal_scores, check_economic_equivalence
+        import pandas as pd, numpy as np, tempfile, os
+        tmp = tempfile.mkdtemp()
+        panel = pd.DataFrame({
+            'trade_date': pd.date_range('2023-01-04', periods=30, freq='B'),
+            'symbol': ['000001'] * 30,
+            'volatility': np.random.randn(30) * 0.01,
+            'value': np.random.randn(30) * 0.01,
+            'size': np.random.randn(30) * 0.01,
+            'momentum': np.random.randn(30) * 0.01,
+            'liquidity': np.random.randn(30) * 0.01,
+            'market_beta': np.random.randn(30) * 0.01,
+        })
+        panel_path = os.path.join(tmp, 'panel.parquet')
+        panel.to_parquet(panel_path)
+        out = os.path.join(tmp, 'scores')
+        result = build_formal_scores(factor_panel_path=panel_path, output_dir=out)
+        assert result['status'] == 'PASS', f'Score build failed: {result.get(\"blockers\")}'
+        assert 'factor_coverage' in result
+        # Test no fillna(0.0): panel with some NaN should BLOCK
+        panel2 = panel.copy()
+        panel2.loc[0:4, 'volatility'] = np.nan
+        panel2_path = os.path.join(tmp, 'panel2.parquet')
+        panel2.to_parquet(panel2_path)
+        out2 = os.path.join(tmp, 'scores2')
+        result2 = build_formal_scores(factor_panel_path=panel2_path, output_dir=out2)
+        assert result2['status'] == 'BLOCKED', 'Should block on high NaN coverage'
+        print('Score builder tests PASS')
+      "
+
+  artifact-seal-v2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic
+      - run: python -m pytest test/test_formal_backbone_e2e.py -v --tb=short -k "test_seal"
+
+  mutation-suite:
+    runs-on: ubuntu-latest
+    needs: [pr-chain-completeness]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic scipy pyarrow
+      - run: python -m pytest test/test_formal_backbone_e2e.py test/test_pr_chain_complete.py -v --tb=short
+
+  full-regression:
+    runs-on: ubuntu-latest
+    needs: [evidence-contract, pr-chain-completeness, formal-score-equivalence, artifact-seal-v2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic scipy pyarrow
+      - run: python -m pytest test/test_formal_backbone_e2e.py test/test_pr_chain_complete.py test/test_formal_evidence_binding.py -v --tb=short
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+
+  pending-pr-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if grep -r "pending_pr_5" scripts/ runtime/ --include="*.py" | grep -v "^[^:]*#"; then
+            echo "ERROR: pending_pr_5 placeholder found in production code"
+            exit 1
+          fi
+          echo "No pending_pr_5 placeholders found"

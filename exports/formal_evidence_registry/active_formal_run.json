@@ -1,0 +1,15 @@
+{
+  "schema_version": "formal_evidence_registry_v1",
+  "formal_pit_run_id": null,
+  "formal_run_id": null,
+  "pr_a_path": null,
+  "pr_b_path": null,
+  "pr_c_path": null,
+  "pr_d_path": null,
+  "pr_e_path": null,
+  "pr_i_path": null,
+  "seal_manifest_sha256": null,
+  "capital_authority": false,
+  "updated_at": null,
+  "updated_by": null
+}

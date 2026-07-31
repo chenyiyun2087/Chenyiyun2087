@@ -1,0 +1,51 @@
+# Formal Strategy Definition: Production Governed Vol Position v1.2b Dynamic Score
+# This is the canonical strategy identity for the champion strategy.
+# All formal evidence (PR-B through PR-I) must bind to this definition.
+
+schema_version: "strategy_definition_v1"
+strategy_id: "production_governed_vol_position_v1_2b_dynamic_score"
+strategy_display_name: "Production Governed Vol Position v1.2b — Dynamic Score"
+
+# ── Score Formula ──
+score_formula: "weighted_sum"
+factor_weights:
+  volatility: 0.25
+  value: 0.25
+  size: 0.15
+  momentum: 0.15
+  liquidity: 0.10
+  market_beta: 0.10
+
+factor_signs:
+  volatility: 1
+  value: 1
+  size: 1
+  momentum: 1
+  liquidity: -1
+  market_beta: 1
+
+# ── Missing Value Policy ──
+# Missing factors must reduce daily coverage, never silently filled.
+missing_value_policy: "BLOCK_IF_EXCEEDS_THRESHOLD"
+missing_factor_threshold_pct: 5.0
+# Forbidden: numeric.fillna(0.0) — a missing factor
+# is not neutral.  It is evidence the data pipeline has a gap.
+
+# ── Ranking ──
+ranking_policy: "descending"
+selection_threshold: "top_20_pct"
+
+# ── Rebalancing ──
+rebalance_policy: "weekly_monday"
+
+# ── Timing (all times in Asia/Shanghai) ──
+signal_time: "T16:00:00+08:00"
+execution_time: "T+1 09:30:00+08:00"
+timezone: "Asia/Shanghai"
+
+# ── Code Identity ──
+code_entry: "scripts.research.build_formal_scores.build_formal_scores"
+code_path: "scripts/research/build_formal_scores.py"
+
+# ── Acceptance Profile ──
+acceptance_profile: "formal_v5_0"

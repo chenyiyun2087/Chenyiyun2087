@@ -1,0 +1,13 @@
+{
+  "active_formal_run": null,
+  "orphaned_runs": [
+    "5c60a2469332308ab0050126cd38dc44f0a9e8d34ba5f2ac736fa89bb650eac3",
+    "897fab232bccd60f74b58f5ec9a0e7e8f1f7d5ac0834f471ed36ec1176b08f2f"
+  ],
+  "quarantined_runs": [
+    "5c60a2469332308ab0050126cd38dc44f0a9e8d34ba5f2ac736fa89bb650eac3",
+    "897fab232bccd60f74b58f5ec9a0e7e8f1f7d5ac0834f471ed36ec1176b08f2f"
+  ],
+  "schema_version": "active_evidence_index_v1",
+  "updated_at": "2026-07-31T00:00:00+00:00"
+}

@@ -1,0 +1,11 @@
+{
+  "capital_authority": false,
+  "content_sha256": "e619b6a54cdb6e66e7a8aee8789a5918ea221579e8be999517b519d253b5828c",
+  "evidence_level": "E0",
+  "original_tree_sha256": "7e7433b728125bad4ccfa2948ec791bad3d0885e8a92c3bec1138e45cb35beea",
+  "quarantine_reason": "ORPHANED",
+  "quarantined_at": "2026-07-31T14:40:27.872129+00:00",
+  "run_name": "5c60a2469332308ab0050126cd38dc44f0a9e8d34ba5f2ac736fa89bb650eac3",
+  "schema_version": "evidence_tombstone_v5_1",
+  "status": "QUARANTINED"
+}
