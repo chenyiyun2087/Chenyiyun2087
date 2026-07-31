@@ -362,16 +362,18 @@ def build_decomposed_capital_firewall(
     data_evidence: str,
     alpha_evidence: str,
     execution_evidence: str,
-    pr_i_status: str,
+    pr_chain_status: str = "BLOCKED",
+    economic_status: str = "UNDETERMINED",
     manual_approval: bool = False,
 ) -> dict[str, Any]:
     """Fail-closed capital firewall consuming decomposed evidence dimensions.
 
-    Minimum capital eligibility rule:
-        DATA_E3  AND  ALPHA_E3  AND  EXEC_E2  AND  PR-I PASS  AND  manual_approval PASS
+    v5.1.3: Splits pr_chain_status (technical) from economic_status (economic
+    decision).  Capital Firewall requires:
+        DATA_E3 AND ALPHA_E3 AND EXEC_E2 AND
+        pr_chain_status == PASS AND economic_status == PASS AND manual_approval
 
-    Any single dimension missing → capital stays 0 CNY.
-    This function CANNOT auto-derive capital authority — it only gates eligibility.
+    PR_I_TRIGGERED is no longer a capital gate — it's an Alpha redesign signal.
     """
     requirements = [
         {
@@ -393,10 +395,16 @@ def build_decomposed_capital_firewall(
             "status": "PASS" if str(execution_evidence) in ("ExecutionEvidence.E2", "ExecutionEvidence.E3") else "BLOCKED",
         },
         {
-            "dimension": "pr_i_chain",
-            "required": "PR_I_TRIGGERED",
-            "actual": str(pr_i_status),
-            "status": "PASS" if str(pr_i_status) == "PR_I_TRIGGERED" else "BLOCKED",
+            "dimension": "pr_chain_status",
+            "required": "PASS",
+            "actual": str(pr_chain_status),
+            "status": "PASS" if str(pr_chain_status) == "PASS" else "BLOCKED",
+        },
+        {
+            "dimension": "economic_status",
+            "required": "PASS",
+            "actual": str(economic_status),
+            "status": "PASS" if str(economic_status) == "PASS" else "BLOCKED",
         },
         {
             "dimension": "manual_approval",

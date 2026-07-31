@@ -314,7 +314,7 @@ def run_formal_pit_pipeline(
     audit_dir = building_dir / "audit"
     audit_dir.mkdir()
     try:
-        from scripts.research.pit_factor_panel_audit import run_semantic_audit
+        from scripts.research.pit_semantic_audit import run_semantic_audit
         audit_result = run_semantic_audit(snapshots_dir, manifest_path)
     except ImportError:
         # Semantic audit module not available — BLOCKED for formal historical data

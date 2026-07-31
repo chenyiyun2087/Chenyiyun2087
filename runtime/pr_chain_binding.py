@@ -197,10 +197,12 @@ def bind_pr_c(
         return blocked_report("pr_c_binding", "input", "run_manifest_verification_failed",
                               extra={"blockers": rm_blockers})
 
-    # Verify PIT Run ID consistency (use formal_run_id from formal runner)
-    if run_manifest.get("formal_pit_run_id", run_manifest.get("formal_run_id")) != pit_run_id:
-        # Accept either field name
-        pass  # not a blocker — formal_run_id is the runner's own identity
+    # Verify PIT Run ID consistency — MUST match PR-B's formal_pit_run_id
+    manifest_pit_id = run_manifest.get("formal_pit_run_id")
+    if not manifest_pit_id:
+        rm_blockers.append("run_manifest_formal_pit_run_id_missing")
+    elif manifest_pit_id != pit_run_id:
+        rm_blockers.append("run_manifest_pit_run_id_mismatch")
 
     # Verify formal_run_id matches (use formal_run_id from runner, not run_id)
     runner_run_id = run_manifest.get("formal_run_id") or run_manifest.get("run_id")

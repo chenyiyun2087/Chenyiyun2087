@@ -155,8 +155,29 @@ class TestActivationReport:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestSemanticAuditBlocked:
-    """Semantic audit module not available must produce BLOCKED."""
+class TestSemanticAudit:
+    """Semantic audit module must exist and produce PASS/BLOCKED."""
+
+    def test_semantic_audit_module_exists(self):
+        """run_semantic_audit must be importable from pit_semantic_audit."""
+        from scripts.research.pit_semantic_audit import run_semantic_audit
+        import inspect
+        sig = inspect.signature(run_semantic_audit)
+        params = list(sig.parameters.keys())
+        assert "snapshots_dir" in params
+        assert "manifest_path" in params
+
+    def test_semantic_audit_blocks_on_missing_snapshots(self, tmp_path):
+        """Missing snapshots must produce BLOCKED."""
+        from scripts.research.pit_semantic_audit import run_semantic_audit
+        result = run_semantic_audit(tmp_path, tmp_path / "nonexistent.json")
+        assert result["status"] == "BLOCKED"
+        assert any("snapshot_missing" in b for b in result.get("blockers", []))
+
+    def test_orchestrator_imports_correct_module(self):
+        """Orchestrator must import from pit_semantic_audit, not pit_factor_panel_audit."""
+        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
+        assert "pit_semantic_audit" in source
 
     def test_no_diagnostic_in_semantic_audit_block(self):
         source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
@@ -164,14 +185,6 @@ class TestSemanticAuditBlocked:
         if idx > 0:
             surrounding = source[idx:idx + 300]
             assert "DIAGNOSTIC" not in surrounding
-
-    def test_semantic_audit_is_blocked(self):
-        source = (PROJECT_ROOT / "scripts" / "research" / "run_formal_pit_pipeline.py").read_text()
-        idx = source.find("semantic_audit_module_not_available")
-        if idx > 0:
-            # The BLOCKED status is set a few lines above the blocker string
-            surrounding = source[max(0, idx - 200):idx + 300]
-            assert '"BLOCKED"' in surrounding or "'BLOCKED'" in surrounding
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
