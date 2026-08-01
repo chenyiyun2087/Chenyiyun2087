@@ -1,5 +1,13 @@
 {
   "entries": {
+    "0ad154649a576a1e06b7aad130178eb6a1a088751bfcaecb4eda82d4a9ab5798": {
+      "artifact_tree_sha256": "a5b3ffed54ca9fbeea573a56ab5228b495f48593a9443a3358cea151ea3bea5c",
+      "registered_at": "2026-08-01T15:01:44.170611+00:00",
+      "registered_by": "f288b56eb110ea1bdba717f9175a2b42852ba365",
+      "run_id": "0ad154649a576a1e06b7aad130178eb6a1a088751bfcaecb4eda82d4a9ab5798",
+      "seal_manifest_file_sha256": "b070111b810ee3a9bf8b78ce02b6d42437058a4dfea2f282c164047e3a770419",
+      "status": "ACTIVE"
+    },
     "3100295fc19ed502fe354943f86f628d038303dc28d99bdfe5e3c0729753f011": {
       "artifact_tree_sha256": "84c7f72d673d03ed3fcec0dc9fd7534e65b1a1769bdfe42077814ba1c45d315f",
       "registered_at": "2026-08-01T12:16:15.480529+00:00",
@@ -66,5 +74,5 @@
     }
   },
   "schema_version": "seal_registry_v1",
-  "updated_at": "2026-08-01T14:50:43.225010+00:00"
+  "updated_at": "2026-08-01T15:01:44.170614+00:00"
 }
