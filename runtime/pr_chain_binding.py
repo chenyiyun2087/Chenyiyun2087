@@ -472,6 +472,41 @@ def verify_pr_i_chain(
     if not pr_c_run_id or not isinstance(pr_c_run_id, str):
         blockers.append("pr_c_formal_run_id_empty_or_invalid")
 
+    # ── v5.1.5: TOCTOU re-check — re-read underlying artifact files ──
+    # PR-C artifacts: formal_run_manifest, frozen_bundle
+    for path_key, label in [("formal_run_manifest_path", "formal_run_manifest"),
+                             ("frozen_bundle_path", "frozen_bundle")]:
+        artifact_path_str = pr_c.get(path_key)
+        if artifact_path_str:
+            ap = Path(artifact_path_str)
+            if not ap.exists():
+                blockers.append(f"{label}_artifact_missing_at_path:{artifact_path_str}")
+            else:
+                current_sha = _file_sha(ap)
+                binding_sha = pr_c.get(f"{label}_sha256" if label != "formal_run_manifest" else "formal_run_manifest_sha256", "")
+                if binding_sha and current_sha != binding_sha:
+                    blockers.append(f"{label}_tampered_after_binding")
+
+    # PR-D artifacts: OOS report
+    oos_path_str = pr_d.get("oos_report_path")
+    if oos_path_str:
+        op = Path(oos_path_str)
+        if not op.exists():
+            blockers.append("oos_report_artifact_missing")
+        else:
+            if _file_sha(op) != pr_d.get("oos_manifest_sha256", ""):
+                blockers.append("oos_report_tampered_after_binding")
+
+    # PR-E artifacts: Capacity report
+    cap_path_str = pr_e.get("capacity_report_path")
+    if cap_path_str:
+        cp = Path(cap_path_str)
+        if not cp.exists():
+            blockers.append("capacity_report_artifact_missing")
+        else:
+            if _file_sha(cp) != pr_e.get("capacity_manifest_sha256", ""):
+                blockers.append("capacity_report_tampered_after_binding")
+
     return _pr_i_report(blockers)
 
 

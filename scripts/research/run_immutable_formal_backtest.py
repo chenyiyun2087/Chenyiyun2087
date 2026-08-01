@@ -85,6 +85,17 @@ def run(
     package_id: str = "",
 ) -> dict[str, Any]:
     # ------------------------------------------------------------------
+    # v5.1.5: Formal identity must be non-empty for non-fixture runs
+    # ------------------------------------------------------------------
+    if not fixture_mode:
+        if not pit_run_id:
+            return _blocked(preflight, output_root, "pit_run_id_empty",
+                            json.loads(preflight.read_text(encoding="utf-8")))
+        if not package_id:
+            return _blocked(preflight, output_root, "package_id_empty",
+                            json.loads(preflight.read_text(encoding="utf-8")))
+
+    # ------------------------------------------------------------------
     # 3.6  Clean worktree — before (skipped in fixture mode)
     # ------------------------------------------------------------------
     git_sha_before: str

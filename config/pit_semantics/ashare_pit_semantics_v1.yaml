@@ -1,0 +1,146 @@
+# A-Share PIT Semantic Contract v1
+# Single authoritative contract for all PIT data families.
+# Adapter, Semantic Audit, Factor Builder, Package, and Readiness
+# MUST derive their field definitions from this file.
+schema_version: "ashare_pit_semantics_v1"
+description: "A-Share Point-in-Time data semantics for Chenyiyun2087 Formal Evidence Backbone"
+timezone: "Asia/Shanghai"
+signal_cutoff: "T16:00:00+08:00"
+
+families:
+  market:
+    required_columns:
+      - trade_date
+      - symbol
+      - open
+      - close
+      - pre_close
+      - amount
+      - circ_mv
+      - market_return
+      - market_regime
+      - market_available_at
+    primary_key: [trade_date, symbol]
+    business_time_column: trade_date
+    available_at_column: market_available_at
+    timezone_requirement: explicit_offset
+    coverage_policy: "universe_symbols_must_have_market_data"
+
+  universe:
+    required_columns:
+      - trade_date
+      - symbol
+      - is_listed
+      - is_st
+      - is_suspended
+      - limit_status
+      - security_status_transition
+      - universe_available_at
+    primary_key: [trade_date, symbol]
+    business_time_column: trade_date
+    available_at_column: universe_available_at
+    timezone_requirement: explicit_offset
+    coverage_policy: "all_listed_symbols_on_trade_date"
+
+  financial:
+    required_columns:
+      - trade_date
+      - symbol
+      - pb
+      - financial_period_end
+      - announcement_date
+      - financial_available_at
+      - revision_id
+      - revision_sequence
+      - financial_source_snapshot_sha
+    primary_key: [symbol, financial_period_end, revision_id]
+    business_time_column: trade_date
+    available_at_column: financial_available_at
+    timezone_requirement: explicit_offset
+    revision_policy:
+      sequence_continuous: true
+      id_unique_per_period: true
+      available_at_monotonic: true
+      announcement_date_le_available_at: true
+    coverage_policy: "pb_must_be_present"
+
+  industry:
+    required_columns:
+      - trade_date
+      - symbol
+      - industry
+      - industry_available_at
+      - valid_from
+      - valid_to
+      - industry_code
+      - industry_name
+    primary_key: [symbol, valid_from]
+    business_time_column: trade_date
+    available_at_column: industry_available_at
+    timezone_requirement: explicit_offset
+    scd_policy:
+      valid_from_le_trade_date: true
+      trade_date_lt_valid_to: true
+
+  adjustment:
+    required_columns:
+      - trade_date
+      - symbol
+      - adj_factor
+      - corporate_action_type
+      - ex_date
+      - record_date
+      - adjustment_factor_version
+      - adjustment_available_at
+    primary_key: [trade_date, symbol]
+    business_time_column: trade_date
+    available_at_column: adjustment_available_at
+    timezone_requirement: explicit_offset
+
+  trade_calendar:
+    required_columns:
+      - cal_date
+      - exchange
+      - is_open
+      - source
+      - available_at
+    primary_key: [cal_date]
+    business_time_column: cal_date
+    timezone_requirement: explicit_offset
+    coverage_policy: "SSE_calendar_coverage_ge_98pct"
+
+  security_lifecycle:
+    required_columns:
+      - trade_date
+      - symbol
+      - is_listed
+      - is_st
+      - is_suspended
+      - listed_date
+      - security_status_transition
+      - lifecycle_available_at
+    primary_key: [trade_date, symbol]
+    business_time_column: trade_date
+    available_at_column: lifecycle_available_at
+    timezone_requirement: explicit_offset
+
+  corporate_actions:
+    required_columns:
+      - trade_date
+      - symbol
+      - corporate_action_type
+      - ex_date
+      - record_date
+      - event_id
+      - effective_date
+      - corporate_action_available_at
+    primary_key: [symbol, event_id]
+    business_time_column: trade_date
+    available_at_column: corporate_action_available_at
+    timezone_requirement: explicit_offset
+
+# Canonical self-hash rules
+canonical_hash:
+  default_self_hash_field: content_sha256
+  default_excluded_fields: [content_sha256]
+  encoding: "json_canonical_utf8"
