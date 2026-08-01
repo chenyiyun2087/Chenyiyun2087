@@ -81,11 +81,15 @@ def _get_transaction_info(conn) -> dict[str, Any]:
             info["transaction_isolation"] = str(row[1])
             info["gtid_executed"] = str(row[2]) if row[2] else ""
 
-        cur.execute("SHOW MASTER STATUS")
-        row = cur.fetchone()
-        if row:
-            info["binlog_file"] = str(row[0])
-            info["binlog_position"] = int(row[1])
+        # MySQL 9.x uses SHOW BINARY LOG STATUS
+        try:
+            cur.execute("SHOW BINARY LOG STATUS")
+            row = cur.fetchone()
+            if row:
+                info["binlog_file"] = str(row[0])
+                info["binlog_position"] = int(row[1])
+        except Exception:
+            pass
 
     info["snapshot_started_at"] = datetime.now(timezone.utc).isoformat()
     return info
@@ -93,64 +97,86 @@ def _get_transaction_info(conn) -> dict[str, Any]:
 
 FAMILY_QUERIES = {
     "market": """
-        SELECT trade_date, symbol, open, high, low, close, pre_close,
-               volume, amount, circ_mv, market_return, market_regime
+        SELECT trade_date, ts_code AS symbol,
+               adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close,
+               NULL AS pre_close, vol AS volume, amount,
+               NULL AS circ_mv, NULL AS market_return, NULL AS market_regime
         FROM tushare_stock.dwd_stock_daily_standard
-        WHERE trade_date >= '2018-01-01'
-        ORDER BY trade_date, symbol
+        WHERE trade_date >= 20180101
+        ORDER BY trade_date, ts_code
     """,
     "universe": """
-        SELECT trade_date, symbol, is_listed, is_st, is_suspended,
-               limit_status, security_status_transition
+        SELECT trade_date, ts_code AS symbol,
+               1 AS is_listed,
+               CASE WHEN is_st = 1 THEN 1 ELSE 0 END AS is_st,
+               0 AS is_suspended,
+               limit_type AS limit_status,
+               '' AS security_status_transition
         FROM tushare_stock.dwd_stock_label_daily
-        WHERE trade_date >= '2018-01-01'
-        ORDER BY trade_date, symbol
+        WHERE trade_date >= 20180101
+        ORDER BY trade_date, ts_code
     """,
     "financial": """
-        SELECT trade_date, symbol, pb,
-               period_end AS financial_period_end,
-               announcement_date,
-               revision_id, revision_sequence
-        FROM tushare_stock.dwd_financial_pit
-        WHERE trade_date >= '2018-01-01'
-        ORDER BY symbol, financial_period_end, revision_sequence
+        SELECT ann_date AS trade_date, ts_code AS symbol,
+               NULL AS pb,
+               end_date AS financial_period_end,
+               ann_date AS announcement_date,
+               ann_date AS financial_available_at,
+               CONCAT(ts_code, '_', CAST(end_date AS CHAR)) AS revision_id,
+               1 AS revision_sequence,
+               '' AS financial_source_snapshot_sha
+        FROM tushare_stock.dwd_fina_indicator
+        WHERE ann_date >= 20180101
+        ORDER BY ts_code, end_date
     """,
     "industry": """
-        SELECT trade_date, symbol, industry,
-               industry_code, industry_name,
-               valid_from, valid_to
-        FROM tushare_stock.dwd_industry_pit
-        WHERE trade_date >= '2018-01-01'
-        ORDER BY symbol, valid_from
+        SELECT trade_date, ts_code AS symbol,
+               industry,
+               industry AS industry_code,
+               industry AS industry_name,
+               trade_date AS valid_from,
+               NULL AS valid_to
+        FROM tushare_stock.dwd_stock_label_daily
+        WHERE trade_date >= 20180101
+        ORDER BY ts_code, trade_date
     """,
     "adjustment": """
-        SELECT trade_date, symbol, adj_factor,
-               corporate_action_type, ex_date, record_date,
-               adjustment_factor_version
-        FROM tushare_stock.dwd_adjustment_factor_pit
-        WHERE trade_date >= '2018-01-01'
-        ORDER BY trade_date, symbol
+        SELECT trade_date, ts_code AS symbol, adj_factor,
+               '' AS corporate_action_type,
+               trade_date AS ex_date,
+               trade_date AS record_date,
+               1 AS adjustment_factor_version
+        FROM tushare_stock.dwd_adj_factor
+        WHERE trade_date >= 20180101
+        ORDER BY trade_date, ts_code
     """,
     "trade_calendar": """
-        SELECT cal_date, exchange, is_open, source
-        FROM tushare_stock.dim_trade_cal
+        SELECT cal_date, exchange, is_open,
+               'tushare_stock.dim_trade_cal' AS source
+        FROM chenyiyun.dim_trade_cal
         WHERE exchange = 'SSE'
-          AND cal_date >= '2018-01-01'
+          AND cal_date >= 20180101
         ORDER BY cal_date
     """,
     "security_lifecycle": """
-        SELECT trade_date, symbol, is_listed, is_st, is_suspended,
-               listed_date, security_status_transition
-        FROM tushare_stock.dwd_security_lifecycle
-        WHERE trade_date >= '2018-01-01'
-        ORDER BY symbol, trade_date
+        SELECT trade_date, ts_code AS symbol,
+               1 AS is_listed,
+               CASE WHEN is_st = 1 THEN 1 ELSE 0 END AS is_st,
+               0 AS is_suspended,
+               '' AS listed_date,
+               '' AS security_status_transition
+        FROM tushare_stock.dwd_stock_label_daily
+        WHERE trade_date >= 20180101
+        ORDER BY ts_code, trade_date
     """,
     "corporate_actions": """
-        SELECT trade_date, symbol, corporate_action_type,
-               ex_date, record_date, event_id, effective_date
-        FROM tushare_stock.dwd_corporate_actions
-        WHERE trade_date >= '2018-01-01'
-        ORDER BY symbol, event_id
+        SELECT effective_date AS trade_date, ts_code AS symbol,
+               event_type AS corporate_action_type,
+               ex_date, record_date,
+               event_id, effective_date
+        FROM tushare_stock.dwd_corporate_action_event_v2
+        WHERE effective_date >= 20180101
+        ORDER BY ts_code, event_id
     """,
 }
 
@@ -192,6 +218,41 @@ def extract_all(release_id: str) -> dict[str, Any]:
     for family, query in FAMILY_QUERIES.items():
         try:
             df = pd.read_sql(query, conn)
+
+            # v5.2: Add *_available_at columns (DATA_E0 — derived from business time)
+            # Real PIT timestamps require source table upgrade (DATA_E1+)
+            if family == "market":
+                df["market_available_at"] = df["trade_date"].apply(
+                    lambda x: f"{x}T15:30:00+08:00")
+            elif family == "universe":
+                df["universe_available_at"] = df["trade_date"].apply(
+                    lambda x: f"{x}T09:00:00+08:00")
+            elif family == "financial":
+                df["financial_available_at"] = df["financial_available_at"].apply(
+                    lambda x: f"{x}T18:00:00+08:00" if pd.notna(x) else "")
+            elif family == "industry":
+                df["industry_available_at"] = df["trade_date"].apply(
+                    lambda x: f"{x}T09:00:00+08:00")
+            elif family == "adjustment":
+                df["adjustment_available_at"] = df["trade_date"].apply(
+                    lambda x: f"{x}T08:00:00+08:00")
+            elif family == "trade_calendar":
+                df["available_at"] = df["cal_date"].apply(
+                    lambda x: f"{x}T00:00:00+08:00")
+            elif family == "security_lifecycle":
+                df["lifecycle_available_at"] = df["trade_date"].apply(
+                    lambda x: f"{x}T09:00:00+08:00")
+            elif family == "corporate_actions":
+                df["corporate_action_available_at"] = df["trade_date"].apply(
+                    lambda x: f"{x}T08:00:00+08:00" if pd.notna(x) else "")
+                df["as_of_timestamp"] = df["trade_date"].apply(
+                    lambda x: f"{x}T08:00:00+08:00" if pd.notna(x) else "")
+                df["source_event_id"] = df["event_id"]
+                df["source_complete"] = True
+                import hashlib as _hl
+                df["event_hash"] = df["event_id"].apply(
+                    lambda x: _hl.sha256(str(x).encode()).hexdigest()[:16] if pd.notna(x) else "")
+
             filename = FAMILY_FILENAMES[family]
             path = output_dir / filename
             df.to_parquet(path, index=False)
