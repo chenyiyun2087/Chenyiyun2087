@@ -219,39 +219,59 @@ def extract_all(release_id: str) -> dict[str, Any]:
         try:
             df = pd.read_sql(query, conn)
 
-            # v5.2: Add *_available_at columns (DATA_E0 — derived from business time)
-            # Real PIT timestamps require source table upgrade (DATA_E1+)
+            # v5.2: Convert integer dates to ISO strings, then add *_available_at
+            # DATA_E0: derived from business time; real PIT timestamps require DATA_E1+
+            def _int_to_iso(d):
+                """Convert YYYYMMDD int to YYYY-MM-DD string."""
+                if pd.isna(d):
+                    return ""
+                s = str(int(d))
+                if len(s) == 8:
+                    return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+                return str(d)
+
             if family == "market":
                 df["market_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{x}T15:30:00+08:00")
+                    lambda x: f"{_int_to_iso(x)}T15:30:00+08:00")
             elif family == "universe":
                 df["universe_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{x}T09:00:00+08:00")
+                    lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
             elif family == "financial":
                 df["financial_available_at"] = df["financial_available_at"].apply(
-                    lambda x: f"{x}T18:00:00+08:00" if pd.notna(x) else "")
+                    lambda x: f"{_int_to_iso(x)}T18:00:00+08:00" if pd.notna(x) and x != 0 else "")
             elif family == "industry":
                 df["industry_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{x}T09:00:00+08:00")
+                    lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
             elif family == "adjustment":
                 df["adjustment_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{x}T08:00:00+08:00")
+                    lambda x: f"{_int_to_iso(x)}T08:00:00+08:00")
             elif family == "trade_calendar":
                 df["available_at"] = df["cal_date"].apply(
-                    lambda x: f"{x}T00:00:00+08:00")
+                    lambda x: f"{_int_to_iso(x)}T00:00:00+08:00")
             elif family == "security_lifecycle":
                 df["lifecycle_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{x}T09:00:00+08:00")
+                    lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
             elif family == "corporate_actions":
                 df["corporate_action_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{x}T08:00:00+08:00" if pd.notna(x) else "")
+                    lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) else "")
                 df["as_of_timestamp"] = df["trade_date"].apply(
-                    lambda x: f"{x}T08:00:00+08:00" if pd.notna(x) else "")
+                    lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) else "")
                 df["source_event_id"] = df["event_id"]
                 df["source_complete"] = True
                 import hashlib as _hl
                 df["event_hash"] = df["event_id"].apply(
                     lambda x: _hl.sha256(str(x).encode()).hexdigest()[:16] if pd.notna(x) else "")
+                df["cash_dividend"] = None
+                df["bonus_ratio"] = None
+                df["rights_issue_price"] = None
+                df["rights_issue_ratio"] = None
+                df["split_ratio"] = None
+
+            # Also convert business time columns to ISO strings
+            if "trade_date" in df.columns:
+                df["trade_date"] = df["trade_date"].apply(_int_to_iso)
+            if "cal_date" in df.columns and family == "trade_calendar":
+                df["cal_date"] = df["cal_date"].apply(_int_to_iso)
 
             filename = FAMILY_FILENAMES[family]
             path = output_dir / filename
@@ -288,6 +308,7 @@ def extract_all(release_id: str) -> dict[str, Any]:
     # Write manifest
     manifest = {
         "schema_version": "pit_release_manifest_v1",
+        "field_definition_hash": contract_sha,
         **results,
         "status": "PASS" if not blockers else "BLOCKED",
         "blockers": blockers,
