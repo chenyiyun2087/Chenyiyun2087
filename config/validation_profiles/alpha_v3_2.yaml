@@ -1,7 +1,7 @@
 schema_version: alpha_v3_2_acceptance_v1
 evidence_version: alpha_v3_2_evidence_v1
 core_period:
-  min_start_date: "2022-02-01"
+  min_start_date: "2022-03-01"
   end_date_policy: latest_complete_trading_day
   legacy_extension_start_date: "2013-01-01"
   legacy_extension_required: false
