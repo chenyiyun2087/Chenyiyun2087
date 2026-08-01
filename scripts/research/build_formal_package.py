@@ -178,7 +178,7 @@ def build_formal_package(
         "factor_panel.parquet": pit_run_dir / "builder" / "factor_panel_daily.parquet",
         "source_manifest.json": pit_run_dir / "adapter" / "pit_source_manifest.json",
         "adapter_report.json": pit_run_dir / "adapter" / "pit_adapter_report.json",
-        "builder_report.json": pit_run_dir / "builder" / "builder_report.json",
+        "builder_report.json": pit_run_dir / "builder" / "factor_builder_report.json",
         # PIT Run identity
         "pit_run_manifest.json": pit_run_dir / "pit_run_manifest.json",
         # Keep the upstream PIT seal under a distinct name; the package gets
