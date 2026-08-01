@@ -1,0 +1,56 @@
+# MySQL PIT Data Source Configuration v1
+schema_version: "mysql_pit_datasource_v1"
+
+provider:
+  name: mysql
+  driver: pymysql
+
+connection:
+  env:
+    url: CHENYIYUN_DB_URL
+    user: CHENYIYUN_DB_USER
+    password: CHENYIYUN_DB_PASSWORD
+    host: CHENYIYUN_DB_HOST
+    port: CHENYIYUN_DB_PORT
+    database: CHENYIYUN_DB_NAME
+  defaults:
+    host: localhost
+    port: 3306
+    database: chenyiyun
+    charset: utf8mb4
+
+transaction:
+  isolation: REPEATABLE READ
+  read_only: true
+
+snapshot:
+  require_gtid: true
+  require_binlog_position: true
+  forbid_timestamp_fallback: true
+  semantic_contract: config/pit_semantics/ashare_pit_semantics_v1.yaml
+
+families:
+  market:
+    source_table: tushare_stock.dwd_stock_daily_standard
+    query_timeout_seconds: 300
+  universe:
+    source_table: tushare_stock.dim_stock
+    query_timeout_seconds: 60
+  financial:
+    source_table: tushare_stock.dwd_financial_pit
+    query_timeout_seconds: 120
+  industry:
+    source_table: tushare_stock.dwd_industry_pit
+    query_timeout_seconds: 60
+  adjustment:
+    source_table: tushare_stock.dwd_adjustment_factor_pit
+    query_timeout_seconds: 60
+  trade_calendar:
+    source_table: tushare_stock.dim_trade_cal
+    query_timeout_seconds: 30
+  security_lifecycle:
+    source_table: tushare_stock.dwd_security_lifecycle
+    query_timeout_seconds: 60
+  corporate_actions:
+    source_table: tushare_stock.dwd_corporate_actions
+    query_timeout_seconds: 60
