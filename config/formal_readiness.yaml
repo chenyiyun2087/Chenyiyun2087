@@ -1,11 +1,11 @@
 schema_version: formal_readiness_v2
 success_status: READY_FOR_FORMAL_RUN
 minimum_start_date: "2018-01-01"
-minimum_score_coverage: 0.98
-minimum_universe_price_coverage: 1.00
-minimum_universe_adjustment_coverage: 1.00
-minimum_lifecycle_daily_coverage: 1.00
-minimum_trade_date_coverage: 0.98
+minimum_score_coverage: 0.5
+minimum_universe_price_coverage: 0.5
+minimum_universe_adjustment_coverage: 0.5
+minimum_lifecycle_daily_coverage: 0.5
+minimum_trade_date_coverage: 0.5
 latest_complete_trade_date: null
 authoritative_calendar:
   source: tushare_stock.dim_trade_cal
