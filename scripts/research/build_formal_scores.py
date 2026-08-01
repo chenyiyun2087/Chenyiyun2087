@@ -104,11 +104,14 @@ def _check_coverage(
         denominators = numeric.groupby(scoped["trade_date"]).size()
         numerators = numeric.groupby(scoped["trade_date"]).count()
         coverage = numerators.div(denominators.replace(0, np.nan))
-        if coverage.empty or float(coverage.min()) < (threshold_pct / 100.0):
+        # ``missing_factor_threshold_pct`` is the allowed missing fraction;
+        # coverage must therefore be at least 100%-threshold (95% by default).
+        minimum_coverage = 1.0 - (threshold_pct / 100.0)
+        if coverage.empty or float(coverage.min()) < minimum_coverage:
             blockers.append(
                 f"factor_coverage_below_threshold:{factor}:"
                 f"minimum={float(coverage.min()) if not coverage.empty else 0.0:.4f},"
-                f"threshold={threshold_pct:.2f}%"
+                f"threshold={minimum_coverage * 100.0:.2f}%"
             )
     return blockers
 
@@ -235,8 +238,14 @@ def build_formal_scores(
     # `formal_score` as the named computation output while binding the two to
     # the same bytes; downstream gates never infer a missing score as zero.
     panel["score"] = panel["formal_score"]
-    panel["formal_rank"] = panel.groupby("trade_date")["formal_score"].rank(pct=True)
-    panel["selected"] = panel["formal_rank"] >= (1.0 - top_pct)
+    eligible_for_rank = panel.get(
+        "eligible_universe", pd.Series(False, index=panel.index)
+    ).fillna(False).astype(bool)
+    panel["formal_rank"] = np.nan
+    panel.loc[eligible_for_rank, "formal_rank"] = panel.loc[eligible_for_rank].groupby(
+        "trade_date"
+    )["formal_score"].rank(pct=True)
+    panel["selected"] = eligible_for_rank & panel["formal_rank"].ge(1.0 - top_pct)
     # The canonical readiness contract is strategy-keyed.  Replicate the
     # same independently computed score for each pre-registered formal
     # strategy identity only when the caller explicitly supplies that set;
@@ -244,9 +253,13 @@ def build_formal_scores(
     # bound to the immutable factor panel.
     panel["strategy"] = resolved_strategy_ids[0]
     if len(resolved_strategy_ids) > 1:
-        panel = pd.concat(
-            [panel.assign(strategy=strategy) for strategy in resolved_strategy_ids],
-            ignore_index=True,
+        # A single definition cannot be copied into multiple formal strategy
+        # identities.  Require callers to invoke the builder once per
+        # definition; this keeps weights/signs SHA-bound and fail-closed.
+        return blocked_report(
+            "formal_score_builder", "strategy_definition",
+            "independent_strategy_definition_required",
+            extra={"strategy_ids": list(resolved_strategy_ids)},
         )
 
     # ── Timezone enforcement ──
@@ -341,6 +354,13 @@ def build_formal_scores(
         "factor_signs": signs,
         "factor_weights_sha256": weights_sha,
         "factor_signs_sha256": canonical_sha({k: signs[k] for k in sorted(signs)}),
+        "strategy_definition_binding": {
+            strategy_id: {
+                "strategy_definition_sha256": strategy_def_sha,
+                "factor_weights_sha256": weights_sha,
+                "factor_signs_sha256": canonical_sha({k: signs[k] for k in sorted(signs)}),
+            }
+        },
         "missing_factor_threshold_pct": missing_threshold,
         "factor_coverage": coverage_report,
         "top_pct": top_pct,

@@ -31,6 +31,7 @@ from runtime.acceptance_config import canonical_sha
 from runtime.pit_semantic_contract import (
     get_contract_sha256, get_required_columns, get_primary_key,
     get_available_at_column, get_business_time_column, signal_time_for_trade_dates,
+    get_canonical_execution_columns, get_economic_columns,
     validate_frame_schema, validate_explicit_timezone,
 )
 
@@ -108,6 +109,16 @@ def run_semantic_audit(
 
         # v5.1.6: Schema from canonical contract
         contract_blockers = validate_frame_schema(df, family)
+        if family == "market":
+            contract_blockers.extend(
+                f"schema_missing_execution_column:{family}:{column}"
+                for column in sorted(get_canonical_execution_columns(family) - set(df.columns))
+            )
+        if family == "corporate_actions":
+            contract_blockers.extend(
+                f"schema_missing_economic_column:{family}:{column}"
+                for column in sorted(get_economic_columns(family) - set(df.columns))
+            )
         blockers.extend(contract_blockers)
 
         actual_cols = set(df.columns)
@@ -161,6 +172,26 @@ def run_semantic_audit(
                         dupes = sorted_df.duplicated(subset=["symbol", period_col, "revision_id"], keep=False)
                         if dupes.any():
                             blockers.append(f"financial_duplicate_revisions:{int(dupes.sum())}")
+                        sequences = pd.to_numeric(
+                            sorted_df["revision_sequence"], errors="coerce"
+                        )
+                        if sequences.isna().any() or (sequences < 1).any():
+                            blockers.append("financial_revision_sequence_invalid")
+                        for _, revision_group in sorted_df.groupby(
+                            ["symbol", period_col], sort=False
+                        ):
+                            seq = pd.to_numeric(
+                                revision_group["revision_sequence"], errors="coerce"
+                            ).dropna().astype(int).tolist()
+                            if seq and seq != list(range(1, len(seq) + 1)):
+                                blockers.append("financial_revision_sequence_gap_or_duplicate")
+                            if "financial_available_at" in revision_group.columns:
+                                available = pd.to_datetime(
+                                    revision_group["financial_available_at"],
+                                    errors="coerce", utc=True,
+                                )
+                                if available.isna().any() or not available.is_monotonic_increasing:
+                                    blockers.append("financial_available_at_nonmonotonic")
                         # Check: announcement_date <= financial_available_at
                         if "announcement_date" in df.columns and "financial_available_at" in df.columns:
                             ad = pd.to_datetime(df["announcement_date"], errors="coerce", utc=True)
@@ -179,10 +210,30 @@ def run_semantic_audit(
                     vt = pd.to_datetime(df["valid_to"], errors="coerce", utc=True)
                     td_ind = pd.to_datetime(df["trade_date"], errors="coerce", utc=True)
                     if vf.notna().any() and vt.notna().any() and td_ind.notna().any():
-                        invalid_scd = (td_ind < vf) | (td_ind >= vt.fillna(pd.Timestamp.max))
+                        invalid_scd = (
+                            vf.isna()
+                            | vt.isna()
+                            | (vf >= vt)
+                            | (td_ind < vf)
+                            | (td_ind >= vt.fillna(pd.Timestamp.max))
+                        )
                         if invalid_scd.any():
                             blockers.append(
                                 f"industry_scd_violation:{int(invalid_scd.sum())}_rows")
+                        ordered = df.assign(_vf=vf, _vt=vt).sort_values(
+                            ["symbol", "_vf"]
+                        )
+                        for _, scd_group in ordered.groupby("symbol", sort=False):
+                            previous_end = None
+                            for end in scd_group["_vt"]:
+                                if previous_end is not None and pd.notna(end) and end < previous_end:
+                                    blockers.append("industry_scd_nonmonotonic_valid_to")
+                                previous_end = end if pd.notna(end) else previous_end
+                            starts = scd_group["_vf"].to_numpy()
+                            ends = scd_group["_vt"].to_numpy()
+                            for idx in range(1, len(starts)):
+                                if pd.notna(starts[idx]) and pd.notna(ends[idx - 1]) and starts[idx] < ends[idx - 1]:
+                                    blockers.append("industry_scd_overlap")
                 except Exception as exc:
                     blockers.append(f"industry_scd_check_error:{type(exc).__name__}")
 

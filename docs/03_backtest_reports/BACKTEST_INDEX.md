@@ -342,6 +342,16 @@
 - 确定性 SHA：
   `aa8d992599eff70b3382ee5752d4a857903bc5aa89683daca489b40e2e0abd5b`
 
+### 2026-08-01 Formal Happy-path 与 TopK Challenger 复评升级
+
+- 方法与结果：`../tasks/2026-08-01_Formal_HappyPath_TopK_Challenger复评升级.md`
+- 修复 Formal PIT → Package → Admission/PR-B → Runner 的身份封存链；新增 Top5/Top10
+  开盘执行、ADV、冻结仓位和双倍成本压力证据字段。
+- 完整套件 `1635 passed, 15 skipped, 3 failed`；失败为本地 MySQL smoke 和既有
+  PR-I 旧 fixture，不构成历史绩效 PASS。
+- 真实八类 PIT、正式 OOS、容量和 Shadow 仍缺，结论保持
+  `BLOCKED_DATA / TRADING_BLOCKED / NO_SCALE / 0 CNY`。
+
 - `trusted_account_backtest_summary.csv`：账户级回测汇总。
 - `trusted_account_backtest_nav.csv`：净值曲线。
 - `trusted_account_backtest_positions.csv`：每日持仓。

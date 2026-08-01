@@ -81,6 +81,7 @@ def audit_factor_availability(
     invalid_counts: dict[str, int] = {}
     naive_counts: dict[str, int] = {}
     timezone_mismatch_counts: dict[str, int] = {}
+    allow_absolute_timezones = str(profile.get("evidence_version") or "") == "alpha_v3_2_evidence_v1"
     for column in required_columns:
         values: list[pd.Timestamp | pd.NaT] = []
         invalid = 0
@@ -97,7 +98,7 @@ def audit_factor_availability(
                 naive += 1
                 value = pd.NaT
             else:
-                if value.utcoffset() != timedelta(hours=8):
+                if value.utcoffset() != timedelta(hours=8) and not allow_absolute_timezones:
                     timezone_mismatch += 1
                 value = value.tz_convert("UTC")
             values.append(value)
@@ -140,6 +141,11 @@ def audit_factor_availability(
         "panel": panel_name,
         "status": "PASS" if not blockers else "BLOCKED",
         "timezone_policy": str(profile["alpha_proof"]["timezone"]),
+        "timezone_comparison": (
+            "absolute_instants_after_explicit_timezone_check"
+            if allow_absolute_timezones
+            else "Asia/Shanghai_offset_required"
+        ),
         "comparison": "factor_available_at <= signal_time",
         "checked_rows": int(len(panel)),
         "blockers": blockers,
@@ -173,6 +179,48 @@ def _daily_returns(nav: pd.DataFrame) -> pd.Series:
     return frame.set_index("trade_date")[value_column].pct_change().dropna()
 
 
+def _hac_mean_tstat(values: np.ndarray, max_lag: int = 5) -> float | None:
+    """Newey-West/HAC t-statistic for a mean of autocorrelated returns."""
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    n = len(values)
+    if n < 2:
+        return None
+    mean = float(values.mean())
+    centered = values - mean
+    lag = min(max(int(max_lag), 0), n - 1)
+    long_run = float(np.mean(centered * centered))
+    for k in range(1, lag + 1):
+        gamma = float(np.mean(centered[k:] * centered[:-k]))
+        long_run += 2.0 * (1.0 - k / (lag + 1.0)) * gamma
+    se = float(np.sqrt(max(long_run, 0.0) / n))
+    return float(mean / se) if se > 0 else None
+
+
+def _hac_intercept_tstat(
+    design: np.ndarray,
+    residual: np.ndarray,
+    intercept: float,
+    max_lag: int = 5,
+) -> float | None:
+    """HAC sandwich t-statistic for the regression intercept."""
+    n = len(residual)
+    if n < 2:
+        return None
+    xtx_inv = np.linalg.pinv(design.T @ design)
+    scores = design * residual[:, None]
+    centered = scores - scores.mean(axis=0)
+    lag = min(max(int(max_lag), 0), n - 1)
+    long_run = centered.T @ centered / n
+    for k in range(1, lag + 1):
+        gamma = centered[k:].T @ centered[:-k] / n
+        weight = 1.0 - k / (lag + 1.0)
+        long_run += weight * (gamma + gamma.T)
+    covariance = xtx_inv @ long_run @ xtx_inv * n
+    se = float(np.sqrt(max(covariance[0, 0], 0.0)))
+    return float(intercept / se) if se > 0 else None
+
+
 def _benchmark_nav(
     benchmark_nav: pd.DataFrame,
     benchmark_id: str,
@@ -201,6 +249,7 @@ def build_benchmark_excess_report(
     """Compare strategy returns with every required benchmark."""
     strategy_returns = _daily_returns(strategy_nav)
     spec = profile["alpha_proof"]
+    allow_absolute_timezones = str(profile.get("evidence_version") or "") == "alpha_v3_2_evidence_v1"
     benchmarks = profile["benchmarks"]
     required = [str(value) for value in benchmarks["required"]]
     rows: list[dict[str, Any]] = []
@@ -252,7 +301,7 @@ def build_benchmark_excess_report(
                     unavailable = True
                     raw_available.append(pd.NaT)
                 else:
-                    if timestamp.utcoffset() != timedelta(hours=8):
+                    if timestamp.utcoffset() != timedelta(hours=8) and not allow_absolute_timezones:
                         unavailable = True
                     raw_available.append(timestamp.tz_convert("UTC"))
             available = pd.Series(
@@ -495,11 +544,7 @@ def build_daily_factor_attribution(
     unexplained_residual = float(regression_residual.sum())
     residual_mean = float(regression_residual.mean())
     residual_std = float(regression_residual.std(ddof=1))
-    residual_tstat = (
-        float(residual_mean / (residual_std / np.sqrt(len(regression_residual))))
-        if len(regression_residual) > 1 and residual_std > 0
-        else None
-    )
+    residual_tstat = _hac_mean_tstat(regression_residual)
     total_arithmetic = float(y.sum())
     closure_error = abs(
         total_arithmetic
@@ -527,9 +572,9 @@ def build_daily_factor_attribution(
     dof = len(y) - len(required) - 1
     alpha_tstat = None
     if dof > 0:
-        xtx_inverse = np.linalg.pinv(design.T @ design)
-        alpha_se = float(np.sqrt(max(residual_ss / dof * xtx_inverse[0, 0], 0.0)))
-        alpha_tstat = float(intercept / alpha_se) if alpha_se > 0 else None
+        alpha_tstat = _hac_intercept_tstat(
+            design, regression_residual, intercept
+        )
     if alpha_tstat is None or alpha_tstat < float(spec["min_alpha_tstat"]):
         blockers.append(
             "alpha_tstat_insufficient:"
@@ -747,8 +792,16 @@ def build_alpha_proof_guard_report(
     regime_attribution: dict[str, Any] | None = None,
     evidence_version: str | None = None,
 ) -> dict[str, Any]:
+    benchmark_economic_status = str(
+        benchmark.get("economic_status", benchmark.get("status") or "BLOCKED")
+    )
     components = {
-        "benchmark_safeguard": str(benchmark.get("status") or "BLOCKED"),
+        "benchmark_safeguard": (
+            "PASS"
+            if benchmark.get("status") == "PASS"
+            and benchmark_economic_status == "PASS"
+            else "BLOCKED"
+        ),
         "factor_returns_availability": str(
             factor_returns_availability.get("status") or "BLOCKED"
         ),
@@ -759,6 +812,9 @@ def build_alpha_proof_guard_report(
             "PASS"
             if attribution.get("status") == "PASS"
             and attribution.get("unexplained_variance_ratio") is not None
+            and float(attribution.get("unexplained_variance_ratio")) <= float(
+                attribution.get("max_unexplained_variance_ratio", 0.05)
+            )
             else "BLOCKED"
         ),
         "alpha_stability": str(stability.get("status") or "BLOCKED"),
@@ -808,8 +864,16 @@ def build_alpha_proof_summary(
     factor_ic: dict[str, Any],
     guard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    benchmark_economic_status = str(
+        benchmark.get("economic_status", benchmark.get("status") or "BLOCKED")
+    )
     components = {
-        "benchmark_excess": str(benchmark.get("status") or "BLOCKED"),
+        "benchmark_excess": (
+            "PASS"
+            if benchmark.get("status") == "PASS"
+            and benchmark_economic_status == "PASS"
+            else "BLOCKED"
+        ),
         "alpha_attribution": str(attribution.get("status") or "BLOCKED"),
         "factor_ic": str(factor_ic.get("status") or "BLOCKED"),
         "alpha_proof_guard": str((guard or {}).get("status") or "BLOCKED"),

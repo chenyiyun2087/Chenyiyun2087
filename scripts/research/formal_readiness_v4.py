@@ -48,7 +48,7 @@ def validate(
     git_commit_sha: str = "",
     acceptance_profile_sha: str = "",
 ) -> dict[str, Any]:
-    """Run all readiness checks. Returns PASS or BLOCKED.
+    """Run all readiness checks. Returns READY_FOR_FORMAL_RUN or BLOCKED.
 
     v5.1.6: Delegates business logic to formal_readiness_preflight.evaluate_package()
     (the single authoritative Readiness engine).  v4 adds Seal verification and
@@ -121,11 +121,16 @@ def validate(
         preflight_blockers.append(f"preflight_evaluation_error:{type(exc).__name__}")
 
     all_blockers = sorted(set(blockers + preflight_blockers))
-    status = "PASS" if not all_blockers else "BLOCKED"
+    # READY_FOR_FORMAL_RUN is the single success token consumed by the
+    # immutable Runner.  Keep legacy_status for downstream diagnostic readers,
+    # but never emit a second success spelling from the formal admission path.
+    status = "READY_FOR_FORMAL_RUN" if not all_blockers else "BLOCKED"
 
     report = {
         "schema_version": "formal_readiness_v5_1_6",
         "status": status,
+        "legacy_status": "PASS" if status == "READY_FOR_FORMAL_RUN" else status,
+        "ready_for_formal_run": status == "READY_FOR_FORMAL_RUN",
         "formal_pit_run_id": formal_pit_run_id,
         "release_id": release_id,
         "strategy_set": strategy_set,

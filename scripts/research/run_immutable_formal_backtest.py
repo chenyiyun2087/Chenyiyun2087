@@ -191,6 +191,111 @@ def run(
             git_tree_clean_before=tree_clean_before,
         )
 
+    # The runner must consume the exact package identities admitted by the
+    # Readiness/Admission chain.  A READY report alone is not sufficient: a
+    # caller cannot swap a different PIT run or package after preflight.
+    package_manifest_path = package / "package_manifest.json"
+    admission_id = str(preflight_payload.get("admission_id") or "")
+    pr_b_sha256 = str(
+        preflight_payload.get("pr_b_file_sha256")
+        or preflight_payload.get("pr_b_sha256")
+        or ""
+    )
+    if not package_manifest_path.is_file():
+        if not fixture_mode:
+            return _blocked(
+                preflight, output_root, "package_manifest_not_found", preflight_payload,
+                git_commit_sha_before=git_sha_before,
+                git_tree_clean_before=tree_clean_before,
+            )
+    else:
+        try:
+            package_manifest = json.loads(package_manifest_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return _blocked(
+                preflight, output_root, "package_manifest_unreadable", preflight_payload,
+                error=f"{type(exc).__name__}: {exc}",
+                git_commit_sha_before=git_sha_before,
+                git_tree_clean_before=tree_clean_before,
+            )
+        manifest_pit_run_id = str(package_manifest.get("formal_pit_run_id") or "")
+        manifest_package_id = str(package_manifest.get("package_id") or "")
+        if manifest_pit_run_id != str(pit_run_id):
+            return _blocked(
+                preflight, output_root, "package_manifest_pit_run_id_mismatch", preflight_payload,
+                expected_pit_run_id=pit_run_id, actual_pit_run_id=manifest_pit_run_id,
+                git_commit_sha_before=git_sha_before,
+                git_tree_clean_before=tree_clean_before,
+            )
+        if manifest_package_id != str(package_id):
+            return _blocked(
+                preflight, output_root, "package_manifest_package_id_mismatch", preflight_payload,
+                expected_package_id=package_id, actual_package_id=manifest_package_id,
+                git_commit_sha_before=git_sha_before,
+                git_tree_clean_before=tree_clean_before,
+            )
+        if not fixture_mode:
+            # A READY report by itself is not a formal admission.  Locate the
+            # sealed Admission/PR-B artifact that binds this exact PIT run
+            # and package before the Runner can consume any input.
+            admission_root = PROJECT_ROOT / "exports" / "formal_admissions"
+            matches: list[Path] = []
+            if admission_root.is_dir():
+                for candidate in sorted(admission_root.iterdir()):
+                    manifest_candidate = candidate / "admission_manifest.json"
+                    if not manifest_candidate.is_file():
+                        continue
+                    try:
+                        payload = json.loads(manifest_candidate.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    if (
+                        payload.get("formal_pit_run_id") == pit_run_id
+                        and payload.get("package_id") == package_id
+                        and payload.get("status") == "PASS"
+                    ):
+                        matches.append(candidate)
+            if len(matches) != 1:
+                return _blocked(
+                    preflight, output_root,
+                    "formal_admission_missing_or_ambiguous", preflight_payload,
+                    admission_candidates=len(matches),
+                    git_commit_sha_before=git_sha_before,
+                    git_tree_clean_before=tree_clean_before,
+                )
+            admission_dir = matches[0]
+            from runtime.artifact_seal import verify_seal
+            admission_seal = verify_seal(admission_dir)
+            if admission_seal.get("status") != "VERIFIED":
+                return _blocked(
+                    preflight, output_root,
+                    "formal_admission_seal_not_verified", preflight_payload,
+                    seal_result=admission_seal,
+                    git_commit_sha_before=git_sha_before,
+                    git_tree_clean_before=tree_clean_before,
+                )
+            admission_manifest = json.loads(
+                (admission_dir / "admission_manifest.json").read_text(encoding="utf-8")
+            )
+            admission_id = str(admission_manifest.get("admission_id") or admission_dir.name)
+            pr_b_path = admission_dir / str(admission_manifest.get("pr_b_path") or "")
+            if not pr_b_path.is_file():
+                return _blocked(
+                    preflight, output_root,
+                    "formal_admission_pr_b_missing", preflight_payload,
+                    git_commit_sha_before=git_sha_before,
+                    git_tree_clean_before=tree_clean_before,
+                )
+            pr_b_sha256 = _sha(pr_b_path)
+            pr_b_payload = json.loads(pr_b_path.read_text(encoding="utf-8"))
+            if pr_b_payload.get("formal_pit_run_id") != pit_run_id or pr_b_payload.get("status") != "PASS":
+                return _blocked(
+                    preflight, output_root,
+                    "formal_admission_pr_b_identity_invalid", preflight_payload,
+                    git_commit_sha_before=git_sha_before,
+                    git_tree_clean_before=tree_clean_before,
+                )
+
     # ------------------------------------------------------------------
     # Compute identity hashes
     # ------------------------------------------------------------------
@@ -246,6 +351,10 @@ def run(
         start_date=FORMAL_CORE_START_DATE,
         end_date=end_date,
         strategy_ids=list(FORMAL_STRATEGIES),
+        formal_pit_run_id=str(pit_run_id or preflight_payload.get("formal_pit_run_id") or ""),
+        package_id=str(package_id or preflight_payload.get("package_id") or ""),
+        admission_id=admission_id,
+        pr_b_sha256=pr_b_sha256,
     )
 
     # Rename temp dir to final run_dir
@@ -375,6 +484,8 @@ def run(
         "formal_run_id": run_id,
         "formal_pit_run_id": pit_run_id,
         "package_id": package_id,
+        "admission_id": admission_id,
+        "pr_b_sha256": pr_b_sha256,
         "status": status,
         "dry_run": dry_run,
         "strategy_ids": list(FORMAL_STRATEGIES),
@@ -420,6 +531,7 @@ def run(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    manifest_file_sha256 = _sha(run_dir / "formal_run_manifest.json")
 
     # ── v5.1.3: Frozen Bundle Manifest (standalone JSON) ──
     frozen_bundle_manifest = {
@@ -448,6 +560,7 @@ def run(
     from runtime.artifact_seal import seal_directory as seal_formal_run
     formal_run_id = run_id
     seal_result: dict[str, Any] | None = None
+    registry_error: str | None = None
     try:
         seal_result = seal_formal_run(
             run_dir, run_id=formal_run_id, git_commit_sha=git_sha_after
@@ -464,31 +577,54 @@ def run(
             formal_run_sealed = False
             seal_error = f"post_seal_verification:{verification.get('reason', verification.get('status'))}"
 
+    # A sealed directory is an integrity fact, not an economic success fact.
+    # DRY_RUN, failed backtests, blocked ledgers, and fixture runs must never
+    # enter the registry as FORMAL_RUN_VERIFIED.
+    formally_verified = bool(
+        formal_run_sealed
+        and not dry_run
+        and status == "VERIFIED"
+        and return_code == 0
+        and not fixture_mode
+        and git_tree_clean_after
+        and head_unchanged(git_sha_before, PROJECT_ROOT)
+    )
+
     # ── v5.1.6: Write formal_run_candidate_registry ──
     try:
         reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
         reg_dir.mkdir(parents=True, exist_ok=True)
         candidate = {
             "schema_version": "formal_run_candidate_v5_1_6",
-            "status": "FORMAL_RUN_VERIFIED" if formal_run_sealed else "FORMAL_RUN_COMPLETE",
+            "status": "FORMAL_RUN_VERIFIED" if formally_verified else "FORMAL_RUN_BLOCKED",
             "formal_run_id": formal_run_id,
             "formal_pit_run_id": pit_run_id,
             "package_id": package_id,
+            # Keep the historical key as an alias, but make the two distinct
+            # identities explicit: self/content hash versus file-byte hash.
             "manifest_sha256": manifest.get("manifest_sha256", ""),
+            "manifest_content_sha256": manifest.get("manifest_sha256", ""),
+            "manifest_file_sha256": manifest_file_sha256,
             "seal_manifest_file_sha256": (
                 hashlib.sha256((run_dir / "seal_manifest.json").read_bytes()).hexdigest()
                 if formal_run_sealed and (run_dir / "seal_manifest.json").exists()
                 else ""
             ),
+            "seal_verified": formal_run_sealed,
+            "economic_status": status,
+            "capital_authority": False,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         tmp = reg_dir / "formal_run_candidate_registry.json.tmp"
         tmp.write_text(json.dumps(candidate, ensure_ascii=False, indent=2, sort_keys=True))
         tmp.replace(reg_dir / "formal_run_candidate_registry.json")
-    except Exception:
-        pass
+    except Exception as exc:
+        registry_error = f"{type(exc).__name__}: {exc}"
+        formally_verified = False
 
     manifest["formal_run_sealed"] = formal_run_sealed
+    manifest["formally_verified"] = formally_verified
+    manifest["registry_write_error"] = registry_error
     if not formal_run_sealed:
         manifest["seal_error"] = seal_error
     return manifest
@@ -536,7 +672,10 @@ def main() -> int:
         package_id=args.package_id,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result["status"] in {"DRY_RUN", "VERIFIED"} else 2
+    return 0 if (
+        result["status"] in {"DRY_RUN", "VERIFIED"}
+        and not result.get("registry_write_error")
+    ) else 2
 
 
 if __name__ == "__main__":

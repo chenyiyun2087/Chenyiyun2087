@@ -93,3 +93,34 @@ def test_topk_report_is_deterministic_for_same_inputs(tmp_path):
     assert (tmp_path / "out1" / "core_alpha_target_gate_report.json").is_file()
     payload = json.loads((tmp_path / "out1" / "topk_alpha_report.json").read_text())
     assert payload["execution_model"] == "strict_t1_open_precommit_v1"
+
+
+def test_historical_topk_requires_opening_limit_snapshot(tmp_path):
+    panel, market = _fixtures(tmp_path)
+    report = run_topk_alpha_lab(
+        panel_path=panel,
+        market_path=market,
+        output_dir=tmp_path / "out",
+        challenger="industry_strength_regime",
+        evidence_origin="HISTORICAL_REAL",
+    )
+    assert report["status"] == "BLOCKED"
+    assert "market_open_limit_status_missing" in report["blockers"]
+    assert report["capital_status"] == "NO_SCALE"
+
+
+def test_topk_nav_includes_signal_days_and_declares_trailing_adv(tmp_path):
+    panel, market = _fixtures(tmp_path)
+    report = run_topk_alpha_lab(
+        panel_path=panel,
+        market_path=market,
+        output_dir=tmp_path / "out",
+        challenger="industry_strength_regime",
+        evidence_origin="SYNTHETIC",
+    )
+    result = next(item for item in report["results"] if item.get("status") == "PASS")
+    # 50 dates, first signal executes on date 2; every subsequent signal day
+    # remains in the NAV series (49 marks rather than a truncated series).
+    assert result["nav_rows"] == 49
+    assert result["adv_source"] == "prior_trading_day_rolling20_amount"
+    assert report["execution_data_contract"]["same_day_amount_used_for_decision"] is False

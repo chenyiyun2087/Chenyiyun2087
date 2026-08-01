@@ -108,7 +108,7 @@ def run_formal_admission(
                               f"readiness_exception:{type(exc).__name__}",
                               exception=exc)
 
-    if readiness_result.get("status") != "PASS":
+    if readiness_result.get("status") != "READY_FOR_FORMAL_RUN":
         return blocked_report("admission", "readiness",
                               "readiness_not_pass",
                               extra={"blockers": readiness_result.get("blockers", [])})

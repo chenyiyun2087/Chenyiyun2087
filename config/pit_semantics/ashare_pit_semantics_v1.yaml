@@ -25,6 +25,7 @@ families:
     available_at_column: market_available_at
     timezone_requirement: explicit_offset
     coverage_policy: "universe_symbols_must_have_market_data"
+    canonical_execution_columns: [high, low, volume]
 
   universe:
     required_columns:
@@ -143,6 +144,12 @@ families:
     business_time_column: trade_date
     available_at_column: corporate_action_available_at
     timezone_requirement: explicit_offset
+    economic_columns:
+      - cash_dividend
+      - bonus_ratio
+      - split_ratio
+      - rights_issue_ratio
+      - rights_issue_price
 
 # Canonical self-hash rules
 canonical_hash:

@@ -30,6 +30,9 @@ from runtime.pit_semantic_contract import (
     get_contract_sha256,
     get_source_families,
     get_required_columns,
+    get_primary_key,
+    get_canonical_execution_columns,
+    get_economic_columns,
     signal_time_for_trade_dates,
     validate_explicit_timezone,
 )
@@ -382,6 +385,16 @@ def _build_pit_factor_panel_impl(
                     frame["industry_name"] = frame.get("industry", "UNKNOWN")
         if absent and (strict_contract or not legacy_fixture):
             blockers.extend(f"{name}_column_missing:{column}" for column in absent)
+        if strict_contract and name == "market":
+            blockers.extend(
+                f"market_execution_column_missing:{column}"
+                for column in sorted(get_canonical_execution_columns(name) - set(frame.columns))
+            )
+        if strict_contract and name == "corporate_actions":
+            blockers.extend(
+                f"corporate_action_economic_column_missing:{column}"
+                for column in sorted(get_economic_columns(name) - set(frame.columns))
+            )
     if str(manifest.get("status")) != "QUALIFIED":
         blockers.append("source_manifest_not_qualified")
     manifest_sources = manifest.get("sources") or {}
@@ -474,10 +487,17 @@ def _build_pit_factor_panel_impl(
         ).dt.normalize()
         if business_column != "trade_date":
             frame["cal_date"] = frame["trade_date"]
-        duplicate_key = ["cal_date"] if name == "trade_calendar" else ["trade_date", "symbol"]
-        duplicate_count = int(frame.duplicated(duplicate_key).sum())
-        if duplicate_count:
-            blockers.append(f"duplicate_key:{name}:{duplicate_count}")
+        duplicate_key = get_primary_key(name)
+        if duplicate_key:
+            key_columns_present = all(column in frame.columns for column in duplicate_key)
+            if key_columns_present and (
+                strict_contract or (not legacy_fixture and evidence_origin != "SYNTHETIC")
+            ):
+                duplicate_count = int(frame.duplicated(duplicate_key).sum())
+                if duplicate_count:
+                    blockers.append(f"duplicate_key:{name}:{duplicate_count}")
+            elif not key_columns_present and strict_contract:
+                blockers.append(f"primary_key_columns_missing:{name}")
         if name != "trade_calendar":
             frame["symbol"] = (
                 frame.get("symbol", pd.Series(index=frame.index, dtype="object"))
@@ -746,7 +766,11 @@ def _build_pit_factor_panel_impl(
         "market_beta": ("market_beta_raw", False),
         "size": ("circ_mv", True),
         "volatility": ("volatility_raw", True),
-        "liquidity": ("liquidity_raw", True),
+        # Keep the raw Amihud liquidity direction intact here.  The formal
+        # strategy definition owns the economic sign (liquidity=-1); applying
+        # a reverse rank in the builder and then -1 in Score would invert it
+        # twice.
+        "liquidity": ("liquidity_raw", False),
         "momentum": ("momentum_raw", False),
         "value": ("pb", True),
     }

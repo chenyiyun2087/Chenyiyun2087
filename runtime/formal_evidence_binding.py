@@ -253,6 +253,10 @@ def compute_formal_run_id(
     start_date: str,
     end_date: str,
     strategy_ids: list[str],
+    formal_pit_run_id: str = "",
+    package_id: str = "",
+    admission_id: str = "",
+    pr_b_sha256: str = "",
 ) -> str:
     """Produce a deterministic, content-addressed formal run identifier.
 
@@ -270,6 +274,10 @@ def compute_formal_run_id(
             "start_date": start_date,
             "end_date": end_date,
             "strategy_ids": sorted(strategy_ids),
+            "formal_pit_run_id": formal_pit_run_id,
+            "package_id": package_id,
+            "admission_id": admission_id,
+            "pr_b_sha256": pr_b_sha256,
         }
     )
     # Keep the run-id filesystem-friendly — full 64-char hex, not a prefix.

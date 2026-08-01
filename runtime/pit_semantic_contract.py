@@ -64,6 +64,14 @@ def get_required_columns(family: str) -> set[str]:
     return set(get_family_contract(family).get("required_columns", []))
 
 
+def get_canonical_execution_columns(family: str) -> set[str]:
+    return set(get_family_contract(family).get("canonical_execution_columns", []))
+
+
+def get_economic_columns(family: str) -> set[str]:
+    return set(get_family_contract(family).get("economic_columns", []))
+
+
 def get_primary_key(family: str) -> list[str]:
     return list(get_family_contract(family).get("primary_key", []))
 

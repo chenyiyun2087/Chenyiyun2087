@@ -25,6 +25,7 @@ import pandas as pd
 import yaml
 
 from runtime.acceptance_config import canonical_sha
+from runtime.artifact_seal import verify_seal
 from runtime.pit_semantic_contract import validate_explicit_timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +87,9 @@ class LabConfig:
     lot_size: int = LOT_SIZE
     ic_horizons: tuple[int, ...] = (5, 10, 20)
     min_ic_coverage: float = 0.95
+    min_rank_ic: float = 0.02
+    min_information_ratio: float = 0.30
+    min_positive_ic_ratio: float = 0.55
     challengers: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: {
             name: tuple(factors) for name, factors in CHALLENGER_FACTORS.items()
@@ -149,6 +153,9 @@ def load_lab_config(path: Path = CONFIG_PATH) -> LabConfig:
             int(value) for value in payload.get("ic_horizons", (5, 10, 20))
         ),
         min_ic_coverage=float(payload.get("min_ic_coverage", 0.95)),
+        min_rank_ic=float(payload.get("min_rank_ic", 0.02)),
+        min_information_ratio=float(payload.get("min_information_ratio", 0.30)),
+        min_positive_ic_ratio=float(payload.get("min_positive_ic_ratio", 0.55)),
         challengers=challengers,
         factor_signs=factor_signs,
     )
@@ -210,6 +217,14 @@ def _blocked(
         "execution_model": "strict_t1_open_precommit_v1",
         "signal_cutoff": "T15:30:00+08:00",
         "execution_time": "T+1 09:30:00+08:00",
+        "execution_data_contract": {
+            "limit_status_field": "open_limit_status",
+            "limit_status_fallback": "synthetic_only",
+            "adv_field": "adv_cny",
+            "adv_definition": "prior_trading_day_rolling20_amount",
+            "same_day_amount_used_for_decision": False,
+            "same_day_close_used_for_decision": False,
+        },
     }
     report["content_sha256"] = canonical_sha(
         {key: value for key, value in report.items() if key != "content_sha256"}
@@ -315,6 +330,68 @@ def _validate_inputs(panel: pd.DataFrame, market: pd.DataFrame) -> list[str]:
         if (signal != expected).fillna(True).any():
             blockers.append("signal_time_not_canonical_t1530")
     return blockers
+
+
+def _validate_formal_package_binding(
+    *,
+    package_dir: Path | None,
+    formal_pit_run_id: str | None,
+    package_id: str | None,
+    seal_sha256: str | None,
+) -> tuple[list[str], dict[str, Any]]:
+    """Verify the immutable Formal Package before historical Challenger use."""
+    blockers: list[str] = []
+    identity: dict[str, Any] = {}
+    if package_dir is None or not package_dir.is_dir():
+        return ["formal_package_binding_missing"], identity
+    package_manifest_path = package_dir / "package_manifest.json"
+    source_manifest_path = package_dir / "source_manifest.json"
+    if not package_manifest_path.is_file():
+        blockers.append("formal_package_manifest_missing")
+    else:
+        try:
+            package_manifest = json.loads(package_manifest_path.read_text(encoding="utf-8"))
+            identity.update({
+                "formal_pit_run_id": package_manifest.get("formal_pit_run_id"),
+                "package_id": package_manifest.get("package_id"),
+            })
+            if formal_pit_run_id and package_manifest.get("formal_pit_run_id") != formal_pit_run_id:
+                blockers.append("formal_pit_run_id_mismatch")
+            if package_id and package_manifest.get("package_id") != package_id:
+                blockers.append("package_id_mismatch")
+        except Exception as exc:
+            blockers.append(f"formal_package_manifest_unreadable:{type(exc).__name__}")
+    seal_path = package_dir / "seal_manifest.json"
+    if not seal_path.is_file():
+        blockers.append("formal_package_seal_missing")
+    else:
+        seal_result = verify_seal(package_dir)
+        if seal_result.get("status") != "VERIFIED":
+            blockers.append(f"formal_package_seal_not_verified:{seal_result.get('status')}")
+        seal_file_sha = _sha(seal_path)
+        identity["package_seal_manifest_file_sha256"] = seal_file_sha
+        if seal_sha256 and seal_file_sha != seal_sha256:
+            blockers.append("formal_package_seal_sha_mismatch")
+    if not source_manifest_path.is_file():
+        blockers.append("formal_package_source_manifest_missing")
+    else:
+        try:
+            source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+            sources = source_manifest.get("sources") or {}
+            required = {
+                "market", "universe", "financial", "industry", "adjustment",
+                "trade_calendar", "security_lifecycle", "corporate_actions",
+            }
+            missing = sorted(required - set(sources))
+            if missing:
+                blockers.append(f"formal_package_source_families_missing:{','.join(missing)}")
+            for family in sorted(required & set(sources)):
+                if not str((sources[family] or {}).get("parameter_sha256") or ""):
+                    blockers.append(f"formal_package_parameter_sha_missing:{family}")
+            identity["source_manifest_sha256"] = _sha(source_manifest_path)
+        except Exception as exc:
+            blockers.append(f"formal_package_source_manifest_unreadable:{type(exc).__name__}")
+    return sorted(set(blockers)), identity
 
 
 def _validate_factor_availability(
@@ -426,7 +503,9 @@ def _benchmark_annualized_return(data: pd.DataFrame) -> float | None:
     return float(growth ** (252.0 / max(len(daily), 1)) - 1.0)
 
 
-def _annual_positive_contribution(nav_series: list[dict[str, Any]]) -> tuple[float | None, float | None]:
+def _annual_positive_contribution(
+    nav_series: list[dict[str, Any]], initial: float = INITIAL_CAPITAL_CNY
+) -> tuple[float | None, float | None]:
     frame = pd.DataFrame(nav_series)
     if frame.empty:
         return None, None
@@ -435,7 +514,12 @@ def _annual_positive_contribution(nav_series: list[dict[str, Any]]) -> tuple[flo
     frame = frame.dropna().sort_values("trade_date")
     if frame.empty:
         return None, None
-    annual_returns = frame.set_index("trade_date")["nav"].resample("YE").last().pct_change().dropna()
+    year_end = frame.set_index("trade_date")["nav"].resample("YE").last().dropna()
+    if year_end.empty:
+        return None, None
+    previous = year_end.shift(1)
+    previous.iloc[0] = float(initial)
+    annual_returns = (year_end / previous - 1.0).dropna()
     positive = annual_returns[annual_returns > 0]
     if positive.empty:
         return 0.0, None
@@ -467,7 +551,7 @@ def _oos_window_metrics(nav_series: list[dict[str, Any]], windows: list[dict[str
     return positive_ratio, pbo_proxy
 
 
-def _dsr_confidence(result: dict[str, Any]) -> float | None:
+def _dsr_confidence(result: dict[str, Any], n_trials: int | None = None) -> float | None:
     nav = pd.DataFrame(result.get("nav_series") or [])
     if len(nav) < 3:
         return None
@@ -475,19 +559,23 @@ def _dsr_confidence(result: dict[str, Any]) -> float | None:
     daily = values.pct_change().dropna()
     if len(daily) < 2 or daily.std() <= 0:
         return None
-    sharpe = float(daily.mean() / daily.std() * np.sqrt(252.0))
-    # Normal approximation with a multiple-testing penalty for the registered
-    # TopK/cost/holding/cap matrix;
-    # matrix; this is diagnostic evidence, never a fabricated PASS.
-    matrix_cells = max(
-        len(HOLDING_COUNTS)
-        * len(REBALANCE_DAYS)
-        * len(COST_RATES)
-        * len(SLIPPAGE_BPS)
-        * len(STOCK_WEIGHT_CAPS),
-        1,
-    )
-    z = sharpe * np.sqrt(len(daily) / 252.0) - np.sqrt(2.0 * np.log(matrix_cells))
+    mean = float(daily.mean())
+    std = float(daily.std(ddof=1))
+    sharpe = float(mean / std * np.sqrt(252.0))
+    matrix_cells = max(int(n_trials or result.get("n_trials") or 1), 1)
+    centered = daily - mean
+    skew = float(centered.pow(3).mean() / max(std ** 3, 1e-18))
+    kurtosis = float(centered.pow(4).mean() / max(std ** 4, 1e-18)) - 3.0
+    # Lo (2002)-style finite-sample Sharpe variance with skew/kurtosis, plus a
+    # registered-trials deflation penalty.  This remains diagnostic until a
+    # full experiment return matrix is supplied to the statistical module.
+    variance = (
+        1.0
+        - skew * sharpe
+        + ((kurtosis + 2.0) / 4.0) * sharpe * sharpe
+    ) / max(len(daily) - 1, 1)
+    se = float(np.sqrt(max(variance, 1e-18)))
+    z = sharpe / se - np.sqrt(2.0 * np.log(matrix_cells))
     return float(0.5 * (1.0 + math.erf(z / np.sqrt(2.0))))
 
 
@@ -514,6 +602,170 @@ def _build_nested_windows(dates: list[pd.Timestamp]) -> list[dict[str, str]]:
         })
         cursor += 6
     return windows
+
+
+def _fit_factor_weights(
+    train: pd.DataFrame,
+    factor_names: tuple[str, ...],
+    registered_signs: dict[str, float],
+) -> tuple[dict[str, float], list[str]]:
+    """Fit deterministic factor weights using training data only.
+
+    The fit is deliberately small and transparent: mean daily Rank IC against
+    the pre-computed 5-day forward label, with the pre-registered direction
+    retained as a sign guard.  Missing labels do not get fabricated; the
+    caller must mark the nested window blocked when the fit cannot be made.
+    """
+    blockers: list[str] = []
+    weights: dict[str, float] = {}
+    target = "fwd_5d_return"
+    if target not in train.columns:
+        return {}, ["nested_training_label_missing:fwd_5d_return"]
+    for factor in factor_names:
+        if factor not in train.columns:
+            blockers.append(f"nested_training_factor_missing:{factor}")
+            continue
+        values = pd.to_numeric(train[factor], errors="coerce")
+        labels = pd.to_numeric(train[target], errors="coerce")
+        frame = pd.DataFrame({"trade_date": train["trade_date"], "factor": values, "label": labels}).dropna()
+        daily_ic: list[float] = []
+        for _, group in frame.groupby("trade_date", sort=True):
+            if len(group) < 5 or group["factor"].nunique() < 2:
+                continue
+            ic = group["factor"].corr(group["label"], method="spearman")
+            if pd.notna(ic):
+                daily_ic.append(float(ic))
+        if not daily_ic:
+            blockers.append(f"nested_training_ic_missing:{factor}")
+            continue
+        mean_ic = float(np.mean(daily_ic))
+        registered = float(registered_signs.get(factor, 1.0))
+        # Keep the pre-registered economic direction.  The magnitude is
+        # learned from training only and normalised below.
+        weights[factor] = registered * max(abs(mean_ic), 1e-6)
+    if blockers:
+        return {}, sorted(set(blockers))
+    total = sum(abs(value) for value in weights.values())
+    if total <= 0:
+        return {}, ["nested_training_weights_zero"]
+    return {key: value / total for key, value in weights.items()}, []
+
+
+def _nested_walk_forward_report(
+    data: pd.DataFrame,
+    *,
+    challenger: str,
+    top_k: int,
+    rebalance_days: int,
+    cost_rate: float,
+    slippage_bps: int,
+    max_stock_weight: float,
+    config: LabConfig,
+    windows: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Run actual train→validation selection→test windows.
+
+    Merely emitting date windows is not evidence of nested walk-forward.  Each
+    window below fits weights on the training slice, chooses between the
+    fitted and pre-registered weights on validation, then evaluates the frozen
+    choice on the untouched test slice.
+    """
+    factor_names = config.challengers.get(challenger, ())
+    registered = config.factor_signs.get(challenger, {})
+    window_reports: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    for window in windows:
+        train_start = pd.Period(window["train_start"], freq="M").start_time
+        train_end = pd.Period(window["train_end"], freq="M").end_time
+        validation_end = pd.Period(window["validation_end"], freq="M").end_time
+        test_end = pd.Period(window["test_end"], freq="M").end_time
+        train = data[(data["trade_date"] >= train_start) & (data["trade_date"] <= train_end)]
+        validation = data[(data["trade_date"] > train_end) & (data["trade_date"] <= validation_end)]
+        test = data[(data["trade_date"] > validation_end) & (data["trade_date"] <= test_end)]
+        learned, fit_blockers = _fit_factor_weights(train, factor_names, registered)
+        if fit_blockers:
+            blockers.extend(fit_blockers)
+            window_reports.append({
+                **window,
+                "status": "BLOCKED",
+                "blockers": fit_blockers,
+                "selected_on": "validation_only",
+            })
+            continue
+        candidates = {
+            "trained_rank_ic": learned,
+            "registered_direction": {
+                factor: float(registered.get(factor, 1.0))
+                for factor in factor_names
+            },
+        }
+        validation_scores: dict[str, float] = {}
+        for name, weights in candidates.items():
+            validation_result = _simulate(
+                pd.concat([train, validation], ignore_index=True),
+                challenger=challenger,
+                top_k=top_k,
+                rebalance_days=rebalance_days,
+                cost_rate=cost_rate,
+                slippage_bps=slippage_bps,
+                max_stock_weight=max_stock_weight,
+                config=config,
+                factor_weights=weights,
+            )
+            validation_nav = pd.DataFrame(validation_result.get("nav_series") or [])
+            validation_nav["trade_date"] = pd.to_datetime(
+                validation_nav.get("trade_date"), errors="coerce"
+            )
+            validation_nav["nav"] = pd.to_numeric(
+                validation_nav.get("nav"), errors="coerce"
+            )
+            validation_nav = validation_nav[
+                validation_nav["trade_date"] >= validation["trade_date"].min()
+            ].dropna(subset=["trade_date", "nav"])
+            validation_scores[name] = (
+                float(validation_nav["nav"].iloc[-1] / validation_nav["nav"].iloc[0] - 1.0)
+                if len(validation_nav) >= 2
+                else -np.inf
+            )
+        selected_name = max(validation_scores, key=validation_scores.get)
+        selected_weights = candidates[selected_name]
+        test_result = _simulate(
+            test,
+            challenger=challenger,
+            top_k=top_k,
+            rebalance_days=rebalance_days,
+            cost_rate=cost_rate,
+            slippage_bps=slippage_bps,
+            max_stock_weight=max_stock_weight,
+            config=config,
+            factor_weights=selected_weights,
+        )
+        test_return = test_result.get("total_return")
+        if test_return is None:
+            blockers.append(f"nested_test_result_missing:{window['test_end']}")
+        window_reports.append({
+            **window,
+            "status": "PASS" if test_return is not None else "BLOCKED",
+            "selected_parameter": selected_name,
+            "selected_factor_weights": selected_weights,
+            "validation_scores": validation_scores,
+            "test_total_return": test_return,
+            "test_annualized_return": test_result.get("annualized_return"),
+            "test_nav_rows": test_result.get("nav_rows", 0),
+            "selected_on": "validation_only",
+        })
+    valid = [item for item in window_reports if item.get("status") == "PASS"]
+    returns = [float(item["test_total_return"]) for item in valid if item.get("test_total_return") is not None]
+    return {
+        "status": "PASS" if valid and not blockers else "BLOCKED",
+        "windows": window_reports,
+        "valid_window_count": len(valid),
+        "positive_test_window_ratio": float(np.mean(np.asarray(returns) > 0)) if returns else None,
+        "pbo_proxy": float(np.mean(np.asarray(returns) <= 0)) if returns else None,
+        "pbo_qualified": False,
+        "blockers": sorted(set(blockers)),
+        "selection_contract": "train_fit_validation_select_test_evaluate_v1",
+    }
 
 
 def _holdout_start(dates: list[pd.Timestamp]) -> pd.Timestamp | None:
@@ -547,6 +799,10 @@ def _factor_ic_report(
     horizons: tuple[int, ...],
     *,
     min_coverage: float,
+    factor_signs: dict[str, float] | None = None,
+    min_rank_ic: float = 0.02,
+    min_information_ratio: float = 0.30,
+    min_positive_ic_ratio: float = 0.55,
 ) -> dict[str, Any]:
     """Report challenger-factor Rank IC and decay without inventing labels.
 
@@ -587,33 +843,65 @@ def _factor_ic_report(
                 })
                 continue
             factor_values = pd.to_numeric(data[factor], errors="coerce")
+            sign = float((factor_signs or {}).get(factor, 1.0))
             target_values = pd.to_numeric(data[target], errors="coerce")
-            coverage = float(
-                factor_values.notna().combine(target_values.notna(), lambda left, right: left and right).mean()
-            )
             frame = pd.DataFrame({
                 "trade_date": data["trade_date"],
                 "factor": factor_values,
                 "target": target_values,
+                "eligible": data.get(
+                    "eligible_universe", pd.Series(True, index=data.index)
+                ).fillna(False).astype(bool),
             })
             daily_ic: list[float] = []
+            daily_coverages: list[float] = []
             for _, group in frame.groupby("trade_date", sort=True):
-                group = group.dropna()
+                eligible_group = group[group["eligible"]]
+                denominator = len(eligible_group)
+                group = eligible_group.dropna(subset=["factor", "target"])
+                daily_coverages.append(
+                    len(group) / denominator if denominator else 0.0
+                )
                 if len(group) < 5 or group["factor"].nunique() < 2:
                     continue
                 value = group["factor"].corr(group["target"], method="spearman")
                 if pd.notna(value):
-                    daily_ic.append(float(value))
+                    daily_ic.append(float(value) * sign)
+            coverage = float(min(daily_coverages)) if daily_coverages else 0.0
             mean_ic = float(np.mean(daily_ic)) if daily_ic else None
-            std_ic = float(np.std(daily_ic, ddof=1)) if len(daily_ic) > 1 else None
+            # Rank IC observations for overlapping horizons are autocorrelated;
+            # use a Newey-West/HAC long-run standard deviation instead of IID
+            # sample std when forming IR.
+            if len(daily_ic) > 1:
+                values = np.asarray(daily_ic, dtype=float)
+                centered = values - values.mean()
+                lag = max(1, min(int(horizon) - 1, len(values) - 1))
+                long_run = float(np.mean(centered * centered))
+                for k in range(1, lag + 1):
+                    gamma = float(np.mean(centered[k:] * centered[:-k]))
+                    long_run += 2.0 * (1.0 - k / (lag + 1.0)) * gamma
+                hac_std = float(np.sqrt(max(long_run, 0.0)))
+            else:
+                hac_std = None
             information_ratio = (
-                float(mean_ic / std_ic)
-                if mean_ic is not None and std_ic not in (None, 0.0)
+                float(mean_ic / hac_std)
+                if mean_ic is not None and hac_std not in (None, 0.0)
                 else None
+            )
+            positive_ratio = (
+                float(np.mean(np.asarray(daily_ic) > 0)) if daily_ic else None
             )
             status = (
                 "PASS"
-                if coverage >= min_coverage and mean_ic is not None
+                if (
+                    coverage >= min_coverage
+                    and mean_ic is not None
+                    and mean_ic >= min_rank_ic
+                    and information_ratio is not None
+                    and information_ratio >= min_information_ratio
+                    and positive_ratio is not None
+                    and positive_ratio >= min_positive_ic_ratio
+                )
                 else "BLOCKED"
             )
             if status != "PASS":
@@ -624,11 +912,11 @@ def _factor_ic_report(
                 "status": status,
                 "mean_rank_ic": mean_ic,
                 "information_ratio": information_ratio,
-                "positive_ic_ratio": (
-                    float(np.mean(np.asarray(daily_ic) > 0)) if daily_ic else None
-                ),
+                "positive_ic_ratio": positive_ratio,
                 "coverage": coverage,
                 "daily_observations": len(daily_ic),
+                "min_daily_coverage": coverage,
+                "factor_sign": sign,
             })
     decay: list[dict[str, Any]] = []
     for factor in factor_names:
@@ -655,6 +943,9 @@ def _factor_ic_report(
         "horizons": [int(value) for value in horizons],
         "blockers": sorted(set(blockers)),
         "coverage_threshold": min_coverage,
+        "minimum_rank_ic": min_rank_ic,
+        "minimum_information_ratio": min_information_ratio,
+        "minimum_positive_ic_ratio": min_positive_ic_ratio,
     }
 
 
@@ -668,6 +959,8 @@ def _simulate(
     slippage_bps: int,
     max_stock_weight: float,
     config: LabConfig,
+    factor_weights: dict[str, float] | None = None,
+    exclude_symbols: set[str] | None = None,
 ) -> dict[str, Any]:
     data = data.sort_values(["trade_date", "symbol"]).copy()
     dates = sorted(data["trade_date"].dropna().unique())
@@ -687,6 +980,7 @@ def _simulate(
             "blockers": ["unknown_challenger"],
         }
     signs = config.factor_signs.get(challenger, CHALLENGER_FACTOR_SIGNS.get(challenger, {}))
+    weights = factor_weights or signs
     # Cross-sectional rank composite.  No missing factor is treated as a
     # neutral zero; rows with an unavailable registered factor are excluded.
     data["challenger_score"] = np.nan
@@ -711,7 +1005,7 @@ def _simulate(
                 standardized = (values - group_mean).div(group_std)
                 values = standardized.where(standardized.notna(), values)
             rank = values.rank(pct=True)
-            score += rank * float(signs.get(factor, 1.0))
+            score += rank * float(weights.get(factor, signs.get(factor, 1.0)))
         data.loc[group.index[complete], "challenger_score"] = score.loc[group.index[complete]]
 
     signal_indices = list(range(0, len(dates) - 1, rebalance_days))
@@ -725,6 +1019,9 @@ def _simulate(
     selected_count = 0
     max_adv_participation = 0.0
     adv_limited_orders = 0
+    constraint_breaches: list[dict[str, Any]] = []
+    event_ledger: list[dict[str, Any]] = []
+    realized_pnl_by_symbol: dict[str, float] = {}
     slip = slippage_bps / 10_000.0
 
     def day_rows(day: object) -> pd.DataFrame:
@@ -752,11 +1049,16 @@ def _simulate(
             & data["eligible_universe"].fillna(False).astype(bool)
             & data["challenger_score"].notna()
         ].sort_values(["challenger_score", "symbol"], ascending=[False, True])
+        if exclude_symbols:
+            signal = signal[~signal["symbol"].astype(str).isin(exclude_symbols)]
         picks = signal.head(top_k).copy()
         selected_count += len(picks)
         desired = set(picks["symbol"].astype(str))
         execution = day_rows(execution_date)
-        equity_before = mark_equity(execution_date)
+        # Portfolio sizing is frozen from the T-day close.  Looking up the
+        # execution day's close here would use an end-of-session value at
+        # 09:30 and contaminate both sells and buys.
+        equity_before = mark_equity(signal_date)
 
         # Sell undesired holdings first.  A limit-down/suspended row freezes
         # the position and never fabricates a fill.
@@ -764,7 +1066,10 @@ def _simulate(
             if symbol in desired:
                 continue
             info = execution.loc[symbol] if symbol in execution.index else None
-            if info is None or str(info.get("limit_status")) in {"LIMIT_DOWN", "SUSPENDED", "NO_TRADE"} or int(float(info.get("is_suspended", 0) or 0)) == 1:
+            execution_limit_status = str(
+                info.get("open_limit_status", info.get("limit_status", "UNKNOWN"))
+            ) if info is not None else "UNKNOWN"
+            if info is None or execution_limit_status in {"LIMIT_DOWN", "SUSPENDED", "NO_TRADE"} or int(float(info.get("is_suspended", 0) or 0)) == 1:
                 frozen_shares += int(positions[symbol]["shares"])
                 rejected += 1
                 continue
@@ -774,11 +1079,50 @@ def _simulate(
                 rejected += 1
                 continue
             shares = int(positions[symbol]["shares"])
-            gross = shares * price * (1.0 - slip)
+            adv = float(pd.to_numeric(info.get("adv_cny"), errors="coerce")) if pd.notna(info.get("adv_cny")) else float("nan")
+            if not np.isfinite(adv) or adv <= 0:
+                frozen_shares += shares
+                rejected += 1
+                continue
+            max_sell_shares = int((adv * config.adv_fraction / price) // config.lot_size * config.lot_size)
+            if max_sell_shares <= 0:
+                frozen_shares += shares
+                rejected += 1
+                continue
+            sell_shares = min(shares, max_sell_shares)
+            if sell_shares < shares:
+                adv_limited_orders += 1
+            max_adv_participation = max(
+                max_adv_participation,
+                float(sell_shares * price / max(adv, 1e-12)),
+            )
+            gross = sell_shares * price * (1.0 - slip)
             fee = gross * cost_rate
+            cost_basis = float(positions[symbol].get("cost_basis", 0.0))
+            net_pnl = (gross - fee) - (cost_basis * sell_shares)
+            realized_pnl_by_symbol[symbol] = realized_pnl_by_symbol.get(symbol, 0.0) + net_pnl
             cash += gross - fee
-            turnover += shares * price
-            positions.pop(symbol, None)
+            turnover += sell_shares * price
+            if sell_shares >= shares:
+                positions.pop(symbol, None)
+            else:
+                positions[symbol]["shares"] = shares - sell_shares
+                positions[symbol]["cost_basis"] = cost_basis
+            event_ledger.append({
+                "trade_date": pd.Timestamp(execution_date).strftime("%Y-%m-%d"),
+                "signal_date": pd.Timestamp(signal_date).strftime("%Y-%m-%d"),
+                "execution_time": "09:30:00+08:00",
+                "symbol": symbol,
+                "side": "SELL",
+                "shares": sell_shares,
+                "price": price,
+                "adv_cny": adv,
+                "adv_participation": float(sell_shares * price / max(adv, 1e-12)),
+                "gross_notional": sell_shares * price,
+                "fee": fee,
+                "slippage_bps": slippage_bps,
+                "status": "FILLED",
+            })
 
         # Carry existing holdings into concentration accounting.  Frozen
         # positions (e.g. a limit-down sale) still consume both their stock
@@ -792,6 +1136,25 @@ def _simulate(
             held_weight = int(held.get("shares") or 0) * held_price / max(equity_before, 1e-12)
             held_industry = str(held.get("industry") or "UNKNOWN")
             industry_weight[held_industry] = industry_weight.get(held_industry, 0.0) + held_weight
+            if held_weight > max_stock_weight + 1e-12:
+                constraint_breaches.append({
+                    "trade_date": pd.Timestamp(execution_date).strftime("%Y-%m-%d"),
+                    "type": "STOCK_WEIGHT_BREACH",
+                    "symbol": held_symbol,
+                    "actual": held_weight,
+                    "limit": max_stock_weight,
+                    "reason": "frozen_or_untradeable_position",
+                })
+        for held_industry, weight_value in industry_weight.items():
+            if weight_value > config.max_industry_weight + 1e-12:
+                constraint_breaches.append({
+                    "trade_date": pd.Timestamp(execution_date).strftime("%Y-%m-%d"),
+                    "type": "INDUSTRY_WEIGHT_BREACH",
+                    "industry": held_industry,
+                    "actual": weight_value,
+                    "limit": config.max_industry_weight,
+                    "reason": "frozen_or_untradeable_position",
+                })
         for row in picks.itertuples(index=False):
             symbol = str(row.symbol)
             if symbol in positions:
@@ -800,19 +1163,25 @@ def _simulate(
                 rejected += 1
                 continue
             info = execution.loc[symbol]
-            if str(info.get("limit_status")) in {"LIMIT_UP", "SUSPENDED", "NO_TRADE"} or int(float(info.get("is_suspended", 0) or 0)) == 1:
+            execution_limit_status = str(
+                info.get("open_limit_status", info.get("limit_status", "UNKNOWN"))
+            )
+            if execution_limit_status in {"LIMIT_UP", "SUSPENDED", "NO_TRADE"} or int(float(info.get("is_suspended", 0) or 0)) == 1:
                 rejected += 1
                 continue
             price = float(pd.to_numeric(info.get("open"), errors="coerce")) if pd.notna(info.get("open")) else 0.0
-            amount = float(pd.to_numeric(info.get("amount"), errors="coerce")) if pd.notna(info.get("amount")) else 0.0
-            if price <= 0 or amount <= 0:
+            adv = float(pd.to_numeric(info.get("adv_cny"), errors="coerce")) if pd.notna(info.get("adv_cny")) else float("nan")
+            if price <= 0 or not np.isfinite(adv) or adv <= 0:
                 rejected += 1
                 continue
             industry = str(getattr(row, "industry", "UNKNOWN"))
             weight = min(1.0 / max(top_k, 1), max_stock_weight)
             weight = min(weight, max(config.max_industry_weight - industry_weight.get(industry, 0.0), 0.0))
             unconstrained_notional = min(equity_before * weight, cash)
-            target_notional = min(unconstrained_notional, amount * config.adv_fraction)
+            # ADV is a trailing amount snapshot computed strictly from dates
+            # before the execution date.  Never use the execution day's full
+            # amount, which is only known after the session.
+            target_notional = min(unconstrained_notional, adv * config.adv_fraction)
             if target_notional + 1e-9 < unconstrained_notional:
                 adv_limited_orders += 1
             shares = int(max(target_notional, 0.0) / (price * (1.0 + slip)) // config.lot_size * config.lot_size)
@@ -828,20 +1197,43 @@ def _simulate(
             turnover += shares * price
             max_adv_participation = max(
                 max_adv_participation,
-                float(shares * price / max(amount, 1e-12)),
+                float(shares * price / max(adv, 1e-12)),
             )
             positions[symbol] = {
                 "shares": shares,
                 "industry": industry,
                 "last_price": price,
+                "cost_basis": (gross + fee) / max(shares, 1),
             }
             industry_weight[industry] = industry_weight.get(industry, 0.0) + (shares * price / max(equity_before, 1e-12))
+            event_ledger.append({
+                "trade_date": pd.Timestamp(execution_date).strftime("%Y-%m-%d"),
+                "signal_date": pd.Timestamp(signal_date).strftime("%Y-%m-%d"),
+                "execution_time": "09:30:00+08:00",
+                "symbol": symbol,
+                "side": "BUY",
+                "shares": shares,
+                "price": price,
+                "adv_cny": adv,
+                "adv_participation": float(shares * price / max(adv, 1e-12)),
+                "gross_notional": shares * price,
+                "fee": fee,
+                "slippage_bps": slippage_bps,
+                "status": "FILLED",
+            })
 
-        period = dates[execution_index:next_signal_index]
+        # Keep the signal day itself in the NAV series.  The next rebalance is
+        # executed on the following day, so excluding next_signal_index would
+        # silently drop every intermediate signal-day mark.
+        next_execution_index = (
+            next_signal_index + 1 if next_signal_index < len(dates) else len(dates)
+        )
+        period = dates[execution_index:next_execution_index]
         for trade_date in period:
             nav_rows.append({
                 "trade_date": pd.Timestamp(trade_date).strftime("%Y-%m-%d"),
                 "nav": mark_equity(trade_date),
+                "valuation": "close",
             })
 
     nav = pd.DataFrame(nav_rows)
@@ -865,11 +1257,20 @@ def _simulate(
             "max_adv_participation": max_adv_participation,
             "adv_limited_orders": adv_limited_orders,
             "lot_size": config.lot_size,
-            "status": "PASS" if max_adv_participation <= config.adv_fraction + 1e-12 else "BLOCKED",
+            "status": "PASS" if (
+                max_adv_participation <= config.adv_fraction + 1e-12
+                and not constraint_breaches
+            ) else "BLOCKED",
         },
+        "constraint_breaches": constraint_breaches,
+        "constraint_status": "CONSTRAINT_BREACH" if constraint_breaches else "PASS",
         "frozen_shares": frozen_shares,
         "nav_rows": int(len(nav)),
         "nav_series": nav.to_dict("records"),
+        "adv_source": "prior_trading_day_rolling20_amount",
+        "event_ledger": event_ledger,
+        "realized_pnl_by_symbol": realized_pnl_by_symbol,
+        "factor_weights": {str(key): float(value) for key, value in weights.items()},
         "status": "PASS" if metrics["annualized_return"] is not None else "BLOCKED",
     }
 
@@ -884,6 +1285,10 @@ def run_topk_alpha_lab(
     config: LabConfig | None = None,
     release: str = "topk_alpha_challenger_v1",
     strategy: str = "topk_registered_challengers",
+    package_dir: Path | None = None,
+    formal_pit_run_id: str | None = None,
+    package_id: str | None = None,
+    seal_sha256: str | None = None,
 ) -> dict[str, Any]:
     config = config or load_lab_config()
     if not panel_path.exists() or not market_path.exists():
@@ -905,22 +1310,109 @@ def run_topk_alpha_lab(
             output_dir, ["evidence_origin_invalid"], panel_path=panel_path,
             market_path=market_path, release=release, strategy=strategy,
         )
+    package_blockers: list[str] = []
+    package_identity: dict[str, Any] = {}
+    if evidence_origin == "HISTORICAL_REAL":
+        package_blockers, package_identity = _validate_formal_package_binding(
+            package_dir=package_dir,
+            formal_pit_run_id=formal_pit_run_id,
+            package_id=package_id,
+            seal_sha256=seal_sha256,
+        )
+        if package_blockers:
+            if "open_limit_status" not in market.columns:
+                package_blockers = ["market_open_limit_status_missing", *package_blockers]
+            return _blocked(
+                output_dir,
+                package_blockers,
+                panel_path=panel_path,
+                market_path=market_path,
+                release=release,
+                strategy=strategy,
+            )
+
+    # An end-of-day `limit_status` is not a valid 09:30 execution input.  Real
+    # evidence must provide an opening snapshot; synthetic fixtures may use the
+    # legacy field but are labelled as such and can never become E3.
+    if "open_limit_status" not in market.columns:
+        if evidence_origin == "HISTORICAL_REAL":
+            return _blocked(
+                output_dir,
+                ["market_open_limit_status_missing"],
+                panel_path=panel_path,
+                market_path=market_path,
+                release=release,
+                strategy=strategy,
+            )
+        market["open_limit_status"] = market["limit_status"]
+        market["execution_status_source"] = "synthetic_legacy_limit_status"
+    else:
+        market["execution_status_source"] = "open_limit_status"
+    # Compute a trailing ADV from amounts strictly before each trade date.  A
+    # same-day full-session amount would leak information into the 09:30 fill.
+    market = market.sort_values(["symbol", "trade_date"]).copy()
+    market["amount"] = pd.to_numeric(market["amount"], errors="coerce")
+    market["adv_cny"] = market.groupby("symbol", sort=False)["amount"].transform(
+        lambda series: series.shift(1).rolling(20, min_periods=1).mean()
+    )
 
     panel["trade_date"] = pd.to_datetime(panel["trade_date"], errors="coerce").dt.normalize()
     market["trade_date"] = pd.to_datetime(market["trade_date"], errors="coerce").dt.normalize()
     panel["symbol"] = panel["symbol"].astype(str).str.extract(r"(\d+)", expand=False).str.zfill(6)
     market["symbol"] = market["symbol"].astype(str).str.extract(r"(\d+)", expand=False).str.zfill(6)
-    data = panel.merge(
+    merged = panel.merge(
         market,
         on=["trade_date", "symbol"],
-        how="inner",
+        how="left",
+        indicator=True,
         suffixes=("", "_market"),
     )
+    eligible = merged["eligible_universe"].fillna(False).astype(bool)
+    missing_market = eligible & merged["_merge"].ne("both")
+    coverage_rows: list[dict[str, Any]] = []
+    if eligible.any():
+        for day, group in merged.loc[eligible].groupby("trade_date", sort=True):
+            denom = len(group)
+            matched = int(group["_merge"].eq("both").sum())
+            coverage = matched / denom if denom else 0.0
+            coverage_rows.append({
+                "trade_date": pd.Timestamp(day).strftime("%Y-%m-%d"),
+                "eligible_universe_rows": denom,
+                "matched_market_rows": matched,
+                "coverage": coverage,
+            })
+            if coverage < 0.95:
+                package_blockers.append(
+                    f"daily_market_coverage_below_95:{pd.Timestamp(day).date()}:{coverage:.4f}"
+                )
+    if missing_market.any():
+        package_blockers.append(
+            f"eligible_market_rows_dropped:{int(missing_market.sum())}"
+        )
+    data = merged.loc[merged["_merge"].eq("both")].drop(columns=["_merge"])
+    if package_blockers:
+        return _blocked(
+            output_dir,
+            package_blockers,
+            panel_path=panel_path,
+            market_path=market_path,
+            release=release,
+            strategy=strategy,
+        )
     dates = sorted(data["trade_date"].dropna().unique())
     windows = _build_nested_windows([pd.Timestamp(value) for value in dates])
     holdout_start = _holdout_start([pd.Timestamp(value) for value in dates])
     results: list[dict[str, Any]] = []
     challengers = [challenger] if challenger else list(config.challengers)
+    experiment_n_trials = max(
+        len(challengers)
+        * len(config.holdings)
+        * len(config.rebalance_days)
+        * len(config.cost_rates)
+        * len(config.slippage_bps)
+        * len(config.stock_weight_caps),
+        1,
+    )
     for challenger_name in challengers:
         required_factors = config.challengers.get(challenger_name)
         if required_factors is None:
@@ -933,6 +1425,10 @@ def run_topk_alpha_lab(
             required_factors,
             config.ic_horizons,
             min_coverage=config.min_ic_coverage,
+            factor_signs=config.factor_signs.get(challenger_name, {}),
+            min_rank_ic=config.min_rank_ic,
+            min_information_ratio=config.min_information_ratio,
+            min_positive_ic_ratio=config.min_positive_ic_ratio,
         )
         if missing_factors or factor_blockers:
             results.append({
@@ -1013,11 +1509,17 @@ def run_topk_alpha_lab(
                                     top_k=top_k,
                                     rebalance_days=rebalance_days,
                                     cost_rate=cost_rate * 2.0,
-                                    slippage_bps=slippage_bps,
+                                    slippage_bps=slippage_bps * 2,
                                     max_stock_weight=float(max_stock_weight),
                                     config=config,
                                 )
                                 result["two_x_cost_annualized_return"] = stress.get("annualized_return")
+                                result["cost_stress_status"] = (
+                                    "PASS"
+                                    if stress.get("annualized_return") is not None
+                                    and stress.get("constraint_status") == "PASS"
+                                    else "BLOCKED"
+                                )
                                 result["cost_stress"]["two_x_cost_annualized_return"] = stress.get(
                                     "annualized_return"
                                 )
@@ -1032,25 +1534,56 @@ def run_topk_alpha_lab(
                                 result["oos_two_x_cost_annualized_return"] = result[
                                     "two_x_cost_oos_annualized_return"
                                 ]
-                                positive_ratio, pbo_proxy = _oos_window_metrics(result.get("nav_series") or [], windows)
-                                result["positive_oos_window_ratio"] = positive_ratio
-                                result["pbo"] = pbo_proxy
+                                nested = _nested_walk_forward_report(
+                                    data,
+                                    challenger=challenger_name,
+                                    top_k=top_k,
+                                    rebalance_days=rebalance_days,
+                                    cost_rate=cost_rate,
+                                    slippage_bps=slippage_bps,
+                                    max_stock_weight=float(max_stock_weight),
+                                    config=config,
+                                    windows=windows,
+                                )
+                                result["nested_walk_forward"] = nested
+                                result["positive_oos_window_ratio"] = nested.get(
+                                    "positive_test_window_ratio"
+                                )
+                                result["pbo"] = nested.get("pbo_proxy")
                                 result["pbo_method"] = "negative_oos_window_proxy"
-                                result["pbo_qualified"] = False
-                                result["dsr_confidence"] = _dsr_confidence(result)
-                                positive_year_ratio, max_year_contribution = _annual_positive_contribution(result.get("nav_series") or [])
+                                result["pbo_qualified"] = bool(nested.get("pbo_qualified"))
+                                result["n_trials"] = experiment_n_trials
+                                result["dsr_confidence"] = _dsr_confidence(
+                                    result, n_trials=experiment_n_trials
+                                )
+                                positive_year_ratio, max_year_contribution = _annual_positive_contribution(
+                                    result.get("nav_series") or [], config.initial_capital_cny
+                                )
                                 result["positive_year_ratio"] = positive_year_ratio
                                 result["max_positive_year_contribution"] = max_year_contribution
                                 # Remove the five most profitable symbols from the
                                 # sample and rerun the exact same challenger path.
-                                symbol_return = data.groupby("symbol").apply(
-                                    lambda frame: float(
-                                        pd.to_numeric(frame["close"], errors="coerce").iloc[-1]
-                                        / max(pd.to_numeric(frame["close"], errors="coerce").iloc[0], 1e-12)
-                                        - 1.0
-                                    ), include_groups=False
+                                reference_data = data
+                                if holdout_start is not None:
+                                    reference_data = data[data["trade_date"] < holdout_start]
+                                reference_result = _simulate(
+                                    reference_data,
+                                    challenger=challenger_name,
+                                    top_k=top_k,
+                                    rebalance_days=rebalance_days,
+                                    cost_rate=cost_rate,
+                                    slippage_bps=slippage_bps,
+                                    max_stock_weight=float(max_stock_weight),
+                                    config=config,
                                 )
-                                excluded = set(symbol_return.nlargest(5).index.astype(str))
+                                realized = pd.Series(
+                                    reference_result.get("realized_pnl_by_symbol") or {},
+                                    dtype=float,
+                                )
+                                excluded = set(realized.nlargest(5).index.astype(str))
+                                if len(excluded) < 5:
+                                    result["top5_concentration_status"] = "BLOCKED"
+                                    result["top5_concentration_blocker"] = "insufficient_realized_trade_pnl"
                                 without_top5 = data[~data["symbol"].astype(str).isin(excluded)]
                                 no_top5 = _simulate(
                                     without_top5,
@@ -1061,10 +1594,12 @@ def run_topk_alpha_lab(
                                     slippage_bps=slippage_bps,
                                     max_stock_weight=float(max_stock_weight),
                                     config=config,
+                                    exclude_symbols=excluded,
                                 )
                                 result["remove_top5_annualized_return"] = no_top5.get("annualized_return")
                                 result["remove_top5_return_positive"] = bool(
-                                    no_top5.get("annualized_return") is not None
+                                    len(excluded) == 5
+                                    and no_top5.get("annualized_return") is not None
                                     and float(no_top5.get("annualized_return")) > 0
                                 )
                                 no_top5_oos, _ = _holdout_metrics(
@@ -1076,9 +1611,11 @@ def run_topk_alpha_lab(
                                     "annualized_return"
                                 )
                                 result["remove_top5_oos_return_positive"] = bool(
-                                    no_top5_oos.get("annualized_return") is not None
+                                    len(excluded) == 5
+                                    and no_top5_oos.get("annualized_return") is not None
                                     and float(no_top5_oos.get("annualized_return")) > 0
                                 )
+                                result["excluded_top5_symbols"] = sorted(excluded)
                             results.append(result)
 
     gate = evaluate_core_alpha_target(results, nested_windows=windows)
@@ -1094,7 +1631,12 @@ def run_topk_alpha_lab(
         "snapshot_identity": {
             "panel_sha256": _sha(panel_path),
             "market_sha256": _sha(market_path),
+            **package_identity,
         },
+        "formal_pit_run_id": formal_pit_run_id,
+        "package_id": package_id,
+        "package_seal_sha256": seal_sha256,
+        "market_coverage_by_date": coverage_rows,
         "sample_start": str(min(dates).date()) if dates else None,
         "sample_end": str(max(dates).date()) if dates else None,
         "execution_model": "strict_t1_open_precommit_v1",
@@ -1126,12 +1668,21 @@ def run_topk_alpha_lab(
         "execution_model": "strict_t1_open_precommit_v1",
         "signal_cutoff": "T15:30:00+08:00",
         "execution_time": "T+1 09:30:00+08:00",
+        "execution_data_contract": {
+            "limit_status_field": "open_limit_status",
+            "limit_status_fallback": "synthetic_only",
+            "adv_field": "adv_cny",
+            "adv_definition": "prior_trading_day_rolling20_amount",
+            "same_day_amount_used_for_decision": False,
+            "same_day_close_used_for_decision": False,
+        },
         "cost_model": {"cost_rates": config.cost_rates, "slippage_bps": config.slippage_bps},
         "challengers": {
             name: list(factors) for name, factors in config.challengers.items()
         },
         "factor_signs": config.factor_signs,
         "factor_ic_horizons": list(config.ic_horizons),
+        "n_trials": experiment_n_trials,
         "factor_ic_reports": {
             str(item.get("challenger")): item.get("factor_ic_report")
             for item in results
@@ -1147,7 +1698,12 @@ def run_topk_alpha_lab(
         "snapshot_identity": {
             "panel_sha256": _sha(panel_path),
             "market_sha256": _sha(market_path),
+            **package_identity,
         },
+        "formal_pit_run_id": formal_pit_run_id,
+        "package_id": package_id,
+        "package_seal_sha256": seal_sha256,
+        "market_coverage_by_date": coverage_rows,
         "config_sha256": config_sha,
         "code_head": _git_sha(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1172,6 +1728,8 @@ def run_topk_alpha_lab(
             "validation_months": 6,
             "test_months": 6,
             "holdout_months": 12,
+            "selection_contract": "train_fit_validation_select_test_evaluate_v1",
+            "windows_are_executed": True,
             "holdout_start": (
                 holdout_start.date().isoformat() if holdout_start is not None else None
             ),
@@ -1266,6 +1824,7 @@ def evaluate_core_alpha_target(
         "pbo_le_20pct": bool(best.get("pbo_qualified")) and _le("pbo", 0.20),
         "max_positive_year_contribution_le_40pct": _le("max_positive_year_contribution", 0.40),
         "two_x_cost_annualized_ge_25pct": _ge("two_x_cost_annualized_return", 0.25),
+        "two_x_cost_stress_execution_pass": bool(best.get("cost_stress_status") == "PASS"),
         "remove_top5_return_positive": bool(
             best.get(
                 "remove_top5_oos_return_positive",
@@ -1316,6 +1875,10 @@ def main() -> int:
     parser.add_argument("--evidence-origin", default="HISTORICAL_REAL")
     parser.add_argument("--release", default="topk_alpha_challenger_v1")
     parser.add_argument("--strategy", default="topk_registered_challengers")
+    parser.add_argument("--package-dir", type=Path)
+    parser.add_argument("--formal-pit-run-id", default=None)
+    parser.add_argument("--package-id", default=None)
+    parser.add_argument("--seal-sha256", default=None)
     args = parser.parse_args()
     result = run_topk_alpha_lab(
         panel_path=args.panel,
@@ -1325,6 +1888,10 @@ def main() -> int:
         challenger=args.challenger,
         release=args.release,
         strategy=args.strategy,
+        package_dir=args.package_dir,
+        formal_pit_run_id=args.formal_pit_run_id,
+        package_id=args.package_id,
+        seal_sha256=args.seal_sha256,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True, default=str))
     return 0 if result.get("status") == "PASS" else 2

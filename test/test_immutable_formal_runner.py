@@ -197,6 +197,7 @@ def test_ready_preflight_creates_one_immutable_dry_run(tmp_path):
     assert result["slippage_bps_one_way"] == 10
     assert "--trade-calendar-snapshot" in result["command"]
     assert result["fixture_mode"] is True
+    assert result["formally_verified"] is False
     with pytest.raises(FileExistsError, match="immutable_formal_run_exists"):
         run(
             preflight=preflight,

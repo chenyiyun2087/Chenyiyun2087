@@ -96,3 +96,9 @@
   完整样本中表现最稳定，流动性和动量多数期限为负 IC。
 - 因样本不足、行业/PIT 缺失和 83.24% 未解释方差，仅为 E2 诊断，资金继续
   `BLOCKED / NO_SCALE / 0元`。
+
+## 2026-08-01 Formal Happy-path 与 TopK Challenger 复评升级
+
+- 方法与结果：`../tasks/2026-08-01_Formal_HappyPath_TopK_Challenger复评升级.md`
+- Top5/Top10 仅作为 Challenger；真实 PIT/快照身份/Shadow 不足时不升级为 E3，研究、
+  交易、资金状态保持独立。

@@ -11,6 +11,9 @@ adv_fraction: 0.002
 lot_size: 100
 ic_horizons: [5, 10, 20]
 min_ic_coverage: 0.95
+min_rank_ic: 0.02
+min_information_ratio: 0.30
+min_positive_ic_ratio: 0.55
 execution_model: strict_t1_open_precommit_v1
 signal_cutoff: "T15:30:00+08:00"
 execution_time: "T+1 09:30:00+08:00"

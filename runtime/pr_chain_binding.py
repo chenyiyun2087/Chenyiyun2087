@@ -88,8 +88,9 @@ def bind_pr_b(
         return blocked_report("pr_b_binding", "input", "readiness_report_not_found")
 
     readiness = json.loads(readiness_report_path.read_text(encoding="utf-8"))
-    if readiness.get("status") != "PASS":
-        return blocked_report("pr_b_binding", "validate", "readiness_not_pass")
+    readiness_status = readiness.get("status")
+    if readiness_status not in {"READY_FOR_FORMAL_RUN", "PASS"}:
+        return blocked_report("pr_b_binding", "validate", "readiness_not_ready")
 
     pr_b = {
         "schema_version": "pr_chain_binding_v5_1",
@@ -101,6 +102,7 @@ def bind_pr_b(
         "package_sha256": package_sha256,
         "readiness_evidence_sha256": readiness.get("evidence_sha256", ""),
         "readiness_report_sha256": canonical_sha(readiness),
+        "readiness_status": readiness_status,
         "fixture_mode": False,
         "capital_authority": False,
     }

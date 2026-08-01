@@ -71,6 +71,16 @@ def _query_sha(query: str, params: Any = None) -> str:
     return canonical_sha({"query": " ".join(query.strip().split()), "params": params})
 
 
+def _query_text_sha(query: str) -> str:
+    """Hash normalized SQL text independently from bound parameters."""
+    return canonical_sha(" ".join(str(query or "").strip().split()))
+
+
+def _parameter_sha(params: Any = None) -> str:
+    """Hash bound parameters independently from SQL text."""
+    return canonical_sha(params if params is not None else {})
+
+
 def _snapshot_identity_from_config(config: dict[str, Any]) -> str:
     value = str(config.get("snapshot_id") or config.get("snapshot_token") or "")
     return value.strip()
@@ -165,6 +175,18 @@ def build_pit_adapter_manifest(
             for req in ("data_source_version", "revision_chain_proof", "availability_time_proof"):
                 if not str(attestation.get(req) or ""):
                     blockers.append(f"evidence_attestation_missing:{req}")
+        completeness = config.get("source_completeness")
+        for family in ("corporate_actions", "security_lifecycle"):
+            if isinstance(completeness, dict):
+                explicit = completeness.get(family)
+            else:
+                explicit = config.get(
+                    "corporate_action_complete"
+                    if family == "corporate_actions"
+                    else "security_lifecycle_complete"
+                )
+            if explicit is not True:
+                blockers.append(f"source_completeness_missing:{family}")
     for field in (
         "release",
         "provider",
@@ -372,6 +394,12 @@ def build_pit_adapter_manifest(
             "coverage_start": coverage_start,
             "coverage_end": coverage_end,
             "query_sha256": source_query_sha.get(name, ""),
+            "query_text_sha256": _query_text_sha(
+                str((source_config.get(name) or {}).get("query") or "")
+            ),
+            "parameter_sha256": _parameter_sha(
+                (source_config.get(name) or {}).get("params")
+            ),
         }
         if not sources[name]["version"]:
             blockers.append(f"source_version_missing:{name}")
@@ -387,6 +415,39 @@ def build_pit_adapter_manifest(
         "retrieved_at": pd.Timestamp(retrieved_at).isoformat(),
         "schema_semantic_version": str(config["schema_semantic_version"]),
         "field_definition_hash": str(config["field_definition_hash"]),
+        "calendar_source": str(
+            config.get("calendar_source")
+            or ((source_config.get("trade_calendar") or {}).get("source") or "")
+            or ((source_config.get("trade_calendar") or {}).get("provider") or "")
+        ),
+        "source_completeness": {
+            "corporate_actions": bool(
+                (config.get("source_completeness") or {}).get("corporate_actions")
+                if isinstance(config.get("source_completeness"), dict)
+                else config.get(
+                    "corporate_action_complete",
+                    config.get("corporate_actions_complete", False),
+                )
+            ),
+            "security_lifecycle": bool(
+                (config.get("source_completeness") or {}).get("security_lifecycle")
+                if isinstance(config.get("source_completeness"), dict)
+                else config.get("security_lifecycle_complete", False)
+            ),
+        },
+        "corporate_action_complete": bool(
+            (config.get("source_completeness") or {}).get("corporate_actions")
+            if isinstance(config.get("source_completeness"), dict)
+            else config.get(
+                "corporate_action_complete",
+                config.get("corporate_actions_complete", False),
+            )
+        ),
+        "security_lifecycle_complete": bool(
+            (config.get("source_completeness") or {}).get("security_lifecycle")
+            if isinstance(config.get("source_completeness"), dict)
+            else config.get("security_lifecycle_complete", False)
+        ),
         "sources": sources,
         "snapshot_identity": {
             **snapshot_meta,

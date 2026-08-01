@@ -294,6 +294,21 @@ def build_formal_package(
             )
         except Exception as exc:
             blockers.append(f"adapter_source_manifest_unreadable:{type(exc).__name__}")
+    # Never repair or infer identity fields in the Package layer.  Missing
+    # upstream evidence must remain visible and fail closed.
+    adapter_field_hash = str(adapter_source_manifest.get("field_definition_hash") or "")
+    if not adapter_field_hash:
+        blockers.append("adapter_field_definition_hash_missing")
+    elif adapter_field_hash != get_contract_sha256():
+        blockers.append("adapter_field_definition_hash_mismatch")
+    adapter_completeness = adapter_source_manifest.get("source_completeness") or {}
+    if adapter_source_manifest.get("evidence_origin") == "HISTORICAL_REAL":
+        for family in ("corporate_actions", "security_lifecycle"):
+            if adapter_completeness.get(family) is not True:
+                blockers.append(f"adapter_source_completeness_missing:{family}")
+    for family, info in sorted((adapter_source_manifest.get("sources") or {}).items()):
+        if not str((info or {}).get("parameter_sha256") or ""):
+            blockers.append(f"adapter_parameter_sha_missing:{family}")
     source_snapshot_sha = canonical_sha(
         {
             name: {
@@ -411,12 +426,23 @@ def build_formal_package(
         "schema_version": "formal_source_manifest_v2",
         "formal_pit_run_id": formal_pit_run_id,
         "package_id": package_id,
-        "calendar_source": "tushare_stock.dim_trade_cal",
+        "calendar_source": adapter_source_manifest.get("calendar_source") or "",
         "coverage_start": min(starts) if starts else None,
         "coverage_end": max(ends) if ends else None,
         "semantic_contract_sha256": get_contract_sha256(),
-        "field_definition_hash": adapter_source_manifest.get("field_definition_hash")
-        or get_contract_sha256(),
+        "field_definition_hash": adapter_field_hash,
+        "corporate_action_complete": bool(
+            adapter_source_manifest.get("corporate_action_complete")
+            or adapter_completeness.get("corporate_actions")
+        ),
+        "security_lifecycle_complete": bool(
+            adapter_source_manifest.get("security_lifecycle_complete")
+            or adapter_completeness.get("security_lifecycle")
+        ),
+        "source_completeness": {
+            "corporate_actions": bool(adapter_completeness.get("corporate_actions")),
+            "security_lifecycle": bool(adapter_completeness.get("security_lifecycle")),
+        },
         "release": adapter_source_manifest.get("release"),
         "provider": adapter_source_manifest.get("provider"),
         "retrieved_at": adapter_source_manifest.get("retrieved_at"),

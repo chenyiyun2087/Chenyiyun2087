@@ -25,6 +25,8 @@ from runtime.pit_semantic_contract import (
     get_contract_sha256,
     get_primary_key,
     get_required_columns,
+    get_canonical_execution_columns,
+    get_economic_columns,
     validate_frame_schema,
     signal_time_for_trade_dates,
     validate_explicit_timezone,
@@ -294,6 +296,7 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
                 "provider",
                 "version",
                 "query_sha256",
+                "parameter_sha256",
             }
             missing_source_fields = sorted(
                 field for field in required_source_fields if field not in source
@@ -307,6 +310,23 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
                     ";".join(missing_source_fields)
                     or f"{source.get('coverage_start')}..{source.get('coverage_end')}",
                     "content/schema/rows/coverage/provider/version/query SHA",
+                )
+            )
+        for family in ("corporate_actions", "security_lifecycle"):
+            complete = bool(
+                (manifest.get("source_completeness") or {}).get(family)
+                or manifest.get(
+                    "corporate_action_complete"
+                    if family == "corporate_actions"
+                    else "security_lifecycle_complete"
+                )
+            )
+            checks.append(
+                Check(
+                    f"source_completeness:{family}",
+                    complete,
+                    str(complete),
+                    "explicit complete=true",
                 )
             )
         canonical_paths = {
@@ -351,6 +371,16 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
             )
             frame = _read_frame(path)
             schema_blockers = validate_frame_schema(frame, family)
+            if family == "market":
+                schema_blockers.extend(
+                    f"schema_missing_execution_column:{family}:{column}"
+                    for column in sorted(get_canonical_execution_columns(family) - set(frame.columns))
+                )
+            if family == "corporate_actions":
+                schema_blockers.extend(
+                    f"schema_missing_economic_column:{family}:{column}"
+                    for column in sorted(get_economic_columns(family) - set(frame.columns))
+                )
             checks.append(
                 Check(
                     f"canonical_schema:{family}",
@@ -883,11 +913,25 @@ def _result(
 ) -> dict[str, Any]:
     passed = bool(checks) and all(item.passed for item in checks)
     status = config["success_status"] if passed else "BLOCKED"
+    identity: dict[str, Any] = {}
+    manifest_path = package / "package_manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            identity = {
+                "formal_pit_run_id": manifest.get("formal_pit_run_id"),
+                "package_id": manifest.get("package_id"),
+                "release_id": manifest.get("release_id"),
+                "strategy_set": manifest.get("strategy_set"),
+            }
+        except Exception:
+            identity = {}
     payload: dict[str, Any] = {
         "schema_version": config["schema_version"],
         "status": status,
         "ready_for_formal_run": passed,
         "package": str(package),
+        **identity,
         "checks": [asdict(item) for item in checks],
         "blocking_checks": [item.check for item in checks if not item.passed],
     }
