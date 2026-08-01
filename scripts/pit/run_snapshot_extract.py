@@ -122,12 +122,19 @@ FAMILY_QUERIES = {
                end_date AS financial_period_end,
                ann_date AS announcement_date,
                ann_date AS financial_available_at,
-               CONCAT(ts_code, '_', CAST(end_date AS CHAR)) AS revision_id,
-               1 AS revision_sequence,
+               CONCAT(ts_code, '_', CAST(end_date AS CHAR), '_v', CAST(rn AS CHAR)) AS revision_id,
+               rn AS revision_sequence,
                '' AS financial_source_snapshot_sha
-        FROM tushare_stock.dwd_fina_indicator
-        WHERE ann_date >= 20180101
-        ORDER BY ts_code, end_date
+        FROM (
+            SELECT DISTINCT ts_code, ann_date, end_date,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY ts_code, end_date
+                       ORDER BY ann_date
+                   ) AS rn
+            FROM tushare_stock.dwd_fina_indicator
+            WHERE ann_date >= 20180101
+        ) AS dedup
+        ORDER BY ts_code, end_date, ann_date
     """,
     "industry": """
         SELECT trade_date, ts_code AS symbol,
@@ -237,8 +244,9 @@ def extract_all(release_id: str) -> dict[str, Any]:
                 df["universe_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
             elif family == "financial":
+                # DATA_E0: announcement assumed available before market open
                 df["financial_available_at"] = df["financial_available_at"].apply(
-                    lambda x: f"{_int_to_iso(x)}T18:00:00+08:00" if pd.notna(x) and x != 0 else "")
+                    lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) and x != 0 else "")
             elif family == "industry":
                 df["industry_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
