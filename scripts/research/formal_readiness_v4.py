@@ -72,7 +72,8 @@ def validate(
             blockers.append("run_id_mismatch")
         if pkg.get("status") != "PASS":
             blockers.append("package_not_pass")
-        pkg_raw = {k: v for k, v in pkg.items() if k != "content_sha256"}
+        # v5.1.5: Exclude both content_sha256 and built_at (matching Package Builder)
+        pkg_raw = {k: v for k, v in pkg.items() if k not in ("content_sha256", "built_at")}
         if pkg.get("content_sha256") != canonical_sha(pkg_raw):
             blockers.append("package_manifest_content_sha_invalid")
         # Cross-check artifact tree

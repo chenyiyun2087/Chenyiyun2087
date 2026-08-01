@@ -208,7 +208,7 @@ def build_formal_package(
     except Exception as exc:
         blockers.append(f"csv_conversion_failed:scores.csv:{type(exc).__name__}")
 
-    # prices.csv + trade_calendar.csv from market
+    # prices.csv from market
     try:
         mkt_df = pd.read_parquet(building_dir / "market.parquet")
         prices_cols = [c for c in ["trade_date", "symbol", "open", "high", "low", "close", "volume", "amount"] if c in mkt_df.columns]
@@ -216,6 +216,21 @@ def build_formal_package(
         csv_entries["prices.csv"] = {"sha256": _file_sha(building_dir / "prices.csv")}
     except Exception as exc:
         blockers.append(f"csv_conversion_failed:prices.csv:{type(exc).__name__}")
+
+    # trade_calendar.csv — from universe snapshot trade_date
+    try:
+        uni_df = pd.read_parquet(building_dir / "universe.parquet")
+        cal_dates = sorted(uni_df["trade_date"].dropna().unique())
+        cal_df = pd.DataFrame({
+            "cal_date": cal_dates,
+            "exchange": "SSE",
+            "is_open": True,
+            "source": "derived_from_universe_snapshot",
+        })
+        cal_df.to_csv(building_dir / "trade_calendar.csv", index=False)
+        csv_entries["trade_calendar.csv"] = {"sha256": _file_sha(building_dir / "trade_calendar.csv")}
+    except Exception as exc:
+        blockers.append(f"csv_conversion_failed:trade_calendar.csv:{type(exc).__name__}")
 
     # tradable_universe.csv + strict_security_lifecycle.csv from universe
     try:
@@ -239,15 +254,20 @@ def build_formal_package(
     except Exception as exc:
         blockers.append(f"csv_conversion_failed:adjustment_factors.csv:{type(exc).__name__}")
 
-    # strict_corporate_actions.csv — BLOCKED if DATA_E0 (no empty placeholder)
+    # strict_corporate_actions.csv — filter corporate action events from adjustment
     ca_path = building_dir / "strict_corporate_actions.csv"
-    if not (building_dir / "adapter" / "snapshots" / "adjustment.parquet").exists():
+    adj_parquet = building_dir / "adjustment.parquet"
+    if not adj_parquet.exists():
         blockers.append("corporate_actions_unavailable:DATA_E0_cannot_generate_empty")
     else:
         try:
-            adj_df = pd.read_parquet(building_dir / "adjustment.parquet")
+            adj_df = pd.read_parquet(adj_parquet)
             ca_cols = [c for c in ["trade_date", "symbol", "corporate_action_type", "ex_date", "record_date"] if c in adj_df.columns]
-            if ca_cols:
+            if ca_cols and "corporate_action_type" in ca_cols:
+                ca_df = adj_df[adj_df["corporate_action_type"].notna()][ca_cols]
+                ca_df.to_csv(ca_path, index=False)
+                csv_entries["strict_corporate_actions.csv"] = {"sha256": _file_sha(ca_path)}
+            elif ca_cols:
                 adj_df[ca_cols].to_csv(ca_path, index=False)
                 csv_entries["strict_corporate_actions.csv"] = {"sha256": _file_sha(ca_path)}
             else:

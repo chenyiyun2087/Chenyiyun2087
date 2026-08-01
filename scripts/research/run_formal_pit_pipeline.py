@@ -51,7 +51,6 @@ from runtime.formal_evidence_contract import (
     EvidenceStatus,
     VersionManifest,
     compute_formal_pit_run_id,
-    update_active_formal_registry,
 )
 from scripts.research.pit_data_adapter import build_pit_adapter_manifest
 from scripts.research.pit_factor_panel_builder import build_pit_factor_panel
@@ -329,9 +328,9 @@ def run_formal_pit_pipeline(
 
     _write_stage_report(audit_dir, "semantic_audit", audit_result)
 
-    if audit_result.get("status") == "BLOCKED":
+    if audit_result.get("status") != "PASS":
         return _block_and_seal(building_dir, run_id, git_sha, "semantic_audit",
-                               "semantic_audit_blocked",
+                               f"semantic_audit_not_pass:{audit_result.get('status')}",
                                extra={"blockers": audit_result.get("blockers", [])})
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -424,31 +423,27 @@ def run_formal_pit_pipeline(
     # ═══════════════════════════════════════════════════════════════════════
     building_dir.rename(run_dir)
 
-    # ── Register in active formal evidence registry ──
-    # PR-B/C/D/E paths are set by downstream Package/Runner/OOS/Capacity,
-    # not by this PIT Run pipeline.
-    registry_payload = {
-        "schema_version": "formal_evidence_registry_v1",
+    # ── Register in pit_candidate_registry (NOT active_formal_run) ──
+    # v5.1.5: PIT Run is a candidate, not an active chain.
+    # Only a complete PR-I PASS updates active_formal_run.json.
+    candidate_payload = {
+        "schema_version": "pit_candidate_registry_v5_1_5",
         "formal_pit_run_id": run_id,
-        "formal_run_id": None,
-        "pr_a_path": None,
-        "pr_b_path": None,
-        "pr_c_path": None,
-        "pr_d_path": None,
-        "pr_e_path": None,
-        "pr_i_path": None,
+        "status": "PIT_VERIFIED",
         "seal_manifest_sha256": _file_sha(run_dir / "seal_manifest.json"),
-        "capital_authority": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "updated_by": git_sha,
     }
     try:
-        update_active_formal_registry(registry_payload)
+        reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
+        reg_dir.mkdir(parents=True, exist_ok=True)
+        candidate_path = reg_dir / "pit_candidate_registry.json"
+        tmp = candidate_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(candidate_payload, ensure_ascii=False, indent=2, sort_keys=True))
+        tmp.replace(candidate_path)
     except Exception as reg_exc:
-        # v5.1.2: Registry activation failure writes external activation report.
-        # The sealed PIT Run is never modified.
         activation_report = {
-            "schema_version": "activation_report_v5_1_2",
+            "schema_version": "activation_report_v5_1_5",
             "formal_pit_run_id": run_id,
             "status": "ACTIVATION_FAILED",
             "error": f"{type(reg_exc).__name__}: {reg_exc}",

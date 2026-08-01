@@ -125,7 +125,11 @@ def run_formal_admission(
     admission_root = PROJECT_ROOT / "exports" / "formal_admissions"
     admission_dir = admission_root / admission_id
     building_adm = admission_root / f".building_adm_{admission_id[:16]}"
-    building_adm.mkdir(parents=True, exist_ok=True)
+    if building_adm.exists():
+        return blocked_report("admission", "preflight",
+                              "stale_building_dir_exists",
+                              extra={"building_dir": str(building_adm)})
+    building_adm.mkdir(parents=True)
 
     # Write readiness_report.json
     readiness_report_path = building_adm / "readiness_report.json"
@@ -183,10 +187,11 @@ def run_formal_admission(
         adm_git_sha = ""
     seal_admission(building_adm, run_id=admission_id, git_commit_sha=adm_git_sha)
 
-    # Atomic publish
+    # Atomic publish — reject if admission already exists
     if admission_dir.exists():
-        import shutil
-        shutil.rmtree(admission_dir, ignore_errors=True)
+        return blocked_report("admission", "publish",
+                              "admission_id_already_exists",
+                              extra={"admission_id": admission_id})
     building_adm.rename(admission_dir)
 
     # ═══════════════════════════════════════════════════════════════════════
