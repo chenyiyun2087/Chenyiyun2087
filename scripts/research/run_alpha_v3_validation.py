@@ -285,12 +285,15 @@ def _resolve_default_inputs(
     evidence = program.get("upgrade_evidence") or {}
     walk_forward = PROJECT_ROOT / str(evidence.get("pr_d_oos_robustness", ""))
     pit = PROJECT_ROOT / str(evidence.get("pr_b_formal_readiness", ""))
+    # ``Path('')`` resolves to PROJECT_ROOT.  Treat only regular files as
+    # usable evidence; a configured-but-missing path must remain missing and
+    # fail closed instead of being hashed as a directory.
     return (
         program,
-        nav if nav.exists() else None,
-        trades if trades.exists() else None,
-        walk_forward if walk_forward.exists() else None,
-        pit if pit.exists() else None,
+        nav if nav.is_file() else None,
+        trades if trades.is_file() else None,
+        walk_forward if walk_forward.is_file() else None,
+        pit if pit.is_file() else None,
     )
 
 
@@ -372,7 +375,11 @@ def build_factor_ic_report(
     rows: list[dict[str, Any]] = []
     if panel.empty or "trade_date" not in panel.columns:
         return {
-            "schema_version": "alpha_v3_5_factor_ic_v1",
+            "schema_version": (
+                "alpha_v3_2_factor_ic_v1"
+                if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+                else "alpha_v3_5_factor_ic_v1"
+            ),
             "status": "BLOCKED",
             "blockers": ["factor_panel_missing"],
             "rows": [],
@@ -382,7 +389,11 @@ def build_factor_ic_report(
     )
     if availability["status"] != "PASS":
         return {
-            "schema_version": "alpha_v3_5_factor_ic_v1",
+            "schema_version": (
+                "alpha_v3_2_factor_ic_v1"
+                if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+                else "alpha_v3_5_factor_ic_v1"
+            ),
             "status": "BLOCKED",
             "blockers": list(availability["blockers"]),
             "rows": [],
@@ -455,7 +466,11 @@ def build_factor_ic_report(
         if row["status"] != "PASS"
     ]
     return {
-        "schema_version": "alpha_v3_5_factor_ic_v1",
+        "schema_version": (
+            "alpha_v3_2_factor_ic_v1"
+            if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_factor_ic_v1"
+        ),
         "status": "PASS" if rows and not blockers else "BLOCKED",
         "blockers": blockers,
         "rows": rows,
@@ -1571,7 +1586,11 @@ def build_alpha_attribution_report(
     if alpha_tstat is None or float(alpha_tstat) < float(proof_spec["min_alpha_tstat"]):
         blockers.append("alpha_tstat_insufficient")
     return {
-        "schema_version": "alpha_v3_5_attribution_v1",
+        "schema_version": (
+            "alpha_v3_2_attribution_v1"
+            if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_attribution_v1"
+        ),
         "status": "PASS" if not blockers else "BLOCKED",
         "required_factors": required,
         "factor_contributions": contributions,
@@ -1583,6 +1602,9 @@ def build_alpha_attribution_report(
             "stock_selection_evidence_status", "NOT_PROVIDED"
         ),
         "unexplained_residual_return": unexplained,
+        "residual_cumulative_return": evidence.get(
+            "residual_cumulative_return", unexplained
+        ),
         "residual_mean": evidence.get("residual_mean"),
         "residual_std": evidence.get("residual_std"),
         "residual_tstat": evidence.get("residual_tstat"),
@@ -1605,6 +1627,7 @@ def attach_selection_attribution(
     release_id: str,
     strategy: str,
     metrics: dict[str, Any],
+    evidence_version: str | None = None,
 ) -> dict[str, Any]:
     """Attach an independently produced selection attribution without relabeling OLS."""
     result = dict(attribution)
@@ -1613,7 +1636,11 @@ def attach_selection_attribution(
         result["stock_selection_evidence_status"] = "NOT_PROVIDED"
         return result
     required_matches = {
-        "schema_version": "alpha_v3_5_selection_attribution_v1",
+        "schema_version": (
+            "alpha_v3_2_selection_attribution_v1"
+            if str(evidence_version or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_selection_attribution_v1"
+        ),
         "release_id": release_id,
         "strategy_id": strategy,
         "sample_start": metrics.get("sample_start"),
@@ -2278,7 +2305,7 @@ def write_validation_package(
     *,
     program_path: Path = DEFAULT_PROGRAM,
     output_dir: Path,
-    profile_name: str = "formal_v5_0",
+    profile_name: str = "alpha_v3_2",
     release_id: str | None = None,
     strategy: str | None = None,
     start_date: str | None = None,
@@ -2441,9 +2468,14 @@ def write_validation_package(
     generated_attribution = build_daily_factor_attribution(
         nav, factor_returns, profile
     )
+    allowed_external_attribution_schemas = {"alpha_v3_5_attribution_v1"}
+    if str(profile.get("evidence_version") or "").startswith("alpha_v3_2"):
+        # A v3.1 report is not a v3.2 proof artifact.  Only an independent
+        # report carrying the active v3.2 schema may be considered here.
+        allowed_external_attribution_schemas.add("alpha_v3_2_attribution_v1")
     trusted_external_attribution = bool(
         attribution_evidence.get("schema_version")
-        == "alpha_v3_5_attribution_v1"
+        in allowed_external_attribution_schemas
         and str(attribution_evidence.get("status")).upper() == "PASS"
     )
     attribution_source = (
@@ -2461,6 +2493,7 @@ def write_validation_package(
         release_id=release_id,
         strategy=strategy,
         metrics=metrics,
+        evidence_version=profile.get("evidence_version"),
     )
     attribution["proof_layer"] = generated_attribution
     factor_ic = build_factor_ic_report(factor_panel, profile)
@@ -2495,6 +2528,7 @@ def write_validation_package(
         factor_lineage,
         factor_effectiveness,
         regime_attribution,
+        profile.get("evidence_version"),
     )
     alpha_proof = build_alpha_proof_summary(
         benchmark_report, attribution, factor_ic, alpha_guard
@@ -2979,7 +3013,7 @@ def write_validation_package(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--program", type=Path, default=DEFAULT_PROGRAM)
-    parser.add_argument("--profile", default="formal_v5_0")
+    parser.add_argument("--profile", default="alpha_v3_2")
     parser.add_argument("--release-id")
     parser.add_argument("--strategy")
     parser.add_argument("--start-date")

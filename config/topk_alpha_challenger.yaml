@@ -1,0 +1,51 @@
+schema_version: topk_alpha_challenger_v1
+initial_capital_cny: 500000
+holdings: [5, 10]
+rebalance_days: [5, 10, 20]
+cost_rates: [0.00075]
+slippage_bps: [10, 20, 50]
+max_industry_weight: 0.30
+max_stock_weight: 0.20
+stock_weight_caps: [0.15, 0.20]
+adv_fraction: 0.002
+lot_size: 100
+ic_horizons: [5, 10, 20]
+min_ic_coverage: 0.95
+execution_model: strict_t1_open_precommit_v1
+signal_cutoff: "T15:30:00+08:00"
+execution_time: "T+1 09:30:00+08:00"
+challengers:
+  size_lowvol_value_quality: [size, volatility, value, quality]
+  financial_quality_growth: [quality, growth, earnings_acceleration]
+  residual_momentum_reversal_trend: [residual_momentum, short_reversal, trend_stability]
+  industry_strength_regime: [industry_strength, market_regime_score]
+factor_signs:
+  size: -1
+  volatility: -1
+  value: -1
+  quality: 1
+  growth: 1
+  earnings_acceleration: 1
+  residual_momentum: 1
+  short_reversal: 1
+  trend_stability: 1
+  industry_strength: 1
+  market_regime_score: 1
+walk_forward:
+  train_months: 36
+  validation_months: 6
+  test_months: 6
+  holdout_months: 12
+core_alpha_target:
+  annualized_return: 0.30
+  annualized_excess_return: 0.15
+  max_drawdown: -0.25
+  sharpe: 1.20
+  calmar: 1.20
+  positive_oos_window_ratio: 0.70
+  dsr_confidence: 0.95
+  pbo: 0.20
+  max_positive_year_contribution: 0.40
+  two_x_cost_annualized_return: 0.25
+  remove_top5_return_positive: true
+capital_authority: false

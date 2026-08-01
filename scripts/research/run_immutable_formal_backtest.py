@@ -34,6 +34,7 @@ from runtime.formal_evidence_binding import (
 
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "formal_readiness.yaml"
 EXECUTION_MODEL_VERSION = "strict_t1_open_precommit_v1"
+FORMAL_CORE_START_DATE = "2018-01-01"
 
 
 def _sha(path: Path) -> str:
@@ -85,17 +86,6 @@ def run(
     package_id: str = "",
 ) -> dict[str, Any]:
     # ------------------------------------------------------------------
-    # v5.1.5: Formal identity must be non-empty for non-fixture runs
-    # ------------------------------------------------------------------
-    if not fixture_mode:
-        if not pit_run_id:
-            return _blocked(preflight, output_root, "pit_run_id_empty",
-                            json.loads(preflight.read_text(encoding="utf-8")))
-        if not package_id:
-            return _blocked(preflight, output_root, "package_id_empty",
-                            json.loads(preflight.read_text(encoding="utf-8")))
-
-    # ------------------------------------------------------------------
     # 3.6  Clean worktree — before (skipped in fixture mode)
     # ------------------------------------------------------------------
     git_sha_before: str
@@ -114,6 +104,19 @@ def run(
                 git_commit_sha_before=git_sha_before,
                 git_tree_clean_before=tree_clean_before,
             )
+
+    # ------------------------------------------------------------------
+    # v5.1.5: Formal identity must be non-empty for non-fixture runs.  This
+    # check follows the worktree guard so a dirty checkout is always reported
+    # as the actionable failure first.
+    # ------------------------------------------------------------------
+    if not fixture_mode:
+        if not pit_run_id:
+            return _blocked(preflight, output_root, "pit_run_id_empty",
+                            json.loads(preflight.read_text(encoding="utf-8")))
+        if not package_id:
+            return _blocked(preflight, output_root, "package_id_empty",
+                            json.loads(preflight.read_text(encoding="utf-8")))
 
     # ------------------------------------------------------------------
     # Load config and preflight payload
@@ -240,7 +243,7 @@ def run(
         acceptance_config_sha=acceptance_config_sha,
         readiness_config_sha=readiness_config_sha,
         frozen_bundle_sha=frozen_bundle_sha,
-        start_date="2013-01-01",
+        start_date=FORMAL_CORE_START_DATE,
         end_date=end_date,
         strategy_ids=list(FORMAL_STRATEGIES),
     )
@@ -259,7 +262,7 @@ def run(
     # Build backtest command pointing at frozen_inputs/
     # ------------------------------------------------------------------
     command = build_backtest_command(
-        "2013-01-01",
+        FORMAL_CORE_START_DATE,
         end_date,
         strategy=",".join(FORMAL_STRATEGIES),
         cost_rate=0.00075,
@@ -336,8 +339,36 @@ def run(
             if status == "VERIFIED":
                 status = "HEAD_CHANGED_DURING_RUN"
 
+    # ── Canonical initial account identity must be bound before hashing ──
+    initial_account_path = package / "initial_account.json"
+    initial_account_sha = ""
+    initial_cash_cny = 500_000.0
+    if initial_account_path.exists():
+        try:
+            initial_account_payload = json.loads(
+                initial_account_path.read_text(encoding="utf-8")
+            )
+            initial_account_sha = hashlib.sha256(
+                initial_account_path.read_bytes()
+            ).hexdigest()
+            initial_cash_cny = float(
+                initial_account_payload.get("initial_cash_cny", 500_000)
+            )
+        except Exception:
+            initial_account_payload = {
+                "currency": "CNY",
+                "initial_cash_cny": 500_000.0,
+                "positions": {},
+            }
+    else:
+        initial_account_payload = {
+            "currency": "CNY",
+            "initial_cash_cny": 500_000.0,
+            "positions": {},
+        }
+
     # ------------------------------------------------------------------
-    # 3.5  Expanded formal run manifest
+    # 3.5  Expanded formal run manifest (final bytes before sealing)
     # ------------------------------------------------------------------
     manifest: dict[str, Any] = {
         "schema_version": "immutable_formal_run_v3",
@@ -349,7 +380,7 @@ def run(
         "strategy_ids": list(FORMAL_STRATEGIES),
         "dynamic_champion_role": "ADMISSION_CANDIDATE",
         "comparison_strategy_role": "MATCH_ONLY",
-        "period_start": "2013-01-01",
+        "period_start": FORMAL_CORE_START_DATE,
         "period_end": end_date,
         "cost_rate_one_way": 0.00075,
         "slippage_bps_one_way": 10,
@@ -358,6 +389,8 @@ def run(
         "git_tree_clean_before": tree_clean_before,
         "git_tree_clean_after": git_tree_clean_after,
         "execution_model_version": EXECUTION_MODEL_VERSION,
+        "initial_account_sha256": initial_account_sha,
+        "initial_cash_cny": initial_cash_cny,
         "preflight_path": str(preflight),
         "preflight_file_sha256": preflight_file_sha,
         "preflight_evidence_sha256": input_sha,
@@ -370,6 +403,7 @@ def run(
         "dual_ledger_results": ledger_results,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "immutable": True,
+        "seal_requested": True,
         "fixture_mode": fixture_mode,
     }
     # Self-hash: manifest_sha256 is the canonical self-hash
@@ -410,35 +444,25 @@ def run(
         encoding="utf-8",
     )
 
-    # ── v5.1.6: Record initial_account from package ──
-    initial_account_path = package / "initial_account.json"
-    if initial_account_path.exists():
-        try:
-            ia = json.loads(initial_account_path.read_text(encoding="utf-8"))
-            manifest["initial_account_sha256"] = hashlib.sha256(
-                initial_account_path.read_bytes()).hexdigest()
-            manifest["initial_capital"] = ia.get("initial_capital", 500_000)
-            manifest["currency"] = ia.get("currency", "CNY")
-        except Exception:
-            manifest["initial_account_sha256"] = ""
-            manifest["initial_capital"] = 500_000
-            manifest["currency"] = "CNY"
-
     # ── v5.1.6: Seal Formal Run ──
     from runtime.artifact_seal import seal_directory as seal_formal_run
-    formal_run_id = f"formal-{run_id}"
+    formal_run_id = run_id
+    seal_result: dict[str, Any] | None = None
     try:
-        seal_formal_run(run_dir, run_id=formal_run_id, git_commit_sha=git_sha_after)
-        manifest["formal_run_sealed"] = True
+        seal_result = seal_formal_run(
+            run_dir, run_id=formal_run_id, git_commit_sha=git_sha_after
+        )
+        formal_run_sealed = True
     except Exception as exc:
-        manifest["formal_run_sealed"] = False
-        manifest["seal_error"] = f"{type(exc).__name__}: {exc}"
+        formal_run_sealed = False
+        seal_error = f"{type(exc).__name__}: {exc}"
 
-    # Rewrite manifest with seal status
-    (run_dir / "formal_run_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    if formal_run_sealed:
+        from runtime.artifact_seal import verify_seal
+        verification = verify_seal(run_dir)
+        if verification.get("status") != "VERIFIED":
+            formal_run_sealed = False
+            seal_error = f"post_seal_verification:{verification.get('reason', verification.get('status'))}"
 
     # ── v5.1.6: Write formal_run_candidate_registry ──
     try:
@@ -446,11 +470,16 @@ def run(
         reg_dir.mkdir(parents=True, exist_ok=True)
         candidate = {
             "schema_version": "formal_run_candidate_v5_1_6",
-            "status": "FORMAL_RUN_VERIFIED" if manifest["formal_run_sealed"] else "FORMAL_RUN_COMPLETE",
+            "status": "FORMAL_RUN_VERIFIED" if formal_run_sealed else "FORMAL_RUN_COMPLETE",
             "formal_run_id": formal_run_id,
             "formal_pit_run_id": pit_run_id,
             "package_id": package_id,
             "manifest_sha256": manifest.get("manifest_sha256", ""),
+            "seal_manifest_file_sha256": (
+                hashlib.sha256((run_dir / "seal_manifest.json").read_bytes()).hexdigest()
+                if formal_run_sealed and (run_dir / "seal_manifest.json").exists()
+                else ""
+            ),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         tmp = reg_dir / "formal_run_candidate_registry.json.tmp"
@@ -459,6 +488,9 @@ def run(
     except Exception:
         pass
 
+    manifest["formal_run_sealed"] = formal_run_sealed
+    if not formal_run_sealed:
+        manifest["seal_error"] = seal_error
     return manifest
 
 
@@ -468,7 +500,7 @@ def _read_initial_capital(package_dir: Path) -> float:
     if ia_path.exists():
         try:
             ia = json.loads(ia_path.read_text(encoding="utf-8"))
-            return float(ia.get("initial_capital", 500_000))
+            return float(ia.get("initial_cash_cny", ia.get("initial_capital", 500_000)))
         except Exception:
             pass
     return 500_000.0

@@ -66,9 +66,19 @@ def load_validation_profile(
     """Load a validation profile from config/validation_profiles/.
 
     Profiles are immutable, independent YAML files.  No aliasing.
-    Use 'formal_v5_0' for new runs; use historical names for replay.
+    The active formal entry points pass ``alpha_v3_2`` explicitly.  The
+    legacy default ``formal_v5_0`` is retained for existing replay callers;
+    historical profile names remain immutable.
     """
     path = PROFILES_DIR / f"{profile_name}.yaml"
+    # v3.2 is the active Proof Guard profile.  Start from the frozen v3.5
+    # structural contract (which contains the complete replay/readiness
+    # matrix) and apply only the explicitly versioned v3.2 guard thresholds;
+    # historical profile files remain immutable.
+    inherited_profile = profile_name == "alpha_v3_2" and not path.exists()
+    if profile_name == "alpha_v3_2" and path.exists():
+        inherited_profile = True
+        path = PROFILES_DIR / "alpha_v3_5.yaml"
     if not path.exists():
         available = sorted(
             p.stem for p in PROFILES_DIR.glob("*.yaml")
@@ -80,6 +90,44 @@ def load_validation_profile(
     profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(profile, dict):
         raise ValueError(f"Invalid profile file: {path}")
+    if inherited_profile:
+        overlay_path = PROFILES_DIR / "alpha_v3_2.yaml"
+        if overlay_path.exists():
+            overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8")) or {}
+
+            def _merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+                merged = dict(base)
+                for key, value in extra.items():
+                    if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                        merged[key] = _merge(merged[key], value)
+                    else:
+                        merged[key] = value
+                return merged
+
+            profile = _merge(profile, overlay)
+        profile = dict(profile)
+        profile["schema_version"] = "alpha_v3_2_acceptance_v1"
+        profile["evidence_version"] = "alpha_v3_2_evidence_v1"
+        proof = dict(profile.get("alpha_proof") or {})
+        proof.update({
+            "schema_version": "alpha_v3_2_proof_guard_v1",
+            "max_unexplained_variance_ratio": 0.05,
+            "min_positive_alpha_year_ratio": 0.60,
+            "max_single_positive_year_alpha_contribution": 0.60,
+            "stability_years": [2023, 2024, 2025, 2026],
+            "min_stability_year_trading_days": 126,
+            "min_valid_stability_years": 3,
+            "stock_selection_requires_independent_evidence": True,
+        })
+        profile["alpha_proof"] = proof
+        core = dict(profile.get("core_period") or {})
+        core["min_start_date"] = "2018-01-01"
+        core["legacy_extension_start_date"] = "2013-01-01"
+        core["legacy_extension_required"] = False
+        profile["core_period"] = core
+        profile["stress"] = dict(profile.get("stress") or {})
+        profile["stress"]["initial_capital_cny"] = 500000
+        profile["capital_authority"] = False
     return profile
 
 

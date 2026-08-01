@@ -62,7 +62,10 @@ def _check_base_requirements(
         blockers.append(f"{stage}_capital_authority_not_false")
     if node.get("status") is None:
         blockers.append(f"{stage}_status_missing")
-    if node.get("formal_pit_run_id") != expected_pit_run_id:
+    node_pit_run_id = node.get("formal_pit_run_id")
+    if not isinstance(node_pit_run_id, str) or not node_pit_run_id:
+        blockers.append(f"{stage}_formal_pit_run_id_missing")
+    elif node_pit_run_id != expected_pit_run_id:
         blockers.append(f"{stage}_pit_run_id_mismatch")
     if not _verify_self_hash(node):
         blockers.append(f"{stage}_content_sha_invalid")
@@ -408,7 +411,8 @@ def verify_pr_i_chain(
         return _pr_i_report(blockers)
 
     # ── PR-B verification ──
-    pr_b_blockers = _check_base_requirements(pr_b, "pr_b", pr_b["formal_pit_run_id"])
+    expected_pit_run_id = pr_b.get("formal_pit_run_id") or ""
+    pr_b_blockers = _check_base_requirements(pr_b, "pr_b", expected_pit_run_id)
     if pr_b.get("status") != "PASS":
         pr_b_blockers.append("pr_b_status_not_pass")
     if pr_b.get("schema_version") != "pr_chain_binding_v5_1":
@@ -416,7 +420,7 @@ def verify_pr_i_chain(
     blockers.extend(pr_b_blockers)
 
     # ── PR-C verification ──
-    pr_c_blockers = _check_base_requirements(pr_c, "pr_c", pr_b["formal_pit_run_id"])
+    pr_c_blockers = _check_base_requirements(pr_c, "pr_c", expected_pit_run_id)
     if pr_c.get("status") != "PASS":
         pr_c_blockers.append("pr_c_status_not_pass")
     if pr_c.get("schema_version") != "pr_chain_binding_v5_1":
@@ -433,7 +437,7 @@ def verify_pr_i_chain(
 
     # ── PR-D verification ──
     VALID_PR_DE_STATUSES = {"PASS", "ECONOMIC_FAILED"}
-    pr_d_blockers = _check_base_requirements(pr_d, "pr_d", pr_b["formal_pit_run_id"])
+    pr_d_blockers = _check_base_requirements(pr_d, "pr_d", expected_pit_run_id)
     if pr_d.get("status") not in VALID_PR_DE_STATUSES:
         pr_d_blockers.append("pr_d_status_invalid")
     if pr_d.get("status") == "BLOCKED":
@@ -452,7 +456,7 @@ def verify_pr_i_chain(
     blockers.extend(pr_d_blockers)
 
     # ── PR-E verification ──
-    pr_e_blockers = _check_base_requirements(pr_e, "pr_e", pr_b["formal_pit_run_id"])
+    pr_e_blockers = _check_base_requirements(pr_e, "pr_e", expected_pit_run_id)
     if pr_e.get("status") not in VALID_PR_DE_STATUSES:
         pr_e_blockers.append("pr_e_status_invalid")
     if pr_e.get("status") == "BLOCKED":
@@ -522,7 +526,11 @@ def verify_pr_i_chain(
 
     # ── v5.1.6: Cross-chain identity consistency ──
     # All layers must agree on formal_pit_run_id and formal_run_id
-    pit_id = pr_b["formal_pit_run_id"]
+    pit_id = pr_b.get("formal_pit_run_id")
+    if not pit_id:
+        # The earlier base checks already record the missing identity.  Keep
+        # the verifier fail-closed without raising a secondary KeyError.
+        pit_id = ""
     chain_ids: dict[str, str | None] = {
         "pr_c": pr_c.get("formal_pit_run_id"),
         "pr_d": pr_d.get("formal_pit_run_id"),

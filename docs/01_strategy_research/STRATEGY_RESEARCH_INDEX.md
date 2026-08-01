@@ -2,6 +2,7 @@
 
 | 主题 | 目录/文件 | 当前状态 | 最新结论 |
 |---|---|---|---|
+| Formal Happy-path 与 TopK Challenger | `docs/tasks/2026-08-01_Formal_HappyPath_TopK_Challenger升级.md` | 工程链路已实现，真实证据阻断 | 8 类 canonical PIT、封存/Readiness/Runner 唯一路径与独立 Top5/Top10 Challenger（含 IC/衰减/容量/成本证据）已接入；缺真实 PIT/OOS/Shadow 时保持 `BLOCKED / NO_SCALE / 0元`。 |
 | Alpha v3–v4.7 生产线 | `docs/01_strategy_research/2026-07-30_Alpha_v3生产线升级.md` | 三基准 E3、短因子 E2、T+1 净账本、PIT builder 与文件/MySQL adapter 已实现，Alpha 仍阻断 | v4.7 将合成验证严格标为 S3、真实历史仍为 E0，并把财务修订、公司行动、证券生命周期和字段语义版本纳入五类输入合同。当前缺 adapter config/只读数据库/真实冻结文件，Alpha 算法迭代冻结，保持 `BLOCKED / NO_SCALE / 0元`。 |
 | Quant Research Validation V2 | `docs/01_strategy_research/2026-07-20_Quant_Research_Validation_V2.md` | 工程完成，真实证据阻断 | 严格 Train/Validation/Test、因子三层、精确消融、PIT V2、执行真实性和 20+60 日 Shadow 已形成 fail-closed 合同；没有新增 Alpha 或扩资结论。 |
 | 可信生产闭环 | `docs/01_strategy_research/2026-07-20_可信生产闭环升级.md` | 工程实现，正式证据阻断 | 统一身份、PIT、双账本、NAV 风险、人工执行和 12/3/3 赛马；未产生新收益结论，保持 `BLOCKED / NO_SCALE`。 |

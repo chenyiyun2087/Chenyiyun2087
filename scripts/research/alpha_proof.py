@@ -16,9 +16,15 @@ import numpy as np
 import pandas as pd
 
 
-def _blocked_attribution(blockers: list[str], **details: Any) -> dict[str, Any]:
+def _blocked_attribution(
+    blockers: list[str], *, evidence_version: str | None = None, **details: Any
+) -> dict[str, Any]:
     return {
-        "schema_version": "alpha_v3_5_attribution_v1",
+        "schema_version": (
+            "alpha_v3_2_attribution_v1"
+            if str(evidence_version or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_attribution_v1"
+        ),
         "status": "BLOCKED",
         "blockers": blockers,
         "factor_contributions": {},
@@ -44,7 +50,11 @@ def audit_factor_availability(
     if panel.empty:
         blockers.append(f"{panel_name}_missing")
         return {
-            "schema_version": "alpha_v3_5_factor_availability_v1",
+            "schema_version": (
+                "alpha_v3_2_factor_availability_v1"
+                if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+                else "alpha_v3_5_factor_availability_v1"
+            ),
             "panel": panel_name,
             "status": "BLOCKED",
             "blockers": blockers,
@@ -55,7 +65,11 @@ def audit_factor_availability(
     blockers.extend(f"{panel_name}_missing_column:{column}" for column in missing)
     if missing:
         return {
-            "schema_version": "alpha_v3_5_factor_availability_v1",
+            "schema_version": (
+                "alpha_v3_2_factor_availability_v1"
+                if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+                else "alpha_v3_5_factor_availability_v1"
+            ),
             "panel": panel_name,
             "status": "BLOCKED",
             "blockers": blockers,
@@ -118,7 +132,11 @@ def audit_factor_availability(
                     }
                 )
     return {
-        "schema_version": "alpha_v3_5_factor_availability_v1",
+        "schema_version": (
+            "alpha_v3_2_factor_availability_v1"
+            if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_factor_availability_v1"
+        ),
         "panel": panel_name,
         "status": "PASS" if not blockers else "BLOCKED",
         "timezone_policy": str(profile["alpha_proof"]["timezone"]),
@@ -374,7 +392,11 @@ def build_benchmark_excess_report(
         > float(profile["performance"]["min_annualized_excess_return"])
     )
     return {
-        "schema_version": "alpha_v3_5_benchmark_excess_v1",
+        "schema_version": (
+            "alpha_v3_2_benchmark_excess_v1"
+            if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_benchmark_excess_v1"
+        ),
         "status": "PASS" if not blockers else "BLOCKED",
         "economic_status": "PASS" if economic_pass else "FAIL",
         "primary_benchmark": str(benchmarks["primary"]),
@@ -396,18 +418,24 @@ def build_daily_factor_attribution(
     spec = profile["alpha_proof"]
     strategy_returns = _daily_returns(strategy_nav)
     if factor_returns.empty or "trade_date" not in factor_returns.columns:
-        return _blocked_attribution(["factor_return_panel_missing"])
+        return _blocked_attribution(
+            ["factor_return_panel_missing"],
+            evidence_version=str(profile.get("evidence_version") or ""),
+        )
     missing = [name for name in required if name not in factor_returns.columns]
     if missing:
         return _blocked_attribution(
-            [f"factor_return_missing:{name}" for name in missing]
+            [f"factor_return_missing:{name}" for name in missing],
+            evidence_version=str(profile.get("evidence_version") or ""),
         )
     availability = audit_factor_availability(
         factor_returns, profile, panel_name="factor_returns"
     )
     if availability["status"] != "PASS":
         return _blocked_attribution(
-            list(availability["blockers"]), factor_availability=availability
+            list(availability["blockers"]),
+            evidence_version=str(profile.get("evidence_version") or ""),
+            factor_availability=availability,
         )
     factors = factor_returns[["trade_date", *required]].copy()
     factors["trade_date"] = pd.to_datetime(factors["trade_date"], errors="coerce")
@@ -416,7 +444,9 @@ def build_daily_factor_attribution(
     factors = factors.dropna().sort_values("trade_date")
     if factors["trade_date"].duplicated().any():
         return _blocked_attribution(
-            ["factor_return_duplicate_dates"], factor_availability=availability
+            ["factor_return_duplicate_dates"],
+            evidence_version=str(profile.get("evidence_version") or ""),
+            factor_availability=availability,
         )
     aligned = pd.concat(
         [
@@ -441,6 +471,7 @@ def build_daily_factor_attribution(
     if blockers:
         return _blocked_attribution(
             blockers,
+            evidence_version=str(profile.get("evidence_version") or ""),
             aligned_trading_days=int(len(aligned)),
             coverage=coverage,
             regression_rank=rank,
@@ -505,7 +536,11 @@ def build_daily_factor_attribution(
             + ("missing" if alpha_tstat is None else f"{alpha_tstat:.10f}")
         )
     return {
-        "schema_version": "alpha_v3_5_attribution_v1",
+        "schema_version": (
+            "alpha_v3_2_attribution_v1"
+            if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_attribution_v1"
+        ),
         "status": "PASS" if not blockers else "BLOCKED",
         "blockers": blockers,
         "warnings": warnings,
@@ -521,6 +556,7 @@ def build_daily_factor_attribution(
         "stock_selection_alpha": None,
         "stock_selection_evidence_status": "NOT_PROVIDED",
         "unexplained_residual_return": unexplained_residual,
+        "residual_cumulative_return": unexplained_residual,
         "residual_mean": residual_mean,
         "residual_std": residual_std,
         "residual_tstat": residual_tstat,
@@ -567,7 +603,11 @@ def build_alpha_stability_report(
     ):
         blockers.append("factor_return_panel_missing_or_incomplete")
         return {
-            "schema_version": "alpha_v3_5_alpha_stability_v1",
+            "schema_version": (
+                "alpha_v3_2_alpha_stability_v1"
+                if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+                else "alpha_v3_5_alpha_stability_v1"
+            ),
             "status": "BLOCKED",
             "blockers": sorted(set(blockers)),
             "rows": [],
@@ -675,7 +715,11 @@ def build_alpha_stability_report(
     ):
         blockers.append("worst_year_alpha_below_floor")
     return {
-        "schema_version": "alpha_v3_5_alpha_stability_v1",
+        "schema_version": (
+            "alpha_v3_2_alpha_stability_v1"
+            if str(profile.get("evidence_version") or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_alpha_stability_v1"
+        ),
         "status": "PASS" if not blockers else "BLOCKED",
         "blockers": sorted(set(blockers)),
         "rows": rows,
@@ -701,6 +745,7 @@ def build_alpha_proof_guard_report(
     factor_lineage: dict[str, Any] | None = None,
     factor_effectiveness: dict[str, Any] | None = None,
     regime_attribution: dict[str, Any] | None = None,
+    evidence_version: str | None = None,
 ) -> dict[str, Any]:
     components = {
         "benchmark_safeguard": str(benchmark.get("status") or "BLOCKED"),
@@ -727,7 +772,11 @@ def build_alpha_proof_guard_report(
     }
     blockers = [name for name, status in components.items() if status != "PASS"]
     return {
-        "schema_version": "alpha_v3_5_guard_v1",
+        "schema_version": (
+            "alpha_v3_2_guard_v1"
+            if str(evidence_version or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_guard_v1"
+        ),
         "status": "PASS" if not blockers else "BLOCKED",
         "components": components,
         "blockers": blockers,
@@ -740,6 +789,7 @@ def build_alpha_proof_guard_report(
                 "residual_std",
                 "residual_tstat",
                 "unexplained_residual_return",
+                "residual_cumulative_return",
                 "unexplained_variance_ratio",
                 "max_unexplained_variance_ratio",
             )
@@ -766,7 +816,11 @@ def build_alpha_proof_summary(
     }
     blockers = [name for name, status in components.items() if status != "PASS"]
     return {
-        "schema_version": "alpha_v3_5_proof_summary_v1",
+        "schema_version": (
+            "alpha_v3_2_proof_summary_v1"
+            if str((guard or {}).get("schema_version") or "").startswith("alpha_v3_2")
+            else "alpha_v3_5_proof_summary_v1"
+        ),
         "status": "PASS" if not blockers else "BLOCKED",
         "components": components,
         "blockers": blockers,

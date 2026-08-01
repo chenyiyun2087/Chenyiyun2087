@@ -185,12 +185,21 @@ def load_upgrade_evidence(program: dict[str, Any]) -> dict[str, Any]:
             effective_path_str = ""
 
         if not effective_path_str:
+            detail = "no_evidence_path_configured"
+            # Missing formal evidence is a business gate failure, not a
+            # successful file lookup.  Bind the deterministic blocked record
+            # so downstream reports can still carry a verifiable SHA.
+            blocked_sha = _canonical_sha({
+                "scope": evidence_id,
+                "status": "BLOCKED",
+                "detail": detail,
+            })
             rows.append({
                 "phase": f"PR-{parts[1].upper()}" if len(parts) > 1 else evidence_id,
-                "scope": evidence_id, "status": "MISSING",
-                "detail": "no_evidence_path_configured",
-                "evidence": "", "evidence_sha256": "",
-                "evidence_source": "none",
+                "scope": evidence_id, "status": "BLOCKED",
+                "detail": detail,
+                "evidence": "", "evidence_sha256": blocked_sha,
+                "evidence_source": "blocked",
             })
             payloads[evidence_id] = {}
             continue

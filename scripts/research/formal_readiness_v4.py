@@ -112,7 +112,11 @@ def validate(
         preflight_result = evaluate_package(package_dir, readiness_config)
         preflight_status = preflight_result.get("status", "UNKNOWN")
         if preflight_status != "READY_FOR_FORMAL_RUN":
-            preflight_blockers = preflight_result.get("blockers", []) or [preflight_status]
+            preflight_blockers = (
+                preflight_result.get("blocking_checks")
+                or preflight_result.get("blockers")
+                or [preflight_status]
+            )
     except Exception as exc:
         preflight_blockers.append(f"preflight_evaluation_error:{type(exc).__name__}")
 
@@ -129,7 +133,12 @@ def validate(
         "acceptance_profile_sha": acceptance_profile_sha,
         "blockers": all_blockers,
         "preflight_status": preflight_status,
-        "evidence_sha256": "",
+        "preflight_evidence_sha256": preflight_result.get("evidence_sha256")
+        if "preflight_result" in locals()
+        else "",
+        "evidence_sha256": preflight_result.get("evidence_sha256")
+        if "preflight_result" in locals()
+        else "",
         "fixture_mode": fixture_mode,
         "capital_authority": False,
     }

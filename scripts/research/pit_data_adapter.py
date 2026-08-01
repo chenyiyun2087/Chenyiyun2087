@@ -24,10 +24,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.acceptance_config import canonical_sha
-from scripts.research.pit_factor_panel_builder import (
-    REQUIRED_COLUMNS,
-    SOURCE_NAMES,
+from runtime.pit_semantic_contract import (
+    get_available_at_column,
+    get_contract_sha256,
+    get_required_columns,
+    get_source_families,
+    validate_explicit_timezone,
+    validate_frame_schema,
 )
+
+SOURCE_NAMES = get_source_families()
+REQUIRED_COLUMNS = {name: get_required_columns(name) for name in SOURCE_NAMES}
 
 
 def _file_sha(path: Path) -> str:
@@ -58,6 +65,34 @@ def _safe_select(query: str) -> bool:
         r"\b(insert|update|delete|drop|alter|truncate|replace|create|grant|revoke)\b"
     )
     return forbidden.search(normalized) is None
+
+
+def _query_sha(query: str, params: Any = None) -> str:
+    return canonical_sha({"query": " ".join(query.strip().split()), "params": params})
+
+
+def _snapshot_identity_from_config(config: dict[str, Any]) -> str:
+    value = str(config.get("snapshot_id") or config.get("snapshot_token") or "")
+    return value.strip()
+
+
+def _validate_source_timezones(
+    frames: dict[str, pd.DataFrame], blockers: list[str], *, strict: bool = True
+) -> None:
+    for name, frame in frames.items():
+        column = get_available_at_column(name)
+        if column not in frame.columns and not strict and "available_at" in frame.columns:
+            column = "available_at"
+        if column not in frame.columns:
+            if strict:
+                blockers.append(f"source_column_missing:{name}:{column}")
+            continue
+        offenders = validate_explicit_timezone(frame[column])
+        if offenders:
+            blockers.append(f"source_available_at_timezone_missing:{name}")
+        parsed = pd.to_datetime(frame[column], errors="coerce", utc=True)
+        if parsed.isna().any():
+            blockers.append(f"source_available_at_unparseable:{name}")
 
 
 def _write_blocked(
@@ -108,6 +143,15 @@ def build_pit_adapter_manifest(
         )
     adapter_type = str(config.get("adapter_type") or "").upper()
     origin = str(config.get("evidence_origin") or "")
+    source_config = config.get("sources") or {}
+    strict_contract = origin == "HISTORICAL_REAL" or bool(
+        config.get("require_canonical_sources", False)
+    )
+    active_names = list(SOURCE_NAMES) if strict_contract else [
+        name for name in SOURCE_NAMES if name in source_config
+    ]
+    if not active_names and not strict_contract:
+        active_names = list(SOURCE_NAMES)
     blockers: list[str] = []
     if adapter_type not in {"FILE", "MYSQL"}:
         blockers.append("adapter_type_invalid")
@@ -136,18 +180,43 @@ def build_pit_adapter_manifest(
             blockers.append("field_definition_hash_is_placeholder")
     elif fdh.startswith("matCHANGEME"):
         blockers.append("field_definition_hash_is_placeholder")
+    contract_sha = get_contract_sha256()
+    if strict_contract and fdh and fdh != contract_sha:
+        blockers.append("field_definition_hash_mismatch_with_canonical_contract")
+    configured_snapshot_id = _snapshot_identity_from_config(config)
+    if strict_contract and adapter_type == "FILE" and not configured_snapshot_id:
+        blockers.append("file_snapshot_id_missing")
+    if strict_contract and adapter_type == "MYSQL" and not (
+        str(config.get("snapshot_token") or "")
+        or str(config.get("snapshot_token_query") or "")
+        or bool(config.get("require_gtid", False))
+    ):
+        blockers.append("mysql_snapshot_token_or_gtid_requirement_missing")
     retrieved_at = pd.to_datetime(
         config.get("retrieved_at"), errors="coerce", utc=True
     )
     if pd.isna(retrieved_at):
         blockers.append("retrieved_at_invalid_or_timezone_missing")
-    source_config = config.get("sources") or {}
     frames: dict[str, pd.DataFrame] = {}
     paths: dict[str, Path] = {}
+    source_query_sha: dict[str, str] = {}
+    snapshot_meta: dict[str, Any] = {
+        "snapshot_id": configured_snapshot_id or None,
+        "transaction_isolation": None,
+        "transaction_started_at": None,
+        "transaction_finished_at": None,
+        "snapshot_token": None,
+        "snapshot_token_query_sha256": None,
+        "gtid_or_binlog_position": None,
+    }
     if adapter_type == "FILE":
-        import shutil, tempfile
-        freeze_dir = Path(tempfile.mkdtemp(prefix="pit_frozen_sources_"))
-        for name in SOURCE_NAMES:
+        import shutil
+        # The frozen copy is part of the release output.  Keeping it under
+        # ``output_dir/snapshots`` makes the manifest, semantic audit, builder,
+        # and downstream registry all bind the same bytes.
+        freeze_dir = output_dir / "snapshots"
+        freeze_dir.mkdir(parents=True, exist_ok=True)
+        for name in active_names:
             payload = source_config.get(name) or {}
             path_value = payload.get("path")
             if not path_value:
@@ -165,6 +234,10 @@ def build_pit_adapter_manifest(
             shutil.copy2(path, frozen)
             paths[name] = frozen
             frames[name] = _read_table(frozen)
+            source_query_sha[name] = _query_sha(
+                str((source_config.get(name) or {}).get("query") or ""),
+                (source_config.get(name) or {}).get("params"),
+            )
     elif adapter_type == "MYSQL":
         db_url = os.getenv("CHENYIYUN_DB_URL")
         if not db_url:
@@ -175,50 +248,130 @@ def build_pit_adapter_manifest(
             engine = create_engine(db_url)
             snapshot_dir = output_dir / "snapshots"
             snapshot_dir.mkdir(parents=True, exist_ok=True)
+            from datetime import datetime, timezone
+
             with engine.connect() as conn:
                 conn.execute(text("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
                 conn.execute(text("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY"))
-                for name in SOURCE_NAMES:
+                snapshot_meta["transaction_started_at"] = datetime.now(timezone.utc).isoformat()
+                isolation_row = conn.execute(
+                    text("SELECT @@SESSION.transaction_isolation")
+                ).fetchone()
+                snapshot_meta["transaction_isolation"] = str(isolation_row[0]) if isolation_row else ""
+                token_query = str(config.get("snapshot_token_query") or "").strip()
+                if token_query:
+                    snapshot_meta["snapshot_token_query_sha256"] = _query_sha(
+                        token_query, config.get("snapshot_token_params")
+                    )
+                    if not _safe_select(token_query):
+                        blockers.append("mysql_snapshot_token_query_not_read_only_select")
+                    else:
+                        token_params = config.get("snapshot_token_params") or {}
+                        token_row = (
+                            conn.execute(text(token_query), token_params)
+                            if token_params
+                            else conn.execute(text(token_query))
+                        ).fetchone()
+                        token_value = token_row[0] if token_row else None
+                        if token_value in (None, ""):
+                            blockers.append("mysql_snapshot_token_empty")
+                        snapshot_meta["snapshot_token"] = str(token_value or "")
+                elif config.get("snapshot_token") or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN"):
+                    snapshot_meta["snapshot_token"] = str(
+                        config.get("snapshot_token")
+                        or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN")
+                    )
+                elif not config.get("require_gtid", False):
+                    blockers.append("mysql_snapshot_token_query_missing")
+                else:
+                    gtid_row = conn.execute(text("SELECT @@GLOBAL.gtid_executed")).fetchone()
+                    gtid_value = gtid_row[0] if gtid_row else None
+                    if not gtid_value:
+                        blockers.append("mysql_gtid_empty")
+                    snapshot_meta["snapshot_token"] = str(gtid_value or "")
+                    snapshot_meta["gtid_or_binlog_position"] = str(gtid_value or "")
+                if snapshot_meta.get("snapshot_token") and config.get("require_gtid"):
+                    snapshot_meta["gtid_or_binlog_position"] = snapshot_meta[
+                        "snapshot_token"
+                    ]
+                for name in active_names:
                     payload = source_config.get(name) or {}
                     query = str(payload.get("query") or "")
                     if not _safe_select(query):
                         blockers.append(f"mysql_query_not_read_only_select:{name}")
                         continue
-                    frame = pd.read_sql(text(query), conn)
+                    frame = pd.read_sql(
+                        text(query), conn, params=payload.get("params") or {}
+                    )
                     path = snapshot_dir / f"{name}.parquet"
                     frame.to_parquet(path, index=False)
                     paths[name] = path
                     frames[name] = frame
+                    source_query_sha[name] = _query_sha(
+                        query, payload.get("params")
+                    )
+                snapshot_meta["transaction_finished_at"] = datetime.now(timezone.utc).isoformat()
                 conn.execute(text("COMMIT"))
             engine.dispose()
+            if not snapshot_meta.get("snapshot_token"):
+                blockers.append("mysql_snapshot_identity_missing")
+            expected_token = str(
+                config.get("snapshot_token")
+                or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN")
+                or ""
+            )
+            if expected_token and str(snapshot_meta.get("snapshot_token")) != expected_token:
+                blockers.append("mysql_snapshot_identity_mismatch")
     for name, frame in frames.items():
         missing_columns = sorted(REQUIRED_COLUMNS[name] - set(frame.columns))
-        blockers.extend(
-            f"source_column_missing:{name}:{column}"
-            for column in missing_columns
-        )
+        if strict_contract:
+            blockers.extend(
+                f"source_column_missing:{name}:{column}"
+                for column in missing_columns
+            )
         expected_schema = str(
             (source_config.get(name) or {}).get("expected_schema_hash") or ""
         )
-        if origin == "HISTORICAL_REAL" and not expected_schema:
-            blockers.append(f"source_schema_hash_missing:{name}")
         actual_schema = _schema_hash(frame)
-        if expected_schema and expected_schema != actual_schema:
+        if strict_contract and expected_schema and expected_schema != actual_schema:
             blockers.append(f"source_schema_hash_mismatch:{name}")
-    if len(frames) != len(SOURCE_NAMES):
+        if strict_contract:
+            blockers.extend(validate_frame_schema(frame, name))
+        elif "trade_date" not in frame.columns or "symbol" not in frame.columns:
+            blockers.append(f"source_key_missing:{name}")
+    _validate_source_timezones(frames, blockers, strict=strict_contract)
+    if len(frames) != len(active_names):
         blockers.append("source_family_incomplete")
     if blockers:
         return _write_blocked(output_dir, blockers, config_path)
     sources: dict[str, Any] = {}
-    for name in SOURCE_NAMES:
+    coverage_values: list[pd.Timestamp] = []
+    for name in active_names:
         frame = frames[name]
+        business_column = "cal_date" if name == "trade_calendar" else "trade_date"
+        parsed_dates = pd.to_datetime(
+            frame.get(business_column, pd.Series(dtype="object")),
+            errors="coerce",
+        ).dropna()
+        if parsed_dates.empty:
+            blockers.append(f"source_business_date_missing:{name}")
+            coverage_start = None
+            coverage_end = None
+        else:
+            coverage_start = parsed_dates.min().date().isoformat()
+            coverage_end = parsed_dates.max().date().isoformat()
+            coverage_values.extend([parsed_dates.min(), parsed_dates.max()])
         sources[name] = {
             "path": str(paths[name]),
             "sha256": _file_sha(paths[name]),
+            "content_sha256": _file_sha(paths[name]),
             "schema_hash": _schema_hash(frame),
             "rows": int(len(frame)),
             "version": str((source_config.get(name) or {}).get("version") or ""),
             "provider": str(config["provider"]),
+            "coverage_start": coverage_start,
+            "coverage_end": coverage_end,
+            "query_sha256": source_query_sha.get(name, ""),
         }
         if not sources[name]["version"]:
             blockers.append(f"source_version_missing:{name}")
@@ -235,6 +388,12 @@ def build_pit_adapter_manifest(
         "schema_semantic_version": str(config["schema_semantic_version"]),
         "field_definition_hash": str(config["field_definition_hash"]),
         "sources": sources,
+        "snapshot_identity": {
+            **snapshot_meta,
+            "configured_snapshot_id": configured_snapshot_id or None,
+        },
+        "coverage_start": min(coverage_values).date().isoformat() if coverage_values else None,
+        "coverage_end": max(coverage_values).date().isoformat() if coverage_values else None,
         "historical_evidence_level": (
             "E1" if origin == "HISTORICAL_REAL" else "E0"
         ),
@@ -267,6 +426,9 @@ def build_pit_adapter_manifest(
         "manifest_path": str(manifest_path),
         "manifest_sha256": _file_sha(manifest_path),
         "evidence_origin": origin,
+        "snapshot_identity": manifest.get("snapshot_identity"),
+        "coverage_start": manifest.get("coverage_start"),
+        "coverage_end": manifest.get("coverage_end"),
         "historical_evidence_level": manifest["historical_evidence_level"],
         "synthetic_evidence_level": manifest["synthetic_evidence_level"],
         "capital_authority": False,

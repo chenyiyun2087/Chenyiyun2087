@@ -25,65 +25,30 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from runtime.acceptance_config import canonical_sha, load_validation_profile
 from runtime.fail_closed import fail_closed
+from runtime.pit_semantic_contract import (
+    get_available_at_column,
+    get_contract_sha256,
+    get_source_families,
+    get_required_columns,
+    signal_time_for_trade_dates,
+    validate_explicit_timezone,
+)
 
 
-SOURCE_NAMES = (
+LEGACY_SOURCE_NAMES = (
     "market",
     "universe",
     "financial",
     "industry",
     "adjustment",
 )
-REQUIRED_COLUMNS = {
-    "market": {
-        "trade_date",
-        "symbol",
-        "open",
-        "close",
-        "pre_close",
-        "amount",
-        "circ_mv",
-        "market_return",
-        "market_regime",
-        "market_available_at",
-    },
-    "universe": {
-        "trade_date",
-        "symbol",
-        "is_listed",
-        "is_st",
-        "is_suspended",
-        "limit_status",
-        "security_status_transition",
-        "universe_available_at",
-    },
-    "financial": {
-        "trade_date",
-        "symbol",
-        "pb",
-        "financial_period_end",
-        "announcement_date",
-        "financial_available_at",
-        "revision_id",
-        "financial_source_snapshot_sha",
-    },
-    "industry": {
-        "trade_date",
-        "symbol",
-        "industry",
-        "industry_available_at",
-    },
-    "adjustment": {
-        "trade_date",
-        "symbol",
-        "adj_factor",
-        "corporate_action_type",
-        "ex_date",
-        "record_date",
-        "adjustment_factor_version",
-        "adjustment_available_at",
-    },
-}
+# The public source registry is canonical and contains all eight PIT families.
+# The legacy five-family function signature is retained for synthetic research
+# fixtures; the formal pipeline passes all families from this canonical list
+# and is strict about their presence.
+CANONICAL_SOURCE_NAMES = get_source_families()
+SOURCE_NAMES = CANONICAL_SOURCE_NAMES
+REQUIRED_COLUMNS = {name: get_required_columns(name) for name in SOURCE_NAMES}
 
 
 def _file_sha(path: Path) -> str:
@@ -105,6 +70,108 @@ def _rank_score(series: pd.Series, *, reverse: bool = False) -> pd.Series:
     if reverse:
         numeric = -numeric
     return numeric.rank(method="average", pct=True) - 0.5
+
+
+def _asof_enrich(
+    target: pd.DataFrame,
+    source: pd.DataFrame,
+    *,
+    source_time: str,
+    target_time: str,
+    source_columns: list[str],
+    validity_end: str | None = None,
+    signal_time_column: str | None = None,
+    source_join_time: str | None = None,
+) -> pd.DataFrame:
+    """Attach one point-in-time source row to each target row.
+
+    Financial revisions and industry SCD records are dimension/event rows,
+    not daily fact rows.  A direct `(trade_date, symbol)` merge would either
+    duplicate the panel or select a future revision.  This helper performs a
+    deterministic per-symbol backward as-of join and invalidates rows whose
+    selected SCD interval or availability timestamp is not legal.
+    """
+    join_time = source_join_time or source_time
+    required = {"symbol", source_time, join_time}
+    if validity_end:
+        required.add(validity_end)
+    if not required.issubset(source.columns):
+        missing = sorted(required - set(source.columns))
+        raise ValueError(f"asof_source_columns_missing:{','.join(missing)}")
+    if not {"symbol", target_time}.issubset(target.columns):
+        missing = sorted({"symbol", target_time} - set(target.columns))
+        raise ValueError(f"asof_target_columns_missing:{','.join(missing)}")
+
+    left = target[["symbol", target_time]].copy()
+    left["_row_id"] = target.index
+    left["_target_ts"] = pd.to_datetime(left[target_time], errors="coerce", utc=True)
+    # The join timestamp and the availability timestamp can differ (industry
+    # SCD uses `valid_from` for membership and `industry_available_at` for
+    # PIT legality).  Keep both explicit and avoid duplicate columns.
+    source_columns = list(dict.fromkeys(source_columns))
+    right_columns = [
+        column for column in source_columns if column not in {"symbol", join_time}
+    ]
+    right = source[["symbol", join_time, *right_columns]].copy()
+    right["_source_ts"] = pd.to_datetime(right[join_time], errors="coerce", utc=True)
+    if validity_end:
+        right["_valid_to_ts"] = pd.to_datetime(
+            right[validity_end], errors="coerce", utc=True
+        )
+    left = left.dropna(subset=["_target_ts"]).sort_values(
+        ["_target_ts", "symbol"]
+    )
+    right = right.dropna(subset=["_source_ts"]).sort_values(
+        ["_source_ts", "symbol"]
+    )
+    # A source can carry several revisions observed at one timestamp.  Keep
+    # the highest revision deterministically when the field is available;
+    # the canonical schema still audits duplicate primary keys separately.
+    dedupe_keys = ["symbol", "_source_ts"]
+    sort_columns = ["symbol", "_source_ts"]
+    if "revision_sequence" in right.columns:
+        right["_revision_sequence_numeric"] = pd.to_numeric(
+            right["revision_sequence"], errors="coerce"
+        )
+        sort_columns.append("_revision_sequence_numeric")
+    if "revision_id" in right.columns:
+        sort_columns.append("revision_id")
+    right = right.sort_values(sort_columns).drop_duplicates(
+        dedupe_keys, keep="last"
+    )
+    if left.empty or right.empty:
+        enriched = target.copy()
+        for column in source_columns:
+            enriched[column] = pd.NaT
+        return enriched
+    joined = pd.merge_asof(
+        left,
+        right.sort_values(["_source_ts", "symbol"]),
+        left_on="_target_ts",
+        right_on="_source_ts",
+        by="symbol",
+        direction="backward",
+        allow_exact_matches=True,
+    )
+    joined = joined.set_index("_row_id").reindex(target.index)
+    enriched = target.copy()
+    for column in source_columns:
+        if column not in joined.columns:
+            enriched[column] = pd.NaT
+            continue
+        values = joined[column].copy()
+        legal = values.notna()
+        if validity_end and "_valid_to_ts" in joined.columns:
+            target_ts = joined["_target_ts"]
+            valid_to = joined["_valid_to_ts"]
+            legal &= valid_to.isna() | target_ts.lt(valid_to)
+        if source_time in joined.columns:
+            available = pd.to_datetime(joined[source_time], errors="coerce", utc=True)
+            signal_column = signal_time_column or target_time
+            signal = pd.to_datetime(target[signal_column], errors="coerce", utc=True)
+            legal &= available.notna() & signal.notna() & available.le(signal)
+        enriched[column] = values.where(legal)
+    return enriched
 
 
 def _blocked_report(
@@ -154,9 +221,12 @@ def build_pit_factor_panel(
     adjustment_path: Path | None,
     source_manifest_path: Path | None,
     output_dir: Path,
-    profile_name: str = "formal_v5_0",
+    profile_name: str = "alpha_v3_2",
     adapter_report_path: Path | None = None,
     fixture_mode: bool = False,
+    trade_calendar_path: Path | None = None,
+    security_lifecycle_path: Path | None = None,
+    corporate_actions_path: Path | None = None,
 ) -> dict[str, Any]:
     profile = load_validation_profile(profile_name)
     source_paths = {
@@ -167,6 +237,12 @@ def build_pit_factor_panel(
         "adjustment": adjustment_path,
         "source_manifest": source_manifest_path,
     }
+    optional_paths = {
+        "trade_calendar": trade_calendar_path,
+        "security_lifecycle": security_lifecycle_path,
+        "corporate_actions": corporate_actions_path,
+    }
+    source_paths.update({k: v for k, v in optional_paths.items() if v is not None})
     try:
         return _build_pit_factor_panel_impl(
             market_path=market_path, universe_path=universe_path,
@@ -175,6 +251,9 @@ def build_pit_factor_panel(
             source_manifest_path=source_manifest_path,
             output_dir=output_dir, profile_name=profile_name,
             adapter_report_path=adapter_report_path, fixture_mode=fixture_mode,
+            trade_calendar_path=trade_calendar_path,
+            security_lifecycle_path=security_lifecycle_path,
+            corporate_actions_path=corporate_actions_path,
             profile=profile, source_paths=source_paths,
         )
     except Exception as exc:
@@ -196,6 +275,9 @@ def _build_pit_factor_panel_impl(
     profile_name: str,
     adapter_report_path: Path | None,
     fixture_mode: bool,
+    trade_calendar_path: Path | None,
+    security_lifecycle_path: Path | None,
+    corporate_actions_path: Path | None,
     profile: dict[str, Any],
     source_paths: dict[str, Path | None],
 ) -> dict[str, Any]:
@@ -221,6 +303,36 @@ def _build_pit_factor_panel_impl(
         and adjustment_path
     )
     assert source_manifest_path
+    try:
+        manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return _blocked_report(
+            output_dir,
+            profile_name,
+            [
+                f"source_manifest_unreadable:{type(exc).__name__}",
+                f"unhandled_manifest_exception:{type(exc).__name__}",
+            ],
+            source_paths,
+        )
+    evidence_origin = str(manifest.get("evidence_origin") or "")
+    semantic_version = str(manifest.get("schema_semantic_version") or "")
+    strict_contract = evidence_origin == "HISTORICAL_REAL" or any(
+        path is not None
+        for path in (trade_calendar_path, security_lifecycle_path, corporate_actions_path)
+    )
+    synthetic_compat = evidence_origin == "SYNTHETIC"
+    legacy_fixture = synthetic_compat and semantic_version.startswith("fixture-")
+    optional_paths = {
+        "trade_calendar": trade_calendar_path,
+        "security_lifecycle": security_lifecycle_path,
+        "corporate_actions": corporate_actions_path,
+    }
+    strict_optional_blockers = (
+        [f"{name}_snapshot_missing" for name, path in optional_paths.items() if path is None]
+        if strict_contract
+        else []
+    )
     frames = {
         "market": _read_table(market_path),
         "universe": _read_table(universe_path),
@@ -228,25 +340,59 @@ def _build_pit_factor_panel_impl(
         "industry": _read_table(industry_path),
         "adjustment": _read_table(adjustment_path),
     }
-    blockers: list[str] = []
+    for name, path in optional_paths.items():
+        if path is not None:
+            frames[name] = _read_table(path)
+    blockers: list[str] = strict_optional_blockers
     for name, frame in frames.items():
-        absent = sorted(REQUIRED_COLUMNS[name] - set(frame.columns))
-        blockers.extend(f"{name}_column_missing:{column}" for column in absent)
-    if blockers:
-        return _blocked_report(
-            output_dir, profile_name, blockers, source_paths
-        )
-    manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+        absent = sorted(get_required_columns(name) - set(frame.columns))
+        # Legacy aliases/defaults are restricted to explicitly synthetic
+        # fixture inputs.  A versioned formal source must carry the canonical
+        # family-specific fields; accepting `available_at` or `is_tradable`
+        # here would create a second authoritative semantic contract.
+        if synthetic_compat:
+            aliases = {
+                "available_at": get_available_at_column(name),
+                "is_tradable": "is_listed",
+                "action_type": "corporate_action_type",
+            }
+            for old, new in aliases.items():
+                if new in absent and old in frame.columns:
+                    frame[new] = frame[old]
+                    absent.remove(new)
+            if name == "universe":
+                for column, value in {
+                    "is_st": 0,
+                    "is_suspended": 0,
+                    "limit_status": "NORMAL",
+                    "security_status_transition": "LEGACY",
+                }.items():
+                    if column not in frame.columns:
+                        frame[column] = value
+            elif name == "financial" and "revision_sequence" not in frame.columns:
+                frame["revision_sequence"] = 1
+            elif name == "industry":
+                if "valid_from" not in frame.columns:
+                    frame["valid_from"] = frame.get("trade_date")
+                if "valid_to" not in frame.columns:
+                    frame["valid_to"] = "2099-12-31"
+                if "industry_code" not in frame.columns:
+                    frame["industry_code"] = frame.get("industry", "UNKNOWN")
+                if "industry_name" not in frame.columns:
+                    frame["industry_name"] = frame.get("industry", "UNKNOWN")
+        if absent and (strict_contract or not legacy_fixture):
+            blockers.extend(f"{name}_column_missing:{column}" for column in absent)
     if str(manifest.get("status")) != "QUALIFIED":
         blockers.append("source_manifest_not_qualified")
     manifest_sources = manifest.get("sources") or {}
-    evidence_origin = str(manifest.get("evidence_origin") or "")
     if evidence_origin not in {"SYNTHETIC", "HISTORICAL_REAL"}:
         blockers.append("source_manifest_evidence_origin_invalid")
     if not str(manifest.get("schema_semantic_version") or ""):
         blockers.append("source_manifest_schema_semantic_version_missing")
     if not str(manifest.get("field_definition_hash") or ""):
         blockers.append("source_manifest_field_definition_hash_missing")
+    if strict_contract and str(manifest.get("field_definition_hash") or "") != get_contract_sha256():
+        blockers.append("field_definition_hash_mismatch_with_canonical_contract")
     # --- Fixture mode: forbidden for HISTORICAL_REAL, allowed for SYNTHETIC (S3 only) ---
     if fixture_mode and evidence_origin == "HISTORICAL_REAL":
         blockers.append("fixture_mode_forbidden_for_historical_real")
@@ -276,6 +422,7 @@ def _build_pit_factor_panel_impl(
             adapter_config_path = adapter.get("config_path")
             if not adapter_config_path or not Path(str(adapter_config_path)).exists():
                 blockers.append("adapter_config_path_missing_or_not_found")
+                blockers.append("adapter_config_path_missing")
             adapter_config_sha = str(adapter.get("config_sha256") or "")
             if not adapter_config_sha or len(adapter_config_sha) != 64:
                 blockers.append("adapter_config_sha256_missing_or_invalid")
@@ -307,50 +454,178 @@ def _build_pit_factor_panel_impl(
         "industry": industry_path,
         "adjustment": adjustment_path,
     }
+    file_map.update({name: path for name, path in optional_paths.items() if path is not None})
     source_sha = {name: _file_sha(path) for name, path in file_map.items()}
     for name, sha in source_sha.items():
-        if str((manifest_sources.get(name) or {}).get("sha256") or "") != sha:
+        declared = str(
+            (manifest_sources.get(name) or {}).get("content_sha256")
+            or (manifest_sources.get(name) or {}).get("sha256")
+            or ""
+        )
+        if declared != sha:
             blockers.append(f"source_manifest_sha_mismatch:{name}")
     for name, frame in frames.items():
+        business_column = "cal_date" if name == "trade_calendar" else "trade_date"
+        if business_column not in frame.columns:
+            blockers.append(f"invalid_key:{name}")
+            continue
         frame["trade_date"] = pd.to_datetime(
-            frame["trade_date"].astype(str), errors="coerce"
+            frame[business_column].astype(str), errors="coerce"
         ).dt.normalize()
-        frame["symbol"] = (
-            frame["symbol"]
-            .astype(str)
-            .str.extract(r"(\d+)", expand=False)
-            .str.zfill(6)
-            .str[-6:]
-        )
-        duplicate_count = int(frame.duplicated(["trade_date", "symbol"]).sum())
+        if business_column != "trade_date":
+            frame["cal_date"] = frame["trade_date"]
+        duplicate_key = ["cal_date"] if name == "trade_calendar" else ["trade_date", "symbol"]
+        duplicate_count = int(frame.duplicated(duplicate_key).sum())
         if duplicate_count:
             blockers.append(f"duplicate_key:{name}:{duplicate_count}")
-        if frame["trade_date"].isna().any() or frame["symbol"].isna().any():
-            blockers.append(f"invalid_key:{name}")
-    if blockers:
-        return _blocked_report(
-            output_dir, profile_name, blockers, source_paths
+        if name != "trade_calendar":
+            frame["symbol"] = (
+                frame.get("symbol", pd.Series(index=frame.index, dtype="object"))
+                .astype(str)
+                .str.extract(r"(\d+)", expand=False)
+                .str.zfill(6)
+                .str[-6:]
+            )
+        invalid_business_time = frame["trade_date"].isna().any()
+        invalid_symbol = (
+            name != "trade_calendar" and frame["symbol"].isna().any()
         )
+        if invalid_business_time or invalid_symbol:
+            blockers.append(f"invalid_key:{name}")
+    # Continue through semantic checks even when an upstream identity/schema
+    # blocker exists.  This produces actionable diagnostics (availability,
+    # history, regime, and revision-chain failures) without ever qualifying a
+    # blocked package.
     panel = frames["universe"].merge(
         frames["market"], on=["trade_date", "symbol"], how="left"
     )
-    panel = panel.merge(
-        frames["financial"], on=["trade_date", "symbol"], how="left"
-    )
-    panel = panel.merge(
-        frames["industry"], on=["trade_date", "symbol"], how="left"
-    )
+    # Make the canonical signal timestamp available to the as-of joins before
+    # the rest of the derived panel columns are built.
+    panel["signal_time"] = signal_time_for_trade_dates(panel["trade_date"])
+    if strict_contract:
+        # Canonical financial and industry snapshots are revision/SCD
+        # dimensions.  Join them as-of instead of pretending each row is a
+        # daily fact keyed by `(trade_date, symbol)`.
+        try:
+            financial_columns = [
+                column
+                for column in frames["financial"].columns
+                if column not in {"trade_date", "symbol"}
+            ]
+            panel = _asof_enrich(
+                panel,
+                frames["financial"],
+                source_time="financial_available_at",
+                target_time="signal_time",
+                source_columns=financial_columns,
+            )
+            industry_columns = [
+                column
+                for column in frames["industry"].columns
+                if column not in {"trade_date", "symbol"}
+            ]
+            # Industry membership is selected by the SCD validity interval;
+            # its own availability timestamp is checked by the same helper.
+            panel = _asof_enrich(
+                panel,
+                frames["industry"],
+                source_time="industry_available_at",
+                target_time="trade_date",
+                source_columns=industry_columns,
+                validity_end="valid_to",
+                signal_time_column="signal_time",
+                source_join_time="valid_from",
+            )
+        except Exception as exc:
+            blockers.append(f"point_in_time_join_failed:{type(exc).__name__}:{exc}")
+    else:
+        panel = panel.merge(
+            frames["financial"], on=["trade_date", "symbol"], how="left"
+        )
+        panel = panel.merge(
+            frames["industry"], on=["trade_date", "symbol"], how="left"
+        )
     panel = panel.merge(
         frames["adjustment"], on=["trade_date", "symbol"], how="left"
     )
+    # Bind the remaining canonical snapshots when supplied by the formal
+    # pipeline.  Corporate actions can contain multiple events per day; keep
+    # one deterministic diagnostic row so the factor panel does not fan out.
+    for name in ("security_lifecycle",):
+        if name not in frames:
+            continue
+        extra = frames[name].copy()
+        extra_cols = [
+            c for c in extra.columns
+            if c not in {"trade_date", "symbol"} and c not in set(panel.columns)
+        ]
+        if extra_cols:
+            panel = panel.merge(
+                extra[["trade_date", "symbol", *extra_cols]],
+                on=["trade_date", "symbol"], how="left",
+            )
+    # Keep diagnostics actionable when a legacy/historical fixture is missing
+    # a newly canonicalized column.  The placeholders are NaN/empty only for
+    # diagnostic calculations; the accumulated schema blockers still prevent
+    # qualification and no formal panel is written.
+    for column in (
+        "is_listed",
+        "is_st",
+        "is_suspended",
+        "limit_status",
+        "industry",
+        "pb",
+        "adj_factor",
+        "corporate_action_type",
+        "ex_date",
+        "record_date",
+        "adjustment_factor_version",
+        "financial_period_end",
+        "announcement_date",
+        "revision_id",
+        "revision_sequence",
+        "financial_source_snapshot_sha",
+        "market_regime",
+        "security_status_transition",
+    ):
+        if column not in panel.columns:
+            panel[column] = "" if column == "limit_status" else np.nan
     availability_columns = [
-        "market_available_at",
-        "financial_available_at",
-        "universe_available_at",
-        "industry_available_at",
-        "adjustment_available_at",
+        get_available_at_column(name)
+        for name in ("market", "financial", "universe", "industry", "adjustment")
     ]
+    for name in ("security_lifecycle",):
+        if name in frames:
+            availability_columns.append(get_available_at_column(name))
     for column in availability_columns:
+        if column not in panel.columns:
+            blockers.append(f"missing_available_at:{column}:0")
+            panel[column] = pd.NaT
+    # Event/calendar families are validated on their own rows.  They are not
+    # daily stock facts, so requiring an event timestamp on every panel row
+    # would incorrectly reject dates without a corporate action.
+    for name in ("trade_calendar", "corporate_actions"):
+        if name not in frames:
+            continue
+        source = frames[name]
+        available_column = get_available_at_column(name)
+        business_column = "cal_date" if name == "trade_calendar" else "trade_date"
+        if available_column not in source.columns:
+            blockers.append(f"missing_available_at:{available_column}")
+            continue
+        timezone_offenders = validate_explicit_timezone(source[available_column])
+        if timezone_offenders:
+            blockers.append(f"available_at_no_timezone:{available_column}")
+        available = pd.to_datetime(source[available_column], errors="coerce", utc=True)
+        signal = signal_time_for_trade_dates(source[business_column])
+        if available.isna().any():
+            blockers.append(f"invalid_or_timezone_missing:{available_column}")
+        if (available > signal).any():
+            blockers.append(f"available_after_signal:{available_column}")
+    for column in availability_columns:
+        timezone_offenders = validate_explicit_timezone(panel[column])
+        if timezone_offenders:
+            blockers.append(f"available_at_no_timezone:{column}")
         missing = panel[column].isna()
         if missing.any():
             blockers.append(f"missing_available_at:{column}:{int(missing.sum())}")
@@ -358,11 +633,7 @@ def _build_pit_factor_panel_impl(
         panel[column] = parsed
         if parsed.isna().any():
             blockers.append(f"invalid_or_timezone_missing:{column}")
-    signal_time = pd.to_datetime(
-        panel["trade_date"].dt.strftime("%Y-%m-%d")
-        + "T15:30:00+08:00",
-        utc=True,
-    )
+    signal_time = signal_time_for_trade_dates(panel["trade_date"])
     panel["signal_time"] = signal_time
     pb_numeric = pd.to_numeric(panel["pb"], errors="coerce")
     panel["pb"] = pb_numeric
@@ -402,7 +673,9 @@ def _build_pit_factor_panel_impl(
         # PB non-negative
         if (panel["pb"].dropna() < 0).any():
             blockers.append("pb_negative_values_detected")
-    listed = panel["is_listed"].fillna(False).astype(bool)
+    listed = panel.get(
+        "is_listed", panel.get("is_tradable", pd.Series(False, index=panel.index))
+    ).fillna(False).astype(bool)
     required_coverage = {
         "market": panel["close"].notna(),
         "industry": panel["industry"].notna(),
@@ -485,6 +758,28 @@ def _build_pit_factor_panel_impl(
             method="average", pct=True
         )
         panel[factor] = panel[factor] - 0.5
+    # Bind each derived factor to the family-specific PIT timestamp that was
+    # actually available when the signal was formed.  The challenger lab
+    # consumes these columns instead of inferring availability from a generic
+    # source timestamp.
+    factor_availability_sources = {
+        "market_beta": ["market_available_at"],
+        "size": ["market_available_at"],
+        "volatility": ["market_available_at"],
+        "liquidity": ["market_available_at"],
+        "momentum": ["market_available_at", "adjustment_available_at"],
+        "value": ["financial_available_at"],
+        # These two factors are supplied by the canonical industry/market
+        # state snapshots.  Keep their own availability columns even when a
+        # downstream study later marks the factor as research-disabled.
+        "industry": ["industry_available_at"],
+        "market_regime": ["market_available_at"],
+    }
+    for factor, source_columns in factor_availability_sources.items():
+        available = panel[source_columns[0]]
+        for source_column in source_columns[1:]:
+            available = pd.DataFrame({"left": available, "right": panel[source_column]}).max(axis=1)
+        panel[f"{factor}_available_at"] = available
     dates = sorted(panel["trade_date"].dropna().unique())
     warmup_dates = set(dates[:20])
     qualified = panel.loc[
@@ -576,13 +871,22 @@ def _build_pit_factor_panel_impl(
         "financial_period_end",
         "announcement_date",
         "revision_id",
+        "revision_sequence",
         "financial_source_snapshot_sha",
         "market_regime",
         *raw_factors,
+        *(f"{factor}_available_at" for factor in factor_availability_sources),
         *availability_columns,
     ]
+    panel_columns = list(dict.fromkeys(
+        column for column in panel_columns if column in qualified.columns
+    ))
     qualified["trade_date"] = qualified["trade_date"].dt.date.astype(str)
-    for column in ["signal_time", *availability_columns]:
+    for column in [
+        "signal_time",
+        *availability_columns,
+        *(f"{factor}_available_at" for factor in raw_factors),
+    ]:
         qualified[column] = qualified[column].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     # Only write qualified panel on PASS; BLOCKED writes diagnostic only
     if status == "PASS":
@@ -658,10 +962,13 @@ def main() -> None:
     parser.add_argument("--financial", type=Path)
     parser.add_argument("--industry", type=Path)
     parser.add_argument("--adjustment", type=Path)
+    parser.add_argument("--trade-calendar", type=Path)
+    parser.add_argument("--security-lifecycle", type=Path)
+    parser.add_argument("--corporate-actions", type=Path)
     parser.add_argument("--source-manifest", type=Path)
     parser.add_argument("--adapter-report", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--profile", default="formal_v5_0")
+    parser.add_argument("--profile", default="alpha_v3_2")
     parser.add_argument("--fixture-mode", action="store_true", default=False)
     args = parser.parse_args()
     result = build_pit_factor_panel(
@@ -670,6 +977,9 @@ def main() -> None:
         financial_path=args.financial,
         industry_path=args.industry,
         adjustment_path=args.adjustment,
+        trade_calendar_path=args.trade_calendar,
+        security_lifecycle_path=args.security_lifecycle,
+        corporate_actions_path=args.corporate_actions,
         source_manifest_path=args.source_manifest,
         output_dir=args.output_dir,
         profile_name=args.profile,

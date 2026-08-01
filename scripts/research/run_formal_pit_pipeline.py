@@ -44,7 +44,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.acceptance_config import canonical_sha, load_validation_profile
-from runtime.artifact_seal import seal_directory
+from runtime.artifact_seal import seal_directory, verify_seal
 from runtime.fail_closed import blocked_report, fail_closed
 from runtime.formal_evidence_binding import check_clean_worktree
 from runtime.formal_evidence_contract import (
@@ -78,35 +78,24 @@ def _git_sha() -> str:
     ).strip()
 
 
-def _db_snapshot_identity() -> str:
-    """Capture a stable database identity string.
+def _db_snapshot_identity(adapter_config_path: Path) -> str:
+    """Return a provider-issued immutable snapshot identity.
 
-    Uses server_uuid + transaction_isolation as a stable identifier.
-    Falls back to timestamp if DB is unavailable (diagnostic only).
+    A timestamp or server UUID is not a database snapshot.  Formal runs must
+    bind to a configured snapshot token/GTID and the adapter later verifies
+    that the same token was observed inside its repeatable-read transaction.
     """
-    import pymysql
     try:
-        db_url = os.getenv("CHENYIYUN_DB_URL")
-        if db_url:
-            # Extract host from URL for a short identity
-            conn = pymysql.connect(
-                host=os.getenv("CHENYIYUN_DB_HOST", "localhost"),
-                port=int(os.getenv("CHENYIYUN_DB_PORT", "3306")),
-                user=os.getenv("CHENYIYUN_DB_USER", "root"),
-                password=os.getenv("CHENYIYUN_DB_PASSWORD", ""),
-                database=os.getenv("CHENYIYUN_DB_NAME", "chenyiyun"),
-                connect_timeout=5,
-            )
-            with conn.cursor() as cur:
-                cur.execute("SELECT @@server_uuid, @@transaction_isolation")
-                row = cur.fetchone()
-                conn.close()
-                if row:
-                    return f"{row[0]}_iso_{row[1]}"
+        config = json.loads(adapter_config_path.read_text(encoding="utf-8"))
     except Exception:
-        pass
-    # Fallback: timestamp (non-reproducible, diagnostic only)
-    return f"mysql_snapshot_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+        return ""
+    identity = str(
+        config.get("snapshot_token")
+        or config.get("snapshot_id")
+        or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN")
+        or ""
+    ).strip()
+    return identity
 
 
 def _check_prerequisites(
@@ -135,9 +124,17 @@ def _check_prerequisites(
         load_validation_profile(acceptance_profile)
     except Exception:
         blockers.append(f"acceptance_profile_missing:{acceptance_profile}")
-    # DB URL must be set
-    if not os.getenv("CHENYIYUN_DB_URL"):
+    # DB URL and stable snapshot identity are mandatory for formal MYSQL runs;
+    # FILE runs still require an explicit immutable snapshot_id.
+    try:
+        adapter_cfg = json.loads(adapter_config_path.read_text(encoding="utf-8"))
+    except Exception:
+        adapter_cfg = {}
+    adapter_type = str(adapter_cfg.get("adapter_type") or "").upper()
+    if adapter_type == "MYSQL" and not os.getenv("CHENYIYUN_DB_URL"):
         blockers.append("CHENYIYUN_DB_URL_not_configured")
+    if not _db_snapshot_identity(adapter_config_path):
+        blockers.append("database_snapshot_identity_not_configured")
     # Dependency lock must exist
     if not DEPENDENCY_LOCK_PATH.exists():
         blockers.append("dependency_lock_missing")
@@ -163,6 +160,93 @@ def _write_stage_report(
     }
     (stage_dir / f"{stage_name}_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _write_alpha_evidence_placeholders(
+    building_dir: Path,
+    *,
+    profile: dict[str, Any],
+    release_id: str,
+    strategy_set: str,
+    input_snapshot_sha256: str,
+    snapshot_identity: dict[str, Any] | None = None,
+) -> None:
+    """Emit explicit fail-closed downstream evidence until OOS/ledger inputs exist."""
+    reports_dir = building_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    common = {
+        "config_sha256": canonical_sha(profile),
+        "evidence_version": profile.get("evidence_version", "alpha_v3_2_evidence_v1"),
+        "code_head": _git_sha(),
+        "input_snapshot_sha256": input_snapshot_sha256,
+        "snapshot_identity": snapshot_identity or {},
+        "release": release_id,
+        "strategy": strategy_set,
+        "sample_start": profile.get("core_period", {}).get("min_start_date"),
+        "sample_end": None,
+        "timezone": "Asia/Shanghai",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "execution_model": "T15:30_signal_T+1_09:30_open",
+        "capital_authority": False,
+        "research_status": "BLOCKED_DATA",
+        "trading_status": "TRADING_BLOCKED",
+        "capital_status": "NO_SCALE",
+        "allowed_new_capital_cny": 0,
+    }
+    names = {
+        "alpha_attribution_report.json": "attribution_and_oos_evidence_missing",
+        "factor_ic_report.json": "factor_ic_evidence_missing",
+        "walk_forward_report.json": "walk_forward_evidence_missing",
+        "execution_cost_report.json": "execution_cost_evidence_missing",
+        "alpha_proof_guard_report.json": "proof_guard_downstream_evidence_missing",
+        "alpha_proof_report.json": "proof_summary_downstream_evidence_missing",
+    }
+    for filename, blocker in names.items():
+        payload = {
+            "schema_version": filename.removesuffix(".json") + "_v1",
+            **common,
+            "status": "BLOCKED",
+            "blockers": [blocker],
+        }
+        payload["content_sha256"] = canonical_sha(
+            {key: value for key, value in payload.items() if key != "content_sha256"}
+        )
+        (reports_dir / filename).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    gate = {
+        "schema_version": "promotion_gate_report_v1",
+        **common,
+        "status": "BLOCKED",
+        "gates": {
+            "research": "BLOCKED_DATA",
+            "trading": "TRADING_BLOCKED",
+            "capital": "NO_SCALE",
+        },
+        "blockers": ["downstream_oos_and_shadow_evidence_missing"],
+    }
+    gate["content_sha256"] = canonical_sha(
+        {key: value for key, value in gate.items() if key != "content_sha256"}
+    )
+    (reports_dir / "promotion_gate_report.json").write_text(
+        json.dumps(gate, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    scorecard = {
+        "schema_version": "strategy_scorecard_v1",
+        **common,
+        "status": "BLOCKED_DATA",
+        "promotion_gate_report_sha256": _file_sha(reports_dir / "promotion_gate_report.json"),
+        "allowed_new_capital_cny": 0,
+    }
+    scorecard["content_sha256"] = canonical_sha(
+        {key: value for key, value in scorecard.items() if key != "content_sha256"}
+    )
+    (reports_dir / "strategy_scorecard.json").write_text(
+        json.dumps(scorecard, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _block_and_seal(
@@ -201,7 +285,7 @@ def run_formal_pit_pipeline(
     release_id: str,
     strategy_set: str,
     adapter_config_path: Path,
-    acceptance_profile: str = "formal_v5_0",
+    acceptance_profile: str = "alpha_v3_2",
 ) -> dict[str, Any]:
     """Execute the complete formal PIT pipeline. Returns run manifest."""
     blockers = _check_prerequisites(adapter_config_path, acceptance_profile)
@@ -226,7 +310,7 @@ def run_formal_pit_pipeline(
     dependency_lock_sha = _file_sha(DEPENDENCY_LOCK_PATH)
     query_bundle_sha = config_sha  # The adapter config IS the query bundle
     field_semantics_sha = _file_sha(FIELD_SEMANTICS_PATH)
-    db_snapshot_id = _db_snapshot_identity()
+    db_snapshot_id = _db_snapshot_identity(adapter_config_path)
 
     run_id = compute_formal_pit_run_id(
         release_id=release_id,
@@ -345,6 +429,9 @@ def run_formal_pit_pipeline(
             financial_path=snapshots_dir / "financial.parquet",
             industry_path=snapshots_dir / "industry.parquet",
             adjustment_path=snapshots_dir / "adjustment.parquet",
+            trade_calendar_path=snapshots_dir / "trade_calendar.parquet",
+            security_lifecycle_path=snapshots_dir / "security_lifecycle.parquet",
+            corporate_actions_path=snapshots_dir / "corporate_actions.parquet",
             source_manifest_path=manifest_path,
             adapter_report_path=adapter_report_path,
             output_dir=builder_dir,
@@ -371,9 +458,11 @@ def run_formal_pit_pipeline(
     scores_dir.mkdir()
     try:
         from scripts.research.build_formal_scores import build_formal_scores
+        from runtime.formal_contract import FORMAL_STRATEGIES
         score_result = build_formal_scores(
             factor_panel_path=factor_panel_path,
             output_dir=scores_dir,
+            strategy_ids=list(FORMAL_STRATEGIES),
         )
     except Exception as exc:
         return _block_and_seal(building_dir, run_id, git_sha, "score_builder",
@@ -385,6 +474,20 @@ def run_formal_pit_pipeline(
         return _block_and_seal(building_dir, run_id, git_sha, "score_builder",
                                "score_builder_not_pass",
                                extra={"blockers": score_result.get("blockers", [])})
+
+    adapter_manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    input_snapshot_sha256 = canonical_sha({
+        name: (info or {}).get("content_sha256") or (info or {}).get("sha256")
+        for name, info in sorted((adapter_manifest_payload.get("sources") or {}).items())
+    })
+    _write_alpha_evidence_placeholders(
+        building_dir,
+        profile=profile,
+        release_id=release_id,
+        strategy_set=strategy_set,
+        input_snapshot_sha256=input_snapshot_sha256,
+        snapshot_identity=adapter_manifest_payload.get("snapshot_identity"),
+    )
 
     # ═══════════════════════════════════════════════════════════════════════
     # Stage 5: Write pit_run_manifest
@@ -401,10 +504,26 @@ def run_formal_pit_pipeline(
         "adapter_config_sha256": _file_sha(config_dir / "adapter_config.json"),
         "factor_panel_sha256": _file_sha(factor_panel_path),
         "scores_sha256": scores_sha,
+        "source_manifest_sha256": _file_sha(manifest_path),
+        "adapter_report_sha256": _file_sha(adapter_report_path),
+        "semantic_audit_sha256": _file_sha(audit_dir / "semantic_audit_report.json"),
+        "snapshot_identity": adapter_manifest_payload.get("snapshot_identity"),
+        "input_snapshot_sha256": canonical_sha({
+            name: (info or {}).get("content_sha256") or (info or {}).get("sha256")
+            for name, info in sorted((adapter_manifest_payload.get("sources") or {}).items())
+        }) if adapter_manifest_payload.get("sources") else "",
         "scores_path": str((scores_dir / "formal_scores.parquet").relative_to(building_dir)),
         "factor_panel_path": str(factor_panel_path.relative_to(building_dir)),
         "evidence_status": EvidenceStatus().as_dict(),
         "capital_authority": False,
+        "research_status": "RESEARCH_PASS",
+        "trading_status": "TRADING_BLOCKED",
+        "capital_status": "NO_SCALE",
+        "allowed_new_capital_cny": 0,
+        "execution_model": "T15:30_signal_T+1_09:30_open",
+        "timezone": "Asia/Shanghai",
+        "sample_start": builder_result.get("sample_start"),
+        "sample_end": builder_result.get("sample_end"),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     pit_run_manifest["content_sha256"] = canonical_sha(
@@ -417,6 +536,13 @@ def run_formal_pit_pipeline(
     # Stage 6: Seal
     # ═══════════════════════════════════════════════════════════════════════
     seal_directory(building_dir, run_id=run_id, git_commit_sha=git_sha)
+    seal_check = verify_seal(building_dir)
+    if seal_check.get("status") != "VERIFIED":
+        return blocked_report(
+            "formal_pit_orchestrator", "seal",
+            "pit_run_seal_verification_failed",
+            extra={"run_id": run_id, "seal_result": seal_check},
+        )
 
     # ═══════════════════════════════════════════════════════════════════════
     # Stage 7: Atomic Publish
@@ -487,7 +613,7 @@ def main() -> None:
     parser.add_argument("--release-id", required=True)
     parser.add_argument("--strategy-set", default="champion_v1_2b")
     parser.add_argument("--adapter-config", type=Path, required=True)
-    parser.add_argument("--acceptance-profile", default="formal_v5_0")
+    parser.add_argument("--acceptance-profile", default="alpha_v3_2")
     args = parser.parse_args()
     result = run_formal_pit_pipeline(
         release_id=args.release_id,

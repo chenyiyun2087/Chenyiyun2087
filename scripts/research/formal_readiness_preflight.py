@@ -1,4 +1,4 @@
-"""Fail-closed readiness gate for the immutable 2013-present formal run.
+"""Fail-closed readiness gate for the immutable 2018-present formal run.
 
 The command validates an already frozen package.  It never silently queries a
 different table, derives a calendar from lifecycle rows, or treats missing
@@ -18,6 +18,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yaml
+
+from runtime.acceptance_config import canonical_sha
+from runtime.pit_semantic_contract import (
+    get_available_at_column,
+    get_contract_sha256,
+    get_primary_key,
+    get_required_columns,
+    validate_frame_schema,
+    signal_time_for_trade_dates,
+    validate_explicit_timezone,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -41,21 +52,30 @@ def _sha(path: Path) -> str:
 
 
 def _read_frame(path: Path) -> pd.DataFrame:
-    frame = pd.read_csv(path, dtype={"symbol": str, "ts_code": str})
+    if path.suffix.lower() in {".parquet", ".pq"}:
+        frame = pd.read_parquet(path)
+    else:
+        frame = pd.read_csv(path, dtype={"symbol": str, "ts_code": str})
     if frame.empty:
         raise ValueError(f"empty_required_object:{path.name}")
     return frame
 
 
-def _pit_visible(frame: pd.DataFrame, business_column: str) -> tuple[bool, int]:
-    if "available_at" not in frame.columns:
+def _pit_visible(
+    frame: pd.DataFrame, business_column: str, available_column: str
+) -> tuple[bool, int]:
+    if available_column not in frame.columns:
         return False, len(frame)
+    timezone_offenders = validate_explicit_timezone(frame[available_column])
+    if timezone_offenders:
+        return False, len(timezone_offenders)
     business = pd.to_datetime(frame[business_column], errors="coerce")
-    available = pd.to_datetime(frame["available_at"], errors="coerce", utc=True)
+    available = pd.to_datetime(frame[available_column], errors="coerce", utc=True)
+    signal = signal_time_for_trade_dates(business)
     invalid = (
         business.isna()
         | available.isna()
-        | (available.dt.tz_convert("Asia/Shanghai").dt.date > business.dt.date)
+        | (available > signal)
     )
     return not bool(invalid.any()), int(invalid.sum())
 
@@ -71,6 +91,19 @@ def _manifest_checks(
     manifest = json.loads(path.read_text(encoding="utf-8"))
     objects = manifest.get("objects") or {}
     checks: list[Check] = []
+    declared_content_sha = str(manifest.get("content_sha256") or "")
+    if declared_content_sha:
+        actual_content_sha = canonical_sha(
+            {key: value for key, value in manifest.items() if key != "content_sha256"}
+        )
+        checks.append(
+            Check(
+                "source_manifest_content_sha",
+                actual_content_sha == declared_content_sha,
+                actual_content_sha,
+                declared_content_sha,
+            )
+        )
     for filename in config["required_objects"]:
         if filename == "source_manifest.json":
             continue
@@ -103,6 +136,14 @@ def _manifest_checks(
             f"<= {config['minimum_start_date']}",
         )
     )
+    checks.append(
+        Check(
+            "coverage_end_manifest",
+            bool(str(manifest.get("coverage_end") or "").strip()),
+            str(manifest.get("coverage_end")),
+            "non-empty coverage_end",
+        )
+    )
     return manifest, checks
 
 
@@ -131,6 +172,221 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
         for filename in required
         if filename.endswith(".csv")
     }
+    # Pre-v3.2 fixture packages used generic `available_at` and
+    # `is_tradable`.  Keep a tightly scoped compatibility reader for the old
+    # synthetic fixtures (which have no formal schema version); canonical or
+    # mixed packages are rejected instead of silently aliasing fields.
+    legacy_aliases_present = any(
+        (
+            ("available_at" in frames["tradable_universe.csv"] and "universe_available_at" not in frames["tradable_universe.csv"]),
+            ("available_at" in frames["scores.csv"] and "score_available_at" not in frames["scores.csv"]),
+            ("available_at" in frames["prices.csv"] and "market_available_at" not in frames["prices.csv"]),
+            ("available_at" in frames["adjustment_factors.csv"] and "adjustment_available_at" not in frames["adjustment_factors.csv"]),
+            ("action_type" in frames["strict_corporate_actions.csv"] and "corporate_action_type" not in frames["strict_corporate_actions.csv"]),
+            ("available_at" in frames["strict_corporate_actions.csv"] and "corporate_action_available_at" not in frames["strict_corporate_actions.csv"]),
+            ("available_at" in frames["strict_security_lifecycle.csv"] and "lifecycle_available_at" not in frames["strict_security_lifecycle.csv"]),
+            ("is_tradable" in frames["tradable_universe.csv"] and "is_listed" not in frames["tradable_universe.csv"]),
+        )
+    )
+    manifest_payload = json.loads((package / "source_manifest.json").read_text(encoding="utf-8"))
+    strict_fixture_manifest = json.loads(
+        (package / "strict_snapshot_manifest.json").read_text(encoding="utf-8")
+    )
+    legacy_compat = legacy_aliases_present and (
+        not manifest_payload.get("schema_version")
+        or str(strict_fixture_manifest.get("dataset_version")) == "fixture"
+    )
+    if legacy_aliases_present and not legacy_compat:
+        checks.append(
+            Check(
+                "canonical_semantic_fields",
+                False,
+                "legacy_aliases_present_in_versioned_package",
+                "canonical family-specific availability and status fields only",
+            )
+        )
+        # Do not continue into the transport-only checks: a versioned package
+        # containing legacy aliases is invalid and must produce a structured
+        # BLOCKED report rather than a KeyError from a later column access.
+        return _result(package, config, checks)
+    if legacy_compat:
+        universe = frames["tradable_universe.csv"]
+        if "is_listed" not in universe and "is_tradable" in universe:
+            universe["is_listed"] = pd.to_numeric(universe["is_tradable"], errors="coerce").fillna(0)
+        if "is_st" not in universe:
+            universe["is_st"] = 0
+        if "is_suspended" not in universe:
+            universe["is_suspended"] = 0
+        if "limit_status" not in universe:
+            universe["limit_status"] = "NORMAL"
+        if "security_status_transition" not in universe:
+            universe["security_status_transition"] = "LEGACY"
+        if "universe_available_at" not in universe and "available_at" in universe:
+            universe["universe_available_at"] = universe["available_at"]
+        scores = frames["scores.csv"]
+        if "score_available_at" not in scores and "available_at" in scores:
+            scores["score_available_at"] = scores["available_at"]
+        if "signal_time" not in scores:
+            scores["signal_time"] = signal_time_for_trade_dates(scores["trade_date"]).dt.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+        prices = frames["prices.csv"]
+        if "market_available_at" not in prices and "available_at" in prices:
+            prices["market_available_at"] = prices["available_at"]
+        adj = frames["adjustment_factors.csv"]
+        if "adjustment_available_at" not in adj and "available_at" in adj:
+            adj["adjustment_available_at"] = adj["available_at"]
+        actions = frames["strict_corporate_actions.csv"]
+        if "corporate_action_type" not in actions and "action_type" in actions:
+            actions["corporate_action_type"] = actions["action_type"]
+        if "trade_date" not in actions and "effective_date" in actions:
+            actions["trade_date"] = actions["effective_date"]
+        if "corporate_action_available_at" not in actions and "available_at" in actions:
+            actions["corporate_action_available_at"] = actions["available_at"]
+        lifecycle = frames["strict_security_lifecycle.csv"]
+        if "is_st" not in lifecycle:
+            lifecycle["is_st"] = 0
+        if "listed_date" not in lifecycle:
+            lifecycle["listed_date"] = lifecycle["trade_date"]
+        if "security_status_transition" not in lifecycle:
+            lifecycle["security_status_transition"] = "LEGACY"
+        if "lifecycle_available_at" not in lifecycle and "available_at" in lifecycle:
+            lifecycle["lifecycle_available_at"] = lifecycle["available_at"]
+    canonical_mode = not legacy_compat
+    if canonical_mode:
+        if not declared_content_sha:
+            checks.append(
+                Check(
+                    "source_manifest_content_sha",
+                    False,
+                    "missing",
+                    "canonical source manifest content_sha256",
+                )
+            )
+        if not isinstance(manifest.get("snapshot_identity"), dict) or not any(
+            str(value or "").strip()
+            for value in (manifest.get("snapshot_identity") or {}).values()
+        ):
+            checks.append(
+                Check(
+                    "source_snapshot_identity",
+                    False,
+                    "missing",
+                    "provider/frozen snapshot identity",
+                )
+            )
+        source_rows = manifest.get("sources") or {}
+        for family in (
+            "market",
+            "universe",
+            "financial",
+            "industry",
+            "adjustment",
+            "trade_calendar",
+            "security_lifecycle",
+            "corporate_actions",
+        ):
+            source = source_rows.get(family) or {}
+            required_source_fields = {
+                "sha256",
+                "schema_hash",
+                "rows",
+                "coverage_start",
+                "coverage_end",
+                "provider",
+                "version",
+                "query_sha256",
+            }
+            missing_source_fields = sorted(
+                field for field in required_source_fields if field not in source
+            )
+            checks.append(
+                Check(
+                    f"source_metadata:{family}",
+                    not missing_source_fields
+                    and bool(source.get("coverage_start"))
+                    and bool(source.get("coverage_end")),
+                    ";".join(missing_source_fields)
+                    or f"{source.get('coverage_start')}..{source.get('coverage_end')}",
+                    "content/schema/rows/coverage/provider/version/query SHA",
+                )
+            )
+        canonical_paths = {
+            "market": package / "market.parquet",
+            "universe": package / "universe.parquet",
+            "financial": package / "financial.parquet",
+            "industry": package / "industry.parquet",
+            "adjustment": package / "adjustment.parquet",
+            "trade_calendar": package / "trade_calendar.parquet",
+            "security_lifecycle": package / "security_lifecycle.parquet",
+            "corporate_actions": package / "corporate_actions.parquet",
+        }
+        canonical_missing = [
+            str(path.name) for path in canonical_paths.values() if not path.is_file()
+        ]
+        required_canonical = config.get("canonical_required_objects") or []
+        canonical_missing.extend(
+            str(name) for name in required_canonical
+            if not (package / str(name)).is_file()
+        )
+        if canonical_missing:
+            checks.append(
+                Check(
+                    "canonical_required_objects",
+                    False,
+                    ",".join(sorted(set(canonical_missing))),
+                    "all eight canonical PIT snapshots present",
+                )
+            )
+            return _result(package, config, checks)
+        canonical_objects = manifest.get("objects") or {}
+        for family, path in canonical_paths.items():
+            expected_sha = str((canonical_objects.get(path.name) or {}).get("sha256") or "")
+            actual_sha = _sha(path) if path.is_file() else "MISSING"
+            checks.append(
+                Check(
+                    f"canonical_object_sha:{path.name}",
+                    bool(expected_sha) and actual_sha == expected_sha,
+                    actual_sha,
+                    expected_sha or "declared SHA256",
+                )
+            )
+            frame = _read_frame(path)
+            schema_blockers = validate_frame_schema(frame, family)
+            checks.append(
+                Check(
+                    f"canonical_schema:{family}",
+                    not schema_blockers,
+                    ";".join(schema_blockers) or "valid",
+                    "canonical contract schema, keys, and explicit timezone",
+                )
+            )
+            if schema_blockers:
+                continue
+            available_column = str(
+                {
+                    "trade_calendar": "available_at",
+                }.get(family, get_available_at_column(family))
+            )
+            business_column = "cal_date" if family == "trade_calendar" else "trade_date"
+            visible, invalid = _pit_visible(frame, business_column, available_column)
+            checks.append(
+                Check(
+                    f"canonical_pit_visibility:{family}",
+                    visible,
+                    f"invalid_rows={invalid}",
+                    f"{available_column} <= T15:30 signal time",
+                )
+            )
+        source_contract_sha = str(manifest.get("field_definition_hash") or "")
+        checks.append(
+            Check(
+                "canonical_field_definition_hash",
+                source_contract_sha == get_contract_sha256(),
+                source_contract_sha,
+                get_contract_sha256(),
+            )
+        )
+        if not all(item.passed for item in checks if item.check.startswith("canonical_")):
+            return _result(package, config, checks)
     for filename, primary_key in (config.get("primary_keys") or {}).items():
         frame = frames[filename]
         absent = sorted(set(primary_key) - set(frame.columns))
@@ -178,22 +434,24 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
     manifest_end = str(manifest.get("coverage_end") or "")
 
     business_columns = {
-        "trade_calendar.csv": "cal_date",
-        "tradable_universe.csv": "trade_date",
-        "scores.csv": "trade_date",
-        "prices.csv": "trade_date",
-        "adjustment_factors.csv": "trade_date",
-        "strict_corporate_actions.csv": "effective_date",
-        "strict_security_lifecycle.csv": "trade_date",
+        "trade_calendar.csv": ("cal_date", "available_at"),
+        "tradable_universe.csv": ("trade_date", "universe_available_at"),
+        "scores.csv": ("trade_date", "score_available_at"),
+        "prices.csv": ("trade_date", "market_available_at"),
+        "adjustment_factors.csv": ("trade_date", "adjustment_available_at"),
+        "strict_corporate_actions.csv": ("trade_date", "corporate_action_available_at"),
+        "strict_security_lifecycle.csv": ("trade_date", "lifecycle_available_at"),
     }
-    for filename, business_column in business_columns.items():
-        passed, invalid = _pit_visible(frames[filename], business_column)
+    for filename, (business_column, available_column) in business_columns.items():
+        passed, invalid = _pit_visible(
+            frames[filename], business_column, available_column
+        )
         checks.append(
             Check(
                 f"pit_visibility:{filename}",
                 passed,
                 f"invalid_rows={invalid}",
-                "available_at date <= business date",
+            f"{available_column} <= T15:30 signal time",
             )
         )
 
@@ -202,7 +460,10 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
         universe["trade_date"], errors="coerce"
     ).dt.strftime("%Y-%m-%d")
     universe = universe[
-        pd.to_numeric(universe["is_tradable"], errors="coerce").eq(1)
+        pd.to_numeric(universe["is_listed"], errors="coerce").eq(1)
+        & ~pd.to_numeric(universe["is_st"], errors="coerce").eq(1)
+        & ~pd.to_numeric(universe["is_suspended"], errors="coerce").eq(1)
+        & universe["limit_status"].astype(str).isin({"NORMAL", "NONE"})
     ]
     denominators = universe.groupby("trade_date")["symbol"].nunique()
     scores = frames["scores.csv"].copy()
@@ -301,7 +562,7 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
         "delist_writeoff",
     }
     action_types = actions.get(
-        "action_type", pd.Series("", index=actions.index)
+        "corporate_action_type", pd.Series("", index=actions.index)
     ).astype(str)
     unknown_actions = int((~action_types.isin(allowed_actions)).sum())
     invalid_economics = pd.Series(False, index=actions.index)
@@ -358,7 +619,7 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
     account_ok = (
         account.get("currency") == "CNY"
         and float(account.get("initial_cash_cny") or 0) == 500_000
-        and not account.get("positions")
+        and account.get("positions") == {}
     )
     checks.append(
         Check(
@@ -471,7 +732,7 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
         config.get("minimum_trade_date_coverage", 0.98)
     )
     coverage_date_set: set[str] = set()
-    for filename, business_column in business_columns.items():
+    for filename, (business_column, _available_column) in business_columns.items():
         if filename in frames:
             parsed = (
                 pd.to_datetime(frames[filename][business_column], errors="coerce")

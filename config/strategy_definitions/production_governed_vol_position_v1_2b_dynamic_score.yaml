@@ -39,7 +39,7 @@ selection_threshold: "top_20_pct"
 rebalance_policy: "weekly_monday"
 
 # ── Timing (all times in Asia/Shanghai) ──
-signal_time: "T16:00:00+08:00"
+signal_time: "T15:30:00+08:00"
 execution_time: "T+1 09:30:00+08:00"
 timezone: "Asia/Shanghai"
 
@@ -48,4 +48,4 @@ code_entry: "scripts.research.build_formal_scores.build_formal_scores"
 code_path: "scripts/research/build_formal_scores.py"
 
 # ── Acceptance Profile ──
-acceptance_profile: "formal_v5_0"
+acceptance_profile: "alpha_v3_2"

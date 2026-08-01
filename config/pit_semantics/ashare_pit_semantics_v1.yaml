@@ -5,7 +5,7 @@
 schema_version: "ashare_pit_semantics_v1"
 description: "A-Share Point-in-Time data semantics for Chenyiyun2087 Formal Evidence Backbone"
 timezone: "Asia/Shanghai"
-signal_cutoff: "T16:00:00+08:00"
+signal_cutoff: "T15:30:00+08:00"
 
 families:
   market:
@@ -130,10 +130,14 @@ families:
       - trade_date
       - symbol
       - corporate_action_type
+      - source_event_id
       - ex_date
       - record_date
       - event_id
       - effective_date
+      - as_of_timestamp
+      - source_complete
+      - event_hash
       - corporate_action_available_at
     primary_key: [symbol, event_id]
     business_time_column: trade_date

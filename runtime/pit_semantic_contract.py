@@ -76,20 +76,57 @@ def get_business_time_column(family: str) -> str:
     return str(get_family_contract(family).get("business_time_column", ""))
 
 
+def get_signal_cutoff() -> str:
+    """Return the canonical T-day signal cutoff from the contract."""
+    return str(_load_raw_contract().get("signal_cutoff") or "T15:30:00+08:00")
+
+
+def get_source_families() -> tuple[str, ...]:
+    """Return all source families in deterministic contract order."""
+    return tuple(sorted(_load_raw_contract().get("families", {}).keys()))
+
+
+def signal_time_for_trade_dates(trade_dates: pd.Series) -> pd.Series:
+    """Build timezone-aware T-day signal timestamps at the contract cutoff."""
+    parsed = pd.to_datetime(trade_dates, errors="coerce")
+    cutoff = get_signal_cutoff().strip()
+    # The contract stores the cutoff as ``T15:30:00+08:00``.  Keep the
+    # parser tolerant of a human-readable value without the leading ``T``
+    # while still deriving the timestamp from the canonical contract rather
+    # than duplicating a second hard-coded timing rule in code.
+    if cutoff and not cutoff.startswith("T"):
+        cutoff = f"T{cutoff}"
+    return pd.to_datetime(
+        parsed.dt.strftime("%Y-%m-%d") + cutoff,
+        errors="coerce",
+        utc=True,
+    )
+
+
 TIMEZONE_PATTERN = re.compile(r"[Zz]$|[+-]\d{2}:\d{2}$")
 
 
 def validate_explicit_timezone(series: pd.Series) -> list[str]:
     """Check that all non-null values contain an explicit timezone suffix.
-    Returns list of offenders (first 5)."""
+    Returns list of offenders (first 5).  A source family must also use one
+    consistent offset; silently normalizing a mixture of ``+08:00`` and UTC
+    values would make the PIT comparison dependent on parser behavior.
+    """
     offenders = []
+    offsets: set[str] = set()
     for idx, val in series.dropna().items():
         s = str(val)
-        if not TIMEZONE_PATTERN.search(s):
+        match = TIMEZONE_PATTERN.search(s)
+        if not match:
             offenders.append(f"row_{idx}:{s}")
             if len(offenders) >= 5:
                 break
-    return offenders
+        else:
+            offset = match.group(0).upper()
+            offsets.add("+00:00" if offset == "Z" else offset)
+    if len(offsets) > 1:
+        offenders.append("mixed_timezone_offsets:" + ",".join(sorted(offsets)))
+    return offenders[:5]
 
 
 def validate_frame_schema(frame: pd.DataFrame, family: str) -> list[str]:

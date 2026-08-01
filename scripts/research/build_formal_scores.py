@@ -34,6 +34,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.acceptance_config import canonical_sha
 from runtime.fail_closed import blocked_report, fail_closed
+from runtime.pit_semantic_contract import (
+    signal_time_for_trade_dates,
+    validate_explicit_timezone,
+)
 
 # ── Default factor weights (fallback; prefer strategy definition YAML) ──
 FACTOR_WEIGHTS = {
@@ -82,19 +86,29 @@ def _check_coverage(
 ) -> list[str]:
     """Check daily factor coverage. Returns blockers if threshold is violated."""
     blockers = []
-    total_rows = len(panel)
-    if total_rows == 0:
+    if panel.empty:
         return ["empty_panel"]
 
     for factor in factor_names:
         if factor not in panel.columns:
             blockers.append(f"missing_factor_column:{factor}")
             continue
-        null_ratio = panel[factor].isna().mean()
-        if null_ratio > (threshold_pct / 100.0):
+        eligible = panel.get(
+            "eligible_universe", pd.Series(False, index=panel.index)
+        ).fillna(False).astype(bool)
+        scoped = panel.loc[eligible]
+        if scoped.empty:
+            blockers.append("eligible_universe_empty")
+            continue
+        numeric = pd.to_numeric(scoped[factor], errors="coerce")
+        denominators = numeric.groupby(scoped["trade_date"]).size()
+        numerators = numeric.groupby(scoped["trade_date"]).count()
+        coverage = numerators.div(denominators.replace(0, np.nan))
+        if coverage.empty or float(coverage.min()) < (threshold_pct / 100.0):
             blockers.append(
                 f"factor_coverage_below_threshold:{factor}:"
-                f"missing={null_ratio:.4f},threshold={threshold_pct:.2f}%"
+                f"minimum={float(coverage.min()) if not coverage.empty else 0.0:.4f},"
+                f"threshold={threshold_pct:.2f}%"
             )
     return blockers
 
@@ -106,6 +120,7 @@ def build_formal_scores(
     factor_weights: dict[str, float] | None = None,
     top_pct: float = 0.20,
     strategy_definition_path: Path = DEFAULT_STRATEGY_DEF,
+    strategy_ids: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Compute formal scores from a frozen factor panel.
 
@@ -114,11 +129,31 @@ def build_formal_scores(
     # Load strategy definition
     strategy_def = _load_strategy_definition(strategy_definition_path)
     strategy_id = strategy_def.get("strategy_id", "unknown")
+    resolved_strategy_ids = tuple(
+        str(value) for value in (strategy_ids or [strategy_id]) if str(value)
+    )
+    if not resolved_strategy_ids:
+        return blocked_report(
+            "formal_score_builder", "strategy_definition",
+            "strategy_ids_missing",
+        )
     weights = factor_weights or FACTOR_WEIGHTS
-
     # Override from strategy definition if present
     if strategy_def.get("factor_weights"):
         weights = {k: float(v) for k, v in strategy_def["factor_weights"].items()}
+    signs = {name: 1.0 for name in weights}
+    if strategy_def.get("factor_signs"):
+        unknown_signs = set(strategy_def["factor_signs"]) - set(weights)
+        if unknown_signs:
+            return blocked_report(
+                "formal_score_builder", "strategy_definition",
+                "factor_sign_without_weight",
+                extra={"factors": sorted(unknown_signs)},
+            )
+        signs = {
+            name: float(strategy_def["factor_signs"].get(name, 1.0))
+            for name in weights
+        }
 
     missing_threshold = float(
         strategy_def.get("missing_factor_threshold_pct", 5.0)
@@ -141,6 +176,17 @@ def build_formal_scores(
     except Exception as exc:
         return fail_closed("formal_score_builder", "read_panel", exc)
 
+    # Compatibility for the pre-PIT synthetic score fixture.  A versioned
+    # formal panel always carries eligible_universe and family availability;
+    # only an unversioned factor-only fixture may use all rows as its research
+    # denominator.  This cannot produce historical evidence by itself.
+    legacy_factor_fixture = (
+        "eligible_universe" not in panel.columns
+        and not any(column.endswith("_available_at") for column in panel.columns)
+    )
+    if legacy_factor_fixture:
+        panel["eligible_universe"] = True
+
     required = set(weights.keys())
     missing = required - set(panel.columns)
     if missing:
@@ -162,34 +208,54 @@ def build_formal_scores(
 
     # Build coverage report
     coverage_report = {}
+    eligible_mask = panel.get(
+        "eligible_universe", pd.Series(False, index=panel.index)
+    ).fillna(False).astype(bool)
     for factor in sorted(required):
         if factor in panel.columns:
+            scoped = panel.loc[eligible_mask, factor]
             coverage_report[factor] = {
-                "missing_pct": round(float(panel[factor].isna().mean()) * 100.0, 2),
-                "total_rows": int(len(panel)),
+                "missing_pct": round(float(scoped.isna().mean()) * 100.0, 2) if len(scoped) else 100.0,
+                "total_rows": int(len(scoped)),
+                "coverage_denominator": "eligible_universe_per_trade_date",
             }
 
     # ── Compute composite score ──
     # Only fill NaN for factors that passed coverage check
-    score = pd.Series(0.0, index=panel.index)
+    score = pd.Series(0.0, index=panel.index, dtype=float)
+    complete = pd.Series(True, index=panel.index)
     for factor, weight in weights.items():
         numeric = pd.to_numeric(panel[factor], errors="coerce")
-        # After coverage check, residual NaN from rare edge cases: fill with 0.0
-        # (these are truly negligible if coverage threshold is met)
-        residual_nan = numeric.isna().sum()
-        if residual_nan > 0:
-            numeric = numeric.fillna(0.0)
-        score += numeric * weight
+        complete &= numeric.notna()
+        score += numeric * float(weight) * float(signs.get(factor, 1.0))
+    score = score.mask(~complete)
 
     panel["formal_score"] = score
+    # `score` is the canonical readiness transport field.  Keep
+    # `formal_score` as the named computation output while binding the two to
+    # the same bytes; downstream gates never infer a missing score as zero.
+    panel["score"] = panel["formal_score"]
     panel["formal_rank"] = panel.groupby("trade_date")["formal_score"].rank(pct=True)
     panel["selected"] = panel["formal_rank"] >= (1.0 - top_pct)
+    # The canonical readiness contract is strategy-keyed.  Replicate the
+    # same independently computed score for each pre-registered formal
+    # strategy identity only when the caller explicitly supplies that set;
+    # this does not create or tune a new strategy and keeps one score source
+    # bound to the immutable factor panel.
+    panel["strategy"] = resolved_strategy_ids[0]
+    if len(resolved_strategy_ids) > 1:
+        panel = pd.concat(
+            [panel.assign(strategy=strategy) for strategy in resolved_strategy_ids],
+            ignore_index=True,
+        )
 
     # ── Timezone enforcement ──
     avail_cols = [c for c in panel.columns if c.endswith("_available_at")]
     tz_blockers = []
     for col in avail_cols:
         try:
+            if validate_explicit_timezone(panel[col]):
+                tz_blockers.append(f"{col}_timezone_missing")
             parsed = pd.to_datetime(panel[col], errors="coerce", utc=True)
             if parsed.isna().any():
                 tz_blockers.append(f"{col}_unparseable_or_no_timezone")
@@ -203,18 +269,55 @@ def build_formal_scores(
             extra={"blockers": tz_blockers},
         )
 
+    if "signal_time" in panel.columns:
+        if validate_explicit_timezone(panel["signal_time"]):
+            tz_blockers.append("signal_time_timezone_missing")
+        signal_time = pd.to_datetime(panel["signal_time"], errors="coerce", utc=True)
+    else:
+        signal_time = signal_time_for_trade_dates(panel["trade_date"])
+        panel["signal_time"] = signal_time
+    if signal_time.isna().any():
+        tz_blockers.append("signal_time_unparseable")
+    # The active formal profile has one timing contract.  Legacy synthetic
+    # score fixtures may omit signal_time, but a supplied timestamp in the
+    # alpha_v3_2 path must be exactly T 15:30 Asia/Shanghai rather than an
+    # earlier/later close silently widening the PIT window.
+    if str(strategy_def.get("acceptance_profile") or "") == "alpha_v3_2":
+        expected_signal = signal_time_for_trade_dates(panel["trade_date"])
+        if (signal_time != expected_signal).fillna(True).any():
+            tz_blockers.append("signal_time_not_canonical_t1530")
+
     if avail_cols:
         avail_frames = [pd.to_datetime(panel[c], utc=True) for c in avail_cols]
         latest_avail = avail_frames[0]
         for af in avail_frames[1:]:
             latest_avail = pd.DataFrame({"a": latest_avail, "b": af}).max(axis=1)
-        compute_time_utc = pd.Timestamp.now(tz="UTC")
-        panel["score_available_at"] = pd.DataFrame({
-            "latest_avail": latest_avail,
-            "compute_time": compute_time_utc,
-        }).max(axis=1)
+        panel["score_available_at"] = latest_avail
     else:
-        panel["score_available_at"] = pd.Timestamp.now(tz="UTC")
+        panel["score_available_at"] = signal_time
+    if (panel["score_available_at"] > signal_time).any():
+        tz_blockers.append("score_available_after_signal_time")
+
+    if tz_blockers:
+        return blocked_report(
+            "formal_score_builder", "timezone",
+            "available_at_timezone_invalid",
+            extra={"blockers": tz_blockers},
+        )
+
+    ordered_dates = sorted(
+        pd.to_datetime(panel["trade_date"], errors="coerce").dropna().dt.date.unique()
+    )
+    next_date = {
+        value: ordered_dates[index + 1]
+        for index, value in enumerate(ordered_dates[:-1])
+    }
+    trade_dates = pd.to_datetime(panel["trade_date"], errors="coerce").dt.date
+    panel["execution_time"] = trade_dates.map(next_date).map(
+        lambda value: (
+            f"{value.isoformat()}T09:30:00+08:00" if pd.notna(value) else None
+        )
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     score_path = output_dir / "formal_scores.parquet"
@@ -228,13 +331,16 @@ def build_formal_scores(
         "schema_version": "formal_score_builder_v5_1",
         "status": "PASS",
         "strategy_id": strategy_id,
+        "strategy_ids": list(resolved_strategy_ids),
         "strategy_definition_sha256": strategy_def_sha,
         "score_code_sha256": code_sha,
         "git_commit_sha": git_sha,
         "factor_panel_sha256": panel_sha,
         "factor_panel_path": str(factor_panel_path),
         "factor_weights": weights,
+        "factor_signs": signs,
         "factor_weights_sha256": weights_sha,
+        "factor_signs_sha256": canonical_sha({k: signs[k] for k in sorted(signs)}),
         "missing_factor_threshold_pct": missing_threshold,
         "factor_coverage": coverage_report,
         "top_pct": top_pct,
@@ -245,6 +351,8 @@ def build_formal_scores(
         "dates": int(panel["trade_date"].nunique()) if "trade_date" in panel.columns else 0,
         "selected_count": int(panel["selected"].sum()) if "selected" in panel.columns else 0,
         "computed_at": compute_time,
+        "signal_cutoff": "T15:30:00+08:00",
+        "execution_time": "T+1 09:30:00+08:00",
         "capital_authority": False,
     }
     manifest["content_sha256"] = canonical_sha(

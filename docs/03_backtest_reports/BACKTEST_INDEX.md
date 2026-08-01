@@ -1,5 +1,11 @@
 # 回测报告索引
 
+## 2026-08-01 Formal Happy-path 与 TopK Challenger
+
+- 实施记录：[Formal Happy-path 与 50 万元 TopK Challenger 升级记录](../tasks/2026-08-01_Formal_HappyPath_TopK_Challenger升级.md)。
+- Top5/Top10 研究入口及每因子 IC/衰减、换手、成本/容量明细写入 `exports/`；真实
+  PIT、OOS 与 Shadow 未闭合前不记录历史 Alpha PASS，保持 `BLOCKED / NO_SCALE / 0元`。
+
 > 2026-07-31 Alpha v4.7 PIT Data Adapter：新增文件与只读 MySQL 两类适配器，
 > 统一 market/universe/financial/industry/adjustment 五类快照的内容 SHA、
 > schema hash、semantic version、field definition hash、provider 和 retrieval

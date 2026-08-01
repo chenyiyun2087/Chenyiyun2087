@@ -196,6 +196,14 @@ def _build_pr_i_report(
         "blockers": sorted(set(blockers)),
         "source_manifest": source_manifest,
     }
+    # Keep the long-standing decision aliases for callers that consume the
+    # PR-I report directly.  They are derived from the strict chain/economic
+    # statuses above and do not relax any gate.
+    triggered = (
+        pr_chain_status == "PASS" and economic_status == "ECONOMIC_FAILED"
+    )
+    result["decision"] = "PR_I_TRIGGERED" if triggered else "PR_I_NOT_TRIGGERED"
+    result["economic_failure_only"] = bool(triggered and technical_evidence_complete)
     result["evidence_sha256"] = hashlib.sha256(
         json.dumps(
             result, ensure_ascii=False, sort_keys=True, separators=(",", ":")

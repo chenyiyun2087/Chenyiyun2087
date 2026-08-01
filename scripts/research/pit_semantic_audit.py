@@ -6,7 +6,7 @@ before the Factor Builder can run.  Any DIAGNOSTIC, UNKNOWN, or ERROR
 status is equivalent to BLOCKED.
 
 Validates:
-  - Five snapshot families have correct schema
+  - All eight canonical snapshot families have correct schema
   - Field semantic SHA matches the authoritative registry
   - *_available_at columns are present and tz-aware
   - Financial revision chain integrity
@@ -30,7 +30,8 @@ import yaml
 from runtime.acceptance_config import canonical_sha
 from runtime.pit_semantic_contract import (
     get_contract_sha256, get_required_columns, get_primary_key,
-    get_available_at_column, validate_frame_schema, validate_explicit_timezone,
+    get_available_at_column, get_business_time_column, signal_time_for_trade_dates,
+    validate_frame_schema, validate_explicit_timezone,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -116,29 +117,33 @@ def run_semantic_audit(
         row_count = len(df)
 
         # ── available_at column check ──
-        avail_col = f"{family}_available_at"
+        avail_col = get_available_at_column(family)
         if avail_col in df.columns:
+            timezone_offenders = validate_explicit_timezone(df[avail_col])
+            if timezone_offenders:
+                blockers.append(f"available_at_no_timezone:{family}")
             try:
                 parsed = pd.to_datetime(df[avail_col], errors="coerce", utc=True)
                 if parsed.isna().any():
                     blockers.append(f"available_at_unparseable:{family}")
             except Exception:
                 blockers.append(f"available_at_timezone_error:{family}")
-        elif family in ("market", "universe"):
-            # Only market and universe strictly require available_at
+        else:
             blockers.append(f"available_at_missing:{family}")
 
         # ── Future-data leakage check ──
         # v5.1.4: Check that available_at is NOT after the signal cutoff time.
-        # Signal cutoff = trade_date 16:00 Asia/Shanghai.
+        # Signal cutoff = trade_date 15:30 Asia/Shanghai.
         # available_at > signal_cutoff → data not yet available at signal time → leak.
-        if "trade_date" in df.columns and avail_col in df.columns:
+        business_col = get_business_time_column(family)
+        if business_col in df.columns and avail_col in df.columns:
             try:
-                td = pd.to_datetime(df["trade_date"], errors="coerce", utc=True)
+                td = pd.to_datetime(df[business_col], errors="coerce", utc=True)
                 av = pd.to_datetime(df[avail_col], errors="coerce", utc=True)
                 if td.notna().any() and av.notna().any():
-                    # signal_cutoff = trade_date at 16:00 Asia/Shanghai = trade_date at 08:00 UTC
-                    signal_cutoff = td + pd.Timedelta(hours=8)
+                    signal_cutoff = signal_time_for_trade_dates(
+                        pd.to_datetime(df[business_col], errors="coerce")
+                    )
                     if (av > signal_cutoff).any():
                         future_count = int((av > signal_cutoff).sum())
                         blockers.append(f"future_data_leak:{family}:{future_count}_rows")

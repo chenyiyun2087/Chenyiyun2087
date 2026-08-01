@@ -1,6 +1,6 @@
 schema_version: formal_readiness_v2
 success_status: READY_FOR_FORMAL_RUN
-minimum_start_date: "2013-01-01"
+minimum_start_date: "2018-01-01"
 minimum_score_coverage: 0.98
 minimum_universe_price_coverage: 1.00
 minimum_universe_adjustment_coverage: 1.00
@@ -29,6 +29,18 @@ required_objects:
   - strict_snapshot_manifest.json
   - initial_account.json
   - source_manifest.json
+# Canonical v3.2 package objects.  Legacy fixture tests use the transport
+# objects above; a versioned formal package must also expose all eight PIT
+# families with their contract-defined fields.
+canonical_required_objects:
+  - market.parquet
+  - universe.parquet
+  - financial.parquet
+  - industry.parquet
+  - adjustment.parquet
+  - trade_calendar.parquet
+  - security_lifecycle.parquet
+  - corporate_actions.parquet
 primary_keys:
   trade_calendar.csv: [cal_date, exchange]
   tradable_universe.csv: [trade_date, symbol]

@@ -17,7 +17,7 @@ The package contains all inputs needed by PR-C (Immutable Formal Runner):
 
 Builder constraints:
   - Only accept inputs from a verified-Seal PIT Run (verify_seal mandatory)
-  - All five Snapshot families are MANDATORY (not optional)
+  - All eight canonical Snapshot families are MANDATORY (not optional)
   - No symlinks, no .building paths, no database access
   - No _internal_call escape hatch — Seal verification is always required
 """
@@ -28,6 +28,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import stat
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +60,10 @@ def _copy_file_safe(src: Path, dst: Path) -> dict[str, str]:
         raise OSError(f"symlink forbidden: {src}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+    # PIT Run files are read-only after sealing.  The Package Builder writes
+    # its own package-scoped manifests (never the source bytes), so make the
+    # copied transport file writable in the private .building directory.
+    dst.chmod(dst.stat().st_mode | stat.S_IWUSR)
     return {"path": str(dst.relative_to(dst.parent)), "sha256": _file_sha(dst)}
 
 
@@ -176,7 +181,9 @@ def build_formal_package(
         "builder_report.json": pit_run_dir / "builder" / "builder_report.json",
         # PIT Run identity
         "pit_run_manifest.json": pit_run_dir / "pit_run_manifest.json",
-        "seal_manifest.json": pit_run_dir / "seal_manifest.json",
+        # Keep the upstream PIT seal under a distinct name; the package gets
+        # its own root seal_manifest.json when it is sealed below.
+        "pit_seal_manifest.json": pit_run_dir / "seal_manifest.json",
         # Snapshots — ALL mandatory (v5.1.6: 8 families)
         "market.parquet": pit_run_dir / "adapter" / "snapshots" / "market.parquet",
         "universe.parquet": pit_run_dir / "adapter" / "snapshots" / "universe.parquet",
@@ -186,6 +193,16 @@ def build_formal_package(
         "trade_calendar.parquet": pit_run_dir / "adapter" / "snapshots" / "trade_calendar.parquet",
         "security_lifecycle.parquet": pit_run_dir / "adapter" / "snapshots" / "security_lifecycle.parquet",
         "corporate_actions.parquet": pit_run_dir / "adapter" / "snapshots" / "corporate_actions.parquet",
+        # Downstream Alpha/Promotion reports are copied as evidence, even
+        # when they are explicitly BLOCKED for missing OOS/Shadow inputs.
+        "alpha_attribution_report.json": pit_run_dir / "reports" / "alpha_attribution_report.json",
+        "factor_ic_report.json": pit_run_dir / "reports" / "factor_ic_report.json",
+        "walk_forward_report.json": pit_run_dir / "reports" / "walk_forward_report.json",
+        "execution_cost_report.json": pit_run_dir / "reports" / "execution_cost_report.json",
+        "alpha_proof_guard_report.json": pit_run_dir / "reports" / "alpha_proof_guard_report.json",
+        "alpha_proof_report.json": pit_run_dir / "reports" / "alpha_proof_report.json",
+        "promotion_gate_report.json": pit_run_dir / "reports" / "promotion_gate_report.json",
+        "strategy_scorecard.json": pit_run_dir / "reports" / "strategy_scorecard.json",
     }
 
     for rel_name, src_path in sorted(ENTRIES.items()):
@@ -223,10 +240,17 @@ def build_formal_package(
     _convert_parquet_to_csv("universe.parquet", "tradable_universe.csv", csv_entries, blockers)
     _convert_parquet_to_csv("adjustment.parquet", "adjustment_factors.csv", csv_entries, blockers)
 
-    # prices.csv from market.parquet
+    # prices.csv from market.parquet.  The CSV is only a transport format;
+    # field names remain the canonical PIT contract names.
     try:
         mkt_df = pd.read_parquet(building_dir / "market.parquet")
-        prices_cols = [c for c in ["trade_date", "symbol", "open", "high", "low", "close", "volume", "amount"] if c in mkt_df.columns]
+        prices_cols = [
+            c for c in [
+                "trade_date", "symbol", "open", "high", "low", "close",
+                "pre_close", "volume", "amount", "circ_mv", "market_return",
+                "market_regime", "market_available_at",
+            ] if c in mkt_df.columns
+        ]
         mkt_df[prices_cols].to_csv(building_dir / "prices.csv", index=False)
         csv_entries["prices.csv"] = {"sha256": _file_sha(building_dir / "prices.csv")}
     except Exception as exc:
@@ -254,43 +278,88 @@ def build_formal_package(
         blockers.append("corporate_actions_snapshot_missing:cannot_derive_from_adjustment")
 
     # strict_snapshot_manifest.json + source_manifest.json
+    #
+    # The package source manifest is rebuilt below after all transport files
+    # (CSV views and the canonical account) have been materialised.  Keep the
+    # adapter manifest hash separately: including the package source manifest
+    # in its own object map would create a circular hash dependency.
     from runtime.pit_semantic_contract import get_contract_sha256
+    adapter_source_manifest: dict[str, Any] = {}
+    adapter_source_path = building_dir / "source_manifest.json"
+    adapter_source_manifest_sha = _file_sha(adapter_source_path) if adapter_source_path.exists() else ""
+    if adapter_source_path.exists():
+        try:
+            adapter_source_manifest = json.loads(
+                adapter_source_path.read_text(encoding="utf-8")
+            )
+        except Exception as exc:
+            blockers.append(f"adapter_source_manifest_unreadable:{type(exc).__name__}")
+    source_snapshot_sha = canonical_sha(
+        {
+            name: {
+                "content_sha256": (info or {}).get("content_sha256")
+                or (info or {}).get("sha256"),
+                "schema_hash": (info or {}).get("schema_hash"),
+                "coverage_start": (info or {}).get("coverage_start"),
+                "coverage_end": (info or {}).get("coverage_end"),
+            }
+            for name, info in sorted((adapter_source_manifest.get("sources") or {}).items())
+        }
+    )
     snapshot_manifest = {
         "schema_version": "strict_snapshot_manifest_v5_1_6",
+        "snapshot_schema_version": "strict_snapshot_manifest_v5_1_6",
+        "dataset_version": adapter_source_manifest.get("schema_semantic_version") or "formal_pit_package",
+        "generated_at": adapter_source_manifest.get("retrieved_at") or datetime.now(timezone.utc).isoformat(),
         "formal_pit_run_id": formal_pit_run_id,
         "package_id": package_id,
         "data_evidence": "DATA_E0",
         "semantic_contract_sha256": get_contract_sha256(),
-        "files": {k: v["sha256"] for k, v in sorted(csv_entries.items())},
+        "snapshot_identity": adapter_source_manifest.get("snapshot_identity"),
+        "source_manifest_sha256": adapter_source_manifest_sha,
+        "adapter_source_manifest_sha256": adapter_source_manifest_sha,
+        "source_snapshot_sha256": source_snapshot_sha,
+        "snapshot_sha256": _file_sha(building_dir / "strict_corporate_actions.csv")
+        if (building_dir / "strict_corporate_actions.csv").exists()
+        else "",
+        "lifecycle_snapshot_sha256": _file_sha(building_dir / "strict_security_lifecycle.csv")
+        if (building_dir / "strict_security_lifecycle.csv").exists()
+        else "",
+        "source_sha256": (
+            ((adapter_source_manifest.get("sources") or {}).get("corporate_actions") or {}).get("content_sha256")
+            or ((adapter_source_manifest.get("sources") or {}).get("corporate_actions") or {}).get("sha256")
+            or ""
+        ),
+        "lifecycle_source_sha256": (
+            ((adapter_source_manifest.get("sources") or {}).get("security_lifecycle") or {}).get("content_sha256")
+            or ((adapter_source_manifest.get("sources") or {}).get("security_lifecycle") or {}).get("sha256")
+            or ""
+        ),
+        # This map intentionally excludes the package source manifest and the
+        # strict manifest itself.  Both contain hashes and would otherwise
+        # form an impossible circular fixed point.  The package-level
+        # artifact_tree_sha256 binds every final file separately.
+        "files": {
+            name: info["sha256"]
+            for name, info in sorted(required_objects.items())
+            if name not in {"source_manifest.json", "strict_snapshot_manifest.json"}
+        },
     }
-    sm_path = building_dir / "strict_snapshot_manifest.json"
-    sm_path.write_text(json.dumps(snapshot_manifest, ensure_ascii=False, indent=2))
-    csv_entries["strict_snapshot_manifest.json"] = {"sha256": _file_sha(sm_path)}
 
-    # source_manifest.json — matches preflight contract
-    source_manifest = {
-        "schema_version": "formal_source_manifest_v1",
-        "formal_pit_run_id": formal_pit_run_id,
-        "package_id": package_id,
-        "calendar_source": "tushare_stock.dim_trade_cal",
-        "coverage_start": "",
-        "coverage_end": "",
-        "semantic_contract_sha256": get_contract_sha256(),
-        "objects": {k: {"sha256": v["sha256"]} for k, v in sorted(csv_entries.items())},
-    }
-    srcm_path = building_dir / "source_manifest.json"
-    srcm_path.write_text(json.dumps(source_manifest, ensure_ascii=False, indent=2))
-    csv_entries["source_manifest.json"] = {"sha256": _file_sha(srcm_path)}
-
-    # Merge CSV entries into required_objects
+    # Merge all CSV transport views into the package object inventory before
+    # sealing the snapshot/account manifests.  These are compatibility views,
+    # never an alternative semantic source of truth.
     for name, info in csv_entries.items():
         required_objects[name] = {"path": name, "sha256": info["sha256"]}
 
     # ── Initial account (identity bound to PIT Run sealed_at) ──
+    # Create it before the final source manifest so the manifest can bind the
+    # exact bytes consumed by Readiness and the Formal Runner.
     seal_manifest = json.loads((pit_run_dir / "seal_manifest.json").read_text(encoding="utf-8"))
     account = {
         "currency": "CNY",
-        "initial_capital": initial_account_cny,
+        "initial_cash_cny": initial_account_cny,
+        "positions": {},
         "generated_at": seal_manifest.get("sealed_at", datetime.now(timezone.utc).isoformat()),
         "pit_run_sealed_at": seal_manifest.get("sealed_at"),
     }
@@ -298,6 +367,76 @@ def build_formal_package(
     acc_path.write_text(json.dumps(account, ensure_ascii=False, indent=2))
     required_objects["initial_account.json"] = {
         "path": "initial_account.json", "sha256": _file_sha(acc_path),
+    }
+
+    # Now that all derived transport files and the account exist, seal the
+    # strict snapshot manifest.  It deliberately points to the immutable
+    # adapter source manifest hash (not the package manifest that contains
+    # this file's hash).
+    snapshot_manifest["files"] = {
+        name: info["sha256"]
+        for name, info in sorted(required_objects.items())
+        if name not in {"source_manifest.json", "strict_snapshot_manifest.json"}
+    }
+    sm_path = building_dir / "strict_snapshot_manifest.json"
+    sm_path.write_text(json.dumps(snapshot_manifest, ensure_ascii=False, indent=2, sort_keys=True))
+    required_objects["strict_snapshot_manifest.json"] = {
+        "path": "strict_snapshot_manifest.json", "sha256": _file_sha(sm_path),
+    }
+
+    # source_manifest.json — matches preflight contract.  It binds every
+    # final package object except itself, including canonical parquet,
+    # transport CSV, strict snapshot and the canonical initial account.
+    def _coverage(filename: str, column: str) -> tuple[str | None, str | None]:
+        path = building_dir / filename
+        if not path.exists():
+            return None, None
+        try:
+            frame = pd.read_csv(path, usecols=[column])
+        except (OSError, ValueError, KeyError) as exc:
+            blockers.append(f"coverage_column_missing:{filename}:{column}:{type(exc).__name__}")
+            return None, None
+        values = pd.to_datetime(frame[column], errors="coerce").dropna()
+        if values.empty:
+            return None, None
+        return values.min().date().isoformat(), values.max().date().isoformat()
+
+    calendar_start, calendar_end = _coverage("trade_calendar.csv", "cal_date")
+    price_start, price_end = _coverage("prices.csv", "trade_date")
+    starts = [value for value in (calendar_start, price_start) if value]
+    ends = [value for value in (calendar_end, price_end) if value]
+    if not starts or not ends:
+        blockers.append("coverage_start_end_missing")
+    source_manifest = {
+        "schema_version": "formal_source_manifest_v2",
+        "formal_pit_run_id": formal_pit_run_id,
+        "package_id": package_id,
+        "calendar_source": "tushare_stock.dim_trade_cal",
+        "coverage_start": min(starts) if starts else None,
+        "coverage_end": max(ends) if ends else None,
+        "semantic_contract_sha256": get_contract_sha256(),
+        "field_definition_hash": adapter_source_manifest.get("field_definition_hash")
+        or get_contract_sha256(),
+        "release": adapter_source_manifest.get("release"),
+        "provider": adapter_source_manifest.get("provider"),
+        "retrieved_at": adapter_source_manifest.get("retrieved_at"),
+        "evidence_origin": adapter_source_manifest.get("evidence_origin"),
+        "snapshot_identity": adapter_source_manifest.get("snapshot_identity"),
+        "input_snapshot_sha256": source_snapshot_sha,
+        "sources": adapter_source_manifest.get("sources") or {},
+        "objects": {
+            name: {"sha256": info["sha256"]}
+            for name, info in sorted(required_objects.items())
+            if name != "source_manifest.json"
+        },
+    }
+    source_manifest["content_sha256"] = canonical_sha(
+        {key: value for key, value in source_manifest.items() if key != "content_sha256"}
+    )
+    srcm_path = building_dir / "source_manifest.json"
+    srcm_path.write_text(json.dumps(source_manifest, ensure_ascii=False, indent=2, sort_keys=True))
+    required_objects["source_manifest.json"] = {
+        "path": "source_manifest.json", "sha256": _file_sha(srcm_path),
     }
 
     if blockers:
@@ -337,6 +476,14 @@ def build_formal_package(
 
     # ── Seal the package with real git SHA ──
     seal_directory(building_dir, run_id=package_id, git_commit_sha=git_sha)
+    package_seal = verify_seal(building_dir)
+    if package_seal.get("status") != "VERIFIED":
+        return blocked_report(
+            "formal_package",
+            "seal",
+            "package_seal_verification_failed",
+            extra={"seal_result": package_seal},
+        )
 
     # ── Atomic publish ──
     building_dir.rename(package_dir)

@@ -345,10 +345,68 @@ acceptance:
     # ── Formal Evidence Backbone v5.0 ──
     # Historical profiles are frozen in config/validation_profiles/.
     # Each profile is an independent, immutable YAML file.
-    # New validation runs must use: formal_v5_0
+    # New validation runs use the active alpha_v3_2 Proof Guard profile;
+    # formal_v5_0 remains available for historical replay compatibility.
     # Historical replays must use the EXACT profile version from that era.
     formal_v5_0: *alpha_v4_7
-    # ── End v5.0 profiles ──
+    # ── Active v3.2 Proof Guard profile ──
+    # This top-level copy is consumed by production-readiness evaluators;
+    # runtime/research modules load the same versioned contract from
+    # config/validation_profiles/alpha_v3_2.yaml.
+    alpha_v3_2:
+      <<: *alpha_v4_7
+      schema_version: "alpha_v3_2_acceptance_v1"
+      evidence_version: "alpha_v3_2_evidence_v1"
+      core_period:
+        min_start_date: "2018-01-01"
+        end_date_policy: "latest_complete_trading_day"
+        legacy_extension_start_date: "2013-01-01"
+        legacy_extension_required: false
+        min_trade_day_coverage: 0.98
+      benchmarks:
+        primary: "000300.SH"
+        secondary: "000905.SH"
+        required: ["000300.SH", "000905.SH", "000852.SH"]
+        require_point_in_time_series: true
+      alpha_proof:
+        schema_version: "alpha_v3_2_proof_guard_v1"
+        min_aligned_trading_days: 252
+        min_daily_coverage: 0.95
+        require_full_rank_regression: true
+        residual_label: "regression_alpha"
+        benchmark_gate_policy: "primary_excess_and_all_required_complete"
+        require_timezone_aware_availability: true
+        timezone: "Asia/Shanghai"
+        unexplained_variance_warning_ratio: 0.05
+        max_unexplained_variance_ratio: 0.05
+        min_alpha_tstat: 2.0
+        stability_years: [2023, 2024, 2025, 2026]
+        min_stability_year_trading_days: 126
+        min_stability_year_months: 9
+        min_valid_stability_years: 3
+        min_positive_alpha_year_ratio: 0.60
+        max_single_positive_year_alpha_contribution: 0.60
+        stock_selection_requires_independent_evidence: true
+      performance:
+        research_target_annualized_return: 0.30
+        min_annualized_return: 0.25
+        min_annualized_excess_return: 0.15
+        max_drawdown: -0.25
+        min_sharpe_ratio: 1.00
+      factor_ic:
+        horizons: [5, 10, 20]
+        min_mean_rank_ic: 0.02
+        min_information_ratio: 0.30
+        research_disable_below_mean_rank_ic: 0.01
+        min_coverage: 0.95
+      promotion:
+        require_formal_pit: true
+        require_walk_forward: true
+        require_factor_attribution: true
+        require_factor_ic: true
+        require_execution_stress: true
+        research_pass_does_not_authorize_capital: true
+    # ── End versioned profiles ──
 
   # -----------------------------------------------------------------------
   # L0→L1: Research → Manual Production

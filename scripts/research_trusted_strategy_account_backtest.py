@@ -21,6 +21,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scoreRank.core.db_config import build_sqlalchemy_url
 from runtime.formal_contract import FORMAL_STRATEGIES
+from runtime.pit_semantic_contract import (
+    signal_time_for_trade_dates,
+    validate_explicit_timezone,
+)
 from scripts.ops.production_config import load_production_config
 from scripts.ops.production_risk_governor import (
     build_risk_governor_decision,
@@ -597,9 +601,38 @@ def _manifest_provenance(manifest: dict, *, snapshot_key: str, source_key: str) 
 def _load_corporate_action_snapshot(path: str | Path, manifest_path: str | Path) -> tuple[dict[object, list[CorporateAction]], str, str, dict[str, object]]:
     """Load the immutable research snapshot produced by the Tushare adapter."""
     frame, manifest, digest = _verified_snapshot(path, manifest_path, "snapshot_sha256")
+    provenance = _manifest_provenance(
+        manifest, snapshot_key="snapshot_sha256", source_key="source_sha256"
+    )
+    # v3.2 canonical PIT semantics use family-specific names.  The internal
+    # ledger model keeps its historical ``action_type`` attribute, so mapping
+    # happens only at this non-authoritative compatibility boundary.
+    if "action_type" not in frame.columns and "corporate_action_type" in frame.columns:
+        frame["action_type"] = frame["corporate_action_type"]
+    if "source_event_id" not in frame.columns and "event_id" in frame.columns:
+        frame["source_event_id"] = frame["event_id"]
+    if "as_of_timestamp" not in frame.columns and "corporate_action_available_at" in frame.columns:
+        frame["as_of_timestamp"] = frame["corporate_action_available_at"]
+    if "effective_date" not in frame.columns and "ex_date" in frame.columns:
+        frame["effective_date"] = frame["ex_date"]
     required = {"symbol", "action_type", "effective_date", "source_event_id", "as_of_timestamp", "source_complete", "event_hash"}
     if missing := sorted(required - set(frame.columns)):
         raise RuntimeError(f"corporate action snapshot missing fields: {missing}")
+    is_fixture = str(manifest.get("dataset_version")) == "fixture-v1"
+    if "corporate_action_available_at" not in frame.columns and not is_fixture:
+        raise RuntimeError("corporate action snapshot missing fields: ['corporate_action_available_at']")
+    availability_column = "corporate_action_available_at" if "corporate_action_available_at" in frame.columns else "as_of_timestamp"
+    if validate_explicit_timezone(frame[availability_column]):
+        raise RuntimeError("corporate_action_available_at_timezone_invalid")
+    available = pd.to_datetime(frame[availability_column], errors="coerce", utc=True)
+    if available.isna().any():
+        raise RuntimeError("corporate_action_available_at_invalid")
+    action_trade_dates = pd.to_datetime(
+        frame.get("trade_date", frame["effective_date"]), errors="coerce"
+    )
+    signal = signal_time_for_trade_dates(action_trade_dates)
+    if (available > signal).any():
+        raise RuntimeError("corporate_action_available_at_after_signal")
     actions: dict[object, list[CorporateAction]] = {}
     for _, row in frame.iterrows():
         date = pd.to_datetime(row.get("effective_date"), errors="coerce")
@@ -625,7 +658,7 @@ def _load_corporate_action_snapshot(path: str | Path, manifest_path: str | Path)
         if not np.isfinite(action.settlement_price or np.nan):
             action = CorporateAction(**{**action.__dict__, "settlement_price": None})
         actions.setdefault(action.ex_date, []).append(action)
-    return actions, "SNAPSHOT_COMPLETE_UNRECONCILED", digest, _manifest_provenance(manifest, snapshot_key="snapshot_sha256", source_key="source_sha256")
+    return actions, "SNAPSHOT_COMPLETE_UNRECONCILED", digest, provenance
 
 
 def _validate_corporate_action_pit(actions_by_date: dict[object, list[CorporateAction]], calendar: list[object]) -> None:
@@ -648,31 +681,220 @@ def _verified_snapshot(path: str | Path, manifest_path: str | Path, manifest_key
     snapshot, manifest_file = Path(path), Path(manifest_path)
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
     digest = hashlib.sha256(snapshot.read_bytes()).hexdigest()
-    if manifest.get(manifest_key) != digest:
+    declared = manifest.get(manifest_key)
+    if not declared:
+        files = manifest.get("files") or {}
+        declared = files.get(snapshot.name)
+        if isinstance(declared, dict):
+            declared = declared.get("sha256")
+    if declared != digest:
         raise RuntimeError(f"snapshot manifest hash mismatch: {snapshot.name}")
-    return pd.read_csv(snapshot), manifest, digest
+    if snapshot.suffix.lower() in {".parquet", ".pq"}:
+        frame = pd.read_parquet(snapshot)
+    else:
+        frame = pd.read_csv(snapshot)
+    return frame, manifest, digest
+
+
+def _read_snapshot_table(path: str | Path) -> pd.DataFrame:
+    """Read a frozen CSV/Parquet snapshot without changing its semantics."""
+    snapshot = Path(path)
+    if snapshot.suffix.lower() in {".parquet", ".pq"}:
+        return pd.read_parquet(snapshot)
+    return pd.read_csv(snapshot, dtype={"symbol": str, "ts_code": str})
 
 
 def _load_lifecycle_snapshot(path: str | Path, manifest_path: str | Path) -> tuple[pd.DataFrame, str, dict[str, object]]:
     frame, manifest, digest = _verified_snapshot(path, manifest_path, "lifecycle_snapshot_sha256")
-    required = {"symbol", "trade_date", "is_listed", "is_suspended"}
+    provenance = _manifest_provenance(
+        manifest, snapshot_key="lifecycle_snapshot_sha256", source_key="lifecycle_source_sha256"
+    )
+    if "lifecycle_available_at" not in frame.columns and "available_at" in frame.columns:
+        frame["lifecycle_available_at"] = frame["available_at"]
+    # Compatibility is limited to the historical fixture emitted by the
+    # pre-canonical unit-test snapshot builder.  Versioned formal packages
+    # must carry an explicit lifecycle_available_at column.
+    if "lifecycle_available_at" not in frame.columns and str(manifest.get("dataset_version")) == "fixture-v1":
+        frame["lifecycle_available_at"] = (
+            pd.to_datetime(frame["trade_date"], errors="coerce")
+            .dt.strftime("%Y-%m-%dT15:00:00+08:00")
+        )
+    if str(manifest.get("dataset_version")) == "fixture-v1":
+        # Compatibility for the pre-canonical unit-test snapshot only.  A
+        # versioned formal package must provide these fields explicitly.
+        if "is_st" not in frame.columns:
+            frame["is_st"] = 0
+        if "security_status_transition" not in frame.columns:
+            frame["security_status_transition"] = "LEGACY"
+        if "listed_date" not in frame.columns:
+            frame["listed_date"] = frame.get("trade_date")
+    required = {
+        "symbol", "trade_date", "is_listed", "is_st", "is_suspended",
+        "listed_date", "security_status_transition", "lifecycle_available_at",
+    }
     if missing := sorted(required - set(frame.columns)):
         raise RuntimeError(f"lifecycle snapshot missing fields: {missing}")
+    if validate_explicit_timezone(frame["lifecycle_available_at"]):
+        raise RuntimeError("lifecycle_available_at_timezone_invalid")
+    lifecycle_available = pd.to_datetime(
+        frame["lifecycle_available_at"], errors="coerce", utc=True
+    )
+    if lifecycle_available.isna().any():
+        raise RuntimeError("lifecycle_available_at_invalid")
+    lifecycle_signal = signal_time_for_trade_dates(frame["trade_date"])
+    if (lifecycle_available > lifecycle_signal).any():
+        raise RuntimeError("lifecycle_available_at_after_signal")
     frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
     frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce").dt.date
     if frame[["symbol", "trade_date"]].isna().any().any() or frame.duplicated(["symbol", "trade_date"]).any():
         raise RuntimeError("invalid lifecycle snapshot identity")
-    return frame, digest, _manifest_provenance(manifest, snapshot_key="lifecycle_snapshot_sha256", source_key="lifecycle_source_sha256")
+    return frame, digest, provenance
 
 
 def _apply_lifecycle_snapshot(prices: pd.DataFrame, lifecycle: pd.DataFrame) -> pd.DataFrame:
-    out = prices.merge(lifecycle.rename(columns={"is_listed": "snapshot_is_listed", "is_suspended": "snapshot_is_suspended"}), on=["symbol", "trade_date"], how="left")
-    if out[["snapshot_is_listed", "snapshot_is_suspended"]].isna().any().any():
+    lifecycle = lifecycle.copy()
+    lifecycle["symbol"] = lifecycle["symbol"].astype(str).str.zfill(6)
+    lifecycle_columns = [
+        "symbol", "trade_date", "is_listed", "is_st", "is_suspended",
+        "security_status_transition", "lifecycle_available_at",
+    ]
+    missing = sorted(set(lifecycle_columns) - set(lifecycle.columns))
+    if missing:
+        raise RuntimeError(f"lifecycle snapshot missing fields: {missing}")
+    lifecycle_view = lifecycle[lifecycle_columns].rename(
+        columns={column: f"snapshot_{column}" for column in lifecycle_columns if column not in {"symbol", "trade_date"}}
+    )
+    out = prices.merge(
+        lifecycle_view,
+        on=["symbol", "trade_date"],
+        how="left",
+    )
+    status_columns = [
+        "snapshot_is_listed", "snapshot_is_st", "snapshot_is_suspended",
+        "snapshot_security_status_transition", "snapshot_lifecycle_available_at",
+    ]
+    if out[status_columns].isna().any().any():
         raise RuntimeError("lifecycle snapshot missing a price/session status")
     out["is_listed"] = pd.to_numeric(out["snapshot_is_listed"], errors="coerce")
+    out["is_st"] = pd.to_numeric(out["snapshot_is_st"], errors="coerce")
     out["is_suspended"] = pd.to_numeric(out["snapshot_is_suspended"], errors="coerce")
-    out["execution_tradable"] = ((out["is_listed"] == 1) & (out["is_suspended"] == 0) & pd.to_numeric(out.get("raw_volume"), errors="coerce").fillna(0).gt(0)).astype(int)
-    return out.drop(columns=["snapshot_is_listed", "snapshot_is_suspended"])
+    out["security_status_transition"] = out["snapshot_security_status_transition"].astype(str)
+    out["lifecycle_available_at"] = out["snapshot_lifecycle_available_at"]
+    limit_ok = out.get("limit_status", pd.Series("NORMAL", index=out.index)).astype(str).isin({"NORMAL", "NONE"})
+    out["execution_tradable"] = ((out["is_listed"] == 1) & (out["is_suspended"] == 0) & ~out["is_st"].eq(1) & limit_ok & pd.to_numeric(out.get("raw_volume"), errors="coerce").fillna(0).gt(0)).astype(int)
+    return out.drop(columns=status_columns)
+
+
+def _apply_formal_market_snapshots(
+    prices: pd.DataFrame,
+    universe: pd.DataFrame,
+    adjustments: pd.DataFrame,
+) -> pd.DataFrame:
+    """Bind canonical universe/adjustment snapshots to market rows.
+
+    The formal runner never derives these statuses from scores or prices.  A
+    missing row, invalid factor, or duplicate key fails closed before any
+    T+1 order can be simulated.
+    """
+    out = prices.copy()
+    out["symbol"] = out["symbol"].astype(str).str.zfill(6)
+    for canonical, legacy in {
+        "open": "raw_open", "high": "raw_high", "low": "raw_low",
+        "close": "raw_close", "pre_close": "raw_pre_close",
+        "volume": "raw_volume", "amount": "raw_amount",
+    }.items():
+        if legacy not in out.columns and canonical in out.columns:
+            out[legacy] = out[canonical]
+    out["trade_date"] = pd.to_datetime(out["trade_date"], errors="coerce").dt.date
+    for frame, name in ((universe, "universe"), (adjustments, "adjustment")):
+        frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
+        frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce").dt.date
+        if frame.duplicated(["trade_date", "symbol"]).any():
+            raise RuntimeError(f"{name}_snapshot_duplicate_keys")
+    uni_cols = [
+        "trade_date", "symbol", "is_listed", "is_st", "is_suspended",
+        "limit_status", "security_status_transition", "universe_available_at",
+    ]
+    missing_uni = sorted(set(uni_cols) - set(universe.columns))
+    if missing_uni:
+        raise RuntimeError(f"universe_snapshot_missing_fields:{','.join(missing_uni)}")
+    out = out.merge(
+        universe[uni_cols],
+        on=["trade_date", "symbol"],
+        how="left",
+        suffixes=("_market", "_universe"),
+    )
+    # The universe snapshot is authoritative for lifecycle/tradability fields.
+    # If a transport file already carried a duplicate status, require exact
+    # agreement instead of silently choosing one side of the merge.
+    for column in uni_cols[2:]:
+        universe_column = f"{column}_universe" if f"{column}_universe" in out.columns else column
+        market_column = f"{column}_market" if f"{column}_market" in out.columns else None
+        if market_column and market_column in out.columns:
+            left = out[market_column]
+            right = out[universe_column]
+            if (
+                left.notna()
+                & right.notna()
+                & left.astype("string").ne(right.astype("string"))
+            ).any():
+                raise RuntimeError(f"universe_snapshot_conflict:{column}")
+        out[column] = out[universe_column]
+        for duplicate in (market_column, universe_column):
+            if duplicate and duplicate != column and duplicate in out.columns:
+                out.drop(columns=[duplicate], inplace=True)
+    if out[uni_cols[2:]].isna().any().any():
+        raise RuntimeError("universe_snapshot_missing_price_rows")
+    adj_cols = ["trade_date", "symbol", "adj_factor", "adjustment_available_at"]
+    missing_adj = sorted(set(adj_cols) - set(adjustments.columns))
+    if missing_adj:
+        raise RuntimeError(f"adjustment_snapshot_missing_fields:{','.join(missing_adj)}")
+    out = out.merge(
+        adjustments[adj_cols],
+        on=["trade_date", "symbol"],
+        how="left",
+        suffixes=("_market", "_adjustment"),
+    )
+    if "adj_factor_adjustment" in out.columns:
+        if "adj_factor_market" in out.columns:
+            left = pd.to_numeric(out["adj_factor_market"], errors="coerce")
+            right = pd.to_numeric(out["adj_factor_adjustment"], errors="coerce")
+            if (left.notna() & right.notna() & ~np.isclose(left, right, equal_nan=True)).any():
+                raise RuntimeError("adjustment_snapshot_conflict:adj_factor")
+        out["adj_factor"] = out["adj_factor_adjustment"]
+        out.drop(columns=[column for column in ("adj_factor_market", "adj_factor_adjustment") if column in out.columns], inplace=True)
+    if "adjustment_available_at_adjustment" in out.columns:
+        out["adjustment_available_at"] = out["adjustment_available_at_adjustment"]
+        out.drop(columns=["adjustment_available_at_adjustment"], inplace=True)
+    factor = pd.to_numeric(out["adj_factor"], errors="coerce")
+    if factor.isna().any() or (factor <= 0).any() or (~np.isfinite(factor)).any():
+        raise RuntimeError("adjustment_snapshot_invalid_factor")
+    if out["adj_factor"].isna().any():
+        raise RuntimeError("adjustment_snapshot_missing_price_rows")
+    for adjusted, raw in (("adj_open", "raw_open"), ("adj_high", "raw_high"), ("adj_low", "raw_low"), ("adj_close", "raw_close")):
+        if raw not in out.columns:
+            raise RuntimeError(f"market_snapshot_missing_field:{raw}")
+        out[adjusted] = pd.to_numeric(out[raw], errors="coerce") * factor
+    out["execution_tradable"] = (
+        pd.to_numeric(out["is_listed"], errors="coerce").eq(1)
+        & pd.to_numeric(out["is_st"], errors="coerce").eq(0)
+        & pd.to_numeric(out["is_suspended"], errors="coerce").eq(0)
+        & out["limit_status"].astype(str).isin({"NORMAL", "NONE"})
+        & pd.to_numeric(out["raw_volume"], errors="coerce").fillna(0).gt(0)
+    ).astype(int)
+    # Every canonical availability timestamp must be explicit and no later
+    # than the T-day 15:30 signal cutoff.  This keeps the formal runner from
+    # accepting a package that only passed the preflight by field aliasing.
+    for column in ("market_available_at", "universe_available_at", "adjustment_available_at"):
+        if column not in out.columns:
+            raise RuntimeError(f"canonical_available_at_missing:{column}")
+        if validate_explicit_timezone(out[column]):
+            raise RuntimeError(f"canonical_available_at_timezone_invalid:{column}")
+        available = pd.to_datetime(out[column], errors="coerce", utc=True)
+        signal = signal_time_for_trade_dates(pd.Series(out["trade_date"], index=out.index))
+        if available.isna().any() or (available > signal).any():
+            raise RuntimeError(f"canonical_available_at_after_signal:{column}")
+    return out
 
 
 def _load_corporate_actions(engine, start_date: object, end_date: object) -> tuple[dict[object, list[CorporateAction]], str]:
@@ -3010,7 +3232,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     ashare_target_cache_dir = getattr(args, "ashare_target_cache_dir", None) or ASHARE_ROUTE_CACHE_ROOT
     engine = create_engine(build_sqlalchemy_url())
     if getattr(args, "scores_snapshot", None):
-        scores = pd.read_csv(args.scores_snapshot)
+        scores = _read_snapshot_table(args.scores_snapshot)
         scores["trade_date"] = pd.to_datetime(scores["trade_date"], errors="coerce").dt.date
         scores = _normalize_formal_score_snapshot(scores)
     else:
@@ -3024,7 +3246,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         raise RuntimeError("No score rows loaded after filters.")
 
     if getattr(args, "prices_snapshot", None):
-        prices = pd.read_csv(args.prices_snapshot)
+        prices = _read_snapshot_table(args.prices_snapshot)
         prices["trade_date"] = pd.to_datetime(prices["trade_date"], errors="coerce").dt.date
     else:
         prices = load_prices(engine, scores["trade_date"].min(), scores["trade_date"].max(), args.hold_days)
@@ -3042,16 +3264,11 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     if requires_frozen_inputs:
         corporate_actions_by_date, corporate_action_source_status, corporate_action_snapshot_hash, corporate_manifest_provenance = _load_corporate_action_snapshot(args.corporate_action_snapshot, args.corporate_action_manifest)
         lifecycle, lifecycle_snapshot_hash, lifecycle_manifest_provenance = _load_lifecycle_snapshot(args.security_lifecycle_snapshot, args.security_lifecycle_manifest)
+        # Bind all canonical snapshots before any feature or order logic.
+        tradable_universe = _read_snapshot_table(args.tradable_universe_snapshot)
+        adjustment_factors = _read_snapshot_table(args.adjustment_factor_snapshot)
+        prices = _apply_formal_market_snapshots(prices, tradable_universe, adjustment_factors)
         prices = _apply_lifecycle_snapshot(prices, lifecycle)
-        # P0-19 fix: Actually load and apply tradable_universe and adjustment_factor snapshots
-        tradable_universe = None
-        adjustment_factors = None
-        if getattr(args, "tradable_universe_snapshot", None):
-            tradable_universe = pd.read_csv(args.tradable_universe_snapshot, dtype={"symbol": str})
-            tradable_universe["trade_date"] = pd.to_datetime(tradable_universe["trade_date"], errors="coerce").dt.date
-        if getattr(args, "adjustment_factor_snapshot", None):
-            adjustment_factors = pd.read_csv(args.adjustment_factor_snapshot, dtype={"symbol": str})
-            adjustment_factors["trade_date"] = pd.to_datetime(adjustment_factors["trade_date"], errors="coerce").dt.date
     else:
         corporate_actions_by_date, corporate_action_source_status = _load_corporate_actions(
             engine, prices["trade_date"].min(), prices["trade_date"].max()
