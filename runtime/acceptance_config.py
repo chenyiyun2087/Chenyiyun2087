@@ -121,8 +121,8 @@ def load_validation_profile(
         })
         profile["alpha_proof"] = proof
         core = dict(profile.get("core_period") or {})
-        core["min_start_date"] = "2018-01-01"
-        core["legacy_extension_start_date"] = "2013-01-01"
+        core.setdefault("min_start_date", "2018-01-01")
+        core.setdefault("legacy_extension_start_date", "2013-01-01")
         core["legacy_extension_required"] = False
         profile["core_period"] = core
         profile["stress"] = dict(profile.get("stress") or {})
