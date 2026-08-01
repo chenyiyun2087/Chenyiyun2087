@@ -240,6 +240,9 @@ def extract_all(release_id: str) -> dict[str, Any]:
             if family == "market":
                 df["market_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T15:30:00+08:00")
+                # Add market_regime and market_return (DATA_E0: not in raw data)
+                df["market_regime"] = "NORMAL"
+                df["market_return"] = 0.0
             elif family == "universe":
                 df["universe_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
@@ -275,15 +278,15 @@ def extract_all(release_id: str) -> dict[str, Any]:
                 df["rights_issue_ratio"] = None
                 df["split_ratio"] = None
 
-            # Convert trade_date to YYYY-MM-DD string — both builder and audit parse this
-            if "trade_date" in df.columns:
-                df["trade_date"] = df["trade_date"].apply(
-                    lambda x: f"{int(x)//10000:04d}-{(int(x)%10000)//100:02d}-{int(x)%100:02d}" if pd.notna(x) and x != 0 else ""
-                )
-            if "cal_date" in df.columns and family == "trade_calendar":
-                df["cal_date"] = df["cal_date"].apply(
-                    lambda x: f"{int(x)//10000:04d}-{(int(x)%10000)//100:02d}-{int(x)%100:02d}" if pd.notna(x) and x != 0 else ""
-                )
+            # Convert all integer date columns to YYYY-MM-DD strings
+            DATE_COLS = ["trade_date", "cal_date", "announcement_date", "financial_period_end",
+                         "end_date", "ex_date", "record_date", "effective_date",
+                         "valid_from", "valid_to", "listed_date"]
+            for dc in DATE_COLS:
+                if dc in df.columns:
+                    df[dc] = df[dc].apply(
+                        lambda x: f"{int(x)//10000:04d}-{(int(x)%10000)//100:02d}-{int(x)%100:02d}" if pd.notna(x) and x != 0 and str(int(x)).isdigit() and len(str(int(x))) == 8 else (str(x) if pd.notna(x) and x != 0 else "")
+                    )
 
             filename = FAMILY_FILENAMES[family]
             path = output_dir / filename
