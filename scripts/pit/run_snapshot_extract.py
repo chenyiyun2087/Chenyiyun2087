@@ -290,7 +290,11 @@ def extract_all(release_id: str) -> dict[str, Any]:
             for dc in DATE_COLS:
                 if dc in df.columns:
                     df[dc] = df[dc].apply(
-                        lambda x: f"{int(x)//10000:04d}-{(int(x)%10000)//100:02d}-{int(x)%100:02d}" if pd.notna(x) and x != 0 and str(int(x)).isdigit() and len(str(int(x))) == 8 else (str(x) if pd.notna(x) and x != 0 else "")
+                        lambda x: (
+                            f"{int(x)//10000:04d}-{(int(x)%10000)//100:02d}-{int(x)%100:02d}"
+                            if pd.notna(x) and x != 0 and x != '' and str(x).isdigit() and len(str(int(float(str(x))))) == 8
+                            else (str(x) if pd.notna(x) and x != 0 and x != '' else "")
+                        )
                     )
 
             filename = FAMILY_FILENAMES[family]
