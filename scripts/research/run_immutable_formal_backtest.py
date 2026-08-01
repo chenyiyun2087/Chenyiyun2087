@@ -264,7 +264,7 @@ def run(
         strategy=",".join(FORMAL_STRATEGIES),
         cost_rate=0.00075,
         slippage_bps=10,
-        initial_cash=500_000,
+        initial_cash=_read_initial_capital(package),
         output_dir=str(account_output),
         scores_snapshot=str(frozen_inputs_dir / "scores.csv"),
         prices_snapshot=str(frozen_inputs_dir / "prices.csv"),
@@ -410,7 +410,68 @@ def run(
         encoding="utf-8",
     )
 
+    # ── v5.1.6: Record initial_account from package ──
+    initial_account_path = package / "initial_account.json"
+    if initial_account_path.exists():
+        try:
+            ia = json.loads(initial_account_path.read_text(encoding="utf-8"))
+            manifest["initial_account_sha256"] = hashlib.sha256(
+                initial_account_path.read_bytes()).hexdigest()
+            manifest["initial_capital"] = ia.get("initial_capital", 500_000)
+            manifest["currency"] = ia.get("currency", "CNY")
+        except Exception:
+            manifest["initial_account_sha256"] = ""
+            manifest["initial_capital"] = 500_000
+            manifest["currency"] = "CNY"
+
+    # ── v5.1.6: Seal Formal Run ──
+    from runtime.artifact_seal import seal_directory as seal_formal_run
+    formal_run_id = f"formal-{run_id}"
+    try:
+        seal_formal_run(run_dir, run_id=formal_run_id, git_commit_sha=git_sha_after)
+        manifest["formal_run_sealed"] = True
+    except Exception as exc:
+        manifest["formal_run_sealed"] = False
+        manifest["seal_error"] = f"{type(exc).__name__}: {exc}"
+
+    # Rewrite manifest with seal status
+    (run_dir / "formal_run_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    # ── v5.1.6: Write formal_run_candidate_registry ──
+    try:
+        reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
+        reg_dir.mkdir(parents=True, exist_ok=True)
+        candidate = {
+            "schema_version": "formal_run_candidate_v5_1_6",
+            "status": "FORMAL_RUN_VERIFIED" if manifest["formal_run_sealed"] else "FORMAL_RUN_COMPLETE",
+            "formal_run_id": formal_run_id,
+            "formal_pit_run_id": pit_run_id,
+            "package_id": package_id,
+            "manifest_sha256": manifest.get("manifest_sha256", ""),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        tmp = reg_dir / "formal_run_candidate_registry.json.tmp"
+        tmp.write_text(json.dumps(candidate, ensure_ascii=False, indent=2, sort_keys=True))
+        tmp.replace(reg_dir / "formal_run_candidate_registry.json")
+    except Exception:
+        pass
+
     return manifest
+
+
+def _read_initial_capital(package_dir: Path) -> float:
+    """Read initial capital from package's initial_account.json."""
+    ia_path = package_dir / "initial_account.json"
+    if ia_path.exists():
+        try:
+            ia = json.loads(ia_path.read_text(encoding="utf-8"))
+            return float(ia.get("initial_capital", 500_000))
+        except Exception:
+            pass
+    return 500_000.0
 
 
 def main() -> int:
