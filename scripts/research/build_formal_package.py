@@ -177,12 +177,15 @@ def build_formal_package(
         # PIT Run identity
         "pit_run_manifest.json": pit_run_dir / "pit_run_manifest.json",
         "seal_manifest.json": pit_run_dir / "seal_manifest.json",
-        # Snapshots — ALL mandatory (v5.1.2)
+        # Snapshots — ALL mandatory (v5.1.6: 8 families)
         "market.parquet": pit_run_dir / "adapter" / "snapshots" / "market.parquet",
         "universe.parquet": pit_run_dir / "adapter" / "snapshots" / "universe.parquet",
         "financial.parquet": pit_run_dir / "adapter" / "snapshots" / "financial.parquet",
         "industry.parquet": pit_run_dir / "adapter" / "snapshots" / "industry.parquet",
         "adjustment.parquet": pit_run_dir / "adapter" / "snapshots" / "adjustment.parquet",
+        "trade_calendar.parquet": pit_run_dir / "adapter" / "snapshots" / "trade_calendar.parquet",
+        "security_lifecycle.parquet": pit_run_dir / "adapter" / "snapshots" / "security_lifecycle.parquet",
+        "corporate_actions.parquet": pit_run_dir / "adapter" / "snapshots" / "corporate_actions.parquet",
     }
 
     for rel_name, src_path in sorted(ENTRIES.items()):
@@ -198,17 +201,29 @@ def build_formal_package(
     if missing:
         blockers.append(f"missing_objects:{','.join(missing)}")
 
-    # ── CSV conversion for Formal Runner compatibility (v5.1.4: fail-closed) ──
+    # ── CSV conversion for Formal Runner compatibility (v5.1.6: fail-closed) ──
+    # Each conversion failure → blocker. No derivation from other families.
     csv_entries: dict[str, dict[str, Any]] = {}
-    # scores.csv
-    try:
-        scores_df = pd.read_parquet(building_dir / "scores.parquet")
-        scores_df.to_csv(building_dir / "scores.csv", index=False)
-        csv_entries["scores.csv"] = {"sha256": _file_sha(building_dir / "scores.csv")}
-    except Exception as exc:
-        blockers.append(f"csv_conversion_failed:scores.csv:{type(exc).__name__}")
 
-    # prices.csv from market
+    def _convert_parquet_to_csv(src: str, csv_name: str, csv_entries: dict, blockers: list):
+        src_path = building_dir / src
+        dst_path = building_dir / csv_name
+        if not src_path.exists():
+            blockers.append(f"csv_source_missing:{src}->{csv_name}")
+            return
+        try:
+            df = pd.read_parquet(src_path)
+            df.to_csv(dst_path, index=False)
+            csv_entries[csv_name] = {"sha256": _file_sha(dst_path)}
+        except Exception as exc:
+            blockers.append(f"csv_conversion_failed:{csv_name}:{type(exc).__name__}")
+
+    # Direct parquet→CSV conversions (no derivation)
+    _convert_parquet_to_csv("scores.parquet", "scores.csv", csv_entries, blockers)
+    _convert_parquet_to_csv("universe.parquet", "tradable_universe.csv", csv_entries, blockers)
+    _convert_parquet_to_csv("adjustment.parquet", "adjustment_factors.csv", csv_entries, blockers)
+
+    # prices.csv from market.parquet
     try:
         mkt_df = pd.read_parquet(building_dir / "market.parquet")
         prices_cols = [c for c in ["trade_date", "symbol", "open", "high", "low", "close", "volume", "amount"] if c in mkt_df.columns]
@@ -217,75 +232,55 @@ def build_formal_package(
     except Exception as exc:
         blockers.append(f"csv_conversion_failed:prices.csv:{type(exc).__name__}")
 
-    # trade_calendar.csv — from universe snapshot trade_date
-    try:
-        uni_df = pd.read_parquet(building_dir / "universe.parquet")
-        cal_dates = sorted(uni_df["trade_date"].dropna().unique())
-        cal_df = pd.DataFrame({
-            "cal_date": cal_dates,
-            "exchange": "SSE",
-            "is_open": True,
-            "source": "derived_from_universe_snapshot",
-        })
-        cal_df.to_csv(building_dir / "trade_calendar.csv", index=False)
-        csv_entries["trade_calendar.csv"] = {"sha256": _file_sha(building_dir / "trade_calendar.csv")}
-    except Exception as exc:
-        blockers.append(f"csv_conversion_failed:trade_calendar.csv:{type(exc).__name__}")
-
-    # tradable_universe.csv + strict_security_lifecycle.csv from universe
-    try:
-        uni_df = pd.read_parquet(building_dir / "universe.parquet")
-        uni_df.to_csv(building_dir / "tradable_universe.csv", index=False)
-        csv_entries["tradable_universe.csv"] = {"sha256": _file_sha(building_dir / "tradable_universe.csv")}
-        lifecycle_cols = [c for c in ["trade_date", "symbol", "is_listed", "is_st", "is_suspended",
-                                       "listed_date", "security_status_transition"] if c in uni_df.columns]
-        if lifecycle_cols:
-            uni_df[lifecycle_cols].to_csv(building_dir / "strict_security_lifecycle.csv", index=False)
-            csv_entries["strict_security_lifecycle.csv"] = {
-                "sha256": _file_sha(building_dir / "strict_security_lifecycle.csv")}
-    except Exception as exc:
-        blockers.append(f"csv_conversion_failed:universe_csv:{type(exc).__name__}")
-
-    # adjustment_factors.csv
-    try:
-        adj_df = pd.read_parquet(building_dir / "adjustment.parquet")
-        adj_df.to_csv(building_dir / "adjustment_factors.csv", index=False)
-        csv_entries["adjustment_factors.csv"] = {"sha256": _file_sha(building_dir / "adjustment_factors.csv")}
-    except Exception as exc:
-        blockers.append(f"csv_conversion_failed:adjustment_factors.csv:{type(exc).__name__}")
-
-    # strict_corporate_actions.csv — filter corporate action events from adjustment
-    ca_path = building_dir / "strict_corporate_actions.csv"
-    adj_parquet = building_dir / "adjustment.parquet"
-    if not adj_parquet.exists():
-        blockers.append("corporate_actions_unavailable:DATA_E0_cannot_generate_empty")
+    # trade_calendar.csv — from trade_calendar.parquet if available
+    tc_parquet = building_dir / "trade_calendar.parquet"
+    if tc_parquet.exists():
+        _convert_parquet_to_csv("trade_calendar.parquet", "trade_calendar.csv", csv_entries, blockers)
     else:
-        try:
-            adj_df = pd.read_parquet(adj_parquet)
-            ca_cols = [c for c in ["trade_date", "symbol", "corporate_action_type", "ex_date", "record_date"] if c in adj_df.columns]
-            if ca_cols and "corporate_action_type" in ca_cols:
-                ca_df = adj_df[adj_df["corporate_action_type"].notna()][ca_cols]
-                ca_df.to_csv(ca_path, index=False)
-                csv_entries["strict_corporate_actions.csv"] = {"sha256": _file_sha(ca_path)}
-            elif ca_cols:
-                adj_df[ca_cols].to_csv(ca_path, index=False)
-                csv_entries["strict_corporate_actions.csv"] = {"sha256": _file_sha(ca_path)}
-            else:
-                blockers.append("corporate_actions_missing_columns")
-        except Exception as exc:
-            blockers.append(f"csv_conversion_failed:strict_corporate_actions.csv:{type(exc).__name__}")
+        blockers.append("trade_calendar_snapshot_missing:cannot_derive_from_universe")
 
-    # strict_snapshot_manifest.json — self-describing manifest
+    # strict_security_lifecycle.csv — from security_lifecycle.parquet
+    sl_parquet = building_dir / "security_lifecycle.parquet"
+    if sl_parquet.exists():
+        _convert_parquet_to_csv("security_lifecycle.parquet", "strict_security_lifecycle.csv", csv_entries, blockers)
+    else:
+        blockers.append("security_lifecycle_snapshot_missing:cannot_derive_from_universe")
+
+    # strict_corporate_actions.csv — from corporate_actions.parquet
+    ca_parquet = building_dir / "corporate_actions.parquet"
+    if ca_parquet.exists():
+        _convert_parquet_to_csv("corporate_actions.parquet", "strict_corporate_actions.csv", csv_entries, blockers)
+    else:
+        blockers.append("corporate_actions_snapshot_missing:cannot_derive_from_adjustment")
+
+    # strict_snapshot_manifest.json + source_manifest.json
+    from runtime.pit_semantic_contract import get_contract_sha256
     snapshot_manifest = {
-        "schema_version": "strict_snapshot_manifest_v5_1_3",
+        "schema_version": "strict_snapshot_manifest_v5_1_6",
         "formal_pit_run_id": formal_pit_run_id,
         "package_id": package_id,
         "data_evidence": "DATA_E0",
+        "semantic_contract_sha256": get_contract_sha256(),
         "files": {k: v["sha256"] for k, v in sorted(csv_entries.items())},
     }
     sm_path = building_dir / "strict_snapshot_manifest.json"
     sm_path.write_text(json.dumps(snapshot_manifest, ensure_ascii=False, indent=2))
     csv_entries["strict_snapshot_manifest.json"] = {"sha256": _file_sha(sm_path)}
+
+    # source_manifest.json — matches preflight contract
+    source_manifest = {
+        "schema_version": "formal_source_manifest_v1",
+        "formal_pit_run_id": formal_pit_run_id,
+        "package_id": package_id,
+        "calendar_source": "tushare_stock.dim_trade_cal",
+        "coverage_start": "",
+        "coverage_end": "",
+        "semantic_contract_sha256": get_contract_sha256(),
+        "objects": {k: {"sha256": v["sha256"]} for k, v in sorted(csv_entries.items())},
+    }
+    srcm_path = building_dir / "source_manifest.json"
+    srcm_path.write_text(json.dumps(source_manifest, ensure_ascii=False, indent=2))
+    csv_entries["source_manifest.json"] = {"sha256": _file_sha(srcm_path)}
 
     # Merge CSV entries into required_objects
     for name, info in csv_entries.items():

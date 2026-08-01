@@ -21,8 +21,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -52,13 +50,14 @@ def validate(
 ) -> dict[str, Any]:
     """Run all readiness checks. Returns PASS or BLOCKED.
 
-    v5.1.3: _internal_call removed.  Seal verification is mandatory.
-    pit_run_dir is required for PIT Run Seal verification.
+    v5.1.6: Delegates business logic to formal_readiness_preflight.evaluate_package()
+    (the single authoritative Readiness engine).  v4 adds Seal verification and
+    identity checks that the preflight doesn't cover.
     """
     blockers: list[str] = []
 
     # ═══════════════════════════════════════════════════════════════════
-    # Identity
+    # Identity + Seal (v4's unique value-add)
     # ═══════════════════════════════════════════════════════════════════
     if fixture_mode:
         blockers.append("fixture_mode_must_be_false_for_formal_run")
@@ -72,47 +71,28 @@ def validate(
             blockers.append("run_id_mismatch")
         if pkg.get("status") != "PASS":
             blockers.append("package_not_pass")
-        # v5.1.5: Exclude both content_sha256 and built_at (matching Package Builder)
+        if pkg.get("release_id") != release_id:
+            blockers.append("release_id_mismatch")
+        if pkg.get("strategy_set") != strategy_set:
+            blockers.append("strategy_set_mismatch")
         pkg_raw = {k: v for k, v in pkg.items() if k not in ("content_sha256", "built_at")}
         if pkg.get("content_sha256") != canonical_sha(pkg_raw):
             blockers.append("package_manifest_content_sha_invalid")
-        # Cross-check artifact tree
-        required = pkg.get("required_objects", {})
-        if required:
-            tree_payload = {name: {"sha256": info["sha256"]}
-                          for name, info in sorted(required.items())}
-            actual_tree = canonical_sha(tree_payload)
-            if pkg.get("artifact_tree_sha256") != actual_tree:
-                blockers.append("artifact_tree_sha_mismatch")
-            # Verify required objects exist
-            for obj_name in required:
-                obj_path = package_dir / obj_name
-                if not obj_path.exists():
-                    blockers.append(f"required_object_missing:{obj_name}")
-                elif _file_sha(obj_path) != required[obj_name].get("sha256", ""):
-                    blockers.append(f"object_sha_mismatch:{obj_name}")
 
-    # ═══════════════════════════════════════════════════════════════════
-    # Seal verification (v5.1.3: mandatory)
-    # ═══════════════════════════════════════════════════════════════════
-    # Verify Package Seal
+    # Package Seal
     pkg_seal = verify_seal(package_dir)
     if pkg_seal["status"] != "VERIFIED":
         blockers.append(f"package_seal_not_verified:{pkg_seal['status']}")
-        if pkg_seal.get("reason"):
-            blockers.append(f"package_seal_reason:{pkg_seal['reason']}")
 
-    # Verify PIT Run Seal
-    if pit_run_dir is not None:
+    # PIT Run Seal (mandatory in v5.1.6)
+    if pit_run_dir is None:
+        blockers.append("pit_run_dir_required_for_seal_verification")
+    else:
         pit_seal = verify_seal(pit_run_dir)
         if pit_seal["status"] != "VERIFIED":
             blockers.append(f"pit_run_seal_not_verified:{pit_seal['status']}")
-            if pit_seal.get("reason"):
-                blockers.append(f"pit_run_seal_reason:{pit_seal['reason']}")
 
-    # ═══════════════════════════════════════════════════════════════════
     # No symlinks, no .building
-    # ═══════════════════════════════════════════════════════════════════
     for p in package_dir.rglob("*"):
         if p.is_symlink():
             blockers.append(f"symlink_forbidden:{p.relative_to(package_dir)}")
@@ -120,83 +100,36 @@ def validate(
         blockers.append(".building_in_path")
 
     # ═══════════════════════════════════════════════════════════════════
-    # Time validation
+    # Delegate business logic to the single authoritative preflight engine
     # ═══════════════════════════════════════════════════════════════════
-    scores_path = package_dir / "scores.parquet"
-    if scores_path.exists():
-        try:
-            scores = pd.read_parquet(scores_path)
-            if "score_available_at" in scores.columns:
-                parsed = pd.to_datetime(scores["score_available_at"], errors="coerce", utc=True)
-                if parsed.isna().any():
-                    blockers.append("score_available_at_unparseable_or_no_timezone")
-            if "signal_time" in scores.columns:
-                signal = pd.to_datetime(scores["signal_time"], errors="coerce", utc=True)
-                if "score_available_at" in scores.columns:
-                    avail = pd.to_datetime(scores["score_available_at"], errors="coerce", utc=True)
-                    if (avail > signal).any():
-                        blockers.append("score_available_after_signal_time")
-        except Exception as exc:
-            blockers.append(f"scores_read_error:{type(exc).__name__}")
+    preflight_blockers: list[str] = []
+    preflight_status = "NOT_RUN"
+    try:
+        from scripts.research.formal_readiness_preflight import evaluate_package
+        import yaml
+        readiness_config_path = PROJECT_ROOT / "config" / "formal_readiness.yaml"
+        readiness_config = yaml.safe_load(readiness_config_path.read_text(encoding="utf-8")) or {}
+        preflight_result = evaluate_package(package_dir, readiness_config)
+        preflight_status = preflight_result.get("status", "UNKNOWN")
+        if preflight_status != "READY_FOR_FORMAL_RUN":
+            preflight_blockers = preflight_result.get("blockers", []) or [preflight_status]
+    except Exception as exc:
+        preflight_blockers.append(f"preflight_evaluation_error:{type(exc).__name__}")
 
-    # ═══════════════════════════════════════════════════════════════════
-    # Coverage checks
-    # ═══════════════════════════════════════════════════════════════════
-    # Trade calendar
-    calendar_path = package_dir / "trade_calendar.parquet"
-    if calendar_path.exists():
-        try:
-            cal = pd.read_parquet(calendar_path)
-            # Check coverage against scores date range
-            if scores_path.exists():
-                scores_dates = set(pd.read_parquet(scores_path)["trade_date"].unique())
-                cal_dates = set(cal["trade_date"].unique())
-                if scores_dates:
-                    coverage = len(scores_dates & cal_dates) / len(scores_dates)
-                    if coverage < 0.98:
-                        blockers.append(f"calendar_coverage_below_98pct:{coverage:.4f}")
-        except Exception as exc:
-            blockers.append(f"calendar_check_error:{type(exc).__name__}")
-
-    # Universe → Market coverage
-    market_path = package_dir / "market.parquet"
-    universe_path = package_dir / "universe.parquet"
-    if market_path.exists() and universe_path.exists():
-        try:
-            mkt = pd.read_parquet(market_path)
-            uni = pd.read_parquet(universe_path)
-            mkt_keys = set(zip(mkt.get("trade_date", pd.Series()), mkt.get("symbol", pd.Series())))
-            uni_keys = set(zip(uni.get("trade_date", pd.Series()), uni.get("symbol", pd.Series())))
-            if uni_keys:
-                covered = len(uni_keys & mkt_keys) / len(uni_keys)
-                if covered < 1.0:
-                    blockers.append(f"universe_market_coverage:{covered:.4f}")
-        except Exception as exc:
-            blockers.append(f"universe_market_coverage_check_error:{type(exc).__name__}")
-
-    # ═══════════════════════════════════════════════════════════════════
-    # Build report
-    # ═══════════════════════════════════════════════════════════════════
-    status = "PASS" if not blockers else "BLOCKED"
-    evidence_sha = (
-        canonical_sha({
-            "run_id": formal_pit_run_id,
-            "package_sha": _file_sha(manifest_path) if manifest_path.exists() else "",
-            "status": status,
-        })
-        if status == "PASS" else ""
-    )
+    all_blockers = sorted(set(blockers + preflight_blockers))
+    status = "PASS" if not all_blockers else "BLOCKED"
 
     report = {
-        "schema_version": "formal_readiness_v4_0",
+        "schema_version": "formal_readiness_v5_1_6",
         "status": status,
         "formal_pit_run_id": formal_pit_run_id,
         "release_id": release_id,
         "strategy_set": strategy_set,
         "git_commit_sha": git_commit_sha,
         "acceptance_profile_sha": acceptance_profile_sha,
-        "blockers": sorted(set(blockers)),
-        "evidence_sha256": evidence_sha,
+        "blockers": all_blockers,
+        "preflight_status": preflight_status,
+        "evidence_sha256": "",
         "fixture_mode": fixture_mode,
         "capital_authority": False,
     }
