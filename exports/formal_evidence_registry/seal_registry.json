@@ -1,5 +1,14 @@
 {
-  "entries": {},
+  "entries": {
+    "3100295fc19ed502fe354943f86f628d038303dc28d99bdfe5e3c0729753f011": {
+      "artifact_tree_sha256": "84c7f72d673d03ed3fcec0dc9fd7534e65b1a1769bdfe42077814ba1c45d315f",
+      "registered_at": "2026-08-01T12:16:15.480529+00:00",
+      "registered_by": "21375dda95479fd3a9a7f2a351acc037e8702cc4",
+      "run_id": "3100295fc19ed502fe354943f86f628d038303dc28d99bdfe5e3c0729753f011",
+      "seal_manifest_file_sha256": "59c6018e878862b2233e2848ed5f6dfbf047780fd19b9ea16ffcc534e08707be",
+      "status": "ACTIVE"
+    }
+  },
   "schema_version": "seal_registry_v1",
-  "updated_at": "2026-08-01T00:00:00.000000+00:00"
+  "updated_at": "2026-08-01T12:16:15.480532+00:00"
 }

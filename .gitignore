@@ -477,3 +477,4 @@ __pycache__/
 exports/evidence_production/**/*.parquet
 exports/evidence_production/**/run_*.py
 data/pit/releases/
+exports/formal_pit_runs/
