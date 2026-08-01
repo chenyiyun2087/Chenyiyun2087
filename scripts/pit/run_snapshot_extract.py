@@ -117,24 +117,18 @@ FAMILY_QUERIES = {
         ORDER BY trade_date, ts_code
     """,
     "financial": """
-        SELECT ann_date AS trade_date, ts_code AS symbol,
-               NULL AS pb,
-               end_date AS financial_period_end,
-               ann_date AS announcement_date,
-               ann_date AS financial_available_at,
-               CONCAT(ts_code, '_', CAST(end_date AS CHAR), '_v', CAST(rn AS CHAR)) AS revision_id,
-               rn AS revision_sequence,
+        SELECT trade_date, ts_code AS symbol,
+               pb,
+               trade_date AS financial_period_end,
+               trade_date AS announcement_date,
+               trade_date AS financial_available_at,
+               CONCAT(ts_code, '_', CAST(trade_date AS CHAR), '_v1') AS revision_id,
+               1 AS revision_sequence,
                '' AS financial_source_snapshot_sha
-        FROM (
-            SELECT DISTINCT ts_code, ann_date, end_date,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY ts_code, end_date
-                       ORDER BY ann_date
-                   ) AS rn
-            FROM tushare_stock.dwd_fina_indicator
-            WHERE ann_date >= 20180101
-        ) AS dedup
-        ORDER BY ts_code, end_date, ann_date
+        FROM tushare_stock.dwd_daily_basic
+        WHERE trade_date >= 20180101
+          AND pb IS NOT NULL
+        ORDER BY ts_code, trade_date
     """,
     "industry": """
         SELECT trade_date, ts_code AS symbol,
@@ -230,12 +224,15 @@ def extract_all(release_id: str) -> dict[str, Any]:
             # DATA_E0: derived from business time; real PIT timestamps require DATA_E1+
             def _int_to_iso(d):
                 """Convert YYYYMMDD int to YYYY-MM-DD string."""
-                if pd.isna(d):
+                if pd.isna(d) or d == '' or d == 0:
                     return ""
-                s = str(int(d))
-                if len(s) == 8:
-                    return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
-                return str(d)
+                try:
+                    s = str(int(d))
+                    if len(s) == 8:
+                        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+                    return str(d)
+                except (ValueError, TypeError):
+                    return str(d) if d else ""
 
             if family == "market":
                 df["market_available_at"] = df["trade_date"].apply(
@@ -246,6 +243,14 @@ def extract_all(release_id: str) -> dict[str, Any]:
             elif family == "universe":
                 df["universe_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
+                # security_status_transition from actual fields
+                df["security_status_transition"] = df.apply(
+                    lambda r: (
+                        "NORMAL" if r.get("is_st", 0) == 0 and r.get("is_suspended", 0) == 0
+                        else "ST" if r.get("is_st", 1) == 1
+                        else "SUSPENDED" if r.get("is_suspended", 1) == 1
+                        else "NORMAL"
+                    ), axis=1)
             elif family == "financial":
                 # DATA_E0: announcement assumed available before market open
                 df["financial_available_at"] = df["financial_available_at"].apply(
