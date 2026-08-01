@@ -203,7 +203,7 @@ jobs:
 
   full-regression:
     runs-on: ubuntu-latest
-    needs: [evidence-contract, pr-chain-completeness, formal-score-equivalence, artifact-seal-v2, orchestrator-e2e, admission-e2e, seal-registry-corruption]
+    needs: [evidence-contract, pr-chain-completeness, formal-score-equivalence, artifact-seal-v2, orchestrator-e2e, admission-e2e, seal-registry-corruption, mutation-suite]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

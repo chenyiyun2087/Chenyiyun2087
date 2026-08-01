@@ -472,40 +472,70 @@ def verify_pr_i_chain(
     if not pr_c_run_id or not isinstance(pr_c_run_id, str):
         blockers.append("pr_c_formal_run_id_empty_or_invalid")
 
-    # ── v5.1.5: TOCTOU re-check — re-read underlying artifact files ──
-    # PR-C artifacts: formal_run_manifest, frozen_bundle
-    for path_key, label in [("formal_run_manifest_path", "formal_run_manifest"),
-                             ("frozen_bundle_path", "frozen_bundle")]:
+    # ── v5.1.6: TOCTOU full-chain re-validation ──
+    # Re-read ALL underlying artifact files and verify SHA + cross-chain identity.
+    TOCTOU_CHECKS: list[tuple[str, str | None, str]] = [
+        # (binding_source, path_key_in_binding, sha_key_in_binding)
+    ]
+
+    # PR-C: formal_run_manifest, frozen_bundle
+    for path_key, label, sha_key in [
+        ("formal_run_manifest_path", "formal_run_manifest", "formal_run_manifest_sha256"),
+        ("frozen_bundle_path", "frozen_bundle", "frozen_bundle_sha256"),
+    ]:
         artifact_path_str = pr_c.get(path_key)
         if artifact_path_str:
             ap = Path(artifact_path_str)
             if not ap.exists():
-                blockers.append(f"{label}_artifact_missing_at_path:{artifact_path_str}")
+                blockers.append(f"{label}_artifact_missing")
             else:
                 current_sha = _file_sha(ap)
-                binding_sha = pr_c.get(f"{label}_sha256" if label != "formal_run_manifest" else "formal_run_manifest_sha256", "")
+                binding_sha = pr_c.get(sha_key, "")
                 if binding_sha and current_sha != binding_sha:
                     blockers.append(f"{label}_tampered_after_binding")
 
-    # PR-D artifacts: OOS report
-    oos_path_str = pr_d.get("oos_report_path")
-    if oos_path_str:
-        op = Path(oos_path_str)
-        if not op.exists():
-            blockers.append("oos_report_artifact_missing")
-        else:
-            if _file_sha(op) != pr_d.get("oos_manifest_sha256", ""):
-                blockers.append("oos_report_tampered_after_binding")
+    # PR-D: OOS report
+    for path_key, label, sha_key in [
+        ("oos_report_path", "oos_report", "oos_manifest_sha256"),
+    ]:
+        artifact_path_str = pr_d.get(path_key)
+        if artifact_path_str:
+            ap = Path(artifact_path_str)
+            if not ap.exists():
+                blockers.append(f"{label}_artifact_missing")
+            else:
+                if _file_sha(ap) != pr_d.get(sha_key, ""):
+                    blockers.append(f"{label}_tampered_after_binding")
 
-    # PR-E artifacts: Capacity report
-    cap_path_str = pr_e.get("capacity_report_path")
-    if cap_path_str:
-        cp = Path(cap_path_str)
-        if not cp.exists():
-            blockers.append("capacity_report_artifact_missing")
-        else:
-            if _file_sha(cp) != pr_e.get("capacity_manifest_sha256", ""):
-                blockers.append("capacity_report_tampered_after_binding")
+    # PR-E: Capacity report
+    for path_key, label, sha_key in [
+        ("capacity_report_path", "capacity_report", "capacity_manifest_sha256"),
+    ]:
+        artifact_path_str = pr_e.get(path_key)
+        if artifact_path_str:
+            ap = Path(artifact_path_str)
+            if not ap.exists():
+                blockers.append(f"{label}_artifact_missing")
+            else:
+                if _file_sha(ap) != pr_e.get(sha_key, ""):
+                    blockers.append(f"{label}_tampered_after_binding")
+
+    # ── v5.1.6: Cross-chain identity consistency ──
+    # All layers must agree on formal_pit_run_id and formal_run_id
+    pit_id = pr_b["formal_pit_run_id"]
+    chain_ids: dict[str, str | None] = {
+        "pr_c": pr_c.get("formal_pit_run_id"),
+        "pr_d": pr_d.get("formal_pit_run_id"),
+        "pr_e": pr_e.get("formal_pit_run_id"),
+    }
+    for layer, cid in chain_ids.items():
+        if cid and cid != pit_id:
+            blockers.append(f"cross_chain_pit_id_mismatch:{layer}")
+
+    run_id = pr_c.get("formal_run_id")
+    for layer, rid in [("pr_d", pr_d.get("formal_run_id")), ("pr_e", pr_e.get("formal_run_id"))]:
+        if rid and rid != run_id:
+            blockers.append(f"cross_chain_run_id_mismatch:{layer}")
 
     return _pr_i_report(blockers)
 
