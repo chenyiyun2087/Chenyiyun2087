@@ -275,11 +275,8 @@ def extract_all(release_id: str) -> dict[str, Any]:
                 df["rights_issue_ratio"] = None
                 df["split_ratio"] = None
 
-            # Also convert business time columns to ISO strings
-            if "trade_date" in df.columns:
-                df["trade_date"] = df["trade_date"].apply(_int_to_iso)
-            if "cal_date" in df.columns and family == "trade_calendar":
-                df["cal_date"] = df["cal_date"].apply(_int_to_iso)
+            # Keep trade_date as integer (YYYYMMDD) — Factor Builder expects this format
+            # Only convert to ISO for *_available_at string columns
 
             filename = FAMILY_FILENAMES[family]
             path = output_dir / filename
