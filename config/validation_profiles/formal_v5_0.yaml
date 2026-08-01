@@ -124,7 +124,7 @@ core_period:
   end_date_policy: latest_complete_trading_day
   legacy_extension_required: false
   legacy_extension_start_date: '2013-01-01'
-  min_start_date: '2020-01-01'
+  min_start_date: '2022-01-01'
   min_trade_day_coverage: 0.8
 economic_alpha_qualification:
   diagnostic_evidence_authorizes_production: false
