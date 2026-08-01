@@ -198,7 +198,6 @@ def run_formal_admission(
     # Stage A8: Update Registry (admission candidate, not active)
     # ═══════════════════════════════════════════════════════════════════════
     # ── Register in admission_candidate_registry (NOT active_formal_run) ──
-    # v5.1.6: Only PR-I PASS updates active_formal_chain.json
     admission_registry_payload = {
         "schema_version": "admission_candidate_registry_v5_1_6",
         "status": "ADMISSION_READY",
@@ -206,11 +205,11 @@ def run_formal_admission(
         "formal_pit_run_id": pit_run_id,
         "package_id": package_id,
         "pr_b_path": str(admission_dir.relative_to(PROJECT_ROOT) / "pr_b" / "pr_b_binding.json"),
-        "seal_manifest_sha256": pit_seal.get("artifact_tree_sha256", ""),
         "capital_authority": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "updated_by": adm_git_sha,
     }
+    result_status = "PASS"
     try:
         reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
         reg_dir.mkdir(parents=True, exist_ok=True)
@@ -221,24 +220,19 @@ def run_formal_admission(
     except Exception as reg_exc:
         reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
         reg_dir.mkdir(parents=True, exist_ok=True)
-        activation = {
-            "schema_version": "activation_report_v5_1_6",
-            "stage": "admission",
-            "admission_id": admission_id,
-            "formal_pit_run_id": pit_run_id,
-            "package_id": package_id,
-            "status": "ACTIVATION_FAILED",
-            "error": f"{type(reg_exc).__name__}: {reg_exc}",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
         (reg_dir / f"activation_failed_{admission_id[:16]}.json").write_text(
-            json.dumps(activation, ensure_ascii=False, indent=2, sort_keys=True))
-        # Registry failure → BLOCKED_NOT_REGISTERED
+            json.dumps({
+                "schema_version": "activation_report_v5_1_6",
+                "admission_id": admission_id,
+                "status": "ACTIVATION_FAILED",
+                "error": f"{type(reg_exc).__name__}: {reg_exc}",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }, ensure_ascii=False, indent=2, sort_keys=True))
         result_status = "ARTIFACT_PASS_REGISTRATION_FAILED"
 
     return {
-        "schema_version": "formal_admission_v5_1_3",
-        "status": "PASS",
+        "schema_version": "formal_admission_v5_1_6",
+        "status": result_status,
         "formal_pit_run_id": pit_run_id,
         "package_id": package_id,
         "release_id": release_id,
@@ -271,7 +265,7 @@ def main() -> None:
         initial_account_cny=args.initial_capital,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    if result.get("status") == "BLOCKED":
+    if result.get("status") != "PASS":
         raise SystemExit(2)
 
 

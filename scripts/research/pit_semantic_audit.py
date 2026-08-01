@@ -51,6 +51,9 @@ SNAPSHOT_NAMES = {
     "financial.parquet": "financial",
     "industry.parquet": "industry",
     "adjustment.parquet": "adjustment",
+    "trade_calendar.parquet": "trade_calendar",
+    "security_lifecycle.parquet": "security_lifecycle",
+    "corporate_actions.parquet": "corporate_actions",
 }
 
 
@@ -80,9 +83,13 @@ def run_semantic_audit(
         except (OSError, json.JSONDecodeError):
             blockers.append("adapter_manifest_unreadable")
 
-    # ── Verify adapter field_definition_hash matches contract ──
+    # ── Verify adapter field_definition_hash matches contract (fail-closed) ──
+    if not manifest_path.exists():
+        blockers.append("adapter_manifest_missing")
     adapter_field_hash = adapter_manifest.get("field_definition_hash", "")
-    if adapter_field_hash and adapter_field_hash != contract_sha:
+    if not adapter_field_hash:
+        blockers.append("field_definition_hash_missing_in_adapter_manifest")
+    elif adapter_field_hash != contract_sha:
         blockers.append(f"field_definition_hash_mismatch:adapter={adapter_field_hash[:16]}... contract={contract_sha[:16]}...")
 
     # ── Check each snapshot ──
@@ -141,14 +148,21 @@ def run_semantic_audit(
         # ── Financial revision chain ──
         if family == "financial":
             if "revision_id" in df.columns and df["revision_id"].notna().any():
-                # Check that revision_sequence is monotonically increasing per symbol+period_end
-                if "revision_sequence" in df.columns and "symbol" in df.columns and "period_end" in df.columns:
+                period_col = "financial_period_end"
+                if period_col in df.columns and "revision_sequence" in df.columns and "symbol" in df.columns:
                     try:
-                        sorted_df = df.sort_values(["symbol", "period_end", "revision_sequence"])
-                        # Basic check: no duplicate revision_ids per symbol+period_end
-                        dupes = sorted_df.duplicated(subset=["symbol", "period_end", "revision_id"], keep=False)
+                        sorted_df = df.sort_values(["symbol", period_col, "revision_sequence"])
+                        # Check: no duplicate revision_ids per symbol+period
+                        dupes = sorted_df.duplicated(subset=["symbol", period_col, "revision_id"], keep=False)
                         if dupes.any():
                             blockers.append(f"financial_duplicate_revisions:{int(dupes.sum())}")
+                        # Check: announcement_date <= financial_available_at
+                        if "announcement_date" in df.columns and "financial_available_at" in df.columns:
+                            ad = pd.to_datetime(df["announcement_date"], errors="coerce", utc=True)
+                            fa = pd.to_datetime(df["financial_available_at"], errors="coerce", utc=True)
+                            bad = (ad.notna() & fa.notna()) & (ad > fa)
+                            if bad.any():
+                                blockers.append(f"financial_announcement_after_available:{int(bad.sum())}")
                     except Exception as exc:
                         blockers.append(f"financial_revision_check_error:{type(exc).__name__}")
 

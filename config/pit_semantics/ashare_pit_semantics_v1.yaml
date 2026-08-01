@@ -106,6 +106,7 @@ families:
       - available_at
     primary_key: [cal_date]
     business_time_column: cal_date
+    available_at_column: available_at
     timezone_requirement: explicit_offset
     coverage_policy: "SSE_calendar_coverage_ge_98pct"
 
