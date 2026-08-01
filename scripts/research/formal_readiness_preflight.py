@@ -253,9 +253,9 @@ def evaluate_package(package: Path, config: dict[str, Any]) -> dict[str, Any]:
         if "lifecycle_available_at" not in lifecycle and "available_at" in lifecycle:
             lifecycle["lifecycle_available_at"] = lifecycle["available_at"]
     canonical_mode = not legacy_compat
-    declared_content_sha = declared_content_sha if 'declared_content_sha' in dir() else ""
+    sm_declared_sha = str((json.loads((package / \"source_manifest.json\").read_text(encoding=\"utf-8\")) if (package / \"source_manifest.json\").is_file() else {}).get(\"content_sha256\") or \"\")
     if canonical_mode:
-        if not declared_content_sha:
+        if not sm_declared_sha:
             checks.append(
                 Check(
                     "source_manifest_content_sha",

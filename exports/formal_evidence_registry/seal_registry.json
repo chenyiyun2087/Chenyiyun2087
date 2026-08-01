@@ -57,11 +57,11 @@
       "status": "ACTIVE"
     },
     "b3eaea4e4713fe730c0bcd862c75f732b9b5c86ef09abba701303ea16e76beca": {
-      "artifact_tree_sha256": "18c481a18dcb6f035a83128a15b6b677a5a7d03f07cf5ef8ddd1654b6fc68da5",
-      "registered_at": "2026-08-01T15:21:24.187709+00:00",
-      "registered_by": "32669f3fde7294475c9df0d29245674407ac18a4",
+      "artifact_tree_sha256": "e402d8a5c788ebed50a2ce2447acfd381fb20f10c1bf857eb75e881c1e737a69",
+      "registered_at": "2026-08-01T15:26:10.499150+00:00",
+      "registered_by": "af38021209252cd1813d5d47dbbbf27fd2eed5eb",
       "run_id": "b3eaea4e4713fe730c0bcd862c75f732b9b5c86ef09abba701303ea16e76beca",
-      "seal_manifest_file_sha256": "06b3959d14d6f2d3c264bd609d9b824bd312fbe424eceef0c4186b0eee47da1d",
+      "seal_manifest_file_sha256": "7b655545f32f90b0009c28defa287c0f9e0d4e6b8c5857e243a5e8821a1d8829",
       "status": "ACTIVE"
     },
     "cda7e564c9427ad2b4ef1f0108631ba9b44470374772c70bbdd373f534d6f5b3": {
@@ -98,5 +98,5 @@
     }
   },
   "schema_version": "seal_registry_v1",
-  "updated_at": "2026-08-01T15:21:24.187714+00:00"
+  "updated_at": "2026-08-01T15:26:10.499166+00:00"
 }
