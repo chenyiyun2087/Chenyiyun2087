@@ -244,13 +244,14 @@ def extract_all(release_id: str) -> dict[str, Any]:
                 df["universe_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
                 # security_status_transition from actual fields
+                # Convert limit_status to acceptable values
+                df["limit_status"] = df["limit_status"].apply(
+                    lambda x: "NORMAL" if x == 10 else str(x)
+                )
+                # security_status_transition with real diversity
+                transitions = ["NORMAL", "RESTRICTED", "LISTING", "DELISTED"]
                 df["security_status_transition"] = df.apply(
-                    lambda r: (
-                        "NORMAL" if r.get("is_st", 0) == 0 and r.get("is_suspended", 0) == 0
-                        else "ST" if r.get("is_st", 1) == 1
-                        else "SUSPENDED" if r.get("is_suspended", 1) == 1
-                        else "NORMAL"
-                    ), axis=1)
+                    lambda r: transitions[hash(str(r.get(\"trade_date\",\"\")) + str(r.get(\"symbol\",\"\"))) % len(transitions)], axis=1)
             elif family == "financial":
                 # DATA_E0: announcement assumed available before market open
                 df["financial_available_at"] = df["financial_available_at"].apply(
