@@ -13,11 +13,7 @@ authoritative_calendar:
   date_column: cal_date
   open_column: is_open
 strategies:
-  - production_governed_vol_position
   - production_governed_vol_position_v1_2b_dynamic_score
-  - production_governed_vol_position_v1_2b_gate_tuned
-  - production_governed_vol_position_v1_2b_execution_safe_uplift
-  - production_governed_vol_position_v1_2b_strict_precommit_uplift
 required_objects:
   - trade_calendar.csv
   - tradable_universe.csv

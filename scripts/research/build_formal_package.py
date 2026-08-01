@@ -426,7 +426,7 @@ def build_formal_package(
         "schema_version": "formal_source_manifest_v2",
         "formal_pit_run_id": formal_pit_run_id,
         "package_id": package_id,
-        "calendar_source": adapter_source_manifest.get("calendar_source") or "",
+        "calendar_source": adapter_source_manifest.get("calendar_source") or "tushare_stock.dim_trade_cal",
         "coverage_start": min(starts) if starts else None,
         "coverage_end": max(ends) if ends else None,
         "semantic_contract_sha256": get_contract_sha256(),
