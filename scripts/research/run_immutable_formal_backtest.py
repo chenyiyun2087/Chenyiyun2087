@@ -81,6 +81,8 @@ def run(
     config_path: Path | None = None,
     acceptance_config_path: Path | None = None,
     fixture_mode: bool = False,
+    pit_run_id: str = "",
+    package_id: str = "",
 ) -> dict[str, Any]:
     # ------------------------------------------------------------------
     # 3.6  Clean worktree — before (skipped in fixture mode)
@@ -329,8 +331,8 @@ def run(
     manifest: dict[str, Any] = {
         "schema_version": "immutable_formal_run_v3",
         "formal_run_id": run_id,
-        "formal_pit_run_id": getattr(args, "pit_run_id", "") or "",
-        "package_id": getattr(args, "package_id", "") or "",
+        "formal_pit_run_id": pit_run_id,
+        "package_id": package_id,
         "status": status,
         "dry_run": dry_run,
         "strategy_ids": list(FORMAL_STRATEGIES),
@@ -359,7 +361,8 @@ def run(
         "immutable": True,
         "fixture_mode": fixture_mode,
     }
-    # Self-hash: manifest_sha256 (legacy) + content_sha256 (v5.1.3)
+    # Self-hash: manifest_sha256 is the canonical self-hash
+    # (content_sha256 not duplicated — dual hashes break verification)
     manifest["manifest_sha256"] = hashlib.sha256(
         json.dumps(
             manifest,
@@ -368,7 +371,6 @@ def run(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    manifest["content_sha256"] = manifest["manifest_sha256"]
     (run_dir / "formal_run_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -426,6 +428,8 @@ def main() -> int:
         config_path=args.config,
         acceptance_config_path=args.acceptance_config,
         fixture_mode=args.fixture_mode,
+        pit_run_id=args.pit_run_id,
+        package_id=args.package_id,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result["status"] in {"DRY_RUN", "VERIFIED"} else 2

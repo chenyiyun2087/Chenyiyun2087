@@ -43,28 +43,32 @@ def _file_sha(path: Path) -> str:
 
 # ── Expected schemas for each snapshot family ──
 
+# v5.1.4: Aligned with pit_factor_panel_builder.REQUIRED_COLUMNS
 EXPECTED_SCHEMAS: dict[str, set[str]] = {
     "market": {
-        "trade_date", "symbol", "open", "high", "low", "close", "volume",
-        "amount", "circ_mv", "market_available_at",
+        "trade_date", "symbol", "open", "close", "pre_close",
+        "amount", "circ_mv", "market_return", "market_regime",
+        "market_available_at",
     },
     "universe": {
         "trade_date", "symbol", "is_listed", "is_st", "is_suspended",
-        "is_limit_up", "is_limit_down", "listed_date", "security_status",
+        "limit_status", "security_status_transition",
         "universe_available_at",
     },
     "financial": {
-        "trade_date", "symbol", "pb", "pe", "roe", "total_mv",
-        "total_liabilities", "period_end", "announcement_at",
-        "revision_id", "revision_sequence", "financial_available_at",
+        "trade_date", "symbol", "pb",
+        "financial_period_end", "announcement_date",
+        "revision_id", "financial_source_snapshot_sha",
+        "financial_available_at",
     },
     "industry": {
-        "trade_date", "symbol", "industry_code", "industry_name",
-        "valid_from", "valid_to", "industry_available_at",
+        "trade_date", "symbol", "industry",
+        "industry_available_at",
     },
     "adjustment": {
-        "trade_date", "symbol", "adj_factor", "factor_version",
-        "anchor_date", "corporate_action_event_id",
+        "trade_date", "symbol", "adj_factor",
+        "corporate_action_type", "ex_date", "record_date",
+        "adjustment_factor_version",
         "adjustment_available_at",
     },
 }
@@ -98,8 +102,8 @@ def run_semantic_audit(
     if FIELD_SEMANTICS_PATH.exists():
         try:
             field_semantics = yaml.safe_load(FIELD_SEMANTICS_PATH.read_text(encoding="utf-8")) or {}
-        except Exception:
-            pass
+        except Exception as exc:
+            blockers.append(f"field_semantics_load_error:{type(exc).__name__}")
     field_semantics_sha = _file_sha(FIELD_SEMANTICS_PATH) if FIELD_SEMANTICS_PATH.exists() else ""
 
     # ── Load adapter manifest for source SHA verification ──
@@ -146,16 +150,21 @@ def run_semantic_audit(
             blockers.append(f"available_at_missing:{family}")
 
         # ── Future-data leakage check ──
+        # v5.1.4: Check that available_at is NOT after the signal cutoff time.
+        # Signal cutoff = trade_date 16:00 Asia/Shanghai.
+        # available_at > signal_cutoff → data not yet available at signal time → leak.
         if "trade_date" in df.columns and avail_col in df.columns:
             try:
                 td = pd.to_datetime(df["trade_date"], errors="coerce", utc=True)
                 av = pd.to_datetime(df[avail_col], errors="coerce", utc=True)
                 if td.notna().any() and av.notna().any():
-                    if (td > av).any():
-                        future_count = int((td > av).sum())
+                    # signal_cutoff = trade_date at 16:00 Asia/Shanghai = trade_date at 08:00 UTC
+                    signal_cutoff = td + pd.Timedelta(hours=8)
+                    if (av > signal_cutoff).any():
+                        future_count = int((av > signal_cutoff).sum())
                         blockers.append(f"future_data_leak:{family}:{future_count}_rows")
-            except Exception:
-                pass  # Non-fatal: already caught by unparseable check above
+            except Exception as exc:
+                blockers.append(f"future_leak_check_error:{family}:{type(exc).__name__}")
 
         # ── Financial revision chain ──
         if family == "financial":
@@ -168,8 +177,8 @@ def run_semantic_audit(
                         dupes = sorted_df.duplicated(subset=["symbol", "period_end", "revision_id"], keep=False)
                         if dupes.any():
                             blockers.append(f"financial_duplicate_revisions:{int(dupes.sum())}")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        blockers.append(f"financial_revision_check_error:{type(exc).__name__}")
 
         # ── Industry SCD ──
         if family == "industry":
@@ -183,8 +192,8 @@ def run_semantic_audit(
                         if invalid_scd.any():
                             blockers.append(
                                 f"industry_scd_violation:{int(invalid_scd.sum())}_rows")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    blockers.append(f"industry_scd_check_error:{type(exc).__name__}")
 
         # ── Source SHA verification ──
         snapshot_sha = _file_sha(snapshot_path)

@@ -114,21 +114,30 @@ def run_formal_admission(
                               extra={"blockers": readiness_result.get("blockers", [])})
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Stage A5: Write readiness_report.json
+    # Stage A5-A7: Write Admission Evidence to SEPARATE directory
+    # v5.1.4: Admission outputs go to exports/formal_admissions/<admission_id>/
+    # NEVER modify the sealed Package directory.
     # ═══════════════════════════════════════════════════════════════════════
-    readiness_report_path = package_dir / "readiness_report.json"
+    import hashlib as _hashlib
+    admission_id = _hashlib.sha256(
+        f"{pit_run_id}{package_id}".encode()
+    ).hexdigest()
+    admission_root = PROJECT_ROOT / "exports" / "formal_admissions"
+    admission_dir = admission_root / admission_id
+    building_adm = admission_root / f".building_adm_{admission_id[:16]}"
+    building_adm.mkdir(parents=True, exist_ok=True)
+
+    # Write readiness_report.json
+    readiness_report_path = building_adm / "readiness_report.json"
     readiness_report_path.write_text(
         json.dumps(readiness_result, ensure_ascii=False, indent=2, sort_keys=True))
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # Stage A6: PR-B Binding
-    # ═══════════════════════════════════════════════════════════════════════
-    import hashlib
-    package_sha = hashlib.sha256(
+    # PR-B Binding
+    package_sha = _hashlib.sha256(
         (package_dir / "package_manifest.json").read_bytes()
     ).hexdigest()
 
-    pr_b_dir = package_dir / "pr_b"
+    pr_b_dir = building_adm / "pr_b"
     try:
         pr_b_result = bind_pr_b(
             formal_pit_run_id=pit_run_id,
@@ -148,8 +157,40 @@ def run_formal_admission(
                               "pr_b_binding_not_pass",
                               extra={"blockers": pr_b_result.get("blockers", [])})
 
+    # Write admission manifest
+    admission_manifest = {
+        "schema_version": "formal_admission_manifest_v5_1_4",
+        "status": "PASS",
+        "admission_id": admission_id,
+        "formal_pit_run_id": pit_run_id,
+        "package_id": package_id,
+        "release_id": release_id,
+        "strategy_set": strategy_set,
+        "pr_b_path": "pr_b/pr_b_binding.json",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "capital_authority": False,
+    }
+    (building_adm / "admission_manifest.json").write_text(
+        json.dumps(admission_manifest, ensure_ascii=False, indent=2, sort_keys=True))
+
+    # Seal the Admission evidence
+    from runtime.artifact_seal import seal_directory as seal_admission
+    import subprocess
+    try:
+        adm_git_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True).strip()
+    except Exception:
+        adm_git_sha = ""
+    seal_admission(building_adm, run_id=admission_id, git_commit_sha=adm_git_sha)
+
+    # Atomic publish
+    if admission_dir.exists():
+        import shutil
+        shutil.rmtree(admission_dir, ignore_errors=True)
+    building_adm.rename(admission_dir)
+
     # ═══════════════════════════════════════════════════════════════════════
-    # Stage A7: Update Registry (candidate status)
+    # Stage A8: Update Registry (admission candidate, not active)
     # ═══════════════════════════════════════════════════════════════════════
     from runtime.formal_evidence_contract import update_active_formal_registry
     registry_payload = {
@@ -157,7 +198,7 @@ def run_formal_admission(
         "formal_pit_run_id": pit_run_id,
         "formal_run_id": None,
         "pr_a_path": None,
-        "pr_b_path": str(pr_b_dir.relative_to(PROJECT_ROOT) / "pr_b_binding.json"),
+        "pr_b_path": str(admission_dir.relative_to(PROJECT_ROOT) / "pr_b" / "pr_b_binding.json"),
         "pr_c_path": None,
         "pr_d_path": None,
         "pr_e_path": None,
@@ -165,24 +206,24 @@ def run_formal_admission(
         "seal_manifest_sha256": pit_seal.get("artifact_tree_sha256", ""),
         "capital_authority": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "updated_by": package_result.get("git_commit_sha", ""),
+        "updated_by": adm_git_sha,
     }
     try:
         update_active_formal_registry(registry_payload)
     except Exception as reg_exc:
-        # Write external activation report — do not modify sealed artifacts
         reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
         reg_dir.mkdir(parents=True, exist_ok=True)
         activation = {
-            "schema_version": "activation_report_v5_1_3",
-            "stage": "admission_pr_b",
+            "schema_version": "activation_report_v5_1_4",
+            "stage": "admission",
+            "admission_id": admission_id,
             "formal_pit_run_id": pit_run_id,
             "package_id": package_id,
             "status": "ACTIVATION_FAILED",
             "error": f"{type(reg_exc).__name__}: {reg_exc}",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        (reg_dir / f"admission_activation_failed_{pit_run_id[:16]}.json").write_text(
+        (reg_dir / f"activation_failed_{admission_id[:16]}.json").write_text(
             json.dumps(activation, ensure_ascii=False, indent=2, sort_keys=True))
 
     return {
@@ -199,7 +240,8 @@ def run_formal_admission(
             "readiness": readiness_result["status"],
             "pr_b": pr_b_result["status"],
         },
-        "pr_b_path": str(pr_b_dir.relative_to(PROJECT_ROOT) / "pr_b_binding.json"),
+        "admission_id": admission_id,
+        "pr_b_path": str(admission_dir.relative_to(PROJECT_ROOT) / "pr_b" / "pr_b_binding.json"),
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "capital_authority": False,
     }
