@@ -1,5 +1,13 @@
 {
   "entries": {
+    "0a5e1693e4ef0a2bfb1f1b20c0ada2dea2867665b43057181fae062611c65a56": {
+      "artifact_tree_sha256": "4fa0acfd8abe197afbf5414e1dfc695adee16c868228d45f189688c31ed4e567",
+      "registered_at": "2026-08-01T22:54:18.505239+00:00",
+      "registered_by": "28b98ec74334276810a2f9ffd3fb987573ff9595",
+      "run_id": "0a5e1693e4ef0a2bfb1f1b20c0ada2dea2867665b43057181fae062611c65a56",
+      "seal_manifest_file_sha256": "2a2b3a3a57f41c7e0c9ab16d6ec031409b7a3f1c4f61f401c715901f0fc46018",
+      "status": "ACTIVE"
+    },
     "0ad154649a576a1e06b7aad130178eb6a1a088751bfcaecb4eda82d4a9ab5798": {
       "artifact_tree_sha256": "a5b3ffed54ca9fbeea573a56ab5228b495f48593a9443a3358cea151ea3bea5c",
       "registered_at": "2026-08-01T15:01:44.170611+00:00",
@@ -57,11 +65,11 @@
       "status": "ACTIVE"
     },
     "b3eaea4e4713fe730c0bcd862c75f732b9b5c86ef09abba701303ea16e76beca": {
-      "artifact_tree_sha256": "e402d8a5c788ebed50a2ce2447acfd381fb20f10c1bf857eb75e881c1e737a69",
-      "registered_at": "2026-08-01T15:26:10.499150+00:00",
-      "registered_by": "af38021209252cd1813d5d47dbbbf27fd2eed5eb",
+      "artifact_tree_sha256": "b149d19bc848437ba616a139087b8d0ccbd7433b8dea3b0f6b38821fe10d4d54",
+      "registered_at": "2026-08-01T22:53:59.306717+00:00",
+      "registered_by": "28b98ec74334276810a2f9ffd3fb987573ff9595",
       "run_id": "b3eaea4e4713fe730c0bcd862c75f732b9b5c86ef09abba701303ea16e76beca",
-      "seal_manifest_file_sha256": "7b655545f32f90b0009c28defa287c0f9e0d4e6b8c5857e243a5e8821a1d8829",
+      "seal_manifest_file_sha256": "0db0f8f8467ea24fd3fb75604cbbd9685b18a644d9d96ce97dc4a60400974d64",
       "status": "ACTIVE"
     },
     "cda7e564c9427ad2b4ef1f0108631ba9b44470374772c70bbdd373f534d6f5b3": {
@@ -95,8 +103,16 @@
       "run_id": "ec7b90c7f2b67464632c315442832cb84b72bfabdd3a8462c7acd4c09169b0ce",
       "seal_manifest_file_sha256": "5e2a50bd695ef5d3c75c4ac76c82119c18879b01304e12b71fa0e9c84af3f68b",
       "status": "ACTIVE"
+    },
+    "formal-8356604cfba5a7c27a8dba0b7dd2accecaaafd20c240145f0b98c9a72c03e5f6": {
+      "artifact_tree_sha256": "7a431d701f80a02f4a8412c2dee4f2212b6c9b7ad469ce84e486243edc6cae4b",
+      "registered_at": "2026-08-01T22:55:23.187283+00:00",
+      "registered_by": "28b98ec74334276810a2f9ffd3fb987573ff9595",
+      "run_id": "formal-8356604cfba5a7c27a8dba0b7dd2accecaaafd20c240145f0b98c9a72c03e5f6",
+      "seal_manifest_file_sha256": "ce87272f441942a3ca1fd477cfbc8fd07644b97867d2864fa06bc1b7109af860",
+      "status": "ACTIVE"
     }
   },
   "schema_version": "seal_registry_v1",
-  "updated_at": "2026-08-01T15:26:10.499166+00:00"
+  "updated_at": "2026-08-01T22:55:23.187289+00:00"
 }
