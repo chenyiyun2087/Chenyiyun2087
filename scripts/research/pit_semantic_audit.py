@@ -28,9 +28,12 @@ import pandas as pd
 import yaml
 
 from runtime.acceptance_config import canonical_sha
+from runtime.pit_semantic_contract import (
+    get_contract_sha256, get_required_columns, get_primary_key,
+    get_available_at_column, validate_frame_schema, validate_explicit_timezone,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FIELD_SEMANTICS_PATH = PROJECT_ROOT / "config" / "factor_registry.yaml"
 
 
 def _file_sha(path: Path) -> str:
@@ -41,38 +44,7 @@ def _file_sha(path: Path) -> str:
     return digest.hexdigest()
 
 
-# ── Expected schemas for each snapshot family ──
-
-# v5.1.4: Aligned with pit_factor_panel_builder.REQUIRED_COLUMNS
-EXPECTED_SCHEMAS: dict[str, set[str]] = {
-    "market": {
-        "trade_date", "symbol", "open", "close", "pre_close",
-        "amount", "circ_mv", "market_return", "market_regime",
-        "market_available_at",
-    },
-    "universe": {
-        "trade_date", "symbol", "is_listed", "is_st", "is_suspended",
-        "limit_status", "security_status_transition",
-        "universe_available_at",
-    },
-    "financial": {
-        "trade_date", "symbol", "pb",
-        "financial_period_end", "announcement_date",
-        "revision_id", "financial_source_snapshot_sha",
-        "financial_available_at",
-    },
-    "industry": {
-        "trade_date", "symbol", "industry",
-        "industry_available_at",
-    },
-    "adjustment": {
-        "trade_date", "symbol", "adj_factor",
-        "corporate_action_type", "ex_date", "record_date",
-        "adjustment_factor_version",
-        "adjustment_available_at",
-    },
-}
-
+# v5.1.6: Schemas are loaded from the canonical contract, not hardcoded
 SNAPSHOT_NAMES = {
     "market.parquet": "market",
     "universe.parquet": "universe",
@@ -97,22 +69,21 @@ def run_semantic_audit(
     blockers: list[str] = []
     audit_details: dict[str, Any] = {}
 
-    # ── Load field semantics ──
-    field_semantics: dict[str, Any] = {}
-    if FIELD_SEMANTICS_PATH.exists():
-        try:
-            field_semantics = yaml.safe_load(FIELD_SEMANTICS_PATH.read_text(encoding="utf-8")) or {}
-        except Exception as exc:
-            blockers.append(f"field_semantics_load_error:{type(exc).__name__}")
-    field_semantics_sha = _file_sha(FIELD_SEMANTICS_PATH) if FIELD_SEMANTICS_PATH.exists() else ""
+    # ── Load semantic contract SHA ──
+    contract_sha = get_contract_sha256()
 
-    # ── Load adapter manifest for source SHA verification ──
+    # ── Load adapter manifest ──
     adapter_manifest: dict[str, Any] = {}
     if manifest_path.exists():
         try:
             adapter_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             blockers.append("adapter_manifest_unreadable")
+
+    # ── Verify adapter field_definition_hash matches contract ──
+    adapter_field_hash = adapter_manifest.get("field_definition_hash", "")
+    if adapter_field_hash and adapter_field_hash != contract_sha:
+        blockers.append(f"field_definition_hash_mismatch:adapter={adapter_field_hash[:16]}... contract={contract_sha[:16]}...")
 
     # ── Check each snapshot ──
     for filename, family in sorted(SNAPSHOT_NAMES.items()):
@@ -127,11 +98,12 @@ def run_semantic_audit(
             blockers.append(f"snapshot_unreadable:{filename}:{type(exc).__name__}")
             continue
 
-        expected_cols = EXPECTED_SCHEMAS.get(family, set())
+        # v5.1.6: Schema from canonical contract
+        contract_blockers = validate_frame_schema(df, family)
+        blockers.extend(contract_blockers)
+
         actual_cols = set(df.columns)
-        missing_cols = expected_cols - actual_cols
-        if missing_cols:
-            blockers.append(f"schema_missing_columns:{family}:{sorted(missing_cols)}")
+        expected_cols = get_required_columns(family)
 
         extra_cols = actual_cols - expected_cols
         row_count = len(df)
@@ -237,7 +209,7 @@ def run_semantic_audit(
         "status": status,
         "component": "semantic_audit",
         "blockers": sorted(set(blockers)),
-        "field_semantics_sha256": field_semantics_sha,
+        "semantic_contract_sha256": contract_sha,
         "snapshots_audited": sorted(audit_details.keys()),
         "audit_details": audit_details,
         "capital_authority": False,

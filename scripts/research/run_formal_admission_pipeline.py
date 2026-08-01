@@ -197,29 +197,32 @@ def run_formal_admission(
     # ═══════════════════════════════════════════════════════════════════════
     # Stage A8: Update Registry (admission candidate, not active)
     # ═══════════════════════════════════════════════════════════════════════
-    from runtime.formal_evidence_contract import update_active_formal_registry
-    registry_payload = {
-        "schema_version": "formal_evidence_registry_v1",
+    # ── Register in admission_candidate_registry (NOT active_formal_run) ──
+    # v5.1.6: Only PR-I PASS updates active_formal_chain.json
+    admission_registry_payload = {
+        "schema_version": "admission_candidate_registry_v5_1_6",
+        "status": "ADMISSION_READY",
+        "admission_id": admission_id,
         "formal_pit_run_id": pit_run_id,
-        "formal_run_id": None,
-        "pr_a_path": None,
+        "package_id": package_id,
         "pr_b_path": str(admission_dir.relative_to(PROJECT_ROOT) / "pr_b" / "pr_b_binding.json"),
-        "pr_c_path": None,
-        "pr_d_path": None,
-        "pr_e_path": None,
-        "pr_i_path": None,
         "seal_manifest_sha256": pit_seal.get("artifact_tree_sha256", ""),
         "capital_authority": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "updated_by": adm_git_sha,
     }
     try:
-        update_active_formal_registry(registry_payload)
+        reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
+        reg_dir.mkdir(parents=True, exist_ok=True)
+        candidate_path = reg_dir / "admission_candidate_registry.json"
+        tmp = candidate_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(admission_registry_payload, ensure_ascii=False, indent=2, sort_keys=True))
+        tmp.replace(candidate_path)
     except Exception as reg_exc:
         reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
         reg_dir.mkdir(parents=True, exist_ok=True)
         activation = {
-            "schema_version": "activation_report_v5_1_4",
+            "schema_version": "activation_report_v5_1_6",
             "stage": "admission",
             "admission_id": admission_id,
             "formal_pit_run_id": pit_run_id,
@@ -230,6 +233,8 @@ def run_formal_admission(
         }
         (reg_dir / f"activation_failed_{admission_id[:16]}.json").write_text(
             json.dumps(activation, ensure_ascii=False, indent=2, sort_keys=True))
+        # Registry failure → BLOCKED_NOT_REGISTERED
+        result_status = "ARTIFACT_PASS_REGISTRATION_FAILED"
 
     return {
         "schema_version": "formal_admission_v5_1_3",
