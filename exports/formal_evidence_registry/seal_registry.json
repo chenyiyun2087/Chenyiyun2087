@@ -15,8 +15,16 @@
       "run_id": "4f586ec076d763001e00bee39486796926686218eca0b640e02eb2390f93015e",
       "seal_manifest_file_sha256": "60d6d3a1a29517100714b7e402e060314860773b02429335cef0e92ed9e74a43",
       "status": "ACTIVE"
+    },
+    "cda7e564c9427ad2b4ef1f0108631ba9b44470374772c70bbdd373f534d6f5b3": {
+      "artifact_tree_sha256": "c0d17058ea7aef3f4d9b2486441911d3c3f30c3573deb59b2c061c88fb1f41f0",
+      "registered_at": "2026-08-01T14:26:02.968606+00:00",
+      "registered_by": "fc415d555328a75231c97905a6798cefb1d65b18",
+      "run_id": "cda7e564c9427ad2b4ef1f0108631ba9b44470374772c70bbdd373f534d6f5b3",
+      "seal_manifest_file_sha256": "6e00998909153320e1c2182e7ca2be6806dacdcf6097ae90290e15420a5834c2",
+      "status": "ACTIVE"
     }
   },
   "schema_version": "seal_registry_v1",
-  "updated_at": "2026-08-01T13:52:11.621386+00:00"
+  "updated_at": "2026-08-01T14:26:02.968609+00:00"
 }
