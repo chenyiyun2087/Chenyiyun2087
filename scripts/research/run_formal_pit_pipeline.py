@@ -460,11 +460,9 @@ def run_formal_pit_pipeline(
     scores_dir.mkdir()
     try:
         from scripts.research.build_formal_scores import build_formal_scores
-        from runtime.formal_contract import FORMAL_STRATEGIES
         score_result = build_formal_scores(
             factor_panel_path=factor_panel_path,
             output_dir=scores_dir,
-            strategy_ids=list(FORMAL_STRATEGIES),
         )
     except Exception as exc:
         return _block_and_seal(building_dir, run_id, git_sha, "score_builder",
