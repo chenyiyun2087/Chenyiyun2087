@@ -275,8 +275,15 @@ def extract_all(release_id: str) -> dict[str, Any]:
                 df["rights_issue_ratio"] = None
                 df["split_ratio"] = None
 
-            # Keep trade_date as integer (YYYYMMDD) — Factor Builder expects this format
-            # Only convert to ISO for *_available_at string columns
+            # Convert trade_date to YYYY-MM-DD string — both builder and audit parse this
+            if "trade_date" in df.columns:
+                df["trade_date"] = df["trade_date"].apply(
+                    lambda x: f"{int(x)//10000:04d}-{(int(x)%10000)//100:02d}-{int(x)%100:02d}" if pd.notna(x) and x != 0 else ""
+                )
+            if "cal_date" in df.columns and family == "trade_calendar":
+                df["cal_date"] = df["cal_date"].apply(
+                    lambda x: f"{int(x)//10000:04d}-{(int(x)%10000)//100:02d}-{int(x)%100:02d}" if pd.notna(x) and x != 0 else ""
+                )
 
             filename = FAMILY_FILENAMES[family]
             path = output_dir / filename
