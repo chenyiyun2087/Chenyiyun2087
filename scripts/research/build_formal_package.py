@@ -230,10 +230,10 @@ def build_formal_package(
             return
         try:
             df = pd.read_parquet(src_path)
-            # v5.2: symbols must stay as zero-padded strings in CSV transports
+            # v5.2: symbols stay as 6-digit strings in CSV transports
             for col in ("symbol", "ts_code"):
                 if col in df.columns:
-                    df[col] = df[col].astype(str).str.zfill(9)
+                    df[col] = df[col].astype(str).str.split(".").str[0].str.zfill(6)
             df.to_csv(dst_path, index=False)
             csv_entries[csv_name] = {"sha256": _file_sha(dst_path)}
         except Exception as exc:

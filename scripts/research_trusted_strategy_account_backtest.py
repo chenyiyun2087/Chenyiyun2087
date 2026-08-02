@@ -744,7 +744,7 @@ def _load_lifecycle_snapshot(path: str | Path, manifest_path: str | Path) -> tup
     lifecycle_signal = signal_time_for_trade_dates(frame["trade_date"])
     if (lifecycle_available > lifecycle_signal).any():
         raise RuntimeError("lifecycle_available_at_after_signal")
-    frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
+    frame["symbol"] = frame["symbol"].astype(str).str.split(".").str[0].str.zfill(6)
     frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce").dt.date
     if frame[["symbol", "trade_date"]].isna().any().any() or frame.duplicated(["symbol", "trade_date"]).any():
         raise RuntimeError("invalid lifecycle snapshot identity")
@@ -753,7 +753,7 @@ def _load_lifecycle_snapshot(path: str | Path, manifest_path: str | Path) -> tup
 
 def _apply_lifecycle_snapshot(prices: pd.DataFrame, lifecycle: pd.DataFrame) -> pd.DataFrame:
     lifecycle = lifecycle.copy()
-    lifecycle["symbol"] = lifecycle["symbol"].astype(str).str.zfill(6)
+    lifecycle["symbol"] = lifecycle["symbol"].astype(str).str.split(".").str[0].str.zfill(6)
     lifecycle_columns = [
         "symbol", "trade_date", "is_listed", "is_st", "is_suspended",
         "security_status_transition", "lifecycle_available_at",
@@ -799,7 +799,7 @@ def _apply_formal_market_snapshots(
     T+1 order can be simulated.
     """
     out = prices.copy()
-    out["symbol"] = out["symbol"].astype(str).str.zfill(6)
+    out["symbol"] = out["symbol"].astype(str).str.split(".").str[0].str.zfill(6)
     for canonical, legacy in {
         "open": "raw_open", "high": "raw_high", "low": "raw_low",
         "close": "raw_close", "pre_close": "raw_pre_close",
@@ -809,7 +809,7 @@ def _apply_formal_market_snapshots(
             out[legacy] = out[canonical]
     out["trade_date"] = pd.to_datetime(out["trade_date"], errors="coerce").dt.date
     for frame, name in ((universe, "universe"), (adjustments, "adjustment")):
-        frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
+        frame["symbol"] = frame["symbol"].astype(str).str.split(".").str[0].str.zfill(6)
         frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce").dt.date
         if frame.duplicated(["trade_date", "symbol"]).any():
             raise RuntimeError(f"{name}_snapshot_duplicate_keys")
@@ -2067,11 +2067,10 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
         .drop_duplicates(keys)
         .drop(columns=["strategy", "score", "score_path"], errors="ignore")
     )
-    # v5.2: normalize symbol to 9-char with exchange suffix to match
-    # prices/universe snapshots (000001 → 000001.SZ)
+    # v5.2: normalize symbol to 6-digit stripped form (000001.SZ → 000001)
+    # to match prices/universe snapshots produced by the extractor
     if "symbol" in base.columns:
-        base["symbol"] = base["symbol"].astype(str).str.zfill(6).str.replace(
-            r"(\d{6})(\.(SZ|SH|BJ))?", r"\1.SZ", regex=True)
+        base["symbol"] = base["symbol"].astype(str).str.split(".").str[0].str.zfill(6)
     if "source_score" in base.columns:
         base["score"] = pd.to_numeric(base.pop("source_score"), errors="coerce")
     # v5.2: single-strategy DATA_E0 run — the only present strategy drives both
