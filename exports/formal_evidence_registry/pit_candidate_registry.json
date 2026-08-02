@@ -1,8 +1,8 @@
 {
-  "formal_pit_run_id": "e738c9ea1598001c456c81c8823162bfaf99c55a1f933a3a4b5d66156922800d",
+  "formal_pit_run_id": "f244538e6a3d0ad4c9169963b1b27a2fa8c3cb229cdd86545ae8783c2d995fcb",
   "schema_version": "pit_candidate_registry_v5_1_5",
-  "seal_manifest_sha256": "b6ea9e119ac16c887fc07f3eceb16e870a9da63072b00843e245cf9acf5dffa0",
+  "seal_manifest_sha256": "04acfe167e0c05949897cc4ae50694c4c722828797b2f3e6904e8b3fd4219a79",
   "status": "PIT_VERIFIED",
-  "updated_at": "2026-08-01T15:13:57.163058+00:00",
-  "updated_by": "ffdbd8f5ffdf00878a69a0f4fce9bb2d1aaa1662"
+  "updated_at": "2026-08-02T03:45:54.337260+00:00",
+  "updated_by": "45175f454899a6a6864378bbaa57677189c7f76e"
 }

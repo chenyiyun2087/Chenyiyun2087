@@ -104,6 +104,14 @@
       "seal_manifest_file_sha256": "5e2a50bd695ef5d3c75c4ac76c82119c18879b01304e12b71fa0e9c84af3f68b",
       "status": "ACTIVE"
     },
+    "f244538e6a3d0ad4c9169963b1b27a2fa8c3cb229cdd86545ae8783c2d995fcb": {
+      "artifact_tree_sha256": "d03ceff4baeb56d58c5c477d7aaf976f9dbc50c3c075e27a699b805bcc3b386b",
+      "registered_at": "2026-08-02T03:45:54.319067+00:00",
+      "registered_by": "45175f454899a6a6864378bbaa57677189c7f76e",
+      "run_id": "f244538e6a3d0ad4c9169963b1b27a2fa8c3cb229cdd86545ae8783c2d995fcb",
+      "seal_manifest_file_sha256": "04acfe167e0c05949897cc4ae50694c4c722828797b2f3e6904e8b3fd4219a79",
+      "status": "ACTIVE"
+    },
     "formal-8356604cfba5a7c27a8dba0b7dd2accecaaafd20c240145f0b98c9a72c03e5f6": {
       "artifact_tree_sha256": "7a431d701f80a02f4a8412c2dee4f2212b6c9b7ad469ce84e486243edc6cae4b",
       "registered_at": "2026-08-01T22:55:23.187283+00:00",
@@ -122,5 +130,5 @@
     }
   },
   "schema_version": "seal_registry_v1",
-  "updated_at": "2026-08-02T00:39:37.297183+00:00"
+  "updated_at": "2026-08-02T03:45:54.319071+00:00"
 }
