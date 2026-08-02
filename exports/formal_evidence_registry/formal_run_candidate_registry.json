@@ -1,0 +1,15 @@
+{
+  "capital_authority": false,
+  "economic_status": "BACKTEST_FAILED",
+  "formal_pit_run_id": "e738c9ea1598001c456c81c8823162bfaf99c55a1f933a3a4b5d66156922800d",
+  "formal_run_id": "formal-e3ada427506783a52f73c824d530658010f11b46d89e30e7fbd2213fee3f3194",
+  "manifest_content_sha256": "18b194854bc456083e14eb22fa4a934b8a074000b5d36c978c01db22a984cc42",
+  "manifest_file_sha256": "6a58582439776fe0f525a6e098018b3b8451fa89eeee7d0acc338cc04f7aab88",
+  "manifest_sha256": "18b194854bc456083e14eb22fa4a934b8a074000b5d36c978c01db22a984cc42",
+  "package_id": "b3eaea4e4713fe730c0bcd862c75f732b9b5c86ef09abba701303ea16e76beca",
+  "schema_version": "formal_run_candidate_v5_1_6",
+  "seal_manifest_file_sha256": "3e61b3dfb9125f017de8b93d56353396ab52afa2862c39a65ea4d834275504a1",
+  "seal_verified": true,
+  "status": "FORMAL_RUN_BLOCKED",
+  "updated_at": "2026-08-02T00:39:37.436629+00:00"
+}

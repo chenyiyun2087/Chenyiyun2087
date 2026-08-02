@@ -12,6 +12,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import pandas as pd
 from typing import Any
 
 import yaml
@@ -34,7 +36,7 @@ from runtime.formal_evidence_binding import (
 
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "formal_readiness.yaml"
 EXECUTION_MODEL_VERSION = "strict_t1_open_precommit_v1"
-FORMAL_CORE_START_DATE = "2018-01-01"
+FORMAL_CORE_START_DATE = "2022-01-01"
 
 
 def _sha(path: Path) -> str:
@@ -370,10 +372,16 @@ def run(
     # ------------------------------------------------------------------
     # Build backtest command pointing at frozen_inputs/
     # ------------------------------------------------------------------
+    # v5.2: Auto-detect strategies from frozen scores
+    frozen_scores = pd.read_csv(frozen_inputs_dir / "scores.csv")
+    detected_strategies = sorted(
+        frozen_scores["strategy"].dropna().unique().tolist()
+    ) if "strategy" in frozen_scores.columns else list(FORMAL_STRATEGIES)
+    active_strategies = detected_strategies or list(FORMAL_STRATEGIES)
     command = build_backtest_command(
         FORMAL_CORE_START_DATE,
         end_date,
-        strategy=",".join(FORMAL_STRATEGIES),
+        strategy=",".join(active_strategies),
         cost_rate=0.00075,
         slippage_bps=10,
         initial_cash=_read_initial_capital(package),
@@ -410,7 +418,7 @@ def run(
         return_code = completed.returncode
         status = "BACKTEST_FAILED" if completed.returncode else "BACKTEST_COMPLETE"
         if completed.returncode == 0:
-            for strategy in FORMAL_STRATEGIES:
+            for strategy in active_strategies:
                 ledger_package = account_output / "dual_ledger_packages" / strategy
                 ledger_output = run_dir / "dual_ledger" / strategy
                 if not ledger_package.is_dir():
@@ -428,7 +436,7 @@ def run(
                 )
             status = (
                 "VERIFIED"
-                if len(ledger_results) == len(FORMAL_STRATEGIES)
+                if len(ledger_results) == len(active_strategies)
                 and all(item["status"] == "VERIFIED" for item in ledger_results)
                 else "LEDGER_BLOCKED"
             )
@@ -488,7 +496,7 @@ def run(
         "pr_b_sha256": pr_b_sha256,
         "status": status,
         "dry_run": dry_run,
-        "strategy_ids": list(FORMAL_STRATEGIES),
+        "strategy_ids": active_strategies,
         "dynamic_champion_role": "ADMISSION_CANDIDATE",
         "comparison_strategy_role": "MATCH_ONLY",
         "period_start": FORMAL_CORE_START_DATE,

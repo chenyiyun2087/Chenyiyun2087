@@ -1,9 +1,0 @@
-{
-  "formal_run_started": false,
-  "preflight": "exports/formal_readiness/20260727_pr_b/formal_readiness_preflight.json",
-  "preflight_evidence_sha256": "55d683f2a096dd62caecf7e8b751f230b0811cbaa8938cb78c97eccf86cc7895",
-  "preflight_status": "BLOCKED",
-  "reason": "preflight_not_ready",
-  "schema_version": "immutable_formal_run_v1",
-  "status": "BLOCKED"
-}
