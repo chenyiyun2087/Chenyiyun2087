@@ -782,6 +782,8 @@ def _apply_lifecycle_snapshot(prices: pd.DataFrame, lifecycle: pd.DataFrame) -> 
     out["lifecycle_available_at"] = out["snapshot_lifecycle_available_at"]
     limit_ok = out.get("limit_status", pd.Series("NORMAL", index=out.index)).astype(str).isin({"NORMAL", "NONE"})
     out["execution_tradable"] = ((out["is_listed"] == 1) & (out["is_suspended"] == 0) & ~out["is_st"].eq(1) & limit_ok & pd.to_numeric(out.get("raw_volume"), errors="coerce").fillna(0).gt(0)).astype(int)
+    # v5.2: security_status_available = 1 when lifecycle status is present
+    out["security_status_available"] = out["execution_tradable"]
     return out.drop(columns=status_columns)
 
 
@@ -2065,6 +2067,11 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
         .drop_duplicates(keys)
         .drop(columns=["strategy", "score", "score_path"], errors="ignore")
     )
+    # v5.2: normalize symbol to 9-char with exchange suffix to match
+    # prices/universe snapshots (000001 → 000001.SZ)
+    if "symbol" in base.columns:
+        base["symbol"] = base["symbol"].astype(str).str.zfill(6).str.replace(
+            r"(\d{6})(\.(SZ|SH|BJ))?", r"\1.SZ", regex=True)
     if "source_score" in base.columns:
         base["score"] = pd.to_numeric(base.pop("source_score"), errors="coerce")
     # v5.2: single-strategy DATA_E0 run — the only present strategy drives both
@@ -2081,9 +2088,16 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
         if "s_liquidity" not in base.columns:
             base["s_liquidity"] = pd.to_numeric(base.get("liquidity_detail_score", 50.0), errors="coerce")
         # v5.2: ensure market-context columns exist (filled from market data or 0)
-        for column in ("market_bs_ratio", "market_hs300_pct_chg", "market_hs300_ret_20"):
+        for column in ("market_bs_ratio", "market_hs300_pct_chg", "market_hs300_ret_20",
+                       "market_amount_ratio_20", "market_liquidity_bucket"):
             if column not in base.columns:
                 base[column] = 0.0
+        if "index_bucket" not in base.columns:
+            base["index_bucket"] = "index_neutral"
+        if "market_liquidity_bucket" not in base.columns:
+            base["market_liquidity_bucket"] = "liquidity_neutral"
+        if "ashare_market_regime" not in base.columns:
+            base["ashare_market_regime"] = "NEUTRAL"
         # 'score' is required by downstream scoring path
         if "score" not in base.columns and "liquidity_detail_score" in base.columns:
             base["score"] = base["liquidity_detail_score"]
