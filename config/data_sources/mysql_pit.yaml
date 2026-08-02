@@ -34,23 +34,23 @@ families:
     source_table: tushare_stock.dwd_stock_daily_standard
     query_timeout_seconds: 300
   universe:
-    source_table: tushare_stock.dim_stock
+    source_table: tushare_stock.dwd_stock_label_daily
     query_timeout_seconds: 60
   financial:
-    source_table: tushare_stock.dwd_financial_pit
-    query_timeout_seconds: 120
+    source_table: tushare_stock.dwd_daily_basic
+    query_timeout_seconds: 300
   industry:
-    source_table: tushare_stock.dwd_industry_pit
+    source_table: tushare_stock.dwd_stock_label_daily
     query_timeout_seconds: 60
   adjustment:
-    source_table: tushare_stock.dwd_adjustment_factor_pit
-    query_timeout_seconds: 60
+    source_table: tushare_stock.dwd_adj_factor
+    query_timeout_seconds: 120
   trade_calendar:
-    source_table: tushare_stock.dim_trade_cal
+    source_table: chenyiyun.dim_trade_cal
     query_timeout_seconds: 30
   security_lifecycle:
-    source_table: tushare_stock.dwd_security_lifecycle
+    source_table: tushare_stock.dwd_stock_label_daily
     query_timeout_seconds: 60
   corporate_actions:
-    source_table: tushare_stock.dwd_corporate_actions
+    source_table: tushare_stock.dwd_corporate_action_event_v2
     query_timeout_seconds: 60

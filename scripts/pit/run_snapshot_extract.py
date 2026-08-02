@@ -54,6 +54,12 @@ def _get_connection(config: dict[str, Any]):
         "charset": defaults.get("charset", "utf8mb4"),
         "connect_timeout": 10,
     }
+    # v5.2: Fail-closed — require explicit credentials for HISTORICAL_REAL
+    if kwargs["user"] == "root" and not kwargs["password"]:
+        raise RuntimeError(
+            "PIT extraction requires explicit database credentials. "
+            "Set CHENYIYUN_DB_PASSWORD or CHENYIYUN_DB_URL environment variable."
+        )
     # If full URL is set, use it
     db_url = os.getenv(env.get("url", ""))
     if db_url:
@@ -235,11 +241,15 @@ def extract_all(release_id: str) -> dict[str, Any]:
                     return str(d) if d else ""
 
             if family == "market":
+                # v5.2: available_at = DATA_E0_DERIVED (not real PIT timestamp)
                 df["market_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{_int_to_iso(x)}T15:30:00+08:00")
-                # Add market_regime and market_return (DATA_E0: not in raw data)
-                df["market_regime"] = "NORMAL"
-                df["market_return"] = 0.0
+                    lambda x: f"{_int_to_iso(x)}T15:30:00+08:00 [DATA_E0_DERIVED]")
+                # market_regime: leave NULL (not in raw data, don't fabricate)
+                # market_return: computed from close prices
+                df["close_num"] = pd.to_numeric(df["close"], errors="coerce")
+                df["market_return"] = df.groupby("trade_date")["close_num"].transform(
+                    lambda x: x.pct_change().mean() if len(x) > 1 else 0.0
+                )
             elif family == "universe":
                 df["universe_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
@@ -248,10 +258,13 @@ def extract_all(release_id: str) -> dict[str, Any]:
                 df["limit_status"] = df["limit_status"].apply(
                     lambda x: "NORMAL" if x == 10 else str(x)
                 )
-                # security_status_transition with real diversity
-                transitions = ["NORMAL", "RESTRICTED", "LISTING", "DELISTED"]
+                # v5.2: security_status_transition from real fields (no hash/synthetic)
                 df["security_status_transition"] = df.apply(
-                    lambda r: transitions[hash(str(r.get(\"trade_date\",\"\")) + str(r.get(\"symbol\",\"\"))) % len(transitions)], axis=1)
+                    lambda r: (
+                        "ST" if int(r.get("is_st", 0) or 0) == 1
+                        else "SUSPENDED" if int(r.get("is_suspended", 0) or 0) == 1
+                        else "NORMAL"
+                    ), axis=1)
             elif family == "financial":
                 # DATA_E0: announcement assumed available before market open
                 df["financial_available_at"] = df["financial_available_at"].apply(
