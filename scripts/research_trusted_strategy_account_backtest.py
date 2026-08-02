@@ -2047,7 +2047,7 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
     if "strategy" not in scores.columns:
         return scores
     keys = ["trade_date", "symbol"]
-    expected = set(FORMAL_STRATEGIES) | {"vls_value_size_liquidity_v1"}
+    expected = set(FORMAL_STRATEGIES) | {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1"}
     actual = set(scores["strategy"].astype(str).unique())
     if not actual.issubset(expected):
         raise ValueError(
@@ -2065,7 +2065,7 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
     base = (
         scores.sort_values([*keys, "strategy"])
         .drop_duplicates(keys)
-        .drop(columns=["strategy", "score", "score_path"], errors="ignore")
+        .drop(columns=["strategy", "score_path"], errors="ignore")
     )
     # v5.2: normalize symbol to 6-digit stripped form (000001.SZ → 000001)
     # to match prices/universe snapshots produced by the extractor
@@ -3237,7 +3237,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     formal_evidence_required = bool(getattr(args, "require_verified_evidence", False))
     requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies) or formal_evidence_required
     # v5.2: allow governed + challenger (vls) strategies for research runs
-    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2"}
+    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1"}
     allowed_strategies = formal_strategies | CHALLENGER_STRATEGIES
     if formal_evidence_required and not requested_strategies.issubset(allowed_strategies):
         raise ValueError("formal evidence requires strategies from the governed formal set")
@@ -3353,8 +3353,9 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         needed_specs.extend(adaptive_underlying_specs.values())
     needs_dynamic = any(
         getattr(spec, "sort_col", "") in {"dynamic_factor_score", "dynamic_ic_factor_score"}
+        and not getattr(spec, "fixed_weight_score", False)
         for spec in needed_specs
-    )
+    ) and not getattr(args, "no_dynamic_rescore", False)
     if needs_dynamic:
         scores, factor_weights = add_dynamic_factor_score(
             scores,
@@ -4460,6 +4461,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default=None, help="Optional isolated output directory; it must not already exist.")
     parser.add_argument("--execution-mode", default=STRICT_MODE, choices=EXECUTION_MODES)
     parser.add_argument("--allow-daily-proxy-approximation", action="store_true")
+    parser.add_argument("--no-dynamic-rescore", action="store_true", help="v5.2 research: use the strategy-specific fixed-weight score from the scores snapshot instead of recomputing the dynamic factor score.")
     parser.add_argument("--require-verified-evidence", action="store_true", help="Require frozen corporate-action/lifecycle inputs and derive strict evidence for the five champion accounts.")
     parser.add_argument("--scores-snapshot", default=None, help="Immutable score CSV consumed instead of querying scores during the run.")
     parser.add_argument("--prices-snapshot", default=None, help="Immutable price CSV consumed instead of querying prices during the run.")

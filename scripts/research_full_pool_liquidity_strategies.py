@@ -71,6 +71,10 @@ class StrategySpec:
     candidate_pool: str = "generic"
     allowed_regimes: tuple[str, ...] = ("strong_risk_on", "normal_risk_on", "neutral", "risk_off")
     pool_role: str = "research"
+    fixed_weight_score: bool = False
+    """v5.2: engine must NOT recompute dynamic_factor_score for this spec;
+    the strategy-specific fixed-weight score from the formal scores snapshot
+    (build_formal_scores yaml weights) drives selection instead."""
 
 
 def _symbol_from_ts_code(ts_code: str) -> str:
@@ -105,10 +109,11 @@ def build_strategy_specs() -> list[StrategySpec]:
         StrategySpec("baseline_full_liquidity_detail", "full", "liquidity_detail_score"),
         StrategySpec("baseline_full_dynamic_factor", "full", "dynamic_factor_score"),
         # v5.2 challenger: value+size+liquidity sleeve (weights from VLS definition)
-        StrategySpec("vls_value_size_liquidity_v1", "full", "dynamic_factor_score"),
+        StrategySpec("vls_value_size_liquidity_v1", "full", "dynamic_factor_score", fixed_weight_score=True),
         # v5.2: VLS with liquidity floor (exclude bottom 40% illiquid) + industry cap
-        StrategySpec("vls_liq_floor60", "full", "dynamic_factor_score", liquidity_top_pct=0.60),
-        StrategySpec("vls_liq_floor60_incap2", "full", "dynamic_factor_score", liquidity_top_pct=0.60, max_per_industry=2),
+        StrategySpec("vls_liq_floor60", "full", "dynamic_factor_score", liquidity_top_pct=0.60, fixed_weight_score=True),
+        StrategySpec("vls_liq_floor60_incap2", "full", "dynamic_factor_score", liquidity_top_pct=0.60, max_per_industry=2, fixed_weight_score=True),
+        StrategySpec("vls_mom_contrarian_v1", "full", "dynamic_factor_score", fixed_weight_score=True),
         StrategySpec("baseline_full_dynamic_ic_factor", "full", "dynamic_ic_factor_score"),
         StrategySpec("liq_top_10_then_score", "full", "score", liquidity_top_pct=0.10),
         StrategySpec("liq_top_20_then_score", "full", "score", liquidity_top_pct=0.20),
