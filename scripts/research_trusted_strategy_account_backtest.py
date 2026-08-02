@@ -3237,7 +3237,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     formal_evidence_required = bool(getattr(args, "require_verified_evidence", False))
     requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies) or formal_evidence_required
     # v5.2: allow governed + challenger (vls) strategies for research runs
-    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1"}
+    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2"}
     allowed_strategies = formal_strategies | CHALLENGER_STRATEGIES
     if formal_evidence_required and not requested_strategies.issubset(allowed_strategies):
         raise ValueError("formal evidence requires strategies from the governed formal set")
