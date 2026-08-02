@@ -104,6 +104,8 @@ def build_strategy_specs() -> list[StrategySpec]:
         StrategySpec("baseline_full_liq_breakout_adj_40p_30d", "full", "score_liq_breakout_adj_40p_30d"),
         StrategySpec("baseline_full_liquidity_detail", "full", "liquidity_detail_score"),
         StrategySpec("baseline_full_dynamic_factor", "full", "dynamic_factor_score"),
+        # v5.2 challenger: value+size+liquidity sleeve (weights from VLS definition)
+        StrategySpec("vls_value_size_liquidity_v1", "full", "dynamic_factor_score"),
         StrategySpec("baseline_full_dynamic_ic_factor", "full", "dynamic_ic_factor_score"),
         StrategySpec("liq_top_10_then_score", "full", "score", liquidity_top_pct=0.10),
         StrategySpec("liq_top_20_then_score", "full", "score", liquidity_top_pct=0.20),

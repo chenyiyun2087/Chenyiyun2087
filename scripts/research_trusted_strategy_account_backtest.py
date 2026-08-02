@@ -2047,7 +2047,7 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
     if "strategy" not in scores.columns:
         return scores
     keys = ["trade_date", "symbol"]
-    expected = set(FORMAL_STRATEGIES)
+    expected = set(FORMAL_STRATEGIES) | {"vls_value_size_liquidity_v1"}
     actual = set(scores["strategy"].astype(str).unique())
     if not actual.issubset(expected):
         raise ValueError(
@@ -3236,8 +3236,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     }
     formal_evidence_required = bool(getattr(args, "require_verified_evidence", False))
     requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies) or formal_evidence_required
-    # v5.2: allow a single governed strategy for DATA_E0 diagnostic runs
-    if formal_evidence_required and not requested_strategies.issubset(formal_strategies):
+    # v5.2: allow governed + challenger (vls) strategies for research runs
+    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1"}
+    allowed_strategies = formal_strategies | CHALLENGER_STRATEGIES
+    if formal_evidence_required and not requested_strategies.issubset(allowed_strategies):
         raise ValueError("formal evidence requires strategies from the governed formal set")
     if formal_evidence_required and not all((getattr(args, "scores_snapshot", None), getattr(args, "prices_snapshot", None))):
         raise ValueError("formal champion evidence requires immutable score and price snapshots")

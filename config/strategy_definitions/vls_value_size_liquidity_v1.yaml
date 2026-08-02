@@ -1,0 +1,37 @@
+# Formal Strategy Definition: VLS (Value + Size + Liquidity)
+# v5.2 alpha sleeve — derived from factor IC screen:
+#   value IC=+0.12, liquidity IC=+0.10, size IC=+0.09 (positive)
+#   momentum IC=+0.01 (removed), market_beta IC=+0.04 (removed)
+# Hypothesis: value/size/liquidity portfolio beats 6-factor baseline.
+
+schema_version: "strategy_definition_v1"
+strategy_id: "vls_value_size_liquidity_v1"
+strategy_display_name: "VLS Alpha Sleeve v1 — Value + Size + Liquidity"
+
+score_formula: "weighted_sum"
+factor_weights:
+  value: 0.40
+  size: 0.30
+  liquidity: 0.30
+
+factor_signs:
+  value: 1
+  size: 1
+  liquidity: 1
+
+missing_value_policy: "BLOCK_IF_EXCEEDS_THRESHOLD"
+missing_factor_threshold_pct: 5.0
+
+ranking_policy: "descending"
+selection_threshold: "top_20_pct"
+
+rebalance_policy: "weekly_monday"
+
+signal_time: "T15:30:00+08:00"
+execution_time: "T+1 09:30:00+08:00"
+timezone: "Asia/Shanghai"
+
+code_entry: "scripts.research.build_formal_scores.build_formal_scores"
+code_path: "scripts/research/build_formal_scores.py"
+
+acceptance_profile: "alpha_v3_2"
