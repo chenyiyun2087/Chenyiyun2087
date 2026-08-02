@@ -2703,6 +2703,7 @@ def _rebalance(
     precommit_prices: dict[str, dict[str, object]] | None = None,
     strict_precommit: bool = False,
     ledger: ExecutionLedger | None = None,
+    rebalance_score_buffer: float = 0.0,
 ) -> tuple[list[dict], list[dict], dict[str, object]]:
     trade_rows: list[dict] = []
     candidate_rows: list[dict] = []
@@ -2712,7 +2713,7 @@ def _rebalance(
     if strict_precommit:
         _sync_account_view_from_ledger(account, ledger, execution_date)  # type: ignore[arg-type]
     if targets.empty:
-        return trade_rows, candidate_rows, {"locked_count": 0, "candidate_count": 0, "executed": 0}
+        return trade_rows, candidate_rows, {"locked_count": 0, "candidate_count": 0, "executed": 0, "buffer_kept_count": 0}
 
     by_symbol = {str(row["symbol"]).zfill(6): row for _, row in targets.iterrows()}
     planning_prices = precommit_prices if strict_precommit and precommit_prices is not None else open_prices
@@ -2725,6 +2726,30 @@ def _rebalance(
         if holding_days < int(hold_days):
             locked_symbols.add(symbol)
             locked_value += _position_value(position, planning_prices, planning_field)
+
+    # v5.2 turnover-penalty: score-buffer rebalancing. An unlocked holding is
+    # kept (locked, budget-occupying, no re-weight) when its current-day
+    # ranking score stays within an absolute buffer of the top-N cutoff score.
+    # Buffer is in ranking-score units (the VLS snapshot score is a per-day
+    # z-score, so a relative cutoff buffer would be ill-defined).
+    buffer_kept: dict[str, float] = {}
+    if float(rebalance_score_buffer) > 0 and not targets.empty:
+        ranked_targets = targets.sort_values("rank")
+        cutoff_index = min(len(ranked_targets) - 1, max(1, int(max_total_positions or 0) or len(ranked_targets)) - 1)
+        cutoff_score = _safe_float(ranked_targets.iloc[cutoff_index].get("rank_score"), np.nan)
+        if np.isfinite(cutoff_score) and spec.sort_col in day_scores.columns:
+            day_rank_series = pd.to_numeric(day_scores.get(spec.sort_col), errors="coerce")
+            day_score_map = dict(zip(day_scores["symbol"].astype(str).str.zfill(6), day_rank_series))
+            for symbol in sorted(account.positions):
+                if symbol in locked_symbols:
+                    continue
+                current_score = _safe_float(day_score_map.get(symbol), np.nan)
+                if not np.isfinite(current_score) or current_score < float(cutoff_score) - float(rebalance_score_buffer):
+                    continue
+                locked_symbols.add(symbol)
+                buffer_kept[symbol] = float(current_score)
+                position = account.positions[symbol]
+                locked_value += _position_value(position, planning_prices, planning_field)
 
     rank_order = (
         targets.assign(_symbol=targets["symbol"].astype(str).str.zfill(6))
@@ -2805,6 +2830,7 @@ def _rebalance(
                 "plan_reject_reason": plan_reject_reasons.get(symbol, ""),
                 "execution_tradable": int(bool(_safe_float(planning_prices.get(symbol, {}).get("execution_tradable"), 0.0))) if strict_precommit else np.nan,
                 "locked": int(symbol in locked_symbols),
+                "buffer_kept": int(symbol in buffer_kept),
                 "skipped_by_position_cap": int(symbol in skipped_by_position_cap),
                 "pattern_score": _safe_float(row.get("pattern_score")),
                 "pattern_sentiment": row.get("pattern_sentiment"),
@@ -2937,6 +2963,7 @@ def _rebalance(
         candidate_rows,
         {
             "locked_count": int(len(locked_symbols)),
+            "buffer_kept_count": int(len(buffer_kept)),
             "locked_value": float(locked_value),
             "candidate_count": int(len(targets)),
             "executed": int(len(trade_rows)),
@@ -4092,6 +4119,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     position_ratio=rebalance_position_ratio,
                     calendar=calendar,
                     open_prices=price_lookup,
+                    rebalance_score_buffer=args.rebalance_score_buffer,
                     targets=target_override,
                     precommit_prices=_price_lookup_for_day(prices, price_day_indices, signal_date, price_lookup_columns),
                     strict_precommit=strict_raw_execution,
@@ -4274,6 +4302,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 "hold_days": int(args.hold_days),
                 "trade_cost_rate": float(args.trade_cost_rate),
                 "slippage_rate": float(args.slippage_rate),
+                "rebalance_score_buffer": float(args.rebalance_score_buffer),
                 "lot_size": int(args.lot_size),
                 "min_trade_value": float(args.min_trade_value),
                 "max_total_positions": int(args.max_total_positions),
@@ -4365,6 +4394,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "hold_days": int(args.hold_days),
         "trade_cost_rate": float(args.trade_cost_rate),
         "slippage_rate": float(args.slippage_rate),
+        "rebalance_score_buffer": float(args.rebalance_score_buffer),
         "lot_size": int(args.lot_size),
         "min_trade_value": float(args.min_trade_value),
         "max_total_positions": int(args.max_total_positions),
@@ -4502,6 +4532,12 @@ def main() -> None:
     parser.add_argument("--hold-days", type=int, default=None)
     parser.add_argument("--trade-cost-rate", type=float, default=0.00075, help="Single-side cost rate. 0.00075 approximates 0.15%% round trip.")
     parser.add_argument("--slippage-rate", type=float, default=0.0)
+    parser.add_argument(
+        "--rebalance-score-buffer",
+        type=float,
+        default=0.0,
+        help="v5.2 turnover-penalty research: keep an unlocked holding when its current-day ranking score stays within this absolute buffer of the top-N cutoff score (ranking-score units; the VLS snapshot score is a per-day z-score). 0 disables.",
+    )
     parser.add_argument("--position-ratio", type=float, default=None, help="Target gross exposure ratio before locked-position budget.")
     parser.add_argument(
         "--hard-stop-loss-pct",
