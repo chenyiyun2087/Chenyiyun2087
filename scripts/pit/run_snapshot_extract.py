@@ -103,7 +103,7 @@ def _get_transaction_info(conn) -> dict[str, Any]:
 
 FAMILY_QUERIES = {
     "market": """
-        SELECT trade_date, ts_code AS symbol,
+        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
                adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close,
                NULL AS pre_close, vol AS volume, amount,
                NULL AS circ_mv, NULL AS market_return, NULL AS market_regime
@@ -112,7 +112,7 @@ FAMILY_QUERIES = {
         ORDER BY trade_date, ts_code
     """,
     "universe": """
-        SELECT trade_date, ts_code AS symbol,
+        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
                1 AS is_listed,
                CASE WHEN is_st = 1 THEN 1 ELSE 0 END AS is_st,
                0 AS is_suspended,
@@ -123,7 +123,7 @@ FAMILY_QUERIES = {
         ORDER BY trade_date, ts_code
     """,
     "financial": """
-        SELECT trade_date, ts_code AS symbol,
+        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
                pb,
                trade_date AS financial_period_end,
                trade_date AS announcement_date,
@@ -137,7 +137,7 @@ FAMILY_QUERIES = {
         ORDER BY ts_code, trade_date
     """,
     "industry": """
-        SELECT trade_date, ts_code AS symbol,
+        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
                industry,
                industry AS industry_code,
                industry AS industry_name,
@@ -148,7 +148,7 @@ FAMILY_QUERIES = {
         ORDER BY ts_code, trade_date
     """,
     "adjustment": """
-        SELECT trade_date, ts_code AS symbol, adj_factor,
+        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol, adj_factor,
                '' AS corporate_action_type,
                trade_date AS ex_date,
                trade_date AS record_date,
@@ -166,7 +166,7 @@ FAMILY_QUERIES = {
         ORDER BY cal_date
     """,
     "security_lifecycle": """
-        SELECT trade_date, ts_code AS symbol,
+        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
                1 AS is_listed,
                CASE WHEN is_st = 1 THEN 1 ELSE 0 END AS is_st,
                0 AS is_suspended,
@@ -177,7 +177,7 @@ FAMILY_QUERIES = {
         ORDER BY ts_code, trade_date
     """,
     "corporate_actions": """
-        SELECT effective_date AS trade_date, ts_code AS symbol,
+        SELECT effective_date AS trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
                event_type AS corporate_action_type,
                ex_date, record_date,
                event_id, effective_date
