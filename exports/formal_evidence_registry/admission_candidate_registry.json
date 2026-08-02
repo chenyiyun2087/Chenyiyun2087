@@ -1,11 +1,11 @@
 {
-  "admission_id": "e873f4bf5f553604114d67eb1c8f73d83ba3251be04ca1a35f32ded84d0a0ea7",
+  "admission_id": "9b021a6351691cb71c649d2affed04a4c1c3d58cdfed5c463ea89a754b3bf87b",
   "capital_authority": false,
-  "formal_pit_run_id": "3899824632f0654e80fc60ebed44c8ef43b892250402f416b0ccf4efee7c7326",
-  "package_id": "d7c14e97969750685a29a546d6a33b17af6cca5e629c480c9af830f1a0869dfa",
-  "pr_b_path": "exports/formal_admissions/e873f4bf5f553604114d67eb1c8f73d83ba3251be04ca1a35f32ded84d0a0ea7/pr_b/pr_b_binding.json",
+  "formal_pit_run_id": "a30768ccf664b6c5a1a3b0c53410a38e71f6b88a170d355aba13c5c07210b7b2",
+  "package_id": "36a4eb087892b3c934081ce5ec2e61a32bd43b8f583f41767f5fc893684f815d",
+  "pr_b_path": "exports/formal_admissions/9b021a6351691cb71c649d2affed04a4c1c3d58cdfed5c463ea89a754b3bf87b/pr_b/pr_b_binding.json",
   "schema_version": "admission_candidate_registry_v5_1_6",
   "status": "ADMISSION_READY",
-  "updated_at": "2026-08-02T05:04:03.103694+00:00",
-  "updated_by": "3797935ea4f4e4bea67529cfcdd11228b8dc5325"
+  "updated_at": "2026-08-02T05:49:27.007654+00:00",
+  "updated_by": "254dd5985a5a92112fc8d04d536ae455917f13da"
 }

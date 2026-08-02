@@ -1,15 +1,15 @@
 {
   "capital_authority": false,
   "economic_status": "LEDGER_BLOCKED",
-  "formal_pit_run_id": "3899824632f0654e80fc60ebed44c8ef43b892250402f416b0ccf4efee7c7326",
-  "formal_run_id": "formal-887233532aa7ab624e6939248d495df21a3b49f359e2a0c15de602daba384390",
-  "manifest_content_sha256": "2d342393d906b5ecf685afdd2af4bc381380b3e8bdbf8028381aec5206a0b6d5",
-  "manifest_file_sha256": "a44a454b0046ac6f1973fc64b36a4f7e365b62be44a1e72cdb4a279bc00aab56",
-  "manifest_sha256": "2d342393d906b5ecf685afdd2af4bc381380b3e8bdbf8028381aec5206a0b6d5",
-  "package_id": "d7c14e97969750685a29a546d6a33b17af6cca5e629c480c9af830f1a0869dfa",
+  "formal_pit_run_id": "a30768ccf664b6c5a1a3b0c53410a38e71f6b88a170d355aba13c5c07210b7b2",
+  "formal_run_id": "formal-13da3e11af7dfdd8b67941e9890129110bea999c2af0a83a6fc39649d3d5e865",
+  "manifest_content_sha256": "eb2d85393b4944db751a03693f807743c0e45350303a88bee485f6a549ad7287",
+  "manifest_file_sha256": "131443acf747fbfc0b37dd9cd8536fae3aa3186517be7dcb4b00ae269d9da33c",
+  "manifest_sha256": "eb2d85393b4944db751a03693f807743c0e45350303a88bee485f6a549ad7287",
+  "package_id": "36a4eb087892b3c934081ce5ec2e61a32bd43b8f583f41767f5fc893684f815d",
   "schema_version": "formal_run_candidate_v5_1_6",
-  "seal_manifest_file_sha256": "5e1a54ebd623a7908d9447c4adad414af41e2da47dc2e811f714029cc03731a7",
+  "seal_manifest_file_sha256": "6301d88469998c2aeffcd82f980f64daa878893228f4bec1eca6492175dcfbcf",
   "seal_verified": true,
   "status": "FORMAL_RUN_BLOCKED",
-  "updated_at": "2026-08-02T05:18:38.696436+00:00"
+  "updated_at": "2026-08-02T05:50:34.416455+00:00"
 }

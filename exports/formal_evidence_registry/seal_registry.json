@@ -1,11 +1,51 @@
 {
   "entries": {
+    "0cc209ad974f8ea697313e4f9eb0205148156c4a05c7381dbfd57b80f247197b": {
+      "artifact_tree_sha256": "18b5d6ef2dace957bab644cb1a3eac64590ab1a0cf4a1c649fc1a17634ede6fd",
+      "registered_at": "2026-08-02T05:45:23.349931+00:00",
+      "registered_by": "254dd5985a5a92112fc8d04d536ae455917f13da",
+      "run_id": "0cc209ad974f8ea697313e4f9eb0205148156c4a05c7381dbfd57b80f247197b",
+      "seal_manifest_file_sha256": "8ee350c0674fb0e74277cd766b9fd14507ce19d5e6d4fbfd3d03107efdc14fb3",
+      "status": "ACTIVE"
+    },
+    "31e6b3833c16c9d005c1ba3e4fb031f777508b048f35ba33d77dd7d7d607984f": {
+      "artifact_tree_sha256": "8475c5f6d5486b1632e5f339f265b3a41b604e8c55d1f786f4a04eaab8197f2c",
+      "registered_at": "2026-08-02T05:45:03.894884+00:00",
+      "registered_by": "254dd5985a5a92112fc8d04d536ae455917f13da",
+      "run_id": "31e6b3833c16c9d005c1ba3e4fb031f777508b048f35ba33d77dd7d7d607984f",
+      "seal_manifest_file_sha256": "088afe900f6f20190ca5aa008f34b580b3217b4ee90ecaf97b748e1a3b822b8f",
+      "status": "ACTIVE"
+    },
+    "36a4eb087892b3c934081ce5ec2e61a32bd43b8f583f41767f5fc893684f815d": {
+      "artifact_tree_sha256": "8ba215f44cbecfb0c7d445582f0e9c216f85e798b262ff659e3ef6c48d37006c",
+      "registered_at": "2026-08-02T05:49:07.296037+00:00",
+      "registered_by": "254dd5985a5a92112fc8d04d536ae455917f13da",
+      "run_id": "36a4eb087892b3c934081ce5ec2e61a32bd43b8f583f41767f5fc893684f815d",
+      "seal_manifest_file_sha256": "0288f5b699693a1a65a532c84b1d6bba7065be2a2174a123193d9e7dccc428aa",
+      "status": "ACTIVE"
+    },
     "3899824632f0654e80fc60ebed44c8ef43b892250402f416b0ccf4efee7c7326": {
       "artifact_tree_sha256": "c996752efc2ddf25461e9010d7f6cdbd187bd5f85a3894178cc6c6e09771355c",
       "registered_at": "2026-08-02T05:03:29.946450+00:00",
       "registered_by": "3797935ea4f4e4bea67529cfcdd11228b8dc5325",
       "run_id": "3899824632f0654e80fc60ebed44c8ef43b892250402f416b0ccf4efee7c7326",
       "seal_manifest_file_sha256": "d3e196518b030a406be06213254986c44a6c73e9b904b5198ccfeeb57f0a8348",
+      "status": "ACTIVE"
+    },
+    "9b021a6351691cb71c649d2affed04a4c1c3d58cdfed5c463ea89a754b3bf87b": {
+      "artifact_tree_sha256": "c5795b326cf7405f6ea482b06df63cff9a7e96f3184ec2296fb1fad17ce06222",
+      "registered_at": "2026-08-02T05:49:27.007241+00:00",
+      "registered_by": "254dd5985a5a92112fc8d04d536ae455917f13da",
+      "run_id": "9b021a6351691cb71c649d2affed04a4c1c3d58cdfed5c463ea89a754b3bf87b",
+      "seal_manifest_file_sha256": "aa6950508c091c4d71158e2d860319020814dd04fdcfaa8f81890416facaec29",
+      "status": "ACTIVE"
+    },
+    "a30768ccf664b6c5a1a3b0c53410a38e71f6b88a170d355aba13c5c07210b7b2": {
+      "artifact_tree_sha256": "cde7ef6b288d64142017c2e68464232c8aad94af9ed0a884549a70406656b826",
+      "registered_at": "2026-08-02T05:48:54.466617+00:00",
+      "registered_by": "254dd5985a5a92112fc8d04d536ae455917f13da",
+      "run_id": "a30768ccf664b6c5a1a3b0c53410a38e71f6b88a170d355aba13c5c07210b7b2",
+      "seal_manifest_file_sha256": "e7bea505764813e3f8b5555a30f15b53b79a12b0c025c9aeea4b555b3bedbe11",
       "status": "ACTIVE"
     },
     "d7c14e97969750685a29a546d6a33b17af6cca5e629c480c9af830f1a0869dfa": {
@@ -24,6 +64,22 @@
       "seal_manifest_file_sha256": "a8fc5b87a1c4071959ff08fa98005063730e43ff74866197736f6c0868d343d3",
       "status": "ACTIVE"
     },
+    "formal-13da3e11af7dfdd8b67941e9890129110bea999c2af0a83a6fc39649d3d5e865": {
+      "artifact_tree_sha256": "48d6804e10476aba61a62687c77c6bef418b00bfe7e8478bf8a7a9bee6aa02a4",
+      "registered_at": "2026-08-02T05:50:34.276672+00:00",
+      "registered_by": "254dd5985a5a92112fc8d04d536ae455917f13da",
+      "run_id": "formal-13da3e11af7dfdd8b67941e9890129110bea999c2af0a83a6fc39649d3d5e865",
+      "seal_manifest_file_sha256": "6301d88469998c2aeffcd82f980f64daa878893228f4bec1eca6492175dcfbcf",
+      "status": "ACTIVE"
+    },
+    "formal-4e00c31324786bed2663c9a80568797c4af124b4f0b2913d70b3ae14c77d39b1": {
+      "artifact_tree_sha256": "11a96dc6778703a10731dc2c293c9997e5238586c8b9ca6233caf7767a5fb611",
+      "registered_at": "2026-08-02T05:46:05.754512+00:00",
+      "registered_by": "254dd5985a5a92112fc8d04d536ae455917f13da",
+      "run_id": "formal-4e00c31324786bed2663c9a80568797c4af124b4f0b2913d70b3ae14c77d39b1",
+      "seal_manifest_file_sha256": "3a898548b68da0cffb004504abc97c0f97aa9a51db67674551df4c090ef2fe95",
+      "status": "ACTIVE"
+    },
     "formal-887233532aa7ab624e6939248d495df21a3b49f359e2a0c15de602daba384390": {
       "artifact_tree_sha256": "5af77a020de9dede88b3aef663b84d958b7ba799f6a3fa48a60a6cfb152d36b4",
       "registered_at": "2026-08-02T05:18:38.559749+00:00",
@@ -34,5 +90,5 @@
     }
   },
   "schema_version": "seal_registry_v1",
-  "updated_at": "2026-08-02T05:18:38.559753+00:00"
+  "updated_at": "2026-08-02T05:50:34.276675+00:00"
 }
