@@ -1,15 +1,15 @@
 {
   "capital_authority": false,
   "economic_status": "BACKTEST_FAILED",
-  "formal_pit_run_id": "e738c9ea1598001c456c81c8823162bfaf99c55a1f933a3a4b5d66156922800d",
-  "formal_run_id": "formal-e3ada427506783a52f73c824d530658010f11b46d89e30e7fbd2213fee3f3194",
-  "manifest_content_sha256": "18b194854bc456083e14eb22fa4a934b8a074000b5d36c978c01db22a984cc42",
-  "manifest_file_sha256": "6a58582439776fe0f525a6e098018b3b8451fa89eeee7d0acc338cc04f7aab88",
-  "manifest_sha256": "18b194854bc456083e14eb22fa4a934b8a074000b5d36c978c01db22a984cc42",
-  "package_id": "b3eaea4e4713fe730c0bcd862c75f732b9b5c86ef09abba701303ea16e76beca",
+  "formal_pit_run_id": "2829a1614360c982e2a1773d220b7911d1885e49d91dc4b3c21951a83e5f7203",
+  "formal_run_id": "formal-b3a469e9a32d508cb3fef11a4997a844af07f4de5a6892e643f0061d77db53c4",
+  "manifest_content_sha256": "4dd4f9a08fd07cd90fdad4abce062ca2ceafb79ede978c5f3002e7e9fe323823",
+  "manifest_file_sha256": "c4a79760d1e907c9f1f03bb1f6071ce0cbcd9ffc2a94d59d25ae0e6b6fa48012",
+  "manifest_sha256": "4dd4f9a08fd07cd90fdad4abce062ca2ceafb79ede978c5f3002e7e9fe323823",
+  "package_id": "305b8d20ad5cac765d7ecf1f2d2b019ba0dd496472bc072b0fdf02ee056a25be",
   "schema_version": "formal_run_candidate_v5_1_6",
-  "seal_manifest_file_sha256": "3e61b3dfb9125f017de8b93d56353396ab52afa2862c39a65ea4d834275504a1",
+  "seal_manifest_file_sha256": "1dd6c85eb36855d2d8a60e2f8b2e173c17ecbdd9c99a81464eedf6b327b633db",
   "seal_verified": true,
   "status": "FORMAL_RUN_BLOCKED",
-  "updated_at": "2026-08-02T00:39:37.436629+00:00"
+  "updated_at": "2026-08-02T04:51:27.577121+00:00"
 }

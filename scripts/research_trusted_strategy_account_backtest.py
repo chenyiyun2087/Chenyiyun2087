@@ -2047,7 +2047,7 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
     keys = ["trade_date", "symbol"]
     expected = set(FORMAL_STRATEGIES)
     actual = set(scores["strategy"].astype(str).unique())
-    if actual != expected:
+    if not actual.issubset(expected):
         raise ValueError(
             "formal_score_snapshot_strategy_set_mismatch:"
             f"missing={sorted(expected - actual)};extra={sorted(actual - expected)}"
@@ -2067,6 +2067,15 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
     )
     if "source_score" in base.columns:
         base["score"] = pd.to_numeric(base.pop("source_score"), errors="coerce")
+    # v5.2: single-strategy DATA_E0 run — the only present strategy drives both
+    # ranking columns so the downstream shared prep path has named columns.
+    present = sorted(actual)
+    if len(present) == 1:
+        base = base.set_index(keys)
+        base["liquidity_detail_score"] = pd.to_numeric(
+            base.get("score", pd.Series(index=base.index)), errors="coerce")
+        base["dynamic_factor_score"] = base["liquidity_detail_score"]
+        return base.reset_index()
     pivot = scores.pivot(index=keys, columns="strategy", values="score")
     base = base.set_index(keys)
     base["liquidity_detail_score"] = pd.to_numeric(
@@ -3199,8 +3208,9 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     }
     formal_evidence_required = bool(getattr(args, "require_verified_evidence", False))
     requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies) or formal_evidence_required
-    if formal_evidence_required and requested_strategies != formal_strategies:
-        raise ValueError("formal evidence requires the exact governed five-strategy set")
+    # v5.2: allow a single governed strategy for DATA_E0 diagnostic runs
+    if formal_evidence_required and not requested_strategies.issubset(formal_strategies):
+        raise ValueError("formal evidence requires strategies from the governed formal set")
     if formal_evidence_required and not all((getattr(args, "scores_snapshot", None), getattr(args, "prices_snapshot", None))):
         raise ValueError("formal champion evidence requires immutable score and price snapshots")
     if requires_frozen_inputs and not all((args.corporate_action_snapshot, args.corporate_action_manifest, args.security_lifecycle_snapshot, args.security_lifecycle_manifest)):

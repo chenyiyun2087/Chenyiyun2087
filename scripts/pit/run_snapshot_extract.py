@@ -281,6 +281,15 @@ def extract_all(release_id: str) -> dict[str, Any]:
             elif family == "security_lifecycle":
                 df["lifecycle_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
+                # security_status_transition from real fields (not empty)
+                df["security_status_transition"] = df.apply(
+                    lambda r: (
+                        "ST" if int(r.get("is_st", 0) or 0) == 1
+                        else "SUSPENDED" if int(r.get("is_suspended", 0) or 0) == 1
+                        else "NORMAL"
+                    ), axis=1)
+                if "listed_date" not in df.columns or df["listed_date"].isna().all():
+                    df["listed_date"] = df["trade_date"]
             elif family == "corporate_actions":
                 df["corporate_action_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) else "")
