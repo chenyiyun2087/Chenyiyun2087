@@ -2075,6 +2075,21 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
         base["liquidity_detail_score"] = pd.to_numeric(
             base.get("score", pd.Series(index=base.index)), errors="coerce")
         base["dynamic_factor_score"] = base["liquidity_detail_score"]
+        # Keep the liquidity factor column required by the full-pool prep path
+        if "s_liquidity" not in base.columns and "liquidity" in base.columns:
+            base["s_liquidity"] = pd.to_numeric(base["liquidity"], errors="coerce")
+        if "s_liquidity" not in base.columns:
+            base["s_liquidity"] = pd.to_numeric(base.get("liquidity_detail_score", 50.0), errors="coerce")
+        # v5.2: ensure market-context columns exist (filled from market data or 0)
+        for column in ("market_bs_ratio", "market_hs300_pct_chg", "market_hs300_ret_20"):
+            if column not in base.columns:
+                base[column] = 0.0
+        # 'score' is required by downstream scoring path
+        if "score" not in base.columns and "liquidity_detail_score" in base.columns:
+            base["score"] = base["liquidity_detail_score"]
+        # is_bs_candidate required by selection path (default all candidates)
+        if "is_bs_candidate" not in base.columns:
+            base["is_bs_candidate"] = 1
         return base.reset_index()
     pivot = scores.pivot(index=keys, columns="strategy", values="score")
     base = base.set_index(keys)
@@ -2166,7 +2181,7 @@ def _rolling_perf(perf: pd.DataFrame, role: str, signal_date: object, window: in
         return {"count": 0, "avg_ret": np.nan, "win_rate": np.nan, "max_drawdown": np.nan, "total_return": np.nan}
     d = perf[
         perf["role"].eq(role)
-        & pd.to_datetime(perf["exit_date"], errors="coerce").dt.date.lt(pd.Timestamp(signal_date).date())
+        & pd.to_datetime(perf["exit_date"], errors="coerce").lt(pd.Timestamp(signal_date))
     ].sort_values("signal_date")
     d = d.dropna(subset=["cycle_ret"]).tail(int(window))
     if d.empty:
@@ -2187,7 +2202,7 @@ def _completed_perf(perf: pd.DataFrame, role: str, signal_date: object) -> dict[
         return {"count": 0, "avg_ret": np.nan, "win_rate": np.nan, "max_drawdown": np.nan, "total_return": np.nan}
     d = perf[
         perf["role"].eq(role)
-        & pd.to_datetime(perf["exit_date"], errors="coerce").dt.date.lt(pd.Timestamp(signal_date).date())
+        & pd.to_datetime(perf["exit_date"], errors="coerce").lt(pd.Timestamp(signal_date))
     ].sort_values("signal_date")
     d = d.dropna(subset=["cycle_ret"])
     if d.empty:
@@ -2336,12 +2351,12 @@ def _choose_adaptive_role(
         "top_industry_weight" in perf.columns
         and not perf[
             perf["role"].eq("attack")
-            & pd.to_datetime(perf["exit_date"], errors="coerce").dt.date.lt(pd.Timestamp(signal_date).date())
+            & pd.to_datetime(perf["exit_date"], errors="coerce").lt(pd.Timestamp(signal_date))
         ].tail(1).empty
         and _safe_float(
             perf[
                 perf["role"].eq("attack")
-                & pd.to_datetime(perf["exit_date"], errors="coerce").dt.date.lt(pd.Timestamp(signal_date).date())
+                & pd.to_datetime(perf["exit_date"], errors="coerce").lt(pd.Timestamp(signal_date))
             ].tail(1)["top_industry_weight"].iloc[0],
             np.nan,
         )
@@ -3437,7 +3452,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             args.execution_mode == STRICT_MODE
             and (
                 spec.name == PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME
-                or (formal_evidence_required and spec.name in champion_evidence_strategies)
+                or (formal_evidence_required and spec.name in formal_strategies)
             )
         )
         strict_ledger = ExecutionLedger(cash=float(args.initial_cash)) if use_strict_ledger else None

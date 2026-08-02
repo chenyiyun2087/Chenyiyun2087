@@ -385,6 +385,11 @@ def add_liquidity_derived_features(scores: pd.DataFrame, prices: pd.DataFrame) -
         + 0.15 * out["s_low_impact_cost"].fillna(50.0)
         + 0.10 * out["s_amount_stability"].fillna(50.0)
     ).clip(0, 100)
+    # v5.2: snapshot path must also expose liquidity_rank_pct (used by
+    # liquidity_tiered pool selection)
+    if "liquidity_rank_pct" not in out.columns:
+        out["liquidity_rank_pct"] = out.groupby("trade_date")[
+            "s_liquidity"].rank(pct=True, ascending=False)
     return out
 
 
