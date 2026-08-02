@@ -108,3 +108,80 @@ is unchanged.
 - Bounded alternative to the unbounded freeze: re-weight kept positions when
   weight drift exceeds a band (e.g., ±50% relative) — keeps buffer's turnover
   benefit without the concentration tail.
+
+---
+
+# Addendum — Drift-Band Reweighting (same session, commit 642c52a9+)
+
+## Headline
+
+**New engine controls (`--rebalance-weight-drift-band` + a fresh-entry weight
+cap) bound the concentration tail: max single-position weight drops 0.51 →
+0.32 in the b=0.05 zone and stays 0.16 in the b=0.10 zone. The bounded b=0.05
+edge survives at +172.7–183.8% (vs +249.1% unbounded, +108.0% baseline) — the
+small-buffer "hold winners longer" effect is not just the concentration
+artifact. Verified b=0/band=0 path is behavior-identical (all 705 nav rows
+identical; only a metadata column added).**
+
+## Mechanism discovered — the real cause of the b=0.05 cliff
+
+The concentration was not (only) compounding of kept positions. With the
+buffer freezing ~9 of 10 slots, the adjustable budget (target gross − locked
+value) normalizes into the 1–2 remaining slots: **fresh buys entered at
+0.37–0.51 weight** (symbol 605: 12,600 shares = 57% of initial cash on what
+should be a 1/10 equal-weight buy). Fixes:
+
+1. **Fresh-entry cap**: fresh names are capped at per-slot target × (1+band);
+   residual budget stays as cash (engine already tolerates cash residuals).
+2. **Kept-position trims** at band edge (overweight-only — no forced top-ups
+   into laggards) handle compounding.
+
+## Grid results (t10/h20, 0.075% + 0.10% costs unless noted)
+
+| Config | Total | Annual | MDD | Trades | Cost | Max weight |
+|--------|-------|--------|-----|--------|------|------------|
+| b=0.05 unbounded | +249.1% | +56.4% | -36.6% | 408 | 40.3K | **0.51** |
+| b=0.05 + band 0.25 | +172.7% | +43.2% | -37.7% | 421 | 32.9K | **0.32** |
+| b=0.05 + band 0.50 | +175.7% | +43.8% | -37.7% | 410 | 33.9K | **0.32** |
+| b=0.05 + band 0.75 | +183.8% | +45.3% | -37.4% | 409 | 34.6K | **0.32** |
+| b=0.10 + band 0.25 | +103.4% | +28.9% | -33.0% | 200 | 12.1K | 0.16 |
+| b=0.10 + band 0.50 | +101.9% | +28.6% | -32.8% | 188 | 11.9K | 0.16 |
+| b=0.10 + band 0.75 | +101.8% | +28.6% | -32.8% | 188 | 11.9K | 0.16 |
+| b=0.10 + band 0.50, 2x cost | +95.3% | +27.1% | -32.8% | 189 | 23.5K | 0.16 |
+
+## Findings
+
+1. **Band width barely matters** (0.25→0.75: +172.7→+183.8, identical max
+   weight 0.32) — the fresh-entry cap does the bounding work; kept-position
+   trims are rare (2 trims at band 0.5 with the cap vs 27 without).
+2. **Bounded b=0.05 excess is spread across periods**: 2022H2 +17.4pp,
+   2023H1 +6.8pp vs baseline; 2024H1 crisis −23.7% ≈ baseline −23.9%. The
+   +249→+176 collapse is the removal of the 2022H2 605-run (44% position) —
+   the unbounded premium was that concentration.
+3. **b=0.10 zone is unaffected by the band** (already diversified); 2x cost
+   +95.3% ≈ +94.9% without band. The band matters exactly where the buffer
+   concentrates (small buffers).
+4. **The band bounds weight, not beta**: MDD at the b=0.05 zone stays
+   −37~−38%, same 2024H1 small-cap crisis exposure.
+
+## Honest caveats
+
+- Per-cell return differences remain within outcome noise (the buffer curve
+  is non-monotonic); robust claims are turnover/cost/MDD/concentration.
+- The bounded b=0.05 +176% is front-loaded (2022H2–2023H1) — regime-specific
+  until walk-forward confirms it.
+- Research-mode ledger (PARTIAL_UNVERIFIED); same 2022–2024 window.
+
+## Recommendation
+
+If promotion is pursued: champion t10/h20 with **b=0.10** (execution-
+resilience, max weight 0.16) as primary; **b=0.05 + band 0.50** as the
+higher-return variant (+175.7%, max weight 0.32) only if walk-forward
+confirms the hold-winners-longer effect. b=0.05 without band remains
+disqualified (concentration cliff).
+
+## Next steps
+
+- Formal immutable runs of champion t10/h20 with b=0.10 and with b=0.05+band
+  if promotion pursued.
+- Walk-forward / DSR-PBO once 2018–2021 panel history exists.

@@ -2704,6 +2704,7 @@ def _rebalance(
     strict_precommit: bool = False,
     ledger: ExecutionLedger | None = None,
     rebalance_score_buffer: float = 0.0,
+    weight_drift_band: float = 0.0,
 ) -> tuple[list[dict], list[dict], dict[str, object]]:
     trade_rows: list[dict] = []
     candidate_rows: list[dict] = []
@@ -2713,12 +2714,13 @@ def _rebalance(
     if strict_precommit:
         _sync_account_view_from_ledger(account, ledger, execution_date)  # type: ignore[arg-type]
     if targets.empty:
-        return trade_rows, candidate_rows, {"locked_count": 0, "candidate_count": 0, "executed": 0, "buffer_kept_count": 0}
+        return trade_rows, candidate_rows, {"locked_count": 0, "candidate_count": 0, "executed": 0, "buffer_kept_count": 0, "band_reweight_count": 0}
 
     by_symbol = {str(row["symbol"]).zfill(6): row for _, row in targets.iterrows()}
     planning_prices = precommit_prices if strict_precommit and precommit_prices is not None else open_prices
     planning_field = "raw_close" if strict_precommit else "adj_open"
     equity_before = _equity(account, planning_prices, planning_field)
+    n_slots = max(1, int(max_total_positions or 0) or len(account.positions))
     locked_symbols: set[str] = set()
     locked_value = 0.0
     for symbol, position in account.positions.items():
@@ -2751,6 +2753,28 @@ def _rebalance(
                 position = account.positions[symbol]
                 locked_value += _position_value(position, planning_prices, planning_field)
 
+    # v5.2 turnover-penalty: drift-band re-weighting. Buffer-kept positions are
+    # never re-weighted, so winners compound unchecked (b=0.05 reached a 51%
+    # single-position weight). When a kept position's weight exceeds a relative
+    # band around its equal-weight target, trim it back to the band edge
+    # (minimal trading). Overweight-only: underweight kept names stay frozen
+    # rather than forcing top-ups into laggards.
+    band_reweight_symbols: set[str] = set()
+    band_target_shares: dict[str, int] = {}
+    if float(weight_drift_band) > 0 and buffer_kept:
+        target_weight = 1.0 / float(n_slots)
+        band_edge = target_weight * (1.0 + float(weight_drift_band))
+        for symbol in sorted(buffer_kept):
+            position = account.positions[symbol]
+            current_weight = _position_value(position, planning_prices, planning_field) / equity_before if equity_before > 0 else 0.0
+            if current_weight <= band_edge:
+                continue
+            price = _safe_float(open_prices.get(symbol, {}).get("adj_open"), np.nan)
+            if not np.isfinite(price) or price <= 0:
+                continue
+            band_reweight_symbols.add(symbol)
+            band_target_shares[symbol] = _round_lot(band_edge * equity_before / price, lot_size)
+
     rank_order = (
         targets.assign(_symbol=targets["symbol"].astype(str).str.zfill(6))
         .sort_values("rank")["_symbol"]
@@ -2779,10 +2803,16 @@ def _rebalance(
     if equity_before > 0:
         adjustable_budget_weight = max(0.0, min(1.0, (target_gross_value - locked_value) / equity_before))
     adjusted_weights: dict[str, float] = {}
+    # v5.2 turnover-penalty: cap fresh-name entry weight at the per-slot target
+    # (x (1+band) when a drift band is set). Without the cap, buffer-kept
+    # positions shrink the adjustable budget to 1-2 slots and the normalization
+    # concentrates the whole remaining budget into the fresh name (observed
+    # 0.37-0.51 single-name weights at b=0.05). Residual budget stays as cash.
+    max_fresh_weight = (1.0 / float(n_slots)) * (1.0 + float(weight_drift_band)) if float(weight_drift_band) > 0 else 1.0
     if unlocked_weight_sum > 0 and adjustable_budget_weight > 0:
         for symbol in adjustable_symbols:
             raw_weight = _safe_float(by_symbol[symbol].get("effective_weight"), 0.0)
-            adjusted_weights[symbol] = raw_weight / unlocked_weight_sum * adjustable_budget_weight
+            adjusted_weights[symbol] = min(raw_weight / unlocked_weight_sum * adjustable_budget_weight, max_fresh_weight)
 
     target_shares: dict[str, int] = {}
     planned_prices: dict[str, float] = {}
@@ -2805,6 +2835,9 @@ def _rebalance(
         target_value = equity_before * float(weight)
         target_shares[symbol] = _round_lot(target_value / price, lot_size)
         planned_prices[symbol] = float(price)
+    for symbol, shares in band_target_shares.items():
+        if shares > 0:
+            target_shares[symbol] = shares
 
     for symbol, row in by_symbol.items():
         execution_proxy = _execution_proxy_fields(
@@ -2831,6 +2864,7 @@ def _rebalance(
                 "execution_tradable": int(bool(_safe_float(planning_prices.get(symbol, {}).get("execution_tradable"), 0.0))) if strict_precommit else np.nan,
                 "locked": int(symbol in locked_symbols),
                 "buffer_kept": int(symbol in buffer_kept),
+                "band_reweight": int(symbol in band_reweight_symbols),
                 "skipped_by_position_cap": int(symbol in skipped_by_position_cap),
                 "pattern_score": _safe_float(row.get("pattern_score")),
                 "pattern_sentiment": row.get("pattern_sentiment"),
@@ -2850,7 +2884,7 @@ def _rebalance(
 
     position_symbols = set(account.positions)
     for symbol in sorted(position_symbols):
-        if symbol in locked_symbols:
+        if symbol in locked_symbols and symbol not in band_reweight_symbols:
             continue
         position = account.positions.get(symbol)
         if position is None:
@@ -2886,7 +2920,7 @@ def _rebalance(
             price=sell_price,
             cost_rate=trade_cost_rate,
             rows=trade_rows,
-            reason="rebalance_unlocked",
+            reason="band_reweight_trim" if symbol in band_reweight_symbols else "rebalance_unlocked",
         )
 
     for symbol in sorted(target_shares):
@@ -2964,6 +2998,7 @@ def _rebalance(
         {
             "locked_count": int(len(locked_symbols)),
             "buffer_kept_count": int(len(buffer_kept)),
+            "band_reweight_count": int(len(band_reweight_symbols)),
             "locked_value": float(locked_value),
             "candidate_count": int(len(targets)),
             "executed": int(len(trade_rows)),
@@ -4120,6 +4155,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     calendar=calendar,
                     open_prices=price_lookup,
                     rebalance_score_buffer=args.rebalance_score_buffer,
+                    weight_drift_band=args.rebalance_weight_drift_band,
                     targets=target_override,
                     precommit_prices=_price_lookup_for_day(prices, price_day_indices, signal_date, price_lookup_columns),
                     strict_precommit=strict_raw_execution,
@@ -4303,6 +4339,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                 "trade_cost_rate": float(args.trade_cost_rate),
                 "slippage_rate": float(args.slippage_rate),
                 "rebalance_score_buffer": float(args.rebalance_score_buffer),
+                "rebalance_weight_drift_band": float(args.rebalance_weight_drift_band),
                 "lot_size": int(args.lot_size),
                 "min_trade_value": float(args.min_trade_value),
                 "max_total_positions": int(args.max_total_positions),
@@ -4395,6 +4432,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
         "trade_cost_rate": float(args.trade_cost_rate),
         "slippage_rate": float(args.slippage_rate),
         "rebalance_score_buffer": float(args.rebalance_score_buffer),
+        "rebalance_weight_drift_band": float(args.rebalance_weight_drift_band),
         "lot_size": int(args.lot_size),
         "min_trade_value": float(args.min_trade_value),
         "max_total_positions": int(args.max_total_positions),
@@ -4537,6 +4575,12 @@ def main() -> None:
         type=float,
         default=0.0,
         help="v5.2 turnover-penalty research: keep an unlocked holding when its current-day ranking score stays within this absolute buffer of the top-N cutoff score (ranking-score units; the VLS snapshot score is a per-day z-score). 0 disables.",
+    )
+    parser.add_argument(
+        "--rebalance-weight-drift-band",
+        type=float,
+        default=0.0,
+        help="v5.2 turnover-penalty research: relative weight-drift band for buffer-kept positions (e.g. 0.50 = trim back to equal-weight x 1.5 at ±50%% drift). Bounds the concentration tail from unbounded winner compounding; 0 freezes kept positions.",
     )
     parser.add_argument("--position-ratio", type=float, default=None, help="Target gross exposure ratio before locked-position budget.")
     parser.add_argument(
