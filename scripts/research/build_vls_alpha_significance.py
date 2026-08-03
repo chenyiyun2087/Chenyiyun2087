@@ -317,8 +317,8 @@ def write_report(work_dir: Path, ic_path: Path, liquidity_null: dict) -> Path:
         if len(comp_null):
             c_ann = comp_null["annualized_return"].dropna()
             lines += [
-                "| Composite null mean (for comparison) | ",
-                f"| {c_ann.mean():+.1%} | {comp_null['max_drawdown'].mean():.1%} |",
+                f"| Composite null mean (for comparison) | {c_ann.mean():+.1%} | "
+                f"{comp_null['max_drawdown'].mean():.1%} |",
                 "",
             ]
 

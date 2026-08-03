@@ -155,6 +155,40 @@ Key results (honest read):
 - Bulk parquet (single-factor scores, split inputs, run intermediates — ~2GB)
   intentionally NOT committed: regenerable from frozen scores + committed code.
 
+## v5.3 VLS alpha significance study (Phase 3.5, added 2026-08-03)
+
+Pre-registered diagnostic for the readiness gate `alpha_proof_guard`; runner
+`scripts/research/build_vls_alpha_significance.py`
+(`--mode ic|null|report|all`).  IC HAC t-stats use the horizon-dependent
+Newey-West lag (`lag = min(horizon-1, n-1)`); the liquidity null mirrors the
+composite random null (100 seeded cross-sectional permutations, same seeds,
+full strict-ledger engine on the blind window).  Frozen parameters untouched.
+
+| Item | Location | Status |
+|------|----------|--------|
+| IC HAC significance (7 signals x 4 horizons, blind) | `factor_diagnostics/alpha_significance/ic_hac_significance.csv` | computed |
+| Liquidity single-factor shuffle null (100 runs, blind) | `factor_diagnostics/alpha_significance/liquidity_null/` (`liquidity_null_summary.csv` + 100 run dirs) | all VERIFIED |
+| Alpha significance report | `reports/vls_alpha_significance_20260803.md` (+ mirror) | on main |
+
+Key results (honest read):
+- **Composite fails at BOTH levels**: portfolio null p=0.190 (+15.4% annual vs
+  shuffled-score null mean +5.8%); composite IC HAC t=+0.83 @20d on blind.
+  `alpha_proof_guard` stays **BLOCKED** — no capital authorization warranted.
+- **Only direction-consistent significant signal is momentum reversal**
+  (IC HAC t=-3.33 @20d, SIG 1%) — the strategy's own -1 momentum sign.
+  Volatility is SIG 1% (3/4 horizons) but unused by the frozen strategy.
+- **Liquidity single-factor blind +42.3% IS distinguishable from random**
+  (shuffle null p=0.010 — only 1/100 shuffled score assignments reached the
+  actual; null mean +7.6%).  Diagnostic only: running one factor as the whole
+  Top10 portfolio has extreme MDD (-46.5%) and is not a deployable
+  configuration under the frozen strategy; does not overturn the composite
+  BLOCKED verdict.
+- Blind_shuffle parquets 0-39 were added by the earlier bulk path-organization
+  commit (pre-existing, left untouched); shuffles 40-99 + blind_prices are
+  regenerable from the recorded seeds (20260803..20260902) and the committed
+  code — intentionally NOT committed per the bulk-parquet policy.
+  `liquidity_null_summary.csv` binds the seed list.
+
 ## Status semantics (v5.3)
 
 The single `status` field historically conflated execution integrity with
