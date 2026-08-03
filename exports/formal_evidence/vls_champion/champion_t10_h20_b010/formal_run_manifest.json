@@ -1,0 +1,49 @@
+{
+  "cell": "champion_t10_h20_b010",
+  "cost_rate_one_way": 0.00075,
+  "created_at": "2026-08-02T16:04:19.350306+00:00",
+  "evidence": {
+    "corporate_action_coverage": 1.0,
+    "lifecycle_session_coverage": 1.0,
+    "order_conservation_errors": 0,
+    "reproducibility_status": "REPRODUCIBLE",
+    "strict_ledger_status": "VERIFIED",
+    "t_plus_1_fill_violations": 0
+  },
+  "execution_model_version": "strict_t1_open_precommit_v1",
+  "frozen_bundle_sha256": "0fb295dbe633a54c090a3a6fb6071a9aaf1da1dc97bd7f36c3e641069f8d8ddc",
+  "git_commit_sha_after": "c8f571ee696f532fda38074dde8c4c7aa24c8b07",
+  "git_commit_sha_before": "c8f571ee696f532fda38074dde8c4c7aa24c8b07",
+  "git_tree_clean_after": true,
+  "git_tree_clean_before": true,
+  "hold_days": 20,
+  "immutable": true,
+  "initial_cash_cny": 500000.0,
+  "input_objects": {
+    "exports/formal_evidence/vls_champion/champion_t10_h20_b010/frozen_inputs/vls_mom_contrarian_scores.csv": "a726e8834dd4ce811136f22d76348154befaeb706e2491a22b6ed3a3f97a7d9e",
+    "exports/formal_runs/formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e/frozen_inputs/adjustment_factors.csv": "0b2b3cbb558fa3bf8c4037f0e1d1e5ccbc64623106a7fef5141441958c3b5dfc",
+    "exports/formal_runs/formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e/frozen_inputs/prices.csv": "4ea7bc0348125a93a66985e07cba943cfb4401127f305079dd2e7c3bca33a9bb",
+    "exports/formal_runs/formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e/frozen_inputs/strict_corporate_actions.csv": "743ba45a2a073bbc8cdedc9b18c1645627b67d1e8416ab1df772e53a5b2bc50f",
+    "exports/formal_runs/formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e/frozen_inputs/strict_security_lifecycle.csv": "540ba51804ec8f446a9ffdc49af5de5a820404ee636a2123735c3eb5252a7ca7",
+    "exports/formal_runs/formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e/frozen_inputs/strict_snapshot_manifest.json": "eb88feeb4af6169db43220dfd186132cbec080083eae9c41a601439d657b5599",
+    "exports/formal_runs/formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e/frozen_inputs/tradable_universe.csv": "fc1e5970250c72e0c7e5e98367da99508f1bb5d382483b03e193a5ceaaaad501",
+    "exports/formal_runs/formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e/frozen_inputs/trade_calendar.csv": "65f7d8f62db56ef8940bfd896582d93368f45c67ac4bda758bbe1ed81d4f4e5d"
+  },
+  "manifest_sha256": "caf8cc93b1471d5cf7230f3d10b209949535ce495e127cd187c28c79c4168400",
+  "metrics": {
+    "annualized_return": 0.2568236663060925,
+    "max_drawdown": -0.3274710989740748,
+    "total_cost": 11377.485230235,
+    "total_return": 0.8938163716595318,
+    "trade_count": 188
+  },
+  "period_end": "2024-12-31",
+  "period_start": "2022-01-01",
+  "rebalance_score_buffer": 0.1,
+  "rebalance_weight_drift_band": 0.0,
+  "schema_version": "vls_champion_immutable_run_v1",
+  "slippage_bps_one_way": 10,
+  "status": "VERIFIED",
+  "strategy": "vls_mom_contrarian_v1",
+  "top_n": 10
+}
