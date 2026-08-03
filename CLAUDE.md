@@ -59,6 +59,16 @@ python scripts/run_bs_signal_enhancement_cycle.py --target hit_20_10pct --model-
 # Monthly auto-cycle for B-signal model
 python scripts/ops/run_monthly_bs_signal_enhancement_cycle.py
 
+# PIT release extraction (immutable snapshot package; E0 diagnostic uses --skip-consistency-snapshot)
+CHENYIYUN_DB_PASSWORD=<password> /opt/homebrew/opt/python@3.14/bin/python3.14 \
+  scripts/pit/run_snapshot_extract.py --release-id 20260803_oos_v4 --skip-consistency-snapshot
+
+# VLS OOS validation pipeline (adapter → panel → scores → runs → report)
+CHENYIYUN_DB_PASSWORD=<password> /opt/homebrew/opt/python@3.14/bin/python3.14 \
+  scripts/research/run_vls_oos_validation.py --release-dir data/pit/releases/<id> \
+  --strategy-def config/strategy_definitions/vls_mom_contrarian_v1_frozen.yaml \
+  --output-root exports/formal_evidence/vls_oos --stages adapter,panel,scores,runs,report
+
 # Run all tests
 pytest test/
 
@@ -80,6 +90,67 @@ This project contains **two separate strategy systems** that share infrastructur
 1. **`sina` strategy system** — directories: `sina/`, `scoreRank/`, `web/strategy_playbook.py`. Core capabilities: B/S detection from Sina Finance screenshots, M2–M8 evaluation chain, M7 rebalancing, live tracking. This is the primary, sophisticated system with multi-score evaluation, Claude AI integration, and ML model training.
 
 2. **`chenyiyun` strategy system** — directories: `chenyiyunSelected/`, `scripts/ops/run_chenyiyun_*.py`. Core capabilities: migrated JoinQuant strategy, a simpler factor-based pipeline (dividend yield → turnover volatility → leverage → small market cap), equal-weight weekly rebalancing, limit-up monitoring, position updates. No AI or ML component.
+
+## PIT Formal Evidence Layer (v5.3)
+
+A third, independent layer for formal strategy evidence — separate from both
+strategy systems above:
+
+- **PIT releases** (`data/pit/releases/<id>/`): immutable snapshot packages — 9
+  parquet families (market, universe, financial, industry, adjustment,
+  trade_calendar, security_lifecycle, corporate_actions, benchmark_index) plus
+  `manifest.json` with per-family content SHA256. Never hand-edit a release;
+  regenerate with a new release id.
+- **Extraction**: `scripts/pit/run_snapshot_extract.py` (pymysql, reads
+  `tushare_stock` raw layer) → `scripts/pit/post_extract_enrich.py` (derives
+  market_return, security_status_transition incl. LISTED-day events).
+  Diagnostic/E0 runs use `--skip-consistency-snapshot` (local MySQL has
+  log_bin=0; formal E3 requires a binlog-enabled server).
+- **Qualification chain**: adapter (`scripts/research/pit_data_adapter.py`,
+  E1 qualification) → panel builder (`scripts/research/pit_factor_panel_builder.py`,
+  PIT-complete core semantics) → frozen scores (`scripts/research/build_formal_scores.py`)
+  → strict-ledger backtests (`scripts/research_trusted_strategy_account_backtest.py`,
+  `--force-strict-ledger --require-verified-evidence --formal-mode`).
+- **Evidence levels** (decoupled from execution status): E0 diagnostic /
+  E1 adapter-qualified / E3 formal. Four status dimensions in
+  `runtime/formal_status_semantics.py`; unified registry at
+  `exports/formal_evidence_registry/unified_formal_registry.json`.
+- **Data availability (verified 2026-08-03)**: no PIT universe/financial data
+  before 2020-01-02; `dws_fina_pit_daily` ramps to 95% coverage by
+  2020-04-30 — the panel core starts at `coverage_ready_date` (2020-04-30).
+  2018-2019 exists only for market/index/dividend tables. Pre-ramp days are
+  reported in the coverage CSV but never gate the core.
+- **Strict-ledger formal runs** consume six immutable snapshots (scores,
+  prices, tradable universe, adjustment factors, corporate actions +
+  manifest, security lifecycle + manifest, trade-calendar CSV); the
+  orchestrator's runs stage builds them from the release automatically.
+  Prices carry BOTH raw (ods_daily) and adjusted (dwd_stock_daily_standard)
+  OHLC — never alias adjusted prices as raw (limit up/down bands break on
+  every ex-date). Corporate-action PIT availability = announcement date
+  (ann_date); events with unknown ann_date are excluded, not misdated.
+
+## VLS Strategy System (research candidate)
+
+- VLS = Value + Size + Liquidity factor scores. `vls_mom_contrarian_v1_frozen`
+  (`config/strategy_definitions/vls_mom_contrarian_v1_frozen.yaml`) is the
+  P0-frozen champion (2026-08-03: TopN=10, hold 20, buffer 0.10, band 0.0).
+  Frozen = do NOT re-optimize on the 2022-2024 tuning window.
+- **OOS validation windows** (TIME_SPLITS in `run_vls_oos_validation.py`):
+  pre_history 2020-04-30..2021, validation 2022, oos1 2023, crisis 2024,
+  blind 2025..2026-07-31. 2025-2026 is the true unseen blind test; parameter
+  changes are forbidden.
+- Evidence lives under `exports/formal_evidence/vls_oos/` and
+  `exports/formal_evidence/vls_champion/`. The champion's historical panel
+  results are E0-diagnostic (directional only) until run on a binlog-enabled
+  server.
+
+## Environment Constraints (formal chain)
+
+- `CHENYIYUN_DB_PASSWORD` must come from the environment — never hardcode it.
+- The formal chain (extraction, qualification, OOS validation) runs with
+  `/opt/homebrew/opt/python@3.14/bin/python3.14`.
+- Immutable formal runs require a clean worktree and unchanged HEAD; PIT
+  releases are immutable evidence (create new release dirs, never overwrite).
 
 ## Core Data Pipeline (sina strategy)
 

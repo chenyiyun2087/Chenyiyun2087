@@ -228,8 +228,33 @@ def stage_snapshots(release_dir: Path, work_dir: Path) -> Path:
                   "adj_open", "adj_high", "adj_low", "adj_close",
                   "pre_close", "raw_pre_close",
                   "raw_open", "raw_high", "raw_low", "raw_close",
-                  "volume", "amount", "circ_mv"]
+                  "volume", "amount", "circ_mv", "market_available_at"]
     prices = market[[c for c in price_cols if c in market.columns]].copy()
+
+    # v5.3: the tradable universe is authoritative for lifecycle status, and
+    # the label table does NOT cover delisting-transition stocks (e.g.
+    # 300379.SZ 东通退 — 1,365 rows, zero label rows ever) nor brand-new
+    # IPOs still in label-ingestion lag (2026-02+ listings, 920*.BJ etc. —
+    # verified 2026-08-03: 5,366 orphan price rows / 74 symbols).  The strict
+    # ledger fails closed on any price row without lifecycle status
+    # (universe_snapshot_missing_price_rows), so restrict prices to
+    # universe-covered (trade_date, symbol) rows.  The dropped rows are
+    # counted and reported — honest exclusion, not silent filtering.
+    uni_keys = universe[["trade_date", "symbol"]].drop_duplicates().copy()
+    uni_keys["_key_date"] = pd.to_datetime(
+        uni_keys["trade_date"], errors="coerce").dt.date
+    prices["_key_date"] = pd.to_datetime(
+        prices["trade_date"], errors="coerce").dt.date
+    price_rows_before = len(prices)
+    prices = prices.merge(uni_keys, on=["_key_date", "symbol"], how="left",
+                          suffixes=("", "_uni"))
+    orphan_rows = int(prices["trade_date_uni"].isna().sum())
+    prices = prices[prices["trade_date_uni"].notna()].drop(
+        columns=["_key_date", "trade_date_uni"])
+    if orphan_rows:
+        print(f"  stage4a: excluded {orphan_rows} price rows without "
+              f"lifecycle status (delisting-transition / IPO label-lag "
+              f"symbols, of {price_rows_before} total)")
     prices.to_parquet(snapshots_dir / "prices.parquet", index=False)
 
     uni_cols = ["trade_date", "symbol", "is_listed", "is_st", "is_suspended",
