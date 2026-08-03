@@ -642,57 +642,10 @@ def _build_pit_factor_panel_impl(
             blockers.append(f"invalid_or_timezone_missing:{available_column}")
         if (available > signal).any():
             blockers.append(f"available_after_signal:{available_column}")
-    for column in availability_columns:
-        timezone_offenders = validate_explicit_timezone(panel[column])
-        if timezone_offenders:
-            blockers.append(f"available_at_no_timezone:{column}")
-        missing = panel[column].isna()
-        if missing.any():
-            blockers.append(f"missing_available_at:{column}:{int(missing.sum())}")
-        parsed = pd.to_datetime(panel[column], errors="coerce", utc=True)
-        panel[column] = parsed
-        if parsed.isna().any():
-            blockers.append(f"invalid_or_timezone_missing:{column}")
-    signal_time = signal_time_for_trade_dates(panel["trade_date"])
-    panel["signal_time"] = signal_time
-    pb_numeric = pd.to_numeric(panel["pb"], errors="coerce")
-    panel["pb"] = pb_numeric
-    for column in availability_columns:
-        if (panel[column] > signal_time).any():
-            blockers.append(f"available_after_signal:{column}")
-    # --- Semantic validation (HISTORICAL_REAL only) ---
-    if evidence_origin == "HISTORICAL_REAL":
-        # Market return must be cross-sectionally uniform per trade_date
-        mr_dispersion = panel.groupby("trade_date")["market_return"].nunique()
-        if (mr_dispersion > 1).any():
-            n_bad = int((mr_dispersion > 1).sum())
-            blockers.append(f"market_return_not_cross_sectional:{n_bad}_dates")
-        # Financial time chain: period_end <= announcement <= availability <= signal
-        fin_sub = panel[["financial_period_end", "announcement_date",
-                          "financial_available_at", "trade_date"]].copy()
-        for col in ["financial_period_end", "announcement_date"]:
-            fin_sub[col] = pd.to_datetime(fin_sub[col].astype(str), errors="coerce")
-        fin_sub = fin_sub.dropna(subset=["financial_period_end", "announcement_date"])
-        if not fin_sub.empty:
-            if (fin_sub["financial_period_end"] > fin_sub["announcement_date"]).any():
-                n_bad = int((fin_sub["financial_period_end"] > fin_sub["announcement_date"]).sum())
-                blockers.append(f"financial_period_after_announcement:{n_bad}")
-        # announcement_date <= financial_available_at (strip tz for comparison)
-        fin_sub2 = panel[["announcement_date", "financial_available_at"]].copy()
-        fin_sub2["_ann_ts"] = pd.to_datetime(
-            fin_sub2["announcement_date"].astype(str), errors="coerce")
-        if fin_sub2["_ann_ts"].isna().any() and evidence_origin == "HISTORICAL_REAL":
-            n_bad = int(fin_sub2["_ann_ts"].isna().sum())
-            blockers.append(f"financial_announcement_date_unparseable:{n_bad}")
-        fin_sub2 = fin_sub2.dropna(subset=["_ann_ts", "financial_available_at"])
-        if not fin_sub2.empty:
-            fin_avail_naive = fin_sub2["financial_available_at"].dt.tz_localize(None)
-            n_bad = int((fin_sub2["_ann_ts"] > fin_avail_naive).sum())
-            if n_bad > 0:
-                blockers.append(f"financial_announcement_after_availability:{n_bad}")
-        # PB non-negative
-        if (panel["pb"].dropna() < 0).any():
-            blockers.append("pb_negative_values_detected")
+    # v5.3: the coverage/eligibility facts are computed BEFORE the per-row
+    # availability gates so those gates can target the rows the panel
+    # actually delivers (PIT-complete core x eligible universe) instead of
+    # every raw row of the merge.
     listed = panel.get(
         "is_listed", panel.get("is_tradable", pd.Series(False, index=panel.index))
     ).fillna(False).astype(bool)
@@ -754,6 +707,79 @@ def _build_pit_factor_panel_impl(
         & panel["limit_status"].fillna("").isin({"NORMAL", "NONE"})
     )
     panel["eligible_universe"] = eligible
+    delivered = eligible
+    if evidence_origin == "HISTORICAL_REAL" and coverage_ready_date is not None:
+        delivered = eligible & (
+            panel["trade_date"] >= pd.to_datetime(coverage_ready_date)
+        )
+    for column in availability_columns:
+        timezone_offenders = validate_explicit_timezone(panel[column])
+        if timezone_offenders:
+            blockers.append(f"available_at_no_timezone:{column}")
+        raw = panel[column]
+        parsed = pd.to_datetime(raw, errors="coerce", utc=True)
+        panel[column] = parsed
+        # Format violations on ANY row are a provider contract breach —
+        # a non-empty value that cannot be parsed is always flagged.
+        invalid = raw.notna() & parsed.isna()
+        if invalid.any():
+            blockers.append(f"invalid_or_timezone_missing:{column}")
+        # v5.3: missing availability is rate-gated on the delivered rows
+        # (PIT-complete core x eligible).  Pre-ramp history and ineligible
+        # rows (ST/suspended/limit) are reported in the coverage CSV but do
+        # not gate — their absence is honest data reality (e.g. brand-new
+        # IPOs before their first statement), and the daily coverage gate
+        # already enforces the profile threshold per day on listed rows.
+        missing = parsed.isna() & delivered
+        if delivered.any() and float(missing.mean()) > (1.0 - min_coverage):
+            blockers.append(f"missing_available_at:{column}:{int(missing.sum())}")
+    signal_time = signal_time_for_trade_dates(panel["trade_date"])
+    panel["signal_time"] = signal_time
+    pb_numeric = pd.to_numeric(panel["pb"], errors="coerce")
+    panel["pb"] = pb_numeric
+    for column in availability_columns:
+        if (panel[column] > signal_time).any():
+            blockers.append(f"available_after_signal:{column}")
+    # --- Semantic validation (HISTORICAL_REAL only) ---
+    if evidence_origin == "HISTORICAL_REAL":
+        # Market return must be cross-sectionally uniform per trade_date
+        mr_dispersion = panel.groupby("trade_date")["market_return"].nunique()
+        if (mr_dispersion > 1).any():
+            n_bad = int((mr_dispersion > 1).sum())
+            blockers.append(f"market_return_not_cross_sectional:{n_bad}_dates")
+        # Financial time chain: period_end <= announcement <= availability <= signal
+        fin_sub = panel[["financial_period_end", "announcement_date",
+                          "financial_available_at", "trade_date"]].copy()
+        for col in ["financial_period_end", "announcement_date"]:
+            fin_sub[col] = pd.to_datetime(fin_sub[col].astype(str), errors="coerce")
+        fin_sub = fin_sub.dropna(subset=["financial_period_end", "announcement_date"])
+        if not fin_sub.empty:
+            if (fin_sub["financial_period_end"] > fin_sub["announcement_date"]).any():
+                n_bad = int((fin_sub["financial_period_end"] > fin_sub["announcement_date"]).sum())
+                blockers.append(f"financial_period_after_announcement:{n_bad}")
+        # announcement_date <= financial_available_at (strip tz for comparison)
+        fin_sub2 = panel[["announcement_date", "financial_available_at"]].copy()
+        fin_sub2["_ann_ts"] = pd.to_datetime(
+            fin_sub2["announcement_date"].astype(str), errors="coerce")
+        if fin_sub2["_ann_ts"].isna().any() and evidence_origin == "HISTORICAL_REAL":
+            # v5.3: same rate gate as missing_available_at — unparseable
+            # announcement dates are the as-of absence rows (pre-ramp /
+            # ineligible / no-statement-yet), all honest and excluded from
+            # the delivered panel; only a rate above the profile tolerance
+            # on the delivered rows blocks.
+            fin_missing = fin_sub2["_ann_ts"].isna() & delivered
+            if delivered.any() and float(fin_missing.mean()) > (1.0 - min_coverage):
+                n_bad = int(fin_missing.sum())
+                blockers.append(f"financial_announcement_date_unparseable:{n_bad}")
+        fin_sub2 = fin_sub2.dropna(subset=["_ann_ts", "financial_available_at"])
+        if not fin_sub2.empty:
+            fin_avail_naive = fin_sub2["financial_available_at"].dt.tz_localize(None)
+            n_bad = int((fin_sub2["_ann_ts"] > fin_avail_naive).sum())
+            if n_bad > 0:
+                blockers.append(f"financial_announcement_after_availability:{n_bad}")
+        # PB non-negative
+        if (panel["pb"].dropna() < 0).any():
+            blockers.append("pb_negative_values_detected")
     panel["ret_1d"] = (
         pd.to_numeric(panel["close"], errors="coerce")
         / pd.to_numeric(panel["pre_close"], errors="coerce")
@@ -854,7 +880,13 @@ def _build_pit_factor_panel_impl(
     target_met = unique_dates >= target_days
     # Core start enforcement (HISTORICAL_REAL only)
     required_core_start = str(profile.get("core_period", {}).get("min_start_date", "2018-01-01"))
-    sample_start_str = str(qualified["trade_date"].min()) if not qualified.empty else None
+    # v5.3: date-only comparison — str(Timestamp) carries " 00:00:00" and
+    # compares after the date lexicographically (a false blocker even for a
+    # valid start).
+    sample_start_str = (
+        str(pd.Timestamp(qualified["trade_date"].min()).date())
+        if not qualified.empty else None
+    )
     if evidence_origin == "HISTORICAL_REAL" and sample_start_str and sample_start_str > required_core_start:
         blockers.append(f"core_start_after_required:{sample_start_str}>{required_core_start}")
     min_regimes = int(profile["economic_alpha_qualification"].get("min_market_regimes", 3))
@@ -983,7 +1015,7 @@ def _build_pit_factor_panel_impl(
         "target_trading_days_met": target_met,
         "core_start_required": str(profile.get("core_period", {}).get("min_start_date", "2018-01-01")),
         "core_start_met": (
-            str(qualified["trade_date"].min()) <= str(profile.get("core_period", {}).get("min_start_date", "2018-01-01"))
+            str(pd.Timestamp(qualified["trade_date"].min()).date()) <= str(profile.get("core_period", {}).get("min_start_date", "2018-01-01"))
             if not qualified.empty else False
         ),
         "market_regime_count": len(regime_values),
