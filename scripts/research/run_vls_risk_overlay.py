@@ -69,6 +69,11 @@ def build_market_state(release_dir: Path, work_dir: Path) -> Path:
     csi = bench[bench["index_code"] == "000300.SH"].sort_values("trade_date")
     if csi.empty:
         raise RuntimeError("market_state_blocked:no_csi300_benchmark_rows")
+    # The benchmark family spans 2018+, but the prices snapshot (and every
+    # backtest signal date) starts at the panel's coverage_ready_date —
+    # breadth cannot exist before the price core.  Restrict the state to the
+    # core window so the merge is total.
+    csi = csi[csi["trade_date"].astype(str) >= "2020-04-30"]
     state = pd.DataFrame({
         "trade_date": csi["trade_date"].astype(str),
         "csi300_ret_20d": pd.to_numeric(csi["ret_20d"], errors="coerce"),
