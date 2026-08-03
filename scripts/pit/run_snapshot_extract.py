@@ -77,9 +77,46 @@ def _get_connection(config: dict[str, Any]):
     return conn
 
 
-def _get_transaction_info(conn) -> dict[str, Any]:
+def _get_transaction_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Read the ``transaction`` / ``snapshot`` sections from mysql_pit.yaml.
+
+    v5.3: these were dead config — the extractor never applied them.  They now
+    drive the consistent-snapshot transaction and its fail-closed checks.
+    """
+    return {
+        "isolation": str(config.get("transaction", {}).get("isolation", "REPEATABLE READ")),
+        "read_only": bool(config.get("transaction", {}).get("read_only", True)),
+        "require_gtid": bool(config.get("snapshot", {}).get("require_gtid", True)),
+        "require_binlog_position": bool(
+            config.get("snapshot", {}).get("require_binlog_position", True)
+        ),
+        "forbid_timestamp_fallback": bool(
+            config.get("snapshot", {}).get("forbid_timestamp_fallback", True)
+        ),
+    }
+
+
+def _begin_consistent_snapshot(conn, config: dict[str, Any]) -> dict[str, Any]:
+    """Start a read-only REPEATABLE READ transaction with a consistent
+    snapshot, then capture the identity markers bound to that snapshot.
+
+    v5.3 fix: previously the extractor read GTID/binlog state WITHOUT any
+    transaction — each ``pd.read_sql`` was an independent read, so the eight
+    families were not guaranteed to come from the same database point in
+    time.  Now all family queries run inside one consistent snapshot.
+
+    Fail-closed: binlog capture failure, missing GTID, or missing binlog
+    position (when the config requires them) abort the extraction instead of
+    being silently ignored.
+    """
+    txn = _get_transaction_config(config)
     info: dict[str, Any] = {}
     with conn.cursor() as cur:
+        cur.execute(f"SET TRANSACTION ISOLATION LEVEL {txn['isolation']}")
+        if txn["read_only"]:
+            cur.execute("START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT")
+        else:
+            cur.execute("START TRANSACTION WITH CONSISTENT SNAPSHOT")
         cur.execute("SELECT @@server_uuid, @@transaction_isolation, @@gtid_executed")
         row = cur.fetchone()
         if row:
@@ -87,17 +124,35 @@ def _get_transaction_info(conn) -> dict[str, Any]:
             info["transaction_isolation"] = str(row[1])
             info["gtid_executed"] = str(row[2]) if row[2] else ""
 
-        # MySQL 9.x uses SHOW BINARY LOG STATUS
+        # MySQL 9.x uses SHOW BINARY LOG STATUS — fail-closed, NOT silent.
         try:
             cur.execute("SHOW BINARY LOG STATUS")
             row = cur.fetchone()
             if row:
                 info["binlog_file"] = str(row[0])
                 info["binlog_position"] = int(row[1])
-        except Exception:
-            pass
+        except Exception as exc:
+            conn.rollback()
+            raise RuntimeError(
+                f"Cannot establish PIT consistency: binlog position unavailable "
+                f"({type(exc).__name__}: {exc})"
+            ) from exc
+
+    # Config-mandated identity checks (fail-closed).
+    if txn["require_gtid"] and not info.get("gtid_executed"):
+        conn.rollback()
+        raise RuntimeError("PIT consistency: GTID required by config but @@gtid_executed is empty")
+    if txn["require_binlog_position"] and not info.get("binlog_file"):
+        conn.rollback()
+        raise RuntimeError(
+            "PIT consistency: binlog position required by config but unavailable"
+        )
+    if txn["forbid_timestamp_fallback"] and not info.get("gtid_executed"):
+        conn.rollback()
+        raise RuntimeError("PIT consistency: timestamp fallback forbidden by config")
 
     info["snapshot_started_at"] = datetime.now(timezone.utc).isoformat()
+    info["consistent_snapshot"] = True
     return info
 
 
@@ -199,15 +254,30 @@ FAMILY_FILENAMES = {
 }
 
 
-def extract_all(release_id: str) -> dict[str, Any]:
-    """Extract all 8 snapshot families and write manifest."""
+def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dict[str, Any]:
+    """Extract all 8 snapshot families and write manifest.
+
+    v5.3: all family queries run inside ONE read-only consistent-snapshot
+    transaction (REPEATABLE READ + START TRANSACTION READ ONLY WITH
+    CONSISTENT SNAPSHOT), so the families are guaranteed to come from the
+    same database point in time.  ``skip_consistency_snapshot`` exists only
+    for E0/diagnostic runs and must never be used for formal E3.
+    """
     config = _load_config()
     contract_sha = get_contract_sha256()
     output_dir = OUTPUT_ROOT / release_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
     conn = _get_connection(config)
-    txn_info = _get_transaction_info(conn)
+    try:
+        if skip_consistency_snapshot:
+            txn_info = _get_legacy_transaction_info(conn)
+            txn_info["consistent_snapshot"] = False
+        else:
+            txn_info = _begin_consistent_snapshot(conn, config)
+    except Exception as exc:
+        conn.close()
+        raise RuntimeError(f"PIT snapshot transaction could not be established: {exc}") from exc
 
     results: dict[str, Any] = {
         "release_id": release_id,
@@ -218,6 +288,7 @@ def extract_all(release_id: str) -> dict[str, Any]:
         "semantic_contract_sha256": contract_sha,
         "transaction_isolation": txn_info.get("transaction_isolation", ""),
         "snapshot_started_at": txn_info["snapshot_started_at"],
+        "consistent_snapshot": txn_info.get("consistent_snapshot", False),
         "families": {},
     }
 
@@ -244,12 +315,13 @@ def extract_all(release_id: str) -> dict[str, Any]:
                 # v5.2: available_at = DATA_E0_DERIVED (not real PIT timestamp)
                 df["market_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T15:30:00+08:00 [DATA_E0_DERIVED]")
-                # market_regime: leave NULL (not in raw data, don't fabricate)
-                # market_return: computed from close prices
-                df["close_num"] = pd.to_numeric(df["close"], errors="coerce")
-                df["market_return"] = df.groupby("trade_date")["close_num"].transform(
-                    lambda x: x.pct_change().mean() if len(x) > 1 else 0.0
-                )
+                # v5.3: market_return is NOT computed here — the previous
+                # cross-sectional `pct_change().mean()` per trade_date was
+                # semantically wrong (sequential jumps of symbol-sorted rows,
+                # not a market return).  market_return stays NULL in the raw
+                # extract; post_extract_enrich.py is the single source of
+                # truth (per-symbol time-series return, daily equal-weight
+                # mean).  market_regime: leave NULL (not in raw data).
             elif family == "universe":
                 df["universe_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
@@ -340,7 +412,11 @@ def extract_all(release_id: str) -> dict[str, Any]:
                 "sha256": "", "status": f"FAILED:{type(exc).__name__}",
             }
 
-    conn.close()
+    # Release the read-only snapshot transaction, then close.
+    try:
+        conn.rollback()
+    finally:
+        conn.close()
 
     # Check required columns
     for family in FAMILY_FILENAMES:
@@ -370,9 +446,41 @@ def extract_all(release_id: str) -> dict[str, Any]:
     return manifest
 
 
+def _get_legacy_transaction_info(conn) -> dict[str, Any]:
+    """Diagnostic-only fallback: capture GTID/binlog WITHOUT a consistent
+    snapshot transaction.  Marked as non-consistent so downstream consumers
+    cannot mistake an E0 diagnostic extraction for a formal snapshot."""
+    info: dict[str, Any] = {}
+    with conn.cursor() as cur:
+        cur.execute("SELECT @@server_uuid, @@transaction_isolation, @@gtid_executed")
+        row = cur.fetchone()
+        if row:
+            info["server_uuid"] = str(row[0])
+            info["transaction_isolation"] = str(row[1])
+            info["gtid_executed"] = str(row[2]) if row[2] else ""
+        try:
+            cur.execute("SHOW BINARY LOG STATUS")
+            row = cur.fetchone()
+            if row:
+                info["binlog_file"] = str(row[0])
+                info["binlog_position"] = int(row[1])
+        except Exception:
+            info["binlog_file"] = ""
+            info["binlog_position"] = 0
+    info["snapshot_started_at"] = datetime.now(timezone.utc).isoformat()
+    return info
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-id", required=True, help="e.g. 20260801")
+    parser.add_argument(
+        "--skip-consistency-snapshot",
+        action="store_true",
+        help="E0/diagnostic ONLY: do not open a consistent-snapshot transaction. "
+        "The resulting manifest is marked consistent_snapshot=false and must "
+        "never be used for a formal E3 run.",
+    )
     args = parser.parse_args()
 
     if CONFIG_PATH.exists():
@@ -381,7 +489,7 @@ def main() -> None:
     print(f"Output: {OUTPUT_ROOT / args.release_id}")
     print()
 
-    result = extract_all(args.release_id)
+    result = extract_all(args.release_id, skip_consistency_snapshot=args.skip_consistency_snapshot)
     print(f"\nStatus: {result['status']}")
     if result["blockers"]:
         print("Blockers:")
