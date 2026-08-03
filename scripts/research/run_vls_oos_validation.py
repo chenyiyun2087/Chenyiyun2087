@@ -312,8 +312,30 @@ def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict
     runs_dir = work_dir / "runs"
     snapshots_dir = stage_snapshots(release_dir, work_dir)
     results = []
+    # v5.3: the backtest's snapshot branch never filters by --start-date (the
+    # simulation starts at the first score row of the scores snapshot), so
+    # every split would otherwise accumulate from 2020-05-06 — later splits
+    # become supersets and the window metrics are invalid.  Cut scores AND
+    # prices to the split window before handing them to the strict ledger.
+    import pandas as pd
+    scores_all = pd.read_parquet(scores_dir / "formal_scores.parquet")
+    prices_all = pd.read_parquet(snapshots_dir / "prices.parquet")
+    split_inputs_dir = work_dir / "split_inputs"
+    split_inputs_dir.mkdir(parents=True, exist_ok=True)
     for label, start, end in TIME_SPLITS:
         out = runs_dir / label
+        start_d = pd.Timestamp(start).date()
+        end_d = pd.Timestamp(end).date()
+        scores_all["_d"] = pd.to_datetime(scores_all["trade_date"], errors="coerce").dt.date
+        prices_all["_d"] = pd.to_datetime(prices_all["trade_date"], errors="coerce").dt.date
+        win_scores = scores_all[(scores_all["_d"] >= start_d) & (scores_all["_d"] <= end_d)]
+        win_prices = prices_all[(prices_all["_d"] >= start_d) & (prices_all["_d"] <= end_d)]
+        win_scores.drop(columns=["_d"]).to_parquet(
+            split_inputs_dir / f"{label}_scores.parquet", index=False,
+            compression="zstd")
+        win_prices.drop(columns=["_d"]).to_parquet(
+            split_inputs_dir / f"{label}_prices.parquet", index=False,
+            compression="zstd")
         _run(
             [PY, "scripts/research_trusted_strategy_account_backtest.py",
              "--risk-profile", "adaptive",
@@ -323,8 +345,8 @@ def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict
              "--trade-cost-rate", str(COST_RATE), "--slippage-rate", str(SLIPPAGE_BPS / 10_000),
              "--initial-cash", str(INITIAL_CASH),
              "--output-dir", str(out),
-             "--scores-snapshot", str(scores_dir / "formal_scores.parquet"),
-             "--prices-snapshot", str(snapshots_dir / "prices.parquet"),
+             "--scores-snapshot", str(split_inputs_dir / f"{label}_scores.parquet"),
+             "--prices-snapshot", str(split_inputs_dir / f"{label}_prices.parquet"),
              "--tradable-universe-snapshot", str(snapshots_dir / "tradable_universe.parquet"),
              "--adjustment-factor-snapshot", str(snapshots_dir / "adjustment_factor.parquet"),
              "--corporate-action-snapshot", str(release_dir / "corporate_actions.parquet"),
@@ -343,7 +365,7 @@ def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict
     return results
 
 
-def stage_report(results: list[dict], output_root: Path) -> Path:
+def stage_report(results: list[dict], output_root: Path, release_dir: Path) -> Path:
     """Aggregate per-split metrics into the OOS report."""
     rows = []
     for r in results:
@@ -381,9 +403,16 @@ def stage_report(results: list[dict], output_root: Path) -> Path:
         "  2022 validation split (its role is checking factor-direction stability).",
         "- 2025-2026 blind test uses real data through 2026-07-31 (ods_index_daily,",
         "  dwd_stock_daily_standard coverage verified 2018-2026).",
-        "- Data tier: the 20260803_test release is DIAGNOSTIC (consistent_snapshot=",
-        "  false — the local MySQL has log_bin=0). Directional OOS evidence only;",
-        "  formal E3 runs require a binlog-enabled server or a relaxed contract.",
+    ]
+    manifest = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))
+    consistent = bool(manifest.get("consistent_snapshot", False))
+    release_id = release_dir.name
+    lines += [
+        f"- Data tier: release {release_id} is "
+        f"{'CONSISTENT-SNAPSHOT' if consistent else 'DIAGNOSTIC'} "
+        f"(consistent_snapshot={'true' if consistent else 'false'} — the local "
+        "MySQL has log_bin=0). Directional OOS evidence only; formal E3 runs "
+        "require a binlog-enabled server or a relaxed contract.",
     ]
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n=== stage5: report written to {report_path} ===")
@@ -438,7 +467,7 @@ def main() -> int:
             for label, start, end in TIME_SPLITS:
                 results.append({"split": label, "start": start, "end": end,
                                 "output": str(work_dir / "runs" / label)})
-        stage_report(results, args.output_root)
+        stage_report(results, args.output_root, release_dir)
 
     print("\nVLS_OOS_VALIDATION_DONE")
     return 0
