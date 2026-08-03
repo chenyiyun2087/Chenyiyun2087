@@ -151,6 +151,32 @@ families:
       - rights_issue_ratio
       - rights_issue_price
 
+  # v5.3: 9th family — real benchmark index klines (CSI 300/500/1000).
+  # Required by the three-benchmark excess gate and market-state inputs
+  # (market_hs300_pct_chg / market_hs300_ret_20 for adaptive risk control).
+  benchmark_index:
+    required_columns:
+      - trade_date
+      - index_code
+      - index_label
+      - open
+      - high
+      - low
+      - close
+      - pre_close
+      - pct_chg
+      - vol
+      - amount
+      - benchmark_available_at
+      - ret_5d
+      - ret_10d
+      - ret_20d
+      - ret_60d
+    primary_key: [index_code, trade_date]
+    business_time_column: trade_date
+    available_at_column: benchmark_available_at
+    timezone_requirement: explicit_offset
+
 # Canonical self-hash rules
 canonical_hash:
   default_self_hash_field: content_sha256

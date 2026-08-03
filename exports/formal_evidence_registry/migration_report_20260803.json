@@ -1,0 +1,40 @@
+{
+  "created_at": "2026-08-03T01:27:34.559000+00:00",
+  "entries_created": {
+    "archived_production": 5,
+    "total": 8,
+    "vls_champion_cells": 2,
+    "vls_family": 1
+  },
+  "inputs_read": {
+    "active_formal_run.json": {
+      "exists": true,
+      "schema_version": "formal_evidence_registry_v1",
+      "status": ""
+    },
+    "admission_candidate_registry.json": {
+      "exists": true,
+      "schema_version": "admission_candidate_registry_v5_1_6",
+      "status": "ADMISSION_READY"
+    },
+    "formal_run_candidate_registry.json": {
+      "exists": true,
+      "schema_version": "formal_run_candidate_v5_1_6",
+      "status": "FORMAL_RUN_BLOCKED"
+    },
+    "pit_candidate_registry.json": {
+      "exists": true,
+      "schema_version": "pit_candidate_registry_v5_1_5",
+      "status": "PIT_VERIFIED"
+    },
+    "seal_registry.json": {
+      "exists": true,
+      "schema_version": "seal_registry_v1",
+      "status": ""
+    }
+  },
+  "output": "exports/formal_evidence_registry/unified_formal_registry.json",
+  "schema_version": "registry_migration_report_v1",
+  "seal_registry_total_entries": 19,
+  "warnings": []
+}

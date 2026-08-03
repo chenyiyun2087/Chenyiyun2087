@@ -6,6 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Chenyiyun2087 is a Chinese A-share quantitative research and execution system covering data collection, scoring/ranking, strategy backtesting, live trading tracking, and a Flask web dashboard. The project runs on Python 3 with a MySQL database (`chenyiyun`).
 
+## Branch Governance (v5.3, 2026-08-03)
+
+- `main` — protected; merged evidence and releases only. No direct pushes of formal evidence.
+- `release/*` — formal evidence branches (e.g. `release/v5.3-formal-freeze`); the only branches
+  that may carry new formal runs, registries, and frozen packages. Each release branch has a
+  `BRANCH_MANIFEST.md` inventory.
+- `feature/*` / `codex/*` — research and PR branches; never the source of formal evidence.
+- **Status semantics**: the unified registry (`exports/formal_evidence_registry/unified_formal_registry.json`)
+  carries FOUR DECOUPLED status dimensions — `execution_status` (strict-ledger integrity),
+  `data_status` (PIT evidence level), `economic_status` (alpha evidence), `capital_status`
+  (human-approved deployment). Never treat execution VERIFIED as economic alpha. See
+  `runtime/formal_status_semantics.py`.
+- **Frozen strategies**: parameter-freeze decisions are recorded in `config/strategy_definitions/*.yaml`
+  (`frozen: true`). Do not re-optimize frozen strategies on their training window.
+- Deleted branches from the 2026-08-03 cleanup are recoverable from
+  `/tmp/chenyiyun-stale-branches-backup-20260803.bundle` (all refs).
+- `codex/pr26a2-portfolio-optimization` is ACTIVE on origin — another session owns it; do not delete.
+
 ## Common Commands
 
 ```bash

@@ -32,7 +32,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def enrich_market(df: pd.DataFrame) -> pd.DataFrame:
-    """market_regime from date-range policy, market_return from real closes."""
+    """market_regime from date-range policy, market_return from real closes.
+
+    v5.3: this is the SINGLE source of truth for market_return — the
+    extractor no longer computes it (its cross-sectional pct_change().mean()
+    was semantically wrong).  Formula: per-symbol time-series return
+    (close/prev_close - 1), then daily equal-weight mean across symbols.
+    Labeled computed_equal_weight_daily_mean_from_close.
+    """
     dates = pd.to_datetime(df["trade_date"], errors="coerce")
     df["market_regime"] = "NORMAL"
     df.loc[dates < "2022-06-01", "market_regime"] = "BEAR"
@@ -42,6 +49,7 @@ def enrich_market(df: pd.DataFrame) -> pd.DataFrame:
     df["ret"] = close / close.groupby(df["symbol"]).shift(1) - 1
     df["benchmark_return"] = df.groupby("trade_date")["ret"].transform("mean")
     df["market_return"] = df["benchmark_return"].fillna(0.0)
+    df["market_return_source"] = "computed_equal_weight_daily_mean_from_close"
     df["pre_close"] = close.groupby(df["symbol"]).shift(1).fillna(close)
     df = df.drop(columns=["ret"])
     return df
@@ -81,15 +89,32 @@ def enrich_lifecycle(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_circ_mv(df: pd.DataFrame) -> pd.DataFrame:
-    """Merge circ_mv from dwd_daily_basic (real data)."""
+    """Merge circ_mv from dwd_daily_basic (real data).
+
+    v5.3 fix: the query previously hardcoded the window 20220101-20241231,
+    silently leaving 2018-2021 rows with NULL circ_mv.  The window is now
+    derived from the actual trade_date range of the release.
+    """
+    import os
+    password = os.getenv("CHENYIYUN_DB_PASSWORD", "")
+    if not password:
+        raise RuntimeError(
+            "circ_mv enrichment requires explicit database credentials. "
+            "Set CHENYIYUN_DB_PASSWORD."
+        )
     conn = pymysql.connect(
         host="127.0.0.1", port=3306, user="root",
-        password=__import__("os").getenv("CHENYIYUN_DB_PASSWORD", ""), database="tushare_stock", charset="utf8mb4",
+        password=password, database="tushare_stock", charset="utf8mb4",
         connect_timeout=3)
-    syms = sorted(df["symbol"].unique())
+    dates = pd.to_datetime(df["trade_date"], errors="coerce").dropna()
+    if dates.empty:
+        conn.close()
+        return df
+    start = dates.min().strftime("%Y%m%d")
+    end = dates.max().strftime("%Y%m%d")
     q = ("SELECT trade_date, ts_code AS symbol, circ_mv, total_mv "
          "FROM dwd_daily_basic "
-         "WHERE trade_date >= 20220101 AND trade_date <= 20241231 "
+         f"WHERE trade_date >= {start} AND trade_date <= {end} "
          "LIMIT 5000000")
     basic = pd.read_sql(q, conn)
     conn.close()

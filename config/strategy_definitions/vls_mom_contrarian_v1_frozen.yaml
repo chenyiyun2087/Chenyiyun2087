@@ -1,0 +1,69 @@
+# Formal Strategy Definition: VLS Momentum-Contrarian — FROZEN CANONICAL
+# ======================================================================
+# P0 parameter freeze per the 2026-08-03 comprehensive evaluation.
+# Parameters locked: TopN=10, hold_days=20, rebalance_score_buffer=0.10,
+# drift_band=0.0.  NO further optimization on the 2022-2024 window.
+#
+# Scoring identity: factor_weights and factor_signs are BYTE-IDENTICAL in
+# value to the original vls_mom_contrarian_v1 (champion evidence replayable
+# under this governance identity).  Only the execution parameters and
+# governance metadata differ.
+#
+# Selection rationale (b=0.10 over b=0.05+band0.5): fewer trades (188 vs 408),
+# lower cost (11.4K vs 32.4K), lower MDD (-32.7% vs -37.8%), simpler parameter
+# structure — the canonical candidate for unseen-data validation.
+# ======================================================================
+
+schema_version: "strategy_definition_v1_frozen"
+strategy_id: "vls_mom_contrarian_v1_frozen"
+strategy_display_name: "VLS + Momentum Contrarian v1 (FROZEN)"
+
+previous_strategy_id: "vls_mom_contrarian_v1"
+frozen: true
+immutable: true
+frozen_at: "2026-08-03"
+freeze_reason: "PARAMETER_SEARCH_COMPLETE — 2022-2024 window optimization finished; P0 freeze per evaluation"
+
+score_formula: "weighted_sum"
+factor_weights:
+  value: 0.30
+  size: 0.25
+  liquidity: 0.25
+  momentum: 0.20
+
+factor_signs:
+  value: 1
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+missing_value_policy: "BLOCK_IF_EXCEEDS_THRESHOLD"
+missing_factor_threshold_pct: 5.0
+
+ranking_policy: "descending"
+selection_threshold: "top_20_pct"
+
+rebalance_policy: "weekly_monday"
+
+signal_time: "T15:30:00+08:00"
+execution_time: "T+1 09:30:00+08:00"
+timezone: "Asia/Shanghai"
+
+# Frozen execution parameters (P0, 2026-08-03)
+frozen_parameters:
+  top_n: 10
+  max_total_positions: 10
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+
+code_entry: "scripts.research.build_formal_scores.build_formal_scores"
+code_path: "scripts/research/build_formal_scores.py"
+
+acceptance_profile: "alpha_v3_2"
+
+research_notes: >
+  b=0.05+band0.5 variant exists as a higher-return config
+  (vls_mom_contrarian_v1_b005_band050) but is NOT the canonical frozen
+  candidate.  See reports/vls_champion_formal_runs_20260803.md and
+  BRANCH_MANIFEST.md.

@@ -2,6 +2,13 @@
 # v5.2 alpha sleeve — momentum IC=-0.16 (reversal regime 2022-24)
 # Hypothesis: A-share short-term reversal → contrarian momentum adds alpha
 # when blended with positive-IC value/size/liquidity.
+#
+# NOTE (2026-08-03 P0 freeze): this file is the SCORING ANCESTOR.  The
+# canonical frozen governance identity is vls_mom_contrarian_v1_frozen.yaml
+# (identical factor weights/signs; execution params locked at TopN=10,
+# hold_days=20, buffer=0.10, band=0.0).  The b=0.05+band0.5 high-return
+# variant is vls_mom_contrarian_v1_b005_band050.yaml.  No further parameter
+# optimization on the 2022-2024 window is permitted.
 
 schema_version: "strategy_definition_v1"
 strategy_id: "vls_mom_contrarian_v1"

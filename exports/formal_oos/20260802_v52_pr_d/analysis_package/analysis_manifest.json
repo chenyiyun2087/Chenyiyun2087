@@ -1,0 +1,29 @@
+{
+  "acceptance_config_sha256": "adb0b33854d3913ec04b53688acbbfb1acc2760609d3de04386f3492a7f09183",
+  "admission_candidate_strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+  "analysis_generator_git_sha": "4d471f5b3052ba20716200e2de2ecc48ce9377a9",
+  "formal_manifest_sha256": "7729b195936e3f0733aa8b748160eab33d00d77bc3d0ef04237053a60b9f91e4",
+  "formal_run_id": "formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e",
+  "frozen_bundle_sha256": "ebad7599738c3624de45e290fdab1402bc41f5f669dea65587d232500910f6a9",
+  "generated_at": "2026-08-02T12:48:18.575820+00:00",
+  "input_files": {
+    "closed_trades.csv": {
+      "sha256": "78f9ee13b78a4b64c9e5431f4a1cb43a8d3dc56e22bf67a084ff7cc7e3b1f358"
+    },
+    "configuration_returns.csv": {
+      "sha256": "4a3cc342eeaf1fd8b1a4e7afad5576e545c6affeb6d266822f188e655ab4cebf"
+    },
+    "folds.json": {
+      "sha256": "10ffca5b4eb7160c7a546296c024a748a2da2880e6dfb648684c94bf3b10f465"
+    },
+    "oos_returns.csv": {
+      "sha256": "0be22289c081c0e4ab9f0385b91aff5958f3fb80ff4611bf62332a37c2a088a3"
+    },
+    "selected_model_config.json": {
+      "sha256": "f3296ba2919510b1d0171674f81817292633232d401f9322e6ed94dcd09eb0a5"
+    }
+  },
+  "manifest_sha256": "849204f8b0ee8dd864957b7b18e34760cdb8ca09bce61ae2766920fb378ab8e2",
+  "release_id": "v5.2",
+  "schema_version": "v5.2_oos_analysis_manifest_v1"
+}

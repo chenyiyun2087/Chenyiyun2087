@@ -1,18 +1,28 @@
 # =====================================================================
-# FORMAL V5.0 PROFILE (v5.3) — E3 formal evidence chain.
-# Strict gates; requires real PIT data from 2018-01-01 with point-in-time
-# consistency.  Distinguishes from diagnostic_e0.yaml:
-#   - min_start_date 2018-01-01 (diagnostic: 2022-01-01)
-#   - require_formal_pit / require_pit_data_adapter = true
-#   - require_point_in_time_consistency / forbid_e0_derived_fields = true
-#   - require_benchmark_index_data = true
+# FORMAL E3 STRICT PROFILE (v5.3) — production-grade E3 gate.
+# Strictest PIT requirements, for the capital pathway (DATA_E3 gate).
+# Built on formal_v5_0.yaml with additional hard requirements:
+#   - require_independent_consistent_snapshot (real transaction)
+#   - require_real_financial_announcement_dates (ann_date != trade_date)
+#   - require_real_corporate_actions (economic fields populated)
+#   - require_market_index_alignment (real benchmark_index family)
+#   - min_universe_coverage 0.98
+#   - E0-derived fields are FORBIDDEN (blockers, not warnings)
 # =====================================================================
-profile_type: formal_v5_0_production
+profile_type: formal_e3_strict_production
 evidence_level: E3
 min_start_date_policy: '2018-01-01'
 require_point_in_time_consistency: true
+require_independent_consistent_snapshot: true
 forbid_e0_derived_fields: true
+require_real_financial_announcement_dates: true
+require_real_corporate_actions: true
+require_market_index_alignment: true
 require_benchmark_index_data: true
+e0_derived_markers_forbidden:
+- DATA_E0_DERIVED
+- 'financial_period_end = trade_date'
+- 'announcement_date = trade_date'
 
 alpha_proof:
   benchmark_gate_policy: primary_excess_and_all_required_complete
@@ -43,6 +53,7 @@ alpha_proof:
   timezone: Asia/Shanghai
   unexplained_variance_warning_ratio: 0.05
   worst_year_alpha_floor: -0.1
+
 attribution:
   closure_tolerance: 1.0e-06
   required_factors:
@@ -54,6 +65,7 @@ attribution:
   - momentum
   - value
   - market_regime
+
 benchmarks:
   primary: 000300.SH
   require_point_in_time_series: true
@@ -62,6 +74,7 @@ benchmarks:
   - 000905.SH
   - 000852.SH
   secondary: 000905.SH
+
 capital_readiness_simulation:
   evidence_ttl_days:
     E0: 0
@@ -136,12 +149,14 @@ capital_readiness_simulation:
     tier: T4
   turnover_zscore_warning: 3.0
   volatility_warning_ratio: 1.5
+
 core_period:
   end_date_policy: latest_complete_trading_day
   legacy_extension_required: false
   legacy_extension_start_date: '2013-01-01'
   min_start_date: '2018-01-01'
   min_trade_day_coverage: 0.8
+
 economic_alpha_qualification:
   diagnostic_evidence_authorizes_production: false
   min_information_ratio: 0.3
@@ -149,7 +164,7 @@ economic_alpha_qualification:
   target_trading_days: 252
   min_median_rank_ic: 0.0
   min_trading_days: 252
-  min_universe_coverage: 0.95
+  min_universe_coverage: 0.98
   require_complete_universe_status: true
   require_corporate_action_semantics: true
   require_cost_adjusted_net_return: true
@@ -172,6 +187,7 @@ economic_alpha_qualification:
   - S2
   - S3
   target_trading_days: 504
+
 evidence_acquisition:
   benchmark_min_aligned_days: 252
   benchmark_min_coverage: 0.95
@@ -198,10 +214,11 @@ evidence_acquisition:
   - 000852.SH
   schema_version: alpha_v4_1_acquisition_v1
   snapshot_copy_max_bytes: 536870912
+
 evidence_production:
   benchmark_available_time: 16:00:00+08:00
-  benchmark_provider: tencent_public_index_kline
-  benchmark_provider_endpoint: https://web.ifzq.gtimg.cn/appstock/app/kline/kline
+  benchmark_provider: tushare_ods_index_daily
+  benchmark_provider_endpoint: mysql://tushare_stock/ods_index_daily
   benchmark_start_date: '2018-01-01'
   factor_builder_requires_formal_pit: true
   pit_minimum_components:
@@ -209,6 +226,7 @@ evidence_production:
   - st_status
   - suspension
   - financial_announcement_time
+  - real_benchmark_index
   request_timeout_seconds: 20
   required_output_columns:
   - benchmark
@@ -221,7 +239,9 @@ evidence_production:
   - release_id
   - strategy_id
   schema_version: alpha_v4_2_production_v1
-evidence_version: formal_evidence_backbone_v5_0
+
+evidence_version: formal_evidence_backbone_v5_3
+
 execution:
   execution_evidence_layers:
   - SIMULATION
@@ -238,6 +258,7 @@ execution:
   - limit_down_sell_blocked
   - one_day_fill_delay
   - slippage_2x
+
 factor_ic:
   horizons:
   - 5
@@ -248,12 +269,14 @@ factor_ic:
   min_information_ratio: 0.3
   min_mean_rank_ic: 0.02
   research_disable_below_mean_rank_ic: 0.01
+
 performance:
   max_drawdown: -0.25
   min_annualized_excess_return: 0.15
   min_annualized_return: 0.25
   min_sharpe_ratio: 1.0
   research_target_annualized_return: 0.3
+
 promotion:
   require_execution_stress: true
   require_factor_attribution: true
@@ -261,6 +284,7 @@ promotion:
   require_formal_pit: true
   require_walk_forward: true
   research_pass_does_not_authorize_capital: true
+
 regime_attribution:
   min_aligned_trading_days_per_state: 63
   required_states:
@@ -269,6 +293,7 @@ regime_attribution:
   - NEUTRAL
   - RISK_ON
   - BROAD_RISK_ON
+
 replay_audit:
   annual_anchor_days_per_year: 10
   capital_minimum_evidence_level: E3
@@ -354,7 +379,8 @@ replay_audit:
     require_kernel_version: true
     thread_count: 1
   shadow_minimum_evidence_level: E4
-schema_version: formal_acceptance_v5_0
+schema_version: formal_acceptance_v5_3_strict
+
 stress:
   capacity_account_sizes_cny:
   - 50000

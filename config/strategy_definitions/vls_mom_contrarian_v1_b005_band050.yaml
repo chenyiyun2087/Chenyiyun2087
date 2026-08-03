@@ -1,0 +1,64 @@
+# Formal Strategy Definition: VLS Momentum-Contrarian — b=0.05 + band 0.50
+# ======================================================================
+# HIGHER-RETURN VARIANT — NOT the canonical frozen candidate.
+# Same factor weights/signs as vls_mom_contrarian_v1; different execution
+# parameters (buffer 0.05, drift band 0.50).  +160.6% (MDD -37.8%, 408
+# trades) — higher return, higher risk, more turnover.  Frozen alongside
+# the canonical config per the 2026-08-03 P0 freeze: this variant may be
+# validated on unseen data but is NOT the primary champion.
+# ======================================================================
+
+schema_version: "strategy_definition_v1_frozen"
+strategy_id: "vls_mom_contrarian_v1_b005_band050"
+strategy_display_name: "VLS + Momentum Contrarian v1 (b005+band050 variant)"
+
+previous_strategy_id: "vls_mom_contrarian_v1"
+canonical_variant_of: "vls_mom_contrarian_v1_frozen"
+frozen: true
+immutable: true
+frozen_at: "2026-08-03"
+freeze_reason: "PARAMETER_SEARCH_COMPLETE — 2022-2024 window optimization finished; high-return variant frozen for OOS study only"
+
+score_formula: "weighted_sum"
+factor_weights:
+  value: 0.30
+  size: 0.25
+  liquidity: 0.25
+  momentum: 0.20
+
+factor_signs:
+  value: 1
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+missing_value_policy: "BLOCK_IF_EXCEEDS_THRESHOLD"
+missing_factor_threshold_pct: 5.0
+
+ranking_policy: "descending"
+selection_threshold: "top_20_pct"
+
+rebalance_policy: "weekly_monday"
+
+signal_time: "T15:30:00+08:00"
+execution_time: "T+1 09:30:00+08:00"
+timezone: "Asia/Shanghai"
+
+# Frozen execution parameters (P0, 2026-08-03)
+frozen_parameters:
+  top_n: 10
+  max_total_positions: 10
+  hold_days: 20
+  rebalance_score_buffer: 0.05
+  rebalance_weight_drift_band: 0.50
+
+code_entry: "scripts.research.build_formal_scores.build_formal_scores"
+code_path: "scripts/research/build_formal_scores.py"
+
+acceptance_profile: "alpha_v3_2"
+
+research_notes: >
+  Formal evidence: +160.6% total, +40.9% annualized, MDD -37.8%, 408 trades,
+  32.4K cost (strict ledger VERIFIED).  Return is front-loaded in 2022-2023;
+  needs walk-forward confirmation of the hold-winners effect.  See
+  reports/vls_champion_formal_runs_20260803.md.

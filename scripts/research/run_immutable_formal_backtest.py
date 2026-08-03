@@ -33,6 +33,13 @@ from runtime.formal_evidence_binding import (
     head_unchanged,
     validate_package_reality,
 )
+from runtime.formal_status_semantics import (
+    CapitalStatus,
+    DataStatus,
+    EconomicStatus,
+    ExecutionStatus,
+    FormalStatus,
+)
 
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "formal_readiness.yaml"
 EXECUTION_MODEL_VERSION = "strict_t1_open_precommit_v1"
@@ -342,6 +349,20 @@ def run(
     frozen_bundle_sha = frozen_bundle_hasher.hexdigest()
 
     # ------------------------------------------------------------------
+    # 3.6  Detect strategies from frozen scores (MUST precede run ID)
+    # ------------------------------------------------------------------
+    # v5.3 fix: the run ID previously bound list(FORMAL_STRATEGIES) while the
+    # actual execution used strategies detected from the frozen scores.  When
+    # the two differed, the run ID described a strategy set that was never
+    # executed.  Detection now happens against the already-frozen scores.csv
+    # BEFORE the run ID is computed, so the ID binds the executed set.
+    frozen_scores = pd.read_csv(frozen_inputs_dir / "scores.csv")
+    detected_strategies = sorted(
+        frozen_scores["strategy"].dropna().unique().tolist()
+    ) if "strategy" in frozen_scores.columns else list(FORMAL_STRATEGIES)
+    active_strategies = detected_strategies or list(FORMAL_STRATEGIES)
+
+    # ------------------------------------------------------------------
     # 3.7  Enhanced formal run ID
     # ------------------------------------------------------------------
     run_id = compute_formal_run_id(
@@ -352,7 +373,7 @@ def run(
         frozen_bundle_sha=frozen_bundle_sha,
         start_date=FORMAL_CORE_START_DATE,
         end_date=end_date,
-        strategy_ids=list(FORMAL_STRATEGIES),
+        strategy_ids=active_strategies,
         formal_pit_run_id=str(pit_run_id or preflight_payload.get("formal_pit_run_id") or ""),
         package_id=str(package_id or preflight_payload.get("package_id") or ""),
         admission_id=admission_id,
@@ -372,12 +393,7 @@ def run(
     # ------------------------------------------------------------------
     # Build backtest command pointing at frozen_inputs/
     # ------------------------------------------------------------------
-    # v5.2: Auto-detect strategies from frozen scores
-    frozen_scores = pd.read_csv(frozen_inputs_dir / "scores.csv")
-    detected_strategies = sorted(
-        frozen_scores["strategy"].dropna().unique().tolist()
-    ) if "strategy" in frozen_scores.columns else list(FORMAL_STRATEGIES)
-    active_strategies = detected_strategies or list(FORMAL_STRATEGIES)
+    # v5.3: active_strategies now detected above (section 3.6), before run ID.
     command = build_backtest_command(
         FORMAL_CORE_START_DATE,
         end_date,
@@ -598,12 +614,18 @@ def run(
         and head_unchanged(git_sha_before, PROJECT_ROOT)
     )
 
-    # ── v5.1.6: Write formal_run_candidate_registry ──
+    # ── v5.3: Write formal_run_candidate_registry with DECOUPLED statuses ──
+    # The legacy single `status` field conflated execution integrity with
+    # economic alpha.  From v5.3 the candidate registry carries the four
+    # decomposed dimensions; `status` is kept only as a derived alias.
     try:
         reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
         reg_dir.mkdir(parents=True, exist_ok=True)
+        exec_status = (
+            ExecutionStatus.VERIFIED if formally_verified else ExecutionStatus.BLOCKED
+        )
         candidate = {
-            "schema_version": "formal_run_candidate_v5_1_6",
+            "schema_version": "formal_run_candidate_v5_1_7",
             "status": "FORMAL_RUN_VERIFIED" if formally_verified else "FORMAL_RUN_BLOCKED",
             "formal_run_id": formal_run_id,
             "formal_pit_run_id": pit_run_id,
@@ -619,13 +641,41 @@ def run(
                 else ""
             ),
             "seal_verified": formal_run_sealed,
-            "economic_status": status,
+            # v5.3: decomposed status semantics — see runtime/formal_status_semantics.py.
+            # economic_status is UNPROVEN here: this runner proves EXECUTION
+            # integrity, not economic alpha (OOS evidence lives elsewhere).
+            "execution_status": exec_status.value,
+            "data_status": DataStatus.E0_DIAGNOSTIC.value,
+            "economic_status": EconomicStatus.UNPROVEN.value,
+            "capital_status": CapitalStatus.BLOCKED.value,
             "capital_authority": False,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         tmp = reg_dir / "formal_run_candidate_registry.json.tmp"
         tmp.write_text(json.dumps(candidate, ensure_ascii=False, indent=2, sort_keys=True))
         tmp.replace(reg_dir / "formal_run_candidate_registry.json")
+
+        # v5.3: upsert the same decomposed status into the unified registry.
+        if formally_verified:
+            from runtime.unified_formal_registry import upsert_run_status
+
+            upsert_run_status(
+                strategy_id=",".join(active_strategies),
+                status=FormalStatus(
+                    execution_status=exec_status,
+                    data_status=DataStatus.E0_DIAGNOSTIC,
+                    economic_status=EconomicStatus.UNPROVEN,
+                    capital_status=CapitalStatus.BLOCKED,
+                ),
+                cell="formal_5strategy_run",
+                manifest_path=str((run_dir / "formal_run_manifest.json").relative_to(PROJECT_ROOT)),
+                manifest_sha256=manifest.get("manifest_sha256", ""),
+                git_commit_sha=git_sha_before,
+                notes=[
+                    "Execution VERIFIED = strict-ledger integrity only; "
+                    "economic alpha is evaluated by OOS evidence separately.",
+                ],
+            )
     except Exception as exc:
         registry_error = f"{type(exc).__name__}: {exc}"
         formally_verified = False
