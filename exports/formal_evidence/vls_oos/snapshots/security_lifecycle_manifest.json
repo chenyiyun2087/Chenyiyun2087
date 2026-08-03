@@ -1,0 +1,7 @@
+{
+  "snapshot_schema_version": "security_lifecycle_snapshot_v1",
+  "dataset_version": "release_20260803_oos_v4",
+  "generated_at": "2026-08-03T06:26:37.509066+00:00",
+  "lifecycle_snapshot_sha256": "9ea3573061ecea8cd649b7c638f1884ac03b19bb356e1d9c2c651125ef5f9bec",
+  "lifecycle_source_sha256": "9ea3573061ecea8cd649b7c638f1884ac03b19bb356e1d9c2c651125ef5f9bec"
+}

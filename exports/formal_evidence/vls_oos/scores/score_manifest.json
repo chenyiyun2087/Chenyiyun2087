@@ -1,0 +1,69 @@
+{
+  "capital_authority": false,
+  "computed_at": "2026-08-03T05:25:35.627281+00:00",
+  "content_sha256": "cabc7f092ec18f73e08e5dd2a083370f1ff8449c771bbaaead197334e80a8d69",
+  "dates": 1516,
+  "execution_time": "T+1 09:30:00+08:00",
+  "factor_coverage": {
+    "liquidity": {
+      "coverage_denominator": "eligible_universe_per_trade_date",
+      "missing_pct": 0.1,
+      "total_rows": 4694136
+    },
+    "momentum": {
+      "coverage_denominator": "eligible_universe_per_trade_date",
+      "missing_pct": 0.22,
+      "total_rows": 4694136
+    },
+    "size": {
+      "coverage_denominator": "eligible_universe_per_trade_date",
+      "missing_pct": 0.3,
+      "total_rows": 4694136
+    },
+    "value": {
+      "coverage_denominator": "eligible_universe_per_trade_date",
+      "missing_pct": 0.11,
+      "total_rows": 4694136
+    }
+  },
+  "factor_panel_path": "exports/formal_evidence/vls_oos/panel/factor_panel_daily.parquet",
+  "factor_panel_sha256": "39d555d7986d6813d5e4a2c5501644143e648485552f31d804835870cd093925",
+  "factor_signs": {
+    "liquidity": 1.0,
+    "momentum": -1.0,
+    "size": 1.0,
+    "value": 1.0
+  },
+  "factor_signs_sha256": "9cb084776c7865394b1901ec807e7cfb83f77bbb4419d605cf5c76f3daa0b65b",
+  "factor_weights": {
+    "liquidity": 0.25,
+    "momentum": 0.2,
+    "size": 0.25,
+    "value": 0.3
+  },
+  "factor_weights_sha256": "10afb31976acd9ee71d15906f5311dfd7b2bdeccc9d434c1a6b64c5995d27d45",
+  "git_commit_sha": "523e6dc35a9762e7c1f642bddf84b410bdf43407",
+  "missing_factor_threshold_pct": 5.0,
+  "rows": 4694136,
+  "schema_version": "formal_score_builder_v5_1",
+  "score_code_sha256": "ce1165e5547f6713f77eec737bb40d7e9ea91a9853709eeafeb4e0634a5ef438",
+  "score_path": "exports/formal_evidence/vls_oos/scores/formal_scores.parquet",
+  "score_sha256": "a5206d62cbba0dfbe2da41d57a52dd02e975e5381b0c74510d372d4d32912f20",
+  "selected_count": 934226,
+  "signal_cutoff": "T15:30:00+08:00",
+  "status": "PASS",
+  "strategy_definition_binding": {
+    "vls_mom_contrarian_v1_frozen": {
+      "factor_signs_sha256": "9cb084776c7865394b1901ec807e7cfb83f77bbb4419d605cf5c76f3daa0b65b",
+      "factor_weights_sha256": "10afb31976acd9ee71d15906f5311dfd7b2bdeccc9d434c1a6b64c5995d27d45",
+      "strategy_definition_sha256": "60f543e6e438914f5e12b7166a683bc8c6ee149bf33ca79ca12985599836c319"
+    }
+  },
+  "strategy_definition_sha256": "60f543e6e438914f5e12b7166a683bc8c6ee149bf33ca79ca12985599836c319",
+  "strategy_id": "vls_mom_contrarian_v1_frozen",
+  "strategy_ids": [
+    "vls_mom_contrarian_v1_frozen"
+  ],
+  "symbols": 3457,
+  "top_pct": 0.2
+}

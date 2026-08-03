@@ -1,0 +1,7 @@
+{
+  "snapshot_schema_version": "corporate_actions_snapshot_v1",
+  "dataset_version": "release_20260803_oos_v4",
+  "generated_at": "2026-08-03T06:26:37.509066+00:00",
+  "snapshot_sha256": "635fd592326618d4ab697897a33a98430fd82c7b1c492b5a7317167bfae4af1e",
+  "source_sha256": "635fd592326618d4ab697897a33a98430fd82c7b1c492b5a7317167bfae4af1e"
+}

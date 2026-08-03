@@ -1,0 +1,27 @@
+{
+  "adapter_ready": true,
+  "blockers": [],
+  "capital_authority": false,
+  "config_path": "exports/formal_evidence/vls_oos/config/adapter_config.json",
+  "config_sha256": "c9eeb9df54f4883d3ca208a819846842b1e8ab62b5ffb6f76b86015a8f98c249",
+  "content_sha256": "3a3cb10611f0a157cad4e59bf07c09e7fdb281822e750cb2eff68344991020e0",
+  "coverage_end": "2026-12-31",
+  "coverage_start": "2018-01-01",
+  "evidence_origin": "HISTORICAL_REAL",
+  "historical_evidence_level": "E1",
+  "manifest_path": "exports/formal_evidence/vls_oos/adapter/pit_source_manifest.json",
+  "manifest_sha256": "047dc0abcaafe46639d91bea33aead991d595cdca9e78097dfe0ca4f4ffcb974",
+  "schema_version": "alpha_v4_7_pit_data_adapter_v1",
+  "snapshot_identity": {
+    "configured_snapshot_id": "03a82810-0f38-11f1-a454-8eeefe31f743:1-109018",
+    "gtid_or_binlog_position": null,
+    "snapshot_id": "03a82810-0f38-11f1-a454-8eeefe31f743:1-109018",
+    "snapshot_token": null,
+    "snapshot_token_query_sha256": null,
+    "transaction_finished_at": null,
+    "transaction_isolation": null,
+    "transaction_started_at": null
+  },
+  "status": "PASS",
+  "synthetic_evidence_level": "S0"
+}

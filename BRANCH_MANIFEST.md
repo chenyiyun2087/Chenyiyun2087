@@ -55,6 +55,41 @@ them on the next run, and the readers default safely when absent:
 - `admission_candidate_registry.json.archived_20260803`
 - `formal_run_candidate_registry.json.archived_20260803`
 
+## v5.3 VLS OOS validation evidence (added 2026-08-03, after full pipeline)
+
+The frozen VLS champion (`vls_mom_contrarian_v1_frozen`) ran the complete
+OOS pipeline on release `20260803_oos_v4` (release parquets are on disk,
+gitignored): adapter PASS → panel QUALIFIED (coverage_ready_date
+2020-04-30) → scores PASS → 5 window-independent strict-ledger runs
+(VERIFIED) → report.
+
+| Item | Location | Status |
+|------|----------|--------|
+| Adapter manifest + report | `exports/formal_evidence/vls_oos/adapter/` | PASS (E1, HISTORICAL_REAL) |
+| Panel report + coverage CSV | `exports/formal_evidence/vls_oos/panel/` | QUALIFIED (4.69M rows) |
+| Score manifest | `exports/formal_evidence/vls_oos/scores/score_manifest.json` | PASS |
+| Snapshot CA/lifecycle manifests | `exports/formal_evidence/vls_oos/snapshots/*_manifest.json` | sha-bound to release |
+| Market-state CSV (overlay inputs) | `exports/formal_evidence/vls_oos/market_state.csv` | real inputs |
+| 5× baseline + 5× overlay runs | `exports/formal_evidence/vls_oos/runs/`, `runs_overlay/` | all VERIFIED |
+| OOS report (incl. overlay section) | `reports/vls_oos_validation_20260803.md` | on main |
+| Overlay detail report | `reports/vls_risk_overlay_20260803.md` | on main |
+
+Economic verdict: NOT OOS_VERIFIED. 2022 validation -43.5% annual (2x index
+loss); 2023/2024 strong excess; blind 2025-26 +15.4% annual / MDD -33%.
+Pre-registered drawdown-guard overlay v1 REJECTED (3/5 windows) — reduces
+MDD every triggered window but reacts too late for -40% class drawdowns and
+sacrifices 45% of alpha in the V-shaped 2024. Champion registry metrics
+(+89.4% 2022-24) are NOT comparable — they ran on the ~500-stock scoreRank
+pool vs the full-universe OOS. Data tier DIAGNOSTIC (E0, log_bin=0); formal
+E3 requires a binlog-enabled server.
+
+Bulk parquet (factor panel, formal scores, prices snapshots, split inputs,
+adapter snapshots — ~3.3GB) is intentionally NOT committed: every file is
+regenerable from the immutable release `data/pit/releases/20260803_oos_v4`
+(878MB, gitignored) + the committed pipeline code, and the committed
+manifests bind it by per-family content SHA256. Strict-ledger run
+manifests record input snapshot hashes for the audit trail.
+
 ## Status semantics (v5.3)
 
 The single `status` field historically conflated execution integrity with

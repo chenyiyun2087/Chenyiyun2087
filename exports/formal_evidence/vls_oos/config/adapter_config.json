@@ -1,0 +1,61 @@
+{
+  "adapter_type": "FILE",
+  "evidence_origin": "HISTORICAL_REAL",
+  "require_canonical_sources": true,
+  "snapshot_token": "03a82810-0f38-11f1-a454-8eeefe31f743:1-109018",
+  "snapshot_id": "03a82810-0f38-11f1-a454-8eeefe31f743:1-109018",
+  "field_definition_hash": "0e8a7a14a142968b69492bee369faa6418d2417cc3224cb15c620a71f953eeb0",
+  "provider": "mysql_tushare_stock",
+  "release": "v5.3_20260803_oos_v4",
+  "retrieved_at": "2026-08-03T04:29:12.689547+00:00",
+  "schema_semantic_version": "ashare_pit_semantics_v1",
+  "evidence_attestation": {
+    "database": "chenyiyun",
+    "gtid": "03a82810-0f38-11f1-a454-8eeefe31f743:1-109018",
+    "data_source_version": "tushare_stock.mysql_pit_v1",
+    "revision_chain_proof": "DATA_E1_frozen_snapshot",
+    "availability_time_proof": "DATA_E1_frozen_snapshot"
+  },
+  "source_completeness": {
+    "corporate_actions": true,
+    "security_lifecycle": true
+  },
+  "sources": {
+    "adjustment": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/adjustment.parquet",
+      "version": "mysql_pit_v1-3871147fe196"
+    },
+    "benchmark_index": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/benchmark_index.parquet",
+      "version": "mysql_pit_v1-fc32db57f71d"
+    },
+    "corporate_actions": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/corporate_actions.parquet",
+      "version": "mysql_pit_v1-635fd5923266"
+    },
+    "financial": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/financial.parquet",
+      "version": "mysql_pit_v1-2f8211abb434"
+    },
+    "industry": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/industry.parquet",
+      "version": "mysql_pit_v1-2d373ec1d00c"
+    },
+    "market": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/market.parquet",
+      "version": "mysql_pit_v1-b1ee9e3f16b0"
+    },
+    "security_lifecycle": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/security_lifecycle.parquet",
+      "version": "mysql_pit_v1-9ea3573061ec"
+    },
+    "trade_calendar": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/trade_calendar.parquet",
+      "version": "mysql_pit_v1-e3c9adc23279"
+    },
+    "universe": {
+      "path": "/Volumes/extension/projects/Chenyiyun2087/data/pit/releases/20260803_oos_v4/universe.parquet",
+      "version": "mysql_pit_v1-d3d041ed1d52"
+    }
+  }
+}
