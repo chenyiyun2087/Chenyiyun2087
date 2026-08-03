@@ -2047,7 +2047,7 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
     if "strategy" not in scores.columns:
         return scores
     keys = ["trade_date", "symbol"]
-    expected = set(FORMAL_STRATEGIES) | {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1"}
+    expected = set(FORMAL_STRATEGIES) | {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1", "vls_mom_contrarian_v1_frozen"}
     actual = set(scores["strategy"].astype(str).unique())
     if not actual.issubset(expected):
         raise ValueError(
@@ -3299,7 +3299,9 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     formal_evidence_required = bool(getattr(args, "require_verified_evidence", False))
     requires_frozen_inputs = bool(requested_strategies & raw_ledger_strategies) or formal_evidence_required
     # v5.2: allow governed + challenger (vls) strategies for research runs
-    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1"}
+    # v5.3: vls_mom_contrarian_v1_frozen is the P0-frozen champion (2026-08-03)
+    # under OOS validation on truly unseen data — included in the challenger set.
+    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1", "vls_mom_contrarian_v1_frozen"}
     allowed_strategies = formal_strategies | CHALLENGER_STRATEGIES
     if formal_evidence_required and not requested_strategies.issubset(allowed_strategies):
         raise ValueError("formal evidence requires strategies from the governed formal set")
