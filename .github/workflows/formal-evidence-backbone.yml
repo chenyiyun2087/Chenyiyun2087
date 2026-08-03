@@ -29,6 +29,9 @@ on:
       - 'config/validation_profiles/**'
       - 'config/dynamic_champion_live_program.yaml'
       - 'exports/formal_evidence_registry/**'
+      - 'scripts/maintenance/**'
+      - 'runtime/formal_status_semantics.py'
+      - 'runtime/unified_formal_registry.py'
       - 'test/test_pr_chain_complete.py'
       - 'test/test_formal_backbone_e2e.py'
       - 'test/test_formal_evidence_binding.py'
@@ -62,6 +65,9 @@ on:
       - 'config/validation_profiles/**'
       - 'config/dynamic_champion_live_program.yaml'
       - 'exports/formal_evidence_registry/**'
+      - 'scripts/maintenance/**'
+      - 'runtime/formal_status_semantics.py'
+      - 'runtime/unified_formal_registry.py'
       - 'test/test_pr_chain_complete.py'
       - 'test/test_formal_backbone_e2e.py'
       - 'test/test_formal_evidence_binding.py'
@@ -243,3 +249,22 @@ jobs:
             exit 1
           fi
           echo "No pending_pr_5 placeholders found"
+
+  # v5.3: unified registry + PIT semantic audit validation (fail-closed)
+  unified-registry-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-ci.lock.txt pydantic
+      - name: Validate unified formal registry
+        run: python scripts/maintenance/validate_unified_registry.py
+      - name: Forbid E0 markers in formal registry entries
+        run: |
+          if grep -q "DATA_E0_DERIVED" exports/formal_evidence_registry/unified_formal_registry.json; then
+            echo "ERROR: DATA_E0_DERIVED marker leaked into unified registry"
+            exit 1
+          fi
+          echo "No E0 markers in unified registry"

@@ -42,6 +42,9 @@ jobs:
           python scripts/ops/verify_release_freeze.py
           --freeze config/release_freeze/prod-fixed-v2-20260720-01.json
           --require frozen-manifest
+      - name: Frozen strategy definitions must not be modified (v5.3)
+        run: >-
+          python scripts/ops/check_frozen_strategy_definitions.py
       - name: Require current checkout identity to remain blocked without equivalence
         run: >-
           python -c "from pathlib import Path;
