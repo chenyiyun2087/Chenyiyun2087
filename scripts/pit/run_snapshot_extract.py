@@ -360,9 +360,15 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                     return str(d) if d else ""
 
             if family == "market":
-                # v5.2: available_at = DATA_E0_DERIVED (not real PIT timestamp)
+                # v5.3: available_at = clean business-time convention (T+0
+                # 15:30 signal cutoff), same convention as benchmark_index
+                # (T15:00).  The v5.2 [DATA_E0_DERIVED] suffix was a stale
+                # marker from the placeholder era: all market values
+                # (adj OHLCV, pre_close, circ_mv) are REAL sources since 2.4,
+                # and the suffix made the timestamp unparseable for the E1
+                # adapter (source_available_at_unparseable).
                 df["market_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{_int_to_iso(x)}T15:30:00+08:00 [DATA_E0_DERIVED]")
+                    lambda x: f"{_int_to_iso(x)}T15:30:00+08:00")
                 # v5.3: market_return is NOT computed here — the previous
                 # cross-sectional `pct_change().mean()` per trade_date was
                 # semantically wrong (sequential jumps of symbol-sorted rows,
