@@ -1,0 +1,210 @@
+{
+  "capital_authority": false,
+  "created_at": "2026-08-03T01:27:34.565154+00:00",
+  "entries": [
+    {
+      "capital_authority": false,
+      "lifecycle_status": "ARCHIVED_ECONOMIC_FAILED",
+      "notes": [
+        "OOS annualized return -1.87%, MDD -25.28%, Deflated Sharpe p~8.1e-50, factor-attributed alpha -74.9%.  Archived as control/benchmark only.",
+        "See reports: walk-forward OOS report on feature/v5.2-alpha-validation."
+      ],
+      "release_registry_status": {
+        "capital_status": "NO_EXTERNAL_SCALE",
+        "lifecycle_status": "PRODUCTION_EXCEPTION_FIXED_CAPITAL",
+        "promotion_status": "BLOCKED"
+      },
+      "role": "ARCHIVED_PRODUCTION",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "ECONOMIC_FAILED",
+        "execution_status": "VERIFIED"
+      },
+      "strategy_id": "production_governed_vol_position"
+    },
+    {
+      "capital_authority": false,
+      "lifecycle_status": "ARCHIVED_ECONOMIC_FAILED",
+      "notes": [
+        "OOS annualized return -1.87%, MDD -25.28%, Deflated Sharpe p~8.1e-50, factor-attributed alpha -74.9%.  Archived as control/benchmark only.",
+        "See reports: walk-forward OOS report on feature/v5.2-alpha-validation."
+      ],
+      "release_registry_status": {
+        "capital_status": "NO_EXTERNAL_SCALE",
+        "lifecycle_status": "RESEARCH",
+        "promotion_status": "BLOCKED"
+      },
+      "role": "ARCHIVED_PRODUCTION",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "ECONOMIC_FAILED",
+        "execution_status": "VERIFIED"
+      },
+      "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score"
+    },
+    {
+      "capital_authority": false,
+      "lifecycle_status": "ARCHIVED_ECONOMIC_FAILED",
+      "notes": [
+        "OOS annualized return -1.87%, MDD -25.28%, Deflated Sharpe p~8.1e-50, factor-attributed alpha -74.9%.  Archived as control/benchmark only.",
+        "See reports: walk-forward OOS report on feature/v5.2-alpha-validation."
+      ],
+      "role": "ARCHIVED_PRODUCTION",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "ECONOMIC_FAILED",
+        "execution_status": "VERIFIED"
+      },
+      "strategy_id": "production_governed_vol_position_v1_2b_gate_tuned"
+    },
+    {
+      "capital_authority": false,
+      "lifecycle_status": "ARCHIVED_ECONOMIC_FAILED",
+      "notes": [
+        "OOS annualized return -1.87%, MDD -25.28%, Deflated Sharpe p~8.1e-50, factor-attributed alpha -74.9%.  Archived as control/benchmark only.",
+        "See reports: walk-forward OOS report on feature/v5.2-alpha-validation."
+      ],
+      "release_registry_status": {
+        "capital_status": "NO_SCALE",
+        "lifecycle_status": "RESEARCH",
+        "promotion_status": "BLOCKED"
+      },
+      "role": "ARCHIVED_PRODUCTION",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "ECONOMIC_FAILED",
+        "execution_status": "VERIFIED"
+      },
+      "strategy_id": "production_governed_vol_position_v1_2b_execution_safe_uplift"
+    },
+    {
+      "capital_authority": false,
+      "lifecycle_status": "ARCHIVED_ECONOMIC_FAILED",
+      "notes": [
+        "OOS annualized return -1.87%, MDD -25.28%, Deflated Sharpe p~8.1e-50, factor-attributed alpha -74.9%.  Archived as control/benchmark only.",
+        "See reports: walk-forward OOS report on feature/v5.2-alpha-validation."
+      ],
+      "role": "ARCHIVED_PRODUCTION",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "ECONOMIC_FAILED",
+        "execution_status": "VERIFIED"
+      },
+      "strategy_id": "production_governed_vol_position_v1_2b_strict_precommit_uplift"
+    },
+    {
+      "capital_authority": false,
+      "lifecycle_status": "RESEARCH",
+      "notes": [
+        "Parent of vls_mom_contrarian_v1; research-mode results only."
+      ],
+      "role": "RESEARCH_CANDIDATE",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "RESEARCH_CANDIDATE",
+        "execution_status": "NOT_RUN"
+      },
+      "strategy_id": "vls_value_size_liquidity_v1"
+    },
+    {
+      "capital_authority": false,
+      "cell": "champion_t10_h20_b005_band050",
+      "frozen_bundle_sha256": "0fb295dbe633a54c090a3a6fb6071a9aaf1da1dc97bd7f36c3e641069f8d8ddc",
+      "git_commit_sha": "c8f571ee696f532fda38074dde8c4c7aa24c8b07",
+      "lifecycle_status": "FROZEN_CHAMPION",
+      "manifest_path": "exports/formal_evidence/vls_champion/champion_t10_h20_b005_band050/formal_run_manifest.json",
+      "manifest_sha256": "ad986e5cbfcbdd84051f6910591397d2b30141c059120c424741365e023d0276",
+      "metrics": {
+        "annualized_return": 0.4089588207440635,
+        "max_drawdown": -0.3777294941701551,
+        "total_return": 1.60597265807912,
+        "trade_count": 408
+      },
+      "notes": [
+        "Execution VERIFIED means strict-ledger integrity only — NOT economic alpha.",
+        "Data level is E0_DIAGNOSTIC (frozen panel contains derived fields).",
+        "Economic status is RESEARCH_CANDIDATE pending independent 2018-2021 OOS."
+      ],
+      "parameters": {
+        "hold_days": 20,
+        "rebalance_score_buffer": 0.05,
+        "rebalance_weight_drift_band": 0.5,
+        "top_n": 10
+      },
+      "period": {
+        "end": "2024-12-31",
+        "start": "2022-01-01"
+      },
+      "role": "RESEARCH_CANDIDATE",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "RESEARCH_CANDIDATE",
+        "execution_status": "VERIFIED"
+      },
+      "strategy_id": "vls_mom_contrarian_v1"
+    },
+    {
+      "capital_authority": false,
+      "cell": "champion_t10_h20_b010",
+      "frozen_bundle_sha256": "0fb295dbe633a54c090a3a6fb6071a9aaf1da1dc97bd7f36c3e641069f8d8ddc",
+      "git_commit_sha": "c8f571ee696f532fda38074dde8c4c7aa24c8b07",
+      "lifecycle_status": "FROZEN_CHAMPION",
+      "manifest_path": "exports/formal_evidence/vls_champion/champion_t10_h20_b010/formal_run_manifest.json",
+      "manifest_sha256": "caf8cc93b1471d5cf7230f3d10b209949535ce495e127cd187c28c79c4168400",
+      "metrics": {
+        "annualized_return": 0.2568236663060925,
+        "max_drawdown": -0.3274710989740748,
+        "total_return": 0.8938163716595318,
+        "trade_count": 188
+      },
+      "notes": [
+        "Execution VERIFIED means strict-ledger integrity only — NOT economic alpha.",
+        "Data level is E0_DIAGNOSTIC (frozen panel contains derived fields).",
+        "Economic status is RESEARCH_CANDIDATE pending independent 2018-2021 OOS."
+      ],
+      "parameters": {
+        "hold_days": 20,
+        "rebalance_score_buffer": 0.1,
+        "rebalance_weight_drift_band": 0.0,
+        "top_n": 10
+      },
+      "period": {
+        "end": "2024-12-31",
+        "start": "2022-01-01"
+      },
+      "role": "RESEARCH_CANDIDATE",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "RESEARCH_CANDIDATE",
+        "execution_status": "VERIFIED"
+      },
+      "strategy_id": "vls_mom_contrarian_v1"
+    }
+  ],
+  "schema_version": "unified_formal_registry_v1",
+  "status_semantics": "execution/data/economic/capital are DECOUPLED — see runtime/formal_status_semantics.py.  VERIFIED in execution_status means strict-ledger integrity only, never economic alpha."
+}

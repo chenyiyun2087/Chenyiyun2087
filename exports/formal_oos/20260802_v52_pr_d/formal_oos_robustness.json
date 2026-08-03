@@ -1,0 +1,131 @@
+{
+  "acceptance_config_sha256": "adb0b33854d3913ec04b53688acbbfb1acc2760609d3de04386f3492a7f09183",
+  "blockers": [
+    "positive_oos_window_ratio",
+    "oos_calmar",
+    "max_single_window_profit_contribution",
+    "deflated_sharpe",
+    "block_bootstrap",
+    "single_stock_concentration",
+    "single_month_concentration",
+    "single_year_concentration",
+    "random_baseline_win_ratio"
+  ],
+  "bootstrap_annual_return_5th": -0.19002033701041446,
+  "concentration": {
+    "max_single_industry_profit_share": 0.19171296366041127,
+    "max_single_month_profit_share": 0.31080829859878767,
+    "max_single_oos_window_profit_share": 0.967390908165105,
+    "max_single_stock_profit_share": 0.15596239931797382,
+    "max_single_year_profit_share": 1.0,
+    "profit_after_removing_top_five_cny": -113190.12751300001,
+    "top_five_winner_profit_cny": 87868.55830700001
+  },
+  "content_sha256": "453e76c94af53b807c64b2e27b601e90aec01d325f7f1e8148c1f9bec50f1018",
+  "cpcv_pbo": 0.1333,
+  "deflated_sharpe_confidence": 8.086253049615074e-50,
+  "economic_gates_passed": false,
+  "evidence_sha256": "453e76c94af53b807c64b2e27b601e90aec01d325f7f1e8148c1f9bec50f1018",
+  "factor_attribution": {
+    "alpha_annualized": -0.7489515706038813,
+    "alpha_daily": -0.0054695484144349354,
+    "factor_exposures": {
+      "industry": 0.14824740883022566,
+      "liquidity": -0.17332085183044627,
+      "market_beta": 0.21149506467921247,
+      "momentum": 0.10203068481683679,
+      "size": 0.29283328107396495,
+      "value": 0.0974498411498107,
+      "volatility": 0.07488537742664433
+    },
+    "r_squared": 0.22980518142143647
+  },
+  "formal_manifest_sha256": "7729b195936e3f0733aa8b748160eab33d00d77bc3d0ef04237053a60b9f91e4",
+  "formal_pit_run_id": "ede3d2561effb0b7c435225c8b9396fe860cc959f9e4eb250f9a0c449fc1aa01",
+  "formal_run_id": "formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e",
+  "frozen_bundle_sha256": "ebad7599738c3624de45e290fdab1402bc41f5f669dea65587d232500910f6a9",
+  "gates": {
+    "block_bootstrap": false,
+    "bootstrap_max_dd": true,
+    "challenger_calmar_improvement": true,
+    "cpcv_pbo": true,
+    "deflated_sharpe": false,
+    "max_single_window_profit_contribution": false,
+    "oos_calmar": false,
+    "oos_max_drawdown": true,
+    "oos_window_coverage": true,
+    "positive_oos_window_ratio": false,
+    "random_baseline_win_ratio": false,
+    "reverse_baseline_win_ratio": true,
+    "single_industry_concentration": true,
+    "single_month_concentration": false,
+    "single_stock_concentration": false,
+    "single_year_concentration": false
+  },
+  "input_sha256": {
+    "analysis_manifest.json": "7b930a6113d479c3566b6aeece95b0433c288fe1be0bd53eb2123ce0b1aa1f79",
+    "closed_trades.csv": "78f9ee13b78a4b64c9e5431f4a1cb43a8d3dc56e22bf67a084ff7cc7e3b1f358",
+    "configuration_returns.csv": "4a3cc342eeaf1fd8b1a4e7afad5576e545c6affeb6d266822f188e655ab4cebf",
+    "folds.json": "10ffca5b4eb7160c7a546296c024a748a2da2880e6dfb648684c94bf3b10f465",
+    "oos_returns.csv": "0be22289c081c0e4ab9f0385b91aff5958f3fb80ff4611bf62332a37c2a088a3",
+    "selected_model_config.json": "f3296ba2919510b1d0171674f81817292633232d401f9322e6ed94dcd09eb0a5"
+  },
+  "oos_annualized_return": -0.018695178575587668,
+  "oos_calmar": -0.07394776400912172,
+  "oos_max_drawdown": -0.2528160090585234,
+  "package_id": "0bedb3cc65c485b6355d00e8d786dc8a8ba690f4d51c1bb6e4695db2f51dd85c",
+  "positive_oos_window_ratio": 0.3333333333333333,
+  "schema_version": "formal_oos_robustness_v2",
+  "status": "ECONOMIC_FAILED",
+  "technical_evidence_complete": true,
+  "window_metrics": [
+    {
+      "annualized_return": 0.026498381484425293,
+      "calmar": 0.4132352675679183,
+      "fold_id": "WF000",
+      "max_drawdown": -0.0641242013063904,
+      "positive": true,
+      "total_return": 0.006768716613162917
+    },
+    {
+      "annualized_return": -0.08298045903439988,
+      "calmar": -1.2481877977829452,
+      "fold_id": "WF001",
+      "max_drawdown": -0.06648074847534269,
+      "positive": false,
+      "total_return": -0.020414108677743625
+    },
+    {
+      "annualized_return": -0.29810332278323315,
+      "calmar": -2.8941570946551103,
+      "fold_id": "WF002",
+      "max_drawdown": -0.10300177669476418,
+      "positive": false,
+      "total_return": -0.07953261489720598
+    },
+    {
+      "annualized_return": -0.17952694051850904,
+      "calmar": -2.624174350527096,
+      "fold_id": "WF003",
+      "max_drawdown": -0.06841273350699772,
+      "positive": false,
+      "total_return": -0.047517300806814045
+    },
+    {
+      "annualized_return": -0.21810102323610903,
+      "calmar": -3.1891138442265374,
+      "fold_id": "WF004",
+      "max_drawdown": -0.06838922468413966,
+      "positive": false,
+      "total_return": -0.06331915364129237
+    },
+    {
+      "annualized_return": 1.1849339683611704,
+      "calmar": 23.604885061248815,
+      "fold_id": "WF005",
+      "max_drawdown": -0.050198675625259814,
+      "positive": true,
+      "total_return": 0.20080273761297773
+    }
+  ]
+}

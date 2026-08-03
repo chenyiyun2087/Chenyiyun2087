@@ -1,0 +1,142 @@
+{
+  "folds": {
+    "WF000": {
+      "code_git_sha": "295a6d2873deeda2e745366e9a8353019efa3bfe",
+      "config_sha": "0df5bbd361d0a376230747b960864b2a37acf31e342be9527de2e437a652e36d",
+      "cost_model": {
+        "min_commission_cny": 5.0,
+        "slippage_bps": 10,
+        "stamp_duty_bps": 10,
+        "trade_cost_rate": 0.00075
+      },
+      "factor_weights": {
+        "liquidity": 0.1,
+        "market_beta": 0.1,
+        "momentum": 0.15,
+        "size": 0.15,
+        "value": 0.25,
+        "volatility": 0.25
+      },
+      "hold_days": 5,
+      "model_config_sha256": "ff9f015044cbc354df618965bae154f3967f3ef11c913d3084d42e20e07d9e32",
+      "selected_at": "2023-05-17",
+      "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+      "top_n": 5
+    },
+    "WF001": {
+      "code_git_sha": "295a6d2873deeda2e745366e9a8353019efa3bfe",
+      "config_sha": "0df5bbd361d0a376230747b960864b2a37acf31e342be9527de2e437a652e36d",
+      "cost_model": {
+        "min_commission_cny": 5.0,
+        "slippage_bps": 10,
+        "stamp_duty_bps": 10,
+        "trade_cost_rate": 0.00075
+      },
+      "factor_weights": {
+        "liquidity": 0.1,
+        "market_beta": 0.1,
+        "momentum": 0.15,
+        "size": 0.15,
+        "value": 0.25,
+        "volatility": 0.25
+      },
+      "hold_days": 5,
+      "model_config_sha256": "7fd6f4cd1001bdc7d45bdc9356f394428cf886c2db3b205d6e54cc02bb86bbcc",
+      "selected_at": "2023-08-17",
+      "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+      "top_n": 5
+    },
+    "WF002": {
+      "code_git_sha": "295a6d2873deeda2e745366e9a8353019efa3bfe",
+      "config_sha": "0df5bbd361d0a376230747b960864b2a37acf31e342be9527de2e437a652e36d",
+      "cost_model": {
+        "min_commission_cny": 5.0,
+        "slippage_bps": 10,
+        "stamp_duty_bps": 10,
+        "trade_cost_rate": 0.00075
+      },
+      "factor_weights": {
+        "liquidity": 0.1,
+        "market_beta": 0.1,
+        "momentum": 0.15,
+        "size": 0.15,
+        "value": 0.25,
+        "volatility": 0.25
+      },
+      "hold_days": 5,
+      "model_config_sha256": "f9cbb8a8151cc46584b9a8a6a9caac08172dc3907184cdfe28ce28563f4cac3d",
+      "selected_at": "2023-11-17",
+      "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+      "top_n": 5
+    },
+    "WF003": {
+      "code_git_sha": "295a6d2873deeda2e745366e9a8353019efa3bfe",
+      "config_sha": "0df5bbd361d0a376230747b960864b2a37acf31e342be9527de2e437a652e36d",
+      "cost_model": {
+        "min_commission_cny": 5.0,
+        "slippage_bps": 10,
+        "stamp_duty_bps": 10,
+        "trade_cost_rate": 0.00075
+      },
+      "factor_weights": {
+        "liquidity": 0.1,
+        "market_beta": 0.1,
+        "momentum": 0.15,
+        "size": 0.15,
+        "value": 0.25,
+        "volatility": 0.25
+      },
+      "hold_days": 5,
+      "model_config_sha256": "677f22a0aa444a645f0e709c835d9db34a29196d1c07df2feae484819adbf798",
+      "selected_at": "2024-02-08",
+      "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+      "top_n": 5
+    },
+    "WF004": {
+      "code_git_sha": "295a6d2873deeda2e745366e9a8353019efa3bfe",
+      "config_sha": "0df5bbd361d0a376230747b960864b2a37acf31e342be9527de2e437a652e36d",
+      "cost_model": {
+        "min_commission_cny": 5.0,
+        "slippage_bps": 10,
+        "stamp_duty_bps": 10,
+        "trade_cost_rate": 0.00075
+      },
+      "factor_weights": {
+        "liquidity": 0.1,
+        "market_beta": 0.1,
+        "momentum": 0.15,
+        "size": 0.15,
+        "value": 0.25,
+        "volatility": 0.25
+      },
+      "hold_days": 5,
+      "model_config_sha256": "378c3413023fd9284db000fb34f1504bd4e022b66eef131ea904eee7fff81086",
+      "selected_at": "2024-05-24",
+      "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+      "top_n": 5
+    },
+    "WF005": {
+      "code_git_sha": "295a6d2873deeda2e745366e9a8353019efa3bfe",
+      "config_sha": "0df5bbd361d0a376230747b960864b2a37acf31e342be9527de2e437a652e36d",
+      "cost_model": {
+        "min_commission_cny": 5.0,
+        "slippage_bps": 10,
+        "stamp_duty_bps": 10,
+        "trade_cost_rate": 0.00075
+      },
+      "factor_weights": {
+        "liquidity": 0.1,
+        "market_beta": 0.1,
+        "momentum": 0.15,
+        "size": 0.15,
+        "value": 0.25,
+        "volatility": 0.25
+      },
+      "hold_days": 5,
+      "model_config_sha256": "c71e94693cc79a1030b9f004d605779b067a8c9d15b2d61ea172bb9fa3576d37",
+      "selected_at": "2024-08-16",
+      "strategy_id": "production_governed_vol_position_v1_2b_dynamic_score",
+      "top_n": 5
+    }
+  }
+}
