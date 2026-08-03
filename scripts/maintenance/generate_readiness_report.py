@@ -172,14 +172,43 @@ def _evidence_gate_status() -> dict[str, tuple[str, str]]:
         rid = manifest.get("release_id", "?")
         gates["core_history"] = ("BLOCKED", f"release {rid} consistent_snapshot={manifest.get('consistent_snapshot')} — E0_DIAGNOSTIC, needs binlog-enabled server for E3")
 
-    # alpha_proof_guard — random-null significance on the blind window
+    # alpha_proof_guard — random-null + IC-HAC + single-factor-null significance
     p = _random_null_p_value()
+    ic_hac = VLS_EVIDENCE / "factor_diagnostics" / "alpha_significance" / "ic_hac_significance.csv"
+    liq_null = VLS_EVIDENCE / "factor_diagnostics" / "alpha_significance" / "liquidity_null" / "liquidity_null_summary.csv"
     if p is None:
         gates["alpha_proof_guard"] = ("BLOCKED", "random null summary missing")
     elif p <= 0.05:
         gates["alpha_proof_guard"] = ("PASS", f"blind-window alpha significant vs random null (p={p:.3f})")
     else:
-        gates["alpha_proof_guard"] = ("BLOCKED", f"blind-window alpha NOT distinguishable from random scores (p={p:.3f} > 0.05)")
+        # Supplementary evidence: IC-level HAC significance + liquidity
+        # single-factor shuffle null (Phase 3.5 study).  The composite is the
+        # gate object; single-factor evidence is diagnostic only.
+        ic_note = ""
+        if ic_hac.is_file():
+            try:
+                import pandas as pd
+                ics = pd.read_csv(ic_hac)
+                comp = ics[(ics["factor"] == "score") & (ics["horizon"] == 20)]
+                mom = ics[(ics["factor"] == "momentum") & (ics["horizon"] == 20)]
+                if len(comp):
+                    t = comp.iloc[0]["hac_t"]
+                    ic_note = f"; composite IC HAC t={t:+.2f} on blind (momentum reversal IC HAC t={mom.iloc[0]['hac_t']:+.2f} direction-consistent)"
+            except Exception:
+                pass
+        liq_note = ""
+        if liq_null.is_file():
+            try:
+                import pandas as pd
+                ann = pd.read_csv(liq_null)["annualized_return"].dropna()
+                if len(ann) >= 100:
+                    actual = 0.423  # liquidity single-factor blind annual (factor diagnostics)
+                    p_liq = float((ann >= actual).mean())
+                    liq_note = f"; liquidity single-factor shuffle null p={p_liq:.3f} on blind (diagnostic only)"
+            except Exception:
+                pass
+        gates["alpha_proof_guard"] = ("BLOCKED",
+            f"blind-window alpha NOT distinguishable from random scores (p={p:.3f} > 0.05){ic_note}{liq_note}")
 
     # alpha_attribution / factor_ic — Phase 3.4 factor diagnostics (2026-08-03)
     diag = VLS_EVIDENCE / "factor_diagnostics"

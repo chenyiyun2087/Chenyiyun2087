@@ -23,7 +23,7 @@ This report is an evidence view, not a capital decision.  Capital authority can 
 - benchmark_excess: **PASS** — 3-benchmark excess computed (2023 +40-44pp; blind +3.1pp vs CSI300, -5.6pp vs CSI500)
 - alpha_attribution: **PASS** — single-factor strict-ledger backtests VERIFIED for all 4 strategy factors x 5 windows
 - factor_ic: **PASS** — per-factor rank IC/ICIR computed (6 factors x 5 windows x 4 horizons); direction check recorded
-- alpha_proof_guard: **BLOCKED** — blind-window alpha NOT distinguishable from random scores (p=0.190 > 0.05)
+- alpha_proof_guard: **BLOCKED** — blind-window alpha NOT distinguishable from random scores (p=0.190 > 0.05); composite IC HAC t=+0.83 on blind (momentum reversal IC HAC t=-3.33 direction-consistent); liquidity single-factor shuffle null p=0.010 on blind (diagnostic only)
 - factor_compute_lineage: **PASS** — scores carry lineage metadata: ['financial_source_snapshot_sha', 'revision_id', 'revision_sequence']
 - walk_forward: **PASS** — 5 window-independent strict-ledger runs VERIFIED on release 20260803_oos_v4; report exists
 - execution_cost_stress: **PASS** — 2x cost degrades <=1.2pp annual; overlay v1 REJECTED 3/5 (reduces MDD every triggered window)
@@ -32,7 +32,7 @@ This report is an evidence view, not a capital decision.  Capital authority can 
 
 ### Remaining blockers to CANARY_50K
   - core_history (BLOCKED): release 20260803_oos_v4 consistent_snapshot=False — E0_DIAGNOSTIC, needs binlog-enabled server for E3
-  - alpha_proof_guard (BLOCKED): blind-window alpha NOT distinguishable from random scores (p=0.190 > 0.05)
+  - alpha_proof_guard (BLOCKED): blind-window alpha NOT distinguishable from random scores (p=0.190 > 0.05); composite IC HAC t=+0.83 on blind (momentum reversal IC HAC t=-3.33 direction-consistent); liquidity single-factor shuffle null p=0.010 on blind (diagnostic only)
   - economic_shadow (BLOCKED): E4 shadow tracking not started; ~3 months once live
   - manual_approval (BLOCKED): human-approved capital decision required by firewall
 
