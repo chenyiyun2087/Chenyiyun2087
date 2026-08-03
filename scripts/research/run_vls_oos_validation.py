@@ -307,35 +307,49 @@ def stage_snapshots(release_dir: Path, work_dir: Path) -> Path:
     return snapshots_dir
 
 
-def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict]:
-    """Run strict-ledger backtests per time split with frozen inputs."""
-    runs_dir = work_dir / "runs"
-    snapshots_dir = stage_snapshots(release_dir, work_dir)
-    results = []
-    # v5.3: the backtest's snapshot branch never filters by --start-date (the
-    # simulation starts at the first score row of the scores snapshot), so
-    # every split would otherwise accumulate from 2020-05-06 — later splits
-    # become supersets and the window metrics are invalid.  Cut scores AND
-    # prices to the split window before handing them to the strict ledger.
+def build_split_inputs(
+    work_dir: Path, scores_dir: Path, snapshots_dir: Path,
+) -> tuple[Path, dict[str, tuple[Path, Path]]]:
+    """Cut frozen scores + prices to each TIME_SPLIT window.
+
+    The backtest's snapshot branch never filters by --start-date (the
+    simulation starts at the first score row of the scores snapshot), so
+    every split would otherwise accumulate from the earliest score date —
+    later splits become supersets and the window metrics are invalid.
+    Returns (split_inputs_dir, {label: (scores_path, prices_path)}).
+    """
     import pandas as pd
     scores_all = pd.read_parquet(scores_dir / "formal_scores.parquet")
     prices_all = pd.read_parquet(snapshots_dir / "prices.parquet")
     split_inputs_dir = work_dir / "split_inputs"
     split_inputs_dir.mkdir(parents=True, exist_ok=True)
+    split_files: dict[str, tuple[Path, Path]] = {}
     for label, start, end in TIME_SPLITS:
-        out = runs_dir / label
         start_d = pd.Timestamp(start).date()
         end_d = pd.Timestamp(end).date()
         scores_all["_d"] = pd.to_datetime(scores_all["trade_date"], errors="coerce").dt.date
         prices_all["_d"] = pd.to_datetime(prices_all["trade_date"], errors="coerce").dt.date
         win_scores = scores_all[(scores_all["_d"] >= start_d) & (scores_all["_d"] <= end_d)]
         win_prices = prices_all[(prices_all["_d"] >= start_d) & (prices_all["_d"] <= end_d)]
+        scores_path = split_inputs_dir / f"{label}_scores.parquet"
+        prices_path = split_inputs_dir / f"{label}_prices.parquet"
         win_scores.drop(columns=["_d"]).to_parquet(
-            split_inputs_dir / f"{label}_scores.parquet", index=False,
-            compression="zstd")
+            scores_path, index=False, compression="zstd")
         win_prices.drop(columns=["_d"]).to_parquet(
-            split_inputs_dir / f"{label}_prices.parquet", index=False,
-            compression="zstd")
+            prices_path, index=False, compression="zstd")
+        split_files[label] = (scores_path, prices_path)
+    return split_inputs_dir, split_files
+
+
+def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict]:
+    """Run strict-ledger backtests per time split with frozen inputs."""
+    runs_dir = work_dir / "runs"
+    snapshots_dir = stage_snapshots(release_dir, work_dir)
+    results = []
+    split_inputs_dir, split_files = build_split_inputs(work_dir, scores_dir, snapshots_dir)
+    for label, start, end in TIME_SPLITS:
+        out = runs_dir / label
+        win_scores, win_prices = split_files[label]
         _run(
             [PY, "scripts/research_trusted_strategy_account_backtest.py",
              "--risk-profile", "adaptive",

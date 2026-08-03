@@ -3284,9 +3284,112 @@ def _validate_strict_execution_arguments(args: argparse.Namespace) -> None:
         raise ValueError("strict_precommit rejects non-zero hard_stop_loss_pct until stop orders are ledger-native")
 
 
+def _load_market_state_snapshot(path: Path) -> dict[object, dict[str, float]]:
+    """Load per-date market-state inputs for the risk overlay.
+
+    Columns: trade_date (ISO), csi300_ret_20d, market_breadth_above_20d_ma.
+    Missing values become NaN — the corresponding overlay rules simply do
+    not fire for that date (no fabricated market state).
+    """
+    frame = pd.read_csv(path)
+    required = {"trade_date", "csi300_ret_20d", "market_breadth_above_20d_ma"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise RuntimeError(f"market_state_snapshot_missing_fields:{sorted(missing)}")
+    out: dict[object, dict[str, float]] = {}
+    for _, row in frame.iterrows():
+        date = pd.to_datetime(row["trade_date"], errors="coerce").date()
+        if pd.isna(date):
+            continue
+        out[date] = {
+            "csi300_ret_20d": float(row["csi300_ret_20d"])
+            if pd.notna(row["csi300_ret_20d"]) else float("nan"),
+            "market_breadth_above_20d_ma": float(row["market_breadth_above_20d_ma"])
+            if pd.notna(row["market_breadth_above_20d_ma"]) else float("nan"),
+        }
+    return out
+
+
+def _risk_overlay_multiplier(
+    overlay: dict,
+    nav_rows: list[dict],
+    market_state: dict[str, float] | None,
+) -> dict:
+    """Evaluate the pre-registered overlay on signal-day state only.
+
+    Drawdown rules use the nav equity path through the signal date (the
+    last nav row at signal time = signal-date mark).  Market rules use the
+    precomputed market-state snapshot.  Rules compose by MINIMUM multiplier
+    (most conservative wins); halt_new_entries is raised if any fired rule
+    requests it.
+    """
+    multiplier = 1.0
+    halt = False
+    triggered: list[str] = []
+    drawdown = 0.0
+    if nav_rows:
+        equities = [float(row["total_equity"]) for row in nav_rows
+                    if row.get("total_equity") is not None]
+        if equities:
+            peak = max(equities)
+            last = equities[-1]
+            drawdown = (peak - last) / peak if peak > 0 else 0.0
+    for rule in overlay.get("rules", []):
+        rule_id = str(rule.get("id", "?"))
+        condition = str(rule.get("condition", ""))
+        fires = False
+        if condition.startswith("portfolio_equity_drawdown_from_peak"):
+            try:
+                threshold = float(condition.split(">=")[-1].strip())
+            except ValueError:
+                threshold = float("inf")
+            fires = drawdown >= threshold
+        elif condition.startswith("csi300_ret_20d") and market_state is not None:
+            value = market_state.get("csi300_ret_20d")
+            try:
+                threshold = float(condition.split("<=")[-1].strip())
+            except ValueError:
+                threshold = float("inf")
+            fires = value == value and value <= threshold  # NaN-safe
+        elif condition.startswith("market_breadth_above_20d_ma") and market_state is not None:
+            value = market_state.get("market_breadth_above_20d_ma")
+            try:
+                threshold = float(condition.split("<")[-1].strip())
+            except ValueError:
+                threshold = float("inf")
+            fires = value == value and value < threshold  # NaN-safe
+        if fires:
+            triggered.append(rule_id)
+            multiplier = min(multiplier, float(rule.get("position_multiplier", 1.0)))
+            if bool(rule.get("halt_new_entries", False)):
+                halt = True
+    return {
+        "multiplier": multiplier,
+        "halt_new_entries": halt,
+        "triggered": triggered,
+        "drawdown_from_peak": drawdown,
+    }
+
+
 def run_account_backtest(args: argparse.Namespace) -> dict:
     args = _apply_risk_profile_defaults(args)
     _validate_strict_execution_arguments(args)
+    # v5.3 pre-registered risk overlay: loaded once, evaluated per signal
+    # day at the _rebalance chokepoint.  Default None -> zero behavior
+    # change for all existing runs.
+    risk_overlay_config: dict | None = None
+    market_state_by_date: dict[object, dict[str, float]] = {}
+    if getattr(args, "risk_overlay_config", None):
+        try:
+            import yaml
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("risk_overlay_config requires PyYAML") from exc
+        with open(args.risk_overlay_config, encoding="utf-8") as fh:
+            risk_overlay_config = yaml.safe_load(fh)
+        if not getattr(args, "market_state_snapshot", None):
+            raise ValueError("risk_overlay_config requires --market-state-snapshot")
+        market_state_by_date = _load_market_state_snapshot(
+            Path(args.market_state_snapshot))
     requested_strategies = set(_parse_strategies(args.strategies))
     raw_ledger_strategies = {"production_governed_vol_position", "production_governed_vol_position_v1_2b_gate_tuned", PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME}
     formal_strategies = {
@@ -4141,6 +4244,18 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                             adaptive_meta["target_position_ratio"] = float(rebalance_position_ratio)
                 if target_override is None:
                     target_override = targets_cache.get((signal_date, rebalance_spec.name))
+                if risk_overlay_config is not None:
+                    overlay_state = _risk_overlay_multiplier(
+                        risk_overlay_config, nav_rows,
+                        market_state_by_date.get(signal_date))
+                    if overlay_state["multiplier"] < 1.0:
+                        rebalance_position_ratio = max(
+                            0.0, min(1.0, float(rebalance_position_ratio)
+                                     * overlay_state["multiplier"]))
+                    adaptive_meta["risk_overlay_multiplier"] = overlay_state["multiplier"]
+                    adaptive_meta["risk_overlay_drawdown_from_peak"] = overlay_state["drawdown_from_peak"]
+                    adaptive_meta["risk_overlay_triggered_rules"] = ",".join(overlay_state["triggered"])
+                    adaptive_meta["risk_overlay_halt_new_entries"] = int(overlay_state["halt_new_entries"])
                 trades, candidates, rebalance_meta = _rebalance(
                     account=account,
                     signal_date=signal_date,
@@ -4591,6 +4706,24 @@ def main() -> None:
         help="v5.2 turnover-penalty research: relative weight-drift band for buffer-kept positions (e.g. 0.50 = trim back to equal-weight x 1.5 at ±50%% drift). Bounds the concentration tail from unbounded winner compounding; 0 freezes kept positions.",
     )
     parser.add_argument("--position-ratio", type=float, default=None, help="Target gross exposure ratio before locked-position budget.")
+    parser.add_argument(
+        "--risk-overlay-config",
+        default=None,
+        help="v5.3 pre-registered risk overlay YAML (config/risk_overlays/*.yaml). "
+        "Evaluated on signal day against portfolio drawdown from peak (nav equity "
+        "through the signal date) and market-state inputs; the resulting position "
+        "multiplier scales the execution-day gross exposure. Rules compose by "
+        "MINIMUM multiplier; halt_new_entries is realized through the exposure "
+        "multiplier (target gross <= locked value -> no fresh budget). "
+        "Requires --market-state-snapshot. None disables the overlay.",
+    )
+    parser.add_argument(
+        "--market-state-snapshot",
+        default=None,
+        help="v5.3 CSV snapshot: trade_date,csi300_ret_20d,market_breadth_above_20d_ma "
+        "(computed by scripts/research/run_vls_risk_overlay.py from the release "
+        "benchmark_index + prices families). Required by --risk-overlay-config.",
+    )
     parser.add_argument(
         "--hard-stop-loss-pct",
         type=float,
