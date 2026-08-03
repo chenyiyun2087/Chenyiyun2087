@@ -56,6 +56,8 @@ SNAPSHOT_NAMES = {
     "trade_calendar.parquet": "trade_calendar",
     "security_lifecycle.parquet": "security_lifecycle",
     "corporate_actions.parquet": "corporate_actions",
+    # v5.3: 9th family — real benchmark index data (CSI 300/500/1000).
+    "benchmark_index.parquet": "benchmark_index",
 }
 
 
