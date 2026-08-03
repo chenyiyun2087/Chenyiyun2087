@@ -266,6 +266,7 @@ def _reverse_transform(df):
 
 def _liqdrop_transform(df):
     """Drop the bottom 20% of names by the liquidity factor each date."""
+    import pandas as pd
     out = df.copy()
     liq = pd.to_numeric(out["liquidity"], errors="coerce")
     keep = liq >= liq.groupby(out["trade_date"]).transform(
