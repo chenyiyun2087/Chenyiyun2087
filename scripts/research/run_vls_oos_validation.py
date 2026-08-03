@@ -58,8 +58,14 @@ SLIPPAGE_BPS = 10
 INITIAL_CASH = 500_000.0
 
 # Time splits: (label, start, end) — 2025-2026 is the blind test.
+# v5.3: 2018-2019 is NOT available in this database — dwd_stock_label_daily
+# (universe) and dws_fina_pit_daily (financial statements) both start
+# 2020-01-02/03 (verified 2026-08-03; the old "2018+ data exists" claim held
+# only for dwd_stock_daily_standard / ods_index_daily / ods_dividend).  The
+# panel core therefore starts ~2020-02-07; the first split is pre-tuning
+# history rather than a 2018-2021 training window.
 TIME_SPLITS = [
-    ("train_2018_2021", "2018-01-01", "2021-12-31"),
+    ("pre_history_2020_2021", "2020-02-07", "2021-12-31"),
     ("validation_2022", "2022-01-01", "2022-12-31"),
     ("oos1_2023", "2023-01-01", "2023-12-31"),
     ("crisis_2024", "2024-01-01", "2024-12-31"),
@@ -107,7 +113,13 @@ def stage_adapter(release_dir: Path, work_dir: Path) -> dict:
             "security_lifecycle": True,
         },
         "sources": {
-            family: {"path": str(release_dir / info["filename"])}
+            family: {
+                "path": str(release_dir / info["filename"]),
+                # v5.3: per-source version required by the adapter's
+                # source_version_missing check — derived from the manifest's
+                # per-family content sha256 (immutable release evidence).
+                "version": f"mysql_pit_v1-{str(info.get('sha256', ''))[:12]}",
+            }
             for family, info in manifest.get("families", {}).items()
             if info.get("status") == "EXTRACTED"
         },
@@ -132,17 +144,23 @@ def stage_panel(work_dir: Path, release_dir: Path) -> Path:
         (adapter_dir / "pit_source_manifest.json").read_text(encoding="utf-8"))
     panel_dir = work_dir / "panel"
     args = [PY, "scripts/research/pit_factor_panel_builder.py"]
+    # v5.3: argparse long options use dashes (--trade-calendar); underscore
+    # spellings are rejected ("unrecognized arguments").
     for family, fname in [
         ("market", "market.parquet"), ("universe", "universe.parquet"),
         ("financial", "financial.parquet"), ("industry", "industry.parquet"),
-        ("adjustment", "adjustment.parquet"), ("trade_calendar", "trade_calendar.parquet"),
-        ("security_lifecycle", "security_lifecycle.parquet"),
-        ("corporate_actions", "corporate_actions.parquet"),
+        ("adjustment", "adjustment.parquet"),
+        ("trade-calendar", "trade_calendar.parquet"),
+        ("security-lifecycle", "security_lifecycle.parquet"),
+        ("corporate-actions", "corporate_actions.parquet"),
     ]:
         args += [f"--{family}", str(release_dir / fname)]
     args += [
         "--source-manifest", str(adapter_dir / "pit_source_manifest.json"),
-        "--adapter-report", str(adapter_dir / "adapter_report.json"),
+        # v5.3: the adapter writes pit_adapter_report.json (not
+        # adapter_report.json) — passing the wrong name failed the
+        # adapter_report_required_for_historical_real check.
+        "--adapter-report", str(adapter_dir / "pit_adapter_report.json"),
         "--output-dir", str(panel_dir),
         "--profile", "formal_v5_0",
     ]
