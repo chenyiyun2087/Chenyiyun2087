@@ -158,38 +158,60 @@ def _begin_consistent_snapshot(conn, config: dict[str, Any]) -> dict[str, Any]:
 
 FAMILY_QUERIES = {
     "market": """
-        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
-               adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close,
-               NULL AS pre_close, vol AS volume, amount,
-               NULL AS circ_mv, NULL AS market_return, NULL AS market_regime
-        FROM tushare_stock.dwd_stock_daily_standard
-        WHERE trade_date >= 20180101
-        ORDER BY trade_date, ts_code
+        SELECT d.trade_date, SUBSTRING_INDEX(d.ts_code, '.', 1) AS symbol,
+               d.adj_open AS open, d.adj_high AS high, d.adj_low AS low,
+               d.adj_close AS close,
+               -- v5.3: REAL pre_close from raw tushare daily (was NULL placeholder)
+               o.pre_close AS pre_close,
+               d.vol AS volume, d.amount,
+               -- v5.3: REAL circ_mv from daily_basic (was NULL placeholder)
+               b.circ_mv AS circ_mv,
+               NULL AS market_return, NULL AS market_regime
+        FROM tushare_stock.dwd_stock_daily_standard d
+        LEFT JOIN tushare_stock.ods_daily o
+          ON d.ts_code = o.ts_code AND d.trade_date = o.trade_date
+        LEFT JOIN tushare_stock.dwd_daily_basic b
+          ON d.ts_code = b.ts_code AND d.trade_date = b.trade_date
+        WHERE d.trade_date >= 20180101
+        ORDER BY d.trade_date, d.ts_code
     """,
     "universe": """
-        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
-               1 AS is_listed,
-               CASE WHEN is_st = 1 THEN 1 ELSE 0 END AS is_st,
+        SELECT l.trade_date, SUBSTRING_INDEX(l.ts_code, '.', 1) AS symbol,
+               -- v5.3: REAL listing status from dim_stock list_date/delist_date
+               CASE WHEN s.list_date <= l.trade_date
+                     AND (s.delist_date IS NULL OR s.delist_date > l.trade_date)
+                    THEN 1 ELSE 0 END AS is_listed,
+               CASE WHEN l.is_st = 1 THEN 1 ELSE 0 END AS is_st,
+               -- v5.3: suspension requires a dedicated source (none in schema yet);
+               -- 0 placeholder is DATA_E0 and must block E3 formal runs
                0 AS is_suspended,
-               limit_type AS limit_status,
+               l.limit_type AS limit_status,
                '' AS security_status_transition
-        FROM tushare_stock.dwd_stock_label_daily
-        WHERE trade_date >= 20180101
-        ORDER BY trade_date, ts_code
+        FROM tushare_stock.dwd_stock_label_daily l
+        JOIN tushare_stock.dim_stock s
+          ON l.ts_code = s.ts_code
+        WHERE l.trade_date >= 20180101
+        ORDER BY l.trade_date, l.ts_code
     """,
     "financial": """
-        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
-               pb,
-               trade_date AS financial_period_end,
-               trade_date AS announcement_date,
-               trade_date AS financial_available_at,
-               CONCAT(ts_code, '_', CAST(trade_date AS CHAR), '_v1') AS revision_id,
+        SELECT d.trade_date, SUBSTRING_INDEX(d.ts_code, '.', 1) AS symbol,
+               d.pb,
+               -- v5.3: REAL period end / announcement dates from the PIT
+               -- financial view (dws_fina_pit_daily, real ann_date/end_date).
+               -- Rows before 2020 have no PIT financial data yet: end_date /
+               -- ann_date stay NULL (honest gap), never fabricated as trade_date.
+               f.end_date AS financial_period_end,
+               f.ann_date AS announcement_date,
+               f.ann_date AS financial_available_at,
+               CONCAT(d.ts_code, '_', CAST(f.end_date AS CHAR), '_v1') AS revision_id,
                1 AS revision_sequence,
                '' AS financial_source_snapshot_sha
-        FROM tushare_stock.dwd_daily_basic
-        WHERE trade_date >= 20180101
-          AND pb IS NOT NULL
-        ORDER BY ts_code, trade_date
+        FROM tushare_stock.dwd_daily_basic d
+        LEFT JOIN tushare_stock.dws_fina_pit_daily f
+          ON d.ts_code = f.ts_code AND d.trade_date = f.trade_date
+        WHERE d.trade_date >= 20180101
+          AND d.pb IS NOT NULL
+        ORDER BY d.ts_code, d.trade_date
     """,
     "industry": """
         SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
@@ -221,24 +243,43 @@ FAMILY_QUERIES = {
         ORDER BY cal_date
     """,
     "security_lifecycle": """
-        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
-               1 AS is_listed,
-               CASE WHEN is_st = 1 THEN 1 ELSE 0 END AS is_st,
+        SELECT l.trade_date, SUBSTRING_INDEX(l.ts_code, '.', 1) AS symbol,
+               -- v5.3: REAL listing status from dim_stock list_date/delist_date
+               CASE WHEN s.list_date <= l.trade_date
+                     AND (s.delist_date IS NULL OR s.delist_date > l.trade_date)
+                    THEN 1 ELSE 0 END AS is_listed,
+               CASE WHEN l.is_st = 1 THEN 1 ELSE 0 END AS is_st,
                0 AS is_suspended,
-               '' AS listed_date,
+               -- v5.3: REAL listed_date from dim_stock (was '' placeholder
+               -- later defaulted to trade_date in post-processing — removed)
+               s.list_date AS listed_date,
                '' AS security_status_transition
-        FROM tushare_stock.dwd_stock_label_daily
-        WHERE trade_date >= 20180101
-        ORDER BY ts_code, trade_date
+        FROM tushare_stock.dwd_stock_label_daily l
+        JOIN tushare_stock.dim_stock s
+          ON l.ts_code = s.ts_code
+        WHERE l.trade_date >= 20180101
+        ORDER BY l.ts_code, l.trade_date
     """,
     "corporate_actions": """
-        SELECT effective_date AS trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
-               event_type AS corporate_action_type,
+        -- v5.3: real economic corporate-action data from ods_dividend
+        -- (dwd_corporate_action_event_v2 was EMPTY; dwd_corporate_action_event
+        -- only covers 2025+).  ods_dividend: 203K rows, 1991-2026, real
+        -- cash_div / stk_div / ex_date / record_date / ann_date.
+        SELECT ex_date AS trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
+               'DIVIDEND' AS corporate_action_type,
                ex_date, record_date,
-               event_id, effective_date
-        FROM tushare_stock.dwd_corporate_action_event_v2
-        WHERE effective_date >= 20180101
-        ORDER BY ts_code, event_id
+               CONCAT('div_', ts_code, '_', CAST(ex_date AS CHAR)) AS event_id,
+               ex_date AS effective_date,
+               ann_date AS ann_date,
+               cash_div AS cash_dividend,
+               stk_div AS bonus_ratio,
+               NULL AS rights_issue_price,
+               NULL AS rights_issue_ratio,
+               NULL AS split_ratio
+        FROM tushare_stock.ods_dividend
+        WHERE ex_date >= 20180101
+          AND div_proc LIKE '实施%'
+        ORDER BY ts_code, ex_date
     """,
 }
 
@@ -360,28 +401,29 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                         else "SUSPENDED" if int(r.get("is_suspended", 0) or 0) == 1
                         else "NORMAL"
                     ), axis=1)
-                if "listed_date" not in df.columns or df["listed_date"].isna().all():
-                    df["listed_date"] = df["trade_date"]
+                # v5.3: listed_date now comes REAL from dim_stock (list_date);
+                # the previous fallback (listed_date = trade_date when missing)
+                # fabricated data and is removed.
             elif family == "corporate_actions":
                 df["corporate_action_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) else "")
                 df["as_of_timestamp"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) else "")
                 df["source_event_id"] = df["event_id"]
-                df["source_complete"] = True
+                # v5.3: source_complete is a REAL fact — rows exist for the
+                # covered range (was hardcoded True even when empty).
+                df["source_complete"] = len(df) > 0
                 import hashlib as _hl
                 df["event_hash"] = df["event_id"].apply(
                     lambda x: _hl.sha256(str(x).encode()).hexdigest()[:16] if pd.notna(x) else "")
-                df["cash_dividend"] = None
-                df["bonus_ratio"] = None
-                df["rights_issue_price"] = None
-                df["rights_issue_ratio"] = None
-                df["split_ratio"] = None
+                # v5.3: economic fields come REAL from ods_dividend
+                # (cash_dividend=cash_div, bonus_ratio=stk_div); rights issues
+                # and splits have no dedicated source yet — honest NULLs.
 
             # Convert all integer date columns to YYYY-MM-DD strings
             DATE_COLS = ["trade_date", "cal_date", "announcement_date", "financial_period_end",
                          "end_date", "ex_date", "record_date", "effective_date",
-                         "valid_from", "valid_to", "listed_date"]
+                         "valid_from", "valid_to", "listed_date", "ann_date"]
             for dc in DATE_COLS:
                 if dc in df.columns:
                     df[dc] = df[dc].apply(
@@ -417,6 +459,27 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
         conn.rollback()
     finally:
         conn.close()
+
+    # v5.3: benchmark_index family — real CSI 300/500/1000 klines from
+    # tushare_stock.ods_index_daily (9th family; powers three-benchmark
+    # excess and market-state inputs for adaptive risk control).
+    try:
+        from scripts.pit.extract_benchmark_index import extract_benchmark_index
+        bench = extract_benchmark_index(output_dir)
+        results["families"]["benchmark_index"] = {
+            "filename": bench["filename"],
+            "rows": bench["rows"],
+            "columns": sorted(pd.read_parquet(output_dir / bench["filename"]).columns.tolist()),
+            "sha256": bench["sha256"],
+            "status": "EXTRACTED",
+            "coverage": bench["coverage"],
+        }
+        print(f"  benchmark_index: {bench['rows']} rows → {bench['filename']}")
+        for label, cov in bench["coverage"].items():
+            if cov.get("gap"):
+                blockers.append(f"benchmark_coverage_gap:{label}")
+    except Exception as exc:
+        blockers.append(f"extract_failed:benchmark_index:{type(exc).__name__}:{exc}")
 
     # Check required columns
     for family in FAMILY_FILENAMES:
