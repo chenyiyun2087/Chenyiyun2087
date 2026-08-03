@@ -3,17 +3,19 @@
 # Strict gates; requires real PIT data with point-in-time consistency.
 # v5.3 (2026-08-03, verified): dwd_stock_label_daily (universe) and
 # dws_fina_pit_daily (financial) have ZERO rows before 2020-01-02/03 —
-# the 2018-2019 window does not exist in this database.  min_start_date is
-# therefore 2020-01-01, and the panel core starts at the first PIT-complete
-# date (coverage_ready_date, ~2020-04-30 for financial ramp).
-#   - min_start_date 2020-01-01 (diagnostic: 2022-01-01)
+# the 2018-2019 window does not exist in this database.  dws_fina_pit_daily
+# then RAMPS during 2020-01..2020-04 (coverage 0.4% -> 95% by 2020-04-30,
+# verified); the panel core starts at the first PIT-complete date
+# (coverage_ready_date = 2020-04-30).  min_start_date is therefore exactly
+# that verified date.
+#   - min_start_date 2020-04-30 (diagnostic: 2022-01-01)
 #   - require_formal_pit / require_pit_data_adapter = true
 #   - require_point_in_time_consistency / forbid_e0_derived_fields = true
 #   - require_benchmark_index_data = true
 # =====================================================================
 profile_type: formal_v5_0_production
 evidence_level: E3
-min_start_date_policy: '2020-01-01'
+min_start_date_policy: '2020-04-30'
 require_point_in_time_consistency: true
 forbid_e0_derived_fields: true
 require_benchmark_index_data: true
@@ -144,7 +146,7 @@ core_period:
   end_date_policy: latest_complete_trading_day
   legacy_extension_required: false
   legacy_extension_start_date: '2013-01-01'
-  min_start_date: '2020-01-01'
+  min_start_date: '2020-04-30'
   min_trade_day_coverage: 0.8
 economic_alpha_qualification:
   diagnostic_evidence_authorizes_production: false
