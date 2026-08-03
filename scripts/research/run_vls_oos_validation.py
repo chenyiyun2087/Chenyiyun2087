@@ -255,17 +255,24 @@ def stage_snapshots(release_dir: Path, work_dir: Path) -> Path:
         print(f"  stage4a: excluded {orphan_rows} price rows without "
               f"lifecycle status (delisting-transition / IPO label-lag "
               f"symbols, of {price_rows_before} total)")
-    prices.to_parquet(snapshots_dir / "prices.parquet", index=False)
+    # zstd (not snappy): a 582MB snappy frame written by pyarrow on macOS
+    # arm64 reproduced "Corrupt snappy compressed data" on read (flaky
+    # codec race, verified 2026-08-03 — identical in-memory DataFrame wrote
+    # cleanly with zstd).  The ledger reads parquet codec-agnostically.
+    prices.to_parquet(snapshots_dir / "prices.parquet", index=False,
+                      compression="zstd")
 
     uni_cols = ["trade_date", "symbol", "is_listed", "is_st", "is_suspended",
                 "limit_status", "security_status_transition",
                 "universe_available_at"]
     universe[[c for c in uni_cols if c in universe.columns]].to_parquet(
-        snapshots_dir / "tradable_universe.parquet", index=False)
+        snapshots_dir / "tradable_universe.parquet", index=False,
+        compression="zstd")
 
     adj_cols = ["trade_date", "symbol", "adj_factor", "adjustment_available_at"]
     adjustment[[c for c in adj_cols if c in adjustment.columns]].to_parquet(
-        snapshots_dir / "adjustment_factor.parquet", index=False)
+        snapshots_dir / "adjustment_factor.parquet", index=False,
+        compression="zstd")
 
     # Calendar: the ledger reads it as CSV with exactly cal_date/exchange/
     # is_open/source; the release carries those columns already.
