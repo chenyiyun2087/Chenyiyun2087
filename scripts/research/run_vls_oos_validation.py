@@ -176,7 +176,9 @@ def stage_scores(strategy_def: Path, panel_dir: Path, work_dir: Path) -> Path:
     _run(
         [PY, "scripts/research/build_formal_scores.py",
          "--strategy-definition", str(strategy_def),
-         "--factor-panel", str(panel_dir / "factor_panel.parquet"),
+         # v5.3: the builder writes factor_panel_daily.parquet (the
+         # qualified daily panel); scores consume that exact file.
+         "--factor-panel", str(panel_dir / "factor_panel_daily.parquet"),
          "--output-dir", str(scores_dir)],
         "stage3: build_formal_scores (frozen VLS)",
     )
@@ -288,7 +290,7 @@ def main() -> int:
     if "scores" in stages:
         if panel_dir is None:
             panel_dir = work_dir / "panel"
-        if not (panel_dir / "factor_panel.parquet").exists():
+        if not (panel_dir / "factor_panel_daily.parquet").exists():
             print("FATAL: factor_panel.parquet missing — run --stages panel first")
             return 2
         scores_dir = stage_scores(args.strategy_def, panel_dir, work_dir)
