@@ -258,6 +258,7 @@ def run_variant(work_dir: Path, release_dir: Path, snapshots_dir: Path,
 
 
 def _reverse_transform(df):
+    import pandas as pd
     df = df.copy()
     df["score"] = -pd.to_numeric(df["score"], errors="coerce")
     return df
