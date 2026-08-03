@@ -269,8 +269,15 @@ def build_formal_scores(
         try:
             if validate_explicit_timezone(panel[col]):
                 tz_blockers.append(f"{col}_timezone_missing")
-            parsed = pd.to_datetime(panel[col], errors="coerce", utc=True)
-            if parsed.isna().any():
+            raw = panel[col]
+            parsed = pd.to_datetime(raw, errors="coerce", utc=True)
+            # v5.3: NaN availability = honest absence on rows without that
+            # source (e.g. a brand-new IPO before its first financial
+            # statement) — the panel contract rate-gates absence and reports
+            # it in the coverage CSV.  Only a NON-EMPTY value that cannot be
+            # parsed is a provider format violation.
+            invalid = raw.notna() & parsed.isna()
+            if invalid.any():
                 tz_blockers.append(f"{col}_unparseable_or_no_timezone")
         except Exception:
             tz_blockers.append(f"{col}_timezone_parse_error")
