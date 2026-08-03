@@ -719,10 +719,34 @@ def _build_pit_factor_panel_impl(
     min_coverage = float(
         profile["economic_alpha_qualification"]["min_universe_coverage"]
     )
-    for name in required_coverage:
-        column = f"{name}_coverage"
-        if daily_coverage.empty or float(daily_coverage[column].min()) < min_coverage:
-            blockers.append(f"daily_coverage_below_threshold:{name}")
+    # v5.3: PIT-complete core semantics.  The raw PIT sources ramp in over a
+    # REAL loading window (verified 2026-08-03: dws_fina_pit_daily coverage
+    # climbs 0.4% -> 95% during 2020-01..2020-04 before the panel core; 72
+    # brand-new 2026 IPOs have no financial rows yet).  Every date is still
+    # reported in the coverage CSV (honest diagnostics), but a family only
+    # BLOCKS when it dips below the threshold ON OR AFTER the first date all
+    # families reached it — a mid-core gap is a genuine data break, a
+    # loading ramp is documented pre-history.
+    coverage_ready_date: str | None = None
+    if daily_coverage.empty:
+        blockers.append("daily_coverage_below_threshold:no_rows")
+    else:
+        coverage_matrix = pd.DataFrame(
+            {name: daily_coverage[f"{name}_coverage"] for name in required_coverage}
+        )
+        ready_rows = coverage_matrix.ge(min_coverage).all(axis=1)
+        ready_dates = daily_coverage.loc[ready_rows, "trade_date"]
+        if ready_dates.empty:
+            worst = coverage_matrix.min().idxmin()
+            blockers.append(f"daily_coverage_below_threshold:{worst}")
+        else:
+            coverage_ready_date = str(ready_dates.iloc[0])
+            core_window = daily_coverage.loc[
+                daily_coverage["trade_date"] >= coverage_ready_date
+            ]
+            for name in required_coverage:
+                if float(core_window[f"{name}_coverage"].min()) < min_coverage:
+                    blockers.append(f"daily_coverage_below_threshold:{name}")
     eligible = (
         listed
         & ~panel["is_st"].fillna(True).astype(bool)
@@ -809,6 +833,12 @@ def _build_pit_factor_panel_impl(
     qualified = panel.loc[
         panel["eligible_universe"] & ~panel["trade_date"].isin(warmup_dates)
     ].copy()
+    if evidence_origin == "HISTORICAL_REAL" and coverage_ready_date is not None:
+        # v5.3: the panel core = the PIT-complete window.  Pre-ramp dates are
+        # honest history (reported in the coverage CSV), not factor rows.
+        qualified = qualified.loc[
+            qualified["trade_date"] >= pd.to_datetime(coverage_ready_date)
+        ].copy()
     factor_coverage = {
         factor: float(qualified[factor].notna().mean())
         for factor in raw_factors
@@ -944,6 +974,7 @@ def _build_pit_factor_panel_impl(
         "sample_end": (
             qualified["trade_date"].max() if not qualified.empty else None
         ),
+        "coverage_ready_date": coverage_ready_date,
         "unique_dates": unique_dates,
         "symbols": int(qualified["symbol"].nunique()),
         "rows": int(len(qualified)),

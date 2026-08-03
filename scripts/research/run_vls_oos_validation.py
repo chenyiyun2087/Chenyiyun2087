@@ -61,11 +61,13 @@ INITIAL_CASH = 500_000.0
 # v5.3: 2018-2019 is NOT available in this database — dwd_stock_label_daily
 # (universe) and dws_fina_pit_daily (financial statements) both start
 # 2020-01-02/03 (verified 2026-08-03; the old "2018+ data exists" claim held
-# only for dwd_stock_daily_standard / ods_index_daily / ods_dividend).  The
-# panel core therefore starts ~2020-02-07; the first split is pre-tuning
+# only for dwd_stock_daily_standard / ods_index_daily / ods_dividend).
+# dws_fina_pit_daily then RAMPS during 2020-01..2020-04 (coverage 0.4% ->
+# 95% by 2020-04-30, verified); the panel builder's coverage_ready_date
+# defines the PIT-complete core start.  The first split is pre-tuning
 # history rather than a 2018-2021 training window.
 TIME_SPLITS = [
-    ("pre_history_2020_2021", "2020-02-07", "2021-12-31"),
+    ("pre_history_2020_2021", "2020-04-30", "2021-12-31"),
     ("validation_2022", "2022-01-01", "2022-12-31"),
     ("oos1_2023", "2023-01-01", "2023-12-31"),
     ("crisis_2024", "2024-01-01", "2024-12-31"),
