@@ -780,17 +780,28 @@ def _build_pit_factor_panel_impl(
         # PB non-negative
         if (panel["pb"].dropna() < 0).any():
             blockers.append("pb_negative_values_detected")
-    panel["ret_1d"] = (
-        pd.to_numeric(panel["close"], errors="coerce")
-        / pd.to_numeric(panel["pre_close"], errors="coerce")
-        - 1.0
-    )
+    # v5.3: returns use the RAW price regime (raw_close/raw_pre_close —
+    # both from ods_daily).  The old close/pre_close pair mixed an adjusted
+    # close with a raw pre_close, producing a fake jump on every dividend
+    # ex-date.  The release now carries raw OHLC explicitly.
+    if "raw_close" in panel.columns and "raw_pre_close" in panel.columns:
+        panel["ret_1d"] = (
+            pd.to_numeric(panel["raw_close"], errors="coerce")
+            / pd.to_numeric(panel["raw_pre_close"], errors="coerce")
+            - 1.0
+        )
+    else:
+        panel["ret_1d"] = (
+            pd.to_numeric(panel["close"], errors="coerce")
+            / pd.to_numeric(panel["pre_close"], errors="coerce")
+            - 1.0
+        )
     panel = panel.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
-    # PIT-adjusted close using adj_factor for corporate-action-aware momentum
-    panel["adj_close"] = (
-        pd.to_numeric(panel["close"], errors="coerce")
-        * pd.to_numeric(panel["adj_factor"], errors="coerce")
-    )
+    # v5.3: adj_close IS the extractor's adjusted close (dwd_stock_daily_
+    # standard adj_close).  The old multiplication by adj_factor double-
+    # adjusted the series (adjusted x factor = raw x factor^2), distorting
+    # momentum around ex-dates.
+    panel["adj_close"] = pd.to_numeric(panel["close"], errors="coerce")
     panel["momentum_raw"] = panel.groupby("symbol")["adj_close"].pct_change(20)
     panel["volatility_raw"] = panel.groupby("symbol")["ret_1d"].transform(
         lambda values: values.rolling(20, min_periods=10).std()

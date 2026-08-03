@@ -185,9 +185,100 @@ def stage_scores(strategy_def: Path, panel_dir: Path, work_dir: Path) -> Path:
     return scores_dir
 
 
+def stage_snapshots(release_dir: Path, work_dir: Path) -> Path:
+    """Build immutable formal snapshots from the PIT release.
+
+    The strict-ledger backtest in --formal-mode consumes six immutable
+    snapshots (scores, prices, tradable universe, adjustment factors,
+    corporate actions + manifest, security lifecycle + manifest, trade
+    calendar).  This stage emits them from the release parquets, CUT to the
+    panel's PIT-complete core (>= coverage_ready_date) — pre-ramp rows would
+    otherwise fail the ledger's fail-closed universe/lifecycle merges.  The
+    corporate-action and lifecycle manifests are sha-bound so the backtest's
+    _verified_snapshot rejects any drift.
+    """
+    import hashlib
+    from datetime import datetime, timezone as _tz
+
+    import pandas as pd
+
+    manifest = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))
+    snapshots_dir = work_dir / "snapshots"
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+    ready = None
+    panel_report = work_dir / "panel" / "pit_factor_panel_builder_report.json"
+    if panel_report.exists():
+        ready = json.loads(panel_report.read_text(encoding="utf-8")).get(
+            "coverage_ready_date")
+
+    market = pd.read_parquet(release_dir / "market.parquet")
+    universe = pd.read_parquet(release_dir / "universe.parquet")
+    adjustment = pd.read_parquet(release_dir / "adjustment.parquet")
+    if ready:
+        market = market[market["trade_date"] >= ready].copy()
+        universe = universe[universe["trade_date"] >= ready].copy()
+        adjustment = adjustment[adjustment["trade_date"] >= ready].copy()
+
+    # Prices: both price regimes (raw from ods_daily, adjusted from
+    # dwd_stock_daily_standard).  prev_adj_close/prev_raw_close are computed
+    # by the backtest shift; the first core session falls back to the REAL
+    # raw_pre_close (previous session's raw close, carried in the release).
+    price_cols = ["trade_date", "symbol", "open", "high", "low", "close",
+                  "adj_open", "adj_high", "adj_low", "adj_close",
+                  "pre_close", "raw_pre_close",
+                  "raw_open", "raw_high", "raw_low", "raw_close",
+                  "volume", "amount", "circ_mv"]
+    prices = market[[c for c in price_cols if c in market.columns]].copy()
+    prices.to_parquet(snapshots_dir / "prices.parquet", index=False)
+
+    uni_cols = ["trade_date", "symbol", "is_listed", "is_st", "is_suspended",
+                "limit_status", "security_status_transition",
+                "universe_available_at"]
+    universe[[c for c in uni_cols if c in universe.columns]].to_parquet(
+        snapshots_dir / "tradable_universe.parquet", index=False)
+
+    adj_cols = ["trade_date", "symbol", "adj_factor", "adjustment_available_at"]
+    adjustment[[c for c in adj_cols if c in adjustment.columns]].to_parquet(
+        snapshots_dir / "adjustment_factor.parquet", index=False)
+
+    # Calendar: the ledger reads it as CSV with exactly cal_date/exchange/
+    # is_open/source; the release carries those columns already.
+    calendar = pd.read_parquet(release_dir / "trade_calendar.parquet")
+    calendar.to_csv(snapshots_dir / "trade_calendar.csv", index=False)
+
+    generated_at = datetime.now(_tz.utc).isoformat()
+
+    def _family_manifest(family: str, snapshot_key: str, source_key: str) -> dict:
+        file_path = release_dir / manifest["families"][family]["filename"]
+        digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        return {
+            "snapshot_schema_version": f"{family}_snapshot_v1",
+            "dataset_version": f"release_{release_dir.name}",
+            "generated_at": generated_at,
+            snapshot_key: digest,
+            source_key: digest,
+        }
+
+    ca_manifest = _family_manifest("corporate_actions",
+                                   "snapshot_sha256", "source_sha256")
+    (snapshots_dir / "corporate_actions_manifest.json").write_text(
+        json.dumps(ca_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    lc_manifest = _family_manifest("security_lifecycle",
+                                   "lifecycle_snapshot_sha256",
+                                   "lifecycle_source_sha256")
+    (snapshots_dir / "security_lifecycle_manifest.json").write_text(
+        json.dumps(lc_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print(f"stage4a: formal snapshots written to {snapshots_dir} "
+          f"(core >= {ready})")
+    return snapshots_dir
+
+
 def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict]:
     """Run strict-ledger backtests per time split with frozen inputs."""
     runs_dir = work_dir / "runs"
+    snapshots_dir = stage_snapshots(release_dir, work_dir)
     results = []
     for label, start, end in TIME_SPLITS:
         out = runs_dir / label
@@ -200,7 +291,15 @@ def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict
              "--trade-cost-rate", str(COST_RATE), "--slippage-rate", str(SLIPPAGE_BPS / 10_000),
              "--initial-cash", str(INITIAL_CASH),
              "--output-dir", str(out),
-             "--scores-snapshot", str(scores_dir / "scores.csv"),
+             "--scores-snapshot", str(scores_dir / "formal_scores.parquet"),
+             "--prices-snapshot", str(snapshots_dir / "prices.parquet"),
+             "--tradable-universe-snapshot", str(snapshots_dir / "tradable_universe.parquet"),
+             "--adjustment-factor-snapshot", str(snapshots_dir / "adjustment_factor.parquet"),
+             "--corporate-action-snapshot", str(release_dir / "corporate_actions.parquet"),
+             "--corporate-action-manifest", str(snapshots_dir / "corporate_actions_manifest.json"),
+             "--security-lifecycle-snapshot", str(release_dir / "security_lifecycle.parquet"),
+             "--security-lifecycle-manifest", str(snapshots_dir / "security_lifecycle_manifest.json"),
+             "--trade-calendar-snapshot", str(snapshots_dir / "trade_calendar.csv"),
              "--top-n", str(TOP_N), "--max-total-positions", str(MAX_POSITIONS),
              "--hold-days", str(HOLD_DAYS),
              "--rebalance-score-buffer", str(SCORE_BUFFER),
@@ -297,8 +396,8 @@ def main() -> int:
     if "runs" in stages:
         if scores_dir is None:
             scores_dir = work_dir / "scores"
-        if not (scores_dir / "scores.csv").exists():
-            print("FATAL: scores.csv missing — run --stages scores first")
+        if not (scores_dir / "formal_scores.parquet").exists():
+            print("FATAL: formal_scores.parquet missing — run --stages scores first")
             return 2
         results = stage_runs(work_dir, release_dir, scores_dir)
     if "report" in stages:

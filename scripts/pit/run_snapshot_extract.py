@@ -166,8 +166,20 @@ FAMILY_QUERIES = {
         SELECT d.trade_date, SUBSTRING_INDEX(d.ts_code, '.', 1) AS symbol,
                d.adj_open AS open, d.adj_high AS high, d.adj_low AS low,
                d.adj_close AS close,
+               -- v5.3: BOTH price regimes, raw and adjusted.  The raw OHLC
+               -- comes from ods_daily (raw tushare daily) and feeds the
+               -- strict-ledger backtest's raw_close/prev_raw_close (limit
+               -- up/down bands, T+1 fills); the adjusted series feeds the
+               -- factor panel (returns/momentum without ex-date jumps).
+               -- previously the raw series was absent and the backtest had
+               -- to alias adjusted prices as raw — silently wrong around
+               -- every dividend ex-date.
+               o.open AS raw_open, o.high AS raw_high, o.low AS raw_low,
+               o.close AS raw_close,
+               d.adj_open AS adj_open, d.adj_high AS adj_high,
+               d.adj_low AS adj_low, d.adj_close AS adj_close,
                -- v5.3: REAL pre_close from raw tushare daily (was NULL placeholder)
-               o.pre_close AS pre_close,
+               o.pre_close AS pre_close, o.pre_close AS raw_pre_close,
                d.vol AS volume, d.amount,
                -- v5.3: REAL circ_mv from daily_basic (was NULL placeholder)
                b.circ_mv AS circ_mv,
@@ -329,6 +341,14 @@ FAMILY_QUERIES = {
         FROM tushare_stock.ods_dividend
         WHERE ex_date >= 20180101
           AND div_proc LIKE '实施%'
+          -- v5.3: honest exclusion of events with unknown announcement
+          -- timing (876 rows, verified 2026-08-03: ann_date NULL/0).  The
+          -- strict ledger places every corporate action PIT by its
+          -- announcement (as_of <= previous-session 15:00 cutoff); an event
+          -- without ann_date cannot be placed legally, so it is absent
+          -- rather than misdated.
+          AND ann_date IS NOT NULL
+          AND ann_date != 0
         ORDER BY symbol, trade_date
     """,
 }
@@ -468,9 +488,16 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                 # the previous fallback (listed_date = trade_date when missing)
                 # fabricated data and is removed.
             elif family == "corporate_actions":
-                df["corporate_action_available_at"] = df["trade_date"].apply(
+                # v5.3: PIT availability = the ANNOUNCEMENT date (when the
+                # dividend became knowable), not the ex-date.  The strict
+                # ledger validates as_of <= previous-session 15:00; with
+                # ex-date-based timestamps every same-day announcement
+                # failed.  ann_date is guaranteed non-null here by the SQL
+                # (ann_date != 0 filter above) and ann_date < ex_date
+                # (verified: 0 rows violate).
+                df["corporate_action_available_at"] = df["ann_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) else "")
-                df["as_of_timestamp"] = df["trade_date"].apply(
+                df["as_of_timestamp"] = df["ann_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) else "")
                 df["source_event_id"] = df["event_id"]
                 # v5.3: source_complete is a REAL fact — rows exist for the
