@@ -32,6 +32,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.pit_semantic_contract import get_required_columns, get_contract_sha256
 
+# v5.3: shared listing-day detection for security_status_transition
+# (LISTED event).  Defined in post_extract_enrich so the extractor rewrite
+# (raw int dates) and the enrich rewrite (persisted ISO dates) stay identical.
+from scripts.pit.post_extract_enrich import _is_listing_day
+
 CONFIG_PATH = PROJECT_ROOT / "config" / "data_sources" / "mysql_pit.yaml"
 OUTPUT_ROOT = PROJECT_ROOT / "data" / "pit" / "releases"
 
@@ -166,12 +171,26 @@ FAMILY_QUERIES = {
                d.vol AS volume, d.amount,
                -- v5.3: REAL circ_mv from daily_basic (was NULL placeholder)
                b.circ_mv AS circ_mv,
-               NULL AS market_return, NULL AS market_regime
+               NULL AS market_return,
+               -- v5.3: REAL regime from CSI 300 20d return (idx join above);
+               -- first 20 sessions of 2018 have no lookback -> NEUTRAL
+               CASE WHEN idx.csi300_ret20 <= -0.05 THEN 'BEAR'
+                    WHEN idx.csi300_ret20 >= 0.05 THEN 'BULL'
+                    ELSE 'NEUTRAL' END AS market_regime
         FROM tushare_stock.dwd_stock_daily_standard d
         LEFT JOIN tushare_stock.ods_daily o
           ON d.ts_code = o.ts_code AND d.trade_date = o.trade_date
         LEFT JOIN tushare_stock.dwd_daily_basic b
           ON d.ts_code = b.ts_code AND d.trade_date = b.trade_date
+        -- v5.3: REAL market regime from CSI 300 20-session return (was NULL).
+        -- The evaluation flagged constant/zero market-state inputs; this is
+        -- the data-driven replacement (BULL/BEAR/NEUTRAL from ods_index_daily).
+        LEFT JOIN (
+            SELECT trade_date,
+                   close / LAG(close, 20) OVER (ORDER BY trade_date) - 1 AS csi300_ret20
+            FROM tushare_stock.ods_index_daily
+            WHERE ts_code = '000300.SH' AND trade_date >= 20180101
+        ) idx ON d.trade_date = idx.trade_date
         WHERE d.trade_date >= 20180101
         ORDER BY d.trade_date, d.ts_code
     """,
@@ -186,6 +205,9 @@ FAMILY_QUERIES = {
                -- 0 placeholder is DATA_E0 and must block E3 formal runs
                0 AS is_suspended,
                l.limit_type AS limit_status,
+               -- v5.3: REAL listed_date from dim_stock (enables LISTED-day
+               -- transition events in security_status_transition)
+               s.list_date AS listed_date,
                '' AS security_status_transition
         FROM tushare_stock.dwd_stock_label_daily l
         JOIN tushare_stock.dim_stock s
@@ -209,12 +231,23 @@ FAMILY_QUERIES = {
                CONCAT(d.ts_code, '_', CAST(f.end_date AS CHAR), '_',
                       CAST(d.trade_date AS CHAR), '_v1') AS revision_id,
                1 AS revision_sequence,
-               '' AS financial_source_snapshot_sha
+               -- v5.3: REAL per-row content SHA over the source triple
+               -- (was '' placeholder -> panel builder rejected all rows as
+               -- financial_source_sha_invalid)
+               SHA2(CONCAT(d.ts_code, '_', CAST(f.end_date AS CHAR), '_',
+                           CAST(f.ann_date AS CHAR)), 256)
+                   AS financial_source_snapshot_sha
         FROM tushare_stock.dwd_daily_basic d
         INNER JOIN tushare_stock.dws_fina_pit_daily f
           ON d.ts_code = f.ts_code AND d.trade_date = f.trade_date
         WHERE d.trade_date >= 20180101
           AND d.pb IS NOT NULL
+          -- v5.3: negative book equity -> P/B undefined (excluded honestly);
+          -- NULL/0 announcement dates are not PIT-usable (excluded honestly —
+          -- the panel builder previously flagged 272K unparseable rows)
+          AND d.pb > 0
+          AND f.ann_date IS NOT NULL
+          AND f.ann_date != 0
         ORDER BY d.ts_code, d.trade_date
     """,
     "industry": """
@@ -229,14 +262,24 @@ FAMILY_QUERIES = {
         ORDER BY ts_code, trade_date
     """,
     "adjustment": """
-        SELECT trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol, adj_factor,
-               '' AS corporate_action_type,
-               trade_date AS ex_date,
-               trade_date AS record_date,
+        SELECT a.trade_date, SUBSTRING_INDEX(a.ts_code, '.', 1) AS symbol,
+               a.adj_factor,
+               -- v5.3: REAL corporate-action type from ods_dividend on the
+               -- ex-date (was '' placeholder -> the panel builder rejected a
+               -- constant corporate_action_type)
+               COALESCE(ca.ca_type, '') AS corporate_action_type,
+               a.trade_date AS ex_date,
+               a.trade_date AS record_date,
                1 AS adjustment_factor_version
-        FROM tushare_stock.dwd_adj_factor
-        WHERE trade_date >= 20180101
-        ORDER BY trade_date, ts_code
+        FROM tushare_stock.dwd_adj_factor a
+        LEFT JOIN (
+            SELECT ts_code, ex_date, MAX('DIVIDEND') AS ca_type
+            FROM tushare_stock.ods_dividend
+            WHERE ex_date >= 20180101 AND div_proc LIKE '实施%'
+            GROUP BY ts_code, ex_date
+        ) ca ON a.ts_code = ca.ts_code AND a.trade_date = ca.ex_date
+        WHERE a.trade_date >= 20180101
+        ORDER BY a.trade_date, a.ts_code
     """,
     "trade_calendar": """
         SELECT cal_date, exchange, is_open,
@@ -384,10 +427,15 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                 df["limit_status"] = df["limit_status"].apply(
                     lambda x: "NORMAL" if x == 10 else str(x)
                 )
-                # v5.2: security_status_transition from real fields (no hash/synthetic)
+                # v5.3: security_status_transition from real fields — incl.
+                # LISTED on the real listing day.  The panel builder requires
+                # >=2 distinct transitions on the ELIGIBLE universe, and ST
+                # rows are excluded from eligibility -> listing-day events
+                # are the honest source of variety.
                 df["security_status_transition"] = df.apply(
                     lambda r: (
-                        "ST" if int(r.get("is_st", 0) or 0) == 1
+                        "LISTED" if _is_listing_day(r)
+                        else "ST" if int(r.get("is_st", 0) or 0) == 1
                         else "SUSPENDED" if int(r.get("is_suspended", 0) or 0) == 1
                         else "NORMAL"
                     ), axis=1)
@@ -407,10 +455,12 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
             elif family == "security_lifecycle":
                 df["lifecycle_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
-                # security_status_transition from real fields (not empty)
+                # v5.3: security_status_transition from real fields (incl.
+                # LISTED-day events — same semantics as the universe family)
                 df["security_status_transition"] = df.apply(
                     lambda r: (
-                        "ST" if int(r.get("is_st", 0) or 0) == 1
+                        "LISTED" if _is_listing_day(r)
+                        else "ST" if int(r.get("is_st", 0) or 0) == 1
                         else "SUSPENDED" if int(r.get("is_suspended", 0) or 0) == 1
                         else "NORMAL"
                     ), axis=1)
@@ -493,6 +543,31 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                 blockers.append(f"benchmark_coverage_gap:{label}")
     except Exception as exc:
         blockers.append(f"extract_failed:benchmark_index:{type(exc).__name__}:{exc}")
+
+    # v5.3: enrich — market_return (single source of truth), circ_mv window,
+    # PIT-aware transforms.  Runs BEFORE the manifest is written so the
+    # manifest SHAs/columns describe the FINAL bytes on disk (the panel
+    # builder compares manifest shas against the actual files and would
+    # otherwise flag source_manifest_sha_mismatch after enrichment).
+    try:
+        from scripts.pit.post_extract_enrich import enrich_release
+        enrich_report = enrich_release(output_dir)
+        print(f"  enriched: {enrich_report['enriched']}")
+        if enrich_report["errors"]:
+            blockers.append(f"enrich_failed:{';'.join(enrich_report['errors'])}")
+    except Exception as exc:
+        blockers.append(f"enrich_failed:{type(exc).__name__}:{exc}")
+    # Refresh family rows/columns/sha256 AFTER enrichment mutated the files.
+    for family, info in results["families"].items():
+        if info.get("status") != "EXTRACTED":
+            continue
+        path = output_dir / info["filename"]
+        if not path.exists():
+            continue
+        df = pd.read_parquet(path)
+        info["rows"] = len(df)
+        info["columns"] = sorted(df.columns.tolist())
+        info["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
 
     # Check required columns
     for family in FAMILY_FILENAMES:

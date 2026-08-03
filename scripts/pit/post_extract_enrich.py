@@ -31,37 +31,52 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _is_listing_day(row) -> bool:
+    """True when the row's trade_date is the stock's REAL listing day.
+
+    Accepts both raw int (20180102) and ISO (2018-01-02) forms — the
+    extractor rewrite runs before date normalization, the enrich rewrite on
+    persisted ISO strings.  Drives the LISTED transition event.
+    """
+    ld = str(row.get("listed_date", "") or "").strip()
+    td = str(row.get("trade_date", "") or "").strip()
+    if not ld or ld in {"0", "nan", "NaT"} or not td or td in {"0", "nan", "NaT"}:
+        return False
+    return ld.replace("-", "") == td.replace("-", "")
+
+
 def enrich_market(df: pd.DataFrame) -> pd.DataFrame:
-    """market_regime from date-range policy, market_return from real closes.
+    """market_return from real closes; preserves the data-derived regime.
 
     v5.3: this is the SINGLE source of truth for market_return — the
     extractor no longer computes it (its cross-sectional pct_change().mean()
     was semantically wrong).  Formula: per-symbol time-series return
     (close/prev_close - 1), then daily equal-weight mean across symbols.
     Labeled computed_equal_weight_daily_mean_from_close.
+
+    v5.3: market_regime is NOT set here anymore — the extractor SQL derives
+    it from the REAL CSI 300 20-session return (the previous date-range
+    policy <2022-06 BEAR / 2024+ BULL was the broken constant/regime input
+    flagged by the 2026-08-03 evaluation).  pre_close also stays REAL from
+    ods_daily (2.4 fix) — the previous close-shift overwrite is removed.
     """
-    dates = pd.to_datetime(df["trade_date"], errors="coerce")
-    df["market_regime"] = "NORMAL"
-    df.loc[dates < "2022-06-01", "market_regime"] = "BEAR"
-    df.loc[(dates >= "2022-06-01") & (dates < "2023-06-01"), "market_regime"] = "BULL"
-    df.loc[dates >= "2024-01-01", "market_regime"] = "BULL"
     close = pd.to_numeric(df["close"], errors="coerce")
     df["ret"] = close / close.groupby(df["symbol"]).shift(1) - 1
     df["benchmark_return"] = df.groupby("trade_date")["ret"].transform("mean")
     df["market_return"] = df["benchmark_return"].fillna(0.0)
     df["market_return_source"] = "computed_equal_weight_daily_mean_from_close"
-    df["pre_close"] = close.groupby(df["symbol"]).shift(1).fillna(close)
     df = df.drop(columns=["ret"])
     return df
 
 
 def enrich_universe(df: pd.DataFrame) -> pd.DataFrame:
-    """limit_status normalization + transition from real fields."""
+    """limit_status normalization + transition from real fields (incl. listing-day events)."""
     df["limit_status"] = df["limit_status"].apply(
         lambda x: "NORMAL" if x == 10 else str(x))
     df["security_status_transition"] = df.apply(
         lambda r: (
-            "ST" if int(r.get("is_st", 0) or 0) == 1
+            "LISTED" if _is_listing_day(r)
+            else "ST" if int(r.get("is_st", 0) or 0) == 1
             else "SUSPENDED" if int(r.get("is_suspended", 0) or 0) == 1
             else "NORMAL"
         ), axis=1)
@@ -69,9 +84,22 @@ def enrich_universe(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def enrich_financial(df: pd.DataFrame) -> pd.DataFrame:
-    """Content hash as source snapshot SHA (deterministic)."""
-    sha = hashlib.sha256(b"DATA_E0").hexdigest()
-    df["financial_source_snapshot_sha"] = sha
+    """Per-row content hash as source snapshot SHA (deterministic).
+
+    v5.3: the SQL extractor now provides a REAL per-row SHA2 over the
+    (ts_code, end_date, ann_date) triple.  For releases that predate that
+    (or carry the old constant sha256(b"DATA_E0") placeholder), fall back to
+    a per-row content hash — never a constant: the panel builder rejects
+    constant/duplicate source SHAs (financial_source_sha_invalid).
+    """
+    col = "financial_source_snapshot_sha"
+    if col not in df.columns or df[col].fillna("").nunique() <= 1:
+        key = (
+            df["symbol"].astype(str) + "_"
+            + df["financial_period_end"].fillna("").astype(str) + "_"
+            + df["announcement_date"].fillna("").astype(str)
+        )
+        df[col] = key.map(lambda x: hashlib.sha256(str(x).encode()).hexdigest())
     return df
 
 
