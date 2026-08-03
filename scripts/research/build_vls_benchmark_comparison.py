@@ -413,12 +413,12 @@ def main() -> int:
     snapshots_dir = work_dir / "snapshots"
     wanted = {x.strip() for x in args.experiments.split(",") if x.strip()}
 
-    excess = run_random = None
+    excess = random_result = None
     variants: dict[str, list[dict]] = {}
     if "excess" in wanted:
         excess = benchmark_excess(work_dir, release_dir)
     if "random" in wanted:
-        run_random = run_random(work_dir, release_dir, snapshots_dir, args.random_n)
+        random_result = run_random(work_dir, release_dir, snapshots_dir, args.random_n)
     if "reverse" in wanted:
         variants["reverse"] = run_variant(work_dir, release_dir, snapshots_dir,
                                           "reverse", transform=_reverse_transform)
@@ -433,7 +433,7 @@ def main() -> int:
         variants["liqdrop"] = run_variant(work_dir, release_dir, snapshots_dir,
                                           "liqdrop", transform=_liqdrop_transform)
 
-    report = write_report(work_dir, excess or [], run_random or {"summary_path": ""},
+    report = write_report(work_dir, excess or [], random_result or {"summary_path": ""},
                           variants, args.random_n)
     mirror = work_dir / report.name
     shutil.copy2(report, mirror)
