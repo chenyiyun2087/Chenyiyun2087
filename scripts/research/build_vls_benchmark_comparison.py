@@ -345,6 +345,14 @@ def write_report(work_dir: Path, excess: list[dict], random: dict,
               "| Split | Variant | Annual | MDD | Trades | Turnover | Cost |",
               "|---|---|---|---|---|---|---|"]
     baseline = {r["split"]: read_summary(work_dir / "runs", r["split"]) for r in excess}
+    if "liqdrop" in variants and variants["liqdrop"]:
+        lines += ["",
+                  "> **liqdrop note**: results are byte-identical to baseline — the frozen",
+                  "> VLS liquidity factor is a positive-weight score component, so the",
+                  "> bottom-20% liquidity names never rank into Top10 (0 of 273 baseline",
+                  "> trades fall in the dropped set).  The experiment's discriminative",
+                  "> power is zero by construction; it does confirm the strategy has no",
+                  "> reliance on the least-liquid tail of the universe."]
     for variant, results in variants.items():
         for r in results:
             b = baseline.get(r["split"], {})
@@ -400,7 +408,8 @@ def main() -> int:
     parser.add_argument("--release-dir", type=Path, required=True)
     parser.add_argument("--output-root", type=Path,
                         default=PROJECT_ROOT / "exports/formal_evidence/vls_oos")
-    parser.add_argument("--experiments", default="excess,random,reverse,cost2x,capacity,liqdrop")
+    parser.add_argument("--experiments", default="excess,random,reverse,cost2x,capacity,liqdrop",
+                        help="Comma list; 'report' re-assembles the report from persisted results")
     parser.add_argument("--random-n", type=int, default=RANDOM_N_DEFAULT)
     args = parser.parse_args()
 
@@ -417,6 +426,21 @@ def main() -> int:
 
     excess = random_result = None
     variants: dict[str, list[dict]] = {}
+    if "report" in wanted:
+        # Re-assemble the report from persisted artifacts (no backtests).
+        excess = benchmark_excess(work_dir, release_dir)
+        random_path = work_dir / "benchmark_stress" / "random" / "random_summary.csv"
+        random_result = {"summary_path": str(random_path)}
+        for variant in ("reverse", "cost2x", "capacity50k", "liqdrop"):
+            csv_path = work_dir / "benchmark_stress" / variant / f"{variant}_summary.csv"
+            if csv_path.is_file():
+                import pandas as pd
+                variants[variant] = pd.read_csv(csv_path).to_dict("records")
+        report = write_report(work_dir, excess, random_result, variants, args.random_n)
+        mirror = work_dir / report.name
+        shutil.copy2(report, mirror)
+        print(f"\nBENCH_STRESS_DONE (report-only) -> {report}", flush=True)
+        return 0
     if "excess" in wanted:
         excess = benchmark_excess(work_dir, release_dir)
     if "random" in wanted:

@@ -90,6 +90,38 @@ regenerable from the immutable release `data/pit/releases/20260803_oos_v4`
 manifests bind it by per-family content SHA256. Strict-ledger run
 manifests record input snapshot hashes for the audit trail.
 
+## v5.3 VLS benchmark / stress comparison (Phase 3.3, added 2026-08-03)
+
+Pre-registered experiments (upgrade plan Phase 3.3) on the frozen champion;
+ALL new runs strict-ledger VERIFIED, T+1 open precommit, seeded for
+reproducibility. Runner: `scripts/research/build_vls_benchmark_comparison.py`
+(`--experiments report` re-assembles the report from persisted results).
+
+| Item | Location | Status |
+|------|----------|--------|
+| Benchmark report | `reports/vls_benchmark_stress_20260803.md` (+ mirror in `exports/formal_evidence/vls_oos/`) | on main |
+| 3-benchmark excess | computed from baseline VERIFIED NAVs + release benchmark_index (000300/000905/000852) | — |
+| Random null (100 seeded shuffles × blind 2025-26) | `exports/formal_evidence/vls_oos/benchmark_stress/random/` (summary CSV + 100 full run dirs) | all VERIFIED |
+| Reverse / 2x-cost / 50K-capacity / liquidity-drop variants (5 windows each) | `exports/formal_evidence/vls_oos/benchmark_stress/{reverse,cost2x,capacity50k,liqdrop}/` | all VERIFIED |
+
+Key results (honest read):
+- **Random null p=0.19**: blind-window +15.4% annual is NOT distinguishable
+  from shuffled-score assignments (null mean +5.8%, std 10.2%). Random picks
+  captured the 2025-26 small-cap rally (CSI 500 +21.0% vs strategy +15.4%).
+- **Excess**: 2022 -22pp below every index; 2023 +40-44pp excess; 2024
+  +22-37pp; blind +3.1pp vs CSI 300, -5.6pp vs CSI 500.
+- **Reverse**: flips sign everywhere (-5.8%..-30% windows vs +15.4%..+31.9%)
+  → factor direction carries real information.
+- **2x cost**: ≤1.2pp annual degradation → alpha is not a cost artifact.
+- **50K capacity**: ≤1pp degradation → small-account sizing viable.
+- **Liquidity drop**: byte-identical to baseline (0/273 baseline trades in
+  the dropped bottom-20% liquidity set — positive-weight liquidity factor
+  keeps them out of Top10); discriminative power zero by construction,
+  confirms no reliance on the least-liquid tail.
+- Bulk parquet (shuffle scores, variant scores, split inputs — ~14.7GB)
+  intentionally NOT committed: regenerable from frozen scores + committed
+  code + recorded seeds; `random_summary.csv` binds the seed list.
+
 ## Status semantics (v5.3)
 
 The single `status` field historically conflated execution integrity with
