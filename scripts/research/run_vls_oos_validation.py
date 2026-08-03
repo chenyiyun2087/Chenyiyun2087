@@ -99,9 +99,12 @@ def stage_adapter(release_dir: Path, work_dir: Path) -> dict:
             "revision_chain_proof": "DATA_E1_frozen_snapshot",
             "availability_time_proof": "DATA_E1_frozen_snapshot",
         },
+        # v5.3: REAL booleans — the adapter's completeness check is
+        # `explicit is not True` (strict identity); JSON strings "True" never
+        # pass and caused source_completeness_missing blockers.
         "source_completeness": {
-            "corporate_actions": "True",
-            "security_lifecycle": "True",
+            "corporate_actions": True,
+            "security_lifecycle": True,
         },
         "sources": {
             family: {"path": str(release_dir / info["filename"])}
