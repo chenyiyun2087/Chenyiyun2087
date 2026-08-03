@@ -167,13 +167,14 @@ families:
       - pct_chg
       - vol
       - amount
+      - benchmark_available_at
       - ret_5d
       - ret_10d
       - ret_20d
       - ret_60d
     primary_key: [index_code, trade_date]
     business_time_column: trade_date
-    available_at_column: trade_date
+    available_at_column: benchmark_available_at
     timezone_requirement: explicit_offset
 
 # Canonical self-hash rules

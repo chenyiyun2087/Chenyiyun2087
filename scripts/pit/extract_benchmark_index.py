@@ -120,8 +120,16 @@ def extract_benchmark_index(release_dir: Path, start_date: str = "2018-01-01") -
         )
     out = pd.concat(frames, ignore_index=True)
     out = out.drop(columns=["close_num"], errors="ignore")
+    # v5.3: explicit PIT availability timestamp — the index daily close is
+    # final at 15:00 (market close) and therefore available at the 15:30
+    # signal cutoff.  16:00 would trip the audit's future-data-leak check
+    # (available_at > signal_cutoff), which applies the stock-signal cutoff
+    # to every family.
+    out["benchmark_available_at"] = out["trade_date"].apply(
+        lambda x: f"{x}T15:00:00+08:00" if x else "")
     out = out[["trade_date", "index_code", "index_label", "open", "high", "low",
                "close", "pre_close", "pct_chg", "vol", "amount",
+               "benchmark_available_at",
                "ret_5d", "ret_10d", "ret_20d", "ret_60d"]]
 
     path = release_dir / OUTPUT_FILENAME

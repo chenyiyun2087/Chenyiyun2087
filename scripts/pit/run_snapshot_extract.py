@@ -198,16 +198,20 @@ FAMILY_QUERIES = {
                d.pb,
                -- v5.3: REAL period end / announcement dates from the PIT
                -- financial view (dws_fina_pit_daily, real ann_date/end_date).
-               -- Rows before 2020 have no PIT financial data yet: end_date /
-               -- ann_date stay NULL (honest gap), never fabricated as trade_date.
+               -- INNER JOIN: rows without PIT financial data (pre-2020, the
+               -- PIT view's earliest trade date) are HONESTLY ABSENT rather
+               -- than present with empty dates.
                f.end_date AS financial_period_end,
                f.ann_date AS announcement_date,
                f.ann_date AS financial_available_at,
-               CONCAT(d.ts_code, '_', CAST(f.end_date AS CHAR), '_v1') AS revision_id,
+               -- revision_id unique per (symbol, period_end, trade_date) row
+               -- (primary_key in the semantic contract)
+               CONCAT(d.ts_code, '_', CAST(f.end_date AS CHAR), '_',
+                      CAST(d.trade_date AS CHAR), '_v1') AS revision_id,
                1 AS revision_sequence,
                '' AS financial_source_snapshot_sha
         FROM tushare_stock.dwd_daily_basic d
-        LEFT JOIN tushare_stock.dws_fina_pit_daily f
+        INNER JOIN tushare_stock.dws_fina_pit_daily f
           ON d.ts_code = f.ts_code AND d.trade_date = f.trade_date
         WHERE d.trade_date >= 20180101
           AND d.pb IS NOT NULL
@@ -265,10 +269,13 @@ FAMILY_QUERIES = {
         -- (dwd_corporate_action_event_v2 was EMPTY; dwd_corporate_action_event
         -- only covers 2025+).  ods_dividend: 203K rows, 1991-2026, real
         -- cash_div / stk_div / ex_date / record_date / ann_date.
-        SELECT ex_date AS trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
+        SELECT DISTINCT ex_date AS trade_date, SUBSTRING_INDEX(ts_code, '.', 1) AS symbol,
                'DIVIDEND' AS corporate_action_type,
                ex_date, record_date,
-               CONCAT('div_', ts_code, '_', CAST(ex_date AS CHAR)) AS event_id,
+               -- event_id includes the source row id for guaranteed uniqueness
+               -- (same (ts_code, ex_date) can appear with different ann_dates,
+               -- e.g. interim + final announcements)
+               CONCAT('div_', ts_code, '_', CAST(ex_date AS CHAR), '_', CAST(id AS CHAR)) AS event_id,
                ex_date AS effective_date,
                ann_date AS ann_date,
                cash_div AS cash_dividend,
@@ -279,7 +286,7 @@ FAMILY_QUERIES = {
         FROM tushare_stock.ods_dividend
         WHERE ex_date >= 20180101
           AND div_proc LIKE '实施%'
-        ORDER BY ts_code, ex_date
+        ORDER BY symbol, trade_date
     """,
 }
 
