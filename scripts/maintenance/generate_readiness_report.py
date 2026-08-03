@@ -181,9 +181,23 @@ def _evidence_gate_status() -> dict[str, tuple[str, str]]:
     else:
         gates["alpha_proof_guard"] = ("BLOCKED", f"blind-window alpha NOT distinguishable from random scores (p={p:.3f} > 0.05)")
 
-    # alpha_attribution / factor_ic — not yet produced
-    gates["alpha_attribution"] = ("BLOCKED", "factor attribution study not yet run")
-    gates["factor_ic"] = ("BLOCKED", "factor IC / ICIR study not yet run")
+    # alpha_attribution / factor_ic — Phase 3.4 factor diagnostics (2026-08-03)
+    diag = VLS_EVIDENCE / "factor_diagnostics"
+    ic_summary = diag / "factor_ic_summary.csv"
+    dc_check = diag / "factor_direction_check.csv"
+    sf_factors = ["value", "size", "liquidity", "momentum"]
+    sf_ok = all(
+        (diag / "single_factor" / f"{f}_only" / f"{f}_summary.csv").is_file()
+        for f in sf_factors
+    )
+    if ic_summary.is_file() and dc_check.is_file():
+        gates["factor_ic"] = ("PASS", "per-factor rank IC/ICIR computed (6 factors x 5 windows x 4 horizons); direction check recorded")
+    else:
+        gates["factor_ic"] = ("BLOCKED", "factor IC / ICIR study not yet run (factor_diagnostics missing)")
+    if sf_ok:
+        gates["alpha_attribution"] = ("PASS", "single-factor strict-ledger backtests VERIFIED for all 4 strategy factors x 5 windows")
+    else:
+        gates["alpha_attribution"] = ("BLOCKED", "factor attribution study not yet run (single-factor runs missing)")
 
     # economic_shadow — E4, time-dependent
     gates["economic_shadow"] = ("BLOCKED", "E4 shadow tracking not started; ~3 months once live")

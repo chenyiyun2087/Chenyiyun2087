@@ -21,8 +21,8 @@ This report is an evidence view, not a capital decision.  Capital authority can 
 
 - core_history: **BLOCKED** — release 20260803_oos_v4 consistent_snapshot=False — E0_DIAGNOSTIC, needs binlog-enabled server for E3
 - benchmark_excess: **PASS** — 3-benchmark excess computed (2023 +40-44pp; blind +3.1pp vs CSI300, -5.6pp vs CSI500)
-- alpha_attribution: **BLOCKED** — factor attribution study not yet run
-- factor_ic: **BLOCKED** — factor IC / ICIR study not yet run
+- alpha_attribution: **PASS** — single-factor strict-ledger backtests VERIFIED for all 4 strategy factors x 5 windows
+- factor_ic: **PASS** — per-factor rank IC/ICIR computed (6 factors x 5 windows x 4 horizons); direction check recorded
 - alpha_proof_guard: **BLOCKED** — blind-window alpha NOT distinguishable from random scores (p=0.190 > 0.05)
 - factor_compute_lineage: **PASS** — scores carry lineage metadata: ['financial_source_snapshot_sha', 'revision_id', 'revision_sequence']
 - walk_forward: **PASS** — 5 window-independent strict-ledger runs VERIFIED on release 20260803_oos_v4; report exists
@@ -32,8 +32,6 @@ This report is an evidence view, not a capital decision.  Capital authority can 
 
 ### Remaining blockers to CANARY_50K
   - core_history (BLOCKED): release 20260803_oos_v4 consistent_snapshot=False — E0_DIAGNOSTIC, needs binlog-enabled server for E3
-  - alpha_attribution (BLOCKED): factor attribution study not yet run
-  - factor_ic (BLOCKED): factor IC / ICIR study not yet run
   - alpha_proof_guard (BLOCKED): blind-window alpha NOT distinguishable from random scores (p=0.190 > 0.05)
   - economic_shadow (BLOCKED): E4 shadow tracking not started; ~3 months once live
   - manual_approval (BLOCKED): human-approved capital decision required by firewall

@@ -1,0 +1,5 @@
+factor,strategy_sign,mean_ic_hold20,sign_agrees,note
+value,1.0,-0.030250293812451423,False,realized IC -0.0303 contradicts strategy sign +1
+size,1.0,0.03467138478650257,True,
+liquidity,1.0,0.065312584312433,True,
+momentum,-1.0,-0.06695149009874767,True,

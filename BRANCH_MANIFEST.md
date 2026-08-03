@@ -122,6 +122,39 @@ Key results (honest read):
   intentionally NOT committed: regenerable from frozen scores + committed
   code + recorded seeds; `random_summary.csv` binds the seed list.
 
+## v5.3 VLS factor IC + attribution diagnostics (Phase 3.4, added 2026-08-03)
+
+Pre-registered diagnostic for the readiness gates `factor_ic` + `alpha_attribution`.
+Runner: `scripts/research/build_vls_factor_diagnostics.py` (`--mode ic|backtests|report|all`).
+IC convention is engine-identical (`add_forward_returns`, T+1 open entry, exit at entry+hold close);
+single-factor backtests replace only the `score` column (score = factor × strategy sign) and are
+strict-ledger VERIFIED.  Frozen parameters untouched — diagnostic, not re-optimization.
+
+| Item | Location | Status |
+|------|----------|--------|
+| IC study (6 factors + composite × 4 horizons, daily rank IC) | `exports/formal_evidence/vls_oos/factor_diagnostics/factor_ic_daily.csv` | computed |
+| Per-window IC summary + direction check | `factor_diagnostics/factor_ic_summary.csv`, `factor_direction_check.csv` | computed |
+| 20 single-factor runs (4 factors × 5 windows) | `factor_diagnostics/single_factor/{factor}_only/runs/` | all VERIFIED |
+| Diagnostics report | `reports/vls_factor_diagnostics_20260803.md` (+ mirror) | on main |
+
+Key results (honest read):
+- **Direction check FAIL (1/4)**: value sign=+1 but realized IC -0.030 (negative in
+  4/5 windows — 2023 +0.007 the only positive); size +0.035, liquidity +0.065,
+  momentum -0.067 (reversal) all agree with their signs.  Value is a negative
+  contributor in every single-factor window (-0.3..-4.6pp weighted).
+- **Composite IC rises with horizon** (5d +0.027 → 40d +0.063): medium-term
+  alpha, consistent with the 20d hold.
+- **Volatility is the strongest factor** (+0.090 IC) but unused by the strategy.
+- **Attribution**: liquidity is the blind-2025-26 alpha engine (+42.3% annual
+  single-factor vs +15.4% composite; MDD -46.5% deeper); 2023's excess is entirely
+  the size+illiquidity micro-cap premium (+39.6/+31.4pp weighted); momentum
+  reversal matters most in 2020-21 (+8.3pp); value is a drag in every window.
+- Combination effects are large (2024 +32pp, blind +12pp of composite return not
+  captured by any single factor) — the top-10 portfolio's alpha is not a simple
+  weighted sum of single factors (size/illiquidity/value overlap).
+- Bulk parquet (single-factor scores, split inputs, run intermediates — ~2GB)
+  intentionally NOT committed: regenerable from frozen scores + committed code.
+
 ## Status semantics (v5.3)
 
 The single `status` field historically conflated execution integrity with
