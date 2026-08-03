@@ -237,13 +237,27 @@ def run_semantic_audit(
                 except Exception as exc:
                     blockers.append(f"industry_scd_check_error:{type(exc).__name__}")
 
-        # ── Source SHA verification ──
+        # ── Source SHA verification (v5.3: FAIL-CLOSED) ──
+        # Previously this block only blocked when a declared SHA was present
+        # AND mismatched — a missing manifest, a `families`-structured
+        # manifest, or a family without a declared SHA silently bypassed the
+        # check.  From v5.3 every family must carry a declared SHA and it
+        # must match the on-disk snapshot.
         snapshot_sha = _file_sha(snapshot_path)
-        if adapter_manifest:
-            sources = adapter_manifest.get("sources", {})
-            source_info = sources.get(family, {})
-            declared_sha = source_info.get("content_sha256") or source_info.get("sha256") or ""
-            if declared_sha and declared_sha != snapshot_sha:
+        if not adapter_manifest:
+            blockers.append(f"adapter_manifest_missing_for_sha_verification:{family}")
+        else:
+            # Accept both legacy `sources` and `families` structures.
+            all_sources: dict[str, Any] = {}
+            all_sources.update(adapter_manifest.get("sources", {}))
+            all_sources.update(adapter_manifest.get("families", {}))
+            source_info = all_sources.get(family, {})
+            declared_sha = str(
+                source_info.get("content_sha256") or source_info.get("sha256") or ""
+            )
+            if not declared_sha:
+                blockers.append(f"source_sha_missing:{family}")
+            elif declared_sha != snapshot_sha:
                 blockers.append(f"source_sha_mismatch:{family}")
 
         audit_details[family] = {

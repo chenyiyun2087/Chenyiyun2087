@@ -1,3 +1,19 @@
+# =====================================================================
+# DIAGNOSTIC E0 PROFILE (v5.3) — rapid iteration / engineering runs ONLY.
+# Relaxed gates; results from this profile MUST NOT enter the formal
+# evidence chain.  Distinguishes from formal_v5_0.yaml:
+#   - min_start_date 2022-01-01 (formal: 2018-01-01)
+#   - require_formal_pit / require_pit_data_adapter = false
+#   - min_daily_coverage 0.90 (formal: 0.95)
+#   - min_valid_stability_years 2 (formal: 3)
+#   - no require_point_in_time_consistency / forbid_e0_derived_fields
+# =====================================================================
+profile_type: diagnostic_e0_research
+evidence_level: E0
+diagnostic_only: true
+results_may_not_enter_formal_chain: true
+min_start_date_policy: '2022-01-01'
+
 alpha_proof:
   benchmark_gate_policy: primary_excess_and_all_required_complete
   market_regime_factor: market_regime
@@ -5,11 +21,11 @@ alpha_proof:
   max_unexplained_variance_ratio: 0.1
   min_aligned_trading_days: 252
   min_alpha_tstat: 2.0
-  min_daily_coverage: 0.95
+  min_daily_coverage: 0.90
   min_positive_alpha_year_ratio: 0.6
   min_stability_year_months: 9
   min_stability_year_trading_days: 126
-  min_valid_stability_years: 3
+  min_valid_stability_years: 2
   require_environment_lock_hash: true
   require_factor_compute_manifest: true
   require_factor_semantic_definition: true
@@ -133,18 +149,20 @@ economic_alpha_qualification:
   target_trading_days: 252
   min_median_rank_ic: 0.0
   min_trading_days: 252
-  min_universe_coverage: 0.95
-  require_complete_universe_status: true
-  require_corporate_action_semantics: true
+  min_universe_coverage: 0.90
+  # v5.3 E0 profile: PIT/adapter gates OFF — diagnostic data (derived
+  # fields, placeholders) is allowed for engineering runs only.
+  require_complete_universe_status: false
+  require_corporate_action_semantics: false
   require_cost_adjusted_net_return: true
   require_factor_overlap_matrix: true
   require_field_definition_hash: true
-  require_financial_revision_chain: true
-  require_formal_pit: true
+  require_financial_revision_chain: false
+  require_formal_pit: false
   require_industry_neutralization: true
-  require_pit_data_adapter: true
-  require_release_scoped_pit_source_manifest: true
-  require_security_lifecycle_transition: true
+  require_pit_data_adapter: false
+  require_release_scoped_pit_source_manifest: false
+  require_security_lifecycle_transition: false
   require_t_plus_1_factor_ledger: true
   require_time_holdout: true
   require_top_bottom_portfolio_evidence: true
