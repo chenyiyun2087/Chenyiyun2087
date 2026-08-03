@@ -59,6 +59,10 @@ def enrich_market(df: pd.DataFrame) -> pd.DataFrame:
     policy <2022-06 BEAR / 2024+ BULL was the broken constant/regime input
     flagged by the 2026-08-03 evaluation).  pre_close also stays REAL from
     ods_daily (2.4 fix) — the previous close-shift overwrite is removed.
+    circ_mv also stays REAL from the extractor's dwd_daily_basic LEFT JOIN —
+    the old add_circ_mv re-merge here was DESTRUCTIVE (deleted the SQL
+    column, then merged on a symbol key whose format never matched
+    ts_code, leaving every row NULL and zeroing the size factor).
     """
     close = pd.to_numeric(df["close"], errors="coerce")
     df["ret"] = close / close.groupby(df["symbol"]).shift(1) - 1
@@ -116,44 +120,6 @@ def enrich_lifecycle(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_circ_mv(df: pd.DataFrame) -> pd.DataFrame:
-    """Merge circ_mv from dwd_daily_basic (real data).
-
-    v5.3 fix: the query previously hardcoded the window 20220101-20241231,
-    silently leaving 2018-2021 rows with NULL circ_mv.  The window is now
-    derived from the actual trade_date range of the release.
-    """
-    import os
-    password = os.getenv("CHENYIYUN_DB_PASSWORD", "")
-    if not password:
-        raise RuntimeError(
-            "circ_mv enrichment requires explicit database credentials. "
-            "Set CHENYIYUN_DB_PASSWORD."
-        )
-    conn = pymysql.connect(
-        host="127.0.0.1", port=3306, user="root",
-        password=password, database="tushare_stock", charset="utf8mb4",
-        connect_timeout=3)
-    dates = pd.to_datetime(df["trade_date"], errors="coerce").dropna()
-    if dates.empty:
-        conn.close()
-        return df
-    start = dates.min().strftime("%Y%m%d")
-    end = dates.max().strftime("%Y%m%d")
-    q = ("SELECT trade_date, ts_code AS symbol, circ_mv, total_mv "
-         "FROM dwd_daily_basic "
-         f"WHERE trade_date >= {start} AND trade_date <= {end} "
-         "LIMIT 5000000")
-    basic = pd.read_sql(q, conn)
-    conn.close()
-    basic["trade_date"] = basic["trade_date"].astype(str).str.replace(
-        r"(\d{4})(\d{2})(\d{2})", r"\1-\2-\3", regex=True)
-    for c in ["circ_mv", "total_mv"]:
-        if c in df.columns:
-            del df[c]
-    return df.merge(basic, on=["trade_date", "symbol"], how="left")
-
-
 def enrich_release(release_dir: Path) -> dict:
     """Apply all enrichments to a release directory. Returns report."""
     report = {"release_dir": str(release_dir), "enriched": [], "errors": []}
@@ -162,7 +128,8 @@ def enrich_release(release_dir: Path) -> dict:
     if mkt_path.exists():
         df = pd.read_parquet(mkt_path)
         df = enrich_market(df)
-        df = add_circ_mv(df)
+        # v5.3: NO add_circ_mv here — the extractor's dwd_daily_basic LEFT
+        # JOIN already provides real circ_mv; the old re-merge destroyed it.
         df.to_parquet(mkt_path, index=False)
         report["enriched"].append("market")
 
