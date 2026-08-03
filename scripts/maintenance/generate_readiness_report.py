@@ -172,14 +172,32 @@ def _evidence_gate_status() -> dict[str, tuple[str, str]]:
         rid = manifest.get("release_id", "?")
         gates["core_history"] = ("BLOCKED", f"release {rid} consistent_snapshot={manifest.get('consistent_snapshot')} — E0_DIAGNOSTIC, needs binlog-enabled server for E3")
 
-    # alpha_proof_guard — random-null significance on the blind window
+    # alpha_proof_guard — random-null + IC-HAC significance on the blind window
     p = _random_null_p_value()
+    ic_hac = VLS_EVIDENCE / "factor_diagnostics" / "alpha_significance" / "ic_hac_significance.csv"
     if p is None:
         gates["alpha_proof_guard"] = ("BLOCKED", "random null summary missing")
     elif p <= 0.05:
         gates["alpha_proof_guard"] = ("PASS", f"blind-window alpha significant vs random null (p={p:.3f})")
     else:
-        gates["alpha_proof_guard"] = ("BLOCKED", f"blind-window alpha NOT distinguishable from random scores (p={p:.3f} > 0.05)")
+        # Supplementary evidence: IC-level HAC significance (Phase 3.5 study).
+        # Composite IC HAC t on the blind window; momentum reversal IC is also
+        # reported (direction-consistent, HAC t=-3.33) but the composite is the
+        # gate object.
+        ic_note = ""
+        if ic_hac.is_file():
+            try:
+                import pandas as pd
+                ics = pd.read_csv(ic_hac)
+                comp = ics[(ics["factor"] == "score") & (ics["horizon"] == 20)]
+                mom = ics[(ics["factor"] == "momentum") & (ics["horizon"] == 20)]
+                if len(comp):
+                    t = comp.iloc[0]["hac_t"]
+                    ic_note = f"; composite IC HAC t={t:+.2f} on blind (momentum reversal IC HAC t={mom.iloc[0]['hac_t']:+.2f} direction-consistent)"
+            except Exception:
+                pass
+        gates["alpha_proof_guard"] = ("BLOCKED",
+            f"blind-window alpha NOT distinguishable from random scores (p={p:.3f} > 0.05){ic_note}")
 
     # alpha_attribution / factor_ic — Phase 3.4 factor diagnostics (2026-08-03)
     diag = VLS_EVIDENCE / "factor_diagnostics"
