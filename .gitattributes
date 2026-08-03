@@ -1,0 +1,4 @@
+exports/formal_evidence/vls_champion/champion_t10_h20_b005_band050/frozen_inputs/vls_mom_contrarian_scores.csv filter=lfs diff=lfs merge=lfs -text
+exports/formal_evidence/vls_champion/champion_t10_h20_b010/frozen_inputs/vls_mom_contrarian_scores.csv filter=lfs diff=lfs merge=lfs -text
+exports/alpha_v3_validation/v52_cc3890_dynamic_score/evidence_snapshots/adceb738bc4efa22.csv filter=lfs diff=lfs merge=lfs -text
+exports/formal_evidence/formal-cc3890152ea89790888022b5b3fc6216e0156801eaf1c3775abe22e5e32c016e/factor_panel_fwd.csv filter=lfs diff=lfs merge=lfs -text
