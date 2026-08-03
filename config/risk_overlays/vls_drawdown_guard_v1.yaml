@@ -1,0 +1,69 @@
+# Pre-Registered Risk Overlay: VLS Drawdown Guard v1 (2026-08-03)
+# =====================================================================
+# ONE pre-registered risk-control experiment per the 2026-08-03 evaluation
+# (P1).  These rules were specified BEFORE running — they are NOT fitted to
+# the 2022-2024 backtest.  The experiment runs the frozen champion
+# (vls_mom_contrarian_v1_frozen) WITH this overlay and compares against the
+# baseline; goal: MDD from -32.7% toward <= -25% while preserving >= 60% of
+# baseline alpha.
+#
+# Rejection criteria (pre-registered):
+#   - overlay reduces annualized return by more than 40% of baseline, OR
+#   - overlay does not reduce max drawdown below -30%, OR
+#   - overlay increases turnover by more than 50%.
+# =====================================================================
+
+schema_version: "risk_overlay_v1"
+overlay_id: "vls_drawdown_guard_v1"
+preregistered_at: "2026-08-03"
+applies_to_strategy: "vls_mom_contrarian_v1_frozen"
+experiment_id: "exp_vls_drawdown_guard_001"
+
+# Rules are evaluated on SIGNAL DAY (T, 15:30) using only data available at
+# T — no lookahead.  Each rule reduces the position-sizing multiplier for
+# the next execution (T+1 open).  Rules compose by taking the MINIMUM
+# multiplier (most conservative wins).
+
+rules:
+  - id: drawdown_20
+    condition: "portfolio_equity_drawdown_from_peak >= 0.20"
+    position_multiplier: 0.70
+    rationale: "Portfolio down 20% from peak -> trim to 70% exposure"
+
+  - id: drawdown_25
+    condition: "portfolio_equity_drawdown_from_peak >= 0.25"
+    position_multiplier: 0.50
+    rationale: "Portfolio down 25% from peak -> trim to 50% exposure"
+
+  - id: drawdown_30
+    condition: "portfolio_equity_drawdown_from_peak >= 0.30"
+    position_multiplier: 0.30
+    halt_new_entries: true
+    rationale: "Portfolio down 30% from peak -> 30% exposure + no new buys"
+
+  - id: csi300_20d_crash
+    condition: "csi300_ret_20d <= -0.10"
+    position_multiplier: 0.70
+    rationale: "CSI 300 down 10%+ over 20 sessions -> trim to 70% exposure"
+
+  - id: market_breadth_collapse
+    condition: "market_breadth_above_20d_ma < 0.20"
+    position_multiplier: 0.50
+    rationale: "Fewer than 20% of stocks above their 20d MA -> 50% exposure"
+
+# Market-state inputs consumed by the csi300/breadth rules.  These were the
+# BROKEN zero/constant inputs flagged by the 2026-08-03 evaluation; the
+# experiment REQUIRES the real benchmark_index family
+# (scripts/pit/extract_benchmark_index.py) and real market breadth computed
+# from the release universe.  If the inputs are absent/constant, the overlay
+# run is BLOCKED — it must not silently no-op.
+required_market_inputs:
+  - csi300_ret_20d        # from benchmark_index.parquet (ret_20d, 000300.SH)
+  - market_breadth_above_20d_ma  # pct of universe stocks above their 20d MA
+
+evaluation:
+  baseline_ref: "vls_champion_t10_h20_b010"  # +89.4% / MDD -32.7% (strict ledger)
+  min_alpha_preserved_ratio: 0.60
+  mdd_improvement_target: "-32.7% -> <= -30% (stretch: -25%)"
+  max_annualized_return_degradation_ratio: 0.40
+  max_turnover_increase_ratio: 0.50
