@@ -81,7 +81,7 @@ def _build_package(root: Path) -> dict:
             {
                 "trade_date": dates[0],
                 "symbol": symbol,
-                "adj_factor": 1,
+                "adj_factor": 1.0,  # float — the non-positive test injects -0.5
                 "available_at": available,
             }
             for symbol in symbols

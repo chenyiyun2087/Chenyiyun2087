@@ -98,6 +98,10 @@ def test_every_enabled_pipeline_task_has_a_result_verifier():
         "trusted_strategy_shadow_monitor", "trusted_strategy_performance_review",
         "candle_diag_scan", "pit_forward_shadow_collection", "bs_signal_monthly_cycle",
         "sina_bs_image_weekly_cleanup",
+        # v5.5 (2026-08-04): Forward Shadow Engine v2 morning chain —
+        # enabled alongside the legacy shadow tasks being disabled.
+        "alpha_signal_package_seal", "alpha_signal_precommit",
+        "alpha_signal_execution_reconcile",
     }
     assert {task.task_name for task in expected} == verifier_tasks
 
@@ -214,9 +218,11 @@ def test_retired_db_bs_detect_cannot_be_scheduled():
 
 def test_batch_monitor_definition_and_status_merge_follow_pipeline():
     definitions = web_app._load_batch_monitor_definition()
-    assert len(definitions) == 16
+    # 16 baseline + 3 v5.5 morning-chain tasks (alpha_signal_*)
+    assert len(definitions) == 19
     assert definitions[0]["task_name"] == "adc_bs_detect"
-    assert {row["group_label"] for row in definitions} == {"盘中", "日终", "周度"}
+    # v5.5 morning chain added the morning group (alpha_signal_* tasks)
+    assert {row["group_label"] for row in definitions} == {"盘中", "日终", "周度", "morning"}
 
     rows = web_app._build_batch_monitor_rows(
         definitions[:2],

@@ -59,6 +59,28 @@ def test_floor_excludes_low_amount_names():
     assert not below["eligible_universe"].any()
 
 
+def test_floor_uses_cny_column_when_present():
+    """v5.4.1 unit fix: the pre-registered threshold is CNY — the floor
+    must compare against amount_20d_cny, not the raw Tushare 千元 column
+    (raw 千元 vs 3M CNY threshold excluded ~99% of the market)."""
+    cfg = {"min_20d_turnover_threshold_cny": 3000000.0}
+    # 2000 千元 = 2M CNY < 3M CNY floor -> excluded.
+    panel = _panel().drop(columns=["turnover_rate_20d_avg"])
+    panel["amount_20d_avg"] = 2000.0
+    panel["amount_20d_cny"] = 2000.0 * 1000.0
+    out = _apply_eligibility_floor(panel, cfg)
+    assert not out["eligible_universe"].any(), (
+        "2M CNY (2000 千元) is below the 3M CNY floor — must be excluded")
+    # Same raw 千元 value, but CNY above the floor -> stays eligible,
+    # proving the CNY column decides (not the raw one).
+    panel2 = _panel().drop(columns=["turnover_rate_20d_avg"])
+    panel2["amount_20d_avg"] = 2000.0
+    panel2["amount_20d_cny"] = 4000000.0  # 4M CNY — above the 3M CNY floor
+    out2 = _apply_eligibility_floor(panel2, cfg)
+    assert out2["eligible_universe"].all(), (
+        "4M CNY must clear the floor even though the raw 千元 value is tiny")
+
+
 def test_no_threshold_no_change():
     panel = _panel()
     out = _apply_eligibility_floor(panel, {})

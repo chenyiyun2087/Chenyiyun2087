@@ -80,7 +80,14 @@ def _build_pipeline(df: pd.DataFrame, feature_cols: list[str], model_kind: str =
     categorical = [
         c
         for c in feature_cols
-        if c in df.columns and (df[c].dtype == object or str(df[c].dtype).startswith("category"))
+        # pandas 3.0: string columns are dtype "str" (not object) — the
+        # median imputer must never receive them.
+        if c in df.columns and (
+            df[c].dtype == object
+            or str(df[c].dtype).startswith("category")
+            or str(df[c].dtype) in ("str", "string")
+            or str(df[c].dtype).startswith("string")
+        )
     ]
     numeric = [c for c in feature_cols if c not in categorical]
 
@@ -134,7 +141,14 @@ def _build_regression_pipeline(df: pd.DataFrame, feature_cols: list[str]) -> Pip
     categorical = [
         c
         for c in feature_cols
-        if c in df.columns and (df[c].dtype == object or str(df[c].dtype).startswith("category"))
+        # pandas 3.0: string columns are dtype "str" (not object) — the
+        # median imputer must never receive them.
+        if c in df.columns and (
+            df[c].dtype == object
+            or str(df[c].dtype).startswith("category")
+            or str(df[c].dtype) in ("str", "string")
+            or str(df[c].dtype).startswith("string")
+        )
     ]
     numeric = [c for c in feature_cols if c not in categorical]
 

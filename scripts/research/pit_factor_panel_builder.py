@@ -833,6 +833,14 @@ def _build_pit_factor_panel_impl(
         panel["amount_20d_avg"] = panel.groupby("symbol")["amount"].transform(
             lambda v: pd.to_numeric(v, errors="coerce")
             .rolling(20, min_periods=10).mean())
+        # Tushare amount is in 千元 (thousands of CNY) — verified against
+        # 600519 (8.2M 千元 ~ 8.2B CNY daily turnover).  The pre-registered
+        # F2 floor threshold (min_20d_turnover_threshold_cny) is CNY —
+        # comparing it against the raw 千元 column would exclude ~99% of
+        # the market.  amount_20d_cny is the canonical CNY-denominated
+        # column the floor consumes.
+        panel["amount_20d_cny"] = (
+            pd.to_numeric(panel["amount_20d_avg"], errors="coerce") * 1000.0)
     if _volume is not None and _close is not None and _circ_mv is not None:
         panel["_turnover_rate"] = _volume / (_circ_mv / _close)
         panel["turnover_rate_20d_avg"] = panel.groupby("symbol")[
@@ -857,7 +865,12 @@ def _build_pit_factor_panel_impl(
         panel["suspension_days_20d"] = panel.groupby("symbol")[
             "_suspended"].transform(
             lambda v: v.rolling(20, min_periods=10).sum())
-    if "amount_20d_avg" in panel.columns:
+    if "amount_20d_cny" in panel.columns:
+        # 500K CNY as a fraction of 20d-avg daily turnover (CNY) — the
+        # ADV participation gate; the raw 千元 column would overstate
+        # capacity 1000x.
+        panel["adv_capacity_500k"] = 500000.0 / panel["amount_20d_cny"]
+    elif "amount_20d_avg" in panel.columns:
         panel["adv_capacity_500k"] = 500000.0 / panel["amount_20d_avg"]
     panel = panel.drop(columns=[c for c in (
         "_turnover_rate", "_zero_volume", "_limit_event", "_suspended")
@@ -1020,6 +1033,18 @@ def _build_pit_factor_panel_impl(
         "revision_sequence",
         "financial_source_snapshot_sha",
         "market_regime",
+        # v5.4.1 F2 completion: raw liquidity detail columns — derived in
+        # the F2 block but they must survive the output whitelist or the
+        # pre-registered F2 floor/consistency gates in the scores builder
+        # fail-closed (SIGNAL_BUILD_BLOCKED) on every build.
+        "amount_20d_avg",
+        "amount_20d_cny",
+        "turnover_rate_20d_avg",
+        "zero_volume_days_20d",
+        "amihud_20d",
+        "limit_event_count_20d",
+        "suspension_days_20d",
+        "adv_capacity_500k",
         *raw_factors,
         *(f"{factor}_available_at" for factor in factor_availability_sources),
         *availability_columns,

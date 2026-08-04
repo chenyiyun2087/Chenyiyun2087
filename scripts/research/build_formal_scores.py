@@ -178,7 +178,12 @@ def _apply_eligibility_floor(panel: pd.DataFrame,
     if threshold is None or float(threshold) <= 0:
         return panel
     turnover_col = None
-    for candidate in ("turnover_20d_cny", "amount_20d_avg", "turnover_cny_20d"):
+    # amount_20d_cny is the canonical CNY-denominated column (the panel
+    # builder converts Tushare's 千元 amount).  The pre-registered
+    # threshold is CNY — preferring the raw 千元 column would exclude
+    # ~99% of the market.
+    for candidate in ("amount_20d_cny", "turnover_20d_cny", "amount_20d_avg",
+                      "turnover_cny_20d"):
         if candidate in panel.columns:
             turnover_col = candidate
             break

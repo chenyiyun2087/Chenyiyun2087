@@ -41,6 +41,7 @@ def _write_qualified_inputs(root: Path, *, late_market: bool = False):
                     "close": close,
                     "pre_close": pre_close,
                     "amount": 100_000_000 + symbol_index * 1_000_000,
+                    "volume": 1_000_000 + symbol_index * 10_000,
                     "circ_mv": 1_000_000 + symbol_index * 20_000,
                     "market_return": market_return,
                     "market_regime": date_index % 3,
@@ -150,6 +151,40 @@ def test_pit_factor_panel_builder_passes_qualified_long_fixture(
     assert panel["trade_date"].min() == "2018-01-30"
     assert panel["signal_time"].str.endswith("Z").all()
     assert result["capital_authority"] is False
+
+
+def test_panel_output_carries_f2_liquidity_detail_columns(tmp_path: Path):
+    """v5.4.1 F2 completion: the derived liquidity detail columns must
+    survive the panel output whitelist — the scores builder's fail-closed
+    floor and Amihud/amount/turnover consistency check consume them.
+    Without this, the pre-registered F2 floor raises SIGNAL_BUILD_BLOCKED
+    on every scores build (the defect this test locks)."""
+    paths, manifest = _write_qualified_inputs(tmp_path)
+    result = build_pit_factor_panel(
+        market_path=paths["market"],
+        universe_path=paths["universe"],
+        financial_path=paths["financial"],
+        industry_path=paths["industry"],
+        adjustment_path=paths["adjustment"],
+        source_manifest_path=manifest,
+        output_dir=tmp_path / "output",
+        profile_name="formal_v5_0",
+    )
+    assert result["status"] == "PASS"
+    panel = pd.read_parquet(result["panel_path"])
+    for column in (
+        "amount_20d_avg", "amount_20d_cny", "turnover_rate_20d_avg",
+        "zero_volume_days_20d", "amihud_20d", "limit_event_count_20d",
+        "suspension_days_20d", "adv_capacity_500k",
+    ):
+        assert column in panel.columns, f"F2 column dropped: {column}"
+    # Derived values are sane on the synthetic fixture.
+    assert (panel["amount_20d_avg"] > 0).all()
+    # CNY unit conversion: Tushare amount is 千元, the floor threshold is
+    # CNY — amount_20d_cny must be the CNY-denominated value.
+    assert np.allclose(panel["amount_20d_cny"], panel["amount_20d_avg"] * 1000.0)
+    assert (panel["adv_capacity_500k"] > 0).all()
+    assert (panel["zero_volume_days_20d"] == 0).all()
 
 
 def test_pit_factor_panel_builder_blocks_late_availability(tmp_path: Path):
