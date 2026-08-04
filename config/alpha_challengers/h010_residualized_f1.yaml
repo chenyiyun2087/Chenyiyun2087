@@ -1,0 +1,71 @@
+# Pre-Registered Alpha Challenger: H010 — Residualized F1 (v5.6, 2026-08-04)
+# ======================================================================
+# Hypothesis H010 (style_neutral_alpha): a per-day cross-sectional OLS of
+# the F1 score on size + liquidity + market_beta + industry fixed effects
+# explains ~88% of F1 variance (E0 research, scripts/research/
+# build_residualized_alpha_scores.py, 2026-08-04).  Ranking on the OLS
+# residual isolates the style-neutral component of F1.  Residual IC is
+# INCONSISTENT across windows (internal OOS 2023: 0.016 vs stress 2024:
+# 0.070) — the hypothesis is TESTED, not assumed; direction consistency
+# is a stopping criterion.
+#
+# H010 = residualize(F1) then equal-weight Top10.  Parameters are FIXED
+# here BEFORE any backtest run on any window.  2025-2026 is CONSUMED
+# (report-only, never selection).  True forward blind starts 2026-08-05.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "h010_residualized_f1"
+experiment_id: "exp_alpha_rebuild_202608_h010_residualized_f1"
+hypothesis_id: "H010_style_neutral_alpha"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"  # release 20260803_oos_v4 content_sha256
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}  # CONSUMED — report only
+true_blind_start: "2026-08-05"
+base_strategy: "f1_no_value"
+change_description: "F1 scores residualized per day on size+liquidity+market_beta+industry FE; rank on the residual"
+hypothesis: "style exposure explains most F1 variance; the residual is a distinct style-neutral signal"
+expected_direction: "residual IC positive AND direction-consistent across internal OOS and stress windows"
+
+stopping_criteria:
+  - "residual IC not positive on development window"
+  - "residual IC sign flips between internal OOS and stress windows"
+  - "random permutation p > 0.10 on untouched window"
+  - "HAC t < 1.65 on untouched window"
+
+# Factor definition (F1 weights/signs — the residualization transform is
+# declared below; selection is the residual, never the raw composite)
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+# Score transform: daily cross-sectional OLS residualization
+score_transform:
+  method: "residualize_on_style"
+  regression: "F1_score ~ 1 + size + liquidity + market_beta + industry_FE"
+  style_factors: [size, liquidity, market_beta]
+  industry_fixed_effects: true
+  minimum_cross_section: 20
+  residual_ranking: true
+
+# Execution (F1 identical)
+execution:
+  top_n: 10
+  max_total_positions: 10
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [scores, runs, report]

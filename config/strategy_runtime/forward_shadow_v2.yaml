@@ -11,11 +11,10 @@
 # F2/F3/P1/P2/P3/R1/B-sleeve are PAUSED from forward shadow until their
 # research completeness gates pass (v5.4.1 plan section 六).
 #
-# Pre-registration: C0/C1/C2 parameters are already sealed by
-# config/formal_seals/alpha_rebuild_202608_seal.json (their challenger
-# configs are the sources).  C3 (residualized F1) and RND are defined
-# here as deterministic transforms; C3 enters the v5.6 pre-registration
-# cycle before any selection use.
+# Pre-registration: C0/C1/C2/C3 challenger configs are sealed by
+# config/formal_seals/alpha_rebuild_202608_seal.json (C1=f1_no_value,
+# C2=h011_f1_r2, C3=h010_residualized_f1 — v5.6 pre-registered
+# 2026-08-04).  RND is a diagnostic transform only, never a candidate.
 # ======================================================================
 
 schema_version: "strategy_runtime_v1"
@@ -54,9 +53,9 @@ candidates:
     execution_policy: "ashare_t1_directional"
 
   C2:
-    challenger_id: "f1_no_value_r2"
+    challenger_id: "h011_f1_r2"
     role: "FORWARD_CANDIDATE"
-    strategy_def: "config/risk_overlays/r2_crowding_control.yaml"
+    strategy_def: "config/alpha_challengers/h011_f1_r2.yaml"
     factor_pipeline: "f1"
     factor_weights: {size: 0.35, liquidity: 0.35, momentum: 0.30}
     factor_signs: {size: 1, liquidity: 1, momentum: -1}
@@ -68,9 +67,9 @@ candidates:
     execution_policy: "ashare_t1_directional"
 
   C3:
-    challenger_id: "f1_residualized"
-    role: "FORWARD_CANDIDATE_V56_PREREGISTRATION_PENDING"
-    strategy_def: "scripts/research/build_residualized_alpha_scores.py"
+    challenger_id: "h010_residualized_f1"
+    role: "FORWARD_CANDIDATE"
+    strategy_def: "config/alpha_challengers/h010_residualized_f1.yaml"
     factor_pipeline: "f1"
     factor_weights: {size: 0.35, liquidity: 0.35, momentum: 0.30}
     factor_signs: {size: 1, liquidity: 1, momentum: -1}

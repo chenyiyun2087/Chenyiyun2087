@@ -1,0 +1,69 @@
+# Pre-Registered Alpha Challenger: H011 — F1 + R2 Crowding Overlay (v5.6, 2026-08-04)
+# ======================================================================
+# Hypothesis H011 (crowding_weight_overlay): style crowding is a LEADING
+# drawdown indicator (2024 small-cap liquidity shock).  The R2 overlay
+# (config/risk_overlays/r2_crowding_control.yaml — pre-registered H008
+# thresholds, reused) scales F1 Top10 POSITION WEIGHTS by crowding state:
+#   elevated  (top5_turnover_concentration >= 0.25 or small_vs_large_20d_rs >= 1.15)
+#             -> position multiplier 0.70
+#   extreme   (top5_turnover_concentration >= 0.30 and small_vs_large_20d_rs >= 1.25)
+#             -> position multiplier 0.50, no new entries
+# The overlay NEVER changes stock ranking — selection stays F1 Top10.
+#
+# H011 = F1 Top10 + R2 weight scaler.  PRE-REGISTERED before any run on
+# any window.  2025-2026 CONSUMED (report-only).  True forward blind
+# starts 2026-08-05.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "h011_f1_r2"
+experiment_id: "exp_alpha_rebuild_202608_h011_f1_r2"
+hypothesis_id: "H011_crowding_weight_overlay"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"  # release 20260803_oos_v4 content_sha256
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}  # CONSUMED — report only
+true_blind_start: "2026-08-05"
+base_strategy: "f1_no_value"
+change_description: "F1 Top10 with R2 crowding weight overlay (0.70 elevated / 0.50 extreme); selection unchanged"
+hypothesis: "reducing exposure during crowding BEFORE the crash beats reacting after"
+expected_direction: "2024 stress MDD improves vs F1; F1 Top10 holdings identical (weights only differ)"
+
+stopping_criteria:
+  - "crowding signals never fire on historical crowding events (detector inert)"
+  - "annualized return degradation > 30% vs F1 on development window"
+  - "random permutation p > 0.10 on untouched window"
+  - "top10 holdings differ from F1 on development (selection must not change)"
+
+# Factor definition (F1 weights/signs)
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+# Risk overlay (weight scaler only — never selection)
+risk_overlay:
+  method: "r2_crowding"
+  overlay_config: "config/risk_overlays/r2_crowding_control.yaml"
+  position_multiplier: {elevated: 0.70, extreme: 0.50}
+  halt_new_entries_on_extreme: true
+
+# Execution (F1 identical)
+execution:
+  top_n: 10
+  max_total_positions: 10
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [scores, runs, report]

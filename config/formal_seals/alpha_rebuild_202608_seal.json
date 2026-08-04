@@ -3,8 +3,8 @@
   "seal_id": "alpha_rebuild_202608",
   "created_at": "2026-08-04",
   "manifest_path": "config/experiments/alpha_rebuild_202608.yaml",
-  "manifest_sha256": "6be8b45e007ae9369b23503c0d393d12710045097bbf467b1f908a65c3935db6",
-  "challenger_count": 12,
+  "manifest_sha256": "e8ba23c4271fe03ae2821d1542429e60ad6aec7ee23158d80ddf95ab799b8ea1",
+  "challenger_count": 15,
   "challengers": {
     "b_sleeve_independent": {
       "config_path": "config/alpha_challengers/b_sleeve_independent.yaml",
@@ -48,6 +48,24 @@
       "manifest_expected_sha256": "16a1bd3d35c7dff02e60d41192dca328d20f0900c775ebe21b7fc51f474a9745",
       "matches_manifest": true
     },
+    "h010_residualized_f1": {
+      "config_path": "config/alpha_challengers/h010_residualized_f1.yaml",
+      "config_sha256": "e69f266cc93834d35ebe875161e585a88e61c06268b218173ec86f6ec487ef9f",
+      "manifest_expected_sha256": "e69f266cc93834d35ebe875161e585a88e61c06268b218173ec86f6ec487ef9f",
+      "matches_manifest": true
+    },
+    "h011_f1_r2": {
+      "config_path": "config/alpha_challengers/h011_f1_r2.yaml",
+      "config_sha256": "9f9547fb1397ce68e4e6fa24090b99e46e6698366443229ad3f7dad453299d93",
+      "manifest_expected_sha256": "9f9547fb1397ce68e4e6fa24090b99e46e6698366443229ad3f7dad453299d93",
+      "matches_manifest": true
+    },
+    "h012_f1_risk_sized": {
+      "config_path": "config/alpha_challengers/h012_f1_risk_sized.yaml",
+      "config_sha256": "a4fb5f02f4ea39d0bc5c3f6d3b58b6d6665b33cc161aeb9d915103e8525c7e0e",
+      "manifest_expected_sha256": "a4fb5f02f4ea39d0bc5c3f6d3b58b6d6665b33cc161aeb9d915103e8525c7e0e",
+      "matches_manifest": true
+    },
     "p1_top20_diversified": {
       "config_path": "config/alpha_challengers/p1_top20_diversified.yaml",
       "config_sha256": "cde14597568559623529484e8a03bfc0690098ef6eef4d2aad8d986517b3beba",
@@ -79,5 +97,5 @@
       "matches_manifest": true
     }
   },
-  "seal_sha256": "f6f0420cc87528525b508fb4db4121bc751a606a5787292301690ad4fb43513a"
+  "seal_sha256": "d1f79fe5538d7b8d335edc1360a8ee40406f475937083cf899421e6033f2eacf"
 }
