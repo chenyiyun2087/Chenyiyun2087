@@ -58,6 +58,7 @@ def test_fixed_capital_release_permissions_fail_closed():
     assert frozen["checkout_status"] == "BLOCKED"
     assert frozen["status"] == "BLOCKED"
     assert set(frozen["checkout_mismatches"]) == {
+        "config/oos_registry.yaml",
         "config/pit_snapshot.yaml",
         "config/production_acceptance.yaml",
         "config/production_strategy.yaml",
@@ -86,7 +87,8 @@ def test_oos_registry_is_manual_frozen_and_completed():
     from scripts.research.oos_registry import load_oos_registry
 
     registry = load_oos_registry()
-    assert registry.version == "2026Q3_v1"
+    # v2 re-declared 2026-08-04 (true-blind start 2026-08-05 under v5.5)
+    assert registry.version == "2026Q3_v2"
     assert len(registry.windows) == 10
     assert registry.windows[-1] == ("2026Q2", "2026-04-01", "2026-06-30")
     assert len(registry.config_sha) == 64

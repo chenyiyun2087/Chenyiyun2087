@@ -124,39 +124,40 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements-ci.lock.txt pydantic scipy pyarrow
-      - run: python -c "
-        import numpy as np, random
-        np.random.seed(42)
-        random.seed(42)
-        from scripts.research.build_formal_scores import build_formal_scores, check_economic_equivalence
-        import pandas as pd, tempfile, os
-        tmp = tempfile.mkdtemp()
-        panel = pd.DataFrame({
-            'trade_date': pd.date_range('2023-01-04', periods=30, freq='B'),
-            'symbol': ['000001'] * 30,
-            'volatility': np.random.randn(30) * 0.01,
-            'value': np.random.randn(30) * 0.01,
-            'size': np.random.randn(30) * 0.01,
-            'momentum': np.random.randn(30) * 0.01,
-            'liquidity': np.random.randn(30) * 0.01,
-            'market_beta': np.random.randn(30) * 0.01,
-        })
-        panel_path = os.path.join(tmp, 'panel.parquet')
-        panel.to_parquet(panel_path)
-        out = os.path.join(tmp, 'scores')
-        result = build_formal_scores(factor_panel_path=panel_path, output_dir=out)
-        assert result['status'] == 'PASS', f'Score build failed: {result.get(\"blockers\")}'
-        assert 'factor_coverage' in result
-        # Test no fillna(0.0): panel with some NaN should BLOCK
-        panel2 = panel.copy()
-        panel2.loc[0:4, 'volatility'] = np.nan
-        panel2_path = os.path.join(tmp, 'panel2.parquet')
-        panel2.to_parquet(panel2_path)
-        out2 = os.path.join(tmp, 'scores2')
-        result2 = build_formal_scores(factor_panel_path=panel2_path, output_dir=out2)
-        assert result2['status'] == 'BLOCKED', 'Should block on high NaN coverage'
-        print('Score builder tests PASS')
-      "
+      - run: |
+          python - <<'EOF'
+          import numpy as np, random
+          np.random.seed(42)
+          random.seed(42)
+          from scripts.research.build_formal_scores import build_formal_scores, check_economic_equivalence
+          import pandas as pd, tempfile, os
+          tmp = tempfile.mkdtemp()
+          panel = pd.DataFrame({
+              'trade_date': pd.date_range('2023-01-04', periods=30, freq='B'),
+              'symbol': ['000001'] * 30,
+              'volatility': np.random.randn(30) * 0.01,
+              'value': np.random.randn(30) * 0.01,
+              'size': np.random.randn(30) * 0.01,
+              'momentum': np.random.randn(30) * 0.01,
+              'liquidity': np.random.randn(30) * 0.01,
+              'market_beta': np.random.randn(30) * 0.01,
+          })
+          panel_path = os.path.join(tmp, 'panel.parquet')
+          panel.to_parquet(panel_path)
+          out = os.path.join(tmp, 'scores')
+          result = build_formal_scores(factor_panel_path=panel_path, output_dir=out)
+          assert result['status'] == 'PASS', f'Score build failed: {result.get("blockers")}'
+          assert 'factor_coverage' in result
+          # Test no fillna(0.0): panel with some NaN should BLOCK
+          panel2 = panel.copy()
+          panel2.loc[0:4, 'volatility'] = np.nan
+          panel2_path = os.path.join(tmp, 'panel2.parquet')
+          panel2.to_parquet(panel2_path)
+          out2 = os.path.join(tmp, 'scores2')
+          result2 = build_formal_scores(factor_panel_path=panel2_path, output_dir=out2)
+          assert result2['status'] == 'BLOCKED', 'Should block on high NaN coverage'
+          print('Score builder tests PASS')
+          EOF
 
   artifact-seal-v2:
     runs-on: ubuntu-latest
@@ -176,31 +177,32 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements-ci.lock.txt pydantic
-      - run: python -c "
-        '''v2.1: verify_seal must TAMPERED on missing/corrupt/damaged registry.'''
-        import json, tempfile, stat
-        from pathlib import Path
-        from runtime.artifact_seal import seal_directory, verify_seal
-        tmp = Path(tempfile.mkdtemp())
-        run_dir = tmp / 'seal_corrupt_test'
-        run_dir.mkdir()
-        (run_dir / 'data.txt').write_text('hello')
-        reg_path = tmp / 'seal_registry.json'
-        seal_directory(run_dir, run_id='corrupt_test', git_commit_sha='test',
-                       registry_path_override=reg_path)
-        # Verify with correct registry
-        v = verify_seal(run_dir, registry_path_override=reg_path)
-        assert v['status'] == 'VERIFIED', f'Expected VERIFIED, got {v}'
-        # Corrupt registry → TAMPERED
-        reg_path.write_text('{not valid json')
-        v2 = verify_seal(run_dir, registry_path_override=reg_path)
-        assert v2['status'] == 'TAMPERED', f'Expected TAMPERED on corrupt, got {v2}'
-        # Missing registry → TAMPERED
-        reg_missing = tmp / 'nonexistent.json'
-        v3 = verify_seal(run_dir, registry_path_override=reg_missing)
-        assert v3['status'] == 'TAMPERED', f'Expected TAMPERED on missing, got {v3}'
-        print('Seal registry corruption tests PASS')
-      "
+      - run: |
+          python - <<'EOF'
+          '''v2.1: verify_seal must TAMPERED on missing/corrupt/damaged registry.'''
+          import json, tempfile, stat
+          from pathlib import Path
+          from runtime.artifact_seal import seal_directory, verify_seal
+          tmp = Path(tempfile.mkdtemp())
+          run_dir = tmp / 'seal_corrupt_test'
+          run_dir.mkdir()
+          (run_dir / 'data.txt').write_text('hello')
+          reg_path = tmp / 'seal_registry.json'
+          seal_directory(run_dir, run_id='corrupt_test', git_commit_sha='test',
+                         registry_path_override=reg_path)
+          # Verify with correct registry
+          v = verify_seal(run_dir, registry_path_override=reg_path)
+          assert v['status'] == 'VERIFIED', f'Expected VERIFIED, got {v}'
+          # Corrupt registry → TAMPERED
+          reg_path.write_text('{not valid json')
+          v2 = verify_seal(run_dir, registry_path_override=reg_path)
+          assert v2['status'] == 'TAMPERED', f'Expected TAMPERED on corrupt, got {v2}'
+          # Missing registry → TAMPERED
+          reg_missing = tmp / 'nonexistent.json'
+          v3 = verify_seal(run_dir, registry_path_override=reg_missing)
+          assert v3['status'] == 'TAMPERED', f'Expected TAMPERED on missing, got {v3}'
+          print('Seal registry corruption tests PASS')
+          EOF
 
   mutation-suite:
     runs-on: ubuntu-latest

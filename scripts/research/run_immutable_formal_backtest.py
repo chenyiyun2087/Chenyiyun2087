@@ -581,18 +581,24 @@ def run(
     )
 
     # ── v5.1.6: Seal Formal Run ──
+    # A DRY_RUN is not formal evidence: it must never register a seal in
+    # the real registry (previously dry runs leaked registry entries, which
+    # dirtied the worktree and polluted the seal registry).
     from runtime.artifact_seal import seal_directory as seal_formal_run
     formal_run_id = run_id
     seal_result: dict[str, Any] | None = None
     registry_error: str | None = None
-    try:
-        seal_result = seal_formal_run(
-            run_dir, run_id=formal_run_id, git_commit_sha=git_sha_after
-        )
-        formal_run_sealed = True
-    except Exception as exc:
-        formal_run_sealed = False
-        seal_error = f"{type(exc).__name__}: {exc}"
+    seal_error: str | None = None
+    formal_run_sealed = False
+    if not dry_run:
+        try:
+            seal_result = seal_formal_run(
+                run_dir, run_id=formal_run_id, git_commit_sha=git_sha_after
+            )
+            formal_run_sealed = True
+        except Exception as exc:
+            formal_run_sealed = False
+            seal_error = f"{type(exc).__name__}: {exc}"
 
     if formal_run_sealed:
         from runtime.artifact_seal import verify_seal
@@ -618,42 +624,47 @@ def run(
     # The legacy single `status` field conflated execution integrity with
     # economic alpha.  From v5.3 the candidate registry carries the four
     # decomposed dimensions; `status` is kept only as a derived alias.
+    # DRY_RUNs are not formal runs — they must not overwrite the real
+    # candidate registry (previously every dry run clobbered it).
     try:
-        reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
-        reg_dir.mkdir(parents=True, exist_ok=True)
-        exec_status = (
-            ExecutionStatus.VERIFIED if formally_verified else ExecutionStatus.BLOCKED
-        )
-        candidate = {
-            "schema_version": "formal_run_candidate_v5_1_7",
-            "status": "FORMAL_RUN_VERIFIED" if formally_verified else "FORMAL_RUN_BLOCKED",
-            "formal_run_id": formal_run_id,
-            "formal_pit_run_id": pit_run_id,
-            "package_id": package_id,
-            # Keep the historical key as an alias, but make the two distinct
-            # identities explicit: self/content hash versus file-byte hash.
-            "manifest_sha256": manifest.get("manifest_sha256", ""),
-            "manifest_content_sha256": manifest.get("manifest_sha256", ""),
-            "manifest_file_sha256": manifest_file_sha256,
-            "seal_manifest_file_sha256": (
-                hashlib.sha256((run_dir / "seal_manifest.json").read_bytes()).hexdigest()
-                if formal_run_sealed and (run_dir / "seal_manifest.json").exists()
-                else ""
-            ),
-            "seal_verified": formal_run_sealed,
-            # v5.3: decomposed status semantics — see runtime/formal_status_semantics.py.
-            # economic_status is UNPROVEN here: this runner proves EXECUTION
-            # integrity, not economic alpha (OOS evidence lives elsewhere).
-            "execution_status": exec_status.value,
-            "data_status": DataStatus.E0_DIAGNOSTIC.value,
-            "economic_status": EconomicStatus.UNPROVEN.value,
-            "capital_status": CapitalStatus.BLOCKED.value,
-            "capital_authority": False,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        tmp = reg_dir / "formal_run_candidate_registry.json.tmp"
-        tmp.write_text(json.dumps(candidate, ensure_ascii=False, indent=2, sort_keys=True))
-        tmp.replace(reg_dir / "formal_run_candidate_registry.json")
+        if dry_run:
+            registry_error = "dry_run_skips_candidate_registry"
+        if not dry_run:
+            reg_dir = PROJECT_ROOT / "exports" / "formal_evidence_registry"
+            reg_dir.mkdir(parents=True, exist_ok=True)
+            exec_status = (
+                ExecutionStatus.VERIFIED if formally_verified else ExecutionStatus.BLOCKED
+            )
+            candidate = {
+                "schema_version": "formal_run_candidate_v5_1_7",
+                "status": "FORMAL_RUN_VERIFIED" if formally_verified else "FORMAL_RUN_BLOCKED",
+                "formal_run_id": formal_run_id,
+                "formal_pit_run_id": pit_run_id,
+                "package_id": package_id,
+                # Keep the historical key as an alias, but make the two distinct
+                # identities explicit: self/content hash versus file-byte hash.
+                "manifest_sha256": manifest.get("manifest_sha256", ""),
+                "manifest_content_sha256": manifest.get("manifest_sha256", ""),
+                "manifest_file_sha256": manifest_file_sha256,
+                "seal_manifest_file_sha256": (
+                    hashlib.sha256((run_dir / "seal_manifest.json").read_bytes()).hexdigest()
+                    if formal_run_sealed and (run_dir / "seal_manifest.json").exists()
+                    else ""
+                ),
+                "seal_verified": formal_run_sealed,
+                # v5.3: decomposed status semantics — see runtime/formal_status_semantics.py.
+                # economic_status is UNPROVEN here: this runner proves EXECUTION
+                # integrity, not economic alpha (OOS evidence lives elsewhere).
+                "execution_status": exec_status.value,
+                "data_status": DataStatus.E0_DIAGNOSTIC.value,
+                "economic_status": EconomicStatus.UNPROVEN.value,
+                "capital_status": CapitalStatus.BLOCKED.value,
+                "capital_authority": False,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            tmp = reg_dir / "formal_run_candidate_registry.json.tmp"
+            tmp.write_text(json.dumps(candidate, ensure_ascii=False, indent=2, sort_keys=True))
+            tmp.replace(reg_dir / "formal_run_candidate_registry.json")
 
         # v5.3: upsert the same decomposed status into the unified registry.
         if formally_verified:

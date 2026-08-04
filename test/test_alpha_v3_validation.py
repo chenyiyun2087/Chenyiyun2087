@@ -81,7 +81,9 @@ STRATEGY = "production_governed_vol_position_v1_2b_dynamic_score"
 def test_alpha_v3_profile_is_fail_closed_and_preserves_t_plus_1():
     profile = load_validation_profile()
 
-    assert profile["core_period"]["min_start_date"] == "2018-01-01"
+    # PIT universe/financial coverage starts at coverage_ready_date
+    # (2020-04-30); 2018-2019 exists only for market/index tables.
+    assert profile["core_period"]["min_start_date"] == "2020-04-30"
     assert profile["core_period"]["legacy_extension_required"] is False
     assert profile["performance"]["min_annualized_return"] == 0.25
     assert profile["performance"]["min_annualized_excess_return"] == 0.15

@@ -63,9 +63,12 @@ jobs:
               sys.exit(0)
           manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
           shas = manifest.get("pre_registration_shas", {})
+          # Factor fields are required only for factor-composite challengers.
+          # Independent sleeves (e.g. b_sleeve_independent, EVENT_DRIVEN)
+          # have no factor_weights/factor_signs by design.
           required_fields = ["challenger_id", "experiment_id", "hypothesis_id",
-                             "factor_weights", "factor_signs", "execution",
-                             "selection_window", "untouched_evaluation_window"]
+                             "execution", "selection_window", "untouched_evaluation_window"]
+          factor_fields = ["factor_weights", "factor_signs"]
           for cid, expected in sorted(shas.items()):
               path = pathlib.Path(f"config/alpha_challengers/{cid}.yaml")
               if not path.exists():
@@ -80,6 +83,8 @@ jobs:
                   errors.append(f"{cid}: yaml parse failed: {exc}")
                   continue
               missing = [f for f in required_fields if f not in data]
+              if data.get("sleeve_type") != "EVENT_DRIVEN":
+                  missing += [f for f in factor_fields if f not in data]
               if missing:
                   errors.append(f"{cid}: missing {missing}")
               if data.get("challenger_id") != cid:

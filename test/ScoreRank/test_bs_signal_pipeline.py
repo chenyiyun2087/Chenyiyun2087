@@ -116,6 +116,9 @@ class TestBSSignalPipeline(unittest.TestCase):
         self.assertEqual(out.loc[0, "bs_model_version"], "unit")
 
     def test_apply_bs_model_scores_adds_risk_head_outputs(self):
+        # v5.3 P0 freeze (2026-08-04): the ridge risk model's out-of-sample
+        # R2 is negative — risk_model_in_chain=false.  The risk head columns
+        # exist but stay None; ranking is probability + bs_score_v2 only.
         df = pd.DataFrame(
             [
                 {"symbol": "000001", "is_bs_candidate": 1, "bs_score_v2": 80, "bs_gate_label": "可买"},
@@ -130,7 +133,8 @@ class TestBSSignalPipeline(unittest.TestCase):
 
         self.assertIn("bs_model_expected_mdd", out.columns)
         self.assertIn("bs_model_risk_score", out.columns)
-        self.assertGreater(float(out.loc[0, "bs_model_risk_score"]), float(out.loc[1, "bs_model_risk_score"]))
+        self.assertTrue(out["bs_model_risk_score"].isna().all(), "risk head frozen off in v5.3")
+        self.assertGreater(float(out.loc[0, "bs_model_rank_score"]), float(out.loc[1, "bs_model_rank_score"]))
 
     def test_apply_bs_model_scores_records_missing_features(self):
         df = pd.DataFrame([{"symbol": "000001", "is_bs_candidate": 1, "bs_score_v2": 80}])
