@@ -64,9 +64,13 @@ def ic_series_by_day(
 def newey_west_t(ic_series: pd.Series, horizon: int = 1) -> float:
     """Newey-West HAC t-stat on an IC series.
 
-    Lag truncation = floor(4 * (T/100)^(2/9)) per Newey & West (1994).
-    horizon >= 1 causes overlapping-window inflation only if the IC series
-    itself is built from overlapping returns; the caller decides.
+    Lag truncation = floor(4 * (T/100)^(2/9)) per Newey & West (1994),
+    FLOORED at horizon - 1: h-day overlapping forward returns introduce
+    autocorrelation up to lag h-1 by construction, and the automatic
+    truncation is regularly shorter than that on short samples — a 20d
+    decay IC series with T=60 gets auto-lag 3, which massively understates
+    the variance inflation.  lag = max(horizon - 1, auto_lag) keeps the
+    HAC honest for every horizon.
     """
     x = ic_series.dropna().to_numpy(dtype=float)
     n = len(x)
@@ -74,7 +78,8 @@ def newey_west_t(ic_series: pd.Series, horizon: int = 1) -> float:
         return float("nan")
     if x.std() <= 0:
         return float("nan")
-    lag = max(0, int(math.floor(4.0 * (n / 100.0) ** (2.0 / 9.0))))
+    auto_lag = max(0, int(math.floor(4.0 * (n / 100.0) ** (2.0 / 9.0))))
+    lag = max(horizon - 1, auto_lag)
     lag = min(lag, n - 2)
     xc = x - x.mean()
     gamma0 = float(np.mean(xc * xc))
@@ -121,9 +126,10 @@ def ic_report(score_df: pd.DataFrame, fwd_ret_col: str = "fwd_return",
     """Full Level-A report for one candidate.
 
     horizons: forward-return columns are expected to be named
-    f"fwd_return_{h}" — if only the plain fwd_return column exists, it is
-    used for all horizons (caller must build the decay columns for a real
-    decay profile).
+    f"fwd_return_{h}".  A missing decay column is reported as
+    {"status": "NOT_AVAILABLE"} — the plain fwd_return column is NEVER
+    used to fake a decay point (a 20d decay entry computed from 1d
+    returns is a different statistic and is banned).
     """
     report = {"n_days": 0, "daily_rank_ic": None, "icir": None,
               "direction_consistency": None, "monthly_ic_win_rate": None,
@@ -143,13 +149,18 @@ def ic_report(score_df: pd.DataFrame, fwd_ret_col: str = "fwd_return",
     report["monthly_ic_win_rate"] = round(monthly_ic_win_rate(ics), 4)
     report["newey_west_hac_t"] = round(newey_west_t(ics), 4)
     for h in horizons:
-        col = f"{fwd_ret_col}_{h}" if f"{fwd_ret_col}_{h}" in score_df.columns \
-            else fwd_ret_col
+        col = f"{fwd_ret_col}_{h}"
+        if col not in score_df.columns:
+            # v5.4.1/PR #189: missing decay columns are NOT_AVAILABLE —
+            # never fall back to the plain fwd_return column.
+            report["decay"][f"{h}d"] = {"status": "NOT_AVAILABLE"}
+            continue
         sub = ic_series_by_day(score_df, fwd_ret_col=col,
                                date_col=date_col, score_col=score_col)
         report["decay"][f"{h}d"] = {
+            "status": "OK",
             "mean_ic": round(float(sub.mean()), 6) if len(sub) else None,
-            "hac_t": round(newey_west_t(sub), 4) if len(sub) else None,
+            "hac_t": round(newey_west_t(sub, horizon=h), 4) if len(sub) else None,
         }
     return report
 
@@ -167,13 +178,25 @@ def permutation_p(actual_return: float, null_returns,
 
     BANS the normal-approximation shortcut: this function takes an
     explicit null sample; it never synthesizes one.
+
+    n_permutations, when given, MUST equal len(null_returns) — the
+    p-value's denominator is only meaningful over the actual null sample.
+    A mismatch is fail-closed (PERMUTATION_COUNT_MISMATCH, no p-value),
+    never silently adjusted with max().
     """
     null = np.asarray(list(null_returns), dtype=float)
     if null.size == 0:
         return {"p_value": None, "n_permutations": 0,
                 "status": "NO_NULL_SAMPLE"}
+    if n_permutations is not None and n_permutations != null.size:
+        return {
+            "p_value": None,
+            "n_permutations": int(null.size),
+            "declared_permutations": int(n_permutations),
+            "status": "PERMUTATION_COUNT_MISMATCH",
+        }
     count_ge = int(np.sum(null >= actual_return))
-    n = null.size if n_permutations is None else max(null.size, n_permutations)
+    n = null.size
     p = (1.0 + count_ge) / (1.0 + n)
     return {
         "p_value": round(float(p), 6),
