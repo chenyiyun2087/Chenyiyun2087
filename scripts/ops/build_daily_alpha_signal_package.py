@@ -137,8 +137,19 @@ def residualize_scores(day: pd.DataFrame, candidate: dict) -> pd.Series:
     """Per-day OLS residual of score on style factors + industry FE.
 
     Same algorithm as scripts/research/build_residualized_alpha_scores.py.
-    NaN rows are dropped from the fit and keep NaN residual (never
-    zero-filled).  Missing style/industry inputs raise (fail-closed).
+    Rows with missing OR non-finite inputs (incl. inf — the 2026-08-04
+    STAR/BSE-listing cohort has no liquidity_raw/beta_raw history and must
+    not pollute the fit) are dropped from the fit and keep NaN residual
+    (never zero-filled).  Style columns are z-scored before the fit: the
+    projection span is unchanged by a linear transform, so residuals are
+    identical (to float rounding) whenever the design is full column rank
+    in both scalings.  On near-degenerate designs the OLD raw-scale fit
+    truncated a singular value below rcond*max (observed 2026-08-04:
+    rank 112/113, ratio 7.6e-14) and returned a non-OLS minimum-norm
+    solution; the z-scored full-rank fit is the contract's unique OLS.
+    The z-score also removes the ill-conditioned lstsq / matmul overflow
+    of extreme scale ratios (circ_mv 1e4..1e8).  Missing style/industry
+    inputs raise (fail-closed).
     """
     styles = candidate.get("residualization", {}).get("style_factors", [])
     with_industry = candidate.get("residualization", {}).get(
@@ -148,6 +159,9 @@ def residualize_scores(day: pd.DataFrame, candidate: dict) -> pd.Series:
     src_map = {"size": "size_raw", "liquidity": "liquidity_raw",
                "market_beta": "beta_raw"}
     need = [src_map[s] for s in styles if s in src_map]
+    # copy, not alias: need gets "industry" appended below and must not
+    # leak into the style design matrix / isfinite mask
+    style_cols = list(need)
     if with_industry:
         need.append("industry")
     missing = [c for c in need if c not in day.columns]
@@ -157,12 +171,23 @@ def residualize_scores(day: pd.DataFrame, candidate: dict) -> pd.Series:
             f"{missing} — SIGNAL_PACKAGE_BLOCKED")
 
     out = pd.Series(np.nan, index=day.index, dtype=float)
-    mask = day[["score"] + need].notna().all(axis=1)
+    # isfinite (not just notna): a single inf input would otherwise poison
+    # lstsq and NaN every residual on the day.
+    num = day[["score"] + style_cols].apply(
+        lambda s: np.isfinite(pd.to_numeric(s, errors="coerce")))
+    mask = num.all(axis=1)
+    if with_industry:
+        mask &= day["industry"].notna()
     sub = day[mask]
     if len(sub) < min_cs:
         return out
-    x_style = sub[need[:3]].to_numpy(dtype=float) \
-        if len(styles) else np.zeros((len(sub), 0))
+    if style_cols:
+        x_style = sub[style_cols].to_numpy(dtype=float)
+        mu, sd = x_style.mean(axis=0), x_style.std(axis=0)
+        sd[sd == 0] = 1.0  # constant column — leave as-is (span unchanged)
+        x_style = (x_style - mu) / sd
+    else:
+        x_style = np.zeros((len(sub), 0))
     if with_industry:
         counts = sub["industry"].value_counts()
         dropped = counts.idxmax()
@@ -178,7 +203,12 @@ def residualize_scores(day: pd.DataFrame, candidate: dict) -> pd.Series:
         design = np.column_stack([np.ones(len(sub)), x_style])
     y = sub["score"].to_numpy(dtype=float)
     beta, *_ = np.linalg.lstsq(design, y, rcond=None)
-    resid = y - design @ beta
+    # np.dot, not `design @ beta`: on this build (numpy 2.2.6 + Accelerate)
+    # matmul's kernel emits spurious divide-by-zero/overflow warnings on
+    # benign float64 data (reproduced with pure standard-normal inputs);
+    # np.dot is numerically identical and warning-clean — genuine overflow
+    # in the data still warns.
+    resid = y - np.dot(design, beta)
     out.loc[mask] = resid
     return out
 
