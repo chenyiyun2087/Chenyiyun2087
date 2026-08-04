@@ -103,12 +103,13 @@ def test_holdout_columns_are_report_only():
     assert "holdout_annualized" in r.columns
 
 
-def test_candidate_census_is_exactly_12():
+def test_candidate_census_is_exactly_15():
     census = _rank.candidate_census()
     fam = census["candidate_family"]
-    assert fam["historical_strategy_candidates_count"] == 11
+    # 11 v5.4 challengers + 3 v5.6 pre-registrations (H010/H011/H012)
+    assert fam["historical_strategy_candidates_count"] == 14
     assert fam["independent_b_sleeve_count"] == 1
-    assert fam["total_registered_objects"] == 12
+    assert fam["total_registered_objects"] == 15
 
 
 def test_missing_run_output_excluded_not_passed():
@@ -146,4 +147,4 @@ def test_b_sleeve_never_ranked():
     assert _rank.B_SLEEVE_ID in registered
     historical = [c for c in registered if c != _rank.B_SLEEVE_ID]
     assert _rank.B_SLEEVE_ID not in historical
-    assert len(historical) == 11
+    assert len(historical) == 14  # 11 v5.4 + 3 v5.6 (H010/H011/H012)

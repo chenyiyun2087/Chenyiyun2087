@@ -130,8 +130,9 @@ jobs:
           np.random.seed(42)
           random.seed(42)
           from scripts.research.build_formal_scores import build_formal_scores, check_economic_equivalence
-          import pandas as pd, tempfile, os
-          tmp = tempfile.mkdtemp()
+          import pandas as pd, tempfile
+          from pathlib import Path
+          tmp = Path(tempfile.mkdtemp())
           panel = pd.DataFrame({
               'trade_date': pd.date_range('2023-01-04', periods=30, freq='B'),
               'symbol': ['000001'] * 30,
@@ -142,18 +143,18 @@ jobs:
               'liquidity': np.random.randn(30) * 0.01,
               'market_beta': np.random.randn(30) * 0.01,
           })
-          panel_path = os.path.join(tmp, 'panel.parquet')
+          panel_path = tmp / 'panel.parquet'
           panel.to_parquet(panel_path)
-          out = os.path.join(tmp, 'scores')
+          out = tmp / 'scores'
           result = build_formal_scores(factor_panel_path=panel_path, output_dir=out)
           assert result['status'] == 'PASS', f'Score build failed: {result.get("blockers")}'
           assert 'factor_coverage' in result
           # Test no fillna(0.0): panel with some NaN should BLOCK
           panel2 = panel.copy()
           panel2.loc[0:4, 'volatility'] = np.nan
-          panel2_path = os.path.join(tmp, 'panel2.parquet')
+          panel2_path = tmp / 'panel2.parquet'
           panel2.to_parquet(panel2_path)
-          out2 = os.path.join(tmp, 'scores2')
+          out2 = tmp / 'scores2'
           result2 = build_formal_scores(factor_panel_path=panel2_path, output_dir=out2)
           assert result2['status'] == 'BLOCKED', 'Should block on high NaN coverage'
           print('Score builder tests PASS')
@@ -246,7 +247,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          if grep -r "pending_pr_5" scripts/ runtime/ --include="*.py" | grep -v "^[^:]*#"; then
+          # filter comment lines by content after the filename: prefix
+          if grep -r "pending_pr_5" scripts/ runtime/ --include="*.py" | grep -v ":[[:space:]]*#"; then
             echo "ERROR: pending_pr_5 placeholder found in production code"
             exit 1
           fi
