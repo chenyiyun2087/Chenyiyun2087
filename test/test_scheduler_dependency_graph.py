@@ -93,7 +93,15 @@ def test_shadow_tasks_disabled_until_shadow_v2():
                 "alpha_challenger_shadow_reconcile"):
         assert tasks[tid]["status"] == "disabled", f"{tid} must be disabled"
         assert "disabled_reason" in tasks[tid], f"{tid} must carry a reason"
-        assert "v5.4.1" in tasks[tid]["disabled_reason"] or "v5.5" in tasks[tid]["disabled_reason"]
+        reason = tasks[tid]["disabled_reason"]
+        # v5.5.1 (2026-08-05): a task may be PERMANENTLY DISABLED (superseded
+        # by alpha_signal_execution_reconcile, never re-enabled — the legacy
+        # reconcile would double-run the T+1 fill path) instead of paused
+        # awaiting v5.5.  Both semantics are legal; a bare reason is not.
+        assert ("PERMANENTLY DISABLED" in reason
+                or "v5.4.1" in reason or "v5.5" in reason), (
+            f"{tid} disabled_reason must reference the v5.4.1/v5.5 repair "
+            "or be PERMANENTLY DISABLED")
 
 
 def test_corrected_dag_times_are_post_close():
