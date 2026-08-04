@@ -1,0 +1,212 @@
+{
+  "target": "hit_20_10pct",
+  "split_col": "split_hit_20_10pct",
+  "reliability": {
+    "train": [
+      {
+        "bin": "(-0.001, 0.1]",
+        "rows": 505,
+        "avg_pred": 0.063525,
+        "hit_rate": 0.009901
+      },
+      {
+        "bin": "(0.1, 0.2]",
+        "rows": 530,
+        "avg_pred": 0.145946,
+        "hit_rate": 0.086792
+      },
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 393,
+        "avg_pred": 0.247192,
+        "hit_rate": 0.203562
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 285,
+        "avg_pred": 0.348569,
+        "hit_rate": 0.452632
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "rows": 188,
+        "avg_pred": 0.448487,
+        "hit_rate": 0.62234
+      },
+      {
+        "bin": "(0.5, 0.6]",
+        "rows": 157,
+        "avg_pred": 0.543356,
+        "hit_rate": 0.808917
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "rows": 144,
+        "avg_pred": 0.643613,
+        "hit_rate": 0.986111
+      },
+      {
+        "bin": "(0.7, 0.8]",
+        "rows": 61,
+        "avg_pred": 0.743018,
+        "hit_rate": 1.0
+      },
+      {
+        "bin": "(0.8, 0.9]",
+        "rows": 5,
+        "avg_pred": 0.80335,
+        "hit_rate": 1.0
+      }
+    ],
+    "validation": [
+      {
+        "bin": "(-0.001, 0.1]",
+        "rows": 25,
+        "avg_pred": 0.061705,
+        "hit_rate": 0.04
+      },
+      {
+        "bin": "(0.1, 0.2]",
+        "rows": 31,
+        "avg_pred": 0.149267,
+        "hit_rate": 0.16129
+      },
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 21,
+        "avg_pred": 0.265766,
+        "hit_rate": 0.428571
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 18,
+        "avg_pred": 0.34526,
+        "hit_rate": 0.111111
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "rows": 12,
+        "avg_pred": 0.436395,
+        "hit_rate": 0.5
+      },
+      {
+        "bin": "(0.5, 0.6]",
+        "rows": 3,
+        "avg_pred": 0.534251,
+        "hit_rate": 0.333333
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "rows": 2,
+        "avg_pred": 0.621767,
+        "hit_rate": 1.0
+      }
+    ],
+    "test": [
+      {
+        "bin": "(-0.001, 0.1]",
+        "rows": 297,
+        "avg_pred": 0.072338,
+        "hit_rate": 0.212121
+      },
+      {
+        "bin": "(0.1, 0.2]",
+        "rows": 461,
+        "avg_pred": 0.144743,
+        "hit_rate": 0.245119
+      },
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 317,
+        "avg_pred": 0.251181,
+        "hit_rate": 0.305994
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 382,
+        "avg_pred": 0.354494,
+        "hit_rate": 0.400524
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "rows": 333,
+        "avg_pred": 0.441017,
+        "hit_rate": 0.489489
+      },
+      {
+        "bin": "(0.5, 0.6]",
+        "rows": 105,
+        "avg_pred": 0.549523,
+        "hit_rate": 0.8
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "rows": 42,
+        "avg_pred": 0.640811,
+        "hit_rate": 0.714286
+      },
+      {
+        "bin": "(0.7, 0.8]",
+        "rows": 1,
+        "avg_pred": 0.738745,
+        "hit_rate": 0.0
+      }
+    ]
+  },
+  "daily_topn": {
+    "train": {
+      "days": 101,
+      "daily_precision_at_20_mean": 0.39427,
+      "daily_precision_at_20_p25": 0.181818
+    },
+    "validation": {
+      "days": 10,
+      "daily_precision_at_20_mean": 0.247226,
+      "daily_precision_at_20_p25": 0.166667
+    },
+    "test": {
+      "days": 17,
+      "daily_precision_at_20_mean": 0.419608,
+      "daily_precision_at_20_p25": 0.3
+    }
+  },
+  "latest_candidates": {
+    "rows": 1499,
+    "p_signal_mean": 0.203965,
+    "expected_mdd_mean": -0.171874,
+    "risk_score_mean": 44.079883,
+    "model_rank_score_mean": 29.887032
+  },
+  "risk_regression": [
+    {
+      "model": "ridge_risk",
+      "split": "train",
+      "target": "mdd_20",
+      "rows": 2268,
+      "mae": 0.038457,
+      "r2": 0.458478,
+      "actual_mean": -0.08186,
+      "pred_mean": -0.08186
+    },
+    {
+      "model": "ridge_risk",
+      "split": "validation",
+      "target": "mdd_20",
+      "rows": 112,
+      "mae": 0.10512,
+      "r2": -0.519347,
+      "actual_mean": -0.184831,
+      "pred_mean": -0.101627
+    },
+    {
+      "model": "ridge_risk",
+      "split": "test",
+      "target": "mdd_20",
+      "rows": 1938,
+      "mae": 0.153395,
+      "r2": -1.252981,
+      "actual_mean": -0.153032,
+      "pred_mean": -0.021653
+    }
+  ]
+}

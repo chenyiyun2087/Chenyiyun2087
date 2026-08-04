@@ -1,0 +1,194 @@
+{
+  "target": "hit_20_10pct",
+  "split_col": "split_hit_20_10pct",
+  "reliability": {
+    "train": [
+      {
+        "bin": "(-0.001, 0.1]",
+        "rows": 97,
+        "avg_pred": 0.083194,
+        "hit_rate": 0.0
+      },
+      {
+        "bin": "(0.1, 0.2]",
+        "rows": 805,
+        "avg_pred": 0.153208,
+        "hit_rate": 0.0
+      },
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 549,
+        "avg_pred": 0.244365,
+        "hit_rate": 0.007286
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 194,
+        "avg_pred": 0.343271,
+        "hit_rate": 0.463918
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "rows": 235,
+        "avg_pred": 0.451925,
+        "hit_rate": 0.978723
+      },
+      {
+        "bin": "(0.5, 0.6]",
+        "rows": 276,
+        "avg_pred": 0.545446,
+        "hit_rate": 1.0
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "rows": 106,
+        "avg_pred": 0.63438,
+        "hit_rate": 1.0
+      },
+      {
+        "bin": "(0.7, 0.8]",
+        "rows": 6,
+        "avg_pred": 0.720117,
+        "hit_rate": 1.0
+      }
+    ],
+    "validation": [
+      {
+        "bin": "(-0.001, 0.1]",
+        "rows": 5,
+        "avg_pred": 0.086205,
+        "hit_rate": 0.0
+      },
+      {
+        "bin": "(0.1, 0.2]",
+        "rows": 44,
+        "avg_pred": 0.154662,
+        "hit_rate": 0.136364
+      },
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 38,
+        "avg_pred": 0.247909,
+        "hit_rate": 0.315789
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 18,
+        "avg_pred": 0.344473,
+        "hit_rate": 0.333333
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "rows": 6,
+        "avg_pred": 0.427171,
+        "hit_rate": 0.166667
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "rows": 1,
+        "avg_pred": 0.628458,
+        "hit_rate": 1.0
+      }
+    ],
+    "test": [
+      {
+        "bin": "(-0.001, 0.1]",
+        "rows": 6,
+        "avg_pred": 0.093309,
+        "hit_rate": 0.333333
+      },
+      {
+        "bin": "(0.1, 0.2]",
+        "rows": 345,
+        "avg_pred": 0.164156,
+        "hit_rate": 0.194203
+      },
+      {
+        "bin": "(0.2, 0.3]",
+        "rows": 572,
+        "avg_pred": 0.25109,
+        "hit_rate": 0.265734
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "rows": 609,
+        "avg_pred": 0.350926,
+        "hit_rate": 0.45977
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "rows": 314,
+        "avg_pred": 0.441134,
+        "hit_rate": 0.506369
+      },
+      {
+        "bin": "(0.5, 0.6]",
+        "rows": 83,
+        "avg_pred": 0.533871,
+        "hit_rate": 0.481928
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "rows": 9,
+        "avg_pred": 0.632716,
+        "hit_rate": 0.333333
+      }
+    ]
+  },
+  "daily_topn": {
+    "train": {
+      "days": 101,
+      "daily_precision_at_20_mean": 0.413081,
+      "daily_precision_at_20_p25": 0.181818
+    },
+    "validation": {
+      "days": 10,
+      "daily_precision_at_20_mean": 0.242226,
+      "daily_precision_at_20_p25": 0.154167
+    },
+    "test": {
+      "days": 17,
+      "daily_precision_at_20_mean": 0.396078,
+      "daily_precision_at_20_p25": 0.25
+    }
+  },
+  "latest_candidates": {
+    "rows": 1499,
+    "p_signal_mean": 0.305676,
+    "expected_mdd_mean": -0.171874,
+    "risk_score_mean": 44.079883,
+    "model_rank_score_mean": 35.989732
+  },
+  "risk_regression": [
+    {
+      "model": "ridge_risk",
+      "split": "train",
+      "target": "mdd_20",
+      "rows": 2268,
+      "mae": 0.038457,
+      "r2": 0.458478,
+      "actual_mean": -0.08186,
+      "pred_mean": -0.08186
+    },
+    {
+      "model": "ridge_risk",
+      "split": "validation",
+      "target": "mdd_20",
+      "rows": 112,
+      "mae": 0.10512,
+      "r2": -0.519347,
+      "actual_mean": -0.184831,
+      "pred_mean": -0.101627
+    },
+    {
+      "model": "ridge_risk",
+      "split": "test",
+      "target": "mdd_20",
+      "rows": 1938,
+      "mae": 0.153395,
+      "r2": -1.252981,
+      "actual_mean": -0.153032,
+      "pred_mean": -0.021653
+    }
+  ]
+}
