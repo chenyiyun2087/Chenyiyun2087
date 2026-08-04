@@ -1,0 +1,37 @@
+{
+  "candidate_count": 11,
+  "alpha": 0.05,
+  "p_values_approx": [
+    0.001,
+    0.0238,
+    0.001,
+    0.001,
+    0.001,
+    0.001,
+    0.001,
+    0.001,
+    0.001,
+    0.001,
+    0.001
+  ],
+  "bh_rejected_count": 11,
+  "holm_rejected_count": 11,
+  "bonferroni_rejected_count": 10,
+  "deflated_sharpe_probs": [
+    0.3234,
+    0.2516,
+    0.3218,
+    0.299,
+    0.3246,
+    0.2875,
+    0.2861,
+    0.4218,
+    0.4218,
+    0.346,
+    0.346
+  ],
+  "caveats": [
+    "p-values approximate (normal-on-Sharpe); formal significance requires the 100-500 permutation null tests from the authenticity tier.",
+    "2025-2026 holdout is CONSUMED — shown for transparency, never a selection criterion."
+  ]
+}

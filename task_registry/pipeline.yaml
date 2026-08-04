@@ -127,6 +127,38 @@ intraday:
       trading_day_only: true
       status: enabled
 
+    # v5.3 (2026-08-04): true-forward-blind shadow accumulation for the
+    # alpha challengers (config/oos_registry.yaml true_forward_blind).
+    # Daily VLS factor scores must be computed before the shadow record
+    # reads them (reads latest available DB date, forward-fill tolerant).
+    - id: daily_vls_scores
+      time: "15:25"
+      script: scripts/ops/compute_daily_vls_scores.py
+      type: script
+      trading_day_only: true
+      status: enabled
+      depends_on: [sina_analyse]
+
+    - id: alpha_challenger_shadow_record
+      time: "15:30"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "record"]
+      type: script
+      trading_day_only: true
+      status: enabled
+      depends_on: [daily_vls_scores]
+
+morning:
+  description: "晨间任务"
+  tasks:
+    - id: alpha_challenger_shadow_reconcile
+      time: "09:35"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "reconcile"]
+      type: script
+      trading_day_only: true
+      status: enabled
+
 weekly:
   description: "每周任务"
   tasks:

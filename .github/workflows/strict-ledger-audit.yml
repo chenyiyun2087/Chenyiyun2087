@@ -30,6 +30,53 @@ jobs:
           test/test_pr21_fold_account_backtest.py
           test/test_trusted_production_closure.py
       - run: '! rg "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
+  freeze-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
+      - name: Verify alpha-challenger pre-registration integrity
+        run: |
+          python - <<'EOF'
+          import hashlib, pathlib, sys
+          import yaml
+
+          errors = []
+          manifest_path = pathlib.Path("config/experiments/alpha_rebuild_202608.yaml")
+          if not manifest_path.exists():
+              print("no alpha_rebuild manifest — skipping (pre-registration not started)")
+              sys.exit(0)
+          manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+          shas = manifest.get("pre_registration_shas", {})
+          required_fields = ["challenger_id", "experiment_id", "hypothesis_id",
+                             "factor_weights", "factor_signs", "execution",
+                             "selection_window", "untouched_evaluation_window"]
+          for cid, expected in sorted(shas.items()):
+              path = pathlib.Path(f"config/alpha_challengers/{cid}.yaml")
+              if not path.exists():
+                  errors.append(f"{cid}: file missing")
+                  continue
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              if actual != expected:
+                  errors.append(f"{cid}: DRIFTED (expected {expected[:12]}…, got {actual[:12]}…)")
+              try:
+                  data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+              except Exception as exc:
+                  errors.append(f"{cid}: yaml parse failed: {exc}")
+                  continue
+              missing = [f for f in required_fields if f not in data]
+              if missing:
+                  errors.append(f"{cid}: missing {missing}")
+              if data.get("challenger_id") != cid:
+                  errors.append(f"{cid}: challenger_id mismatch")
+          if errors:
+              print("\n".join(errors))
+              sys.exit(1)
+          print(f"freeze-integrity OK: {len(shas)} challengers verified against pre-registration SHAs")
+          EOF
   secret-scan:
     runs-on: ubuntu-latest
     steps:

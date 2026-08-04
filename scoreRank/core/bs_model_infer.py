@@ -83,6 +83,22 @@ def _risk_score_from_mdd(values: np.ndarray | pd.Series) -> np.ndarray:
     return score.clip(lower=0.0, upper=100.0).to_numpy(dtype=float)
 
 
+def _resolve_repo_path(path_value: str) -> Path:
+    """Resolve a model path that may be repo-relative (exports/...) or absolute.
+
+    active_model.json uses repo-relative paths (portable across machines);
+    older records may carry absolute paths.  Paths not existing as-is are
+    retried against PROJECT_ROOT so a clean checkout still resolves.
+    """
+    candidate = Path(str(path_value))
+    if candidate.exists():
+        return candidate
+    rooted = PROJECT_ROOT / candidate
+    if rooted.exists():
+        return rooted
+    return candidate
+
+
 def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str = DEFAULT_TARGET) -> Path | None:
     root = Path(model_root)
     if not root.exists():
@@ -92,7 +108,7 @@ def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str =
         try:
             data = json.loads(active_manifest.read_text(encoding="utf-8"))
             manifest_target = data.get("target")
-            model_path = Path(str(data.get("model_path", "")))
+            model_path = _resolve_repo_path(str(data.get("model_path", "")))
             if manifest_target in (None, target) and model_path.exists():
                 return model_path
         except Exception:
@@ -103,7 +119,7 @@ def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str =
         if manifest.exists():
             try:
                 data = json.loads(manifest.read_text(encoding="utf-8"))
-                manifest_path = Path(str(data.get("model_path", "")))
+                manifest_path = _resolve_repo_path(str(data.get("model_path", "")))
                 if manifest_path.exists() and data.get("target", target) == target:
                     return manifest_path
             except Exception:
@@ -220,23 +236,14 @@ def apply_bs_model_scores(
         warnings.filterwarnings("ignore", message="Skipping features without any observed values:*")
         probs = _safe_prob(model.predict_proba(out.loc[mask, feature_cols])[:, 1])
     v2 = pd.to_numeric(out.loc[mask, "bs_score_v2"], errors="coerce").fillna(0.0) if "bs_score_v2" in out.columns else 0.0
-    risk_model = model_bundle.get("risk_model")
+    # v5.3 (2026-08-04) P0 freeze: the ridge risk model's out-of-sample
+    # R2 is NEGATIVE on both validation and test — it is REMOVED from the
+    # position-sizing chain until re-proven (recorded in active_model.json
+    # model_validation.risk_model_in_chain=false).  expected_mdd/risk_score
+    # columns stay None; the rank is model-probability + bs_score_v2 only.
     expected_mdd = None
     risk_score = None
-    if risk_model is not None:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            warnings.filterwarnings("ignore", message="Skipping features without any observed values:*")
-            expected_mdd = (
-                pd.Series(risk_model.predict(out.loc[mask, feature_cols]), index=out.loc[mask].index)
-                .replace([np.inf, -np.inf], np.nan)
-                .clip(lower=-0.60, upper=0.10)
-                .to_numpy(dtype=float)
-            )
-        risk_score = _risk_score_from_mdd(expected_mdd)
-        rank = 60.0 * probs + 25.0 * (v2 / 100.0) + 15.0 * (risk_score / 100.0)
-    else:
-        rank = 70.0 * probs + 30.0 * (v2 / 100.0)
+    rank = 70.0 * probs + 30.0 * (v2 / 100.0)
 
     if "bs_gate_label" in out.columns:
         gate_label = out.loc[mask, "bs_gate_label"].fillna("").astype(str)

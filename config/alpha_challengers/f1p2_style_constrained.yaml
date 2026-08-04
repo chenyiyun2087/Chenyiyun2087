@@ -1,0 +1,69 @@
+# Pre-Registered Alpha Challenger: F1P2 — F1 Factor + Style Constraints (2026-08-04)
+# ======================================================================
+# Phase-2 follow-up: style-exposure constraints re-tested on the CONFIRMED
+# F1 factor core.  Pre-registered expectation: the F1 core (momentum
+# reversal + liquidity, no value) may retain residual cross-sectional
+# alpha under style limits where the F2 core collapsed to cash.
+#
+# Limits identical to the original P2 pre-registration (no loosening).
+# PRE-REGISTERED before any run. 2025-2026 CONSUMED (report-only).
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "f1p2_style_constrained"
+experiment_id: "exp_alpha_rebuild_202608_f1p2_style_constrained"
+hypothesis_id: "H005b_style_purity_on_f1"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}
+true_blind_start: "2026-08-05"
+base_strategy: "f1_no_value"
+change_description: "F1 factor + style exposure constraints (identical limits to P2 pre-registration)"
+hypothesis: "on the F1 core the residual alpha is less size/liquidity-dominated, so style limits bind less and cash-hold is smaller"
+expected_direction: "gross exposure materially above the F2-era 10%; returns retain >= 60% of F1"
+
+stopping_criteria:
+  - "gross exposure still collapses below 30% on the development window"
+  - "annualized return degradation > 40% vs F1"
+  - "constraint satisfaction rate < 95% across rebalances"
+  - "random permutation p > 0.10 on untouched window"
+
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+score_transforms: {}
+
+portfolio_constraints:
+  top_n: 20
+  max_total_positions: 20
+  single_stock_cap: 0.08
+  industry_cap: 0.25
+  top2_risk_contribution_cap: 0.45
+  target_gross_exposure: 1.00
+  exposure_constraints:
+    beta_tolerance: 0.20          # |net market-beta rank exposure| <= 0.20
+    max_size_exposure: 0.15
+    max_liquidity_exposure: 0.15
+    max_industry_active_weight: 0.10
+
+execution:
+  top_n: 20
+  max_total_positions: 20
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [adapter, panel, scores, portfolio_construction, runs, report]

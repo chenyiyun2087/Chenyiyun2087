@@ -1,0 +1,77 @@
+# Pre-Registered Alpha Challenger: F1P3 — F1 Factor + Covariance Sizing (2026-08-04)
+# ======================================================================
+# Phase-2 follow-up: covariance risk-budget sizing on the CONFIRMED F1
+# core (P3 was pre-registered on the F2 core, which collapsed to cash).
+# Objective unchanged from the original P3 pre-registration:
+#   maximize expected_alpha - risk_penalty - turnover_penalty - exposure_penalty
+#   alpha retention >= 80%, variance reduction >= 15%, no equal-weight fallback.
+#
+# PRE-REGISTERED before any run. 2025-2026 CONSUMED (report-only).
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "f1p3_covariance_sizing"
+experiment_id: "exp_alpha_rebuild_202608_f1p3_covariance_sizing"
+hypothesis_id: "H006b_risk_budget_on_f1"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}
+true_blind_start: "2026-08-05"
+base_strategy: "f1p2_style_constrained"
+change_description: "F1 factor + covariance risk-budget sizing (60d window, 20d halflife, Ledoit-Wolf)"
+hypothesis: "on the F1 core, covariance-aware sizing delivers variance reduction without the F2-era cash collapse"
+expected_direction: "portfolio variance falls >= 15%; alpha retention >= 80%; Sharpe improves vs F1P2"
+
+stopping_criteria:
+  - "predicted variance reduction < 15% on development window"
+  - "alpha retention < 80%"
+  - "optimizer fails and falls back to equal weight"
+  - "random permutation p > 0.10 on untouched window"
+
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+score_transforms: {}
+
+portfolio_constraints:
+  top_n: 20
+  max_total_positions: 20
+  single_stock_cap: 0.08
+  industry_cap: 0.25
+  top2_risk_contribution_cap: 0.45
+  target_gross_exposure: 1.00
+  exposure_constraints:
+    beta_tolerance: 0.20
+    max_size_exposure: 0.15
+    max_liquidity_exposure: 0.15
+    max_industry_active_weight: 0.10
+  covariance_config:
+    estimation_window: 60
+    decay_halflife: 20
+    regularization: "ledoit_wolf"
+    alpha_retention_floor: 0.80
+    predicted_variance_reduction_floor: 0.15
+    max_turnover_ratio_vs_baseline: 1.20
+    fallback_on_failure: "BLOCK"
+
+execution:
+  top_n: 20
+  max_total_positions: 20
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [adapter, panel, scores, portfolio_construction, runs, report]

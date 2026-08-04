@@ -207,6 +207,75 @@
         "execution_status": "VERIFIED"
       },
       "strategy_id": "vls_mom_contrarian_v1"
+    },
+    {
+      "capital_authority": false,
+      "cell": "frozen_t10_h20_b010",
+      "git_commit_sha": "ce98795faacfebf59653b8453e73a039276ac541",
+      "lifecycle_status": "BASELINE_FROZEN_202608",
+      "metrics": {
+        "annualized_return": 0.2568236663060925,
+        "max_drawdown": -0.3274710989740748,
+        "total_return": 0.8938163716595318,
+        "trade_count": 188
+      },
+      "notes": [
+        "P0 baseline freeze 2026-08-04: NO further parameter changes under this strategy_id (TopN=10/h20/b0.10/band0.0).",
+        "Blind window 2025-01-01..2026-07-31 DECLARED CONSUMED on 2026-08-04: usable for final reporting only, NEVER for parameter/factor/model/portfolio selection.",
+        "Independent OOS on release 20260803_oos_v4 (5 windows, strict-ledger VERIFIED): 2020-21 +13.6%, 2022 -43.5%, 2023 +31.9%, 2024 +38.7%, blind 2025-26 +15.4%/MDD -33% -> NOT OOS_VERIFIED.",
+        "Composite alpha NOT distinguishable from random on blind: permutation p=0.190, composite IC HAC t=+0.83 @20d. Liquidity single-factor blind +42.3% IS distinguishable (shuffle null p=0.010) but diagnostic only (MDD -46.5%, not deployable).",
+        "Factor diagnostics: value sign=+1 but IC=-0.030 (4/5 windows negative) -> candidate for removal; liquidity +0.065 / momentum reversal -0.067 direction-consistent; volatility +0.090 strongest but unused.",
+        "economic_status=RESEARCH_CANDIDATE is correct: execution VERIFIED is NOT economic alpha. OOS-verification remains BLOCKED until a challenger passes significance + shadow.",
+        "True forward blind starts 2026-08-05 (shadow accumulation, min 60 trading days / 30 round trips)."
+      ],
+      "parameters": {
+        "hold_days": 20,
+        "rebalance_score_buffer": 0.1,
+        "rebalance_weight_drift_band": 0.0,
+        "top_n": 10
+      },
+      "period": {
+        "end": "2026-07-31",
+        "start": "2022-01-01"
+      },
+      "role": "BASELINE_FROZEN",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "RESEARCH_CANDIDATE",
+        "execution_status": "VERIFIED"
+      },
+      "strategy_id": "vls_mom_contrarian_v1_frozen"
+    },
+    {
+      "capital_authority": false,
+      "git_commit_sha": "ce98795faacfebf59653b8453e73a039276ac541",
+      "lifecycle_status": "BASELINE_FROZEN_202608",
+      "model_ref": {
+        "activated_at": "2026-07-01T22:25:51",
+        "model_dir": "exports/bs_signal_models/20260701_222545_255922",
+        "model_kind": "random_forest",
+        "target": "hit_20_10pct"
+      },
+      "notes": [
+        "P0 baseline freeze 2026-08-04: active_model.json now carries auto_activate=false — nightly/monthly cycles must NOT auto-switch this pointer.",
+        "economic_status=UNPROVEN is DECOUPLED from activation: the pointer selects the model version for signal generation; it is NOT evidence of economic alpha.",
+        "Validation gap (2026-08-04): test AUC ~0.679 / precision@20 ~0.65 with a large train/test gap; ridge risk model out-of-sample R2 NEGATIVE (removed from position-sizing chain until re-proven).",
+        "B-point model runs as an independent Alpha Sleeve B (event-driven) until: daily return correlation with VLS < 0.5, positive incremental Sharpe, independent permutation p<=0.05, and E4 shadow (60 days/30 round trips) pass.",
+        "Activation frozen until the validation-redo (time-split with purge/embargo, feature drift report, lift vs bs_score_v2) passes review."
+      ],
+      "role": "BASELINE_FROZEN",
+      "schema_version": "unified_formal_registry_v1",
+      "seal_registry_ref": null,
+      "status": {
+        "capital_status": "BLOCKED",
+        "data_status": "E0_DIAGNOSTIC",
+        "economic_status": "UNPROVEN",
+        "execution_status": "NOT_RUN"
+      },
+      "strategy_id": "bs_point_active_rf_20260701"
     }
   ],
   "schema_version": "unified_formal_registry_v1",

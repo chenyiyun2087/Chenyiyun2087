@@ -1,0 +1,59 @@
+# Pre-Registered Alpha Challenger: F1 — Remove Value Factor (2026-08-04)
+# ======================================================================
+# Hypothesis H001 (value_dilution): value has direction-wrong sign=+1 but
+# realized IC=-0.030 over the full panel (negative in 4/5 windows) and its
+# single-factor attribution is negative in every window.  Removing value from
+# the composite should raise composite IC and reduce factor noise.
+#
+# F1 = liquidity + size + momentum_reversal (value weight moved to 0).
+#
+# PRE-REGISTERED: parameters are fixed here BEFORE any backtest run on any
+# window.  The 2025-2026 window is CONSUMED (report-only, never selection).
+# True forward blind starts 2026-08-05.  See config/oos_registry.yaml.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "f1_no_value"
+experiment_id: "exp_alpha_rebuild_202608_f1_no_value"
+hypothesis_id: "H001_value_dilution"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"  # release 20260803_oos_v4 content_sha256
+selection_window: {start: "2020-04-30", end: "2022-12-31"}   # direction confirmation only
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}  # CONSUMED — report only
+true_blind_start: "2026-08-05"
+base_strategy: "vls_mom_contrarian_v1_frozen"
+change_description: "Remove value factor; keep liquidity + size + momentum_reversal"
+hypothesis: "value dilutes effective alpha (direction-wrong 4/5 windows, negative attribution everywhere)"
+expected_direction: "composite IC improves; alpha retention >= 80% of baseline"
+
+stopping_criteria:
+  - "rank IC and annualized return do not improve vs baseline on development window"
+  - "random permutation p > 0.10 on untouched window"
+  - "HAC t < 1.65 on untouched window"
+  - "2022-class market still produces drawdown beyond -35%"
+
+# Factor definition (extends strategy_definition schema)
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+# Execution (inherited from frozen baseline — identical)
+execution:
+  top_n: 10
+  max_total_positions: 10
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [adapter, panel, scores, runs, report]

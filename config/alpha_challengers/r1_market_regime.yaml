@@ -1,0 +1,106 @@
+# Pre-Registered Alpha Challenger: R1 — Market Regime Position Control (2026-08-04)
+# ======================================================================
+# Hypothesis H007 (leading_regime): the drawdown-guard overlay reacts AFTER
+# losses (too slow for -40% class crashes, over-reacts on V-shapes).  A
+# LEADING regime controller using only T-day 15:30-visible variables
+# (CSI300 20d return, market breadth, cross-sectional vol, volume
+# concentration) should cut the 2022-class loss and keep V-shape upside.
+#
+# R1 = P2 portfolio + leading regime position caps:
+#   Risk On   (index trend +, breadth strong, vol normal) -> 90-100%
+#   Neutral   (mixed)                                     -> 60-80%
+#   Risk Off  (index trend -, breadth weak, vol spiking)  -> 30-50%
+#
+# PRE-REGISTERED thresholds fixed BEFORE any backtest run.  2025-2026
+# CONSUMED (report-only). True forward blind starts 2026-08-05.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "r1_market_regime"
+experiment_id: "exp_alpha_rebuild_202608_r1_market_regime"
+hypothesis_id: "H007_leading_regime"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"  # release 20260803_oos_v4 content_sha256
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}  # CONSUMED — report only
+true_blind_start: "2026-08-05"
+base_strategy: "p2_style_constrained"
+change_description: "P2 + leading market-regime position caps (Risk On/Neutral/Off), T-15:30 variables only"
+hypothesis: "leading regime control beats reactive drawdown-guard; reduces 2022-class drawdown without sacrificing V-shape upside"
+expected_direction: "2022-class MDD <= -30% while retaining >= 70% of P2 annualized return"
+
+stopping_criteria:
+  - "2022-class window still produces drawdown beyond -30%"
+  - "annualized return degradation > 30% vs P2 on development window"
+  - "regime whips > 20% of trading days (state instability)"
+  - "random permutation p > 0.10 on untouched window"
+
+# Factor definition (F2 weights/signs)
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+# Score transforms (F2 inherited)
+score_transforms:
+  liquidity_winsorization:
+    method: "clip"
+    lower_percentile: 10.0
+    upper_percentile: 90.0
+  min_20d_turnover_threshold_cny: 3000000.0
+
+# Portfolio construction layer (P2)
+portfolio_constraints:
+  top_n: 20
+  max_total_positions: 20
+  single_stock_cap: 0.08
+  industry_cap: 0.25
+  top2_risk_contribution_cap: 0.45
+  target_gross_exposure: 1.00
+  exposure_constraints:
+    beta_tolerance: 0.20          # |net market-beta rank exposure| <= 0.20
+    max_size_exposure: 0.15
+    max_liquidity_exposure: 0.15
+    max_industry_active_weight: 0.10
+
+# Regime control layer (leading, T-15:30 variables)
+regime_control:
+  enabled: true
+  states:
+    risk_on:
+      max_position: 1.00
+      conditions: "csi300_ret_20d > 0 and breadth > 0.50 and vol_normal"
+    neutral:
+      max_position: 0.80
+      conditions: "mixed (neither risk_on nor risk_off)"
+    risk_off:
+      max_position: 0.50
+      conditions: "csi300_ret_20d < -0.05 or breadth < 0.30 or vol_spiking"
+  input_variables:
+    - csi300_ret_20d          # benchmark_index.parquet, 000300.SH
+    - market_breadth_above_20d_ma
+    - cross_sectional_vol     # 20d mean of stock 20d returns std
+    - volume_concentration    # top 5% turnover share
+  hysteresis:
+    min_hold_days: 5
+    cooldown_days: 3
+
+# Execution (TopN=20 via portfolio layer; hold/cost unchanged)
+execution:
+  top_n: 20
+  max_total_positions: 20
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [adapter, panel, scores, portfolio_construction, regime_control, runs, report]

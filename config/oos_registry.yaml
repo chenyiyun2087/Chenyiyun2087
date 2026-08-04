@@ -1,9 +1,46 @@
 {
   "schema_version": "1.0",
-  "version": "2026Q3_v1",
+  "version": "2026Q3_v2",
   "frozen_at": "2026-07-01T00:00:00+08:00",
+  "declared_at": "2026-08-04T00:00:00+08:00",
   "approved_by": "chenyiyun",
   "append_policy": "MANUAL_AFTER_QUARTER_END",
+  "blind_window_2025_2026": {
+    "label": "2025Q1-2026Q2_historical_holdout",
+    "start": "2025-01-01",
+    "end": "2026-07-31",
+    "status": "CONSUMED_HISTORICAL_HOLDOUT",
+    "declared_at": "2026-08-04T00:00:00+08:00",
+    "consumed_for": [
+      "baseline_comparison",
+      "random_permutation_null",
+      "factor_attribution",
+      "liquidity_single_factor_analysis",
+      "hac_significance",
+      "risk_overlay_evaluation",
+      "benchmark_stress"
+    ],
+    "forbidden_uses": [
+      "parameter_tuning",
+      "top_n_selection",
+      "factor_selection",
+      "weight_optimization",
+      "threshold_selection",
+      "model_selection",
+      "portfolio_construction_selection",
+      "regime_parameter_selection"
+    ],
+    "reporting_policy": "RESULT_SHOWN_IN_FINAL_REPORT_ONLY_NOT_SELECTION"
+  },
+  "true_forward_blind": {
+    "label": "true_forward_blind_20260805",
+    "start": "2026-08-05",
+    "end": null,
+    "status": "ACCUMULATING",
+    "min_shadow_days": 60,
+    "min_completed_round_trips": 30,
+    "recording": "daily_shadow_log"
+  },
   "windows": [
     {"label": "2024Q1", "start": "2024-01-01", "end": "2024-03-31"},
     {"label": "2024Q2", "start": "2024-04-01", "end": "2024-06-30"},

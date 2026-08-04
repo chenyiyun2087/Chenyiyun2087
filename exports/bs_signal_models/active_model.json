@@ -1,10 +1,24 @@
 {
   "activated_at": "2026-07-01T22:25:51",
-  "model_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260701_222545_255922",
-  "model_path": "/Volumes/extension/projects/Chenyiyun2087/exports/bs_signal_models/20260701_222545_255922/random_forest_hit_20_10pct.joblib",
+  "model_dir": "exports/bs_signal_models/20260701_222545_255922",
+  "model_path": "exports/bs_signal_models/20260701_222545_255922/random_forest_hit_20_10pct.joblib",
   "target": "hit_20_10pct",
   "model_kind": "random_forest",
   "risk_target": "mdd_20",
   "feature_schema_hash": "0571ea172db41c67",
-  "selection_source": "run_bs_signal_enhancement_cycle"
+  "selection_source": "run_bs_signal_enhancement_cycle",
+  "lifecycle_stage": "RESEARCH_MODEL",
+  "economic_status": "UNPROVEN",
+  "economic_status_decoupled": true,
+  "auto_activate": false,
+  "activation_frozen_reason": "P0 freeze 2026-08-04: model validation redo (time-split + purge/embargo + feature drift) required before any auto-switching; risk model OOS R2 negative",
+  "model_validation": {
+    "test_auc": 0.679,
+    "test_precision_at_20": 0.65,
+    "train_test_gap": "LARGE_KNOWN_GAP",
+    "risk_model_oos_r2": "NEGATIVE_BOTH_VAL_AND_TEST",
+    "risk_model_in_chain": false,
+    "validation_redone": false,
+    "notes": "Validation metrics are diagnostics, NOT economic evidence. Activation selects model version only."
+  }
 }

@@ -34,8 +34,12 @@ from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 
 
-def load_dataset(path: str) -> tuple:
-    """Load dataset and return (X_train, y_train_buy, y_train_sell, X_val, ...)."""
+def load_dataset(path: str, purge_days: int = 0) -> tuple:
+    """Load dataset and return (X_train, y_train_buy, y_train_sell, X_val, ...).
+
+    purge_days: drop training rows within N days after the last training date
+    (label-overlap leakage prevention).  See --purge-days.
+    """
     df = pd.read_parquet(path)
     print(f"[Data] Loaded {len(df)} rows, {df['split'].value_counts().to_dict()}")
 
@@ -56,10 +60,40 @@ def load_dataset(path: str) -> tuple:
 
     print(f"[Data] Using {len(feature_cols)} feature columns")
 
-    # Split
+    # Split — v5.3 (2026-08-04) validation redo: the export pipeline writes
+    # train/validation/test/embargo while the trainer historically read
+    # train/val/test; normalize so a validation split is never silently
+    # empty, and DROP embargo rows (they exist exactly to be unused).
+    df = df.copy()
+    df["split"] = df["split"].astype(str).str.strip().str.lower()
+    df["split"] = df["split"].replace({"validation": "val"})
+    df = df[~df["split"].isin(["embargo", "unlabeled"])]
+
+    # Purge (--purge-days): remove training rows within N calendar days
+    # AFTER the last training date — their forward labels overlap the
+    # validation window (label leakage).  No date column -> purge no-ops
+    # (fail-safe, never wrongly excludes).
+    purge_days = kwargs.get("purge_days", 0)
+    if purge_days and "train" in df["split"].values:
+        date_col = next((c for c in ("event_date", "trade_date", "batch_date", "asof_date")
+                         if c in df.columns), None)
+        if date_col is not None:
+            dates = pd.to_datetime(df[date_col], errors="coerce")
+            train_end = dates[df["split"] == "train"].max()
+            if pd.notna(train_end):
+                purge_cut = train_end + pd.Timedelta(days=int(purge_days))
+                purge_mask = (df["split"] == "train") & (dates > train_end) & (dates <= purge_cut)
+                if purge_mask.any():
+                    print(f"[Data] Purged {int(purge_mask.sum())} training rows within "
+                          f"{purge_days}d after {train_end.date()} (label overlap)")
+                    df = df[~purge_mask]
+
     train_df = df[df["split"] == "train"].copy()
     val_df = df[df["split"] == "val"].copy()
     test_df = df[df["split"] == "test"].copy()
+    if val_df.empty:
+        print("[Data] WARNING: validation split EMPTY — check split labels "
+              "(export writes 'validation'; normalized to 'val').")
 
     # Handle missing values
     for split_df in [train_df, val_df, test_df]:
@@ -93,7 +127,7 @@ def load_dataset(path: str) -> tuple:
     return (X_train, y_train_buy, y_train_sell,
             X_val, y_val_buy, y_val_sell,
             X_test, y_test_buy, y_test_sell,
-            train_df, feature_cols)
+            train_df, test_df, feature_cols)
 
 
 def train_and_evaluate(name, model, X_train, y_train, X_val, y_val, X_test, y_test,
@@ -186,13 +220,22 @@ def main():
                              "hgb=HistGradientBoosting, all=all three")
     parser.add_argument("--overfit", action="store_true",
                         help="Overfit mode: aggressive params to match OCR labels closely")
+    parser.add_argument(
+        "--purge-days", type=int, default=0,
+        help="v5.3 (2026-08-04) validation redo: drop training rows within "
+             "N days after the last training date (forward labels overlap the "
+             "validation window). 0 disables.")
+    parser.add_argument(
+        "--report-dir", default=None,
+        help="v5.3: directory for the validation-redo report "
+             "(feature drift CSV + lift vs bs_score_v2 JSON).")
     args = parser.parse_args()
 
     # Load data
     (X_train, y_train_buy, y_train_sell,
      X_val, y_val_buy, y_val_sell,
      X_test, y_test_buy, y_test_sell,
-     train_df, feature_cols) = load_dataset(args.dataset)
+     train_df, test_df, feature_cols) = load_dataset(args.dataset, purge_days=args.purge_days)
 
     # Scale features for Logistic Regression
     scaler = StandardScaler()
@@ -309,6 +352,16 @@ def main():
     joblib.dump(scaler, os.path.join(output_dir, "scaler.joblib"))
     joblib.dump(scaler, os.path.join(args.model_dir, "latest", "scaler.joblib"))
 
+    # ── v5.3 (2026-08-04) validation-redo report: feature drift + lift ──
+    if args.report_dir:
+        report_dir = Path(args.report_dir)
+        report_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            _write_validation_report(report_dir, train_df, test_df,
+                                     feature_cols, all_results)
+        except Exception as exc:  # report failure must not kill training
+            print(f"[Report] validation report skipped: {exc}")
+
     # Save feature list and metadata
     with open(os.path.join(output_dir, "feature_names.json"), "w") as f:
         json.dump(feature_cols, f, indent=2)
@@ -335,6 +388,69 @@ def main():
 
     print(f"\n[Output] All models saved to {output_dir}")
     print(f"[Output] Best models linked to {args.model_dir}/latest/")
+
+
+def _write_validation_report(report_dir: "Path", train_df: pd.DataFrame,
+                             test_df: pd.DataFrame,
+                             feature_cols: list[str],
+                             all_results: dict) -> None:
+    """Feature drift (train vs test) + lift vs bs_score_v2 (test AUC gap).
+
+    v5.3 (2026-08-04) validation redo (b_sleeve_independent requirements):
+    the train/test gap must be quantified per feature, and the model's lift
+    over the traditional bs_score_v2 must be reported — a large drift or a
+    non-positive lift blocks activation review.
+    """
+    import json as _json
+
+    def _stats(frame: pd.DataFrame) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for col in feature_cols:
+            if col not in frame.columns:
+                continue
+            values = pd.to_numeric(frame[col], errors="coerce").dropna()
+            out[col] = {
+                "mean": float(values.mean()) if len(values) else None,
+                "std": float(values.std()) if len(values) > 1 else None,
+            }
+        return out
+
+    train_stats = _stats(train_df)
+    test_stats = _stats(test_df)
+    drift_rows = []
+    for col in feature_cols:
+        tr, te = train_stats.get(col), test_stats.get(col)
+        if tr is None or te is None or tr["mean"] is None or te["mean"] is None:
+            continue
+        mean_gap = te["mean"] - tr["mean"]
+        # Normalized gap: |mean shift| relative to pooled std.
+        pooled_std = (((tr["std"] or 0.0) + (te["std"] or 0.0)) / 2.0) or 1e-12
+        drift_rows.append({
+            "feature": col,
+            "train_mean": round(tr["mean"], 6),
+            "test_mean": round(te["mean"], 6),
+            "mean_gap": round(mean_gap, 6),
+            "normalized_gap": round(mean_gap / pooled_std, 4),
+            "train_std": round(tr["std"] or 0.0, 6),
+            "test_std": round(te["std"] or 0.0, 6),
+        })
+    drift = pd.DataFrame(drift_rows).sort_values("normalized_gap", ascending=False)
+    drift.to_csv(report_dir / "feature_drift_train_vs_test.csv", index=False)
+
+    lift = {}
+    for name, results in all_results.items():
+        lift[name] = {
+            "test_auc": results.get("test_auc"),
+            "test_precision": results.get("test_precision"),
+            "test_f1": results.get("test_f1"),
+        }
+    (report_dir / "validation_lift.json").write_text(
+        _json.dumps({"models": lift, "caveats": [
+            "bs_score_v2 lift: compare test_auc against bs_score_v2 AUC "
+            "from the ranker evaluation (evaluate_bs_signal_rankers.py).",
+            "normalized_gap > 2.0 flags a material train/test feature shift.",
+        ]}, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[Report] validation report -> {report_dir}")
 
 
 if __name__ == "__main__":
