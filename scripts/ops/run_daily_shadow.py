@@ -62,8 +62,15 @@ _MR = _iu.module_from_spec(_mr)
 _mr.loader.exec_module(_MR)
 
 
-def load_trade_calendar() -> pd.DataFrame:
-    """Canonical trade calendar (SSE) from the F1 challenger snapshot."""
+def load_trade_calendar(need_date: str | None = None) -> list[str]:
+    """Canonical SSE open days (sorted 'YYYY-MM-DD').
+
+    v5.5 live extension: when ``need_date`` is beyond the PIT snapshot
+    calendar (2026-07-31), open days are merged from the live
+    ``chenyiyun.dim_trade_cal``.  Fail-closed: a live day whose calendar
+    cannot be read, or which the DB does not know as open, raises — the
+    calendar is never fabricated.
+    """
     cal_path = CHALLENGER_ROOT / "f1_no_value" / "snapshots" / "trade_calendar.csv"
     if not cal_path.exists():
         raise RuntimeError(
@@ -71,7 +78,183 @@ def load_trade_calendar() -> pd.DataFrame:
             "run the F1 challenger pipeline first")
     cal = pd.read_csv(cal_path)
     cal["cal_date"] = cal["cal_date"].astype(str)
-    return cal[cal["is_open"] == 1]["cal_date"].sort_values().tolist()
+    base = sorted(cal.loc[cal["is_open"] == 1, "cal_date"].tolist())
+    if need_date and base and need_date > base[-1]:
+        live = _live_open_days(base[-1])
+        if not live:
+            raise RuntimeError(
+                f"shadow_blocked: {need_date} is beyond the snapshot "
+                f"calendar ({base[-1]}) and chenyiyun.dim_trade_cal has no "
+                "open days after it — live calendar unavailable")
+        base = sorted(set(base) | set(live))
+    return base
+
+
+def _live_open_days(after_date: str) -> list[str]:
+    """Open SSE trading days after ``after_date`` from chenyiyun.dim_trade_cal.
+
+    Raises RuntimeError on any DB failure — a live execution day must
+    block, never silently substitute the snapshot calendar.
+    """
+    import os
+    import pymysql
+    try:
+        conn = pymysql.connect(
+            host="localhost", user="root",
+            password=os.environ.get("CHENYIYUN_DB_PASSWORD", ""),
+            database="chenyiyun", charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"shadow_blocked: live calendar unavailable: {exc}") from exc
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT cal_date FROM dim_trade_cal "
+                "WHERE exchange = 'SSE' AND is_open = 1 AND cal_date > %s "
+                "ORDER BY cal_date",
+                (after_date,))
+            rows = cur.fetchall()
+    except Exception as exc:
+        raise RuntimeError(
+            f"shadow_blocked: live calendar query failed: {exc}") from exc
+    finally:
+        conn.close()
+    out: list[str] = []
+    for row in rows:
+        value = str(row["cal_date"])
+        # normalize 20260805 -> 2026-08-05
+        if len(value) == 8 and value.isdigit():
+            value = f"{value[:4]}-{value[4:6]}-{value[6:]}"
+        out.append(value)
+    return out
+
+
+# v5.5: execution prices — immutable PIT snapshot for historical days,
+# dwd_stock_daily_standard for live days beyond the snapshot end.
+PIT_PRICES_PATH = CHALLENGER_ROOT / "f1_no_value" / "snapshots" / "prices.parquet"
+
+
+def _pit_prices_max_date() -> str | None:
+    """Last trade_date covered by the immutable PIT snapshot prices."""
+    if not PIT_PRICES_PATH.exists():
+        return None
+    try:
+        dates = pd.to_datetime(
+            pd.read_parquet(PIT_PRICES_PATH, columns=["trade_date"])["trade_date"],
+            errors="coerce").dropna()
+        return str(dates.max().date()) if not dates.empty else None
+    except Exception:
+        return None
+
+
+def _live_bars(date_str: str) -> pd.DataFrame:
+    """Bars for one live date from tushare_stock.dwd_stock_daily_standard.
+
+    Columns: trade_date, symbol, raw_open, raw_pre_close, raw_close
+    (aliased for the snapshot-compatible downstream).  Raises RuntimeError
+    on DB failure; returns an EMPTY frame when the date has no bars —
+    per-order NO_OPEN is then the honest fill outcome.
+    """
+    import os
+    import pymysql
+    try:
+        conn = pymysql.connect(
+            host="localhost", user="root",
+            password=os.environ.get("CHENYIYUN_DB_PASSWORD", ""),
+            database="tushare_stock", charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"shadow_blocked: live bars unavailable: {exc}") from exc
+    try:
+        date_int = int(date_str.replace("-", ""))
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT trade_date, ts_code, open, pre_close, close "
+                "FROM dwd_stock_daily_standard WHERE trade_date = %s",
+                (date_int,))
+            rows = cur.fetchall()
+    except Exception as exc:
+        raise RuntimeError(
+            f"shadow_blocked: live bars query failed: {exc}") from exc
+    finally:
+        conn.close()
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df["symbol"] = df["ts_code"].astype(str).str.replace(
+        r"\.(SH|SZ|BJ)$", "", regex=True).str.zfill(6)
+    df["raw_open"] = pd.to_numeric(df["open"], errors="coerce")
+    df["raw_pre_close"] = pd.to_numeric(df["pre_close"], errors="coerce")
+    df["raw_close"] = pd.to_numeric(df["close"], errors="coerce")
+    df["trade_date"] = date_str
+    return df[["trade_date", "symbol", "raw_open", "raw_pre_close", "raw_close"]]
+
+
+def _load_execution_prices(execution_date: str,
+                           prices_path: Path | None = None) -> pd.DataFrame:
+    """Execution-day bars for the reconcile gates.
+
+    ``prices_path`` (tests) wins; otherwise the immutable PIT snapshot is
+    authoritative for historical days and the live DB serves days beyond
+    the snapshot end.  A missing snapshot is fail-closed (raise), never
+    silently replaced by live data.
+    """
+    if prices_path is not None:
+        if not prices_path.exists():
+            return pd.DataFrame()
+        prices = pd.read_parquet(prices_path)
+        prices["trade_date"] = prices["trade_date"].astype(str)
+        prices["symbol"] = prices["symbol"].astype(str).str.zfill(6)
+        return prices[prices["trade_date"] == execution_date]
+    pit_max = _pit_prices_max_date()
+    if pit_max is None:
+        raise RuntimeError(
+            "shadow_blocked: PIT snapshot prices missing — cannot reconcile")
+    if execution_date > pit_max:
+        return _live_bars(execution_date)
+    prices = pd.read_parquet(PIT_PRICES_PATH)
+    prices["trade_date"] = prices["trade_date"].astype(str)
+    prices["symbol"] = prices["symbol"].astype(str).str.zfill(6)
+    return prices[prices["trade_date"] == execution_date]
+
+
+def _flag(series: pd.Series, symbol: str) -> float | None:
+    """Read a per-symbol flag from a package-universe series (None if absent)."""
+    if series is None or series.empty or symbol not in series.index:
+        return None
+    value = series.get(symbol)
+    return float(value) if pd.notna(value) else None
+
+
+def _t_close_map(signal_date: str, prices_path: Path | None = None) -> pd.Series:
+    """T-day close (raw_close) map for precommit reference prices."""
+    if prices_path is not None:
+        if not prices_path.exists():
+            return pd.Series(dtype=float)
+        prices = pd.read_parquet(prices_path, columns=["trade_date", "symbol",
+                                                       "raw_close"])
+        prices["trade_date"] = prices["trade_date"].astype(str)
+        prices["symbol"] = prices["symbol"].astype(str).str.zfill(6)
+        return (prices[prices["trade_date"] == signal_date]
+                .set_index("symbol")["raw_close"])
+    pit_max = _pit_prices_max_date()
+    if pit_max is None:
+        raise RuntimeError(
+            "shadow_blocked: PIT snapshot prices missing — cannot precommit")
+    if signal_date > pit_max:
+        frame = _live_bars(signal_date)
+        return (frame.set_index("symbol")["raw_close"] if not frame.empty
+                else pd.Series(dtype=float))
+    prices = pd.read_parquet(PIT_PRICES_PATH, columns=["trade_date", "symbol",
+                                                       "raw_close"])
+    prices["trade_date"] = prices["trade_date"].astype(str)
+    prices["symbol"] = prices["symbol"].astype(str).str.zfill(6)
+    return (prices[prices["trade_date"] == signal_date]
+            .set_index("symbol")["raw_close"])
 
 
 def next_open_day(open_days: list[str], signal_date: str) -> str:
@@ -354,7 +537,8 @@ def precommit(execution_date: str | None = None,
     Target shares are lot-adjusted (100-share A-share lots).  The orders
     file is append-only per execution date.
     """
-    open_days = load_trade_calendar()
+    today = datetime.now().date().isoformat()
+    open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
         execution_date = open_days[-1] if open_days else None
     if execution_date not in open_days:
@@ -367,16 +551,7 @@ def precommit(execution_date: str | None = None,
             f"{execution_date} — seal the T-day package first")
     manifest = json.loads((pkg / "signal_package_manifest.json").read_text())
     portfolios = pd.read_parquet(pkg / "target_portfolios.parquet")
-    prices_path = prices_path or (CHALLENGER_ROOT / "f1_no_value" /
-                                  "snapshots" / "prices.parquet")
-    close_map = pd.Series(dtype=float)
-    if prices_path.exists():
-        prices = pd.read_parquet(prices_path, columns=["trade_date", "symbol",
-                                                       "raw_close"])
-        prices["trade_date"] = prices["trade_date"].astype(str)
-        prices["symbol"] = prices["symbol"].astype(str).str.zfill(6)
-        close_map = (prices[prices["trade_date"] == manifest["signal_date"]]
-                     .set_index("symbol")["raw_close"])
+    close_map = _t_close_map(manifest["signal_date"], prices_path)
 
     orders_path = _orders_path(execution_date, execution_zone)
     existing = []
@@ -418,15 +593,21 @@ def precommit(execution_date: str | None = None,
 
 def reconcile_from_package(execution_date: str | None = None,
                            execution_zone: Path | None = None,
-                           prices_path: Path | None = None) -> dict:
+                           prices_path: Path | None = None,
+                           packages_zone: Path | None = None) -> dict:
     """T+1 09:35 — fill PRECOMMITTED orders at open with directional gates.
 
     BUY blocks limit-UP (can_buy_at_open); suspension / not-listed / no
     open price block.  A completed BUY_FILLED opens a HOLDING; round
     trips are counted only after a later SELL_FILLED (state machine).
+
+    v5.5 live: prices come from the PIT snapshot for historical days and
+    from dwd_stock_daily_standard beyond the snapshot end; ST / listing /
+    suspension flags come from the SEALED package universe (T-day status).
     """
     zone = execution_zone or EXECUTION_ZONE
-    open_days = load_trade_calendar()
+    today = datetime.now().date().isoformat()
+    open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
         # Morning: the next open day after the latest precommitted signal.
         candidates = sorted(d.name for d in zone.iterdir() if d.is_dir())
@@ -456,13 +637,23 @@ def reconcile_from_package(execution_date: str | None = None,
         return {"reconciled": 0, "failed": 0,
                 "status": {"state": "already_reconciled"}}
 
-    prices = pd.read_parquet(
-        prices_path or (CHALLENGER_ROOT / "f1_no_value" /
-                        "snapshots" / "prices.parquet"),
-        columns=["trade_date", "symbol", "open", "raw_open", "raw_pre_close"])
-    prices["trade_date"] = prices["trade_date"].astype(str)
-    prices["symbol"] = prices["symbol"].astype(str).str.zfill(6)
-    day_prices = prices[prices["trade_date"] == execution_date].set_index("symbol")
+    prices = _load_execution_prices(execution_date, prices_path)
+    day_prices = prices.set_index("symbol") if not prices.empty else prices
+
+    # T-day status flags from the SEALED package universe (PIT contract);
+    # absent universe -> flags stay None (gates treat unknown as blocked).
+    st_map = listed_map = suspended_map = pd.Series(dtype=float)
+    pkg = _latest_package_for_execution(
+        execution_date, packages_zone or PACKAGES_ZONE)
+    if pkg is not None and (pkg / "universe.parquet").exists():
+        uni = pd.read_parquet(pkg / "universe.parquet")
+        uni["symbol"] = uni["symbol"].astype(str).str.zfill(6)
+        uni = uni.set_index("symbol")
+        st_map = pd.to_numeric(uni.get("is_st", 0), errors="coerce")
+        if "is_listed" in uni.columns:
+            listed_map = pd.to_numeric(uni["is_listed"], errors="coerce")
+        if "is_suspended" in uni.columns:
+            suspended_map = pd.to_numeric(uni["is_suspended"], errors="coerce")
 
     filled, failed = 0, 0
     for o in pending:
@@ -484,7 +675,12 @@ def reconcile_from_package(execution_date: str | None = None,
             o["state"] = "BUY_REJECTED"
             failed += 1
             continue
-        allowed, reason = _MR.can_buy_at_open(open_price, prev_close, symbol, 0)
+        is_st = float(st_map.get(symbol)) if (
+            symbol in st_map.index and pd.notna(st_map.get(symbol))) else 0.0
+        allowed, reason = _MR.can_buy_at_open(
+            open_price, prev_close, symbol, is_st,
+            is_listed=_flag(listed_map, symbol),
+            is_suspended=_flag(suspended_map, symbol))
         if not allowed:
             o["fill_status"] = "BLOCKED"
             o["rejection_reason"] = reason or "gate_blocked"

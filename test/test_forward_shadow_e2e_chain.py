@@ -18,17 +18,31 @@ import numpy as np
 import pandas as pd
 import pytest
 
-PROJECT_ROOT = Path("/Volumes/extension/projects/Chenyiyun2087")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.ops.build_daily_alpha_signal_package import seal_signal_package  # noqa: E402
+from scripts.ops import run_daily_shadow as shadow  # noqa: E402
 from scripts.ops.run_daily_shadow import (  # noqa: E402
     precommit,
     reconcile_from_package,
 )
 
 SIGNAL_DATE, EXEC_DATE = "2026-08-05", "2026-08-06"
+
+
+@pytest.fixture(autouse=True)
+def _calendar(monkeypatch):
+    """Hermetic calendar — the PIT snapshot calendar is not in CI.
+
+    The chain tests exercise the SEALED package flow on live-dated days
+    (2026-08-05/06); the trade calendar is provided by the fixture, never
+    read from the untracked challenger snapshot.
+    """
+    monkeypatch.setattr(
+        shadow, "load_trade_calendar",
+        lambda need_date=None: sorted({SIGNAL_DATE, EXEC_DATE}))
 
 
 def _seal_package(tmp: Path, portfolios: dict) -> Path:
