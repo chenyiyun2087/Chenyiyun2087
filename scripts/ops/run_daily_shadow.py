@@ -717,6 +717,17 @@ def sell_precommit(execution_date: str | None = None,
     machine = replay_all(zone)
     held = _held_positions(machine)
     if not held:
+        # v5.5.1 verifier contract: a no-position day still writes a
+        # decision marker — the task scheduler's result verifier needs a
+        # durable artifact to distinguish "legitimately nothing to sell"
+        # from a crashed/failed run (fail-closed).
+        decision_path = _orders_path(execution_date, zone).with_name("sell_decisions.json")
+        decision_path.parent.mkdir(parents=True, exist_ok=True)
+        decision_path.write_text(json.dumps({
+            "signal_date": signal_date, "execution_date": execution_date,
+            "reason": "no_open_positions",
+            "decided_at": datetime.now().isoformat(timespec="seconds"),
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"sells": 0, "execution_date": execution_date,
                 "signal_date": signal_date, "reason": "no_open_positions"}
 

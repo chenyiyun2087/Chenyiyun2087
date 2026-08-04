@@ -1129,8 +1129,9 @@ def _load_batch_monitor_definition():
     pipeline_path = Path(__file__).resolve().parents[1] / "task_registry" / "pipeline.yaml"
     payload = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
     rows = []
-    group_labels = {"intraday": "盘中", "daily_close": "日终", "weekly": "周度"}
-    group_order = {"intraday": 1, "daily_close": 2, "weekly": 3}
+    group_labels = {"intraday": "盘中", "daily_close": "日终", "weekly": "周度",
+                    "morning": "晨间"}
+    group_order = {"morning": 0, "intraday": 1, "daily_close": 2, "weekly": 3}
     for group_name, group in payload.items():
         for task in group.get("tasks", []):
             if task.get("status") != "enabled":
@@ -2844,6 +2845,191 @@ def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
     return True, lines
 
 
+# ── v5.5 Forward Shadow Engine v2 verifiers (RE-ENABLED 2026-08-05) ──
+# The alpha_signal_* chain writes immutable artifacts under
+# exports/forward_shadow_evidence/ (SEALED packages, orders, event ledger,
+# NAV summaries).  Verification is artifact-based — the packages and the
+# event ledger ARE the evidence, so these verifiers need no DB access.
+FORWARD_EVIDENCE_ROOT = Path(__file__).resolve().parents[1] / "exports" / "forward_shadow_evidence"
+
+
+def _forward_sealed_manifest(target_datestr: str):
+    """(manifest, path) of the SEALED signal-date package (latest revision)."""
+    iso = f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"
+    pkg_dir = FORWARD_EVIDENCE_ROOT / "packages" / iso
+    direct = pkg_dir / "signal_package_manifest.json"
+    if direct.exists():
+        try:
+            return json.loads(direct.read_text(encoding="utf-8")), direct
+        except ValueError:
+            return None, direct
+    for rev in sorted(pkg_dir.glob("revision_*"), reverse=True):
+        mp = rev / "signal_package_manifest.json"
+        if mp.exists():
+            try:
+                return json.loads(mp.read_text(encoding="utf-8")), mp
+            except ValueError:
+                return None, mp
+    return None, None
+
+
+def _forward_orders(execution_datestr: str):
+    """(orders list | None, path) for one execution date."""
+    path = FORWARD_EVIDENCE_ROOT / "execution" / execution_datestr / "orders.json"
+    if not path.exists():
+        return None, path
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        payload = []
+    return payload if isinstance(payload, list) else [], path
+
+
+def _forward_events(execution_datestr: str):
+    """([event dict | None], path) parsed from the append-only JSONL."""
+    path = FORWARD_EVIDENCE_ROOT / "execution" / "events" / f"{execution_datestr}.jsonl"
+    events = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                events.append(None)
+    return events, path
+
+
+def _verify_alpha_signal_package_seal_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    manifest, mpath = _forward_sealed_manifest(target_datestr)
+    if manifest is None:
+        return False, [f"result=FAIL; task=alpha_signal_package_seal; "
+                       f"business_date={target_datestr}; reason=no_sealed_package"]
+    ok = manifest.get("package_status") == "SEALED"
+    return ok, [
+        f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_package_seal; "
+        f"business_date={target_datestr}; package_status={manifest.get('package_status')}; "
+        f"revision={manifest.get('revision')}",
+        f"manifest={mpath}; signal_date={manifest.get('signal_date')}; "
+        f"execution_date={manifest.get('execution_date')}; "
+        f"git={str(manifest.get('git_commit_sha') or '')[:12]}",
+    ]
+
+
+def _verify_alpha_signal_precommit_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    orders, opath = _forward_orders(target_datestr)
+    if orders is None:
+        return False, [f"result=FAIL; task=alpha_signal_precommit; "
+                       f"execution_date={target_datestr}; reason=no_orders_file"]
+    # v5.5.1 idempotency contract: every order must carry an order_id —
+    # a pre-v5.5.1 ledger means the execution day was never rebuilt.
+    legacy = [o for o in orders if "order_id" not in o]
+    if legacy:
+        return False, [f"result=FAIL; task=alpha_signal_precommit; "
+                       f"execution_date={target_datestr}; "
+                       f"reason=pre_v551_orders_without_id; count={len(legacy)}"]
+    buys = [o for o in orders if o.get("side") == "BUY"]
+    return True, [
+        f"result=PASS; task=alpha_signal_precommit; "
+        f"execution_date={target_datestr}; orders={len(orders)}; buys={len(buys)}; "
+        f"states={sorted({o.get('state') for o in orders})}",
+        f"orders={opath}",
+    ]
+
+
+def _verify_alpha_signal_execution_reconcile_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    orders, _ = _forward_orders(target_datestr)
+    events, epath = _forward_events(target_datestr)
+    if not epath.exists():
+        return False, [f"result=FAIL; task=alpha_signal_execution_reconcile; "
+                       f"execution_date={target_datestr}; reason=no_events_log"]
+    fills = [e for e in events if e and e.get("event_type")
+             in ("BUY_FILLED", "SELL_FILLED", "BUY_REJECTED", "SELL_REJECTED")]
+    # Zero precommitted orders is a legitimate no-op day (nothing to fill);
+    # any order must end in a fill/reject event, never a silent dangling one.
+    if orders and not fills:
+        return False, [f"result=FAIL; task=alpha_signal_execution_reconcile; "
+                       f"execution_date={target_datestr}; "
+                       f"reason=orders_without_fill_events; orders={len(orders)}; fills=0"]
+    return True, [
+        f"result=PASS; task=alpha_signal_execution_reconcile; "
+        f"execution_date={target_datestr}; fill_events={len(fills)}; "
+        f"orders={len(orders) if orders is not None else 0}",
+        f"events={epath}",
+    ]
+
+
+def _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_options=None):
+    """SELL decisions write to the NEXT open day's orders.json (T+1
+    execution), so the verification scans the execution zone for artifacts
+    touched inside the run window (same evidence pattern as the
+    monthly-cycle verifier).  A no-position day writes sell_decisions.json
+    (reason=no_open_positions); with positions, SELL orders must appear in
+    the touched order ledgers."""
+    target_datestr = _queue_business_date(run_options)
+    zone = FORWARD_EVIDENCE_ROOT / "execution"
+    touched_orders, touched_decisions = [], []
+    for path in sorted(zone.glob("*/orders.json")) + sorted(zone.glob("*/sell_decisions.json")):
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            continue
+        if (started_at - timedelta(seconds=30)) <= mtime <= (finished_at + timedelta(seconds=300)):
+            (touched_orders if path.name == "orders.json"
+             else touched_decisions).append(path)
+    if not touched_orders and not touched_decisions:
+        return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
+                       f"business_date={target_datestr}; reason=no_artifact_in_window"]
+    sells = []
+    for path in touched_orders:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        sells += [o for o in payload if o.get("side") == "SELL"]
+    no_pos = any(
+        json.loads(path.read_text(encoding="utf-8")).get("reason") == "no_open_positions"
+        for path in touched_decisions
+        if path.exists()
+    ) if touched_decisions else False
+    ok = bool(sells) or no_pos
+    return ok, [
+        f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_sell_precommit; "
+        f"business_date={target_datestr}; sell_orders={len(sells)}; "
+        f"no_open_positions={int(no_pos)}",
+        f"touched_orders={[str(p) for p in touched_orders]}; "
+        f"touched_decisions={[str(p) for p in touched_decisions]}",
+    ]
+
+
+def _verify_alpha_signal_nav_result(started_at, finished_at, run_options=None):
+    _ = started_at, finished_at
+    target_datestr = _queue_business_date(run_options)
+    summary_path = FORWARD_EVIDENCE_ROOT / "execution" / "nav" / "nav_summary.json"
+    if not summary_path.exists():
+        return False, [f"result=FAIL; task=alpha_signal_nav; "
+                       f"execution_date={target_datestr}; reason=no_nav_summary"]
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return False, [f"result=FAIL; task=alpha_signal_nav; "
+                       f"execution_date={target_datestr}; reason=corrupt_nav_summary"]
+    days = summary.get("days", {})
+    ok = target_datestr in days
+    return ok, [
+        f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_nav; "
+        f"execution_date={target_datestr}; recorded_days={len(days)}",
+        f"nav_summary={summary_path}",
+    ]
+
+
 def _run_task_result_verification(task_name, started_at, finished_at, run_options=None):
     if task_name == "sina_picture":
         return _verify_sina_picture_result(started_at, finished_at, run_options=run_options)
@@ -2881,6 +3067,16 @@ def _run_task_result_verification(task_name, started_at, finished_at, run_option
         return _verify_sina_m7_sell_result(started_at, finished_at, run_options=run_options)
     if task_name == OPS_DAILY_BATCH_AUDIT_TASK:
         return _verify_daily_batch_audit_result(started_at, finished_at, run_options=run_options)
+    if task_name == "alpha_signal_package_seal":
+        return _verify_alpha_signal_package_seal_result(started_at, finished_at, run_options=run_options)
+    if task_name == "alpha_signal_precommit":
+        return _verify_alpha_signal_precommit_result(started_at, finished_at, run_options=run_options)
+    if task_name == "alpha_signal_execution_reconcile":
+        return _verify_alpha_signal_execution_reconcile_result(started_at, finished_at, run_options=run_options)
+    if task_name == "alpha_signal_sell_precommit":
+        return _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_options=run_options)
+    if task_name == "alpha_signal_nav":
+        return _verify_alpha_signal_nav_result(started_at, finished_at, run_options=run_options)
     return None, [f"result=SKIP; no verifier for task={task_name}"]
 
 

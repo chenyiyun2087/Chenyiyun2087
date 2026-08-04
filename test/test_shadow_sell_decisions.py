@@ -260,6 +260,12 @@ def test_no_open_positions(tmp_path):
                          prices_path=_base_prices(tmp_path))
     assert out["sells"] == 0
     assert out["reason"] == "no_open_positions"
+    # v5.5.1 verifier contract: a no-position day still writes a durable
+    # decision marker so the scheduler's result verifier can tell a
+    # legitimate no-op from a crashed run (fail-closed).
+    marker = zone / D1 / "sell_decisions.json"
+    assert marker.exists()
+    assert json.loads(marker.read_text(encoding="utf-8"))["reason"] == "no_open_positions"
 
 
 def test_missing_contract_blocks(tmp_path):
