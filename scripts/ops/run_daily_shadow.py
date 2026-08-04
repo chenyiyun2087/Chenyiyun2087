@@ -312,17 +312,220 @@ def _status_from_log(log: pd.DataFrame) -> dict:
     return status
 
 
+# ══════════════════════════════════════════════════════════════════
+# v5.5 execution zone — precommit + reconcile from SEALED packages
+# ══════════════════════════════════════════════════════════════════
+
+EXECUTION_ZONE = PROJECT_ROOT / "exports" / "forward_shadow_evidence" / "execution"
+PACKAGES_ZONE = PROJECT_ROOT / "exports" / "forward_shadow_evidence" / "packages"
+
+
+def _latest_package_for_execution(execution_date: str,
+                                  packages_zone: Path | None = None) -> Path | None:
+    """The SEALED package whose execution_date matches (v5.5 flow)."""
+    zone = packages_zone or PACKAGES_ZONE
+    if not zone.exists():
+        return None
+    for pkg_dir in sorted(zone.iterdir(), reverse=True):
+        if not pkg_dir.is_dir():
+            continue
+        manifest_path = pkg_dir / "signal_package_manifest.json"
+        if not manifest_path.exists():
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("execution_date") == execution_date:
+            return pkg_dir
+    return None
+
+
+def _orders_path(execution_date: str, execution_zone: Path | None = None) -> Path:
+    zone = execution_zone or EXECUTION_ZONE
+    return zone / execution_date / "orders.json"
+
+
+def precommit(execution_date: str | None = None,
+              packages_zone: Path | None = None,
+              execution_zone: Path | None = None,
+              prices_path: Path | None = None) -> dict:
+    """T+1 09:25 — materialize BUY orders from the SEALED package.
+
+    Orders start at SIGNAL_CREATED, pass TARGET_PORTFOLIO_SEALED and end
+    at ORDER_PRECOMMITTED with precommit_price = T-day close (reference).
+    Target shares are lot-adjusted (100-share A-share lots).  The orders
+    file is append-only per execution date.
+    """
+    open_days = load_trade_calendar()
+    if execution_date is None:
+        execution_date = open_days[-1] if open_days else None
+    if execution_date not in open_days:
+        raise RuntimeError(
+            f"shadow_blocked: {execution_date} is not an open trading day")
+    pkg = _latest_package_for_execution(execution_date, packages_zone)
+    if pkg is None:
+        raise RuntimeError(
+            f"shadow_blocked: no SEALED package for execution_date "
+            f"{execution_date} — seal the T-day package first")
+    manifest = json.loads((pkg / "signal_package_manifest.json").read_text())
+    portfolios = pd.read_parquet(pkg / "target_portfolios.parquet")
+    prices_path = prices_path or (CHALLENGER_ROOT / "f1_no_value" /
+                                  "snapshots" / "prices.parquet")
+    close_map = pd.Series(dtype=float)
+    if prices_path.exists():
+        prices = pd.read_parquet(prices_path, columns=["trade_date", "symbol",
+                                                       "raw_close"])
+        prices["trade_date"] = prices["trade_date"].astype(str)
+        prices["symbol"] = prices["symbol"].astype(str).str.zfill(6)
+        close_map = (prices[prices["trade_date"] == manifest["signal_date"]]
+                     .set_index("symbol")["raw_close"])
+
+    orders_path = _orders_path(execution_date, execution_zone)
+    existing = []
+    if orders_path.exists():
+        existing = json.loads(orders_path.read_text(encoding="utf-8"))
+        if any(o.get("state") != "ORDER_PRECOMMITTED" for o in existing):
+            raise RuntimeError(
+                f"shadow_blocked: orders for {execution_date} already "
+                "reconciled — precommit is append-only before fills")
+
+    orders = list(existing)
+    for _, row in portfolios.iterrows():
+        symbol = str(row["symbol"])
+        precommit_price = float(close_map.get(symbol, float("nan")))
+        notional = float(row["target_weight"]) * 500_000.0
+        shares = int(notional / precommit_price // 100 * 100) \
+            if pd.notna(precommit_price) and precommit_price > 0 else 0
+        orders.append({
+            "signal_date": manifest["signal_date"],
+            "execution_date": execution_date,
+            "challenger_id": str(row.get("candidate_id", "")),
+            "symbol": symbol,
+            "side": "BUY",
+            "target_weight": float(row["target_weight"]),
+            "target_shares": shares,
+            "lot_adjusted_shares": shares,
+            "precommit_price": precommit_price,
+            "fill_price": None, "fill_status": None,
+            "slippage_bps": None, "rejection_reason": None,
+            "state": "ORDER_PRECOMMITTED",
+            "precommitted_at": datetime.now().isoformat(timespec="seconds"),
+        })
+    orders_path.parent.mkdir(parents=True, exist_ok=True)
+    orders_path.write_text(json.dumps(orders, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+    return {"precommitted": len(orders), "execution_date": execution_date,
+            "package": str(pkg.name), "signal_date": manifest["signal_date"]}
+
+
+def reconcile_from_package(execution_date: str | None = None,
+                           execution_zone: Path | None = None,
+                           prices_path: Path | None = None) -> dict:
+    """T+1 09:35 — fill PRECOMMITTED orders at open with directional gates.
+
+    BUY blocks limit-UP (can_buy_at_open); suspension / not-listed / no
+    open price block.  A completed BUY_FILLED opens a HOLDING; round
+    trips are counted only after a later SELL_FILLED (state machine).
+    """
+    zone = execution_zone or EXECUTION_ZONE
+    open_days = load_trade_calendar()
+    if execution_date is None:
+        # Morning: the next open day after the latest precommitted signal.
+        candidates = sorted(d.name for d in zone.iterdir() if d.is_dir())
+        if not candidates:
+            return {"reconciled": 0, "error": "no_precommitted_orders"}
+        latest_signal = None
+        for c in reversed(candidates):
+            orders_file = zone / c / "orders.json"
+            if orders_file.exists():
+                data = json.loads(orders_file.read_text(encoding="utf-8"))
+                if data:
+                    latest_signal = data[0]["signal_date"]
+                    break
+        if latest_signal is None:
+            return {"reconciled": 0, "error": "no_precommitted_orders"}
+        execution_date = next_open_day(open_days, latest_signal)
+    if execution_date not in open_days:
+        raise RuntimeError(
+            f"shadow_blocked: {execution_date} is not an open trading day")
+
+    orders_path = _orders_path(execution_date, zone)
+    if not orders_path.exists():
+        return {"reconciled": 0, "error": "no_orders_for_execution_date"}
+    orders = json.loads(orders_path.read_text(encoding="utf-8"))
+    pending = [o for o in orders if o.get("state") == "ORDER_PRECOMMITTED"]
+    if not pending:
+        return {"reconciled": 0, "failed": 0,
+                "status": {"state": "already_reconciled"}}
+
+    prices = pd.read_parquet(
+        prices_path or (CHALLENGER_ROOT / "f1_no_value" /
+                        "snapshots" / "prices.parquet"),
+        columns=["trade_date", "symbol", "open", "raw_open", "raw_pre_close"])
+    prices["trade_date"] = prices["trade_date"].astype(str)
+    prices["symbol"] = prices["symbol"].astype(str).str.zfill(6)
+    day_prices = prices[prices["trade_date"] == execution_date].set_index("symbol")
+
+    filled, failed = 0, 0
+    for o in pending:
+        symbol = str(o["symbol"])
+        info = day_prices.loc[symbol] if symbol in day_prices.index else None
+        open_price = float(info["raw_open"] or info["open"] or float("nan")) \
+            if info is not None else float("nan")
+        prev_close = float(info.get("raw_pre_close") or float("nan")) \
+            if info is not None else float("nan")
+        if not pd.notna(open_price) or open_price <= 0:
+            o["fill_status"] = "NO_OPEN"
+            o["rejection_reason"] = "no_open_price"
+            o["state"] = "BUY_REJECTED"
+            failed += 1
+            continue
+        if not pd.notna(prev_close) or prev_close <= 0:
+            o["fill_status"] = "NO_PREV_CLOSE"
+            o["rejection_reason"] = "missing_prev_close_limit_unknown"
+            o["state"] = "BUY_REJECTED"
+            failed += 1
+            continue
+        allowed, reason = _MR.can_buy_at_open(open_price, prev_close, symbol, 0)
+        if not allowed:
+            o["fill_status"] = "BLOCKED"
+            o["rejection_reason"] = reason or "gate_blocked"
+            o["state"] = "BUY_REJECTED"
+            failed += 1
+            continue
+        o["fill_price"] = float(open_price)
+        o["slippage_bps"] = round(
+            (open_price / float(o["precommit_price"]) - 1.0) * 1e4, 2) \
+            if o.get("precommit_price") else None
+        o["fill_status"] = "FILLED"
+        o["state"] = "BUY_FILLED"
+        o["filled_at"] = datetime.now().isoformat(timespec="seconds")
+        filled += 1
+    orders_path.write_text(json.dumps(orders, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+    return {"reconciled": filled, "failed": failed,
+            "execution_date": execution_date,
+            "status": {"buy_filled": filled, "buy_rejected": failed}}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=["record", "reconcile", "status"],
+    parser.add_argument("--mode", choices=["record", "precommit", "reconcile",
+                                           "status"],
                         default="record")
     parser.add_argument("--date", default=None, help="signal/execution date YYYY-MM-DD")
     args = parser.parse_args()
     try:
         if args.mode == "record":
             print(json.dumps(record(args.date), ensure_ascii=False))
+        elif args.mode == "precommit":
+            print(json.dumps(precommit(args.date), ensure_ascii=False))
         elif args.mode == "reconcile":
-            print(json.dumps(reconcile(args.date), ensure_ascii=False))
+            # v5.5: fill from SEALED-package precommitted orders first;
+            # legacy log-based reconcile remains for the disabled path.
+            try:
+                print(json.dumps(reconcile_from_package(args.date),
+                                 ensure_ascii=False))
+            except RuntimeError:
+                print(json.dumps(reconcile(args.date), ensure_ascii=False))
         else:
             status = json.loads(STATUS_PATH.read_text(encoding="utf-8")) \
                 if STATUS_PATH.exists() else {"shadow_days": 0, "round_trips": 0}
