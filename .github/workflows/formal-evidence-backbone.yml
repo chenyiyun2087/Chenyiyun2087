@@ -241,6 +241,11 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
+        env:
+          # gitleaks v2 breaking change: a token is now REQUIRED to scan
+          # pull requests (mirrors strict-ledger-audit.yml); without it the
+          # job fails on PR events only.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   pending-pr-check:
     runs-on: ubuntu-latest

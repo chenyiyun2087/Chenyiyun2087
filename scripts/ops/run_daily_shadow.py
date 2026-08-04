@@ -29,6 +29,7 @@ Usage (scheduled by web/app.py task alpha_challenger_shadow):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util as _iu
 import json
 from datetime import datetime
@@ -409,7 +410,10 @@ def record(signal_date: str | None = None) -> dict:
             "execution_date": execution_date, "total_rows": len(frame)}
 
 
-def reconcile(execution_date: str | None = None) -> dict:
+def reconcile(execution_date: str | None = None,
+              log_path: Path | None = None,
+              write_back: bool = True,
+              status_path: Path | None = None) -> dict:
     """T+1 fill simulation: canonical directional gates + min lot.
 
     BUY  gates: limit-UP at open blocks; suspension blocks; no open price
@@ -419,8 +423,15 @@ def reconcile(execution_date: str | None = None) -> dict:
 
     Execution date comes from the caller (T+1 morning) — verified against
     the trade calendar; it is NEVER derived from "latest score date".
+
+    v5.5.1: the legacy path is ENGINEERING-ONLY.  `--mode
+    legacy-reconcile-audit` reads the legacy log but never writes it back
+    (write_back=False) and never touches the formal status file — its
+    output is smoke-test zone with evidence_eligible: false.
     """
-    log = pd.read_parquet(LOG_PATH) if LOG_PATH.exists() else pd.DataFrame()
+    log_path = log_path or LOG_PATH
+    status_path = status_path or STATUS_PATH
+    log = pd.read_parquet(log_path) if log_path.exists() else pd.DataFrame()
     if log.empty:
         return {"reconciled": 0, "error": "empty_log"}
     open_days = load_trade_calendar()
@@ -487,13 +498,21 @@ def reconcile(execution_date: str | None = None) -> dict:
         log.at[idx, "execution_date"] = execution_date
         log.at[idx, "side"] = side
         filled += 1
-    log.to_parquet(LOG_PATH, index=False, compression="zstd")
+    if write_back:
+        log.to_parquet(log_path, index=False, compression="zstd")
+        status = _status_from_log(log, status_path)
+    else:
+        # Audit mode: never write the fill back, never touch the formal
+        # status file — compute a read-only status for the report.
+        status = _status_from_log(log, status_path, write_back=False)
     return {"reconciled": filled, "failed": failed,
             "execution_date": execution_date,
-            "status": _status_from_log(log)}
+            "status": status}
 
 
-def _status_from_log(log: pd.DataFrame) -> dict:
+def _status_from_log(log: pd.DataFrame,
+                     status_path: Path | None = None,
+                     write_back: bool = True) -> dict:
     days = log.dropna(subset=["fill_price"])
     round_trips = int(days.groupby(["challenger_id", "symbol"]).size().ge(2).sum()) \
         if not days.empty else 0
@@ -504,8 +523,10 @@ def _status_from_log(log: pd.DataFrame) -> dict:
         "e4_gate_met": log["signal_date"].nunique() >= 60 and round_trips >= 30,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
-    STATUS_PATH.write_text(json.dumps(status, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
+    if write_back:
+        (status_path or STATUS_PATH).write_text(
+            json.dumps(status, ensure_ascii=False, indent=2),
+            encoding="utf-8")
     return status
 
 
@@ -540,6 +561,31 @@ def _orders_path(execution_date: str, execution_zone: Path | None = None) -> Pat
     return zone / execution_date / "orders.json"
 
 
+def compute_order_id(package_sha: str, candidate_id: str,
+                     execution_date: str, symbol: str, side: str,
+                     rebalance_sequence: int = 1) -> str:
+    """Deterministic order identity (v5.5.1 idempotency contract).
+
+    The same (package, candidate, execution date, symbol, side, sequence)
+    MUST hash to the same id so a repeated precommit is a no-op instead of
+    a double-append.
+    """
+    payload = "|".join([package_sha, candidate_id, execution_date,
+                        symbol, side, str(rebalance_sequence)])
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _package_sha(pkg_dir: Path) -> str:
+    """Canonical package identity from package_sha256.json."""
+    sha_path = pkg_dir / "package_sha256.json"
+    if not sha_path.exists():
+        raise RuntimeError(
+            f"shadow_blocked: package_sha256.json missing at {pkg_dir} — "
+            "no package identity, idempotency contract cannot apply")
+    return str(json.loads(sha_path.read_text(encoding="utf-8"))
+               .get("package_sha256") or "")
+
+
 def precommit(execution_date: str | None = None,
               packages_zone: Path | None = None,
               execution_zone: Path | None = None,
@@ -550,6 +596,14 @@ def precommit(execution_date: str | None = None,
     at ORDER_PRECOMMITTED with precommit_price = T-day close (reference).
     Target shares are lot-adjusted (100-share A-share lots).  The orders
     file is append-only per execution date.
+
+    v5.5.1 idempotency contract (each order carries package_sha, order_id,
+    precommit_run_id, event_sequence):
+
+      | same order_id rerun              | IDEMPOTENT_SUCCESS (no append) |
+      | same execution day, other pkg SHA | BLOCKED                       |
+      | duplicate BUY same cand+symbol   | BLOCKED                       |
+      | precommit after reconcile        | BLOCKED                       |
     """
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
@@ -566,6 +620,8 @@ def precommit(execution_date: str | None = None,
     manifest = json.loads((pkg / "signal_package_manifest.json").read_text())
     portfolios = pd.read_parquet(pkg / "target_portfolios.parquet")
     close_map = _t_close_map(manifest["signal_date"], prices_path)
+    package_sha = _package_sha(pkg)
+    precommit_run_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
 
     orders_path = _orders_path(execution_date, execution_zone)
     existing = []
@@ -575,18 +631,48 @@ def precommit(execution_date: str | None = None,
             raise RuntimeError(
                 f"shadow_blocked: orders for {execution_date} already "
                 "reconciled — precommit is append-only before fills")
+        if any("order_id" not in o for o in existing):
+            raise RuntimeError(
+                f"shadow_blocked: orders for {execution_date} predate the "
+                "v5.5.1 idempotency contract (no order_id) — the "
+                "execution-day ledger must be rebuilt from the package")
 
     orders = list(existing)
-    for _, row in portfolios.iterrows():
+    seen_ids = {o["order_id"] for o in orders if "order_id" in o}
+    if seen_ids:
+        foreign = [o for o in orders if o.get("package_sha") != package_sha]
+        if foreign:
+            raise RuntimeError(
+                f"shadow_blocked: orders for {execution_date} were "
+                f"precommitted from a DIFFERENT package "
+                f"({foreign[0].get('package_sha')} vs {package_sha}) — "
+                "same-day orders may not mix package identities")
+    run_orders = []
+    idempotent_skipped = 0
+    for seq, (_, row) in enumerate(portfolios.iterrows(), start=1):
         symbol = str(row["symbol"])
+        candidate_id = str(row.get("candidate_id", ""))
+        order_id = compute_order_id(package_sha, candidate_id,
+                                    execution_date, symbol, "BUY", 1)
+        if order_id in seen_ids:
+            idempotent_skipped += 1  # IDEMPOTENT_SUCCESS — already there
+            continue
+        key = (candidate_id, symbol)
+        if any(o.get("challenger_id") == candidate_id
+               and o.get("symbol") == symbol and o.get("side") == "BUY"
+               for o in orders):
+            raise RuntimeError(
+                f"shadow_blocked: duplicate BUY for candidate {candidate_id} "
+                f"symbol {symbol} on {execution_date} — one precommit per "
+                "(candidate, symbol, execution day)")
         precommit_price = float(close_map.get(symbol, float("nan")))
         notional = float(row["target_weight"]) * 500_000.0
         shares = int(notional / precommit_price // 100 * 100) \
             if pd.notna(precommit_price) and precommit_price > 0 else 0
-        orders.append({
+        order = {
             "signal_date": manifest["signal_date"],
             "execution_date": execution_date,
-            "challenger_id": str(row.get("candidate_id", "")),
+            "challenger_id": candidate_id,
             "symbol": symbol,
             "side": "BUY",
             "target_weight": float(row["target_weight"]),
@@ -596,13 +682,21 @@ def precommit(execution_date: str | None = None,
             "fill_price": None, "fill_status": None,
             "slippage_bps": None, "rejection_reason": None,
             "state": "ORDER_PRECOMMITTED",
+            "package_sha": package_sha,
+            "order_id": order_id,
+            "precommit_run_id": precommit_run_id,
+            "event_sequence": seq,
             "precommitted_at": datetime.now().isoformat(timespec="seconds"),
-        })
+        }
+        run_orders.append(order)
+        orders.append(order)
     orders_path.parent.mkdir(parents=True, exist_ok=True)
     orders_path.write_text(json.dumps(orders, ensure_ascii=False, indent=2),
                            encoding="utf-8")
     return {"precommitted": len(orders), "execution_date": execution_date,
-            "package": str(pkg.name), "signal_date": manifest["signal_date"]}
+            "package": str(pkg.name), "signal_date": manifest["signal_date"],
+            "package_sha": package_sha, "precommit_run_id": precommit_run_id,
+            "idempotent_skipped": idempotent_skipped}
 
 
 def reconcile_from_package(execution_date: str | None = None,
@@ -716,10 +810,35 @@ def reconcile_from_package(execution_date: str | None = None,
             "status": {"buy_filled": filled, "buy_rejected": failed}}
 
 
+def legacy_reconcile_audit(execution_date: str | None = None) -> dict:
+    """v5.5.1: legacy log-based reconcile as an ENGINEERING-ONLY audit.
+
+    Reads the legacy daily log, runs the old fill gates, and writes the
+    result to the smoke-test zone — NEVER to the E4 execution zone, NEVER
+    back into the legacy log, NEVER to the formal shadow status file.
+    The output is explicitly not evidence.
+    """
+    smoke = PROJECT_ROOT / "exports" / "forward_shadow_smoke_tests"
+    smoke.mkdir(parents=True, exist_ok=True)
+    result = reconcile(
+        execution_date,
+        log_path=LOG_PATH,          # read the real legacy log
+        write_back=False,           # but do not modify it
+        status_path=smoke / "legacy_reconcile_status.json",
+    )
+    result["evidence_eligible"] = False
+    result["engine_use_only"] = True
+    out_path = smoke / f"legacy_reconcile_{execution_date or 'latest'}.json"
+    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    result["wrote_to"] = str(out_path.relative_to(PROJECT_ROOT))
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["record", "precommit", "reconcile",
-                                           "status"],
+                                           "legacy-reconcile-audit", "status"],
                         default="record")
     parser.add_argument("--date", default=None, help="signal/execution date YYYY-MM-DD")
     args = parser.parse_args()
@@ -729,13 +848,14 @@ def main() -> int:
         elif args.mode == "precommit":
             print(json.dumps(precommit(args.date), ensure_ascii=False))
         elif args.mode == "reconcile":
-            # v5.5: fill from SEALED-package precommitted orders first;
-            # legacy log-based reconcile remains for the disabled path.
-            try:
-                print(json.dumps(reconcile_from_package(args.date),
-                                 ensure_ascii=False))
-            except RuntimeError:
-                print(json.dumps(reconcile(args.date), ensure_ascii=False))
+            # v5.5.1: package-path ONLY, fail-closed.  A RuntimeError here
+            # must surface — the legacy log path was auto-fallback and hid
+            # package/execution breakage (forbidden by design).
+            print(json.dumps(reconcile_from_package(args.date),
+                             ensure_ascii=False))
+        elif args.mode == "legacy-reconcile-audit":
+            print(json.dumps(legacy_reconcile_audit(args.date),
+                             ensure_ascii=False))
         else:
             status = json.loads(STATUS_PATH.read_text(encoding="utf-8")) \
                 if STATUS_PATH.exists() else {"shadow_days": 0, "round_trips": 0}
