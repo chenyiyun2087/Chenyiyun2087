@@ -36,11 +36,34 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SHADOW_ROOT = PROJECT_ROOT / "exports" / "formal_evidence" / "alpha_challengers" / "shadow"
 LOG_PATH = SHADOW_ROOT / "daily_log.parquet"
 STATUS_PATH = SHADOW_ROOT / "shadow_status.json"
+
+# v5.5.2 execution loop: the event ledger is the durable truth, the state
+# machine is reconstructed from it (replay), orders.json is a projection.
+from runtime.shadow_events import (  # noqa: E402
+    BUY_FILLED,
+    BUY_REJECTED,
+    NAV_SNAPSHOT,
+    ORDER_PRECOMMITTED,
+    SELL_FILLED,
+    SELL_PRECOMMITTED,
+    append_event,
+    event_log_path,
+    existing_identities,
+    exported_orders,
+    iter_all_events,
+    replay,
+    replay_all,
+)
+from runtime.shadow_virtual_account import (  # noqa: E402
+    AccountConservationError,
+    VirtualAccount,
+)
 
 CHALLENGER_ROOT = PROJECT_ROOT / "exports" / "formal_evidence" / "alpha_challengers"
 ACTIVE_CHALLENGERS = (
@@ -575,6 +598,343 @@ def compute_order_id(package_sha: str, candidate_id: str,
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+# ── v5.5.2 execution loop ────────────────────────────────────────────
+
+EXECUTION_CONTRACT_PATH = (PROJECT_ROOT / "config" / "strategy_runtime"
+                           / "forward_shadow_v2.yaml")
+
+
+def _candidate_execution_config() -> dict[str, dict]:
+    """Per-candidate frozen execution contracts (forward_shadow_v2.yaml).
+
+    Keyed by challenger_id (C0's 'baseline_vls_frozen', C1's
+    'f1_no_value', ...).  Missing file or missing candidate -> fail-closed
+    raise: the sell engine and NAV must NEVER run on guessed parameters.
+    """
+    if not EXECUTION_CONTRACT_PATH.exists():
+        raise RuntimeError(
+            "shadow_blocked: forward_shadow_v2.yaml missing — execution "
+            "contracts unavailable")
+    cfg = yaml.safe_load(EXECUTION_CONTRACT_PATH.read_text(encoding="utf-8"))
+    out = {}
+    for cand, meta in (cfg.get("candidates") or {}).items():
+        challenger_id = meta.get("challenger_id")
+        if not challenger_id:
+            continue
+        ex = meta.get("execution") or {}
+        out[challenger_id] = {
+            "hold_days": int(ex.get("hold_days", 20)),
+            "rebalance_score_buffer": float(
+                ex.get("rebalance_score_buffer", 0.10)),
+            "weight_drift_band": float(ex.get("weight_drift_band", 0.0)),
+            "cost_rate": float(ex.get("cost_rate", 0.00075)),
+            "slippage_bps": float(ex.get("slippage_bps", 10.0)),
+            "initial_cash_cny": float(ex.get("initial_cash_cny", 500000.0)),
+        }
+    if not out:
+        raise RuntimeError(
+            "shadow_blocked: no candidate execution contracts found in "
+            "forward_shadow_v2.yaml")
+    return out
+
+
+def _target_map(pkg_dir: Path) -> dict[tuple[str, str], float]:
+    """{(candidate_id, symbol): target_weight} from the SEALED package."""
+    portfolios_path = pkg_dir / "target_portfolios.parquet"
+    if not portfolios_path.exists():
+        raise RuntimeError(
+            f"shadow_blocked: {pkg_dir.name} has no target_portfolios.parquet "
+            "— sell engine cannot rebalance against the package")
+    frame = pd.read_parquet(portfolios_path)
+    out = {}
+    for _, row in frame.iterrows():
+        cand = str(row.get("candidate_id", ""))
+        sym = str(row["symbol"]).zfill(6)
+        out[(cand, sym)] = float(row.get("target_weight", 0.0))
+    return out
+
+
+def _held_positions(machine):
+    """Open HOLDING positions as {key: (position, buy_order)}."""
+    out = {}
+    for key, pos in machine.positions.items():
+        if pos.state == "HOLDING":
+            out[key] = (pos, pos.buy_order)
+    return out
+
+
+def _orders_for_date(execution_date: str,
+                     execution_zone: Path | None = None) -> list[dict]:
+    """orders.json for one execution date (empty list when absent)."""
+    path = _orders_path(execution_date, execution_zone)
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def sell_precommit(execution_date: str | None = None,
+                   execution_zone: Path | None = None,
+                   packages_zone: Path | None = None,
+                   prices_path: Path | None = None) -> dict:
+    """T 17:00 — decide which HOLDING positions to SELL on T+1.
+
+    Per the frozen contracts (hold_days / rebalance_score_buffer /
+    weight_drift_band from forward_shadow_v2.yaml):
+
+      - before hold expiry: a position is left untouched even if the
+        latest package no longer holds the symbol (hold-period rule)
+      - on/after hold expiry: a position whose symbol is NOT in the
+        latest target portfolio is exited (rebalance_exit); one still in
+        the portfolio is kept (score-buffer rule: it survived the top-N
+        cut) unless its target weight shrank beyond the drift band
+      - target-weight shrinkage beyond the band triggers a partial
+        reduction at ANY time (risk_reduction — C2's R2 overlay scales
+        weights daily; C0/C1/C3 equal-weight so this never fires)
+
+    SELL orders are precommitted at the T-day close and executed at T+1
+    open (same T+1 semantics as BUY).  Idempotency mirrors BUY: the same
+    (challenger, symbol, execution date) has at most one pending SELL.
+    """
+    zone = execution_zone or EXECUTION_ZONE
+    today = datetime.now().date().isoformat()
+    open_days = load_trade_calendar(need_date=execution_date or today)
+    if execution_date is None:
+        execution_date = open_days[-1] if open_days else None
+    if execution_date not in open_days:
+        raise RuntimeError(
+            f"shadow_blocked: {execution_date} is not an open trading day")
+    pkg = _latest_package_for_execution(execution_date,
+                                        packages_zone or PACKAGES_ZONE)
+    if pkg is None:
+        raise RuntimeError(
+            f"shadow_blocked: no SEALED package for execution_date "
+            f"{execution_date} — sell engine requires the T-day target "
+            "portfolio")
+    manifest = json.loads((pkg / "signal_package_manifest.json").read_text())
+    signal_date = manifest["signal_date"]
+    config = _candidate_execution_config()
+    target = _target_map(pkg)
+    machine = replay_all(zone)
+    held = _held_positions(machine)
+    if not held:
+        return {"sells": 0, "execution_date": execution_date,
+                "signal_date": signal_date, "reason": "no_open_positions"}
+
+    close_map = _t_close_map(signal_date, prices_path)
+    day_index = {d: i for i, d in enumerate(open_days)}
+    exec_idx = day_index.get(execution_date, 0)
+    log_path = event_log_path(zone, execution_date)
+    seen_events = existing_identities(log_path)
+
+    orders = _orders_for_date(execution_date, zone)
+    pending_sells = {o.get("challenger_id"): o.get("symbol")
+                     for o in orders
+                     if o.get("side") == "SELL"
+                     and o.get("state") == "SELL_PRECOMMITTED"}
+    run_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+    sells, skipped = [], 0
+    for (cand, sym), (pos, buy) in sorted(held.items()):
+        contract = config.get(cand)
+        if contract is None:
+            raise RuntimeError(
+                f"shadow_blocked: candidate {cand} has no frozen execution "
+                "contract — sell engine refuses to guess hold_days/costs")
+        if sym in pending_sells.get(cand, ""):
+            skipped += 1  # already precommitted for this execution day
+            continue
+        hold_days = contract["hold_days"]
+        sig_idx = day_index.get(buy.signal_date, 0)
+        expired = (exec_idx - sig_idx) >= hold_days
+        target_weight = target.get((cand, sym))
+        shares = pos.sell_order.lot_adjusted_shares if (
+            pos.sell_order is not None) else buy.lot_adjusted_shares or buy.target_shares
+        precommit_price = float(close_map.get(sym, float("nan")))
+        if not pd.notna(precommit_price) or precommit_price <= 0:
+            # No T-close reference: cannot precommit a price -> defer to
+            # the next run (never invent a price).
+            skipped += 1
+            continue
+        if not expired and target_weight is None:
+            # Hold-period rule: before hold expiry a position is left
+            # untouched even if the latest package drops the symbol (no
+            # churn on daily score noise — the exit decision is deferred
+            # to the expiry rebalance).
+            skipped += 1
+            continue
+        if not expired and target_weight is not None:
+            band = contract["weight_drift_band"]
+            if target_weight >= buy.target_weight * (1.0 - band) - 1e-12:
+                skipped += 1  # hold: within band / still in target, pre-expiry
+                continue
+        # Exit decision reached: full exit on expiry-exclusion, partial
+        # reduction when the target weight shrank beyond the band.
+        sell_shares = shares
+        reason = "rebalance_exit"
+        if expired and target_weight is not None:
+            skipped += 1  # still in target at expiry -> keep holding
+            continue
+        if not expired and target_weight is not None:
+            target_shares = int(target_weight * contract["initial_cash_cny"]
+                                / precommit_price // 100 * 100)
+            sell_shares = min(shares, max(0, shares - target_shares))
+            reason = "risk_reduction"
+            if sell_shares <= 0:
+                skipped += 1  # target >= current (rounding) — nothing to sell
+                continue
+        order_id = compute_order_id(
+            _package_sha(pkg), cand, execution_date, sym, "SELL", 1)
+        if any(o.get("order_id") == order_id for o in orders):
+            # The same decision (package, candidate, execution day, symbol)
+            # re-run is an idempotent no-op — orders.json stays 1:1 with
+            # the event ledger.  A REJECTED sell is re-decided on a LATER
+            # execution day (new order_id), never re-precommitted today.
+            skipped += 1
+            continue
+        order = {
+            "signal_date": signal_date,
+            "execution_date": execution_date,
+            "challenger_id": cand,
+            "symbol": sym,
+            "side": "SELL",
+            "target_weight": float(buy.target_weight),
+            "target_shares": sell_shares,
+            "lot_adjusted_shares": sell_shares,
+            "precommit_price": precommit_price,
+            "fill_price": None, "fill_status": None,
+            "slippage_bps": None, "rejection_reason": None,
+            "state": "SELL_PRECOMMITTED",
+            "package_sha": _package_sha(pkg),
+            "order_id": order_id,
+            "precommit_run_id": run_id,
+            "exit_reason": reason,
+            "precommitted_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        event = {
+            "event_type": SELL_PRECOMMITTED,
+            "signal_date": signal_date,
+            "execution_date": execution_date,
+            "challenger_id": cand,
+            "symbol": sym,
+            "side": "SELL",
+            "target_weight": float(buy.target_weight),
+            "target_shares": sell_shares,
+            "lot_adjusted_shares": sell_shares,
+            "precommit_price": precommit_price,
+            "order_id": order_id,
+            "source_package_sha": _package_sha(pkg),
+            "exit_reason": reason,
+        }
+        append_event(log_path, event, seen=seen_events)
+        orders.append(order)
+        sells.append(order)
+    orders_path = _orders_path(execution_date, zone)
+    orders_path.parent.mkdir(parents=True, exist_ok=True)
+    orders_path.write_text(json.dumps(orders, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+    return {"sells": len(sells), "skipped": skipped,
+            "execution_date": execution_date, "signal_date": signal_date,
+            "sells_detail": [{"challenger_id": o["challenger_id"],
+                              "symbol": o["symbol"], "shares": o["target_shares"],
+                              "reason": o.get("exit_reason")}
+                             for o in sells]}
+
+
+def _rebuild_accounts(config: dict[str, dict],
+                      execution_zone: Path | None = None):
+    """Replay all fill events into per-candidate VirtualAccounts."""
+    zone = execution_zone or EXECUTION_ZONE
+    accounts: dict[str, VirtualAccount] = {}
+    for ev in iter_all_events(zone):
+        etype = ev["event_type"]
+        if etype not in (BUY_FILLED, SELL_FILLED):
+            continue
+        cand = ev["challenger_id"]
+        contract = config.get(cand)
+        if contract is None:
+            raise RuntimeError(
+                f"shadow_blocked: fill event for candidate {cand} with no "
+                "execution contract — account cannot be costed")
+        acc = accounts.get(cand)
+        if acc is None:
+            acc = accounts[cand] = VirtualAccount(
+                cand, initial_cash=contract["initial_cash_cny"],
+                cost_rate=contract["cost_rate"],
+                slippage_bps=contract["slippage_bps"])
+        shares = int(ev["shares"])
+        if etype == BUY_FILLED:
+            acc.buy_fill(ev["symbol"], shares, float(ev["fill_price"]))
+        else:
+            acc.sell_fill(ev["symbol"], shares, float(ev["fill_price"]))
+    return accounts
+
+
+def nav(execution_date: str | None = None,
+        execution_zone: Path | None = None,
+        prices_path: Path | None = None) -> dict:
+    """T+1 15:30 — daily per-candidate NAV snapshots (mark to close).
+
+    Accounts are rebuilt from the fill-event ledger (never from
+    orders.json); a held symbol with no close price for the day raises
+    ACCOUNT_CONSERVATION_ERROR (a 0-price mark is forbidden).  The NAV
+    snapshot event is appended per candidate — a rerun is an idempotent
+    no-op.
+    """
+    zone = execution_zone or EXECUTION_ZONE
+    today = datetime.now().date().isoformat()
+    open_days = load_trade_calendar(need_date=execution_date or today)
+    if execution_date is None:
+        execution_date = open_days[-1] if open_days else None
+    if execution_date not in open_days:
+        raise RuntimeError(
+            f"shadow_blocked: {execution_date} is not an open trading day")
+    config = _candidate_execution_config()
+    accounts = _rebuild_accounts(config, zone)
+    if not accounts:
+        return {"date": execution_date, "accounts": [], "reason": "no_fills"}
+    prices = _load_execution_prices(execution_date, prices_path)
+    close_map = (prices.set_index("symbol")["raw_close"].to_dict()
+                 if not prices.empty else {})
+    log_path = event_log_path(zone, execution_date)
+    seen_events = existing_identities(log_path)
+    snapshots = []
+    for cand, acc in sorted(accounts.items()):
+        snap = acc.daily_snapshot(execution_date, close_map)
+        snapshots.append(snap)
+        append_event(log_path, {
+            "event_type": NAV_SNAPSHOT,
+            "signal_date": execution_date,
+            "execution_date": execution_date,
+            "challenger_id": cand,
+            "symbol": None,
+            "side": None,
+            "shares": None,
+            "nav": snap["nav"],
+            "cash": snap["cash"],
+        }, seen=seen_events)
+    nav_dir = zone / "nav"
+    nav_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = nav_dir / "nav_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8")) \
+        if summary_path.exists() else {"days": {}}
+    summary["days"][execution_date] = snapshots
+    summary["generated_at"] = datetime.now().isoformat(timespec="seconds")
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+    return {"date": execution_date, "accounts": snapshots}
+
+
+def round_trips(execution_zone: Path | None = None) -> dict:
+    """E4 counter: ONLY complete BUY_FILLED -> HOLDING -> SELL_FILLED
+    chains (the state machine's completed_round_trips)."""
+    machine = replay_all(execution_zone or EXECUTION_ZONE)
+    open_positions = [f"{cand}/{sym}" for (cand, sym), p
+                      in machine.positions.items()
+                      if p.state != "ROUND_TRIP_COMPLETED"]
+    return {"round_trips": machine.completed_round_trips(),
+            "open_positions": open_positions,
+            "orders": len(machine.orders)}
+
+
 def _package_sha(pkg_dir: Path) -> str:
     """Canonical package identity from package_sha256.json."""
     sha_path = pkg_dir / "package_sha256.json"
@@ -647,8 +1007,19 @@ def precommit(execution_date: str | None = None,
                 f"precommitted from a DIFFERENT package "
                 f"({foreign[0].get('package_sha')} vs {package_sha}) — "
                 "same-day orders may not mix package identities")
+
+    # v5.5.2: event ledger + hold-period rule.  A symbol already HELD is
+    # never re-bought (equal-weight target unchanged -> no add-on);
+    # new entries into the target portfolio are bought exactly once.
+    log_path = event_log_path(execution_zone or EXECUTION_ZONE,
+                              execution_date)
+    seen_events = existing_identities(log_path)
+    held = {p.challenger_id: p.symbol for p in
+            replay_all(execution_zone or EXECUTION_ZONE).positions.values()}
+
     run_orders = []
     idempotent_skipped = 0
+    held_skipped = 0
     for seq, (_, row) in enumerate(portfolios.iterrows(), start=1):
         symbol = str(row["symbol"])
         candidate_id = str(row.get("candidate_id", ""))
@@ -665,6 +1036,9 @@ def precommit(execution_date: str | None = None,
                 f"shadow_blocked: duplicate BUY for candidate {candidate_id} "
                 f"symbol {symbol} on {execution_date} — one precommit per "
                 "(candidate, symbol, execution day)")
+        if held.get(candidate_id) == symbol:
+            held_skipped += 1  # already holding — no re-buy (v5.5.2 rule)
+            continue
         precommit_price = float(close_map.get(symbol, float("nan")))
         notional = float(row["target_weight"]) * 500_000.0
         shares = int(notional / precommit_price // 100 * 100) \
@@ -688,6 +1062,20 @@ def precommit(execution_date: str | None = None,
             "event_sequence": seq,
             "precommitted_at": datetime.now().isoformat(timespec="seconds"),
         }
+        append_event(log_path, {
+            "event_type": ORDER_PRECOMMITTED,
+            "signal_date": manifest["signal_date"],
+            "execution_date": execution_date,
+            "challenger_id": candidate_id,
+            "symbol": symbol,
+            "side": "BUY",
+            "target_weight": float(row["target_weight"]),
+            "target_shares": shares,
+            "lot_adjusted_shares": shares,
+            "precommit_price": precommit_price,
+            "order_id": order_id,
+            "source_package_sha": package_sha,
+        }, seen=seen_events)
         run_orders.append(order)
         orders.append(order)
     orders_path.parent.mkdir(parents=True, exist_ok=True)
@@ -696,7 +1084,8 @@ def precommit(execution_date: str | None = None,
     return {"precommitted": len(orders), "execution_date": execution_date,
             "package": str(pkg.name), "signal_date": manifest["signal_date"],
             "package_sha": package_sha, "precommit_run_id": precommit_run_id,
-            "idempotent_skipped": idempotent_skipped}
+            "idempotent_skipped": idempotent_skipped,
+            "held_skipped": held_skipped}
 
 
 def reconcile_from_package(execution_date: str | None = None,
@@ -740,10 +1129,14 @@ def reconcile_from_package(execution_date: str | None = None,
     if not orders_path.exists():
         return {"reconciled": 0, "error": "no_orders_for_execution_date"}
     orders = json.loads(orders_path.read_text(encoding="utf-8"))
-    pending = [o for o in orders if o.get("state") == "ORDER_PRECOMMITTED"]
+    pending = [o for o in orders
+               if o.get("state") in ("ORDER_PRECOMMITTED", "SELL_PRECOMMITTED")]
     if not pending:
         return {"reconciled": 0, "failed": 0,
                 "status": {"state": "already_reconciled"}}
+    log_path = event_log_path(execution_zone or EXECUTION_ZONE,
+                              execution_date)
+    seen_events = existing_identities(log_path)
 
     prices = _load_execution_prices(execution_date, prices_path)
     day_prices = prices.set_index("symbol") if not prices.empty else prices
@@ -764,50 +1157,101 @@ def reconcile_from_package(execution_date: str | None = None,
             suspended_map = pd.to_numeric(uni["is_suspended"], errors="coerce")
 
     filled, failed = 0, 0
+    buy_filled = buy_rejected = sell_filled = sell_rejected = 0
     for o in pending:
         symbol = str(o["symbol"])
+        side = o.get("side", "BUY")
         info = day_prices.loc[symbol] if symbol in day_prices.index else None
         open_price = float(info["raw_open"] or info["open"] or float("nan")) \
             if info is not None else float("nan")
         prev_close = float(info.get("raw_pre_close") or float("nan")) \
             if info is not None else float("nan")
+        def _reject(fill_status: str, reason: str) -> None:
+            """Record a rejection in orders.json AND in the event ledger
+            (the ledger is the durable truth — a rejection is an event)."""
+            o["fill_status"] = fill_status
+            o["rejection_reason"] = reason
+            o["state"] = f"{side}_REJECTED"
+            append_event(log_path, {
+                "event_type": f"{side}_REJECTED",
+                "signal_date": o.get("signal_date"),
+                "execution_date": execution_date,
+                "challenger_id": o.get("challenger_id"),
+                "symbol": symbol,
+                "side": side,
+                "shares": int(o.get("lot_adjusted_shares")
+                              or o.get("target_shares") or 0),
+                "order_id": o.get("order_id"),
+                "source_package_sha": o.get("package_sha"),
+                "reason": reason,
+            }, seen=seen_events)
+
         if not pd.notna(open_price) or open_price <= 0:
-            o["fill_status"] = "NO_OPEN"
-            o["rejection_reason"] = "no_open_price"
-            o["state"] = "BUY_REJECTED"
+            _reject("NO_OPEN", "no_open_price")
             failed += 1
             continue
         if not pd.notna(prev_close) or prev_close <= 0:
-            o["fill_status"] = "NO_PREV_CLOSE"
-            o["rejection_reason"] = "missing_prev_close_limit_unknown"
-            o["state"] = "BUY_REJECTED"
+            _reject("NO_PREV_CLOSE", "missing_prev_close_limit_unknown")
             failed += 1
             continue
         is_st = float(st_map.get(symbol)) if (
             symbol in st_map.index and pd.notna(st_map.get(symbol))) else 0.0
-        allowed, reason = _MR.can_buy_at_open(
-            open_price, prev_close, symbol, is_st,
-            is_listed=_flag(listed_map, symbol),
-            is_suspended=_flag(suspended_map, symbol))
+        if side == "BUY":
+            allowed, reason = _MR.can_buy_at_open(
+                open_price, prev_close, symbol, is_st,
+                is_listed=_flag(listed_map, symbol),
+                is_suspended=_flag(suspended_map, symbol))
+        else:
+            # SELL: limit-DOWN blocks, suspension defers (retried by the
+            # next sell_precommit), never a forced cross.
+            allowed, reason = _MR.can_sell_at_open(
+                open_price, prev_close, symbol, is_st,
+                is_listed=_flag(listed_map, symbol),
+                is_suspended=_flag(suspended_map, symbol))
         if not allowed:
-            o["fill_status"] = "BLOCKED"
-            o["rejection_reason"] = reason or "gate_blocked"
-            o["state"] = "BUY_REJECTED"
+            _reject("BLOCKED", reason or "gate_blocked")
             failed += 1
+            if side == "SELL":
+                sell_rejected += 1
+            else:
+                buy_rejected += 1
             continue
         o["fill_price"] = float(open_price)
         o["slippage_bps"] = round(
             (open_price / float(o["precommit_price"]) - 1.0) * 1e4, 2) \
             if o.get("precommit_price") else None
         o["fill_status"] = "FILLED"
-        o["state"] = "BUY_FILLED"
+        o["state"] = f"{side}_FILLED"
         o["filled_at"] = datetime.now().isoformat(timespec="seconds")
         filled += 1
+        # v5.5.2: the fill event is the durable truth; the state machine
+        # derives BUY_FILLED->HOLDING and SELL_FILLED->ROUND_TRIP_COMPLETED
+        # from replay.  shares = the order's lot-adjusted quantity.
+        append_event(log_path, {
+            "event_type": f"{side}_FILLED",
+            "signal_date": o.get("signal_date"),
+            "execution_date": execution_date,
+            "challenger_id": o.get("challenger_id"),
+            "symbol": symbol,
+            "side": side,
+            "shares": int(o.get("lot_adjusted_shares")
+                          or o.get("target_shares") or 0),
+            "fill_price": float(open_price),
+            "slippage_bps": o["slippage_bps"],
+            "order_id": o.get("order_id"),
+            "source_package_sha": o.get("package_sha"),
+        }, seen=seen_events)
+        if side == "SELL":
+            sell_filled += 1
+        else:
+            buy_filled += 1
     orders_path.write_text(json.dumps(orders, ensure_ascii=False, indent=2),
                            encoding="utf-8")
     return {"reconciled": filled, "failed": failed,
             "execution_date": execution_date,
-            "status": {"buy_filled": filled, "buy_rejected": failed}}
+            "status": {"buy_filled": buy_filled, "buy_rejected": buy_rejected,
+                       "sell_filled": sell_filled,
+                       "sell_rejected": sell_rejected}}
 
 
 def legacy_reconcile_audit(execution_date: str | None = None) -> dict:
@@ -838,6 +1282,8 @@ def legacy_reconcile_audit(execution_date: str | None = None) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["record", "precommit", "reconcile",
+                                           "sell-precommit", "nav",
+                                           "round-trips",
                                            "legacy-reconcile-audit", "status"],
                         default="record")
     parser.add_argument("--date", default=None, help="signal/execution date YYYY-MM-DD")
@@ -853,6 +1299,15 @@ def main() -> int:
             # package/execution breakage (forbidden by design).
             print(json.dumps(reconcile_from_package(args.date),
                              ensure_ascii=False))
+        elif args.mode == "sell-precommit":
+            # v5.5.2: T 17:00 sell decisions for T+1 execution.
+            print(json.dumps(sell_precommit(args.date), ensure_ascii=False))
+        elif args.mode == "nav":
+            # v5.5.2: T+1 close per-candidate NAV snapshot.
+            print(json.dumps(nav(args.date), ensure_ascii=False))
+        elif args.mode == "round-trips":
+            # v5.5.2: E4 counter — only complete round-trip chains.
+            print(json.dumps(round_trips(), ensure_ascii=False))
         elif args.mode == "legacy-reconcile-audit":
             print(json.dumps(legacy_reconcile_audit(args.date),
                              ensure_ascii=False))

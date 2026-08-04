@@ -60,6 +60,15 @@ candidates:
     max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "none"
     execution_policy: "ashare_t1_directional"
+    # v5.5.2 execution contract (inherited from the frozen baseline —
+    # identical for every candidate so comparisons are execution-fair).
+    execution:
+      hold_days: 20
+      rebalance_score_buffer: 0.10
+      weight_drift_band: 0.0
+      cost_rate: 0.00075
+      slippage_bps: 10
+      initial_cash_cny: 500000
 
   C1:
     challenger_id: "f1_no_value"
@@ -75,6 +84,14 @@ candidates:
     max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "none"
     execution_policy: "ashare_t1_directional"
+    # v5.5.2 execution contract (identical across candidates).
+    execution:
+      hold_days: 20
+      rebalance_score_buffer: 0.10
+      weight_drift_band: 0.0
+      cost_rate: 0.00075
+      slippage_bps: 10
+      initial_cash_cny: 500000
 
   C2:
     challenger_id: "h011_f1_r2"
@@ -90,6 +107,14 @@ candidates:
     max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "r2_crowding"     # weight scaler — never changes selection
     execution_policy: "ashare_t1_directional"
+    # v5.5.2 execution contract (identical across candidates).
+    execution:
+      hold_days: 20
+      rebalance_score_buffer: 0.10
+      weight_drift_band: 0.0
+      cost_rate: 0.00075
+      slippage_bps: 10
+      initial_cash_cny: 500000
 
   C3:
     challenger_id: "h010_residualized_f1"
@@ -109,6 +134,14 @@ candidates:
     max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "none"
     execution_policy: "ashare_t1_directional"
+    # v5.5.2 execution contract (identical across candidates).
+    execution:
+      hold_days: 20
+      rebalance_score_buffer: 0.10
+      weight_drift_band: 0.0
+      cost_rate: 0.00075
+      slippage_bps: 10
+      initial_cash_cny: 500000
 
   RND:
     challenger_id: "random_control"
@@ -123,3 +156,13 @@ candidates:
     max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "none"
     execution_policy: "ashare_t1_directional"
+    # v5.5.2 execution contract — RND uses identical execution conditions
+    # to the candidates (same cost model, same cash) so the control is
+    # execution-fair.
+    execution:
+      hold_days: 20
+      rebalance_score_buffer: 0.10
+      weight_drift_band: 0.0
+      cost_rate: 0.00075
+      slippage_bps: 10
+      initial_cash_cny: 500000

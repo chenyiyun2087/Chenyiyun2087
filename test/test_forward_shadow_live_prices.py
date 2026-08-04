@@ -104,6 +104,7 @@ def test_reconcile_live_no_bars_fail_closed(monkeypatch, tmp_path):
         "precommit_price": 10.0, "fill_price": None, "fill_status": None,
         "slippage_bps": None, "rejection_reason": None,
         "state": "ORDER_PRECOMMITTED", "precommitted_at": "2026-08-05T09:25:00",
+        "order_id": "b1b2b3b4b5b6b7b8",  # v5.5.2 identity contract
     }]))
     out = reconcile_from_package(EXEC_DATE, execution_zone=exec_zone)
     assert out["reconciled"] == 0 and out["failed"] == 1
@@ -161,8 +162,9 @@ def test_reconcile_live_st_symbol_uses_st_band(monkeypatch, tmp_path):
             "precommit_price": 10.05, "fill_price": None, "fill_status": None,
             "slippage_bps": None, "rejection_reason": None,
             "state": "ORDER_PRECOMMITTED", "precommitted_at": "2026-08-05T09:25:00",
+            "order_id": f"oid{idx}",  # v5.5.2 identity contract
         }
-        for symbol in ("600001", "600002")
+        for idx, symbol in enumerate(("600001", "600002"))
     ]))
     out = reconcile_from_package(EXEC_DATE, execution_zone=exec_zone,
                                  packages_zone=tmp_path / "packages")
