@@ -547,9 +547,19 @@ def fetch_production_inputs(signal_date: str) -> dict:
             "WHERE trade_date = %s", (date_int,))
         industry = _read_sql(
             conn,
-            "SELECT ts_code, industry_name, effective_date, expire_date "
-            "FROM dwd_stock_industry_scd WHERE "
-            "(expire_date IS NULL OR expire_date > %s) AND effective_date <= %s",
+            # Canonical taxonomy only: the SCD table carries several
+            # industry systems (SW2021 L1/L2, TUSHARE_CURRENT L1) that are
+            # ALL marked effective on the same date (000001.SZ had 3 rows
+            # on 2026-08-04).  labels.industry == TUSHARE_CURRENT L1 at
+            # latest updated_at, 100% verified — that is the pipeline's
+            # canonical naming.  Per-symbol revision dedupe happens in
+            # _normalize (the table keeps overlapping revision intervals
+            # even within one system/level).
+            "SELECT ts_code, industry_name, effective_date, expire_date, "
+            "updated_at FROM dwd_stock_industry_scd WHERE "
+            "industry_system = 'TUSHARE_CURRENT' AND industry_level = 'L1' "
+            "AND (expire_date IS NULL OR expire_date > %s) "
+            "AND effective_date <= %s",
             (date_int, date_int))
         labels = _read_sql(
             conn,
@@ -614,8 +624,21 @@ def _normalize(day: pd.DataFrame, mcap: pd.DataFrame,
     basic_syms = basic.assign(symbol=lambda d: d["ts_code"].astype(str).str.replace(
         r"\.(SH|SZ|BJ)$", "", regex=True).str.zfill(6))[["symbol", "pb", "turnover_rate"]]
     day = day.merge(basic_syms, on="symbol", how="left")
-    ind_syms = industry.assign(symbol=lambda d: d["ts_code"].astype(str).str.replace(
-        r"\.(SH|SZ|BJ)$", "", regex=True).str.zfill(6))[["symbol", "industry_name"]]
+    ind = industry.assign(symbol=lambda d: d["ts_code"].astype(str).str.replace(
+        r"\.(SH|SZ|BJ)$", "", regex=True).str.zfill(6))
+    # SCD overlap guard (2026-08-04 defect): the SCD table keeps multiple
+    # overlapping effective intervals per symbol (revision rows even within
+    # one system/level — 000001.SZ had 3, every symbol 2+).  Merging them
+    # exploded the left join to 6054 rows / 526 duplicate symbols and put
+    # the same stock in a target portfolio 3 times (603823 x3 in C3 top-10).
+    # One row per symbol: the latest revision wins (max updated_at, then
+    # effective_date, then expire_date — verified equal to labels.industry
+    # 100% on 2026-08-04); rows without the columns sort last.
+    sort_cols = [c for c in ("updated_at", "effective_date", "expire_date")
+                 if c in ind.columns]
+    ind = (ind.sort_values(sort_cols, ascending=False, na_position="last")
+           .drop_duplicates("symbol", keep="first"))
+    ind_syms = ind[["symbol", "industry_name"]]
     day = day.merge(ind_syms.rename(columns={"industry_name": "industry"}),
                     on="symbol", how="left")
     return day

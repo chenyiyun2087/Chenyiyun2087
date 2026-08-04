@@ -42,6 +42,8 @@ jobs:
           test/test_forward_shadow_live_prices.py
           test/test_pit_universe_contract.py
           test/test_f2_liquidity_consistency.py
+          test/test_residualize_scores.py
+          test/test_scd_overlap_guard.py
       - run: '! rg "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
   freeze-integrity:
     runs-on: ubuntu-latest
