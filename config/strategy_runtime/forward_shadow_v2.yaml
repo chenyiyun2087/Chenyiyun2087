@@ -19,15 +19,22 @@
 
 schema_version: "strategy_runtime_v1"
 shadow_id: "forward_shadow_v2"
-# v5.5.1 prestart (2026-08-05): the 2026-08-05 true-blind start is
+# v5.5.1 prestart (2026-08-05): the 2026-08-05 true-blind start was
 # WITHDRAWN.  The 08-04 SEALED package carries known defects (C3 rank
 # truncation, SCD duplicate symbols, C2 crowding state invalid — circ_mv
 # never in bars, legacy reconcile fallback, factor fillna(0), PIT lineage
 # placeholders) and is classified KNOWN_DEFECT_PRESTART_PACKAGE — never
-# consumed for execution, never counted for E4.  true-blind restarts only
-# after v5.5.1 + v5.5.2 merge and the full re-declaration checklist
-# (first valid signal date + package SHA recorded here).
-forward_shadow_status: PAUSED_AWAITING_V5_5_1
+# consumed for execution, never counted for E4.  Its corrected
+# revision_2/ (v5.5.1 code, 2026-08-05) is engineering comparison only.
+#
+# Phase 5 re-declaration (2026-08-05): v5.5.1 + v5.5.2 + v5.6.1 merged to
+# main (PRs #187/#189/#190/#191), remote required CI all green, tasks
+# re-enabled in task_registry/pipeline.yaml.  The 2026-08-05 17:00 run
+# is the FIRST FORMALLY ELIGIBLE signal package; true_blind_start is
+# written here ONLY after the first-day audit passes (PIT lineage
+# complete, atomic SEALED, precommit idempotent, T+1 fills, position
+# ledger, no legacy fallback).
+forward_shadow_status: ENABLED_AWAITING_FIRST_PACKAGE
 true_blind_start: null
 true_blind_status: NOT_STARTED
 capital_authority: false
