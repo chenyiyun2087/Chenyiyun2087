@@ -993,16 +993,23 @@ def compute_raw_factors(bars: pd.DataFrame, signal_date: str) -> pd.DataFrame:
     return day
 
 
-def run_package(signal_date: str | None = None, dry_run: bool = False) -> int:
+def run_package(signal_date: str | None = None, dry_run: bool = False,
+                revision_for: str | None = None) -> int:
     """Production entry: fetch -> quality -> universe -> factors -> seal.
 
     dry_run=True runs every stage with real data but seals nothing
     (v5.5.1): no package dir, no SEALED manifest, no state change.
+
+    revision_for=<date> regenerates THAT date's package with today's code
+    as the next revision_N/ beside the original (v5.5.1 plan 0.4): the
+    original SEALED package is preserved and never overwritten.  This is
+    an ENGINEERING COMPARISON revision only — its manifest records the
+    correction reason, and it is never counted into E4 shadow days.
     """
     from runtime.shadow_execution_state import ALL_STATES  # noqa: F401  (import sanity)
     runtime_cfg = yaml.safe_load(RUNTIME_CFG_PATH.read_text(encoding="utf-8"))
     if signal_date is None:
-        signal_date = datetime.now().strftime("%Y-%m-%d")
+        signal_date = revision_for or datetime.now().strftime("%Y-%m-%d")
 
     inputs = fetch_production_inputs(signal_date)
     dq = inputs["data_quality"]
@@ -1124,12 +1131,28 @@ def run_package(signal_date: str | None = None, dry_run: bool = False) -> int:
         signal_date=signal_date, execution_date=exec_date,
         universe=uni.universe, factor_values=factors_all, scores=scores_all,
         target_portfolios=portfolios, data_quality=dq,
-        input_manifest=input_manifest)
+        input_manifest=input_manifest,
+        allow_revision=revision_for is not None,
+        revision_reason=(
+            "v5.5.1 corrected engineering comparison revision (plan 0.4) "
+            f"for {revision_for} — parent classified "
+            "KNOWN_DEFECT_PRESTART_PACKAGE; replay/smoke test only, "
+            "NEVER counted into E4 shadow days or round trips"
+            if revision_for else None))
+    out_dir = PACKAGES_ROOT / signal_date
+    rev = int(manifest.get("revision", 1))
+    if rev > 1:
+        # Construct from the manifest — never re-probe the filesystem
+        # (the revision now exists, so a second next_revision_dir() call
+        # would skip ahead to the next free number).
+        out_dir = PACKAGES_ROOT / signal_date / f"revision_{rev}"
     print(json.dumps({"package_sealed": manifest["signal_date"],
                       "execution_date": exec_date,
+                      "revision": manifest.get("revision"),
+                      "package_dir": str(out_dir.relative_to(PROJECT_ROOT)),
                       "candidates": manifest["candidate_ids"],
                       "universe": uni.n_tradeable,
-                      "package_sha": (PACKAGES_ROOT / signal_date /
+                      "package_sha": (out_dir /
                                       "package_sha256.json").exists()},
                      ensure_ascii=False, indent=2))
     return 0
@@ -1190,9 +1213,16 @@ def main() -> int:
                         help="signal date YYYY-MM-DD (default: today)")
     parser.add_argument("--dry-run", action="store_true",
                         help="run stages but do not seal")
+    parser.add_argument(
+        "--revision-for", default=None,
+        help="regenerate THIS signal date as the next revision_N/ with "
+             "today's code (engineering comparison only — plan 0.4; the "
+             "original SEALED package is preserved, revision never counts "
+             "into E4)")
     args = parser.parse_args()
     try:
-        return run_package(args.date, dry_run=args.dry_run)
+        return run_package(args.date, dry_run=args.dry_run,
+                           revision_for=args.revision_for)
     except (SignalPackageBlocked, PackageSealedError) as exc:
         print(json.dumps({"signal_package_blocked": str(exc)},
                          ensure_ascii=False, indent=2))
