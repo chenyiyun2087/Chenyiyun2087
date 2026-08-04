@@ -19,7 +19,19 @@
 
 schema_version: "strategy_runtime_v1"
 shadow_id: "forward_shadow_v2"
-true_blind_start: "2026-08-05"   # formally declared 2026-08-04 (integration suite green)
+# v5.5.1 prestart (2026-08-05): the 2026-08-05 true-blind start is
+# WITHDRAWN.  The 08-04 SEALED package carries known defects (C3 rank
+# truncation, SCD duplicate symbols, C2 crowding state invalid — circ_mv
+# never in bars, legacy reconcile fallback, factor fillna(0), PIT lineage
+# placeholders) and is classified KNOWN_DEFECT_PRESTART_PACKAGE — never
+# consumed for execution, never counted for E4.  true-blind restarts only
+# after v5.5.1 + v5.5.2 merge and the full re-declaration checklist
+# (first valid signal date + package SHA recorded here).
+forward_shadow_status: PAUSED_AWAITING_V5_5_1
+true_blind_start: null
+true_blind_status: NOT_STARTED
+capital_authority: false
+allowed_new_capital_cny: 0
 signal_time: "T15:30:00+08:00"
 execution_time: "T+1 09:30:00+08:00"
 

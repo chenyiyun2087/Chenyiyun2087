@@ -117,7 +117,11 @@ DDL = (
 def seed(db_url: str) -> dict[str, int | str]:
     _validate_url(db_url)
     engine = create_engine(db_url, future=True)
-    dates = _business_dates(date(2024, 11, 1), date(2025, 1, 10))
+    # Seed through 2026-07-01: TestT1CalendarBehavior queries 2026-06-22 /
+    # 2026-06-26 for next-trading-day lookups — the old 2025-01-10 end made
+    # full-regression CI fail with "No next trading day found".  2027-12-31
+    # (test_calendar_missing_raises) stays beyond the seed range on purpose.
+    dates = _business_dates(date(2024, 11, 1), date(2026, 7, 1))
     score_dates = {date(2025, 1, 2), date(2025, 1, 3), date(2025, 1, 6)}
     price_rows = 0
     score_rows = 0

@@ -56,7 +56,9 @@ evaluation_windows:
   internal_oos: {start: "2023-01-01", end: "2023-12-31"}
   stress_validation: {start: "2024-01-01", end: "2024-12-31"}
   historical_holdout: {start: "2025-01-01", end: "2026-07-31"}
-  true_forward_blind: {start: "2026-08-05", end: null}
+  # WITHDRAWN 2026-08-05 (v5.5.1 prestart): start null until the
+  # correctness fixes merge and the re-declaration checklist passes.
+  true_forward_blind: {start: null, end: null}
 
 selection_prohibited_on: [historical_holdout]
 holdout_usage: "REPORT_ONLY_SHOWN_NEVER_SELECTED"

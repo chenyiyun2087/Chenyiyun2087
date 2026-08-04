@@ -164,16 +164,22 @@ intraday:
     # daily_vls_scores + shadow_record).  One script runs the post-close
     # chain: data quality -> PIT universe freeze -> per-candidate factors
     # -> target portfolios -> SEAL (17:00).
-    # ENABLED 2026-08-04: the v5.5 integration suite passed (74 tests
-    # locally + CI fixtures green on evidence/v5.4.1-evidence-repair);
-    # true-blind start 2026-08-05 is now formally declared (was
-    # provisional until the integration suite passed).
+    # ENABLED 2026-08-04, then PAUSED 2026-08-05 (v5.5.1 prestart): the
+    # 08-04 SEALED package carries known defects (C3 rank truncation,
+    # SCD duplicate symbols, C2 crowding state invalid — circ_mv never
+    # in bars so small_vs_large_20d_rs always None, legacy reconcile
+    # fallback, factor fillna(0), PIT lineage placeholders).  Tasks stay
+    # disabled until v5.5.1 correctness fixes merge and the new
+    # true-blind start is formally declared (was 2026-08-05, now
+    # NOT_STARTED — 08-04 package is KNOWN_DEFECT_PRESTART_PACKAGE,
+    # never counted for E4).
     - id: alpha_signal_package_seal
       time: "17:00"
       script: scripts/ops/build_daily_alpha_signal_package.py
       type: script
       trading_day_only: true
-      status: enabled
+      status: disabled
+      disabled_reason: "v5.5.1 prestart: PAUSED_AWAITING_V5_5_1 — R2/crowding/idempotency/PIT lineage fixes required before true-blind restarts"
       depends_on: [sina_analyse]
 
 morning:
@@ -189,21 +195,23 @@ morning:
       disabled_reason: "v5.4.1 evidence repair: fixed — reconcile now resolves execution_date from trade-calendar next_open_day and uses directional gates (can_buy_at_open/can_sell_at_open); awaits Shadow Engine v2 (v5.5) integration suite before re-enable"
 
     # v5.5 T+1 morning execution chain (ENABLED 2026-08-04 — integration
-    # suite green).  Order precommit 09:25 (uses the SEALED package from
-    # T day), fill reconcile 09:35 (directional gates via
-    # execution_market_rules; live prices from dwd_stock_daily_standard
-    # beyond the PIT snapshot end).  NOTE: no depends_on here — the
-    # cross-day binding (T-day seal -> T+1 morning) is enforced in-code:
-    # precommit/reconcile RAISE shadow_blocked when the SEALED package or
-    # orders are missing (fail-closed), matching the existing
-    # morning-task pattern.
+    # suite green; PAUSED 2026-08-05 with the seal task — see the
+    # alpha_signal_package_seal comment).  Order precommit 09:25 (uses
+    # the SEALED package from T day), fill reconcile 09:35 (directional
+    # gates via execution_market_rules; live prices from
+    # dwd_stock_daily_standard beyond the PIT snapshot end).  NOTE: no
+    # depends_on here — the cross-day binding (T-day seal -> T+1 morning)
+    # is enforced in-code: precommit/reconcile RAISE shadow_blocked when
+    # the SEALED package or orders are missing (fail-closed), matching
+    # the existing morning-task pattern.
     - id: alpha_signal_precommit
       time: "09:25"
       script: scripts/ops/run_daily_shadow.py
       args: ["--mode", "precommit"]
       type: script
       trading_day_only: true
-      status: enabled
+      status: disabled
+      disabled_reason: "v5.5.1 prestart: PAUSED_AWAITING_V5_5_1 — order idempotency contract + legacy fallback removal required before re-enable"
 
     - id: alpha_signal_execution_reconcile
       time: "09:35"
@@ -211,7 +219,8 @@ morning:
       args: ["--mode", "reconcile"]
       type: script
       trading_day_only: true
-      status: enabled
+      status: disabled
+      disabled_reason: "v5.5.1 prestart: PAUSED_AWAITING_V5_5_1 — legacy reconcile auto-fallback must be removed (fail-closed on package path) before re-enable"
 
 weekly:
   description: "每周任务"

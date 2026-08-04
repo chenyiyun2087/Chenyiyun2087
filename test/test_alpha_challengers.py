@@ -68,7 +68,9 @@ def test_manifest_windows_and_holdout_policy():
     assert "historical_holdout" in manifest["selection_prohibited_on"]
     assert manifest["holdout_usage"] == "REPORT_ONLY_SHOWN_NEVER_SELECTED"
     blind = manifest["evaluation_windows"]["true_forward_blind"]
-    assert blind["start"] == "2026-08-05"
+    # v5.5.1 prestart (2026-08-05): start withdrawn — NOT_STARTED until
+    # the correctness fixes merge and the start is re-declared.
+    assert blind["start"] is None
     assert blind["end"] is None
 
 
