@@ -222,6 +222,30 @@ morning:
       status: disabled
       disabled_reason: "v5.5.1 prestart: PAUSED_AWAITING_V5_5_1 — legacy reconcile auto-fallback must be removed (fail-closed on package path) before re-enable"
 
+    # v5.5.2 execution loop (REGISTERED but PAUSED): the sell engine and
+    # NAV close the execution cycle (hold-expiry exits, rebalance exits,
+    # R2 risk reductions, T+1 open fills, per-candidate virtual accounts).
+    # Re-enabled together with the v5.5.1 tasks after the full Phase 5
+    # checklist (event ledger + state machine + round-trip counting
+    # verified in production; true blind re-declared).
+    - id: alpha_signal_sell_precommit
+      time: "17:00"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "sell-precommit"]
+      type: script
+      trading_day_only: true
+      status: disabled
+      disabled_reason: "v5.5.2 prestart: PAUSED_AWAITING_V5_5_1 — sell engine registered with the execution loop, re-enabled at true-blind re-declaration"
+
+    - id: alpha_signal_nav
+      time: "15:30"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "nav"]
+      type: script
+      trading_day_only: true
+      status: disabled
+      disabled_reason: "v5.5.2 prestart: PAUSED_AWAITING_V5_5_1 — per-candidate NAV snapshots registered with the execution loop, re-enabled at true-blind re-declaration"
+
 weekly:
   description: "每周任务"
   tasks:

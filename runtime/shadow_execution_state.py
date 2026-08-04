@@ -86,6 +86,9 @@ class ShadowOrder:
     slippage_bps: Optional[float] = None
     rejection_reason: Optional[str] = None
     state: str = SIGNAL_CREATED
+    # v5.5.2: identity + source binding (idempotency contract / PIT lineage).
+    order_id: Optional[str] = None
+    package_sha: Optional[str] = None
 
     def transition(self, to_state: str, **updates) -> "ShadowOrder":
         """Validate and apply a state transition (returns a new record)."""
@@ -163,20 +166,26 @@ class ShadowStateMachine:
                            rejection_reason=reason)
 
     def precommit_sell(self, position: ShadowPosition,
-                       precommit_price: float) -> ShadowPosition:
+                       precommit_price: float,
+                       execution_date: str | None = None,
+                       order_id: str | None = None) -> ShadowPosition:
         if position.state == ROUND_TRIP_COMPLETED:
             raise ValueError(
                 f"position {position.symbol} is terminal "
                 "(ROUND_TRIP_COMPLETED) — no further transitions")
+        # ``execution_date``/``order_id`` come from the SELL_PRECOMMITTED
+        # event when replaying — the sell executes on a LATER day than the
+        # buy and carries its own order identity.
         sell = ShadowOrder(
             signal_date=position.signal_date,
-            execution_date=position.execution_date,
+            execution_date=execution_date or position.execution_date,
             side="SELL", symbol=position.symbol,
             challenger_id=position.challenger_id,
             target_weight=position.buy_order.target_weight,
             target_shares=position.buy_order.lot_adjusted_shares
             or position.buy_order.target_shares,
-            precommit_price=precommit_price, state=SELL_PRECOMMITTED)
+            precommit_price=precommit_price, state=SELL_PRECOMMITTED,
+            order_id=order_id)
         position.sell_order = sell
         return position
 
@@ -189,6 +198,19 @@ class ShadowStateMachine:
             slippage_bps=slippage_bps)
         position.sell_order = sell
         position.state = SELL_FILLED
+        return position
+
+    def reject_sell(self, position: ShadowPosition,
+                    reason: str) -> ShadowPosition:
+        """A SELL_REJECTED (limit-down / gate) — the position stays
+        HOLDING and is re-decided on a LATER execution day; it never
+        becomes a round trip."""
+        if position.sell_order is None:
+            raise ValueError("no precommitted sell order")
+        rejected = position.sell_order.transition(
+            SELL_REJECTED, fill_status="REJECTED", rejection_reason=reason)
+        position.sell_order = rejected
+        # position.state stays HOLDING — the rejected exit is re-decided.
         return position
 
     def complete_round_trip(self, position: ShadowPosition) -> ShadowPosition:
