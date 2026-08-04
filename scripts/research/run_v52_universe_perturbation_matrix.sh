@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-export CHENYIYUN_DB_PASSWORD=19871019
+: "${CHENYIYUN_DB_PASSWORD:?CHENYIYUN_DB_PASSWORD is required — export it from a secure source (never hardcode)}"
 PY=/opt/homebrew/opt/python@3.14/bin/python3.14
 PREFLIGHT=exports/formal_admissions/2ba43f2a7f41c112e4f36e3b77719e0f32d858aae7d910283294757b79bdabb3/readiness_report.json
 PACKAGE=exports/formal_packages/0bedb3cc65c485b6355d00e8d786dc8a8ba690f4d51c1bb6e4695db2f51dd85c
