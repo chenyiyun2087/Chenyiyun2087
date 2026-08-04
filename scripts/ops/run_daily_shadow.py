@@ -32,19 +32,27 @@ STATUS_PATH = SHADOW_ROOT / "shadow_status.json"
 
 CHALLENGER_ROOT = PROJECT_ROOT / "exports" / "formal_evidence" / "alpha_challengers"
 ACTIVE_CHALLENGERS = (
-    "f1_no_value", "f2_liquidity_clipped", "f3_vol_risk_penalty",
+    "f1_no_value", "f1p1_top20_diversified",
+    "f2_liquidity_clipped", "f3_vol_risk_penalty",
     "p1_top20_diversified", "p2_style_constrained", "p3_covariance_sizing",
     "r1_market_regime", "r2_crowding_control",
 )
 
 
 def _trade_day() -> str:
-    """Next trading day per the release calendar (T+1 for fills).
+    """Latest signal date available in the F1 formal scores snapshot.
 
-    Calendar source: the challenger snapshots' trade_calendar.csv (real
-    SSE calendar from the PIT release), which the pipeline stages for every
-    challenger.  Fails closed when the calendar is missing.
+    Uses the max trade_date from f1_no_value/scores/formal_scores.parquet,
+    which is kept current by the daily VLS score pipeline
+    (scripts/ops/compute_daily_vls_scores.py).  Falls back to the SSE
+    trade calendar when the scores file is missing.
     """
+    scores_path = CHALLENGER_ROOT / "f1_no_value" / "scores" / "formal_scores.parquet"
+    if scores_path.exists():
+        scores = pd.read_parquet(scores_path, columns=["trade_date"])
+        if not scores.empty:
+            return str(scores["trade_date"].max())
+    # Fallback: calendar-derived next trading day
     cal_path = CHALLENGER_ROOT / "f1_no_value" / "snapshots" / "trade_calendar.csv"
     if not cal_path.exists():
         raise RuntimeError(
