@@ -288,6 +288,13 @@ def _sha256_file(p: Path) -> str:
     return _sha256_bytes(p.read_bytes())
 
 
+# Evidence exports and reports are generated artifacts that are never
+# committed (parquet-bloat policy) — they must not block formal packaging.
+# Same pathspecs as the strict-ledger backtest worktree gate
+# (scripts/research_trusted_strategy_account_backtest.py).
+GIT_STATUS_PATHS = [".", ":(exclude)exports/**", ":(exclude)reports/**"]
+
+
 def _git_info() -> dict:
     """Current git commit + worktree cleanliness (production gate)."""
     try:
@@ -298,7 +305,8 @@ def _git_info() -> dict:
         sha = "UNKNOWN"
     try:
         dirty = bool(subprocess.run(
-            ["git", "status", "--porcelain"], capture_output=True, text=True,
+            ["git", "status", "--porcelain", "--", *GIT_STATUS_PATHS],
+            capture_output=True, text=True,
             cwd=PROJECT_ROOT, check=True).stdout.strip())
     except subprocess.CalledProcessError:
         dirty = True  # fail-closed: cannot verify -> treat as dirty

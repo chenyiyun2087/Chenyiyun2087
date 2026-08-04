@@ -10,6 +10,7 @@ path is forbidden in Shadow Engine v2).
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import scripts.ops.build_daily_alpha_signal_package as pkg_mod  # noqa: E402
 from scripts.ops.build_daily_alpha_signal_package import (  # noqa: E402
     REQUIRED_PACKAGE_FILES,
     PackageSealedError,
@@ -143,6 +145,43 @@ def test_dirty_worktree_blocks_package(tmp_path):
                             target_portfolios=portfolios, data_quality=dq,
                             input_manifest=im, git_info=dirty)
     assert not (pkg / "signal_package_manifest.json").exists()
+
+
+def _init_git_repo(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "t@test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "test"], check=True)
+    (tmp_path / "tracked.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.py"], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-q", "-m", "init"], check=True)
+
+
+def test_git_info_ignores_untracked_evidence_exports(tmp_path, monkeypatch):
+    """The production worktree gate excludes exports/** and reports/**
+    (generated evidence, never committed under the parquet-bloat policy).
+    Without this, a shadow day would be permanently BLOCKED by the very
+    evidence the pipeline itself produces."""
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(pkg_mod, "PROJECT_ROOT", tmp_path)
+    exports = tmp_path / "exports" / "forward_shadow_evidence" / "packages"
+    exports.mkdir(parents=True)
+    (exports / "universe.parquet").write_bytes(b"evidence")
+    reports = tmp_path / "reports" / "daily"
+    reports.mkdir(parents=True)
+    (reports / "nav.csv").write_text("date,nav\n", encoding="utf-8")
+    info = pkg_mod._git_info()
+    assert info["worktree_clean"] is True
+
+
+def test_git_info_blocks_untracked_source(tmp_path, monkeypatch):
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(pkg_mod, "PROJECT_ROOT", tmp_path)
+    (tmp_path / "new_source.py").write_text("y = 2\n", encoding="utf-8")
+    info = pkg_mod._git_info()
+    assert info["worktree_clean"] is False
 
 
 def test_package_builder_never_touches_historical_evidence(tmp_path):
