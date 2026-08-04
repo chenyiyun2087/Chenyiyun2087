@@ -50,6 +50,7 @@ ACTIVE_CHALLENGERS = (
 )
 
 # True-blind start (config/oos_registry.yaml true_forward_blind.start).
+# Formally declared 2026-08-04 after the v5.5 integration suite passed.
 # Recording before this date is refused — those records cannot be shadow
 # evidence.
 TRUE_BLIND_START = "2026-08-05"

@@ -19,7 +19,7 @@
 
 schema_version: "strategy_runtime_v1"
 shadow_id: "forward_shadow_v2"
-true_blind_start: "2026-08-05"   # re-declared after integration suite passes
+true_blind_start: "2026-08-05"   # formally declared 2026-08-04 (integration suite green)
 signal_time: "T15:30:00+08:00"
 execution_time: "T+1 09:30:00+08:00"
 
