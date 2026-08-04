@@ -1,0 +1,915 @@
+{
+  "schema_version": "evidence_inventory_v1",
+  "generated_at": "2026-08-04T19:25:45",
+  "policy": {
+    "selection_eligible": "requires E3-or-better data_status AND a valid selection context; execution VERIFIED is NOT selection eligibility",
+    "invalidation": [
+      "consumed_holdout_used_in_ranking",
+      "approximate_pvalues_not_formal",
+      "shadow_not_strategy_equivalent"
+    ]
+  },
+  "run_count": 60,
+  "runs": [
+    {
+      "challenger_id": "b_sleeve_independent",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "NOT_RUN",
+      "replay_status": null,
+      "worktree_clean": null,
+      "data_status": null,
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "b_sleeve_independent",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "NOT_RUN",
+      "replay_status": null,
+      "worktree_clean": null,
+      "data_status": null,
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "b_sleeve_independent",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "NOT_RUN",
+      "replay_status": null,
+      "worktree_clean": null,
+      "data_status": null,
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "b_sleeve_independent",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "NOT_RUN",
+      "replay_status": null,
+      "worktree_clean": null,
+      "data_status": null,
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "b_sleeve_independent",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "NOT_RUN",
+      "replay_status": null,
+      "worktree_clean": null,
+      "data_status": null,
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1_no_value",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1_no_value",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1_no_value",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1_no_value",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1_no_value",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p1_top20_diversified",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p1_top20_diversified",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p1_top20_diversified",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p1_top20_diversified",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p1_top20_diversified",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p2_style_constrained",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p2_style_constrained",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p2_style_constrained",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p2_style_constrained",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p2_style_constrained",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p3_covariance_sizing",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p3_covariance_sizing",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p3_covariance_sizing",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p3_covariance_sizing",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f1p3_covariance_sizing",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f2_liquidity_clipped",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f2_liquidity_clipped",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f2_liquidity_clipped",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f2_liquidity_clipped",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f2_liquidity_clipped",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f3_vol_risk_penalty",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f3_vol_risk_penalty",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f3_vol_risk_penalty",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f3_vol_risk_penalty",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "f3_vol_risk_penalty",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p1_top20_diversified",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p1_top20_diversified",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p1_top20_diversified",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p1_top20_diversified",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p1_top20_diversified",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p2_style_constrained",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p2_style_constrained",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p2_style_constrained",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p2_style_constrained",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p2_style_constrained",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p3_covariance_sizing",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p3_covariance_sizing",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p3_covariance_sizing",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p3_covariance_sizing",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "p3_covariance_sizing",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "PARTIAL_UNVERIFIED",
+      "replay_status": "NON_REPRODUCIBLE",
+      "worktree_clean": false,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r1_market_regime",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r1_market_regime",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r1_market_regime",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r1_market_regime",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r1_market_regime",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r2_crowding_control",
+      "window_id": "pre_history_2020_2021",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r2_crowding_control",
+      "window_id": "validation_2022",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r2_crowding_control",
+      "window_id": "oos1_2023",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r2_crowding_control",
+      "window_id": "crisis_2024",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    },
+    {
+      "challenger_id": "r2_crowding_control",
+      "window_id": "blind_2025_2026",
+      "run_manifest_sha": null,
+      "ledger_status": "VERIFIED",
+      "replay_status": "REPRODUCIBLE",
+      "worktree_clean": true,
+      "data_status": "E0_DIAGNOSTIC",
+      "selection_eligible": false,
+      "invalidation_reasons": [
+        "consumed_holdout_used_in_ranking",
+        "approximate_pvalues_not_formal",
+        "shadow_not_strategy_equivalent"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "schema_version": "formal_seal_v1",
+  "seal_id": "alpha_rebuild_202608",
+  "created_at": "2026-08-04",
+  "manifest_path": "config/experiments/alpha_rebuild_202608.yaml",
+  "manifest_sha256": "e8ba23c4271fe03ae2821d1542429e60ad6aec7ee23158d80ddf95ab799b8ea1",
+  "challenger_count": 15,
+  "challengers": {
+    "b_sleeve_independent": {
+      "config_path": "config/alpha_challengers/b_sleeve_independent.yaml",
+      "config_sha256": "c99b8124afdf3745123724330db6339ffc938768bd5d20c9d087a579a32a1ed8",
+      "manifest_expected_sha256": "c99b8124afdf3745123724330db6339ffc938768bd5d20c9d087a579a32a1ed8",
+      "matches_manifest": true
+    },
+    "f1_no_value": {
+      "config_path": "config/alpha_challengers/f1_no_value.yaml",
+      "config_sha256": "e30e3b659412f0660d633f122bab73a3cafb9c38a39db4fc4e87b0f0dabbbccf",
+      "manifest_expected_sha256": "e30e3b659412f0660d633f122bab73a3cafb9c38a39db4fc4e87b0f0dabbbccf",
+      "matches_manifest": true
+    },
+    "f1p1_top20_diversified": {
+      "config_path": "config/alpha_challengers/f1p1_top20_diversified.yaml",
+      "config_sha256": "98223f3cb7e209e41ce9d807231c3155c1eab38eebd03e086d169592a7430eb3",
+      "manifest_expected_sha256": "98223f3cb7e209e41ce9d807231c3155c1eab38eebd03e086d169592a7430eb3",
+      "matches_manifest": true
+    },
+    "f1p2_style_constrained": {
+      "config_path": "config/alpha_challengers/f1p2_style_constrained.yaml",
+      "config_sha256": "050a71de4bf0ab41a0eda9c32dfeae96420b16bf8368ecb92e296d1e3f2c6107",
+      "manifest_expected_sha256": "050a71de4bf0ab41a0eda9c32dfeae96420b16bf8368ecb92e296d1e3f2c6107",
+      "matches_manifest": true
+    },
+    "f1p3_covariance_sizing": {
+      "config_path": "config/alpha_challengers/f1p3_covariance_sizing.yaml",
+      "config_sha256": "cd54d9b9dc5b4546020790bb3c278bf18c9895c4f262862db662e1083e80e7fe",
+      "manifest_expected_sha256": "cd54d9b9dc5b4546020790bb3c278bf18c9895c4f262862db662e1083e80e7fe",
+      "matches_manifest": true
+    },
+    "f2_liquidity_clipped": {
+      "config_path": "config/alpha_challengers/f2_liquidity_clipped.yaml",
+      "config_sha256": "92cc871bd8731eb53b2d80fd8c03113a95ca6ecaae317c57b203da6f418ce4c1",
+      "manifest_expected_sha256": "92cc871bd8731eb53b2d80fd8c03113a95ca6ecaae317c57b203da6f418ce4c1",
+      "matches_manifest": true
+    },
+    "f3_vol_risk_penalty": {
+      "config_path": "config/alpha_challengers/f3_vol_risk_penalty.yaml",
+      "config_sha256": "16a1bd3d35c7dff02e60d41192dca328d20f0900c775ebe21b7fc51f474a9745",
+      "manifest_expected_sha256": "16a1bd3d35c7dff02e60d41192dca328d20f0900c775ebe21b7fc51f474a9745",
+      "matches_manifest": true
+    },
+    "h010_residualized_f1": {
+      "config_path": "config/alpha_challengers/h010_residualized_f1.yaml",
+      "config_sha256": "e69f266cc93834d35ebe875161e585a88e61c06268b218173ec86f6ec487ef9f",
+      "manifest_expected_sha256": "e69f266cc93834d35ebe875161e585a88e61c06268b218173ec86f6ec487ef9f",
+      "matches_manifest": true
+    },
+    "h011_f1_r2": {
+      "config_path": "config/alpha_challengers/h011_f1_r2.yaml",
+      "config_sha256": "9f9547fb1397ce68e4e6fa24090b99e46e6698366443229ad3f7dad453299d93",
+      "manifest_expected_sha256": "9f9547fb1397ce68e4e6fa24090b99e46e6698366443229ad3f7dad453299d93",
+      "matches_manifest": true
+    },
+    "h012_f1_risk_sized": {
+      "config_path": "config/alpha_challengers/h012_f1_risk_sized.yaml",
+      "config_sha256": "a4fb5f02f4ea39d0bc5c3f6d3b58b6d6665b33cc161aeb9d915103e8525c7e0e",
+      "manifest_expected_sha256": "a4fb5f02f4ea39d0bc5c3f6d3b58b6d6665b33cc161aeb9d915103e8525c7e0e",
+      "matches_manifest": true
+    },
+    "p1_top20_diversified": {
+      "config_path": "config/alpha_challengers/p1_top20_diversified.yaml",
+      "config_sha256": "cde14597568559623529484e8a03bfc0690098ef6eef4d2aad8d986517b3beba",
+      "manifest_expected_sha256": "cde14597568559623529484e8a03bfc0690098ef6eef4d2aad8d986517b3beba",
+      "matches_manifest": true
+    },
+    "p2_style_constrained": {
+      "config_path": "config/alpha_challengers/p2_style_constrained.yaml",
+      "config_sha256": "6683ff7865a2a7112478868e4ceaf7ea26facd55a94c77ce6c54860da1bb1ad1",
+      "manifest_expected_sha256": "6683ff7865a2a7112478868e4ceaf7ea26facd55a94c77ce6c54860da1bb1ad1",
+      "matches_manifest": true
+    },
+    "p3_covariance_sizing": {
+      "config_path": "config/alpha_challengers/p3_covariance_sizing.yaml",
+      "config_sha256": "b8b114be22f700172da3318b53432e469f04de4ac8311475d0b34e38d76de31a",
+      "manifest_expected_sha256": "b8b114be22f700172da3318b53432e469f04de4ac8311475d0b34e38d76de31a",
+      "matches_manifest": true
+    },
+    "r1_market_regime": {
+      "config_path": "config/alpha_challengers/r1_market_regime.yaml",
+      "config_sha256": "8e3181323d5c29dd0574c355a9fe3efd2f9b5d420d71dc45d9018ae970ba200a",
+      "manifest_expected_sha256": "8e3181323d5c29dd0574c355a9fe3efd2f9b5d420d71dc45d9018ae970ba200a",
+      "matches_manifest": true
+    },
+    "r2_crowding_control": {
+      "config_path": "config/alpha_challengers/r2_crowding_control.yaml",
+      "config_sha256": "591dd31484648edcf2ad95fce8d78c639d702a383260a238954888b14a0d5526",
+      "manifest_expected_sha256": "591dd31484648edcf2ad95fce8d78c639d702a383260a238954888b14a0d5526",
+      "matches_manifest": true
+    }
+  },
+  "seal_sha256": "d1f79fe5538d7b8d335edc1360a8ee40406f475937083cf899421e6033f2eacf"
+}

@@ -1,0 +1,73 @@
+# Pre-Registered Alpha Challenger: H012 — F1 Risk-Sized (v5.6, 2026-08-04)
+# ======================================================================
+# Hypothesis H012 (risk_sized_weights): F3's linear volatility PENALTY
+# (score-level, H003) was rejected.  v5.4.1 redefines the risk layer as a
+# WEIGHTING layer only:
+#
+#   raw_weight_i = (1 / forecast_volatility_i) normalized
+#   single_name_risk_cap        = 0.12
+#   top2_risk_contribution_cap  = 0.30
+#   portfolio_vol_target        = 0.18
+#
+# Volatility affects weights / position sizing / risk budget ONLY — it
+# NEVER changes the stock alpha ranking (F1 Top10 selection is fixed).
+#
+# H012 = F1 Top10 + risk-weighted sizing.  PRE-REGISTERED before any run
+# on any window.  2025-2026 CONSUMED (report-only).  True forward blind
+# starts 2026-08-05.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "h012_f1_risk_sized"
+experiment_id: "exp_alpha_rebuild_202608_h012_f1_risk_sized"
+hypothesis_id: "H012_risk_sized_weights"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"  # release 20260803_oos_v4 content_sha256
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}  # CONSUMED — report only
+true_blind_start: "2026-08-05"
+base_strategy: "f1_no_value"
+change_description: "F1 Top10 with risk-weighted position sizing; volatility affects weights only, never ranking"
+hypothesis: "risk-weighting the F1 Top10 improves Sharpe without changing stock selection"
+expected_direction: "Sharpe improves vs F1 on development; top10 holdings identical to F1 (weights differ)"
+
+stopping_criteria:
+  - "top10 holdings differ from F1 on development (selection must not change)"
+  - "Sharpe does not improve vs F1 on development window"
+  - "random permutation p > 0.10 on untouched window"
+  - "HAC t < 1.65 on untouched window"
+
+# Factor definition (F1 weights/signs)
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+# Portfolio construction: risk-weighted sizing (weight layer only)
+portfolio_constructor:
+  method: "risk_weighted"
+  raw_weight_scaler: "1 / forecast_volatility_i"
+  single_name_risk_cap: 0.12
+  top2_risk_contribution_cap: 0.30
+  portfolio_vol_target: 0.18
+  volatility_never_affects_ranking: true
+
+# Execution (F1 identical)
+execution:
+  top_n: 10
+  max_total_positions: 10
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [scores, runs, report]

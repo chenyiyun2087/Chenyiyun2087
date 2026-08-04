@@ -1,0 +1,57 @@
+{
+  "schema_version": "residualized_f1_v1",
+  "method": "per-day OLS: score ~ 1 + size + liquidity + market_beta + industry_FE; residual is the style-neutral score",
+  "style_factors": [
+    "size",
+    "liquidity",
+    "market_beta"
+  ],
+  "windows": [
+    {
+      "window": "development",
+      "start": "2020-04-30",
+      "end": "2022-12-31",
+      "n_days": 650,
+      "style_explained_r2": 0.88,
+      "raw_vs_residual_corr": 0.3464,
+      "top10_selection_overlap": 0.3605,
+      "rank_ic_raw_20d": 0.07541,
+      "rank_ic_residual_20d": 0.06807
+    },
+    {
+      "window": "internal_oos_2023",
+      "start": "2023-01-01",
+      "end": "2023-12-31",
+      "n_days": 242,
+      "style_explained_r2": 0.881,
+      "raw_vs_residual_corr": 0.345,
+      "top10_selection_overlap": 0.1723,
+      "rank_ic_raw_20d": 0.13471,
+      "rank_ic_residual_20d": 0.01637
+    },
+    {
+      "window": "stress_2024",
+      "start": "2024-01-01",
+      "end": "2024-12-31",
+      "n_days": 242,
+      "style_explained_r2": 0.8918,
+      "raw_vs_residual_corr": 0.3289,
+      "top10_selection_overlap": 0.1851,
+      "rank_ic_raw_20d": 0.037,
+      "rank_ic_residual_20d": 0.07011
+    },
+    {
+      "window": "holdout_report_only",
+      "start": "2025-01-01",
+      "end": "2026-07-31",
+      "n_days": 382,
+      "style_explained_r2": 0.8862,
+      "raw_vs_residual_corr": 0.3373,
+      "top10_selection_overlap": 0.2563,
+      "rank_ic_raw_20d": 0.05652,
+      "rank_ic_residual_20d": 0.06075
+    }
+  ],
+  "holdout_policy": "holdout_report_only window is DISPLAY ONLY — never selection",
+  "interpretation": "high style_explained_r2 + low residual IC => F1's power is style exposure; low r2 + positive residual IC => residual selection information exists"
+}

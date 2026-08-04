@@ -83,6 +83,13 @@ def _risk_score_from_mdd(values: np.ndarray | pd.Series) -> np.ndarray:
     return score.clip(lower=0.0, upper=100.0).to_numpy(dtype=float)
 
 
+class ModelActivationBlocked(RuntimeError):
+    """Raised when the active model manifest is missing or invalid in
+    production mode — fail-closed (v5.4.1).  Activation may only proceed
+    through the explicit active_model.json pointer; directory scanning is
+    a research-only fallback and must never silently select a model."""
+
+
 def _resolve_repo_path(path_value: str) -> Path:
     """Resolve a model path that may be repo-relative (exports/...) or absolute.
 
@@ -99,11 +106,27 @@ def _resolve_repo_path(path_value: str) -> Path:
     return candidate
 
 
-def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str = DEFAULT_TARGET) -> Path | None:
+def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str = DEFAULT_TARGET,
+                      research_mode: bool = False) -> Path | None:
+    """Resolve the active B-signal model path.
+
+    Production mode (research_mode=False, the default) is FAIL-CLOSED:
+    the active_model.json manifest must exist, parse, and point at an
+    existing model for the target.  Any failure raises
+    ModelActivationBlocked — the function NEVER falls back to scanning
+    model directories.
+
+    Research mode (research_mode=True) may scan dated model directories
+    for the newest model with a valid manifest — explicitly opt-in.
+    """
     root = Path(model_root)
     if not root.exists():
-        return None
+        if research_mode:
+            return None
+        raise ModelActivationBlocked(
+            f"model root {root} missing — active manifest invalid")
     active_manifest = root / "active_model.json"
+    manifest_ok = False
     if active_manifest.exists():
         try:
             data = json.loads(active_manifest.read_text(encoding="utf-8"))
@@ -111,8 +134,18 @@ def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str =
             model_path = _resolve_repo_path(str(data.get("model_path", "")))
             if manifest_target in (None, target) and model_path.exists():
                 return model_path
+            manifest_ok = True  # manifest parsed but pointer invalid
         except Exception:
-            pass
+            manifest_ok = False
+    if not research_mode:
+        if not active_manifest.exists():
+            raise ModelActivationBlocked(
+                f"active_model.json missing at {active_manifest} — model "
+                "activation blocked (fail-closed); manual review required")
+        raise ModelActivationBlocked(
+            f"active_model.json invalid at {active_manifest} (target={target}, "
+            f"parsed={manifest_ok}) — model activation blocked (fail-closed); "
+            "manual review required")
     paths = []
     for model_dir in sorted([p for p in root.glob("*") if p.is_dir()], reverse=True):
         manifest = model_dir / "model_manifest.json"
@@ -136,8 +169,9 @@ def latest_model_path(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str =
     return paths[0] if paths else None
 
 
-def load_latest_bs_model(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str = DEFAULT_TARGET) -> dict[str, Any] | None:
-    model_path = latest_model_path(model_root, target)
+def load_latest_bs_model(model_root: Path | str = DEFAULT_MODEL_ROOT, target: str = DEFAULT_TARGET,
+                         research_mode: bool = False) -> dict[str, Any] | None:
+    model_path = latest_model_path(model_root, target, research_mode=research_mode)
     if model_path is None:
         return None
     try:

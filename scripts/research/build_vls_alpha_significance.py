@@ -284,10 +284,12 @@ def write_report(work_dir: Path, ic_path: Path, liquidity_null: dict) -> Path:
               "|---|---|---|---|---|---|---|"]
     for _, r in ic.iterrows():
         p = f"{r['p_one_sided']:.3f}" if pd.notna(r["p_one_sided"]) else "—"
+        # 3.11-compatible: nested same-quote f-strings are invalid pre-PEP 701
+        hac_txt = "None" if r["hac_t"] is None else f"{r['hac_t']:+.2f}"
         lines.append(
             f"| {r['factor']} | {int(r['horizon'])}d | {r['mean_ic']:+.4f} | "
             f"{r['hac_std']:.4f} | {r['hac_inflation']:.1f}x | "
-            f"{r['hac_t'] if r['hac_t'] is None else f'{r['hac_t']:+.2f}'} | {p} |")
+            f"{hac_txt} | {p} |")
     lines.append("")
 
     # 2. Liquidity null distribution

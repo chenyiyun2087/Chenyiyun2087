@@ -19,6 +19,10 @@ sys.modules['cv2'] = MagicMock()
 sys.modules['pytesseract'] = MagicMock()
 sys.modules['selenium'] = MagicMock()
 sys.modules['selenium.webdriver'] = MagicMock()
+# Save the real pymysql first — the mock must not leak into other test
+# modules in the same process (SQLAlchemy engine creation for real-DB
+# tests would otherwise receive a MagicMock dialect).
+_real_pymysql = sys.modules.get("pymysql")
 sys.modules['pymysql'] = MagicMock()
 
 # Now import
@@ -28,6 +32,14 @@ from sina.bs_detection.SinaBSDetector import (
     ensure_tesseract_available,
     normalize_stock_codes,
 )
+
+# Test isolation: restore the real pymysql after the import chain that
+# needed the mock.  SinaBSDetector's own binding already holds the mock,
+# so this file's tests remain mocked while later files get the real module.
+if _real_pymysql is not None:
+    sys.modules["pymysql"] = _real_pymysql
+else:
+    sys.modules.pop("pymysql", None)
 
 class TestBSLogic(unittest.TestCase):
     def test_normalize_stock_codes(self):

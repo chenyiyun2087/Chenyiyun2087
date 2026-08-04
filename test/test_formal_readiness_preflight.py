@@ -24,8 +24,11 @@ def _sha(path: Path) -> str:
 
 
 def _build_package(root: Path) -> dict:
-    available = "2013-01-04T15:00:00+08:00"
-    dates = ["2013-01-04"]
+    # Data must end at the config's latest_complete_trade_date, otherwise
+    # the data_end_date check (v5.2+) blocks the "complete" fixture.
+    latest = str(_config()["latest_complete_trade_date"])
+    available = f"{latest}T15:00:00+08:00"
+    dates = [latest]
     symbols = ["000001", "000002"]
     pd.DataFrame(
         [
@@ -78,7 +81,7 @@ def _build_package(root: Path) -> dict:
             {
                 "trade_date": dates[0],
                 "symbol": symbol,
-                "adj_factor": 1,
+                "adj_factor": 1.0,  # float — the non-positive test injects -0.5
                 "available_at": available,
             }
             for symbol in symbols
@@ -142,7 +145,7 @@ def _build_package(root: Path) -> dict:
     manifest = {
         "calendar_source": "tushare_stock.dim_trade_cal",
         "coverage_start": "2013-01-01",
-        "coverage_end": "2013-01-04",
+        "coverage_end": dates[0],
         "corporate_action_complete": True,
         "security_lifecycle_complete": True,
         "objects": {
@@ -184,22 +187,34 @@ def test_calendar_must_be_authoritative_sse(tmp_path):
 def test_daily_coverage_is_relative_to_pit_tradable_universe(tmp_path):
     _build_package(tmp_path)
     scores = pd.read_csv(tmp_path / "scores.csv", dtype={"symbol": str})
-    scores = scores[
-        ~(
-            scores["strategy"].eq(STRATEGIES[1])
-            & scores["symbol"].astype(str).str.zfill(6).eq("000002")
-        )
-    ]
+    # Drop EVERY symbol of one strategy → 0% coverage for that strategy
+    # against the PIT tradable universe (2-symbol fixture, threshold 0.5).
+    scores = scores[~scores["strategy"].astype(str).eq(STRATEGIES[1])]
     scores.to_csv(tmp_path / "scores.csv", index=False)
+    # Re-seal the object sha so the package-integrity check passes and only
+    # the coverage check is exercised (v5.2: modifying a sealed object must
+    # not mask the coverage computation).
+    manifest_path = tmp_path / "source_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["objects"]["scores.csv"]["sha256"] = _sha(tmp_path / "scores.csv")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     result = evaluate_package(tmp_path, _config())
-    assert result["status"] == "BLOCKED"
-    assert "daily_pit_score_coverage" in result["blocking_checks"]
+    # The coverage computation runs against the PIT tradable universe: with
+    # every symbol of one strategy dropped, its per-day ratio must be 0.0.
+    # v5.2 E0-diagnostic: daily_pit_score_coverage (and the five-strategy
+    # date intersection) are classified diagnostic-only — the failing ratio
+    # is recorded in `actual`, never silently dropped, but does not hard-block.
+    coverage = [c for c in result["checks"] if c["check"] == "daily_pit_score_coverage"]
+    assert len(coverage) == 1
+    assert "minimum_ratio=0.000000" in coverage[0]["actual"]
+    assert result["status"] == "READY_FOR_FORMAL_RUN"
 
 
 def test_future_visible_score_fails_closed(tmp_path):
     _build_package(tmp_path)
     scores = pd.read_csv(tmp_path / "scores.csv", dtype={"symbol": str})
-    scores.loc[0, "available_at"] = "2013-01-05T09:00:00+08:00"
+    # Future-visible relative to any fixture date: available after signal time
+    scores.loc[0, "available_at"] = "2099-01-05T09:00:00+08:00"
     scores.to_csv(tmp_path / "scores.csv", index=False)
     result = evaluate_package(tmp_path, _config())
     assert result["status"] == "BLOCKED"

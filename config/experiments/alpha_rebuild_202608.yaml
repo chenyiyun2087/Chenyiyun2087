@@ -40,6 +40,16 @@ phases:
   - id: b_point_sleeve
     order: 4
     challengers: [b_sleeve_independent]
+  - id: residual_alpha_v56
+    order: 5
+    depends_on: [factor_ablation]
+    rationale: "v5.6 pre-registration (2026-08-04): risk/weighting-layer
+      challengers on the CONFIRMED F1 core.  H010 = residualized F1
+      (style-neutral alpha), H011 = F1+R2 crowding weight overlay,
+      H012 = F1 risk-weighted sizing (F3 redefinition: volatility affects
+      weights only, NEVER ranking).  PRE-REGISTERED only — no run until
+      Forward Shadow Phase 1 (E4) completes."
+    challengers: [h010_residualized_f1, h011_f1_r2, h012_f1_risk_sized]
 
 evaluation_windows:
   development: {start: "2020-04-30", end: "2022-12-31"}
@@ -52,7 +62,7 @@ selection_prohibited_on: [historical_holdout]
 holdout_usage: "REPORT_ONLY_SHOWN_NEVER_SELECTED"
 
 max_challengers_per_phase: 8
-multiple_testing: {method: "benjamini_hochberg", alpha: 0.05, candidate_count: 12}
+multiple_testing: {method: "benjamini_hochberg", alpha: 0.05, candidate_count: 15}
 
 pre_registration_shas:
   f1_no_value: "e30e3b659412f0660d633f122bab73a3cafb9c38a39db4fc4e87b0f0dabbbccf"
@@ -67,6 +77,9 @@ pre_registration_shas:
   f1p1_top20_diversified: "98223f3cb7e209e41ce9d807231c3155c1eab38eebd03e086d169592a7430eb3"
   f1p2_style_constrained: "050a71de4bf0ab41a0eda9c32dfeae96420b16bf8368ecb92e296d1e3f2c6107"
   f1p3_covariance_sizing: "cd54d9b9dc5b4546020790bb3c278bf18c9895c4f262862db662e1083e80e7fe"
+  h010_residualized_f1: "e69f266cc93834d35ebe875161e585a88e61c06268b218173ec86f6ec487ef9f"
+  h011_f1_r2: "9f9547fb1397ce68e4e6fa24090b99e46e6698366443229ad3f7dad453299d93"
+  h012_f1_risk_sized: "a4fb5f02f4ea39d0bc5c3f6d3b58b6d6665b33cc161aeb9d915103e8525c7e0e"
 
 hard_gates:
   # Challenger screening (research level) — the formal gates continue to

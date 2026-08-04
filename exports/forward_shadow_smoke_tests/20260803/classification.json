@@ -1,0 +1,11 @@
+{
+  "evidence_eligible": false,
+  "classification": "PRESTART_PIPELINE_SMOKE_TEST",
+  "excluded_from_shadow_days": true,
+  "excluded_from_round_trips": true,
+  "record_count": 70,
+  "recorded_at": "2026-08-04",
+  "reason": "v5.4.1 evidence repair: records produced by the pre-v5.5 shadow task are not strategy-equivalent evidence (all challengers shared F1 scores; eligible_universe defaulted to True; no fill_status column exists — reconcile never executed due to task_commands.py args bug; T+1 not resolved from trade calendar). Isolated for audit reference only.",
+  "invalidation_ref": "audit/v5.4-alpha-rebuild-20260804",
+  "reevaluation_rule": "These records can never become forward shadow evidence. Forward shadow timing restarts at the first fully-valid sealed Signal Package under Shadow Engine v2 (v5.5)."
+}

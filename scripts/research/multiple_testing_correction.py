@@ -1,13 +1,25 @@
 """Multiple-testing corrections for the alpha challenger comparison.
 
-Pre-registered 2026-08-04 (alpha_rebuild_202608): 9 candidates compete;
+Pre-registered 2026-08-04 (alpha_rebuild_202608): 12 registered objects
+(11 historical strategy candidates + 1 independent B-sleeve) compete;
 uncorrected p-values would inflate the false-discovery rate.  This module
 provides Benjamini-Hochberg FDR, Bonferroni, Holm, and the Deflated Sharpe
 Ratio (Bailey/López de Prado) used by the unified registry.
 
+v5.4.1 evidence-repair policy:
+    Approximate p-values (normal-on-Sharpe, e.g. the `p_approx` pattern
+    that rank_alpha_challengers.py previously built with a fixed n=60) are
+    BANNED from the formal registry.  Family corrections must be applied
+    to REAL permutation p-values (see scripts/research/formal_significance.py
+    `permutation_p` / `holm_family`).  The BH/Bonferroni/Holm functions here
+    remain valid — they are distribution-agnostic — but the values fed to
+    them must come from permutation nulls, never from normal approximations.
+
 Usage (called by rank_alpha_challengers.py):
     from scripts.research.multiple_testing_correction import (
-        benjamini_hochberg, bonferroni, holm, deflated_sharpe_p)
+        benjamini_hochberg, bonferroni, holm, deflated_sharpe_ratio)
+    from scripts.research.formal_significance import (
+        permutation_p, holm_family, load_permutation_null)
 """
 
 from __future__ import annotations

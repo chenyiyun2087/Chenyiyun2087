@@ -29,6 +29,19 @@ jobs:
           test/test_replay_strict_execution_ledger.py
           test/test_pr21_fold_account_backtest.py
           test/test_trusted_production_closure.py
+          test/test_alpha_challengers.py
+          test/test_challenger_ranking_integrity.py
+          test/test_scheduler_dependency_graph.py
+          test/test_t1_execution_calendar.py
+          test/test_directional_limit_rules.py
+          test/test_active_model_fail_closed.py
+          test/test_forward_shadow_state_machine.py
+          test/test_forward_shadow_immutability.py
+          test/test_forward_shadow_package.py
+          test/test_forward_shadow_e2e_chain.py
+          test/test_forward_shadow_live_prices.py
+          test/test_pit_universe_contract.py
+          test/test_f2_liquidity_consistency.py
       - run: '! rg "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
   freeze-integrity:
     runs-on: ubuntu-latest
@@ -51,9 +64,12 @@ jobs:
               sys.exit(0)
           manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
           shas = manifest.get("pre_registration_shas", {})
+          # Factor fields are required only for factor-composite challengers.
+          # Independent sleeves (e.g. b_sleeve_independent, EVENT_DRIVEN)
+          # have no factor_weights/factor_signs by design.
           required_fields = ["challenger_id", "experiment_id", "hypothesis_id",
-                             "factor_weights", "factor_signs", "execution",
-                             "selection_window", "untouched_evaluation_window"]
+                             "execution", "selection_window", "untouched_evaluation_window"]
+          factor_fields = ["factor_weights", "factor_signs"]
           for cid, expected in sorted(shas.items()):
               path = pathlib.Path(f"config/alpha_challengers/{cid}.yaml")
               if not path.exists():
@@ -68,6 +84,8 @@ jobs:
                   errors.append(f"{cid}: yaml parse failed: {exc}")
                   continue
               missing = [f for f in required_fields if f not in data]
+              if data.get("sleeve_type") != "EVENT_DRIVEN":
+                  missing += [f for f in factor_fields if f not in data]
               if missing:
                   errors.append(f"{cid}: missing {missing}")
               if data.get("challenger_id") != cid:

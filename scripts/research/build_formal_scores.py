@@ -162,27 +162,80 @@ def _apply_eligibility_floor(panel: pd.DataFrame,
         min_20d_turnover_threshold_cny: 3000000.0
         liquidity_consistency_check: true
 
-    The floor uses the panel's 20d average turnover in CNY when available;
-    otherwise it no-ops (fail-safe: never wrongly excludes).  Ineligible
-    rows are excluded from ranking AND selection — they cannot be picked.
+    v5.4.1 F2 completion (evidence repair): the floor is FAIL-CLOSED.
+    When the config declares a threshold but the panel lacks the turnover
+    column, the build is BLOCKED (RuntimeError) — a silent no-op used to
+    make the pre-registered F2 floor vacuously pass.  Ineligible rows are
+    excluded from ranking AND selection — they cannot be picked.
+
+    When liquidity_consistency_check is true, the Amihud/amount/turnover
+    agreement is evaluated per cross-section; conflicting signals are
+    flagged `liquidity_signal_unstable` = LIQUIDITY_SIGNAL_UNSTABLE.
     """
     cfg = score_transforms or {}
     threshold = cfg.get("min_20d_turnover_threshold_cny")
+    consistency = bool(cfg.get("liquidity_consistency_check", False))
     if threshold is None or float(threshold) <= 0:
         return panel
     turnover_col = None
-    for candidate in ("turnover_20d_cny", "amount_20d_avg", "turnover_cny_20d"):
+    # amount_20d_cny is the canonical CNY-denominated column (the panel
+    # builder converts Tushare's 千元 amount).  The pre-registered
+    # threshold is CNY — preferring the raw 千元 column would exclude
+    # ~99% of the market.
+    for candidate in ("amount_20d_cny", "turnover_20d_cny", "amount_20d_avg",
+                      "turnover_cny_20d"):
         if candidate in panel.columns:
             turnover_col = candidate
             break
     if turnover_col is None:
-        # Panel lacks a turnover column: floor is a no-op, never wrong-exclude.
-        return panel
+        # Fail-closed: a declared floor must have its input present.
+        raise RuntimeError(
+            "SIGNAL_BUILD_BLOCKED: min_20d_turnover_threshold_cny declared "
+            f"but no turnover column found in panel (have: "
+            f"{[c for c in panel.columns if 'turnover' in c or 'amount' in c]}); "
+            "the F2 floor must not no-op")
     out = panel.copy()
     numeric = pd.to_numeric(out[turnover_col], errors="coerce")
     below = numeric.fillna(0.0) < float(threshold)
     if "eligible_universe" in out.columns:
         out.loc[below, "eligible_universe"] = False
+    if consistency:
+        out = _apply_liquidity_consistency(out)
+    return out
+
+
+def _apply_liquidity_consistency(panel: pd.DataFrame) -> pd.DataFrame:
+    """Amihud/amount/turnover agreement per cross-section (v5.4.1 F2).
+
+    A stock is consistent when the three liquidity signals agree on its
+    rank direction: high Amihud (illiquid) <-> low amount <-> low
+    turnover.  Disagreement -> LIQUIDITY_SIGNAL_UNSTABLE.
+
+    The raw columns (amount_20d_avg, turnover_rate_20d_avg, amihud_20d)
+    come from the panel builder's F2 block; a missing column means the
+    consistency check cannot run — it flags unstable rather than passing.
+    """
+    cols = ["amount_20d_avg", "turnover_rate_20d_avg", "amihud_20d"]
+    out = panel.copy()
+    if not all(c in out.columns for c in cols):
+        # Consistency cannot be verified without the raw fields — every
+        # row is flagged unstable (fail-closed, never a free pass).
+        out["liquidity_signal_unstable"] = pd.Series(True, index=out.index)
+        return out
+    for c in cols:
+        out[f"_rank_{c}"] = (pd.to_numeric(out[c], errors="coerce")
+                             .groupby(out["trade_date"])
+                             .rank(pct=True))
+    amihud_high = out["_rank_amihud_20d"] > 0.6
+    amount_low = out["_rank_amount_20d_avg"] < 0.4
+    turnover_low = out["_rank_turnover_rate_20d_avg"] < 0.4
+    # Agreement on the illiquid direction: high Amihud AND low amount AND
+    # low turnover.  Any conflict -> unstable.
+    illiquid_agree = amihud_high & amount_low & turnover_low
+    liquid_agree = (~amihud_high) & (~amount_low) & (~turnover_low)
+    out["liquidity_signal_unstable"] = (
+        (~illiquid_agree) & (~liquid_agree)).fillna(False)
+    out = out.drop(columns=[f"_rank_{c}" for c in cols])
     return out
 
 

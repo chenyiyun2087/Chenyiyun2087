@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-REPO_ROOT = Path("/Volumes/extension/projects/Chenyiyun2087")
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DISPLAY_REPO_ROOT = Path("/Users/chenyiyun/PycharmProjects/Chenyiyun2087")
 VAULT_ROOT = Path("/Users/chenyiyun/Documents/Obsidian Vault")
 PROJECT_ROOT = VAULT_ROOT / "02_项目" / "Chenyiyun2087"

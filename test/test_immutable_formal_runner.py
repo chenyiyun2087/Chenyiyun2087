@@ -36,9 +36,16 @@ def _build_valid_package(root: Path) -> str:
 
     Returns the evidence_sha256 from the preflight computation.
     """
+    import yaml
+
+    # Data must end at the config's latest_complete_trade_date, otherwise
+    # the data_end_date check (v5.2+) blocks the "valid" fixture.
+    config = yaml.safe_load(
+        (PROJECT_ROOT / "config" / "formal_readiness.yaml").read_text(encoding="utf-8")
+    )
     root.mkdir(parents=True, exist_ok=True)
-    available = "2013-01-04T15:00:00+08:00"
-    date = "2013-01-04"
+    date = str(config["latest_complete_trade_date"])
+    available = f"{date}T15:00:00+08:00"
     symbols = ["000001", "000002"]
 
     pd.DataFrame(
@@ -120,7 +127,7 @@ def _build_valid_package(root: Path) -> str:
     source_manifest = {
         "calendar_source": "tushare_stock.dim_trade_cal",
         "coverage_start": "2013-01-01",
-        "coverage_end": "2013-01-04",
+        "coverage_end": date,
         "corporate_action_complete": True,
         "security_lifecycle_complete": True,
         "objects": {
@@ -192,7 +199,9 @@ def test_ready_preflight_creates_one_immutable_dry_run(tmp_path):
         fixture_mode=True,
     )
     assert result["status"] == "DRY_RUN"
-    assert tuple(result["strategy_ids"]) == FORMAL_STRATEGIES
+    # v5.3: strategy_ids are detected from the frozen scores and reported
+    # sorted; identity (not order) is the contract.
+    assert set(result["strategy_ids"]) == set(FORMAL_STRATEGIES)
     assert result["cost_rate_one_way"] == 0.00075
     assert result["slippage_bps_one_way"] == 10
     assert "--trade-calendar-snapshot" in result["command"]

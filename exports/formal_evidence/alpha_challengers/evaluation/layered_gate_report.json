@@ -1,0 +1,158 @@
+{
+  "schema_version": "layered_gate_report_v1",
+  "generated_at": "2026-08-04T19:35:04",
+  "candidate_census": {
+    "candidate_family": {
+      "historical_strategy_candidates": [
+        "f1_no_value",
+        "f1p1_top20_diversified",
+        "f1p2_style_constrained",
+        "f1p3_covariance_sizing",
+        "f2_liquidity_clipped",
+        "f3_vol_risk_penalty",
+        "p1_top20_diversified",
+        "p2_style_constrained",
+        "p3_covariance_sizing",
+        "r1_market_regime",
+        "r2_crowding_control"
+      ],
+      "historical_strategy_candidates_count": 11,
+      "independent_b_sleeve": [
+        "b_sleeve_independent"
+      ],
+      "independent_b_sleeve_count": 1,
+      "total_registered_objects": 12
+    },
+    "ranking_scope": "historical_strategy_candidates_only",
+    "b_sleeve_scope": "independent_event_sleeve_never_ranked"
+  },
+  "gates": {
+    "layer1_development": {
+      "min_development_annualized": 0.15,
+      "min_development_sharpe": 0.5,
+      "max_development_mdd": -0.35,
+      "development_score_formula": "0.40*robust_annualized + 0.25*sharpe + 0.20*calmar + 0.15*cross_sectional_ic(h=20)"
+    },
+    "layer2_internal_oos_2023": {
+      "pass_criteria": [
+        "annualized>0",
+        "excess>0",
+        "mdd_not_worse_than_dev",
+        "factor_direction_consistent"
+      ]
+    },
+    "layer3_stress_2024": {
+      "pass_criteria": [
+        "no_execution_failure",
+        "mdd>=-0.35",
+        "cost2x_retention>=0.75",
+        "capacity_500k_pass"
+      ]
+    },
+    "layer4_historical_holdout": {
+      "policy": "REPORT_ONLY_SHOWN_NEVER_SELECTED"
+    }
+  },
+  "per_challenger": [
+    {
+      "challenger_id": "f1_no_value",
+      "layer1_pass": false,
+      "development_score": 0.0793,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "f3_vol_risk_penalty",
+      "layer1_pass": false,
+      "development_score": -0.0683,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "f1p2_style_constrained",
+      "layer1_pass": false,
+      "development_score": -0.0946,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "f1p3_covariance_sizing",
+      "layer1_pass": false,
+      "development_score": -0.0946,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "p2_style_constrained",
+      "layer1_pass": false,
+      "development_score": -0.1147,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "p3_covariance_sizing",
+      "layer1_pass": false,
+      "development_score": -0.1147,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "f1p1_top20_diversified",
+      "layer1_pass": false,
+      "development_score": -0.1483,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "r2_crowding_control",
+      "layer1_pass": false,
+      "development_score": -0.152,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "r1_market_regime",
+      "layer1_pass": false,
+      "development_score": -0.165,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "f2_liquidity_clipped",
+      "layer1_pass": false,
+      "development_score": -0.1711,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    },
+    {
+      "challenger_id": "p1_top20_diversified",
+      "layer1_pass": false,
+      "development_score": -0.1994,
+      "layer2_pass": false,
+      "layer2_reason": "layer1_not_passed",
+      "layer3_pass": false,
+      "layer3_reason": "layer1_not_passed"
+    }
+  ],
+  "selected": []
+}

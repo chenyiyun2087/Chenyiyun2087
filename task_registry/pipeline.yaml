@@ -129,29 +129,83 @@ intraday:
 
     # v5.3 (2026-08-04): true-forward-blind shadow accumulation for the
     # alpha challengers (config/oos_registry.yaml true_forward_blind).
-    # Daily VLS factor scores must be computed before the shadow record
-    # reads them (reads latest available DB date, forward-fill tolerant).
+    # DISABLED 2026-08-04 (v5.4.1 evidence repair): pre-v5.5 shadow is not
+    # strategy-equivalent — all challengers share F1 scores, eligible_universe
+    # defaults to True, T+1 resolution reads max score date instead of
+    # next_open_day, reconcile blocks limit-DOWN instead of limit-UP for buys,
+    # and the 15:25 depends_on 16:10 time relation is impossible. The shadow
+    # task will be re-enabled only after Forward Shadow Engine v2 (v5.5)
+    # passes its full integration test suite. Records produced before the
+    # redesign are isolated under exports/forward_shadow_smoke_tests/20260803/
+    # and classified PRESTART_PIPELINE_SMOKE_TEST (never shadow evidence).
     - id: daily_vls_scores
-      time: "15:25"
+      # v5.4.1 DAG fix: was 15:25 depending on sina_analyse at 16:10 —
+      # an impossible time relation.  Now post-close at 16:40 (after
+      # sina_analyse 16:10 data collection completes).
+      time: "16:40"
       script: scripts/ops/compute_daily_vls_scores.py
+      type: script
+      trading_day_only: true
+      status: disabled
+      disabled_reason: "v5.4.1 evidence repair: non-equivalent shadow — all challengers share F1 scores; stale-date fallback can duplicate appends. DAG times corrected (16:40 post-close); awaits Shadow Engine v2 (v5.5)"
+      depends_on: [sina_analyse]
+
+    - id: alpha_challenger_shadow_record
+      time: "17:00"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "record"]
+      type: script
+      trading_day_only: true
+      status: disabled
+      disabled_reason: "v5.4.1 evidence repair: shadow not strategy-equivalent; awaits Shadow Engine v2 (v5.5). Record now enforces true-blind start (>= 2026-08-05) and T+1 from trade calendar when re-enabled"
+      depends_on: [daily_vls_scores]
+
+    # v5.5 Shadow Engine v2 — daily immutable Signal Package (replaces
+    # daily_vls_scores + shadow_record).  One script runs the post-close
+    # chain: data quality -> PIT universe freeze -> per-candidate factors
+    # -> target portfolios -> SEAL (17:00).
+    # ENABLED 2026-08-04: the v5.5 integration suite passed (74 tests
+    # locally + CI fixtures green on evidence/v5.4.1-evidence-repair);
+    # true-blind start 2026-08-05 is now formally declared (was
+    # provisional until the integration suite passed).
+    - id: alpha_signal_package_seal
+      time: "17:00"
+      script: scripts/ops/build_daily_alpha_signal_package.py
       type: script
       trading_day_only: true
       status: enabled
       depends_on: [sina_analyse]
 
-    - id: alpha_challenger_shadow_record
-      time: "15:30"
-      script: scripts/ops/run_daily_shadow.py
-      args: ["--mode", "record"]
-      type: script
-      trading_day_only: true
-      status: enabled
-      depends_on: [daily_vls_scores]
-
 morning:
   description: "晨间任务"
   tasks:
     - id: alpha_challenger_shadow_reconcile
+      time: "09:35"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "reconcile"]
+      type: script
+      trading_day_only: true
+      status: disabled
+      disabled_reason: "v5.4.1 evidence repair: fixed — reconcile now resolves execution_date from trade-calendar next_open_day and uses directional gates (can_buy_at_open/can_sell_at_open); awaits Shadow Engine v2 (v5.5) integration suite before re-enable"
+
+    # v5.5 T+1 morning execution chain (ENABLED 2026-08-04 — integration
+    # suite green).  Order precommit 09:25 (uses the SEALED package from
+    # T day), fill reconcile 09:35 (directional gates via
+    # execution_market_rules; live prices from dwd_stock_daily_standard
+    # beyond the PIT snapshot end).  NOTE: no depends_on here — the
+    # cross-day binding (T-day seal -> T+1 morning) is enforced in-code:
+    # precommit/reconcile RAISE shadow_blocked when the SEALED package or
+    # orders are missing (fail-closed), matching the existing
+    # morning-task pattern.
+    - id: alpha_signal_precommit
+      time: "09:25"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "precommit"]
+      type: script
+      trading_day_only: true
+      status: enabled
+
+    - id: alpha_signal_execution_reconcile
       time: "09:35"
       script: scripts/ops/run_daily_shadow.py
       args: ["--mode", "reconcile"]
