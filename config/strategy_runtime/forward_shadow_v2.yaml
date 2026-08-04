@@ -35,6 +35,16 @@ allowed_new_capital_cny: 0
 signal_time: "T15:30:00+08:00"
 execution_time: "T+1 09:30:00+08:00"
 
+# v5.5.1 strategy contract: the universe excludes ST, new stocks (60d),
+# delisting-period names, and suspended names.  Each flag MUST have a
+# reliable status source (label table / LISTED transitions); a missing
+# source BLOCKS the package — never default-normal.
+universe_contract:
+  exclude_st: true
+  exclude_new_stock_days: 60
+  exclude_delisting_period: true
+  exclude_suspended: true
+
 candidates:
   C0:
     challenger_id: "baseline_vls_frozen"
@@ -47,6 +57,7 @@ candidates:
     score_transform: "identity"
     portfolio_constructor: "equal_weight_top_n"
     top_n: 10
+    max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "none"
     execution_policy: "ashare_t1_directional"
 
@@ -61,6 +72,7 @@ candidates:
     score_transform: "identity"
     portfolio_constructor: "equal_weight_top_n"
     top_n: 10
+    max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "none"
     execution_policy: "ashare_t1_directional"
 
@@ -75,6 +87,7 @@ candidates:
     score_transform: "identity"
     portfolio_constructor: "equal_weight_top_n"
     top_n: 10
+    max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "r2_crowding"     # weight scaler — never changes selection
     execution_policy: "ashare_t1_directional"
 
@@ -93,6 +106,7 @@ candidates:
       minimum_cross_section: 20
     portfolio_constructor: "equal_weight_top_n"
     top_n: 10
+    max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "none"
     execution_policy: "ashare_t1_directional"
 
@@ -106,5 +120,6 @@ candidates:
     random_seed_base: 20260805
     portfolio_constructor: "equal_weight_top_n"
     top_n: 10
+    max_missing_factor_pct: 0.05  # v5.5.1 contract gate — any-required-factor-missing rows are NaN (never imputed 0) and must stay under this rate
     risk_overlay: "none"
     execution_policy: "ashare_t1_directional"

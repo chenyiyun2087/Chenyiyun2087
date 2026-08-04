@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -30,6 +31,14 @@ def _snapshot(n: int = 5, trade_date: str = "2026-08-05") -> pd.DataFrame:
         "limit_status": ["NORMAL"] * n,
         "security_status_transition": ["NORMAL"] * n,
     })
+
+
+CONTRACT = {
+    "exclude_st": True,
+    "exclude_new_stock_days": 60,
+    "exclude_delisting_period": True,
+    "exclude_suspended": True,
+}
 
 
 AVAIL = {f: f"2026-08-05T15:00:00+08:00" for f in (
@@ -100,3 +109,92 @@ def test_missing_required_column_blocks():
     snap = _snapshot().drop(columns=["is_st"])
     res = build_daily_universe(snap, "2026-08-05", AVAIL)
     assert res.blocked and "universe_missing_column:is_st" in res.blockers
+
+
+# ── v5.5.1 universe contract (strict status sources) ──────────────────────
+
+
+def test_contract_nan_is_st_blocks():
+    snap = _snapshot()
+    snap.loc[0, "is_st"] = np.nan
+    res = build_daily_universe(snap, "2026-08-05", AVAIL, CONTRACT)
+    assert res.blocked and "status_source_missing:is_st" in res.blockers
+
+
+def test_contract_nan_is_suspended_blocks():
+    snap = _snapshot()
+    snap.loc[0, "is_suspended"] = np.nan
+    res = build_daily_universe(snap, "2026-08-05", AVAIL, CONTRACT)
+    assert res.blocked and "status_source_missing:is_suspended" in res.blockers
+
+
+def test_contract_nan_is_listed_blocks():
+    snap = _snapshot()
+    snap.loc[0, "is_listed"] = np.nan
+    res = build_daily_universe(snap, "2026-08-05", AVAIL, CONTRACT)
+    assert res.blocked and "status_source_missing:is_listed" in res.blockers
+
+
+def test_contract_excludes_st_names():
+    snap = _snapshot()
+    snap["is_new"] = 0  # valid new-stock source, so only ST is in play
+    snap.loc[2, "is_st"] = 1
+    res = build_daily_universe(snap, "2026-08-05", AVAIL, CONTRACT)
+    assert res.status == "READY" and res.n_tradeable == 4
+    tradeable_symbols = set(res.universe.loc[res.universe["tradeable"], "symbol"])
+    assert f"{600002:06d}" not in tradeable_symbols
+
+
+def test_contract_excludes_suspended_names():
+    snap = _snapshot()
+    snap["is_new"] = 0
+    snap.loc[1, "is_suspended"] = 1
+    res = build_daily_universe(snap, "2026-08-05", AVAIL, CONTRACT)
+    assert res.status == "READY" and res.n_tradeable == 4
+    tradeable_symbols = set(res.universe.loc[res.universe["tradeable"], "symbol"])
+    assert f"{600001:06d}" not in tradeable_symbols
+
+
+def test_contract_excludes_new_stock_via_is_new():
+    snap = _snapshot()
+    snap["is_new"] = 0
+    snap.loc[1, "is_new"] = 1
+    res = build_daily_universe(snap, "2026-08-05", AVAIL, CONTRACT)
+    assert res.status == "READY" and res.n_tradeable == 4
+    tradeable_symbols = set(res.universe.loc[res.universe["tradeable"], "symbol"])
+    assert f"{600001:06d}" not in tradeable_symbols
+
+
+def test_contract_nan_is_new_blocks():
+    snap = _snapshot()
+    snap["is_new"] = [0, 1, np.nan, 0, 0]
+    res = build_daily_universe(snap, "2026-08-05", AVAIL, CONTRACT)
+    assert res.blocked and "status_source_missing:is_new" in res.blockers
+
+
+def test_contract_no_reliable_new_stock_source_blocks():
+    # No is_new column and no LISTED transitions (list_days all NaN):
+    # the 60-day new-stock exclusion has no reliable source -> BLOCKED,
+    # never default-normal.
+    res = build_daily_universe(_snapshot(), "2026-08-05", AVAIL, CONTRACT)
+    assert res.blocked and "status_source_missing:new_stock" in res.blockers
+
+
+def test_contract_partial_list_days_coverage_blocks():
+    # No is_new column AND only SOME names carry LISTED transitions: the
+    # fallback source is not reliable for the whole day -> BLOCKED.
+    snap = _snapshot()
+    snap.loc[0, "security_status_transition"] = "LISTED"
+    res = build_daily_universe(snap, "2026-08-05", AVAIL, CONTRACT)
+    assert res.blocked and "status_source_missing:new_stock" in res.blockers
+
+
+def test_no_contract_preserves_legacy_behavior():
+    # Without a contract the legacy path is preserved: NaN is_st and
+    # is_new==1 names neither block nor get excluded.
+    snap = _snapshot()
+    snap.loc[0, "is_st"] = np.nan
+    snap["is_new"] = 0
+    snap.loc[1, "is_new"] = 1
+    res = build_daily_universe(snap, "2026-08-05", AVAIL)
+    assert res.status == "READY" and res.n_tradeable == 5

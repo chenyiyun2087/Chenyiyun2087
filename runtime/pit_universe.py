@@ -106,6 +106,7 @@ def build_daily_universe(
     universe_snapshot: pd.DataFrame,
     trade_date: str,
     availability: dict | None = None,
+    contract: dict | None = None,
 ) -> UniverseBuildResult:
     """Build the tradeable universe for one signal date.
 
@@ -113,6 +114,17 @@ def build_daily_universe(
       - the snapshot is empty / lacks required columns
       - any PIT availability family is missing or later than the date
       - the snapshot carries no rows for the signal date
+      - (v5.5.1, when ``contract`` is given) any exclusion the contract
+        requires has no RELIABLE source — NaN is_st / is_suspended /
+        is_listed, or no new-stock source, BLOCKS instead of defaulting
+        to "normal".  Without a contract the legacy fillna behavior is
+        preserved (OOS/historical path unchanged).
+
+    contract keys (forward_shadow_v2.yaml universe_contract):
+      exclude_st: true                 is_st == 1 never tradeable
+      exclude_new_stock_days: 60       is_new == 1 (or list_days < 60)
+      exclude_delisting_period: true   DELISTED/DELISTING transitions
+      exclude_suspended: true          is_suspended == 1 never tradeable
     """
     result = UniverseBuildResult(status="READY", trade_date=trade_date)
     if universe_snapshot is None or universe_snapshot.empty:
@@ -141,11 +153,44 @@ def build_daily_universe(
 
     day["symbol"] = day["symbol"].astype(str).str.zfill(6)
     day["is_listed"] = pd.to_numeric(day["is_listed"], errors="coerce")
-    day["is_st"] = pd.to_numeric(day["is_st"], errors="coerce").fillna(0.0)
+    day["is_st"] = pd.to_numeric(day["is_st"], errors="coerce")
     day["is_suspended"] = pd.to_numeric(
-        day["is_suspended"], errors="coerce").fillna(0.0)
+        day["is_suspended"], errors="coerce")
     trans = day["security_status_transition"].astype(str)
     day["list_days"] = _list_days(day, trade_date)
+
+    # ── v5.5.1 strict status-source contract (when provided) ──
+    exclusions = []
+    if contract:
+        for col in ("is_listed", "is_st", "is_suspended"):
+            if day[col].isna().any():
+                result.status = "SIGNAL_PACKAGE_BLOCKED"
+                result.blockers.append(f"status_source_missing:{col}")
+                return result
+        if contract.get("exclude_st"):
+            exclusions.append("is_st")
+        if contract.get("exclude_suspended"):
+            exclusions.append("is_suspended")
+        new_stock_days = contract.get("exclude_new_stock_days")
+        if new_stock_days:
+            if "is_new" in day.columns:
+                day["is_new"] = pd.to_numeric(day["is_new"],
+                                              errors="coerce")
+                if day["is_new"].isna().any():
+                    result.status = "SIGNAL_PACKAGE_BLOCKED"
+                    result.blockers.append("status_source_missing:is_new")
+                    return result
+                exclusions.append("is_new")
+            elif day["list_days"].notna().all():
+                exclusions.append("list_days_lt_60")
+            else:
+                # The contract demands a 60-day new-stock exclusion but no
+                # reliable source exists -> BLOCKED, never default-normal.
+                result.status = "SIGNAL_PACKAGE_BLOCKED"
+                result.blockers.append("status_source_missing:new_stock")
+                return result
+        if contract.get("exclude_delisting_period"):
+            exclusions.append("delisting_transition")
 
     tradeable = (
         day["is_listed"].eq(1)
@@ -153,6 +198,16 @@ def build_daily_universe(
         & ~trans.isin(UNTRADEABLE_TRANSITIONS)
         & ~day["limit_status"].astype(str).isin({"DELISTED", "SUSPENDED"})
     )
+    if "is_st" in exclusions:
+        tradeable &= day["is_st"].ne(1)
+    if "is_suspended" in exclusions:
+        pass  # already excluded above
+    if "is_new" in exclusions:
+        tradeable &= day["is_new"].ne(1)
+    if "list_days_lt_60" in exclusions:
+        tradeable &= day["list_days"] >= 60
+    if "delisting_transition" in exclusions:
+        pass  # UNTRADEABLE_TRANSITIONS already covers it
     day["tradeable"] = tradeable.fillna(False)
     result.universe = day
     result.n_total = int(len(day))

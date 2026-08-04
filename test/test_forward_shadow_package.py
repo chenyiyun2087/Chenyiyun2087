@@ -136,6 +136,25 @@ def test_missing_style_input_blocks_c3():
         compute_candidate_scores(raw, RUNTIME["candidates"]["C3"])
 
 
+def test_missing_factor_never_imputed_zero():
+    # v5.5.1: a NaN on ANY required factor -> score NaN (drops out of
+    # selection), NEVER imputed as 0.0.
+    raw = _raw_frame()
+    victim = raw["symbol"].iloc[5]
+    raw.loc[raw["symbol"] == victim, "size_raw"] = np.nan
+    c1 = compute_candidate_scores(raw, RUNTIME["candidates"]["C1"])
+    row = c1[c1["symbol"] == victim].iloc[0]
+    assert pd.isna(row["score"])
+    assert pd.isna(row["score"]) and not np.isclose(row["score"], 0.0)
+
+
+def test_max_missing_factor_pct_contract_registered():
+    # The v5.5.1 missing-factor gate threshold is part of the runtime
+    # contract — every candidate must carry it pre-registered.
+    for cid in ("C0", "C1", "C2", "C3", "RND"):
+        assert "max_missing_factor_pct" in RUNTIME["candidates"][cid], cid
+
+
 def test_crowding_state_from_bars():
     dates = pd.to_datetime(pd.bdate_range("2026-07-01", periods=30))
     rows = []
@@ -154,3 +173,66 @@ def test_crowding_state_from_bars():
     state = compute_crowding_state(day)
     assert state["top5_turnover_concentration"] is not None
     assert state["top5_turnover_concentration"] > 0
+
+
+def test_dry_run_seals_nothing(monkeypatch, tmp_path, capsys):
+    """v5.5.1 --dry-run contract: every stage runs with real data and the
+    in-memory SHA preview is produced, but NOTHING formal is created — no
+    package dir, no SEALED manifest, no execution state change."""
+    import hashlib
+
+    from scripts.ops import build_daily_alpha_signal_package as pkg
+
+    n_syms, n_days = 30, 26
+    symbols = [f"{600000 + i:06d}" for i in range(n_syms)]
+    ts_codes = [f"{s}.SH" for s in symbols]
+    rng = np.random.default_rng(7)
+    dates = pd.bdate_range("2026-07-01", "2026-08-05")
+    rows = []
+    for i, s in enumerate(symbols):
+        rets = rng.normal(0.0005, 0.01, n_days)
+        close = 10.0 * np.exp(np.cumsum(rets))
+        for j, d in enumerate(dates):
+            rows.append({
+                # production shape: ts_code only (no symbol column)
+                "trade_date": d.date().isoformat(), "ts_code": f"{s}.SH",
+                "adj_close": float(close[j]),
+                "amount": float(1e8 + i * 1e6 + j * 1e4),
+                "circ_mv": float(5e9 + i * 1e9),
+            })
+    bars = pd.DataFrame(rows)
+    mcap = pd.DataFrame({"ts_code": ts_codes,
+                         "circ_mv": [5e9 + i * 1e9 for i in range(n_syms)]})
+    basic = pd.DataFrame({"ts_code": ts_codes,
+                          "pb": [1.0 + i * 0.1 for i in range(n_syms)],
+                          "turnover_rate": [1.0] * n_syms})
+    industry = pd.DataFrame({"ts_code": ts_codes,
+                             "industry_name": [f"ind{i % 5}" for i in range(n_syms)]})
+    labels = pd.DataFrame({"ts_code": ts_codes,
+                           "is_st": [0] * n_syms,
+                           "is_new": [0] * n_syms,
+                           "industry": [f"ind{i % 5}" for i in range(n_syms)]})
+    lineage = [{"family": fam,
+                "content_sha256": hashlib.sha256(fam.encode()).hexdigest()}
+               for fam in ("market", "market_cap", "basic_financial",
+                           "industry_scd", "labels", "trade_calendar")]
+
+    monkeypatch.setattr(pkg, "fetch_production_inputs", lambda d: {
+        "data_quality": {"rows": len(bars)},
+        "lineage": lineage,
+        "bars": bars, "mcap": mcap, "basic": basic,
+        "industry": industry, "labels": labels,
+    })
+    monkeypatch.setattr(pkg, "_next_open_day", lambda d: "2026-08-06")
+    monkeypatch.setattr(pkg, "PACKAGES_ROOT", tmp_path)
+
+    rc = pkg.run_package("2026-08-05", dry_run=True)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '"status": "DRY_RUN_PASS"' in out
+    assert '"would_seal": true' in out
+    assert '"package_sha256_preview"' in out
+    # the dry run must leave the packages zone completely untouched
+    assert list(tmp_path.iterdir()) == [], \
+        f"dry-run wrote into the packages zone: {list(tmp_path.iterdir())}"
+    assert not (tmp_path / "2026-08-05").exists()
