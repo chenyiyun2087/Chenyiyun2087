@@ -130,18 +130,66 @@ def _run_preflight_tests(run_dir: Path, *, enabled: bool) -> tuple[dict | None, 
     return {"passed": True}, output
 
 
+def _activation_blocked_reason() -> str | None:
+    """Return a blocker reason when the active model must not be auto-switched.
+
+    P0 freeze 2026-08-04: the active model carries ``auto_activate: false`` —
+    activation is frozen until the validation redo (time-split with
+    purge/embargo, feature drift, lift vs bs_score_v2) passes review.  None
+    means activation is permitted.
+    """
+    active_path = MODEL_ROOT / "active_model.json"
+    if not active_path.exists():
+        return None
+    try:
+        data = json.loads(active_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if data.get("auto_activate") is False:
+        return data.get(
+            "activation_frozen_reason",
+            "auto_activate=false in active_model.json (P0 freeze 2026-08-04)",
+        )
+    return None
+
+
+def _repo_relative(path: Path) -> str:
+    """Return a repo-relative path when possible; fall back to absolute."""
+    try:
+        return str(path.resolve().relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _activate_model(summary: dict) -> tuple[Path, dict | None]:
+    blocker = _activation_blocked_reason()
+    if blocker is not None:
+        raise RuntimeError(
+            f"Activation BLOCKED: {blocker} — cycle completed training/imports "
+            "but the active_model.json pointer was NOT switched."
+        )
     model_path = Path(str(summary.get("model_path") or ""))
     active_path = MODEL_ROOT / "active_model.json"
     payload = {
         "activated_at": datetime.now().isoformat(timespec="seconds"),
-        "model_dir": str(Path(str(summary["output_dir"]))),
-        "model_path": str(model_path),
+        # Repo-relative paths (portable across machines); consumers resolve
+        # via scoreRank.core.bs_model_infer._resolve_repo_path.
+        "model_dir": _repo_relative(Path(str(summary["output_dir"]))),
+        "model_path": _repo_relative(model_path),
         "target": summary.get("target"),
         "model_kind": summary.get("model_kind"),
         "risk_target": summary.get("risk_target"),
         "feature_schema_hash": summary.get("feature_schema_hash"),
         "selection_source": "run_bs_signal_enhancement_cycle",
+        # Decoupled dimensions: pointer selection is NOT economic evidence.
+        "lifecycle_stage": "RESEARCH_MODEL",
+        "economic_status": "UNPROVEN",
+        "economic_status_decoupled": True,
+        "auto_activate": False,
+        "activation_frozen_reason": (
+            "P0 freeze 2026-08-04: model validation redo (time-split + "
+            "purge/embargo + feature drift) required before any auto-switching"
+        ),
     }
     previous = None
     if active_path.exists():

@@ -1,0 +1,93 @@
+# Experiment Manifest: Alpha Rebuild 202608 (pre-registered 2026-08-04)
+# ======================================================================
+# Single manifest tying the 9 challengers to windows, selection rules, and
+# hard gates.  The 2025-2026 window is CONSUMED (report-only, NEVER
+# selection).  True forward blind starts 2026-08-05 (shadow accumulation,
+# min 60 trading days / 30 round trips).
+#
+# Each challenger file's sha256 below is the PRE-REGISTRATION SHA — the
+# freeze-integrity CI check compares current file hashes against these.
+# ======================================================================
+
+schema_version: "experiment_manifest_v1"
+experiment_id: "alpha_rebuild_202608"
+created_at: "2026-08-04"
+git_commit_sha: "ce98795faacfebf59653b8453e73a039276ac541"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"
+release_id: "20260803_oos_v4"
+
+baseline_strategy_id: "vls_mom_contrarian_v1_frozen"
+
+phases:
+  - id: factor_ablation
+    order: 1
+    challengers: [f1_no_value, f2_liquidity_clipped, f3_vol_risk_penalty]
+  - id: portfolio_construction
+    order: 2
+    depends_on: [factor_ablation]
+    challengers: [p1_top20_diversified, p2_style_constrained, p3_covariance_sizing]
+  - id: portfolio_construction_on_f1
+    order: 2b
+    depends_on: [factor_ablation]
+    rationale: "P-series pre-registered on F2 (rejected); re-run the same
+      portfolio layer on the CONFIRMED F1 core with new challenger IDs.
+      Limits identical to the original pre-registrations (no loosening)."
+    challengers: [f1p1_top20_diversified, f1p2_style_constrained, f1p3_covariance_sizing]
+  - id: state_control
+    order: 3
+    depends_on: [portfolio_construction]
+    challengers: [r1_market_regime, r2_crowding_control]
+  - id: b_point_sleeve
+    order: 4
+    challengers: [b_sleeve_independent]
+
+evaluation_windows:
+  development: {start: "2020-04-30", end: "2022-12-31"}
+  internal_oos: {start: "2023-01-01", end: "2023-12-31"}
+  stress_validation: {start: "2024-01-01", end: "2024-12-31"}
+  historical_holdout: {start: "2025-01-01", end: "2026-07-31"}
+  true_forward_blind: {start: "2026-08-05", end: null}
+
+selection_prohibited_on: [historical_holdout]
+holdout_usage: "REPORT_ONLY_SHOWN_NEVER_SELECTED"
+
+max_challengers_per_phase: 8
+multiple_testing: {method: "benjamini_hochberg", alpha: 0.05, candidate_count: 12}
+
+pre_registration_shas:
+  f1_no_value: "e30e3b659412f0660d633f122bab73a3cafb9c38a39db4fc4e87b0f0dabbbccf"
+  f2_liquidity_clipped: "92cc871bd8731eb53b2d80fd8c03113a95ca6ecaae317c57b203da6f418ce4c1"
+  f3_vol_risk_penalty: "16a1bd3d35c7dff02e60d41192dca328d20f0900c775ebe21b7fc51f474a9745"
+  p1_top20_diversified: "cde14597568559623529484e8a03bfc0690098ef6eef4d2aad8d986517b3beba"
+  p2_style_constrained: "6683ff7865a2a7112478868e4ceaf7ea26facd55a94c77ce6c54860da1bb1ad1"
+  p3_covariance_sizing: "b8b114be22f700172da3318b53432e469f04de4ac8311475d0b34e38d76de31a"
+  r1_market_regime: "8e3181323d5c29dd0574c355a9fe3efd2f9b5d420d71dc45d9018ae970ba200a"
+  r2_crowding_control: "591dd31484648edcf2ad95fce8d78c639d702a383260a238954888b14a0d5526"
+  b_sleeve_independent: "c99b8124afdf3745123724330db6339ffc938768bd5d20c9d087a579a32a1ed8"
+  f1p1_top20_diversified: "98223f3cb7e209e41ce9d807231c3155c1eab38eebd03e086d169592a7430eb3"
+  f1p2_style_constrained: "050a71de4bf0ab41a0eda9c32dfeae96420b16bf8368ecb92e296d1e3f2c6107"
+  f1p3_covariance_sizing: "cd54d9b9dc5b4546020790bb3c278bf18c9895c4f262862db662e1083e80e7fe"
+
+hard_gates:
+  # Challenger screening (research level) — the formal gates continue to
+  # follow production_acceptance.yaml / strategy_tournament.yaml.
+  min_annualized_return: 0.20
+  max_drawdown: -0.32
+  min_sharpe: 0.50
+  random_permutation_p: 0.10
+  hac_t: 1.65
+  two_x_cost_alpha_loss_pp: 2.0
+  capacity_50w_degradation_pp: 1.0
+
+stopping_and_rejection:
+  - "REJECTED_HYPOTHESIS: record as rejected, do NOT re-tune to rescue"
+  - "value removal with no IC/return improvement -> reject F1 family"
+  - "single-window dependence (2023 OR 2024 alone) -> reject"
+  - "random permutation p > 0.10 -> reject"
+  - "HAC t < 1.65 -> reject"
+  - "2022-class market still beyond -35% drawdown -> reject"
+  - "returns fully explained by size/liquidity exposure -> reject"
+  - "Top20 return entirely disappears -> reject"
+  - "parameter micro-changes collapse results -> reject"
+  - "2x cost wipes excess return -> reject"
+  - "shadow vs backtest persistent directional bias -> reject"

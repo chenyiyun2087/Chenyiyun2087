@@ -1,0 +1,62 @@
+# Pre-Registered Alpha Challenger: B-Sleeve — B-Point as Independent Alpha Sleeve (2026-08-04)
+# ======================================================================
+# The B-point RF model (test AUC ~0.679, precision@20 ~0.65) is NOT added
+# into the VLS composite score.  It runs as an independent event-driven
+# Alpha Sleeve B with its own evaluation:
+#
+#   - independent annualized return / IC / MDD
+#   - daily return correlation with VLS Sleeve A < 0.5
+#   - positive incremental Sharpe when combined
+#   - independent random permutation p <= 0.05
+#   - E4 shadow (>= 60 trading days, >= 30 round trips)
+#
+# Activation of the model pointer is frozen (auto_activate=false) until the
+# validation redo (time-split with purge/embargo, feature drift, lift vs
+# bs_score_v2) passes.  PRE-REGISTERED 2026-08-04.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "b_sleeve_independent"
+experiment_id: "exp_alpha_rebuild_202608_b_sleeve_independent"
+hypothesis_id: "H009_b_point_sleeve"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"  # release 20260803_oos_v4 content_sha256
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}  # CONSUMED — report only
+true_blind_start: "2026-08-05"
+base_strategy: "vls_mom_contrarian_v1_frozen"
+hypothesis: "B-point model adds value only as an independent event-driven sleeve with uncorrelated returns; blending into VLS scores is forbidden"
+sleeve_type: "EVENT_DRIVEN"
+independent_from: "vls_mom_contrarian_v1_frozen"
+model_source: "exports/bs_signal_models/active_model.json"
+model_id: "20260701_222545_255922"
+
+evaluation_criteria:
+  - "independent annualized return reported (not blended)"
+  - "daily_return_correlation_with_vls < 0.5"
+  - "incremental_sharpe > 0 when combined"
+  - "portfolio_mdd_reduction > 0 when combined"
+  - "independent_random_permutation_p <= 0.05"
+  - "e4_shadow: >= 60 trading days AND >= 30 round trips"
+
+stopping_criteria:
+  - "correlation with VLS Sleeve A >= 0.5"
+  - "incremental Sharpe <= 0"
+  - "independent permutation p > 0.05"
+  - "train/test validation gap persists after redo"
+
+# Execution (independent sleeve — own capital book)
+execution:
+  top_n: 10
+  max_total_positions: 10
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [scores, runs, report]

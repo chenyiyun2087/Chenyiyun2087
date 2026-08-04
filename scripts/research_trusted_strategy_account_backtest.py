@@ -13,6 +13,7 @@ from typing import Iterable
 
 import numpy as np
 import pandas as pd
+import yaml
 from sqlalchemy import create_engine, text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +56,7 @@ from scripts.research_full_pool_liquidity_strategies import (
     attach_market_environment,
     build_market_environment,
     build_strategy_specs,
+    discover_alpha_challenger_ids,
     filter_strategy_specs,
     load_prices,
     load_scores,
@@ -2047,7 +2049,9 @@ def _normalize_formal_score_snapshot(scores: pd.DataFrame) -> pd.DataFrame:
     if "strategy" not in scores.columns:
         return scores
     keys = ["trade_date", "symbol"]
-    expected = set(FORMAL_STRATEGIES) | {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1", "vls_mom_contrarian_v1_frozen"}
+    # v5.3 (2026-08-04): pre-registered alpha challengers join the governed
+    # snapshot set (auto-discovered from config/alpha_challengers/).
+    expected = set(FORMAL_STRATEGIES) | {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1", "vls_mom_contrarian_v1_frozen"} | discover_alpha_challenger_ids()
     actual = set(scores["strategy"].astype(str).unique())
     if not actual.issubset(expected):
         raise ValueError(
@@ -2683,6 +2687,108 @@ def _strict_precommit_uplift_cap(decision: dict[str, object], targets: pd.DataFr
     return {**base, "risk_level": "normal", "reason": "precommit_normal", "capped_ratio": planned_ratio, "cap_applied": False, "fallback_to_v1": False}
 
 
+def _apply_portfolio_constraints(
+    adjusted_weights: dict[str, float],
+    by_symbol: dict[str, object],
+    day_scores: pd.DataFrame,
+    pc_config: dict,
+) -> dict[str, float]:
+    """Apply the pre-registered portfolio-construction layer to adjustable weights.
+
+    P1/P2/P3 alpha challengers (2026-08-04).  The config schema mirrors
+    constrained_weights.PortfolioConstraints plus exposure limits:
+
+      single_stock_cap, industry_cap, top2_risk_contribution_cap,
+      exposure_constraints: {target_beta, beta_tolerance, max_size_exposure,
+                             max_liquidity_exposure, max_industry_active_weight}
+
+    Pipeline: raw weights -> water-filling caps (constrained_weight_allocation)
+    -> style exposure limits (enforce_exposure_constraints).  Raises
+    fail-closed on unsatisfiable constraints; returns weight dict otherwise.
+    """
+    from scripts.research.constrained_weights import (
+        PortfolioConstraints,
+        constrained_weight_allocation,
+        enforce_exposure_constraints,
+    )
+
+    if not adjusted_weights:
+        return adjusted_weights
+    symbols = sorted(adjusted_weights)
+    raw = np.array([max(0.0, float(adjusted_weights[s])) for s in symbols], dtype=float)
+    if raw.sum() <= 0.0:
+        return adjusted_weights
+
+    single_cap = float(pc_config.get("single_stock_cap") or 0.0) or 0.20
+    industry_cap = float(pc_config.get("industry_cap") or 0.0) or 0.30
+    top2_cap = float(pc_config.get("top2_risk_contribution_cap") or 0.0) or 0.45
+    # Clamp to (0,1]: float accumulation can nudge the budget to
+    # 1.0000000000000002, which PortfolioConstraints rejects.
+    target_exposure = min(1.0, float(raw.sum()))
+
+    # Industry labels from the target rows (targets carry industry).
+    industries = [
+        str(by_symbol[s].get("industry") or "unknown") if isinstance(by_symbol[s], dict) else "unknown"
+        for s in symbols
+    ]
+
+    # Water-filling caps (single stock / industry), preserving mass = raw sum.
+    alloc = constrained_weight_allocation(
+        raw,
+        symbols=symbols,
+        industries=industries,
+        single_cap=single_cap,
+        industry_cap=industry_cap,
+        top2_risk_cap=top2_cap,
+        target_gross_exposure=target_exposure,
+    )
+    capped = pd.Series(alloc["final_portfolio_weight"].to_numpy(), index=symbols)
+
+    # Style exposure limits (P2/P3) using panel factor columns as loadings.
+    ec = (pc_config.get("exposure_constraints") or {}) if isinstance(pc_config.get("exposure_constraints"), dict) else {}
+    constraints = PortfolioConstraints(
+        single_cap=single_cap,
+        industry_cap=industry_cap,
+        top2_risk_cap=top2_cap,
+        target_gross_exposure=target_exposure,
+        target_beta=float(ec.get("target_beta") or 1.0),
+        beta_tolerance=float(ec.get("beta_tolerance") or 0.0),
+        max_size_exposure=float(ec.get("max_size_exposure") or 0.0),
+        max_liquidity_exposure=float(ec.get("max_liquidity_exposure") or 0.0),
+        max_industry_active_weight=float(ec.get("max_industry_active_weight") or 0.0),
+    )
+    if constraints.exposure_constraints_enabled:
+        loadings = pd.DataFrame(index=symbols)
+        day_map = {}
+        if "symbol" in day_scores.columns and "market_beta" in day_scores.columns:
+            day_map = dict(zip(
+                day_scores["symbol"].astype(str).str.zfill(6),
+                pd.to_numeric(day_scores["market_beta"], errors="coerce"),
+            ))
+            loadings["beta"] = [day_map.get(s, 0.0) or 0.0 for s in symbols]
+        if "symbol" in day_scores.columns and "size" in day_scores.columns:
+            day_map_size = dict(zip(
+                day_scores["symbol"].astype(str).str.zfill(6),
+                pd.to_numeric(day_scores["size"], errors="coerce"),
+            ))
+            loadings["size"] = [day_map_size.get(s, 0.0) or 0.0 for s in symbols]
+        if "symbol" in day_scores.columns and "liquidity" in day_scores.columns:
+            day_map_liq = dict(zip(
+                day_scores["symbol"].astype(str).str.zfill(6),
+                pd.to_numeric(day_scores["liquidity"], errors="coerce"),
+            ))
+            loadings["liquidity"] = [day_map_liq.get(s, 0.0) or 0.0 for s in symbols]
+        if loadings.empty:
+            raise ValueError(
+                "PORTFOLIO_CONSTRAINTS_FAILED: exposure constraints require "
+                "market_beta/size/liquidity columns in the scores snapshot")
+        industries_series = pd.Series(industries, index=symbols)
+        capped = enforce_exposure_constraints(
+            capped, loadings, constraints, industries=industries_series)
+
+    return {s: float(capped[s]) for s in symbols}
+
+
 def _rebalance(
     account: AccountState,
     signal_date: object,
@@ -2705,6 +2811,7 @@ def _rebalance(
     ledger: ExecutionLedger | None = None,
     rebalance_score_buffer: float = 0.0,
     weight_drift_band: float = 0.0,
+    portfolio_constraints: dict | None = None,
 ) -> tuple[list[dict], list[dict], dict[str, object]]:
     trade_rows: list[dict] = []
     candidate_rows: list[dict] = []
@@ -2813,6 +2920,15 @@ def _rebalance(
         for symbol in adjustable_symbols:
             raw_weight = _safe_float(by_symbol[symbol].get("effective_weight"), 0.0)
             adjusted_weights[symbol] = min(raw_weight / unlocked_weight_sum * adjustable_budget_weight, max_fresh_weight)
+
+    # v5.3 (2026-08-04): pre-registered portfolio-construction layer
+    # (alpha challengers P1/P2/P3).  Post-processes the adjustable weights:
+    # water-filling caps (single/industry) and style exposure limits
+    # (beta/size/liquidity).  Fail-closed: an unsatisfiable constraint set
+    # raises — never silently trades with violated limits.
+    if portfolio_constraints and adjusted_weights:
+        adjusted_weights = _apply_portfolio_constraints(
+            adjusted_weights, by_symbol, day_scores, portfolio_constraints)
 
     target_shares: dict[str, int] = {}
     planned_prices: dict[str, float] = {}
@@ -3287,27 +3403,88 @@ def _validate_strict_execution_arguments(args: argparse.Namespace) -> None:
 def _load_market_state_snapshot(path: Path) -> dict[object, dict[str, float]]:
     """Load per-date market-state inputs for the risk overlay.
 
-    Columns: trade_date (ISO), csi300_ret_20d, market_breadth_above_20d_ma.
-    Missing values become NaN — the corresponding overlay rules simply do
-    not fire for that date (no fabricated market state).
+    Columns: trade_date (ISO), csi300_ret_20d, market_breadth_above_20d_ma,
+    and (v5.3, 2026-08-04) R1/R2 variables: cross_sectional_vol_ratio,
+    top5_turnover_concentration, small_vs_large_20d_rs.  ALL numeric
+    columns are passed through to the condition evaluator.  Missing values
+    become NaN — the corresponding overlay rules simply do not fire for
+    that date (no fabricated market state).
     """
     frame = pd.read_csv(path)
     required = {"trade_date", "csi300_ret_20d", "market_breadth_above_20d_ma"}
     missing = required - set(frame.columns)
     if missing:
         raise RuntimeError(f"market_state_snapshot_missing_fields:{sorted(missing)}")
+    numeric_cols = [c for c in frame.columns if c != "trade_date"]
     out: dict[object, dict[str, float]] = {}
     for _, row in frame.iterrows():
         date = pd.to_datetime(row["trade_date"], errors="coerce").date()
         if pd.isna(date):
             continue
         out[date] = {
-            "csi300_ret_20d": float(row["csi300_ret_20d"])
-            if pd.notna(row["csi300_ret_20d"]) else float("nan"),
-            "market_breadth_above_20d_ma": float(row["market_breadth_above_20d_ma"])
-            if pd.notna(row["market_breadth_above_20d_ma"]) else float("nan"),
+            col: float(row[col]) if pd.notna(row[col]) else float("nan")
+            for col in numeric_cols
         }
     return out
+
+
+def _eval_overlay_condition(condition: str, drawdown: float,
+                            market_state: dict[str, float] | None) -> bool:
+    """Evaluate a pre-registered overlay condition string (fail-safe False).
+
+    R1/R2 alpha challengers (2026-08-04): conditions may combine multiple
+    comparisons of known variables with numeric literals via 'or'/'and',
+    e.g. "csi300_ret_20d <= -0.05 or market_breadth_above_20d_ma < 0.30".
+    Variables resolve against the market-state snapshot plus the running
+    portfolio drawdown.  Unknown tokens or missing/NaN values evaluate to
+    False for that comparison (fail-safe: never fires on missing data);
+    'or' chains still fire when any other branch fires.
+    """
+    import re
+
+    if market_state is None:
+        market_state = {}
+    env: dict[str, float] = {"portfolio_equity_drawdown_from_peak": drawdown}
+    env.update({k: float(v) for k, v in market_state.items()
+                if v is not None and v == v})
+
+    parts = re.split(r"\s+(or|and)\s+", condition.strip())
+    results: list[bool] = []
+    ops: list[str] = []
+    for part in parts:
+        part = part.strip()
+        if part in ("or", "and"):
+            ops.append(part)
+            continue
+        match = re.match(
+            r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*(<=|<|>=|>|==)\s*(-?[0-9]+(?:\.[0-9]+)?)$",
+            part,
+        )
+        if not match:
+            results.append(False)  # unknown token -> does not fire
+            continue
+        var, op, literal = match.groups()
+        value = env.get(var)
+        if value is None:
+            results.append(False)
+            continue
+        target = float(literal)
+        if op == "<=":
+            results.append(value <= target)
+        elif op == "<":
+            results.append(value < target)
+        elif op == ">=":
+            results.append(value >= target)
+        elif op == ">":
+            results.append(value > target)
+        else:
+            results.append(value == target)
+    if not results:
+        return False
+    acc = results[0]
+    for op, result in zip(ops, results[1:]):
+        acc = (acc and result) if op == "and" else (acc or result)
+    return acc
 
 
 def _risk_overlay_multiplier(
@@ -3337,27 +3514,11 @@ def _risk_overlay_multiplier(
     for rule in overlay.get("rules", []):
         rule_id = str(rule.get("id", "?"))
         condition = str(rule.get("condition", ""))
-        fires = False
-        if condition.startswith("portfolio_equity_drawdown_from_peak"):
-            try:
-                threshold = float(condition.split(">=")[-1].strip())
-            except ValueError:
-                threshold = float("inf")
-            fires = drawdown >= threshold
-        elif condition.startswith("csi300_ret_20d") and market_state is not None:
-            value = market_state.get("csi300_ret_20d")
-            try:
-                threshold = float(condition.split("<=")[-1].strip())
-            except ValueError:
-                threshold = float("inf")
-            fires = value == value and value <= threshold  # NaN-safe
-        elif condition.startswith("market_breadth_above_20d_ma") and market_state is not None:
-            value = market_state.get("market_breadth_above_20d_ma")
-            try:
-                threshold = float(condition.split("<")[-1].strip())
-            except ValueError:
-                threshold = float("inf")
-            fires = value == value and value < threshold  # NaN-safe
+        # v5.3 (2026-08-04): generic evaluator supports OR/AND-combined
+        # conditions + new variables (cross_sectional_vol_ratio,
+        # top5_turnover_concentration, small_vs_large_20d_rs).  The legacy
+        # single-comparison conditions evaluate identically.
+        fires = _eval_overlay_condition(condition, drawdown, market_state)
         if fires:
             triggered.append(rule_id)
             multiplier = min(multiplier, float(rule.get("position_multiplier", 1.0)))
@@ -3390,6 +3551,16 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
             raise ValueError("risk_overlay_config requires --market-state-snapshot")
         market_state_by_date = _load_market_state_snapshot(
             Path(args.market_state_snapshot))
+    # v5.3 (2026-08-04): pre-registered portfolio-construction layer
+    # (alpha challengers P1/P2/P3).  Default None -> existing behavior.
+    portfolio_constraints: dict | None = None
+    if getattr(args, "portfolio_constraints", None):
+        try:
+            import yaml
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("portfolio_constraints requires PyYAML") from exc
+        with open(args.portfolio_constraints, encoding="utf-8") as fh:
+            portfolio_constraints = yaml.safe_load(fh)
     requested_strategies = set(_parse_strategies(args.strategies))
     raw_ledger_strategies = {"production_governed_vol_position", "production_governed_vol_position_v1_2b_gate_tuned", PRODUCTION_GOVERNED_VOL_POSITION_V1_2B_STRICT_PRECOMMIT_UPLIFT_STRATEGY_NAME}
     formal_strategies = {
@@ -3404,7 +3575,10 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
     # v5.2: allow governed + challenger (vls) strategies for research runs
     # v5.3: vls_mom_contrarian_v1_frozen is the P0-frozen champion (2026-08-03)
     # under OOS validation on truly unseen data — included in the challenger set.
-    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1", "vls_mom_contrarian_v1_frozen"}
+    # v5.3 (2026-08-04): pre-registered alpha challengers auto-discover from
+    # config/alpha_challengers/ so new challenger IDs join the allowed set
+    # without editing this module.
+    CHALLENGER_STRATEGIES = {"vls_value_size_liquidity_v1", "vls_liq_floor60", "vls_liq_floor60_incap2", "vls_mom_contrarian_v1", "vls_mom_contrarian_v1_frozen"} | discover_alpha_challenger_ids()
     allowed_strategies = formal_strategies | CHALLENGER_STRATEGIES
     if formal_evidence_required and not requested_strategies.issubset(allowed_strategies):
         raise ValueError("formal evidence requires strategies from the governed formal set")
@@ -4278,6 +4452,7 @@ def run_account_backtest(args: argparse.Namespace) -> dict:
                     precommit_prices=_price_lookup_for_day(prices, price_day_indices, signal_date, price_lookup_columns),
                     strict_precommit=strict_raw_execution,
                     ledger=strict_ledger,
+                    portfolio_constraints=portfolio_constraints,
                 )
                 for item in [*candidates, *trades]:
                     for field in ("cash_residual_ratio", "intentional_cash_ratio", "planned_cash_buffer_ratio", "unexpected_cash_residual_ratio", "planned_vs_filled_notional_gap", "planned_vs_filled_share_gap", "buy_order_shortfall_ratio", "t1_not_tradable_reject_count", "limit_block_reject_count"):
@@ -4723,6 +4898,17 @@ def main() -> None:
         help="v5.3 CSV snapshot: trade_date,csi300_ret_20d,market_breadth_above_20d_ma "
         "(computed by scripts/research/run_vls_risk_overlay.py from the release "
         "benchmark_index + prices families). Required by --risk-overlay-config.",
+    )
+    parser.add_argument(
+        "--portfolio-constraints",
+        default=None,
+        help="v5.3 (2026-08-04) pre-registered portfolio-construction YAML "
+        "(alpha challengers P1/P2/P3: single_stock_cap, industry_cap, "
+        "top2_risk_contribution_cap, exposure_constraints with target_beta/"
+        "beta_tolerance/max_size_exposure/max_liquidity_exposure/"
+        "max_industry_active_weight). Applied to adjustable weights at each "
+        "rebalance: water-filling caps then style exposure limits. Fail-closed "
+        "on unsatisfiable constraints. None disables the layer.",
     )
     parser.add_argument(
         "--hard-stop-loss-pct",

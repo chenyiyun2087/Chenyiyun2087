@@ -1,0 +1,76 @@
+# Pre-Registered Alpha Challenger: P1 — Top20 Diversification (2026-08-04)
+# ======================================================================
+# Hypothesis H004 (diversification): the Top10 near-full-position portfolio
+# carries excessive single-stock/industry risk (2022 -40% class losses).
+# Keeping the F2 factor score but selecting Top20 with single-stock cap 8%
+# and industry cap 25% should cut non-systematic drawdown while retaining IC.
+#
+# P1 = F2 factor score + portfolio construction layer (TopN=20, caps).
+# IC unchanged by construction — tests portfolio conversion efficiency.
+#
+# PRE-REGISTERED: 2025-2026 is CONSUMED (report-only). True forward blind
+# starts 2026-08-05.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "p1_top20_diversified"
+experiment_id: "exp_alpha_rebuild_202608_p1_top20_diversified"
+hypothesis_id: "H004_diversification"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"  # release 20260803_oos_v4 content_sha256
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}  # CONSUMED — report only
+true_blind_start: "2026-08-05"
+base_strategy: "f2_liquidity_clipped"
+change_description: "F2 score unchanged; portfolio layer: TopN 10->20, single cap 8%, industry cap 25%, top2 risk cap 45%"
+hypothesis: "diversification converts the same alpha signal into a lower-drawdown return path"
+expected_direction: "MDD falls materially; annualized return loss <= 15%; turnover increase <= 30%"
+
+stopping_criteria:
+  - "MDD does not improve vs F2 on stress window (2024)"
+  - "return loss > 25% vs F2 on development window"
+  - "2022-class market still produces drawdown beyond -30%"
+  - "random permutation p > 0.10 on untouched window"
+
+# Factor definition (F2 weights/signs)
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+# Score transforms (F2 inherited)
+score_transforms:
+  liquidity_winsorization:
+    method: "clip"
+    lower_percentile: 10.0
+    upper_percentile: 90.0
+  min_20d_turnover_threshold_cny: 3000000.0
+
+# Portfolio construction layer
+portfolio_constraints:
+  top_n: 20
+  max_total_positions: 20
+  single_stock_cap: 0.08
+  industry_cap: 0.25
+  top2_risk_contribution_cap: 0.45
+  target_gross_exposure: 1.00
+
+# Execution (TopN=20 via portfolio layer; hold/cost unchanged)
+execution:
+  top_n: 20
+  max_total_positions: 20
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [adapter, panel, scores, portfolio_construction, runs, report]

@@ -43,6 +43,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -75,6 +77,77 @@ TIME_SPLITS = [
 ]
 
 PY = "/opt/homebrew/opt/python@3.14/bin/python3.14"
+
+# ── Alpha-challenger support (2026-08-04 pre-registration) ─────────────────
+# A challenger config (config/alpha_challengers/<id>.yaml) overrides the
+# frozen-champion defaults below: factor weights/signs (passed to
+# build_formal_scores as the strategy definition), execution parameters,
+# cost model, and — when present — portfolio_construction / regime_control /
+# crowding_control stages.  Without --challenger-config the pipeline runs the
+# frozen baseline exactly as before (backwards compatible).
+
+CHALLENGER_MANIFEST = PROJECT_ROOT / "config" / "experiments" / "alpha_rebuild_202608.yaml"
+
+
+def _load_challenger_config(path: Path) -> dict:
+    """Load + validate a pre-registered challenger manifest (fail-closed)."""
+    if not path.exists():
+        raise FileNotFoundError(f"challenger config not found: {path}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    required = ("schema_version", "challenger_id", "experiment_id",
+                "factor_weights", "factor_signs", "execution",
+                "selection_window", "untouched_evaluation_window")
+    missing = [k for k in required if k not in data]
+    if missing:
+        raise ValueError(f"challenger config {path} missing fields: {missing}")
+    return data
+
+
+def _verify_challenger_preregistration(challenger: dict, config_path: Path) -> None:
+    """Fail closed if the challenger file drifted from its pre-registered sha.
+
+    The pre-registration SHA is recorded in config/experiments/alpha_rebuild
+    _202608.yaml (or any sibling experiment manifest).  Drift means the file
+    was edited after pre-registration — the run is BLOCKED, never silently
+    executed with changed parameters.
+    """
+    import hashlib
+
+    if not CHALLENGER_MANIFEST.exists():
+        raise FileNotFoundError(
+            f"experiment manifest not found: {CHALLENGER_MANIFEST} — "
+            "pre-registration SHA verification is mandatory")
+    manifest = yaml.safe_load(CHALLENGER_MANIFEST.read_text(encoding="utf-8")) or {}
+    shas = manifest.get("pre_registration_shas", {})
+    cid = challenger["challenger_id"]
+    expected = shas.get(cid)
+    if not expected:
+        raise ValueError(
+            f"challenger {cid} not found in {CHALLENGER_MANIFEST} "
+            "pre_registration_shas — register before running")
+    actual = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    if actual != expected:
+        raise RuntimeError(
+            f"challenger {cid} DRIFTED from pre-registration sha "
+            f"(expected {expected}, got {actual}) — file edited after "
+            "pre-registration; run BLOCKED.")
+
+
+def _challenger_execution(challenger: dict) -> dict:
+    """Merge challenger execution params over frozen-champion defaults."""
+    base = {
+        "top_n": TOP_N, "max_positions": MAX_POSITIONS, "hold_days": HOLD_DAYS,
+        "score_buffer": SCORE_BUFFER, "drift_band": DRIFT_BAND,
+        "cost_rate": COST_RATE, "slippage_bps": SLIPPAGE_BPS,
+        "initial_cash": INITIAL_CASH,
+    }
+    exec_block = challenger.get("execution") or {}
+    # YAML schema uses max_total_positions; the backtest CLI flag and the
+    # base dict use max_positions — translate.
+    if "max_total_positions" in exec_block:
+        base["max_positions"] = int(exec_block["max_total_positions"])
+    base.update({k: exec_block[k] for k in exec_block if k in base})
+    return base
 
 
 def _run(cmd: list[str], label: str) -> None:
@@ -341,10 +414,30 @@ def build_split_inputs(
     return split_inputs_dir, split_files
 
 
-def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict]:
-    """Run strict-ledger backtests per time split with frozen inputs."""
+def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path,
+               *, strategy_id: str = "vls_mom_contrarian_v1_frozen",
+               top_n: int = TOP_N, max_positions: int = MAX_POSITIONS,
+               hold_days: int = HOLD_DAYS, score_buffer: float = SCORE_BUFFER,
+               drift_band: float = DRIFT_BAND, cost_rate: float = COST_RATE,
+               slippage_bps: int = SLIPPAGE_BPS,
+               initial_cash: float = INITIAL_CASH,
+               portfolio_constraints: dict | None = None) -> list[dict]:
+    """Run strict-ledger backtests per time split with frozen inputs.
+
+    Defaults reproduce the frozen champion exactly; a challenger config
+    overrides strategy_id + execution parameters.  A portfolio_constraints
+    dict (alpha challengers P1/P2/P3) is staged to a YAML file in the work
+    dir and passed to the backtest via --portfolio-constraints.
+    """
     runs_dir = work_dir / "runs"
     snapshots_dir = stage_snapshots(release_dir, work_dir)
+    pc_flag: list[str] = []
+    if portfolio_constraints:
+        pc_path = work_dir / "portfolio_constraints.yaml"
+        pc_path.write_text(
+            yaml.safe_dump(portfolio_constraints, sort_keys=False),
+            encoding="utf-8")
+        pc_flag = ["--portfolio-constraints", str(pc_path)]
     results = []
     split_inputs_dir, split_files = build_split_inputs(work_dir, scores_dir, snapshots_dir)
     for label, start, end in TIME_SPLITS:
@@ -353,11 +446,11 @@ def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict
         _run(
             [PY, "scripts/research_trusted_strategy_account_backtest.py",
              "--risk-profile", "adaptive",
-             "--strategies", "vls_mom_contrarian_v1_frozen",
+             "--strategies", strategy_id,
              "--execution-mode", "strict_t1_open_precommit",
              "--start-date", start, "--end-date", end,
-             "--trade-cost-rate", str(COST_RATE), "--slippage-rate", str(SLIPPAGE_BPS / 10_000),
-             "--initial-cash", str(INITIAL_CASH),
+             "--trade-cost-rate", str(cost_rate), "--slippage-rate", str(slippage_bps / 10_000),
+             "--initial-cash", str(initial_cash),
              "--output-dir", str(out),
              "--scores-snapshot", str(split_inputs_dir / f"{label}_scores.parquet"),
              "--prices-snapshot", str(split_inputs_dir / f"{label}_prices.parquet"),
@@ -368,18 +461,22 @@ def stage_runs(work_dir: Path, release_dir: Path, scores_dir: Path) -> list[dict
              "--security-lifecycle-snapshot", str(release_dir / "security_lifecycle.parquet"),
              "--security-lifecycle-manifest", str(snapshots_dir / "security_lifecycle_manifest.json"),
              "--trade-calendar-snapshot", str(snapshots_dir / "trade_calendar.csv"),
-             "--top-n", str(TOP_N), "--max-total-positions", str(MAX_POSITIONS),
-             "--hold-days", str(HOLD_DAYS),
-             "--rebalance-score-buffer", str(SCORE_BUFFER),
-             "--rebalance-weight-drift-band", str(DRIFT_BAND),
-             "--require-verified-evidence", "--formal-mode", "--force-strict-ledger"],
+             "--top-n", str(top_n), "--max-total-positions", str(max_positions),
+             "--hold-days", str(hold_days),
+             "--rebalance-score-buffer", str(score_buffer),
+             "--rebalance-weight-drift-band", str(drift_band),
+             "--require-verified-evidence", "--formal-mode", "--force-strict-ledger",
+             *pc_flag],
             f"stage4: strict backtest {label}",
         )
         results.append({"split": label, "start": start, "end": end, "output": str(out)})
     return results
 
 
-def stage_report(results: list[dict], output_root: Path, release_dir: Path) -> Path:
+def stage_report(results: list[dict], output_root: Path, release_dir: Path,
+                 *, strategy_label: str = "vls_mom_contrarian_v1_frozen",
+                 params_label: str | None = None,
+                 report_prefix: str = "vls_oos_validation") -> Path:
     """Aggregate per-split metrics into the OOS report."""
     rows = []
     for r in results:
@@ -400,10 +497,10 @@ def stage_report(results: list[dict], output_root: Path, release_dir: Path) -> P
             "total_cost": s.get("total_cost"),
         })
 
-    report_path = output_root / f"vls_oos_validation_{datetime.now(timezone.utc).strftime('%Y%m%d')}.md"
-    lines = ["# VLS Frozen OOS Validation", "",
-             f"Strategy: vls_mom_contrarian_v1_frozen (TopN={TOP_N}, hold={HOLD_DAYS}, "
-             f"buffer={SCORE_BUFFER}, band={DRIFT_BAND}) — FROZEN 2026-08-03",
+    report_path = output_root / f"{report_prefix}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.md"
+    lines = ["# VLS OOS Validation", "",
+             f"Strategy: {strategy_label}"
+             + (f" ({params_label})" if params_label else ""),
              "", "| Split | Period | Total | Annual | MDD | Trades | Cost |", "|---|---|---|---|---|---|---|"]
     for row in rows:
         lines.append(
@@ -438,19 +535,52 @@ def main() -> int:
     parser.add_argument("--release-dir", type=Path, required=True)
     parser.add_argument("--strategy-def", type=Path,
                         default=PROJECT_ROOT / "config/strategy_definitions/vls_mom_contrarian_v1_frozen.yaml")
+    parser.add_argument("--challenger-config", type=Path, default=None,
+                        help="Pre-registered alpha challenger YAML "
+                             "(config/alpha_challengers/<id>.yaml). Overrides "
+                             "strategy definition, execution parameters, and "
+                             "output root; pre-registration SHA is verified "
+                             "fail-closed before any stage runs.")
     parser.add_argument("--output-root", type=Path,
                         default=PROJECT_ROOT / "exports/formal_evidence/vls_oos")
     parser.add_argument("--stages", default="adapter,panel,scores,runs,report")
     args = parser.parse_args()
 
     stages = [s.strip() for s in args.stages.split(",")]
-    work_dir = args.output_root
-    work_dir.mkdir(parents=True, exist_ok=True)
-
     release_dir = args.release_dir.resolve()
     if not (release_dir / "manifest.json").exists():
         print(f"FATAL: no manifest.json in {release_dir}")
         return 2
+
+    # ── Challenger overrides (pre-registration verified fail-closed) ──
+    challenger: dict | None = None
+    exec_params: dict = {}
+    strategy_def_path = args.strategy_def
+    strategy_id = "vls_mom_contrarian_v1_frozen"
+    params_label = "FROZEN 2026-08-03"
+    report_prefix = "vls_oos_validation"
+    if args.challenger_config is not None:
+        challenger = _load_challenger_config(args.challenger_config.resolve())
+        _verify_challenger_preregistration(challenger, args.challenger_config.resolve())
+        strategy_id = str(challenger.get("challenger_id"))
+        exec_params = _challenger_execution(challenger)
+        params_label = (
+            f"challenger {strategy_id} (TopN={exec_params['top_n']}, "
+            f"hold={exec_params['hold_days']}, "
+            f"buffer={exec_params['score_buffer']}, band={exec_params['drift_band']})"
+        )
+        report_prefix = f"challenger_{strategy_id}"
+        # Challenger outputs go to their own evidence directory; the
+        # challenger YAML itself doubles as the strategy definition because
+        # factor_weights/factor_signs live at top level.
+        strategy_def_path = args.challenger_config.resolve()
+        if args.output_root == parser.get_default("output_root"):
+            args.output_root = PROJECT_ROOT / "exports" / "formal_evidence" / "alpha_challengers" / strategy_id
+        print(f"challenger {strategy_id}: pre-registration verified, "
+              f"output -> {args.output_root}")
+
+    work_dir = args.output_root
+    work_dir.mkdir(parents=True, exist_ok=True)
 
     adapter_info: dict = {}
     panel_dir: Path | None = None
@@ -467,21 +597,27 @@ def main() -> int:
         if not (panel_dir / "factor_panel_daily.parquet").exists():
             print("FATAL: factor_panel.parquet missing — run --stages panel first")
             return 2
-        scores_dir = stage_scores(args.strategy_def, panel_dir, work_dir)
+        scores_dir = stage_scores(strategy_def_path, panel_dir, work_dir)
     if "runs" in stages:
         if scores_dir is None:
             scores_dir = work_dir / "scores"
         if not (scores_dir / "formal_scores.parquet").exists():
             print("FATAL: formal_scores.parquet missing — run --stages scores first")
             return 2
-        results = stage_runs(work_dir, release_dir, scores_dir)
+        pc = challenger.get("portfolio_constraints") if challenger else None
+        results = stage_runs(
+            work_dir, release_dir, scores_dir,
+            strategy_id=strategy_id, portfolio_constraints=pc,
+            **exec_params)
     if "report" in stages:
         if not results:
             results = []
             for label, start, end in TIME_SPLITS:
                 results.append({"split": label, "start": start, "end": end,
                                 "output": str(work_dir / "runs" / label)})
-        stage_report(results, args.output_root, release_dir)
+        stage_report(results, args.output_root, release_dir,
+                     strategy_label=strategy_id, params_label=params_label,
+                     report_prefix=report_prefix)
 
     print("\nVLS_OOS_VALIDATION_DONE")
     return 0

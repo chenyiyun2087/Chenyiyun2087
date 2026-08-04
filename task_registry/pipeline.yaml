@@ -127,6 +127,30 @@ intraday:
       trading_day_only: true
       status: enabled
 
+    # v5.3 (2026-08-04): true-forward-blind shadow accumulation for the
+    # alpha challengers (config/oos_registry.yaml true_forward_blind).
+    # Records T-day candidate signals at 15:30; the T+1 fill reconciliation
+    # runs in the morning batch below.
+    - id: alpha_challenger_shadow_record
+      time: "15:30"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "record"]
+      type: script
+      trading_day_only: true
+      status: enabled
+      depends_on: [sina_analyse]
+
+morning:
+  description: "晨间任务"
+  tasks:
+    - id: alpha_challenger_shadow_reconcile
+      time: "09:35"
+      script: scripts/ops/run_daily_shadow.py
+      args: ["--mode", "reconcile"]
+      type: script
+      trading_day_only: true
+      status: enabled
+
 weekly:
   description: "每周任务"
   tasks:

@@ -97,6 +97,31 @@ def _industry_key(value: object, symbol: object) -> str:
     return f"UNKNOWN_{str(symbol or '').zfill(6)}"
 
 
+def discover_alpha_challenger_ids() -> set[str]:
+    """Discover pre-registered alpha challenger IDs from config/alpha_challengers/.
+
+    Fail-open: a missing/broken config directory yields an empty set (the
+    frozen champion and legacy challengers still resolve); each YAML is
+    parsed defensively.  Single source of truth for challenger discovery —
+    the trusted backtest imports this to avoid duplication.
+    """
+    challenger_dir = PROJECT_ROOT / "config" / "alpha_challengers"
+    if not challenger_dir.is_dir():
+        return set()
+    import yaml
+
+    ids: set[str] = set()
+    for path in sorted(challenger_dir.glob("*.yaml")):
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        cid = data.get("challenger_id")
+        if cid:
+            ids.add(str(cid))
+    return ids
+
+
 def build_strategy_specs() -> list[StrategySpec]:
     specs = [
         StrategySpec("baseline_full_score", "full", "score"),
@@ -211,6 +236,17 @@ def build_strategy_specs() -> list[StrategySpec]:
                         market_gate=True,
                     )
                 )
+    # v5.3 (2026-08-04): pre-registered alpha challengers (F1-F3/P1-P3/R1-R2)
+    # ride the same fixed-weight score path as the frozen VLS champion —
+    # selection is driven by the `score` column of their formal scores
+    # snapshot (build_formal_scores YAML weights), never recomputed here.
+    existing = {spec.name for spec in specs}
+    for challenger_id in sorted(discover_alpha_challenger_ids()):
+        if challenger_id not in existing:
+            specs.append(
+                StrategySpec(challenger_id, "full", "dynamic_factor_score",
+                             fixed_weight_score=True)
+            )
     return specs
 
 

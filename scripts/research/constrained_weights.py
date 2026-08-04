@@ -41,7 +41,14 @@ class OrderingMode(str, Enum):
 
 @dataclass(frozen=True)
 class PortfolioConstraints:
-    """Immutable constraint set for portfolio construction."""
+    """Immutable constraint set for portfolio construction.
+
+    v5.3 (2026-08-04): style exposure limits added for alpha challengers
+    P2/P3 — |beta - target_beta| <= beta_tolerance, |size_exposure| <=
+    max_size_exposure, |liquidity_exposure| <= max_liquidity_exposure,
+    and industry active weight <= max_industry_active_weight.  These are
+    enforced by enforce_exposure_constraints() AFTER water-filling.
+    """
 
     single_cap: float = 0.15
     industry_cap: float = 0.30
@@ -49,6 +56,12 @@ class PortfolioConstraints:
     top2_risk_cap: float = 0.45
     target_gross_exposure: float = 0.70
     max_iterations: int = 100
+    # Style exposure limits (P2/P3 alpha challengers; 0/None = not enforced)
+    target_beta: float = 1.0
+    beta_tolerance: float = 0.0
+    max_size_exposure: float = 0.0
+    max_liquidity_exposure: float = 0.0
+    max_industry_active_weight: float = 0.0
 
     def __post_init__(self) -> None:
         if not 0.0 < self.single_cap <= 1.0:
@@ -61,6 +74,16 @@ class PortfolioConstraints:
             raise ValueError(
                 f"target_gross_exposure must be in (0,1]; got {self.target_gross_exposure}"
             )
+
+    @property
+    def exposure_constraints_enabled(self) -> bool:
+        """True when any style exposure limit is active."""
+        return (
+            self.beta_tolerance > 0.0
+            or self.max_size_exposure > 0.0
+            or self.max_liquidity_exposure > 0.0
+            or self.max_industry_active_weight > 0.0
+        )
 
 
 def constrained_weight_allocation(
@@ -221,6 +244,174 @@ def constrained_weight_allocation(
     result.attrs["target_gross_exposure"] = target_gross_exposure
 
     return result
+
+
+def compute_style_exposures(weights: pd.Series,
+                            factor_loadings: pd.DataFrame) -> pd.Series:
+    """Net style exposures of a weight vector: sum(w_i * loading_i).
+
+    Parameters
+    ----------
+    weights : Series indexed by symbol (or aligned to factor_loadings index).
+    factor_loadings : DataFrame indexed by symbol with one column per style
+        (e.g. 'beta', 'size', 'liquidity').  Loading convention: positive =
+        long-side tilt (e.g. size loading +1 for small caps, liquidity
+        loading -1 for illiquid names is the caller's responsibility).
+
+    Returns
+    -------
+    Series indexed by style column name: net exposure per style.
+    """
+    if weights.empty or factor_loadings.empty:
+        return pd.Series(dtype=float)
+    joined = factor_loadings.join(weights.rename("_w"))
+    w = pd.to_numeric(joined["_w"], errors="coerce").fillna(0.0)
+    exposures = {}
+    for col in factor_loadings.columns:
+        loadings = pd.to_numeric(joined[col], errors="coerce").fillna(0.0)
+        exposures[col] = float((w * loadings).sum())
+    return pd.Series(exposures)
+
+
+def enforce_exposure_constraints(weights: pd.Series,
+                                 factor_loadings: pd.DataFrame,
+                                 constraints: PortfolioConstraints,
+                                 industries: pd.Series | None = None,
+                                 max_iterations: int = 50) -> pd.Series:
+    """Iteratively adjust weights to satisfy style exposure limits.
+
+    P2/P3 alpha-challenger layer (pre-registered, 2026-08-04).  Applied
+    AFTER water-filling: each violated style limit is corrected by
+    proportional redistribution — scale down the weights that contribute to
+    the excess in that direction and reallocate to the opposite-sign names —
+    then re-check.  Fails closed (raises) if constraints cannot be met after
+    max_iterations; never silently returns a violating allocation.
+
+    Enforced limits (only when > 0 in ``constraints``):
+      |beta_active|        <= beta_tolerance (around target_beta)
+      |size_exposure|      <= max_size_exposure
+      |liquidity_exposure| <= max_liquidity_exposure
+      max industry active  <= max_industry_active_weight (when industries given)
+    """
+    if not constraints.exposure_constraints_enabled or weights.empty:
+        return weights
+    active = weights[weights > 0.0]
+    if active.empty:
+        return weights
+
+    out = weights.copy().astype(float)
+    total = float(out.sum())
+    if total <= 0.0:
+        return weights
+
+    # Damping factor for iterative constraint correction (half-step per
+    # iteration): prevents oscillation when multiple constraints interact.
+    RELAXATION = 0.5
+
+    normalized = out / total  # relative weights; final exposure scaled back
+    styles = list(factor_loadings.columns)
+
+    def _industry_active() -> float:
+        if industries is None or not constraints.max_industry_active_weight:
+            return 0.0
+        active_w = pd.Series(normalized).groupby(
+            industries.loc[normalized.index]).sum()
+        return float(active_w.max())
+
+    for _ in range(max_iterations):
+        exposures = compute_style_exposures(normalized, factor_loadings)
+        violations: list[tuple[str, float, float]] = []
+        if constraints.beta_tolerance > 0.0 and "beta" in exposures:
+            # The caller supplies loadings ALREADY target-relative (the panel
+            # market_beta factor is a centered rank; for real betas the caller
+            # passes beta - target_beta).  The limit bounds the net exposure
+            # directly — no implicit target subtraction here.
+            beta_active = exposures["beta"]
+            # Tolerance mirrors the correction-side skip (1e-12): a residual
+            # inside the convergence band is NOT a violation — otherwise the
+            # loop detects-but-skips forever and misreports infeasible.
+            if abs(beta_active) > constraints.beta_tolerance + 1e-12:
+                violations.append(("beta", beta_active, constraints.beta_tolerance))
+        if constraints.max_size_exposure > 0.0 and "size" in exposures:
+            if abs(exposures["size"]) > constraints.max_size_exposure + 1e-12:
+                violations.append(("size", exposures["size"], constraints.max_size_exposure))
+        if constraints.max_liquidity_exposure > 0.0 and "liquidity" in exposures:
+            if abs(exposures["liquidity"]) > constraints.max_liquidity_exposure + 1e-12:
+                violations.append(("liquidity", exposures["liquidity"], constraints.max_liquidity_exposure))
+        if constraints.max_industry_active_weight > 0.0:
+            ind_active = _industry_active()
+            if ind_active > constraints.max_industry_active_weight + 1e-12:
+                violations.append(("industry_active", ind_active, constraints.max_industry_active_weight))
+        if not violations:
+            # Corrections below mutate `normalized`; scale it back to the
+            # original total weight mass (never returns the untouched `out`).
+            return normalized * total
+
+        for style, current, limit in violations:
+            if style == "industry_active":
+                # Cap the largest industry: scale its members down toward the
+                # limit and distribute freed weight across others.  Half-step
+                # (relaxation) so simultaneous style+industry violations do
+                # not oscillate between fixes.  Re-checks the CURRENT worst
+                # industry: earlier fixes in this iteration may already have
+                # brought it within the limit (stale violation) — skip then.
+                active_w = pd.Series(normalized).groupby(
+                    industries.loc[normalized.index]).sum()
+                worst_industry = active_w.idxmax()
+                current_max = float(active_w.max())
+                if current_max <= limit + 1e-12:
+                    continue
+                excess_ratio = limit / current_max
+                step = 1.0 - RELAXATION * (1.0 - excess_ratio)
+                members = normalized.index[industries.loc[normalized.index] == worst_industry]
+                freed = float((normalized.loc[members] * (1.0 - step)).sum())
+                normalized.loc[members] *= step
+                others = normalized.index.difference(members)
+                if freed > 0 and len(others) > 0:
+                    normalized.loc[others] += freed * normalized.loc[others] / max(float(normalized.loc[others].sum()), 1e-12)
+                continue
+            if style not in styles:
+                continue
+            loadings = pd.to_numeric(factor_loadings[style], errors="coerce").fillna(0.0)
+            side = np.sign(current)
+            contributors = normalized.index[(loadings * side) > 0]
+            opposite = normalized.index[(loadings * side) < 0]
+            if len(contributors) == 0 or len(opposite) == 0:
+                # Portfolio-level semantics (pre-registered limits unchanged):
+                # when no opposite-sign names exist to absorb redistribution,
+                # scale the contributors down to the limit and leave the
+                # residual as CASH (cash has zero style loading, so the
+                # portfolio-level constraint is satisfied exactly).  This is
+                # NOT a parameter change — the limit is enforced as written.
+                contributing_w = float(normalized.loc[contributors].sum())
+                if contributing_w <= 1e-12:
+                    continue
+                exposure_now = abs(float(
+                    (normalized.loc[contributors] * loadings.loc[contributors]).sum()))
+                if exposure_now <= 1e-12:
+                    continue
+                scale = limit / exposure_now
+                normalized.loc[contributors] *= scale
+                continue
+            contributing_w = float(normalized.loc[contributors].sum())
+            if contributing_w <= 1e-12:
+                continue
+            target_contrib = limit * float(normalized.loc[opposite].sum()) / max(
+                1.0 - limit, 1e-12)
+            full_scale = max(0.0, min(1.0, target_contrib / contributing_w))
+            # Damped half-step toward the full correction: prevents the
+            # redistribution from overshooting past the limit and oscillating
+            # with other constraints fixed in the same iteration.
+            scale = 1.0 - RELAXATION * (1.0 - full_scale)
+            freed = float((normalized.loc[contributors] * (1.0 - scale)).sum())
+            normalized.loc[contributors] *= scale
+            if freed > 0 and len(opposite) > 0:
+                normalized.loc[opposite] += freed * normalized.loc[opposite] / max(
+                    float(normalized.loc[opposite].sum()), 1e-12)
+
+    raise ValueError(
+        f"EXPOSURE_INFEASIBLE: style constraints unsatisfied after "
+        f"{max_iterations} iterations")
 
 
 def validate_allocation(result: pd.DataFrame) -> dict:

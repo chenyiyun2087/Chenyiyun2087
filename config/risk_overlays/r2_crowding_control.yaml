@@ -1,0 +1,40 @@
+# Pre-Registered Risk Overlay: R2 — Style Crowding Control (2026-08-04)
+# =====================================================================
+# Alpha challenger R2 (exp_alpha_rebuild_202608_r2_crowding_control, H008).
+# LEADING style-crowding detection: extreme small-cap / low-liquidity
+# crowding precedes the worst drawdowns (2024 small-cap liquidity shock).
+# Reduces size/liquidity exposure BEFORE the crash (not full exit).
+# Variables computed in run_vls_risk_overlay.build_market_state from the
+# prices snapshot (amount, circ_mv) — all T-day 15:30 visible.
+#
+# PRE-REGISTERED: thresholds fixed 2026-08-04.  2025-2026 CONSUMED
+# (report-only). True forward blind starts 2026-08-05.
+# =====================================================================
+
+schema_version: "risk_overlay_v1"
+overlay_id: "r2_crowding_control_v1"
+preregistered_at: "2026-08-04"
+applies_to_strategy: "p2_style_constrained"
+experiment_id: "exp_alpha_rebuild_202608_r2_crowding_control"
+
+rules:
+  - id: crowding_elevated
+    condition: "top5_turnover_concentration >= 0.25 or small_vs_large_20d_rs >= 1.15"
+    position_multiplier: 0.70
+    rationale: "Top-5% turnover concentration or small-vs-large RS extreme -> trim to 70%"
+
+  - id: crowding_extreme
+    condition: "top5_turnover_concentration >= 0.30 and small_vs_large_20d_rs >= 1.25"
+    position_multiplier: 0.50
+    halt_new_entries: true
+    rationale: "Concentration AND relative-strength both extreme -> 50% + no new buys"
+
+required_market_inputs:
+  - top5_turnover_concentration   # share of market amount in top 5% symbols
+  - small_vs_large_20d_rs         # 20d cum-return small quartile / large quartile
+
+evaluation:
+  baseline_ref: "challenger_p2_style_constrained"
+  min_alpha_preserved_ratio: 0.70
+  mdd_improvement_target: "2024 small-cap shock drawdown improves vs P2"
+  max_annualized_return_degradation_ratio: 0.30

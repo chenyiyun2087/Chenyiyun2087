@@ -1,0 +1,67 @@
+# Pre-Registered Alpha Challenger: F1P1 — F1 Factor + Top20 Diversification (2026-08-04)
+# ======================================================================
+# Phase-2 follow-up (2026-08-04): F1 (no-value factor) is the only
+# confirmed factor improvement; the P-series was pre-registered on F2
+# (rejected).  Re-run the portfolio-construction layer on the F1 factor
+# core: TopN=20, single cap 8%, industry cap 25%.
+#
+# PRE-REGISTERED before any run on any window. 2025-2026 CONSUMED
+# (report-only). True forward blind starts 2026-08-05.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "f1p1_top20_diversified"
+experiment_id: "exp_alpha_rebuild_202608_f1p1_top20_diversified"
+hypothesis_id: "H004b_diversification_on_f1"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}
+true_blind_start: "2026-08-05"
+base_strategy: "f1_no_value"
+change_description: "F1 factor (no value) + Top20 diversification (cap 8%, industry 25%)"
+hypothesis: "on the confirmed F1 core, diversification converts alpha into a lower-drawdown path without the F2-era return loss"
+expected_direction: "MDD improves vs F1; annualized return loss <= 15%; 2022-class drawdown < -35%"
+
+stopping_criteria:
+  - "MDD not improved vs F1 on stress window"
+  - "return loss > 25% vs F1 on development window"
+  - "2022-class drawdown still beyond -30%"
+  - "random permutation p > 0.10 on untouched window"
+
+# F1 factor definition
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+# No F2 score transforms (F1 core only)
+score_transforms: {}
+
+# Portfolio construction layer (P1)
+portfolio_constraints:
+  top_n: 20
+  max_total_positions: 20
+  single_stock_cap: 0.08
+  industry_cap: 0.25
+  top2_risk_contribution_cap: 0.45
+  target_gross_exposure: 1.00
+
+execution:
+  top_n: 20
+  max_total_positions: 20
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [adapter, panel, scores, portfolio_construction, runs, report]

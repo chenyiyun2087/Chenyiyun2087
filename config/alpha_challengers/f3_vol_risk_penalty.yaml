@@ -1,0 +1,73 @@
+# Pre-Registered Alpha Challenger: F3 — Volatility Risk Penalty (2026-08-04)
+# ======================================================================
+# Hypothesis H003 (volatility_penalty): volatility has the strongest panel
+# IC (+0.090, SIG 1%) but the frozen composite never uses it.  Applying a
+# PRE-REGISTERED penalty (final_score = alpha_score - lambda*idvol -
+# beta*downside_vol) should improve the risk-adjusted return without turning
+# volatility into a positive stock-selection factor.
+#
+# F3 = F2 + volatility risk penalty.  lambda/beta are FIXED here before any
+# backtest run on any window (no tuning on 2025-2026).
+#
+# PRE-REGISTERED: 2025-2026 is CONSUMED (report-only). True forward blind
+# starts 2026-08-05.
+# ======================================================================
+
+schema_version: "alpha_challenger_v1"
+challenger_id: "f3_vol_risk_penalty"
+experiment_id: "exp_alpha_rebuild_202608_f3_vol_risk_penalty"
+hypothesis_id: "H003_volatility_penalty"
+created_at: "2026-08-04"
+parameter_source: "PRE_REGISTERED"
+data_snapshot_sha: "5ec0962af4a7bff057517a20aa043ef726577409f0379d3cadd5e244c5f469a0"  # release 20260803_oos_v4 content_sha256
+selection_window: {start: "2020-04-30", end: "2022-12-31"}
+internal_oos_window: {start: "2023-01-01", end: "2023-12-31"}
+stress_validation_window: {start: "2024-01-01", end: "2024-12-31"}
+untouched_evaluation_window: {start: "2025-01-01", end: "2026-07-31"}  # CONSUMED — report only
+true_blind_start: "2026-08-05"
+base_strategy: "f2_liquidity_clipped"
+change_description: "F2 + volatility risk penalty: final = alpha - lambda*idvol - beta*downside_vol"
+hypothesis: "volatility IC is strong but unused; a penalty (not a selection factor) improves risk-adjusted return"
+expected_direction: "Sharpe improves vs F2; MDD improves; alpha loss <= 15%"
+
+stopping_criteria:
+  - "Sharpe does not improve vs F2 on development window"
+  - "annualized return degradation > 20% vs F2"
+  - "random permutation p > 0.10 on untouched window"
+  - "HAC t < 1.65 on untouched window"
+
+# Factor definition (F1 weights/signs)
+factor_weights:
+  size: 0.35
+  liquidity: 0.35
+  momentum: 0.30
+factor_signs:
+  size: 1
+  liquidity: 1
+  momentum: -1
+
+# Score transforms (F2 inherited + volatility penalty)
+score_transforms:
+  liquidity_winsorization:
+    method: "clip"
+    lower_percentile: 10.0
+    upper_percentile: 90.0
+  min_20d_turnover_threshold_cny: 3000000.0
+  liquidity_consistency_check: true
+  volatility_penalty:
+    lambda_idvol: 0.15      # PRE-REGISTERED — never re-tuned
+    beta_downside: 0.10     # PRE-REGISTERED — never re-tuned
+    formula: "final_score = alpha_score - lambda_idvol * idvol - beta_downside * downside_vol"
+
+# Execution (inherited from frozen baseline)
+execution:
+  top_n: 10
+  max_total_positions: 10
+  hold_days: 20
+  rebalance_score_buffer: 0.10
+  rebalance_weight_drift_band: 0.0
+  cost_rate: 0.00075
+  slippage_bps: 10
+  initial_cash: 500000.0
+
+pipeline_stages: [adapter, panel, scores, runs, report]

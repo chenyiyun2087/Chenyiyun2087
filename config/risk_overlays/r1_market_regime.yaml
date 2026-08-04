@@ -1,0 +1,50 @@
+# Pre-Registered Risk Overlay: R1 — Leading Market Regime Control (2026-08-04)
+# =====================================================================
+# Alpha challenger R1 (exp_alpha_rebuild_202608_r1_market_regime, H007).
+# LEADING regime control: uses only T-day 15:30-visible variables
+# (csi300_ret_20d, market breadth, cross-sectional vol ratio).  Composes
+# with the drawdown guard via MIN multiplier (most conservative wins).
+# Rule conditions support OR/AND-combined comparisons (extended evaluator
+# in research_trusted_strategy_account_backtest._eval_overlay_condition).
+#
+# PRE-REGISTERED: thresholds fixed 2026-08-04 before any backtest run on
+# any window.  2025-2026 is CONSUMED (report-only).  True forward blind
+# starts 2026-08-05.
+# =====================================================================
+
+schema_version: "risk_overlay_v1"
+overlay_id: "r1_market_regime_v1"
+preregistered_at: "2026-08-04"
+applies_to_strategy: "p2_style_constrained"
+experiment_id: "exp_alpha_rebuild_202608_r1_market_regime"
+
+# Rules evaluated on SIGNAL DAY (T, 15:30) using only data available at T.
+# Rules compose by MINIMUM multiplier.  Fail-closed: if any referenced
+# market input is missing, the run BLOCKS (no silent no-op).
+rules:
+  - id: risk_off
+    condition: "csi300_ret_20d <= -0.05 or market_breadth_above_20d_ma < 0.30 or cross_sectional_vol_ratio >= 2.0"
+    position_multiplier: 0.50
+    rationale: "Index trend negative OR breadth weak OR vol spiking -> 50% exposure (leading, not reactive)"
+
+  - id: risk_off_deep
+    condition: "csi300_ret_20d <= -0.10 or market_breadth_above_20d_ma < 0.20"
+    position_multiplier: 0.30
+    halt_new_entries: true
+    rationale: "Deep risk-off -> 30% exposure + no new buys"
+
+  - id: neutral
+    condition: "csi300_ret_20d <= 0.0 and csi300_ret_20d > -0.05"
+    position_multiplier: 0.80
+    rationale: "Index flat-to-mild-negative -> 80% exposure"
+
+required_market_inputs:
+  - csi300_ret_20d            # from benchmark_index.parquet (000300.SH)
+  - market_breadth_above_20d_ma  # pct of universe symbols above 20d MA
+  - cross_sectional_vol_ratio    # 20d cross-sectional vol / trailing 120d median
+
+evaluation:
+  baseline_ref: "challenger_p2_style_constrained"
+  min_alpha_preserved_ratio: 0.70
+  mdd_improvement_target: "2022-class drawdown <= -30%"
+  max_annualized_return_degradation_ratio: 0.30

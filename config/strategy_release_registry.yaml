@@ -269,3 +269,34 @@ releases:
     execution_status: BLOCKED
     promotion_status: RETIRED
     capital_status: NO_SCALE
+
+  vls_mom_contrarian_v1_frozen:
+    strategy_id: vls_mom_contrarian_v1_frozen
+    strategy_version: "2026.08.03"
+    release_id: vls-frozen-20260803
+    role: RESEARCH_CHALLENGER
+    lifecycle_status: BASELINE_FROZEN_202608
+    research_status: RESEARCH_CANDIDATE
+    walk_forward_status: BLOCKED
+    execution_status: RESEARCH_ONLY
+    promotion_status: BLOCKED
+    capital_status: NO_SCALE
+    # P0 baseline freeze 2026-08-04 (TopN=10/h20/b0.10/band0.0). Blind window
+    # 2025-2026 CONSUMED — report-only, never for selection. True forward
+    # blind starts 2026-08-05. Economic alpha UNPROVEN (permutation p=0.190);
+    # full evidence recorded in unified_formal_registry.json.
+
+  bs_point_active_rf_20260701:
+    strategy_id: bs_point_active_rf_20260701
+    strategy_version: "2026.07.01"
+    release_id: bs-rf-20260701
+    role: RESEARCH_CHALLENGER
+    lifecycle_status: BASELINE_FROZEN_202608
+    research_status: RESEARCH_ONLY
+    walk_forward_status: BLOCKED
+    execution_status: RESEARCH_ONLY
+    promotion_status: BLOCKED
+    capital_status: NO_SCALE
+    # P0 baseline freeze 2026-08-04: activation frozen (auto_activate=false in
+    # exports/bs_signal_models/active_model.json); economic_status UNPROVEN
+    # decoupled from activation; independent Alpha Sleeve B only.

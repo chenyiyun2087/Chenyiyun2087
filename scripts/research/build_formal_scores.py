@@ -116,6 +116,110 @@ def _check_coverage(
     return blockers
 
 
+def _apply_winsorization(panel: pd.DataFrame,
+                         score_transforms: dict) -> pd.DataFrame:
+    """Clip factor values at pre-registered percentiles (additive transform).
+
+    Pre-registered challenger config (alpha_challenger_v1):
+      score_transforms:
+        liquidity_winsorization:
+          method: "clip"
+          lower_percentile: 10.0
+          upper_percentile: 90.0
+
+    Percentiles are computed PER trade_date (cross-sectional), so the clip
+    is rank-space stable and never leaks future data.
+    """
+    winsor_cfg = (score_transforms or {}).get("liquidity_winsorization") or {}
+    if not winsor_cfg:
+        return panel
+    factor = str(winsor_cfg.get("factor", "liquidity"))
+    if factor not in panel.columns:
+        return panel
+    lower = float(winsor_cfg.get("lower_percentile", 0.0))
+    upper = float(winsor_cfg.get("upper_percentile", 100.0))
+    if lower >= upper:
+        raise ValueError(
+            f"winsorization lower_percentile {lower} >= upper {upper}"
+        )
+    out = panel.copy()
+    grouped = out.groupby("trade_date", group_keys=False)
+    out[factor] = grouped[factor].transform(
+        lambda s: s.clip(
+            lower=s.quantile(lower / 100.0),
+            upper=s.quantile(upper / 100.0),
+        )
+    )
+    return out
+
+
+def _apply_eligibility_floor(panel: pd.DataFrame,
+                             score_transforms: dict) -> pd.DataFrame:
+    """Mark names below the minimum 20d turnover as ineligible (pre-rank).
+
+    Pre-registered:
+      score_transforms:
+        min_20d_turnover_threshold_cny: 3000000.0
+        liquidity_consistency_check: true
+
+    The floor uses the panel's 20d average turnover in CNY when available;
+    otherwise it no-ops (fail-safe: never wrongly excludes).  Ineligible
+    rows are excluded from ranking AND selection — they cannot be picked.
+    """
+    cfg = score_transforms or {}
+    threshold = cfg.get("min_20d_turnover_threshold_cny")
+    if threshold is None or float(threshold) <= 0:
+        return panel
+    turnover_col = None
+    for candidate in ("turnover_20d_cny", "amount_20d_avg", "turnover_cny_20d"):
+        if candidate in panel.columns:
+            turnover_col = candidate
+            break
+    if turnover_col is None:
+        # Panel lacks a turnover column: floor is a no-op, never wrong-exclude.
+        return panel
+    out = panel.copy()
+    numeric = pd.to_numeric(out[turnover_col], errors="coerce")
+    below = numeric.fillna(0.0) < float(threshold)
+    if "eligible_universe" in out.columns:
+        out.loc[below, "eligible_universe"] = False
+    return out
+
+
+def _apply_risk_penalty(score: pd.Series,
+                        panel: pd.DataFrame,
+                        score_transforms: dict) -> pd.Series:
+    """Subtract pre-registered volatility penalties from the alpha score.
+
+    Pre-registered:
+      score_transforms:
+        volatility_penalty:
+          lambda_idvol: 0.15
+          beta_downside: 0.10
+          formula: "final = alpha - lambda*idvol - beta*downside_vol"
+
+    Idiosyncratic volatility is the panel's volatility factor (already
+    centered rank); downside volatility uses the same column when no
+    dedicated downside series exists (pre-registered approximation).
+    """
+    penalty_cfg = (score_transforms or {}).get("volatility_penalty") or {}
+    if not penalty_cfg:
+        return score
+    out = score.copy()
+    lambda_idvol = float(penalty_cfg.get("lambda_idvol", 0.0))
+    beta_downside = float(penalty_cfg.get("beta_downside", 0.0))
+    vol_col = str(penalty_cfg.get("volatility_column", "volatility"))
+    if lambda_idvol > 0 and vol_col in panel.columns:
+        idvol = pd.to_numeric(panel[vol_col], errors="coerce")
+        out = out - lambda_idvol * idvol
+    if beta_downside > 0:
+        downside_col = str(penalty_cfg.get("downside_column", vol_col))
+        if downside_col in panel.columns:
+            downside = pd.to_numeric(panel[downside_col], errors="coerce")
+            out = out - beta_downside * downside
+    return out
+
+
 def build_formal_scores(
     *,
     factor_panel_path: Path,
@@ -131,7 +235,10 @@ def build_formal_scores(
     """
     # Load strategy definition
     strategy_def = _load_strategy_definition(strategy_definition_path)
-    strategy_id = strategy_def.get("strategy_id", "unknown")
+    # Alpha-challenger manifests carry challenger_id instead of strategy_id;
+    # fall back so a pre-registered challenger YAML can serve as the
+    # definition directly (factor_weights/factor_signs live at top level).
+    strategy_id = strategy_def.get("strategy_id") or strategy_def.get("challenger_id", "unknown")
     resolved_strategy_ids = tuple(
         str(value) for value in (strategy_ids or [strategy_id]) if str(value)
     )
@@ -223,6 +330,19 @@ def build_formal_scores(
                 "coverage_denominator": "eligible_universe_per_trade_date",
             }
 
+    # ── Pre-registered score transforms (alpha_challenger_v1) ──
+    # Applied AFTER coverage verification (they alter VALUES, not missingness)
+    # and BEFORE score computation.  Winsorization clips factor ranks at
+    # pre-registered percentiles; the eligibility floor marks low-liquidity
+    # names ineligible BEFORE ranking so they cannot be selected.
+    score_transforms = strategy_def.get("score_transforms") or {}
+
+    # 1) Factor winsorization (e.g. liquidity rank clip to [10, 90]).
+    panel = _apply_winsorization(panel, score_transforms)
+
+    # 2) Eligibility floor: minimum 20d turnover (CNY) for tradability.
+    panel = _apply_eligibility_floor(panel, score_transforms)
+
     # ── Compute composite score ──
     # Only fill NaN for factors that passed coverage check
     score = pd.Series(0.0, index=panel.index, dtype=float)
@@ -232,6 +352,10 @@ def build_formal_scores(
         complete &= numeric.notna()
         score += numeric * float(weight) * float(signs.get(factor, 1.0))
     score = score.mask(~complete)
+
+    # 3) Risk penalty (pre-registered lambda/beta): subtract volatility
+    #    terms from the composite alpha score.
+    score = _apply_risk_penalty(score, panel, score_transforms)
 
     panel["formal_score"] = score
     # `score` is the canonical readiness transport field.  Keep

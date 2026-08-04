@@ -95,9 +95,18 @@ def build_market_state(release_dir: Path, work_dir: Path) -> Path:
     if breadth["market_breadth_above_20d_ma"].nunique() <= 1:
         raise RuntimeError("market_state_blocked:constant_breadth")
 
-    merged = state.merge(breadth, on="trade_date", how="left")
+    # ── v5.3 (2026-08-04): R1/R2 crowding + regime variables ──
+    # All inputs are T-day 15:30 visible (amount/circ_mv/close at day T).
+    crowd = _build_crowding_state(snapshots_dir)
+    merged = (state.merge(breadth, on="trade_date", how="left")
+              .merge(crowd, on="trade_date", how="left"))
     if merged["market_breadth_above_20d_ma"].isna().any():
         raise RuntimeError("market_state_blocked:breadth_date_gap")
+    # Fail-closed for R1/R2: crowding columns must be non-constant.
+    for col in ("top5_turnover_concentration", "small_vs_large_20d_rs",
+                "cross_sectional_vol_ratio"):
+        if col in merged.columns and merged[col].nunique() <= 1:
+            raise RuntimeError(f"market_state_blocked:constant_{col}")
     path = work_dir / "market_state.csv"
     merged.to_csv(path, index=False)
     print(f"market_state: {len(merged)} dates, csi300_ret_20d "
@@ -105,6 +114,62 @@ def build_market_state(release_dir: Path, work_dir: Path) -> Path:
           f"breadth {merged['market_breadth_above_20d_ma'].min():.3f}.."
           f"{merged['market_breadth_above_20d_ma'].max():.3f} -> {path}")
     return path
+
+
+def _build_crowding_state(snapshots_dir: Path) -> pd.DataFrame:
+    """Per-date crowding variables from the prices snapshot (T-visible)."""
+    import numpy as np
+    import pandas as pd
+
+    prices = pd.read_parquet(
+        snapshots_dir / "prices.parquet",
+        columns=["trade_date", "symbol", "adj_close", "amount", "circ_mv"])
+    prices["trade_date"] = prices["trade_date"].astype(str)
+    prices["adj_close"] = pd.to_numeric(prices["adj_close"], errors="coerce")
+    prices["amount"] = pd.to_numeric(prices["amount"], errors="coerce").fillna(0.0)
+    prices["circ_mv"] = pd.to_numeric(prices["circ_mv"], errors="coerce")
+
+    # top5_turnover_concentration: share of market amount in top 5% symbols.
+    def _concentration(group: pd.DataFrame) -> float:
+        total = float(group["amount"].sum())
+        if total <= 0:
+            return float("nan")
+        top = group.nlargest(max(1, int(round(len(group) * 0.05))), "amount")
+        return float(top["amount"].sum()) / total
+
+    conc = (prices.groupby("trade_date").apply(_concentration)
+            .rename("top5_turnover_concentration").reset_index())
+
+    # small_vs_large_20d_rs: 20d cumulative return, small quartile vs large
+    # quartile (by circ_mv).  NaN-guarded product of (1+ret).
+    prices["ret"] = prices.groupby("symbol")["adj_close"].pct_change()
+    prices["ret20"] = prices.groupby("symbol")["ret"].transform(
+        lambda s: (1.0 + s.fillna(0.0)).rolling(20, min_periods=5).apply(
+            lambda w: float(np.prod(w) - 1.0)))
+    prices["size_quartile"] = prices.groupby("trade_date")["circ_mv"] \
+        .transform(lambda s: pd.qcut(s.rank(method="first"), 4,
+                                     labels=[1, 2, 3, 4], duplicates="drop"))
+
+    def _rs(group: pd.DataFrame) -> float:
+        small = group.loc[group["size_quartile"] == 1, "ret20"]
+        large = group.loc[group["size_quartile"] == 4, "ret20"]
+        if small.empty or large.empty:
+            return float("nan")
+        return float(small.mean() - large.mean())
+
+    rs = (prices.groupby("trade_date").apply(_rs)
+          .rename("small_vs_large_20d_rs").reset_index())
+
+    # cross_sectional_vol_ratio: 20d mean cross-sectional std of daily
+    # returns / trailing 120d median of that series.
+    xvol = prices.groupby("trade_date")["ret"].std().rename("xvol").reset_index()
+    xvol["xvol_med120"] = xvol["xvol"].rolling(120, min_periods=60).median()
+    xvol["cross_sectional_vol_ratio"] = xvol["xvol"] / xvol["xvol_med120"]
+
+    out = (conc.merge(rs, on="trade_date")
+           .merge(xvol[["trade_date", "cross_sectional_vol_ratio"]], on="trade_date"))
+    out["trade_date"] = out["trade_date"].astype(str)
+    return out
 
 
 def run_overlay_split(label: str, start: str, end: str, release_dir: Path,
