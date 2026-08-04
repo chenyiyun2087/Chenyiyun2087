@@ -158,7 +158,8 @@ class TestBSSignalPipeline(unittest.TestCase):
                 return original_import(name, *args, **kwargs)
 
             with patch("builtins.__import__", side_effect=fake_import), self.assertWarns(RuntimeWarning):
-                bundle = load_latest_bs_model(model_root=tmp, target="hit_20_10pct")
+                bundle = load_latest_bs_model(model_root=tmp, target="hit_20_10pct",
+                                              research_mode=True)
 
             self.assertIsNone(bundle)
 
@@ -174,7 +175,8 @@ class TestBSSignalPipeline(unittest.TestCase):
                     raise AttributeError("incompatible sklearn bundle")
 
             with patch.dict(sys.modules, {"joblib": FakeJoblib}), self.assertWarns(RuntimeWarning):
-                bundle = load_latest_bs_model(model_root=tmp, target="hit_20_10pct")
+                bundle = load_latest_bs_model(model_root=tmp, target="hit_20_10pct",
+                                              research_mode=True)
 
             self.assertIsNone(bundle)
 

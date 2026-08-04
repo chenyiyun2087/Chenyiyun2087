@@ -29,6 +29,14 @@ jobs:
           test/test_replay_strict_execution_ledger.py
           test/test_pr21_fold_account_backtest.py
           test/test_trusted_production_closure.py
+          test/test_alpha_challengers.py
+          test/test_challenger_ranking_integrity.py
+          test/test_scheduler_dependency_graph.py
+          test/test_t1_execution_calendar.py
+          test/test_directional_limit_rules.py
+          test/test_active_model_fail_closed.py
+          test/test_forward_shadow_state_machine.py
+          test/test_f2_liquidity_consistency.py
       - run: '! rg "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
   freeze-integrity:
     runs-on: ubuntu-latest

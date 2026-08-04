@@ -40,7 +40,7 @@ def _load_model_bundle(model_dir: Path | None) -> dict | None:
             candidates = sorted(model_dir.glob("*_hit_20_10pct.joblib"))
             model_path = candidates[0] if candidates else None
     else:
-        model_path = latest_model_path(DEFAULT_MODEL_ROOT)
+        model_path = latest_model_path(DEFAULT_MODEL_ROOT, research_mode=True)
     if model_path is None or not model_path.exists():
         return None
     bundle = joblib.load(model_path)

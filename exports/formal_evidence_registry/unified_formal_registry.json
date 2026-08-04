@@ -238,6 +238,19 @@
         "end": "2026-07-31",
         "start": "2022-01-01"
       },
+      "evidence_status": "INVALIDATED_FOR_SELECTION",
+      "evidence_invalidation": {
+        "invalidated_at": "2026-08-04",
+        "invalidated_by": "v5.4.1 evidence repair",
+        "reasons": [
+          "consumed_holdout_used_in_ranking",
+          "approximate_pvalues_not_formal",
+          "shadow_not_strategy_equivalent"
+        ],
+        "scope": "challenger_selection_ranking_and_shadow_evidence",
+        "baseline_freeze_unaffected": true,
+        "note": "The parameter freeze itself remains valid (TopN=10/h20/b0.10/band0.0). Only selection evidence from the 2026-08-04 challenger ranking, multiple-testing report, and pre-v5.5 shadow is invalidated. See tag audit/v5.4-alpha-rebuild-20260804 and BRANCH_MANIFEST.md."
+      },
       "role": "BASELINE_FROZEN",
       "schema_version": "unified_formal_registry_v1",
       "seal_registry_ref": null,
@@ -269,6 +282,19 @@
       "role": "BASELINE_FROZEN",
       "schema_version": "unified_formal_registry_v1",
       "seal_registry_ref": null,
+      "evidence_status": "INVALIDATED_FOR_SELECTION",
+      "evidence_invalidation": {
+        "invalidated_at": "2026-08-04",
+        "invalidated_by": "v5.4.1 evidence repair",
+        "reasons": [
+          "consumed_holdout_used_in_ranking",
+          "approximate_pvalues_not_formal",
+          "shadow_not_strategy_equivalent"
+        ],
+        "scope": "challenger_selection_ranking_and_shadow_evidence",
+        "baseline_freeze_unaffected": true,
+        "note": "The activation freeze (auto_activate=false) and economic_status=UNPROVEN remain valid. Only selection evidence produced by the 2026-08-04 alpha rebuild is invalidated."
+      },
       "status": {
         "capital_status": "BLOCKED",
         "data_status": "E0_DIAGNOSTIC",

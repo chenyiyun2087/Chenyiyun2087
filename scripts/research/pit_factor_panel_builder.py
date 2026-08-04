@@ -813,6 +813,55 @@ def _build_pit_factor_panel_impl(
     panel["liquidity_raw"] = panel.groupby("symbol")["amihud_raw"].transform(
         lambda values: values.rolling(20, min_periods=10).mean()
     )
+    # v5.4.1 F2 completion (pre-registered in
+    # config/alpha_challengers/f2_liquidity_clipped.yaml):
+    # raw liquidity fields so the liquidity-clip challenger can run its
+    # Amihud/amount/turnover consistency check and ADV capacity gate
+    # instead of no-oping on missing columns.  These are derived PIT
+    # columns (computed from the same market frame the factors use) —
+    # never backfilled.  Each field is conditional on its source column
+    # existing; a challenger that DECLARES a transform whose inputs are
+    # missing fails closed later at the eligibility/consistency gate
+    # (build_formal_scores._apply_eligibility_floor), never here.
+    _volume = pd.to_numeric(panel["volume"], errors="coerce") \
+        if "volume" in panel.columns else None
+    _close = pd.to_numeric(panel["close"], errors="coerce").replace(0.0, np.nan) \
+        if "close" in panel.columns else None
+    _circ_mv = pd.to_numeric(panel["circ_mv"], errors="coerce") \
+        if "circ_mv" in panel.columns else None
+    if "amount" in panel.columns:
+        panel["amount_20d_avg"] = panel.groupby("symbol")["amount"].transform(
+            lambda v: pd.to_numeric(v, errors="coerce")
+            .rolling(20, min_periods=10).mean())
+    if _volume is not None and _close is not None and _circ_mv is not None:
+        panel["_turnover_rate"] = _volume / (_circ_mv / _close)
+        panel["turnover_rate_20d_avg"] = panel.groupby("symbol")[
+            "_turnover_rate"].transform(
+            lambda v: v.rolling(20, min_periods=10).mean())
+        panel["_zero_volume"] = _volume.eq(0).astype(float)
+        panel["zero_volume_days_20d"] = panel.groupby("symbol")[
+            "_zero_volume"].transform(
+            lambda v: v.rolling(20, min_periods=10).sum())
+    if "liquidity_raw" in panel.columns:
+        panel["amihud_20d"] = panel["liquidity_raw"]
+    if "limit_status" in panel.columns:
+        panel["_limit_event"] = (
+            ~panel["limit_status"].astype(str).isin({"NORMAL", "NONE"})
+        ).astype(float)
+        panel["limit_event_count_20d"] = panel.groupby("symbol")[
+            "_limit_event"].transform(
+            lambda v: v.rolling(20, min_periods=10).sum())
+    if "is_suspended" in panel.columns:
+        panel["_suspended"] = pd.to_numeric(
+            panel["is_suspended"], errors="coerce").fillna(0.0)
+        panel["suspension_days_20d"] = panel.groupby("symbol")[
+            "_suspended"].transform(
+            lambda v: v.rolling(20, min_periods=10).sum())
+    if "amount_20d_avg" in panel.columns:
+        panel["adv_capacity_500k"] = 500000.0 / panel["amount_20d_avg"]
+    panel = panel.drop(columns=[c for c in (
+        "_turnover_rate", "_zero_volume", "_limit_event", "_suspended")
+        if c in panel.columns])
     market_return = pd.to_numeric(panel["market_return"], errors="coerce")
     beta_parts: list[pd.Series] = []
     for _, group in panel.groupby("symbol", sort=False):

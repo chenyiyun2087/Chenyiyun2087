@@ -134,6 +134,16 @@ def build_task_script_parts(
         if datestr:
             args.extend(["--date", _iso_date(datestr)])
         return [script, *args]
+    if task_name in ("alpha_challenger_shadow_record",
+                     "alpha_challenger_shadow_reconcile",
+                     "daily_vls_scores"):
+        # v5.4.1 fix: the pipeline args (e.g. --mode reconcile) were
+        # previously DROPPED here, so the reconcile task silently ran in
+        # record mode.  Honor the pipeline-declared args explicitly.
+        args = list(task_config.get("args") or [])
+        if datestr:
+            args.extend(["--date", _iso_date(datestr)])
+        return [script, *args]
     if task_name == context.daily_audit_task:
         args = ["--notify-feishu"]
         if datestr:
@@ -141,6 +151,11 @@ def build_task_script_parts(
         if historical_reissue:
             args.append("--historical-reissue")
         return [script, *args]
+    # Generic fallback: honor any pipeline-declared args (fail-safe so a
+    # future task with args can never silently drop its mode).
+    pipeline_args = list(task_config.get("args") or [])
+    if pipeline_args:
+        return [script, *pipeline_args]
     return [script]
 
 

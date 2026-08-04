@@ -1,37 +1,79 @@
 {
-  "candidate_count": 11,
+  "schema_version": "multiple_testing_report_v2",
+  "candidate_family": {
+    "historical_strategy_candidates": [
+      "f1_no_value",
+      "f1p1_top20_diversified",
+      "f1p2_style_constrained",
+      "f1p3_covariance_sizing",
+      "f2_liquidity_clipped",
+      "f3_vol_risk_penalty",
+      "p1_top20_diversified",
+      "p2_style_constrained",
+      "p3_covariance_sizing",
+      "r1_market_regime",
+      "r2_crowding_control"
+    ],
+    "historical_strategy_candidates_count": 11,
+    "independent_b_sleeve": [
+      "b_sleeve_independent"
+    ],
+    "independent_b_sleeve_count": 1,
+    "total_registered_objects": 12
+  },
   "alpha": 0.05,
-  "p_values_approx": [
-    0.001,
-    0.0238,
-    0.001,
-    0.001,
-    0.001,
-    0.001,
-    0.001,
-    0.001,
-    0.001,
-    0.001,
-    0.001
-  ],
-  "bh_rejected_count": 11,
-  "holm_rejected_count": 11,
-  "bonferroni_rejected_count": 10,
-  "deflated_sharpe_probs": [
-    0.3234,
-    0.2516,
-    0.3218,
-    0.299,
-    0.3246,
-    0.2875,
-    0.2861,
-    0.4218,
-    0.4218,
-    0.346,
-    0.346
+  "selection_criterion": "layered_gating_no_holdout",
+  "family_correction": {
+    "method": "holm_step_down_on_permutation_p",
+    "status": "DEFERRED_NO_PERMUTATION_NULLS",
+    "note": "fewer than 2 candidates carry real permutation nulls (only f1_no_value has benchmark_stress/random to date); family correction is deferred until each candidate runs its permutation null.  No approximate p-values are produced.",
+    "candidate_count": 1
+  },
+  "permutation_nulls": {
+    "f1_no_value": {
+      "n_permutations": 100,
+      "p_value": 0.15,
+      "evaluation_window": "2025-01-01..2026-07-31",
+      "holdout_usage": "REPORT_ONLY_SHOWN_NEVER_SELECTED"
+    },
+    "f3_vol_risk_penalty": {
+      "status": "NOT_RUN"
+    },
+    "f1p2_style_constrained": {
+      "status": "NOT_RUN"
+    },
+    "f1p3_covariance_sizing": {
+      "status": "NOT_RUN"
+    },
+    "p2_style_constrained": {
+      "status": "NOT_RUN"
+    },
+    "p3_covariance_sizing": {
+      "status": "NOT_RUN"
+    },
+    "f1p1_top20_diversified": {
+      "status": "NOT_RUN"
+    },
+    "r2_crowding_control": {
+      "status": "NOT_RUN"
+    },
+    "r1_market_regime": {
+      "status": "NOT_RUN"
+    },
+    "f2_liquidity_clipped": {
+      "status": "NOT_RUN"
+    },
+    "p1_top20_diversified": {
+      "status": "NOT_RUN"
+    }
+  },
+  "banned": [
+    "normal_approximation_pvalues_on_sharpe",
+    "holdout_metrics_in_any_selection_formula"
   ],
   "caveats": [
-    "p-values approximate (normal-on-Sharpe); formal significance requires the 100-500 permutation null tests from the authenticity tier.",
-    "2025-2026 holdout is CONSUMED — shown for transparency, never a selection criterion."
+    "p-values derive from strict-ledger permutation nulls only; candidates without a null report carry NOT_RUN.",
+    "2025-2026 holdout is CONSUMED — report-only columns are transparency, never selection criteria.",
+    "Layer-1 development gate (ann>=15%, sharpe>=0.5, mdd>=-35%) is fail-closed: no gate pass means no candidate is selectable."
   ]
 }
