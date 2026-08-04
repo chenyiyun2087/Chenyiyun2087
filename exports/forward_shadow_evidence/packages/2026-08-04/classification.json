@@ -1,0 +1,24 @@
+{
+  "schema_version": "package_classification_v1",
+  "signal_date": "2026-08-04",
+  "package_status": "SEALED",
+  "package_sha256": "see package_sha256.json (unchanged — the package itself is immutable)",
+  "evidence_eligible": false,
+  "execution_eligible": false,
+  "classification": "KNOWN_DEFECT_PRESTART_PACKAGE",
+  "classified_at": "2026-08-05",
+  "reason": "v5.5.1 prestart (2026-08-05): the package was sealed before the C2/C3/SCD/PIT-lineage correctness fixes; its target portfolios and scores carry known defects. Permanently preserved (immutability rule) but never consumed for execution and never counted toward E4 shadow days or round trips.",
+  "blockers": [
+    "c3_residualization_defect",
+    "industry_scd_duplicate_symbols",
+    "c2_crowding_state_invalid",
+    "pit_lineage_incomplete"
+  ],
+  "excluded_from": {
+    "shadow_days": true,
+    "round_trips": true,
+    "execution": true,
+    "true_blind_start_candidate": true
+  },
+  "engineering_use": "corrected revision_2/ may be generated with v5.5.1 code for engineering comparison only (replay/smoke test — never retroactively counted into true blind)"
+}

@@ -33,10 +33,10 @@
     "reporting_policy": "RESULT_SHOWN_IN_FINAL_REPORT_ONLY_NOT_SELECTION"
   },
   "true_forward_blind": {
-    "label": "true_forward_blind_20260805",
-    "start": "2026-08-05",
+    "label": "true_forward_blind_not_started",
+    "start": null,
     "end": null,
-    "status": "ACCUMULATING",
+    "status": "NOT_STARTED",
     "min_shadow_days": 60,
     "min_completed_round_trips": 30,
     "recording": "daily_shadow_log"
