@@ -580,6 +580,30 @@ def _latest_package_for_execution(execution_date: str,
     return None
 
 
+def _latest_sealed_package(packages_zone: Path | None = None):
+    """(pkg_dir, manifest) of the newest SEALED package by signal date.
+
+    v5.5.3 (2026-08-05): the production sell/precommit tasks run WITHOUT
+    an explicit execution date and must resolve it from the latest
+    SEALED package — never from open_days[-1] (the snapshot calendar
+    extends to 2026-12-31, so a date-less run used to resolve to year-end
+    and crash with "no SEALED package for execution_date 2026-12-31").
+    """
+    zone = packages_zone or PACKAGES_ZONE
+    if not zone.exists():
+        return None
+    for pkg_dir in sorted(zone.iterdir(), reverse=True):
+        if not pkg_dir.is_dir():
+            continue
+        manifest_path = pkg_dir / "signal_package_manifest.json"
+        if not manifest_path.exists():
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("package_status") == "SEALED":
+            return pkg_dir, manifest
+    return None
+
+
 def _orders_path(execution_date: str, execution_zone: Path | None = None) -> Path:
     zone = execution_zone or EXECUTION_ZONE
     return zone / execution_date / "orders.json"
@@ -704,7 +728,25 @@ def sell_precommit(execution_date: str | None = None,
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
-        execution_date = open_days[-1] if open_days else None
+        # v5.5.3 (2026-08-05): the production sell task runs at T 17:00
+        # under the queue's datestr=T, but the sells target the NEXT
+        # execution day — the latest SEALED package's execution_date
+        # (the T-day seal's T+1).  open_days[-1] resolved to 2026-12-31
+        # (snapshot calendar extends to year-end) and crashed.  A seal
+        # whose execution day has already passed means there is NO fresh
+        # T-day signal — refuse stale targets (fail-closed).
+        latest = _latest_sealed_package(packages_zone)
+        if latest is None:
+            raise RuntimeError(
+                "shadow_blocked: no SEALED package — the sell engine "
+                "requires the T-day target portfolio")
+        execution_date = latest[1]["execution_date"]
+        if execution_date <= today:
+            raise RuntimeError(
+                f"shadow_blocked: latest SEALED package "
+                f"{latest[1].get('signal_date')} targets execution "
+                f"{execution_date} (already passed {today}) — no fresh "
+                "T-day seal; refusing stale sell targets")
     if execution_date not in open_days:
         raise RuntimeError(
             f"shadow_blocked: {execution_date} is not an open trading day")
@@ -903,7 +945,10 @@ def nav(execution_date: str | None = None,
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
-        execution_date = open_days[-1] if open_days else None
+        # v5.5.3: NAV is a mark-to-close of TODAY — never open_days[-1]
+        # (the snapshot calendar extends to 2026-12-31, so a date-less
+        # run would snapshot a nonexistent future day).
+        execution_date = today
     if execution_date not in open_days:
         raise RuntimeError(
             f"shadow_blocked: {execution_date} is not an open trading day")
@@ -988,7 +1033,16 @@ def precommit(execution_date: str | None = None,
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
-        execution_date = open_days[-1] if open_days else None
+        # v5.5.3 (2026-08-05): resolve from the latest SEALED package —
+        # at T+1 09:25 that is the T-day seal's execution_date (T+1).
+        # open_days[-1] resolved to 2026-12-31 (snapshot calendar
+        # extends to year-end) and crashed precommit in production.
+        latest = _latest_sealed_package(packages_zone)
+        if latest is None:
+            raise RuntimeError(
+                "shadow_blocked: no SEALED package — seal the T-day "
+                "package first")
+        execution_date = latest[1]["execution_date"]
     if execution_date not in open_days:
         raise RuntimeError(
             f"shadow_blocked: {execution_date} is not an open trading day")
@@ -1007,7 +1061,12 @@ def precommit(execution_date: str | None = None,
     existing = []
     if orders_path.exists():
         existing = json.loads(orders_path.read_text(encoding="utf-8"))
-        if any(o.get("state") != "ORDER_PRECOMMITTED" for o in existing):
+        # v5.5.3 (2026-08-05): SELL_PRECOMMITTED orders share the same
+        # execution-day file — the sell task writes them at T 17:00 and
+        # precommit appends BUYs at T+1 09:25.  Only terminal states
+        # (fills/rejects — i.e. the day was reconciled) block a rerun.
+        if any(o.get("state") not in ("ORDER_PRECOMMITTED",
+                                      "SELL_PRECOMMITTED") for o in existing):
             raise RuntimeError(
                 f"shadow_blocked: orders for {execution_date} already "
                 "reconciled — precommit is append-only before fills")

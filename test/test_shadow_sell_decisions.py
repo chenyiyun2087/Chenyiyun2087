@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime as _real_dt
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +40,8 @@ from scripts.ops.run_daily_shadow import (  # noqa: E402
     BUY_FILLED,
     ORDER_PRECOMMITTED,
     compute_order_id,
+    nav,
+    precommit,
     reconcile_from_package,
     round_trips,
     sell_precommit,
@@ -348,3 +351,132 @@ def test_rejected_sell_retried_next_day_completes_round_trip(tmp_path):
     assert out3["status"]["sell_filled"] == 1
     assert round_trips(zone)["round_trips"] == 1
     assert round_trips(zone)["open_positions"] == []
+
+
+# ── v5.5.3 production wiring: date-less runs resolve from the latest
+# ── SEALED package (2026-08-05 defect: open_days[-1] resolved to
+# ── 2026-12-31 because the snapshot calendar extends to year-end, so
+# ── the scheduled precommit/sell tasks crashed with "shadow_blocked:
+# ── no SEALED package for execution_date 2026-12-31").
+
+
+class _FrozenDatetime(_real_dt):
+    """datetime subclass whose now() returns a fixed instant — used to
+    freeze the production wall clock in the staleness-guard tests."""
+    frozen: str = "2099-01-01T12:00:00"
+
+    @classmethod
+    def now(cls):
+        return cls.fromisoformat(cls.frozen)
+
+
+def test_sell_precommit_without_date_resolves_latest_sealed_package(tmp_path):
+    """The T 17:00 sell task runs without --date: it must bind the latest
+    SEALED package's execution_date (the T+1 fill day) — never
+    open_days[-1] (= 2026-12-31 on the real snapshot calendar).  Sealed
+    at D21 (execution D22, ahead of the wall clock)."""
+    _seal_package(tmp_path, D21, D22, [SYM_A], {SYM_A: TW})
+    zone = _zone(tmp_path)
+    out = sell_precommit(execution_zone=zone,
+                         packages_zone=tmp_path / "packages",
+                         prices_path=_base_prices(tmp_path))
+    assert out["execution_date"] == D22
+    assert out["signal_date"] == D21
+    assert out["reason"] == "no_open_positions"
+    marker = zone / D22 / "sell_decisions.json"
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload["reason"] == "no_open_positions"
+    assert payload["signal_date"] == D21
+    assert payload["execution_date"] == D22
+
+
+def test_sell_precommit_without_date_refuses_stale_seal(monkeypatch, tmp_path):
+    """Fail-closed: a seal whose execution day has already passed means
+    there is no fresh T-day signal — the sell engine must refuse stale
+    targets instead of selling against yesterday's package."""
+    monkeypatch.setattr(shadow, "datetime", _FrozenDatetime)
+    _FrozenDatetime.frozen = "2099-01-01T12:00:00"  # after D1
+    _seal_package(tmp_path, D0, D1, [SYM_A], {SYM_A: TW})
+    zone = _zone(tmp_path)
+    with pytest.raises(RuntimeError, match="refusing stale sell targets"):
+        sell_precommit(execution_zone=zone,
+                       packages_zone=tmp_path / "packages",
+                       prices_path=_base_prices(tmp_path))
+
+
+def test_precommit_without_date_resolves_latest_sealed_package(tmp_path):
+    """The T+1 09:25 precommit task runs without --date: it must resolve
+    the T-day seal's execution_date (T+1) — never open_days[-1]."""
+    _seal_package(tmp_path, D21, D22, [SYM_A], {SYM_A: TW})
+    zone = _zone(tmp_path)
+    out = precommit(execution_zone=zone,
+                    packages_zone=tmp_path / "packages",
+                    prices_path=_base_prices(tmp_path))
+    assert out["execution_date"] == D22
+    orders = json.loads((zone / D22 / "orders.json").read_text(encoding="utf-8"))
+    buys = [o for o in orders if o["side"] == "BUY"]
+    assert len(buys) == 1 and buys[0]["symbol"] == SYM_A
+    assert buys[0]["signal_date"] == D21
+    assert buys[0]["execution_date"] == D22
+
+
+def test_precommit_without_date_no_package_fails_closed(tmp_path):
+    zone = _zone(tmp_path)
+    with pytest.raises(RuntimeError, match="no SEALED package"):
+        precommit(execution_zone=zone,
+                  packages_zone=tmp_path / "packages",
+                  prices_path=_base_prices(tmp_path))
+
+
+def test_nav_without_date_snapshots_today(monkeypatch, tmp_path):
+    """NAV at 15:30 marks TODAY's close — a date-less run must not
+    resolve to open_days[-1] (= 2026-12-31 on the snapshot calendar)."""
+    monkeypatch.setattr(shadow, "datetime", _FrozenDatetime)
+    _FrozenDatetime.frozen = "2026-09-10T15:30:00"
+    zone = _zone(tmp_path)
+    out = nav(execution_zone=zone)
+    assert out["date"] == "2026-09-10"
+
+
+# ── v5.5.3 production sequence: sell at T 17:00 then precommit at T+1
+# ── 09:25 write the SAME execution-day orders file — SELL_PRECOMMITTED
+# ── and ORDER_PRECOMMITTED must coexist (2026-08-05 defect: precommit
+# ── raised "already reconciled" on the SELL orders and the morning
+# ── chain crashed).
+
+
+def test_precommit_coexists_with_sell_precommitted_same_day(tmp_path):
+    """The full T → T+1 wiring: a HOLDING position bought earlier is
+    exited at expiry against the D22 package (SELL written at T 17:00);
+    precommit at T+1 09:25 appends the new BUY to the SAME file; the
+    09:35 reconcile fills both in one pass."""
+    _seal_package(tmp_path, D21, D22, [SYM_B], {SYM_B: TW})
+    zone = _zone(tmp_path)
+    _buy_chain(zone, D0, D1)  # held SYM_A, expired by D22 (hold_days=20)
+    prices = _prices(tmp_path, [
+        (D0, SYM_A, 10.0, 10.0, 10.0),
+        (D21, SYM_A, 10.0, 10.0, 10.0),   # sell reference close
+        (D21, SYM_B, 10.0, 10.0, 10.0),   # buy reference close
+        (D22, SYM_A, 9.00, 10.0, 9.00),   # limit-down open
+        (D22, SYM_B, 10.0, 10.0, 10.0),
+    ])
+    # T 17:00 — sell task (date-less: resolves D22 from the D21 seal).
+    out = sell_precommit(execution_zone=zone,
+                         packages_zone=tmp_path / "packages",
+                         prices_path=prices)
+    assert out["sells"] == 1
+    assert out["sells_detail"][0]["reason"] == "rebalance_exit"
+    # T+1 09:25 — precommit must NOT raise "already reconciled".
+    out2 = precommit(execution_zone=zone,
+                     packages_zone=tmp_path / "packages",
+                     prices_path=prices)
+    assert out2["execution_date"] == D22
+    orders = json.loads((zone / D22 / "orders.json").read_text(encoding="utf-8"))
+    sides = {o["side"] for o in orders}
+    assert sides == {"SELL", "BUY"}
+    assert all(o["state"] in ("ORDER_PRECOMMITTED", "SELL_PRECOMMITTED")
+               for o in orders)
+    # T+1 09:35 — one reconcile pass fills both.
+    out3 = reconcile_from_package(D22, execution_zone=zone, prices_path=prices)
+    assert out3["status"]["buy_filled"] == 1
+    assert out3["status"]["sell_rejected"] == 1  # SYM_A opens limit-down

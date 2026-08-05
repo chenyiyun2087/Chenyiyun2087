@@ -2899,7 +2899,33 @@ def _sealed_package_for_execution(execution_iso: str):
                     man.get("package_status") != "SEALED":
                 continue
             if best is None or mp.parent.name > best[0].parent.name:
-                best = (mp, man)
+                best = (man, mp)  # (manifest, path) — verifier convention
+    return best
+
+
+def _latest_sealed_package():
+    """(manifest, manifest_path) of the newest SEALED package by signal
+    date — the sell task's binding package.
+
+    v5.5.3 (2026-08-05): the sell task runs at T 17:00 under the queue's
+    datestr=T, but its sells belong to the LATEST SEALED package (the
+    T-day seal) and fill on that package's execution_date (T+1).  The
+    verifier binds by package output, never by wall-clock datestr, so it
+    is immune to schedule drift.  Mirrors run_daily_shadow's scan: base
+    manifests only (revisions are engineering-only, never scheduled)."""
+    best = None
+    for pkg_dir in sorted(FORWARD_EVIDENCE_ROOT.glob("packages/*")):
+        mp = pkg_dir / "signal_package_manifest.json"
+        if not mp.exists():
+            continue
+        try:
+            man = json.loads(mp.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if man.get("package_status") != "SEALED":
+            continue
+        if best is None or mp.parent.name > best[0].parent.name:
+            best = (man, mp)  # (manifest, path) — verifier convention
     return best
 
 
@@ -3060,21 +3086,35 @@ def _verify_alpha_signal_execution_reconcile_result(started_at, finished_at, run
 
 def _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_options=None):
     """A5 contract: SELL orders bind the EXACT signal_date / package SHA /
-    execution date (no cross-day mixing, no mtime-window guessing).  The
-    sell task runs at T+1's datestr; its sells belong to the T-day SEALED
-    package.  A no-position day must write sell_decisions.json with
+    execution date (no cross-day mixing, no mtime-window guessing).
+
+    The sell task runs at T 17:00 under the queue's datestr=T, but its
+    sells belong to the LATEST SEALED package (the T-day seal) and fill
+    on that package's execution_date (T+1).  The verifier binds by
+    package output — latest SEALED package's execution_date — never by
+    the queue datestr, making the contract immune to schedule drift.
+    A no-position day must write sell_decisions.json with
     reason=no_open_positions and the same signal_date."""
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
-    iso = _evidence_iso(target_datestr)
     try:
         from runtime.verifier_contracts import check_sell_contract
-        pkg = _sealed_package_for_execution(iso)
+        pkg = _latest_sealed_package()
         if pkg is None:
             return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
                            f"business_date={target_datestr}; "
-                           f"reason=no_sealed_package_for_execution"]
+                           f"reason=no_sealed_package"]
         mp, mpath = pkg
+        iso = mp.get("execution_date")
+        if not iso or iso <= _evidence_iso(target_datestr):
+            # fail-closed: a seal whose execution day is not ahead of the
+            # queue date means the sell task had no fresh signal to bind —
+            # stale sells must never pass the contract.
+            return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
+                           f"business_date={target_datestr}; "
+                           f"reason=stale_sealed_package; "
+                           f"signal_date={mp.get('signal_date')}; "
+                           f"execution_date={iso}"]
         sha_json = mpath.parent / "package_sha256.json"
         if not sha_json.exists():
             return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
@@ -3082,7 +3122,7 @@ def _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_opti
                            f"reason=no_package_identity"]
         pkg_sha = json.loads(sha_json.read_text(encoding="utf-8")) \
             .get("package_sha256")
-        orders, opath = _forward_orders(target_datestr)
+        orders, opath = _forward_orders(iso.replace("-", ""))
         sells = [o for o in (orders or []) if o.get("side") == "SELL"]
         if not sells:
             marker = FORWARD_EVIDENCE_ROOT / "execution" / iso \
@@ -3098,7 +3138,8 @@ def _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_opti
             if no_pos:
                 return True, [f"result=PASS; task=alpha_signal_sell_precommit; "
                               f"business_date={target_datestr}; "
-                              f"sell_orders=0; no_open_positions=1"]
+                              f"execution_date={iso}; sell_orders=0; "
+                              f"no_open_positions=1"]
             return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
                            f"business_date={target_datestr}; "
                            f"reason=no_sell_artifacts_for_signal_date="
@@ -3111,7 +3152,8 @@ def _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_opti
                        f"reason=contract_eval_error; error={exc!r}"]
     return ok, ([
         f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_sell_precommit; "
-        f"business_date={target_datestr}; signal_date={mp['signal_date']}; "
+        f"business_date={target_datestr}; execution_date={iso}; "
+        f"signal_date={mp['signal_date']}; "
         f"package_sha={str(pkg_sha)[:12]}"] + details)
 
 

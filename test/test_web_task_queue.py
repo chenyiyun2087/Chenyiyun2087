@@ -568,3 +568,125 @@ def test_feishu_audit_records_no_webhook(monkeypatch):
     assert reason == "no_webhook"
     assert records[0]["status"] == "no_webhook"
     assert records[0]["business_date"] == "20260624"
+
+
+# ── v5.5.3 (2026-08-05): alpha_signal_* production wiring ──────────────
+#
+# Defect found by probe: task_commands.py only injected --date for the
+# OLD shadow task names; the five alpha_signal_* names fell through to
+# the generic fallback and ran WITHOUT --date.  precommit(None)/
+# sell_precommit(None) then resolved execution_date = open_days[-1] =
+# 2026-12-31 (the snapshot calendar extends to year-end) and crashed
+# with "shadow_blocked: no SEALED package for execution_date 2026-12-31".
+
+
+def test_alpha_signal_tasks_carry_queue_date_except_sell():
+    options = {"datestr": "20260805"}
+    for task in ("alpha_signal_package_seal", "alpha_signal_precommit",
+                 "alpha_signal_execution_reconcile", "alpha_signal_nav"):
+        parts = web_app._build_task_script_parts(task, options)
+        assert parts[-2:] == ["--date", "2026-08-05"], parts
+    # The sell task MUST NOT receive --date: it runs at T 17:00 under
+    # datestr=T but resolves the T+1 fill day from the latest SEALED
+    # package — passing --date T would bind it to the stale T-1 package.
+    sell = web_app._build_task_script_parts(
+        "alpha_signal_sell_precommit", options)
+    assert "--date" not in sell, sell
+    assert sell[1:3] == ["--mode", "sell-precommit"], sell
+
+
+def test_sell_verifier_binds_latest_sealed_package_execution_date(monkeypatch, tmp_path):
+    """The sell task runs at T 17:00 (datestr=T); its sells land under
+    the latest SEALED package's execution_date (T+1) — the verifier must
+    look there, not at datestr."""
+    root = tmp_path / "evidence"
+    pkg = root / "packages" / "2026-08-05"
+    pkg.mkdir(parents=True)
+    (pkg / "signal_package_manifest.json").write_text(json.dumps({
+        "signal_date": "2026-08-05", "execution_date": "2026-08-06",
+        "package_status": "SEALED",
+    }), encoding="utf-8")
+    (pkg / "package_sha256.json").write_text(json.dumps({
+        "package_sha256": "a" * 64,
+    }), encoding="utf-8")
+    # no positions held -> the producer wrote the decision marker only.
+    marker = root / "execution" / "2026-08-06" / "sell_decisions.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps({
+        "signal_date": "2026-08-05", "execution_date": "2026-08-06",
+        "reason": "no_open_positions",
+    }), encoding="utf-8")
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    ok, lines = web_app._verify_alpha_signal_sell_precommit_result(
+        None, None, run_options={"datestr": "20260805"})
+    assert ok, lines
+    assert any("no_open_positions=1" in ln for ln in lines)
+
+
+def test_sell_verifier_rejects_stale_sealed_package(monkeypatch, tmp_path):
+    """Fail-closed: the latest SEALED package whose execution day is not
+    ahead of the queue date means no fresh signal — stale sells fail."""
+    root = tmp_path / "evidence"
+    pkg = root / "packages" / "2026-08-04"
+    pkg.mkdir(parents=True)
+    (pkg / "signal_package_manifest.json").write_text(json.dumps({
+        "signal_date": "2026-08-04", "execution_date": "2026-08-05",
+        "package_status": "SEALED",
+    }), encoding="utf-8")
+    (pkg / "package_sha256.json").write_text(json.dumps({
+        "package_sha256": "b" * 64,
+    }), encoding="utf-8")
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    ok, lines = web_app._verify_alpha_signal_sell_precommit_result(
+        None, None, run_options={"datestr": "20260805"})
+    assert not ok
+    assert any("stale_sealed_package" in ln for ln in lines)
+
+
+def test_sell_verifier_no_sealed_package_fails_closed(monkeypatch, tmp_path):
+    root = tmp_path / "evidence"
+    (root / "packages").mkdir(parents=True)
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    ok, lines = web_app._verify_alpha_signal_sell_precommit_result(
+        None, None, run_options={"datestr": "20260805"})
+    assert not ok
+    assert any("no_sealed_package" in ln for ln in lines)
+
+
+def test_precommit_verifier_unpacks_manifest_path_convention(monkeypatch, tmp_path):
+    """Regression (2026-08-05): _sealed_package_for_execution returned
+    (path, manifest) but the precommit verifier unpacks (manifest, path)
+    — on any real artifact it crashed with AttributeError
+    ('PosixPath' has no 'get'), caught into a FAIL.  The convention is
+    (manifest, path) like _forward_sealed_manifest."""
+    root = tmp_path / "evidence"
+    pkg = root / "packages" / "2026-08-05"
+    pkg.mkdir(parents=True)
+    (pkg / "signal_package_manifest.json").write_text(json.dumps({
+        "signal_date": "2026-08-05", "execution_date": "2026-08-06",
+        "package_status": "SEALED",
+    }), encoding="utf-8")
+    (pkg / "package_sha256.json").write_text(json.dumps({
+        "package_sha256": "c" * 64,
+    }), encoding="utf-8")
+    import pandas as pd
+
+    pd.DataFrame([{"candidate_id": "c0", "symbol": "600001",
+                   "target_weight": 1.0}]).to_parquet(
+        pkg / "target_portfolios.parquet", index=False)
+    # A BUY order bound to the T-seal, precommitted for the T+1 day.
+    exec_dir = root / "execution" / "2026-08-06"
+    exec_dir.mkdir(parents=True)
+    (exec_dir / "orders.json").write_text(json.dumps([{
+        "signal_date": "2026-08-05", "execution_date": "2026-08-06",
+        "challenger_id": "c0", "symbol": "600001", "side": "BUY",
+        "state": "ORDER_PRECOMMITTED", "package_sha": "c" * 64,
+        "order_id": "0123456789abcdef",
+    }]), encoding="utf-8")
+    # replay_all reads the REAL execution zone — a hermetic run without
+    # precommitted events must not crash the contract (held_keys = {}).
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    ok, lines = web_app._verify_alpha_signal_precommit_result(
+        None, None, run_options={"datestr": "20260806"})
+    assert ok, lines
+    assert any("buys=1" in ln for ln in lines)

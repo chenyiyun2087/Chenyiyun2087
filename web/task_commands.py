@@ -136,10 +136,22 @@ def build_task_script_parts(
         return [script, *args]
     if task_name in ("alpha_challenger_shadow_record",
                      "alpha_challenger_shadow_reconcile",
-                     "daily_vls_scores"):
+                     "daily_vls_scores",
+                     "alpha_signal_package_seal",
+                     "alpha_signal_precommit",
+                     "alpha_signal_execution_reconcile",
+                     "alpha_signal_nav"):
         # v5.4.1 fix: the pipeline args (e.g. --mode reconcile) were
         # previously DROPPED here, so the reconcile task silently ran in
         # record mode.  Honor the pipeline-declared args explicitly.
+        # v5.5.3 (2026-08-05): the alpha_signal_* chain runs with
+        # --date = the queue's business day so precommit/reconcile/nav
+        # bind the exact execution day.  alpha_signal_sell_precommit is
+        # DELIBERATELY excluded: it runs at T 17:00 under datestr=T but
+        # must resolve the T+1 fill day from the latest SEALED package
+        # (run_daily_shadow.sell_precommit(None)) — passing --date T
+        # would bind it to the stale T-1 package and its sells would
+        # never be filled by the T+1 reconcile.
         args = list(task_config.get("args") or [])
         if datestr:
             args.extend(["--date", _iso_date(datestr)])
