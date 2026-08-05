@@ -3063,12 +3063,20 @@ def _verify_alpha_signal_precommit_result(started_at, finished_at, run_options=N
 
 def _verify_alpha_signal_execution_reconcile_result(started_at, finished_at, run_options=None):
     """A5 contract: every PRECOMMITTED order ends in exactly one
-    fill/reject (no dangling); terminal events reference real orders."""
+    fill/reject (no dangling); terminal events reference real orders.
+    A day with zero PRECOMMITTED orders has nothing to reconcile —
+    vacuous PASS (check_reconcile_contract([], []) is true), mirroring
+    the sell verifier's no_open_positions branch.  Orders without an
+    events log stay FAIL (the dangling contract is unproven)."""
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
     orders, _ = _forward_orders(target_datestr)
     events, epath = _forward_events(target_datestr)
     if not epath.exists():
+        if not orders:
+            return True, [f"result=PASS; task=alpha_signal_execution_reconcile; "
+                          f"execution_date={target_datestr}; "
+                          f"reason=no_orders_vacuous"]
         return False, [f"result=FAIL; task=alpha_signal_execution_reconcile; "
                        f"execution_date={target_datestr}; reason=no_events_log"]
     try:
@@ -3164,6 +3172,23 @@ def _verify_alpha_signal_nav_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
     iso = _evidence_iso(target_datestr)
     summary_path = FORWARD_EVIDENCE_ROOT / "execution" / "nav" / "nav_summary.json"
+    events, _ = _forward_events(target_datestr)
+    fills = [e for e in events if e and e.get("event_type")
+             in ("BUY_FILLED", "SELL_FILLED")]
+    has_day = False
+    if summary_path.exists():
+        try:
+            has_day = iso in json.loads(
+                summary_path.read_text(encoding="utf-8")).get("days", {})
+        except ValueError:
+            has_day = False
+    if not fills and not has_day:
+        # Vacuous PASS: a day with zero fills has no mark-to-close work —
+        # nav() correctly no-ops (reason=no_fills) without writing a NAV
+        # day.  Mirrors the sell verifier's no_open_positions branch; a
+        # day WITH fills but no NAV day still FAILs below.
+        return True, [f"result=PASS; task=alpha_signal_nav; "
+                      f"execution_date={target_datestr}; reason=no_fills_vacuous"]
     if not summary_path.exists():
         return False, [f"result=FAIL; task=alpha_signal_nav; "
                        f"execution_date={target_datestr}; reason=no_nav_summary"]

@@ -690,3 +690,65 @@ def test_precommit_verifier_unpacks_manifest_path_convention(monkeypatch, tmp_pa
         None, None, run_options={"datestr": "20260806"})
     assert ok, lines
     assert any("buys=1" in ln for ln in lines)
+
+
+# ── A5 vacuous contracts (v5.5.3 first-run discovery) ──────────────────
+# The bootstrap night (2026-08-05) reconciles/navs execution dates with
+# zero precommitted orders and zero fills.  The nav() script no-ops
+# (reason=no_fills) without writing a NAV day and reconcile returns
+# no_orders_for_execution_date without an events log — both verifiers
+# must PASS vacuously (nothing to prove), mirroring the sell verifier's
+# no_open_positions branch.  Non-vacuous cases must keep FAILing.
+
+
+def test_reconcile_verifier_vacuous_pass_no_orders(monkeypatch, tmp_path):
+    root = tmp_path / "fe"
+    root.mkdir(parents=True)
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    ok, lines = web_app._verify_alpha_signal_execution_reconcile_result(
+        None, None, run_options={"datestr": "20260805"})
+    assert ok, lines
+    assert any("no_orders_vacuous" in ln for ln in lines)
+
+
+def test_reconcile_verifier_still_fails_orders_without_events(
+        monkeypatch, tmp_path):
+    root = tmp_path / "fe"
+    exec_dir = root / "execution" / "2026-08-05"
+    exec_dir.mkdir(parents=True)
+    (exec_dir / "orders.json").write_text(json.dumps([{
+        "signal_date": "2026-08-04", "execution_date": "2026-08-05",
+        "challenger_id": "c0", "symbol": "600001", "side": "BUY",
+        "state": "ORDER_PRECOMMITTED", "package_sha": "b" * 64,
+        "order_id": "0123456789abcdef",
+    }]), encoding="utf-8")
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    ok, lines = web_app._verify_alpha_signal_execution_reconcile_result(
+        None, None, run_options={"datestr": "20260805"})
+    assert not ok, lines  # orders exist but no events log — unproven
+    assert any("no_events_log" in ln for ln in lines)
+
+
+def test_nav_verifier_vacuous_pass_no_fills(monkeypatch, tmp_path):
+    root = tmp_path / "fe"
+    root.mkdir(parents=True)
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    ok, lines = web_app._verify_alpha_signal_nav_result(
+        None, None, run_options={"datestr": "20260805"})
+    assert ok, lines
+    assert any("no_fills_vacuous" in ln for ln in lines)
+
+
+def test_nav_verifier_still_fails_fills_without_day(monkeypatch, tmp_path):
+    root = tmp_path / "fe"
+    events_dir = root / "execution" / "events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "2026-08-05.jsonl").write_text(json.dumps({
+        "event_type": "BUY_FILLED", "order_id": "0123456789abcdef",
+        "challenger_id": "c0", "symbol": "600001",
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    ok, lines = web_app._verify_alpha_signal_nav_result(
+        None, None, run_options={"datestr": "20260805"})
+    assert not ok, lines  # fills exist but no NAV day — real defect
+    assert any("no_nav_summary" in ln for ln in lines)
