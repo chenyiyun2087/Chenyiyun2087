@@ -60,6 +60,7 @@ from runtime.shadow_events import (  # noqa: E402
     replay,
     replay_all,
 )
+from runtime.shadow_execution_state import ROUND_TRIP_COMPLETED  # noqa: E402
 from runtime.shadow_virtual_account import (  # noqa: E402
     AccountConservationError,
     VirtualAccount,
@@ -607,9 +608,13 @@ EXECUTION_CONTRACT_PATH = (PROJECT_ROOT / "config" / "strategy_runtime"
 def _candidate_execution_config() -> dict[str, dict]:
     """Per-candidate frozen execution contracts (forward_shadow_v2.yaml).
 
-    Keyed by challenger_id (C0's 'baseline_vls_frozen', C1's
-    'f1_no_value', ...).  Missing file or missing candidate -> fail-closed
-    raise: the sell engine and NAV must NEVER run on guessed parameters.
+    Keyed by the CANDIDATE id (C0/C1/C2/C3/RND — the id that packages,
+    orders and accounts carry).  v5.5.3: keyed by candidate id, NOT by
+    challenger_id ('baseline_vls_frozen' / 'f1_no_value' / ...) — the
+    two had silently diverged and every config.get() on a real order
+    missed, which precommit/sell/NAV must never do.  Missing file or
+    missing candidate -> fail-closed raise: the engines must NEVER run
+    on guessed parameters.
     """
     if not EXECUTION_CONTRACT_PATH.exists():
         raise RuntimeError(
@@ -618,11 +623,11 @@ def _candidate_execution_config() -> dict[str, dict]:
     cfg = yaml.safe_load(EXECUTION_CONTRACT_PATH.read_text(encoding="utf-8"))
     out = {}
     for cand, meta in (cfg.get("candidates") or {}).items():
-        challenger_id = meta.get("challenger_id")
-        if not challenger_id:
+        if not meta:
             continue
         ex = meta.get("execution") or {}
-        out[challenger_id] = {
+        out[cand] = {
+            "challenger_id": meta.get("challenger_id"),
             "hold_days": int(ex.get("hold_days", 20)),
             "rebalance_score_buffer": float(
                 ex.get("rebalance_score_buffer", 0.10)),
@@ -738,7 +743,8 @@ def sell_precommit(execution_date: str | None = None,
     seen_events = existing_identities(log_path)
 
     orders = _orders_for_date(execution_date, zone)
-    pending_sells = {o.get("challenger_id"): o.get("symbol")
+    # v5.5.3: (candidate, symbol) SET — one candidate holds several names.
+    pending_sells = {(o.get("challenger_id"), o.get("symbol"))
                      for o in orders
                      if o.get("side") == "SELL"
                      and o.get("state") == "SELL_PRECOMMITTED"}
@@ -750,15 +756,18 @@ def sell_precommit(execution_date: str | None = None,
             raise RuntimeError(
                 f"shadow_blocked: candidate {cand} has no frozen execution "
                 "contract — sell engine refuses to guess hold_days/costs")
-        if sym in pending_sells.get(cand, ""):
+        if (cand, sym) in pending_sells:
             skipped += 1  # already precommitted for this execution day
             continue
         hold_days = contract["hold_days"]
         sig_idx = day_index.get(buy.signal_date, 0)
         expired = (exec_idx - sig_idx) >= hold_days
         target_weight = target.get((cand, sym))
-        shares = pos.sell_order.lot_adjusted_shares if (
-            pos.sell_order is not None) else buy.lot_adjusted_shares or buy.target_shares
+        # v5.5.3: sell quantity = what is still HELD (remaining_shares) —
+        # never the previous sell order's shares (a partial risk_reduction
+        # fill leaves the rest held and re-decidable).
+        shares = pos.remaining_shares if pos.remaining_shares > 0 \
+            else buy.lot_adjusted_shares or buy.target_shares
         precommit_price = float(close_map.get(sym, float("nan")))
         if not pd.notna(precommit_price) or precommit_price <= 0:
             # No T-close reference: cannot precommit a price -> defer to
@@ -1025,12 +1034,23 @@ def precommit(execution_date: str | None = None,
     log_path = event_log_path(execution_zone or EXECUTION_ZONE,
                               execution_date)
     seen_events = existing_identities(log_path)
-    held = {p.challenger_id: p.symbol for p in
-            replay_all(execution_zone or EXECUTION_ZONE).positions.values()}
+    # v5.5.3: held is a (candidate, symbol) SET — one candidate can hold
+    # several names (TopN > 1) and a closed round trip is not held.
+    held = {(p.challenger_id, p.symbol) for p in
+            replay_all(execution_zone or EXECUTION_ZONE).positions.values()
+            if p.state != ROUND_TRIP_COMPLETED}
+    # v5.5.3 cash-aware sizing: accounts rebuilt from the fill-event
+    # ledger give each candidate's CURRENT cash — the cap for BUY
+    # notional, never the hardcoded 500k.
+    config = _candidate_execution_config()
+    accounts = _rebuild_accounts(config, execution_zone or EXECUTION_ZONE)
 
     run_orders = []
     idempotent_skipped = 0
     held_skipped = 0
+    # per-candidate reserved cash so consecutive BUYs in one run share
+    # the same pool (TopN > 1: each order reduces what the next can buy).
+    reserved: dict[str, float] = {}
     for seq, (_, row) in enumerate(portfolios.iterrows(), start=1):
         symbol = str(row["symbol"])
         candidate_id = str(row.get("candidate_id", ""))
@@ -1047,13 +1067,38 @@ def precommit(execution_date: str | None = None,
                 f"shadow_blocked: duplicate BUY for candidate {candidate_id} "
                 f"symbol {symbol} on {execution_date} — one precommit per "
                 "(candidate, symbol, execution day)")
-        if held.get(candidate_id) == symbol:
+        if (candidate_id, symbol) in held:
             held_skipped += 1  # already holding — no re-buy (v5.5.2 rule)
             continue
         precommit_price = float(close_map.get(symbol, float("nan")))
-        notional = float(row["target_weight"]) * 500_000.0
+        # v5.5.3 cash-aware sizing: the contract's initial cash defines
+        # the target notional; the account's CURRENT cash caps it (never
+        # the hardcoded 500k).  A candidate whose cash cannot afford one
+        # A-share lot is skipped, not over-leveraged.
+        contract = config.get(candidate_id)
+        if contract is None:
+            raise RuntimeError(
+                f"shadow_blocked: candidate {candidate_id} has no frozen "
+                "execution contract — precommit refuses to size on guesses")
+        acc = accounts.get(candidate_id)
+        available_cash = reserved.get(
+            candidate_id,
+            acc.available_cash if acc is not None
+            else contract["initial_cash_cny"])
+        notional = min(float(row["target_weight"]) * contract["initial_cash_cny"],
+                       available_cash)
         shares = int(notional / precommit_price // 100 * 100) \
             if pd.notna(precommit_price) and precommit_price > 0 else 0
+        if shares <= 0:
+            raise RuntimeError(
+                f"shadow_blocked: candidate {candidate_id} symbol {symbol} "
+                f"has no cash for one lot (available {available_cash:.2f}, "
+                f"close {precommit_price}) — sizing would be zero/negative")
+        # reserve this order's estimated cash outlay — consecutive BUYs
+        # in the same run share one cash pool (never double-spend).
+        est_total = notional * (1.0 + contract["cost_rate"]
+                                + contract["slippage_bps"] / 1e4)
+        reserved[candidate_id] = available_cash - est_total
         order = {
             "signal_date": manifest["signal_date"],
             "execution_date": execution_date,
@@ -1169,6 +1214,11 @@ def reconcile_from_package(execution_date: str | None = None,
 
     filled, failed = 0, 0
     buy_filled = buy_rejected = sell_filled = sell_rejected = 0
+    # v5.5.3: accounts rebuilt from prior fills — the fill-time
+    # buying-power check runs against CURRENT cash (intraday moves can
+    # push a precommitted order beyond the precommit budget).
+    config = _candidate_execution_config()
+    accounts = _rebuild_accounts(config, zone)
     for o in pending:
         symbol = str(o["symbol"])
         side = o.get("side", "BUY")
@@ -1227,6 +1277,43 @@ def reconcile_from_package(execution_date: str | None = None,
             else:
                 buy_rejected += 1
             continue
+        # v5.5.3 fill-time buying power + account conservation: the fill
+        # must clear the account's CURRENT cash (precommit sizing is a
+        # T-day estimate; the open price and concurrent fills move the
+        # true balance).  A cash shortfall rejects THIS order; an account
+        # invariant breach (negative cash / oversell) fails closed.
+        cand = o.get("challenger_id")
+        contract = config.get(cand)
+        if contract is None:
+            raise RuntimeError(
+                f"shadow_blocked: fill for candidate {cand} without a "
+                "frozen execution contract — the account cannot be costed")
+        acc = accounts.get(cand)
+        if acc is None:
+            acc = accounts[cand] = VirtualAccount(
+                cand, initial_cash=contract["initial_cash_cny"],
+                cost_rate=contract["cost_rate"],
+                slippage_bps=contract["slippage_bps"])
+        shares_to_fill = int(o.get("lot_adjusted_shares")
+                             or o.get("target_shares") or 0)
+        try:
+            if side == "BUY":
+                notional = shares_to_fill * open_price
+                total = notional * (1.0 + acc.cost_rate
+                                    + acc.slippage_bps / 1e4)
+                if acc.cash + 1e-9 < total:
+                    _reject("NO_CASH", "insufficient_cash_at_fill")
+                    failed += 1
+                    buy_rejected += 1
+                    continue
+                acc.buy_fill(symbol, shares_to_fill, open_price)
+            else:
+                acc.sell_fill(symbol, shares_to_fill, open_price)
+            acc.verify_conservation()
+        except AccountConservationError as exc:
+            raise RuntimeError(
+                f"shadow_blocked: ACCOUNT_CONSERVATION_ERROR on {side} "
+                f"fill {cand} {symbol}: {exc}") from exc
         o["fill_price"] = float(open_price)
         o["slippage_bps"] = round(
             (open_price / float(o["precommit_price"]) - 1.0) * 1e4, 2) \

@@ -128,8 +128,12 @@ def test_industry_missing_rows_excluded():
 
 def test_min_cross_section_fail_closed():
     day = _day(n=10)
-    resid = residualize_scores(day, CANDIDATE)
-    assert resid.isna().all()
+    # v5.5.3 (A4): a below-minimum cross-section must RAISE C3_BLOCKED —
+    # never return a silent all-NaN residual day (the old behavior let a
+    # broken day through as a no-score day indistinguishable from a
+    # legitimate market halt).
+    with pytest.raises(SignalPackageBlocked, match="C3_BLOCKED"):
+        residualize_scores(day, CANDIDATE)
 
 
 def test_single_member_industry_absorbed_by_fe():

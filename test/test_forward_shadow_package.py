@@ -211,17 +211,36 @@ def test_dry_run_seals_nothing(monkeypatch, tmp_path, capsys):
     labels = pd.DataFrame({"ts_code": ts_codes,
                            "is_st": [0] * n_syms,
                            "is_new": [0] * n_syms,
+                           "limit_type": [10] * n_syms,
                            "industry": [f"ind{i % 5}" for i in range(n_syms)]})
     lineage = [{"family": fam,
                 "content_sha256": hashlib.sha256(fam.encode()).hexdigest()}
                for fam in ("market", "market_cap", "basic_financial",
-                           "industry_scd", "labels", "trade_calendar")]
+                           "industry_scd", "labels", "trade_calendar",
+                           "adjustment", "benchmark_index",
+                           "status_scd", "dim_stock")]
+    basic = basic.assign(ann_date=20260805)
+    industry = industry.assign(effective_date=20260805)
+    adjustment = pd.DataFrame({"trade_date": [20260805],
+                               "ts_code": ts_codes[0],
+                               "adj_factor": [1.0]})
+    benchmark = pd.DataFrame({"trade_date": [20260805],
+                              "ts_code": ["000300.SH"], "close": [4000.0]})
+    status_scd = pd.DataFrame({"ts_code": [], "status": [],
+                               "effective_date": [], "expire_date": []})
+    dim_stock = pd.DataFrame({"ts_code": ts_codes,
+                              "list_date": [20200101] * n_syms,
+                              "delist_date": [None] * n_syms})
 
     monkeypatch.setattr(pkg, "fetch_production_inputs", lambda d: {
         "data_quality": {"rows": len(bars)},
         "lineage": lineage,
         "bars": bars, "mcap": mcap, "basic": basic,
         "industry": industry, "labels": labels,
+        "adjustment": adjustment, "benchmark": benchmark,
+        "status_scd": status_scd, "dim_stock": dim_stock,
+        "snapshot_identity": {"consistent_snapshot": True,
+                              "server_uuid": "test-uuid"},
     })
     monkeypatch.setattr(pkg, "_next_open_day", lambda d: "2026-08-06")
     monkeypatch.setattr(pkg, "PACKAGES_ROOT", tmp_path)

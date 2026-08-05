@@ -2873,9 +2873,40 @@ def _forward_sealed_manifest(target_datestr: str):
     return None, None
 
 
+def _evidence_iso(target_datestr: str) -> str:
+    """YYYYMMDD -> YYYY-MM-DD (the evidence zone's canonical naming —
+    producers write execution/<YYYY-MM-DD>/ and packages/<YYYY-MM-DD>/)."""
+    return f"{target_datestr[:4]}-{target_datestr[4:6]}-{target_datestr[6:]}"
+
+
+def _sealed_package_for_execution(execution_iso: str):
+    """(manifest, manifest_path) of the LATEST SEALED revision whose
+    execution_date matches (packages are immutable; the scan is small).
+    Never picks a KNOWN_DEFECT/PRESTART revision as the binding package
+    when a healthy one exists for the same date."""
+    best = None
+    for pkg_dir in sorted(FORWARD_EVIDENCE_ROOT.glob("packages/*")):
+        candidates = [pkg_dir / "signal_package_manifest.json"] + sorted(
+            pkg_dir.glob("revision_*/signal_package_manifest.json"))
+        for mp in candidates:
+            if not mp.exists():
+                continue
+            try:
+                man = json.loads(mp.read_text(encoding="utf-8"))
+            except ValueError:
+                continue
+            if man.get("execution_date") != execution_iso or \
+                    man.get("package_status") != "SEALED":
+                continue
+            if best is None or mp.parent.name > best[0].parent.name:
+                best = (mp, man)
+    return best
+
+
 def _forward_orders(execution_datestr: str):
     """(orders list | None, path) for one execution date."""
-    path = FORWARD_EVIDENCE_ROOT / "execution" / execution_datestr / "orders.json"
+    path = FORWARD_EVIDENCE_ROOT / "execution" / \
+        _evidence_iso(execution_datestr) / "orders.json"
     if not path.exists():
         return None, path
     try:
@@ -2887,7 +2918,8 @@ def _forward_orders(execution_datestr: str):
 
 def _forward_events(execution_datestr: str):
     """([event dict | None], path) parsed from the append-only JSONL."""
-    path = FORWARD_EVIDENCE_ROOT / "execution" / "events" / f"{execution_datestr}.jsonl"
+    path = FORWARD_EVIDENCE_ROOT / "execution" / "events" / \
+        f"{_evidence_iso(execution_datestr)}.jsonl"
     events = []
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -2902,26 +2934,49 @@ def _forward_events(execution_datestr: str):
 
 
 def _verify_alpha_signal_package_seal_result(started_at, finished_at, run_options=None):
+    """A5 contract: file SHAs, PIT lineage completeness, no-defect
+    classification, weight sum + cash residual (runtime/verifier_contracts
+    check_package_contract)."""
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
     manifest, mpath = _forward_sealed_manifest(target_datestr)
     if manifest is None:
         return False, [f"result=FAIL; task=alpha_signal_package_seal; "
                        f"business_date={target_datestr}; reason=no_sealed_package"]
-    ok = manifest.get("package_status") == "SEALED"
-    return ok, [
+    try:
+        import pandas as pd
+
+        from runtime.verifier_contracts import check_package_contract
+        from scripts.ops.build_daily_alpha_signal_package import \
+            REQUIRED_LINEAGE_FAMILIES
+        pkg_dir = mpath.parent
+        pf_path = pkg_dir / "target_portfolios.parquet"
+        portfolios = pd.read_parquet(pf_path) if pf_path.exists() \
+            else pd.DataFrame()
+        im_path = pkg_dir / "input_manifest.json"
+        input_manifest = json.loads(im_path.read_text(encoding="utf-8")) \
+            if im_path.exists() else {}
+        ok, details = check_package_contract(
+            manifest, pkg_dir, portfolios,
+            input_manifest.get("lineage") or [], REQUIRED_LINEAGE_FAMILIES)
+    except Exception as exc:  # fail-closed: a broken proof is a FAIL
+        return False, [f"result=FAIL; task=alpha_signal_package_seal; "
+                       f"business_date={target_datestr}; "
+                       f"reason=contract_eval_error; error={exc!r}"]
+    return ok, ([
         f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_package_seal; "
-        f"business_date={target_datestr}; package_status={manifest.get('package_status')}; "
-        f"revision={manifest.get('revision')}",
-        f"manifest={mpath}; signal_date={manifest.get('signal_date')}; "
-        f"execution_date={manifest.get('execution_date')}; "
-        f"git={str(manifest.get('git_commit_sha') or '')[:12]}",
-    ]
+        f"business_date={target_datestr}; manifest={mpath}; "
+        f"signal_date={manifest.get('signal_date')}; "
+        f"revision={manifest.get('revision')}"] + details)
 
 
 def _verify_alpha_signal_precommit_result(started_at, finished_at, run_options=None):
+    """A5 contract: every portfolio row maps to one deterministic order or
+    a held position; every order binds the package SHA / signal / execution
+    dates exactly; zero BUY orders need a legitimate reason."""
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
+    iso = _evidence_iso(target_datestr)
     orders, opath = _forward_orders(target_datestr)
     if orders is None:
         return False, [f"result=FAIL; task=alpha_signal_precommit; "
@@ -2933,16 +2988,56 @@ def _verify_alpha_signal_precommit_result(started_at, finished_at, run_options=N
         return False, [f"result=FAIL; task=alpha_signal_precommit; "
                        f"execution_date={target_datestr}; "
                        f"reason=pre_v551_orders_without_id; count={len(legacy)}"]
-    buys = [o for o in orders if o.get("side") == "BUY"]
-    return True, [
-        f"result=PASS; task=alpha_signal_precommit; "
-        f"execution_date={target_datestr}; orders={len(orders)}; buys={len(buys)}; "
-        f"states={sorted({o.get('state') for o in orders})}",
-        f"orders={opath}",
-    ]
+    try:
+        import pandas as pd
+
+        from runtime.shadow_events import replay_all
+        from runtime.shadow_execution_state import ROUND_TRIP_COMPLETED
+        from runtime.verifier_contracts import check_precommit_contract
+        pkg = _sealed_package_for_execution(iso)
+        if pkg is None:
+            return False, [f"result=FAIL; task=alpha_signal_precommit; "
+                           f"execution_date={target_datestr}; "
+                           f"reason=no_sealed_package_for_execution"]
+        mp, mpath = pkg
+        sha_json = mpath.parent / "package_sha256.json"
+        if not sha_json.exists():
+            return False, [f"result=FAIL; task=alpha_signal_precommit; "
+                           f"execution_date={target_datestr}; "
+                           f"reason=no_package_identity"]
+        pkg_sha = json.loads(sha_json.read_text(encoding="utf-8")) \
+            .get("package_sha256")
+        pf_path = mpath.parent / "target_portfolios.parquet"
+        portfolios = pd.read_parquet(pf_path) if pf_path.exists() \
+            else pd.DataFrame()
+        portfolio_rows = []
+        if not portfolios.empty:
+            portfolios["symbol"] = portfolios["symbol"].astype(str).str.zfill(6)
+            portfolio_rows = [
+                (str(r["candidate_id"]), str(r["symbol"]))
+                for _, r in portfolios.iterrows()]
+        zone = FORWARD_EVIDENCE_ROOT / "execution"
+        machine = replay_all(zone)
+        held_keys = {(p.challenger_id, p.symbol) for p in
+                     machine.positions.values()
+                     if p.state != ROUND_TRIP_COMPLETED}
+        ok, details = check_precommit_contract(
+            orders, portfolio_rows, held_keys, pkg_sha,
+            mp["signal_date"], iso)
+    except Exception as exc:  # fail-closed: a broken proof is a FAIL
+        return False, [f"result=FAIL; task=alpha_signal_precommit; "
+                       f"execution_date={target_datestr}; "
+                       f"reason=contract_eval_error; error={exc!r}"]
+    return ok, ([
+        f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_precommit; "
+        f"execution_date={target_datestr}; orders={len(orders)}; "
+        f"states={sorted({o.get('state') for o in orders})}; orders={opath}"]
+        + details)
 
 
 def _verify_alpha_signal_execution_reconcile_result(started_at, finished_at, run_options=None):
+    """A5 contract: every PRECOMMITTED order ends in exactly one
+    fill/reject (no dangling); terminal events reference real orders."""
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
     orders, _ = _forward_orders(target_datestr)
@@ -2950,84 +3045,122 @@ def _verify_alpha_signal_execution_reconcile_result(started_at, finished_at, run
     if not epath.exists():
         return False, [f"result=FAIL; task=alpha_signal_execution_reconcile; "
                        f"execution_date={target_datestr}; reason=no_events_log"]
-    fills = [e for e in events if e and e.get("event_type")
-             in ("BUY_FILLED", "SELL_FILLED", "BUY_REJECTED", "SELL_REJECTED")]
-    # Zero precommitted orders is a legitimate no-op day (nothing to fill);
-    # any order must end in a fill/reject event, never a silent dangling one.
-    if orders and not fills:
+    try:
+        from runtime.verifier_contracts import check_reconcile_contract
+        ok, details = check_reconcile_contract(
+            orders or [], [e for e in events if e is not None])
+    except Exception as exc:  # fail-closed: a broken proof is a FAIL
         return False, [f"result=FAIL; task=alpha_signal_execution_reconcile; "
                        f"execution_date={target_datestr}; "
-                       f"reason=orders_without_fill_events; orders={len(orders)}; fills=0"]
-    return True, [
-        f"result=PASS; task=alpha_signal_execution_reconcile; "
-        f"execution_date={target_datestr}; fill_events={len(fills)}; "
-        f"orders={len(orders) if orders is not None else 0}",
-        f"events={epath}",
-    ]
+                       f"reason=contract_eval_error; error={exc!r}"]
+    return ok, ([
+        f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_execution_reconcile; "
+        f"execution_date={target_datestr}; events={epath}"] + details)
 
 
 def _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_options=None):
-    """SELL decisions write to the NEXT open day's orders.json (T+1
-    execution), so the verification scans the execution zone for artifacts
-    touched inside the run window (same evidence pattern as the
-    monthly-cycle verifier).  A no-position day writes sell_decisions.json
-    (reason=no_open_positions); with positions, SELL orders must appear in
-    the touched order ledgers."""
+    """A5 contract: SELL orders bind the EXACT signal_date / package SHA /
+    execution date (no cross-day mixing, no mtime-window guessing).  The
+    sell task runs at T+1's datestr; its sells belong to the T-day SEALED
+    package.  A no-position day must write sell_decisions.json with
+    reason=no_open_positions and the same signal_date."""
+    _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
-    zone = FORWARD_EVIDENCE_ROOT / "execution"
-    touched_orders, touched_decisions = [], []
-    for path in sorted(zone.glob("*/orders.json")) + sorted(zone.glob("*/sell_decisions.json")):
-        try:
-            mtime = datetime.fromtimestamp(path.stat().st_mtime)
-        except OSError:
-            continue
-        if (started_at - timedelta(seconds=30)) <= mtime <= (finished_at + timedelta(seconds=300)):
-            (touched_orders if path.name == "orders.json"
-             else touched_decisions).append(path)
-    if not touched_orders and not touched_decisions:
+    iso = _evidence_iso(target_datestr)
+    try:
+        from runtime.verifier_contracts import check_sell_contract
+        pkg = _sealed_package_for_execution(iso)
+        if pkg is None:
+            return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
+                           f"business_date={target_datestr}; "
+                           f"reason=no_sealed_package_for_execution"]
+        mp, mpath = pkg
+        sha_json = mpath.parent / "package_sha256.json"
+        if not sha_json.exists():
+            return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
+                           f"business_date={target_datestr}; "
+                           f"reason=no_package_identity"]
+        pkg_sha = json.loads(sha_json.read_text(encoding="utf-8")) \
+            .get("package_sha256")
+        orders, opath = _forward_orders(target_datestr)
+        sells = [o for o in (orders or []) if o.get("side") == "SELL"]
+        if not sells:
+            marker = FORWARD_EVIDENCE_ROOT / "execution" / iso \
+                / "sell_decisions.json"
+            no_pos = False
+            if marker.exists():
+                try:
+                    payload = json.loads(marker.read_text(encoding="utf-8"))
+                    no_pos = (payload.get("reason") == "no_open_positions"
+                              and payload.get("signal_date") == mp["signal_date"])
+                except ValueError:
+                    no_pos = False
+            if no_pos:
+                return True, [f"result=PASS; task=alpha_signal_sell_precommit; "
+                              f"business_date={target_datestr}; "
+                              f"sell_orders=0; no_open_positions=1"]
+            return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
+                           f"business_date={target_datestr}; "
+                           f"reason=no_sell_artifacts_for_signal_date="
+                           f"{mp['signal_date']}"]
+        ok, details = check_sell_contract(
+            sells, mp["signal_date"], pkg_sha)
+    except Exception as exc:  # fail-closed: a broken proof is a FAIL
         return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
-                       f"business_date={target_datestr}; reason=no_artifact_in_window"]
-    sells = []
-    for path in touched_orders:
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except ValueError:
-            continue
-        sells += [o for o in payload if o.get("side") == "SELL"]
-    no_pos = any(
-        json.loads(path.read_text(encoding="utf-8")).get("reason") == "no_open_positions"
-        for path in touched_decisions
-        if path.exists()
-    ) if touched_decisions else False
-    ok = bool(sells) or no_pos
-    return ok, [
+                       f"business_date={target_datestr}; "
+                       f"reason=contract_eval_error; error={exc!r}"]
+    return ok, ([
         f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_sell_precommit; "
-        f"business_date={target_datestr}; sell_orders={len(sells)}; "
-        f"no_open_positions={int(no_pos)}",
-        f"touched_orders={[str(p) for p in touched_orders]}; "
-        f"touched_decisions={[str(p) for p in touched_decisions]}",
-    ]
+        f"business_date={target_datestr}; signal_date={mp['signal_date']}; "
+        f"package_sha={str(pkg_sha)[:12]}"] + details)
 
 
 def _verify_alpha_signal_nav_result(started_at, finished_at, run_options=None):
+    """A5 contract: all candidates present, cash >= 0, nav identity, and
+    day-over-day fill conservation with frozen cost rates."""
     _ = started_at, finished_at
     target_datestr = _queue_business_date(run_options)
+    iso = _evidence_iso(target_datestr)
     summary_path = FORWARD_EVIDENCE_ROOT / "execution" / "nav" / "nav_summary.json"
     if not summary_path.exists():
         return False, [f"result=FAIL; task=alpha_signal_nav; "
                        f"execution_date={target_datestr}; reason=no_nav_summary"]
     try:
+        import yaml
+
+        from runtime.verifier_contracts import check_nav_contract
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    except ValueError:
+        days = summary.get("days", {})
+        if iso not in days:
+            return False, [f"result=FAIL; task=alpha_signal_nav; "
+                           f"execution_date={target_datestr}; "
+                           f"reason=day_missing_from_nav_summary"]
+        cfg_path = Path(__file__).resolve().parents[1] / "config" \
+            / "strategy_runtime" / "forward_shadow_v2.yaml"
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        candidate_ids = list((cfg.get("candidates") or {}).keys())
+        cost_rate_map = {
+            cid: float((meta.get("execution") or {}).get("cost_rate", 0.00075))
+            for cid, meta in (cfg.get("candidates") or {}).items()}
+        events, _ = _forward_events(target_datestr)
+        fills = [e for e in events if e and e.get("event_type")
+                 in ("BUY_FILLED", "SELL_FILLED")]
+        prev_cash = {}
+        prior_days = sorted(d for d in days if d < iso)
+        if prior_days:
+            prev_snaps = days[prior_days[-1]]
+            prev_cash = {s.get("candidate_id"): s.get("cash")
+                         for s in prev_snaps if s.get("candidate_id")}
+        ok, details = check_nav_contract(
+            days[iso], candidate_ids, fills, cost_rate_map, prev_cash)
+    except Exception as exc:  # fail-closed: a broken proof is a FAIL
         return False, [f"result=FAIL; task=alpha_signal_nav; "
-                       f"execution_date={target_datestr}; reason=corrupt_nav_summary"]
-    days = summary.get("days", {})
-    ok = target_datestr in days
-    return ok, [
+                       f"execution_date={target_datestr}; "
+                       f"reason=contract_eval_error; error={exc!r}"]
+    return ok, ([
         f"result={'PASS' if ok else 'FAIL'}; task=alpha_signal_nav; "
-        f"execution_date={target_datestr}; recorded_days={len(days)}",
-        f"nav_summary={summary_path}",
-    ]
+        f"execution_date={target_datestr}; recorded_days={len(days)}; "
+        f"nav_summary={summary_path}"] + details)
 
 
 def _run_task_result_verification(task_name, started_at, finished_at, run_options=None):
