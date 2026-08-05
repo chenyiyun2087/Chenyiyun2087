@@ -178,11 +178,20 @@ def _pit_prices_max_date() -> str | None:
 
 
 def _live_bars(date_str: str) -> pd.DataFrame:
-    """Bars for one live date from tushare_stock.dwd_stock_daily_standard.
+    """Raw bars for one live date from tushare_stock.ods_daily.
 
     Columns: trade_date, symbol, raw_open, raw_pre_close, raw_close
-    (aliased for the snapshot-compatible downstream).  Raises RuntimeError
-    on DB failure; returns an EMPTY frame when the date has no bars —
+    (aliased for the snapshot-compatible downstream).
+
+    v5.5.3 (2026-08-05, production first run): this previously read
+    dwd_stock_daily_standard, which carries ONLY ADJUSTED prices
+    (adj_open/adj_high/adj_low/adj_close — no open/pre_close columns at
+    all; the first live run crashed with Unknown column 'open').  Raw
+    prices must NEVER be aliased from adjusted ones: limit up/down bands
+    break on every ex-date.  ods_daily is the raw canonical table and is
+    loaded at ~17:00 T (measured 2026-08-04 17:00:03) — in time for the
+    T 21:35 sell and the T+1 morning precommit.  Raises RuntimeError on
+    DB failure; returns an EMPTY frame when the date has no bars —
     per-order NO_OPEN is then the honest fill outcome.
     """
     import os
@@ -202,7 +211,7 @@ def _live_bars(date_str: str) -> pd.DataFrame:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT trade_date, ts_code, open, pre_close, close "
-                "FROM dwd_stock_daily_standard WHERE trade_date = %s",
+                "FROM ods_daily WHERE trade_date = %s",
                 (date_int,))
             rows = cur.fetchall()
     except Exception as exc:
@@ -577,6 +586,29 @@ def _latest_package_for_execution(execution_date: str,
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if manifest.get("execution_date") == execution_date:
             return pkg_dir
+
+
+def _package_execution_eligible(pkg_dir: Path) -> tuple[bool, str]:
+    """classification.json gate: absent = eligible; present with
+    execution_eligible=False = REFUSE.
+
+    v5.5.3 (2026-08-05, production first run): the 08-04 prestart package
+    is SEALED with execution_date 2026-08-05 but classified
+    KNOWN_DEFECT_PRESTART_PACKAGE (execution_eligible: false).  Without
+    this gate a re-run of precommit with datestr=2026-08-05 would write
+    orders against that defective package — the execution chain must
+    never consume a package its own classification forbids (fail-closed).
+    """
+    cls_path = pkg_dir / "classification.json"
+    if not cls_path.exists():
+        return True, "no classification.json"
+    try:
+        cls = json.loads(cls_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return False, "classification.json corrupt"
+    if cls.get("execution_eligible") is False:
+        return False, f"classification={cls.get('classification')!r}"
+    return True, ""
     return None
 
 
@@ -757,6 +789,12 @@ def sell_precommit(execution_date: str | None = None,
             f"shadow_blocked: no SEALED package for execution_date "
             f"{execution_date} — sell engine requires the T-day target "
             "portfolio")
+    eligible, why = _package_execution_eligible(pkg)
+    if not eligible:
+        raise RuntimeError(
+            f"shadow_blocked: package {pkg.name} for execution_date "
+            f"{execution_date} is not execution-eligible ({why}) — the "
+            "sell engine never consumes KNOWN_DEFECT/prestart packages")
     manifest = json.loads((pkg / "signal_package_manifest.json").read_text())
     signal_date = manifest["signal_date"]
     config = _candidate_execution_config()
@@ -1051,6 +1089,12 @@ def precommit(execution_date: str | None = None,
         raise RuntimeError(
             f"shadow_blocked: no SEALED package for execution_date "
             f"{execution_date} — seal the T-day package first")
+    eligible, why = _package_execution_eligible(pkg)
+    if not eligible:
+        raise RuntimeError(
+            f"shadow_blocked: package {pkg.name} for execution_date "
+            f"{execution_date} is not execution-eligible ({why}) — the "
+            "execution chain never consumes KNOWN_DEFECT/prestart packages")
     manifest = json.loads((pkg / "signal_package_manifest.json").read_text())
     portfolios = pd.read_parquet(pkg / "target_portfolios.parquet")
     close_map = _t_close_map(manifest["signal_date"], prices_path)
@@ -1214,8 +1258,13 @@ def reconcile_from_package(execution_date: str | None = None,
     trips are counted only after a later SELL_FILLED (state machine).
 
     v5.5 live: prices come from the PIT snapshot for historical days and
-    from dwd_stock_daily_standard beyond the snapshot end; ST / listing /
+    from ods_daily (raw) beyond the snapshot end; ST / listing /
     suspension flags come from the SEALED package universe (T-day status).
+
+    v5.5.3 (2026-08-05): scheduled at 21:45 T+1 — the execution day's raw
+    bars land in ods_daily at ~17:00 T+1, so a 09:35 run could never see
+    them (every order would NO_OPEN).  The fill uses the recorded OPEN —
+    semantically the T+1 open execution the contract promises.
     """
     zone = execution_zone or EXECUTION_ZONE
     today = datetime.now().date().isoformat()
@@ -1261,6 +1310,13 @@ def reconcile_from_package(execution_date: str | None = None,
     st_map = listed_map = suspended_map = pd.Series(dtype=float)
     pkg = _latest_package_for_execution(
         execution_date, packages_zone or PACKAGES_ZONE)
+    if pkg is not None:
+        eligible, why = _package_execution_eligible(pkg)
+        if not eligible:
+            raise RuntimeError(
+                f"shadow_blocked: package {pkg.name} for execution_date "
+                f"{execution_date} is not execution-eligible ({why}) — "
+                "reconcile never consumes KNOWN_DEFECT/prestart packages")
     if pkg is not None and (pkg / "universe.parquet").exists():
         uni = pd.read_parquet(pkg / "universe.parquet")
         uni["symbol"] = uni["symbol"].astype(str).str.zfill(6)

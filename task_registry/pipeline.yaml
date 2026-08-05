@@ -163,7 +163,7 @@ intraday:
     # v5.5 Shadow Engine v2 — daily immutable Signal Package (replaces
     # daily_vls_scores + shadow_record).  One script runs the post-close
     # chain: data quality -> PIT universe freeze -> per-candidate factors
-    # -> target portfolios -> SEAL (17:00).
+    # -> target portfolios -> SEAL.
     # ENABLED 2026-08-04, then PAUSED 2026-08-05 (v5.5.1 prestart): the
     # 08-04 SEALED package carries known defects (C3 rank truncation,
     # SCD duplicate symbols, C2 crowding state invalid — circ_mv never
@@ -174,15 +174,16 @@ intraday:
     # NOT_STARTED — 08-04 package is KNOWN_DEFECT_PRESTART_PACKAGE,
     # never counted for E4).
     # RE-ENABLED 2026-08-05 (Phase 5): v5.5.1 + v5.5.2 + v5.6.1 merged to
-    # main (PRs #187/#189/#190/#191), remote required CI all green.  The
-    # 2026-08-05 17:00 run produces the FIRST formally eligible package;
-    # true-blind is re-declared (forward_shadow_v2.yaml) only after the
-    # Phase 5 first-day audit (PIT lineage complete, atomic SEALED,
-    # precommit idempotent, T+1 fills, position ledger, no legacy
-    # fallback) passes.  The 08-04 package stays
-    # KNOWN_DEFECT_PRESTART_PACKAGE — never counted for E4.
+    # main (PRs #187/#189/#190/#191), remote required CI all green.
+    # v5.5.3 (2026-08-05, FIRST production run): the original 17:00 slot
+    # is IMPOSSIBLE — the seal gates on dwd_stock_daily_standard
+    # (ADJUSTED bars + factor window), which is only loaded at ~21:20 T
+    # (measured 21:20:06 on 2026-08-04; raw ods_daily lands ~17:00).  At
+    # 17:00 the seal correctly BLOCKED (no bars for the signal date —
+    # fail-closed, no stale substitution).  Seal moved to 21:30, after
+    # the 21:20 adjusted load.
     - id: alpha_signal_package_seal
-      time: "17:00"
+      time: "21:30"
       script: scripts/ops/build_daily_alpha_signal_package.py
       type: script
       trading_day_only: true
@@ -206,16 +207,20 @@ morning:
       status: disabled
       disabled_reason: "PERMANENTLY DISABLED 2026-08-05: superseded by alpha_signal_execution_reconcile — legacy reconcile would double-run the T+1 fill path"
 
-    # v5.5 T+1 morning execution chain (ENABLED 2026-08-04 — integration
-    # suite green; PAUSED 2026-08-05 with the seal task — see the
+    # v5.5 T+1 execution chain (ENABLED 2026-08-04 — integration suite
+    # green; PAUSED 2026-08-05 with the seal task — see the
     # alpha_signal_package_seal comment).  Order precommit 09:25 (uses
-    # the SEALED package from T day), fill reconcile 09:35 (directional
-    # gates via execution_market_rules; live prices from
-    # dwd_stock_daily_standard beyond the PIT snapshot end).  NOTE: no
-    # depends_on here — the cross-day binding (T-day seal -> T+1 morning)
-    # is enforced in-code: precommit/reconcile RAISE shadow_blocked when
-    # the SEALED package or orders are missing (fail-closed), matching
-    # the existing morning-task pattern.
+    # the SEALED package from T day + T-day close from ods_daily — the
+    # raw load lands ~17:00 T, so the 09:25 slot works).  Reconcile moved
+    # from 09:35 to 21:45 (v5.5.3, FIRST production run): the T+1 open
+    # bars simply do not exist at 09:35 — ods_daily gets T+1 rows only
+    # at ~17:00 T+1 — so a 09:35 run NO_OPENs every order (day burned).
+    # The 21:45 fill uses the recorded T+1 open — the same T+1 open
+    # execution the contract promises.  NOTE: no depends_on here — the
+    # cross-day binding (T-day seal -> T+1) is enforced in-code:
+    # precommit/reconcile RAISE shadow_blocked when the SEALED package
+    # or orders are missing (fail-closed), matching the existing
+    # morning-task pattern.
     - id: alpha_signal_precommit
       time: "09:25"
       script: scripts/ops/run_daily_shadow.py
@@ -225,7 +230,7 @@ morning:
       status: enabled  # RE-ENABLED 2026-08-05 — see alpha_signal_package_seal
 
     - id: alpha_signal_execution_reconcile
-      time: "09:35"
+      time: "21:45"
       script: scripts/ops/run_daily_shadow.py
       args: ["--mode", "reconcile"]
       type: script
@@ -239,23 +244,29 @@ morning:
     # checklist (event ledger + state machine + round-trip counting
     # verified in production; true blind re-declared).
     - id: alpha_signal_sell_precommit
-      time: "17:00"
+      time: "21:35"
       script: scripts/ops/run_daily_shadow.py
       args: ["--mode", "sell-precommit"]
       type: script
       trading_day_only: true
       status: enabled  # RE-ENABLED 2026-08-05 — see alpha_signal_package_seal
       # The sell decision reads the SAME day's sealed package (target
-      # portfolios) — run after the seal so the 17:00 pair is ordered.
+      # portfolios) — run after the seal so the 21:30 pair is ordered
+      # (v5.5.3: both moved from 17:00 — see the seal's data-availability
+      # comment; the sell itself resolves T+1 from the latest seal and
+      # uses T-day close from ods_daily, loaded ~17:00 T).
       depends_on: [alpha_signal_package_seal]
 
     - id: alpha_signal_nav
-      time: "15:30"
+      time: "21:50"
       script: scripts/ops/run_daily_shadow.py
       args: ["--mode", "nav"]
       type: script
       trading_day_only: true
       status: enabled  # RE-ENABLED 2026-08-05 — see alpha_signal_package_seal
+      # v5.5.3 (moved from 15:30): NAV marks to the execution-day CLOSE —
+      # ods_daily gets T+1 rows at ~17:00 T+1, so 15:30 could never see
+      # the close; 21:50 runs after the 21:45 reconcile fills.
 
 weekly:
   description: "每周任务"

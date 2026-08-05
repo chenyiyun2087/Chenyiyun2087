@@ -480,3 +480,140 @@ def test_precommit_coexists_with_sell_precommitted_same_day(tmp_path):
     out3 = reconcile_from_package(D22, execution_zone=zone, prices_path=prices)
     assert out3["status"]["buy_filled"] == 1
     assert out3["status"]["sell_rejected"] == 1  # SYM_A opens limit-down
+
+
+# ── v5.5.3 (2026-08-05, FIRST production run) regression tests ──────────
+# The 17:01 run exposed: (1) _live_bars read open/pre_close/close from
+# dwd_stock_daily_standard — that table carries ONLY adjusted prices
+# (adj_*) → Unknown column 'open' crash; the raw canonical source is
+# ods_daily (loaded ~17:00 T).  (2) the execution chain had no
+# execution_eligible gate — the SEALED-but-KNOWN_DEFECT 08-04 prestart
+# package (execution_date 2026-08-05) could be consumed by a stale-datestr
+# precommit/sell/reconcile run.
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = rows
+        self.executed = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.executed = sql
+        return 0
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeConn:
+    def __init__(self, rows):
+        self._rows = rows
+        self._cursor = _FakeCursor(rows)
+
+    def cursor(self):
+        return self._cursor
+
+    def close(self):
+        pass
+
+
+class _FakePymysql:
+    """Stand-in for the pymysql module (sys.modules) used by _live_bars."""
+    cursors = type("_Cursors", (), {"DictCursor": object})()
+
+    def __init__(self, rows):
+        self._rows = rows
+        self._cursor = None
+
+    def connect(self, **kwargs):
+        conn = _FakeConn(self._rows)
+        self._cursor = conn._cursor
+        return conn
+
+    @property
+    def executed_sql(self) -> str:
+        return self._cursor.executed if self._cursor else ""
+
+
+def test_live_bars_reads_raw_ods_daily_columns(monkeypatch):
+    """The live-bars query must target ods_daily (RAW prices) — never
+    dwd_stock_daily_standard (adjusted adj_* only; aliasing adjusted as
+    raw breaks limit up/down bands on ex-dates)."""
+    fake = _FakePymysql([{"trade_date": 20260805, "ts_code": "600001.SH",
+                          "open": 10.0, "pre_close": 9.8, "close": 10.2}])
+    monkeypatch.setitem(sys.modules, "pymysql", fake)
+    frame = shadow._live_bars("2026-08-05")
+    assert "ods_daily" in fake.executed_sql, "query must read ods_daily"
+    assert frame["symbol"].tolist() == ["600001"]
+    assert frame["raw_open"].tolist() == [10.0]
+    assert frame["raw_pre_close"].tolist() == [9.8]
+    assert frame["raw_close"].tolist() == [10.2]
+    assert frame["trade_date"].tolist() == ["2026-08-05"]
+
+
+def _mark_known_defect(pkg: Path) -> None:
+    """Write the classification.json the 08-04 prestart package carries:
+    SEALED but execution_eligible=false."""
+    (pkg / "classification.json").write_text(json.dumps({
+        "schema_version": "package_classification_v1",
+        "package_status": "SEALED",
+        "evidence_eligible": False,
+        "execution_eligible": False,
+        "classification": "KNOWN_DEFECT_PRESTART_PACKAGE",
+        "classified_at": "2026-08-05",
+    }), encoding="utf-8")
+
+
+def test_precommit_refuses_known_defect_package(tmp_path):
+    """A SEALED package classified execution_eligible=false (the prestart
+    KNOWN_DEFECT package) must fail closed — a stale-datestr re-run can
+    never write orders against it."""
+    pkg = _seal_package(tmp_path, D21, D22, [SYM_B], {SYM_B: TW})
+    _mark_known_defect(pkg)
+    prices = _prices(tmp_path, [(D21, SYM_B, 10.0, 10.0, 10.0)])
+    with pytest.raises(RuntimeError, match="not execution-eligible"):
+        precommit(execution_zone=_zone(tmp_path),
+                  packages_zone=tmp_path / "packages",
+                  prices_path=prices)
+
+
+def test_sell_precommit_refuses_known_defect_package(tmp_path):
+    """Same gate for the sell engine: a KNOWN_DEFECT package's target
+    portfolio must never drive sell decisions."""
+    pkg = _seal_package(tmp_path, D21, D22, [SYM_B], {SYM_B: TW})
+    _mark_known_defect(pkg)
+    prices = _prices(tmp_path, [(D21, SYM_B, 10.0, 10.0, 10.0)])
+    with pytest.raises(RuntimeError, match="not execution-eligible"):
+        sell_precommit(execution_zone=_zone(tmp_path),
+                       packages_zone=tmp_path / "packages",
+                       prices_path=prices)
+
+
+def test_reconcile_refuses_known_defect_package(tmp_path):
+    """Reconcile resolves the same package for universe flags — it must
+    refuse it too, never fill against a defective package's universe.
+    (With no orders it returns no_orders_for_execution_date first — the
+    guard matters once orders exist and fills are about to be priced.)"""
+    pkg = _seal_package(tmp_path, D21, D22, [SYM_B], {SYM_B: TW})
+    _mark_known_defect(pkg)
+    zone = _zone(tmp_path)
+    orders_path = zone / D22 / "orders.json"
+    orders_path.parent.mkdir(parents=True, exist_ok=True)
+    orders_path.write_text(json.dumps([{
+        "order_id": compute_order_id(PKG_SHA, CAND, D22, SYM_B, "BUY", 1),
+        "challenger_id": CAND, "symbol": SYM_B, "side": "BUY",
+        "state": "ORDER_PRECOMMITTED", "package_sha": PKG_SHA,
+        "signal_date": D21, "execution_date": D22,
+        "target_shares": SHARES, "lot_adjusted_shares": SHARES,
+    }]), encoding="utf-8")
+    prices = _prices(tmp_path, [(D22, SYM_B, 10.0, 10.0, 10.0)])
+    with pytest.raises(RuntimeError, match="not execution-eligible"):
+        reconcile_from_package(D22, execution_zone=zone,
+                               prices_path=prices,
+                               packages_zone=tmp_path / "packages")
