@@ -186,6 +186,29 @@ def build_rolling_score_section(snapshot: dict[str, Any]) -> str:
                 f"Calmar {_num(row.get('calmar'))} | "
                 f"MDD {_pct(row.get('max_drawdown'))}"
             )
+
+        active = [
+            row for row in rows
+            if (_safe_float(row.get("smooth_weight")) or 0.0) >= 0.001
+        ]
+        active.sort(
+            key=lambda row: -(_safe_float(row.get("smooth_weight")) or 0.0)
+        )
+        if active:
+            lines.append("T+1研究权重：")
+            for row in active[:8]:
+                lines.append(
+                    f"- {row.get('strategy')}: {_pct(row.get('smooth_weight'))}"
+                )
+            if len(active) > 8:
+                lines.append(f"- 其余活跃策略：{len(active) - 8}个")
+        allocated = sum(
+            _safe_float(row.get("smooth_weight")) or 0.0 for row in active
+        )
+        idle = max(0.0, 1.0 - allocated)
+        if idle >= 0.001:
+            lines.append(f"- 闲置/现金：{_pct(idle)}")
+
     warnings = list(snapshot.get("warnings") or [])
     if warnings:
         lines.append("数据提醒：" + "；".join(warnings[:5]))
