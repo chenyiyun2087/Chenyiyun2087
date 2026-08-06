@@ -5,7 +5,10 @@ from pathlib import Path
 import yaml
 
 from scripts.ops.run_integrated_batch_audit import attention_rows
-from scripts.ops.run_integrated_strategy_review import build_rolling_score_section
+from scripts.ops.run_integrated_strategy_review import (
+    build_candidate_score_section,
+    build_rolling_score_section,
+)
 from web.task_commands import TaskCommandContext, build_task_script_parts
 
 
@@ -69,6 +72,28 @@ def test_pipeline_routes_to_integrated_wrappers_and_orders_dependencies():
     }
 
 
+def test_candidate_score_section_preserves_actionable_ranking_details():
+    section = build_candidate_score_section(
+        [
+            {
+                "rank_no": 1,
+                "symbol": "000001",
+                "stock_name": "示例银行",
+                "rank_score": 88.5,
+                "dynamic_factor_score": 76.0,
+                "liquidity_detail_score": 69.5,
+                "effective_weight": 0.12,
+            }
+        ]
+    )
+    assert "今日候选评分" in section
+    assert "#1 示例银行(000001)" in section
+    assert "排序分 88.5" in section
+    assert "动态因子 76.0" in section
+    assert "流动性 69.5" in section
+    assert "目标权重 +12.0%" in section
+
+
 def test_integrated_score_section_contains_rank_weight_and_risk_context():
     section = build_rolling_score_section(
         {
@@ -96,6 +121,8 @@ def test_integrated_score_section_contains_rank_weight_and_risk_context():
     assert "评分 82.5" in section
     assert "平滑权重 +40.0%" in section
     assert "有效敞口：+70%" in section
+    assert "T+1研究权重" in section
+    assert "闲置/现金：+60.0%" in section
     assert "不替代生产风险总闸或资金授权" in section
 
 
