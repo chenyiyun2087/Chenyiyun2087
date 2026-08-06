@@ -2898,7 +2898,7 @@ def _sealed_package_for_execution(execution_iso: str):
             if man.get("execution_date") != execution_iso or \
                     man.get("package_status") != "SEALED":
                 continue
-            if best is None or mp.parent.name > best[0].parent.name:
+            if best is None or mp.parent.name > best[1].parent.name:
                 best = (man, mp)  # (manifest, path) — verifier convention
     return best
 
@@ -2924,7 +2924,7 @@ def _latest_sealed_package():
             continue
         if man.get("package_status") != "SEALED":
             continue
-        if best is None or mp.parent.name > best[0].parent.name:
+        if best is None or mp.parent.name > best[1].parent.name:
             best = (man, mp)  # (manifest, path) — verifier convention
     return best
 
