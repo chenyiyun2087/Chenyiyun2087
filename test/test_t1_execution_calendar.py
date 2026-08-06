@@ -70,9 +70,9 @@ def test_strictly_after_semantics():
 
 
 def test_true_blind_start_enforced():
-    # v5.5.1 prestart (2026-08-05): TRUE_BLIND_START is null (NOT_STARTED)
-    # — EVERY date is refused until the start is re-declared.
-    with pytest.raises(RuntimeError, match="NOT_STARTED"):
+    # DECLARED 2026-08-06 (v5.5.3, Phase 5 first-day audit PASS):
+    # TRUE_BLIND_START = 2026-08-05.  Dates before the start are refused
+    # (pre-blind — never shadow evidence); the start date and later pass.
+    with pytest.raises(RuntimeError, match="precedes true_forward_blind.start"):
         _shadow._check_true_blind("2026-08-03")
-    with pytest.raises(RuntimeError, match="NOT_STARTED"):
-        _shadow._check_true_blind("2026-08-05")
+    _shadow._check_true_blind("2026-08-05")  # start date allowed

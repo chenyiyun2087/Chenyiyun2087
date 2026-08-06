@@ -5,6 +5,7 @@
   "package_sha256": "see package_sha256.json (unchanged — the package itself is immutable)",
   "evidence_eligible": false,
   "execution_eligible": false,
+  "true_blind_epoch_id": null,
   "classification": "KNOWN_DEFECT_PRESTART_PACKAGE",
   "classified_at": "2026-08-05",
   "reason": "v5.5.1 prestart (2026-08-05): the package was sealed before the C2/C3/SCD/PIT-lineage correctness fixes; its target portfolios and scores carry known defects. Permanently preserved (immutability rule) but never consumed for execution and never counted toward E4 shadow days or round trips.",

@@ -27,16 +27,19 @@ shadow_id: "forward_shadow_v2"
 # consumed for execution, never counted for E4.  Its corrected
 # revision_2/ (v5.5.1 code, 2026-08-05) is engineering comparison only.
 #
-# Phase 5 re-declaration (2026-08-05): v5.5.1 + v5.5.2 + v5.6.1 merged to
-# main (PRs #187/#189/#190/#191), remote required CI all green, tasks
-# re-enabled in task_registry/pipeline.yaml.  The 2026-08-05 17:00 run
-# is the FIRST FORMALLY ELIGIBLE signal package; true_blind_start is
-# written here ONLY after the first-day audit passes (PIT lineage
-# complete, atomic SEALED, precommit idempotent, T+1 fills, position
-# ledger, no legacy fallback).
-forward_shadow_status: ENABLED_AWAITING_FIRST_PACKAGE
-true_blind_start: null
-true_blind_status: NOT_STARTED
+# DECLARED 2026-08-06 (v5.5.3, Phase 5 first-day audit PASS): the
+# v5.5.3 chain's 2026-08-05 run passed the full first-day audit (PIT
+# lineage complete, atomic SEALED, precommit idempotent, T+1 fills,
+# position ledger, no legacy fallback), so true_blind_start is now
+# formally written.  Epoch id v5.5.3-2026-08-05; dates before
+# 2026-08-05 are never shadow evidence (08-04 package stays
+# KNOWN_DEFECT_PRESTART_PACKAGE).  Mirrored in
+# config/oos_registry.yaml true_forward_blind and enforced by
+# run_daily_shadow.py TRUE_BLIND_START.
+forward_shadow_status: ENABLED_ACCUMULATING
+true_blind_epoch_id: "v5.5.3-2026-08-05"
+true_blind_start: "2026-08-05"
+true_blind_status: ACCUMULATING
 capital_authority: false
 allowed_new_capital_cny: 0
 signal_time: "T15:30:00+08:00"
