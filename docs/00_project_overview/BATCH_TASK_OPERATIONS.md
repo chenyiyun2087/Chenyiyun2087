@@ -23,14 +23,14 @@ Validation V2 新增交易日 21:55 的 `pit_forward_shadow_collection`：只读
 | 21:10 | `bs_ocr_adc_compare` | 对比 OCR 与 ADC 两类 B/S 信号来源 | `scripts/research/compare_bs_sources.py` | 仅交易日 | 启用 |
 | 21:12 | `sina_score` | 计算全 A 股多因子评分并落库 | `scoreRank/run_daily.py` | 仅交易日 | 启用 |
 | 21:20 | `sina_bs_consensus` | 复算 B 点增强分、研究分、综合分和建议 | `scoreRank/cli/build_bs_consensus.py` | 仅交易日 | 启用 |
-| 21:25 | `trusted_strategy_backtest` | 运行当日可信生产策略回测 | `scripts/ops/run_daily_strategy_backtest.py` | 仅交易日 | 启用 |
-| 21:30 | `rolling_strategy_scorer` | 计算滚动策略评分、轮动权重和风险敞口 | `scripts/ops/run_rolling_strategy_scorer.py` | 仅交易日 | 启用 |
-| 21:35 | `trusted_strategy_candidates` | 导出 Top5 生产候选，写入信号和订单草案 | `scripts/ops/export_trusted_strategy_candidates.py` | 仅交易日 | 启用 |
-| 21:40 | `trusted_strategy_shadow_monitor` | 复盘上一信号日订单的开盘可成交性、滑点和风险状态 | `scripts/ops/run_trusted_strategy_shadow_monitor.py` | 仅交易日 | 启用 |
-| 21:45 | `trusted_strategy_performance_review` | 汇总策略收益、回撤、候选、影子盘和实盘状态 | `scripts/ops/run_strategy_performance_review.py` | 仅交易日 | 启用 |
+| 22:05 | `trusted_strategy_backtest` | 运行当日可信生产策略回测 | `scripts/ops/run_daily_strategy_backtest.py` | 仅交易日 | 启用 |
+| 22:05 | `rolling_strategy_scorer` | 计算滚动策略评分、轮动权重和风险敞口 | `scripts/ops/run_rolling_strategy_scorer.py` | 仅交易日 | 启用 |
+| 22:10 | `trusted_strategy_candidates` | 导出 Top5 生产候选，写入信号和订单草案 | `scripts/ops/export_trusted_strategy_candidates.py` | 仅交易日 | 启用 |
+| 22:15 | `trusted_strategy_shadow_monitor` | 复盘上一信号日订单的开盘可成交性、滑点和风险状态 | `scripts/ops/run_trusted_strategy_shadow_monitor.py` | 仅交易日 | 启用 |
+| 22:20 | `trusted_strategy_performance_review` | 汇总策略收益、回撤、候选、影子盘和实盘状态 | `scripts/ops/run_integrated_strategy_review.py` | 仅交易日 | 启用 |
 | 21:50 | `candle_diag_scan` | 扫描全市场 K 线反转、突破等形态 | `scripts/ops/run_candle_diag_daily_scan.py` | 仅交易日 | 启用 |
 | 22:00 | `bs_signal_monthly_cycle` | 执行 B 点模型月度训练、写回和评估闭环 | `scripts/ops/run_monthly_bs_signal_enhancement_cycle.py` | 仅交易日 | 启用 |
-| 22:20 | `ops_daily_batch_audit` | 巡检当日计划任务、通知结果并识别待补跑项 | `scripts/ops/daily_batch_audit.py` | 仅交易日 | 启用 |
+| 22:40 | `ops_daily_batch_audit` | 巡检当日计划任务、通知结果并识别待补跑项 | `scripts/ops/run_integrated_batch_audit.py` | 仅交易日 | 启用 |
 
 `bs_signal_monthly_cycle` 虽名为“月度闭环”，当前 YAML 默认仍按每个交易日进入调度；脚本内部负责判断是否需要实际执行。
 
@@ -51,15 +51,15 @@ flowchart TD
     D["21:05 adc_bs_detect"] --> X["21:10 bs_ocr_adc_compare"]
     D --> S["21:12 sina_score"]
     S --> C["21:20 sina_bs_consensus"]
-    C --> B["21:25 trusted_strategy_backtest"]
-    B --> R["21:30 rolling_strategy_scorer"]
-    C --> T["21:35 trusted_strategy_candidates"]
+    C --> B["22:05 trusted_strategy_backtest"]
+    B --> R["22:05 rolling_strategy_scorer"]
+    C --> T["22:10 trusted_strategy_candidates"]
     R --> T
-    T --> M["21:40 trusted_strategy_shadow_monitor"]
-    B --> V["21:45 trusted_strategy_performance_review"]
+    T --> M["22:15 trusted_strategy_shadow_monitor"]
+    B --> V["22:20 trusted_strategy_performance_review"]
     T --> V
     S --> K["21:50 candle_diag_scan"]
-    M --> Q["22:20 ops_daily_batch_audit"]
+    M --> Q["22:40 ops_daily_batch_audit"]
     V --> Q
     K --> Q
 
@@ -90,11 +90,10 @@ flowchart TD
 
 | 时间 | 任务 | 通知类型 | 推送内容概要 |
 |---|---|---|---|
-| 21:30 | `rolling_strategy_scorer` | `rolling_strategy_scorer` | 计算日期、策略身份、熔断状态、有效敞口、策略权重、Top3 评分及滚动窗口表现 |
-| 21:35 | `trusted_strategy_candidates` | `trusted_strategy_candidates` | 策略与风险档、生产健康状态、Top5 候选、目标仓位、订单草案、计划金额及人工确认提示 |
-| 21:40 | `trusted_strategy_shadow_monitor` | `trusted_strategy_shadow_monitor` | 信号日和执行日、可成交/受阻订单、滑点、校验状态；无订单时说明跳过原因 |
-| 21:45 | `trusted_strategy_performance_review` | `trusted_strategy_performance_review` | 运行结论、近 3 个月及长期收益回撤、候选与订单、影子盘、实盘快照、风险提醒和 Top5 |
-| 22:20 | `ops_daily_batch_audit` | `daily_batch_audit` | 业务日、是否交易日、巡检结论、需确认补跑数量和异常任务列表 |
+| 22:20 | `trusted_strategy_performance_review` | `trusted_strategy_performance_review` | 唯一日终综合简报：收益回撤、滚动评分、候选与订单、影子盘、实盘快照、风险提醒和 Top5 |
+| 22:40 | `ops_daily_batch_audit` | `ops_daily_batch_audit_incident` | 异常型巡检：仅异常日推送；健康日静默。内容为巡检结论、需确认补跑数量和异常任务列表 |
+
+`rolling_strategy_scorer`、`trusted_strategy_candidates`、`trusted_strategy_shadow_monitor` 为综合简报数据源，正常成功不单独推送；其内容统一并入 22:20 综合简报。
 
 这些业务摘要通过经审计的飞书发送函数投递，使用“通知类型 + 任务 + 业务日”的去重键。历史补发会增加 `【历史补发】` 前缀。
 

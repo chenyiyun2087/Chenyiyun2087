@@ -49,7 +49,7 @@ def _digest_delivery_row(business_date: str) -> dict[str, Any]:
     except Exception as exc:
         return {
             "task_name": "integrated_strategy_digest_delivery",
-            "expected_time": "21:45",
+            "expected_time": "22:20",
             "status": "NOTIFICATION_AUDIT_FAILED",
             "reason": f"无法读取综合策略简报投递状态：{type(exc).__name__}",
             "replay_required": 0,
@@ -60,7 +60,7 @@ def _digest_delivery_row(business_date: str) -> dict[str, Any]:
     if row is None:
         return {
             "task_name": "integrated_strategy_digest_delivery",
-            "expected_time": "21:45",
+            "expected_time": "22:20",
             "status": "NOTIFICATION_MISSING",
             "reason": "综合策略简报未发现投递审计记录",
             "replay_required": 0,
@@ -69,7 +69,7 @@ def _digest_delivery_row(business_date: str) -> dict[str, Any]:
     if status == "ok":
         return {
             "task_name": "integrated_strategy_digest_delivery",
-            "expected_time": "21:45",
+            "expected_time": "22:20",
             "status": "OK",
             "reason": "综合策略简报投递成功",
             "notification_status": status,
@@ -77,7 +77,7 @@ def _digest_delivery_row(business_date: str) -> dict[str, Any]:
         }
     return {
         "task_name": "integrated_strategy_digest_delivery",
-        "expected_time": "21:45",
+        "expected_time": "22:20",
         "status": "NOTIFICATION_FAILED",
         "reason": f"综合策略简报投递未成功：{status or 'unknown'} / {row.get('reason') or '-'}",
         "notification_status": status or None,

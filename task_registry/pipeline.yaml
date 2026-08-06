@@ -39,7 +39,7 @@ daily_close:
       depends_on: [sina_score]
 
     - id: trusted_strategy_backtest
-      time: "21:25"
+      time: "22:05"
       script: scripts/ops/run_daily_strategy_backtest.py
       type: script
       trading_day_only: true
@@ -48,7 +48,7 @@ daily_close:
 
     - id: rolling_strategy_scorer
       description: "滚动策略评分与权重落库（综合简报数据源，正常成功不单独通知）"
-      time: "21:30"
+      time: "22:05"
       script: scripts/ops/run_rolling_strategy_scorer.py
       type: script
       trading_day_only: true
@@ -57,7 +57,7 @@ daily_close:
 
     - id: trusted_strategy_candidates
       description: "可信候选与订单草案落库（综合简报数据源，正常成功不单独通知）"
-      time: "21:35"
+      time: "22:10"
       script: scripts/ops/export_trusted_strategy_candidates.py
       type: pipeline
       trading_day_only: true
@@ -66,7 +66,7 @@ daily_close:
 
     - id: trusted_strategy_shadow_monitor
       description: "可信策略影子成交与滑点落库（综合简报数据源，正常成功不单独通知）"
-      time: "21:40"
+      time: "22:15"
       script: scripts/ops/run_trusted_strategy_shadow_monitor.py
       type: script
       trading_day_only: true
@@ -75,7 +75,7 @@ daily_close:
 
     - id: trusted_strategy_performance_review
       description: "综合策略简报：收益风险、滚动评分、候选订单与影子成交统一通知"
-      time: "21:45"
+      time: "22:20"
       script: scripts/ops/run_integrated_strategy_review.py
       type: script
       trading_day_only: true
@@ -108,7 +108,7 @@ daily_close:
 
     - id: ops_daily_batch_audit
       description: "日终批量闭环审计（健康日静默，仅异常通知）"
-      time: "22:20"
+      time: "22:40"
       script: scripts/ops/run_integrated_batch_audit.py
       type: script
       trading_day_only: true
