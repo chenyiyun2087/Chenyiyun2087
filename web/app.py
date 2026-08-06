@@ -2984,7 +2984,7 @@ def _verify_alpha_signal_package_seal_result(started_at, finished_at, run_option
             if im_path.exists() else {}
         ok, details = check_package_contract(
             manifest, pkg_dir, portfolios,
-            input_manifest.get("lineage") or [], REQUIRED_LINEAGE_FAMILIES)
+            input_manifest.get("pit_lineage") or [], REQUIRED_LINEAGE_FAMILIES)
     except Exception as exc:  # fail-closed: a broken proof is a FAIL
         return False, [f"result=FAIL; task=alpha_signal_package_seal; "
                        f"business_date={target_datestr}; "

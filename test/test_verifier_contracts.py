@@ -78,9 +78,13 @@ def _write_package(tmp_path: Path, *,
                    weight_mult: float = 0.50,
                    known_defect: bool = False,
                    tamper: str | None = None,
-                   missing_family: str | None = None) -> tuple[dict, Path]:
+                   missing_family: str | None = None,
+                   nested_inventory: bool = False) -> tuple[dict, Path]:
     """Build a valid SEALED package dir with real SHAs.  ``tamper`` names
-    a payload file to corrupt after inventorying."""
+    a payload file to corrupt after inventorying.
+    ``nested_inventory`` writes the v5.5.3 builder's NESTED form
+    ({schema_version, package_dir, files: {fname: sha}, package_sha256})
+    instead of the legacy flat form."""
     pkg = tmp_path / "packages" / "2026-08-04"
     pkg.mkdir(parents=True)
     portfolios = pd.DataFrame({
@@ -139,7 +143,7 @@ def _write_package(tmp_path: Path, *,
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # root of trust — written LAST, binds every payload incl. the manifest
-    inventory = {
+    flat = {
         "package_sha256": _sha256_bytes(b"package"),
         "signal_package_manifest.json": _sha256_file(
             pkg / "signal_package_manifest.json"),
@@ -149,6 +153,16 @@ def _write_package(tmp_path: Path, *,
         "target_portfolios.parquet": _sha256_file(
             pkg / "target_portfolios.parquet"),
     }
+    if nested_inventory:
+        inventory = {
+            "schema_version": "package_sha256_v1",
+            "package_dir": str(pkg),
+            "files": {k: v for k, v in flat.items()
+                      if k != "package_sha256"},
+            "package_sha256": flat["package_sha256"],
+        }
+    else:
+        inventory = flat
     (pkg / "package_sha256.json").write_text(
         json.dumps(inventory, ensure_ascii=False, indent=2), encoding="utf-8")
     if tamper:
@@ -180,6 +194,31 @@ def test_package_contract_known_defect_rejected(tmp_path):
 
 def test_package_contract_tampered_payload_rejected(tmp_path):
     manifest, pkg = _write_package(tmp_path, tamper="universe.parquet")
+    portfolios = pd.read_parquet(pkg / "target_portfolios.parquet")
+    ok, details = check_package_contract(
+        manifest, pkg, portfolios, _lineage_records(), REQUIRED)
+    assert not ok
+    assert any("universe.parquet" in d and "!=" in d for d in details)
+
+
+def test_package_contract_nested_inventory_happy_path(tmp_path):
+    # v5.5.3 (2026-08-06): the builder's package_sha256.json is NESTED
+    # ({schema_version, package_dir, files: {...}, package_sha256}) — the
+    # first production seal (2026-08-05) was wrongly failed because the
+    # verifier treated top-level keys as file names.  A nested inventory
+    # with intact payloads must PASS.
+    manifest, pkg = _write_package(tmp_path, nested_inventory=True)
+    portfolios = pd.read_parquet(pkg / "target_portfolios.parquet")
+    ok, details = check_package_contract(
+        manifest, pkg, portfolios, _lineage_records(), REQUIRED)
+    assert ok, details
+
+
+def test_package_contract_nested_inventory_tamper_rejected(tmp_path):
+    # Nested form must still catch a tampered payload — the real file
+    # SHAs under "files" are the check, never the top-level metadata.
+    manifest, pkg = _write_package(tmp_path, nested_inventory=True,
+                                   tamper="universe.parquet")
     portfolios = pd.read_parquet(pkg / "target_portfolios.parquet")
     ok, details = check_package_contract(
         manifest, pkg, portfolios, _lineage_records(), REQUIRED)

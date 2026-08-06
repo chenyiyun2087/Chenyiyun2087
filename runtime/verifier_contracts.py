@@ -108,8 +108,17 @@ def check_package_contract(
         except ValueError:
             problems.append("package_sha256.json corrupt")
             inventory = {}
-        for fname, expected in inventory.items():
-            if fname == "package_sha256":
+        # v5.5.3 (2026-08-06): the builder's inventory is NESTED —
+        # {"schema_version", "package_dir", "files": {fname: sha},
+        #  "package_sha256"}.  The 2026-08-05 first production seal was
+        # wrongly failed: top-level keys were treated as file names and
+        # the real payload SHAs were never checked.  Read the "files"
+        # mapping; fall back to the legacy flat form.
+        payloads = inventory.get("files")
+        if not isinstance(payloads, dict):
+            payloads = inventory
+        for fname, expected in payloads.items():
+            if fname in ("package_sha256", "schema_version", "package_dir"):
                 continue
             path = pkg_dir / fname
             if not path.exists():
