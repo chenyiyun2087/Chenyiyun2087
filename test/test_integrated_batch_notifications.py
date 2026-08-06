@@ -45,6 +45,15 @@ def test_routine_source_jobs_are_silent_and_digest_job_notifies():
     assert "--notify-feishu" in audit
 
 
+def test_historical_safe_audit_cannot_emit_a_current_day_incident():
+    command = build_task_script_parts(
+        "ops_daily_batch_audit",
+        {"datestr": "20260801", "historical_safe": True},
+        _context(),
+    )
+    assert "--historical-safe" in command
+
+
 def test_pipeline_routes_to_integrated_wrappers_and_orders_dependencies():
     context = _context()
     digest = context.tasks["trusted_strategy_performance_review"]
