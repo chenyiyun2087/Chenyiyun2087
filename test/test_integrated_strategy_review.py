@@ -393,7 +393,7 @@ def _context() -> TaskCommandContext:
 
 
 def test_source_jobs_never_notify_even_on_reissue():
-    """Only the digest job (21:45) sends the routine card — reissues included."""
+    """Only the digest job (22:20) sends the routine card — reissues included."""
     context = _context()
     for task_name in ("rolling_strategy_scorer", "trusted_strategy_candidates",
                       "trusted_strategy_shadow_monitor"):

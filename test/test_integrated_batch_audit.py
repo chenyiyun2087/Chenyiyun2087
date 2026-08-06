@@ -140,7 +140,7 @@ def _install_audit(monkeypatch, *, audit_rows=None, digest_row=None, trading_day
     monkeypatch.setattr(audit_mod, "run_audit", fake_run_audit)
     if digest_row is None:
         digest_row = {"task_name": "integrated_strategy_digest_delivery",
-                      "expected_time": "21:45", "status": "OK",
+                      "expected_time": "22:20", "status": "OK",
                       "reason": "综合策略简报投递成功", "replay_required": 0}
 
     def fake_digest_row(business_date):
