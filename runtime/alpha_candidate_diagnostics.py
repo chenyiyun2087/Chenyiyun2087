@@ -214,6 +214,30 @@ def diagnose_h010_day(
 # ── H011: R2 crowding state (weight-only overlay) ─────────────────────
 
 
+class _UndefinedRatio:
+    """Sentinel for an undefined (non-finite) ratio in rule evaluation.
+
+    ``small_vs_large_20d_rs`` is None when the ratio is mathematically
+    undefined — the large-quartile 20d return is non-positive, so
+    small/large has no value (compute_crowding_state marks this as a
+    VALID state, blocked=False).  The pre-registered rules only trigger
+    on ``small_vs_large_20d_rs >= X`` (small-cap overheating); an
+    undefined ratio cannot exceed any threshold, so every comparison
+    against it evaluates to False and the other condition of an OR-rule
+    (top5_turnover_concentration) is still evaluated.  This is NOT a
+    silent 1.0 fallback: a concentration-triggered rule (crowding_elevated
+    at conc >= 0.25) still fires, and a missing concentration still
+    blocks.
+    """
+
+    def __lt__(self, other: Any) -> bool: return False
+    def __le__(self, other: Any) -> bool: return False
+    def __gt__(self, other: Any) -> bool: return False
+    def __ge__(self, other: Any) -> bool: return False
+    def __eq__(self, other: Any) -> bool: return False
+    def __bool__(self) -> bool: return False
+
+
 def resolve_r2_state(
     concentration: Any,
     small_vs_large_rs: Any,
@@ -225,16 +249,23 @@ def resolve_r2_state(
     (e.g. crowding_extreme -> multiplier 0.50, crowding_elevated -> 0.70),
     most-severe first.  The first rule whose conditions hold wins.
 
-    Fail-closed: if either input is missing/NaN the state is UNKNOWN and
-    the multiplier is None — the overlay NEVER silently degrades to the
+    Fail-closed: a MISSING concentration is R2_INPUT_MISSING and the
+    multiplier is None — the overlay NEVER silently degrades to the
     normal-state 1.0 (the 2026-08-04 defect that defaulted R2 to 1.0
     when inputs were absent).
+
+    v5.5.3 fix (2026-08-06): ``small_vs_large_20d_rs=None`` from a
+    blocked=False crowding state is NOT an input failure — it is the
+    mathematically undefined ratio (large-quartile 20d return <= 0).
+    Rules are then evaluated with the rs conditions treated as False via
+    the _UndefinedRatio sentinel, so the elevated OR-rule can still fire
+    on concentration alone.  NaN/inf/garbage rs (data anomalies) still
+    fail closed.
 
     Returns {state, position_multiplier, blocked, reason}.
     """
     conc = _finite_float(concentration)
-    rs = _finite_float(small_vs_large_rs)
-    if conc is None or rs is None:
+    if conc is None:
         return {
             "state": "UNKNOWN",
             "position_multiplier": None,
@@ -243,6 +274,24 @@ def resolve_r2_state(
                        f"top5_turnover_concentration={concentration!r}, "
                        f"small_vs_large_20d_rs={small_vs_large_rs!r}"),
         }
+    raw_rs = _finite_float(small_vs_large_rs)
+    if raw_rs is None:
+        if small_vs_large_rs is None:
+            # Mathematically undefined ratio — a valid market state, not
+            # a missing input (see _UndefinedRatio).
+            rs: Any = _UndefinedRatio()
+        else:
+            # NaN / inf / non-numeric — a data anomaly, fail closed.
+            return {
+                "state": "UNKNOWN",
+                "position_multiplier": None,
+                "blocked": R2_INPUT_MISSING,
+                "reason": (f"required R2 input missing: "
+                           f"small_vs_large_20d_rs={small_vs_large_rs!r} "
+                           f"(non-finite data anomaly)"),
+            }
+    else:
+        rs = raw_rs
     for rule in rules:
         cond = rule.get("condition", "")
         if not cond:

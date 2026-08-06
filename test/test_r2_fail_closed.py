@@ -2,11 +2,15 @@
 
 The production builder must share the diagnostic layer's fail-closed
 gates:
-  - R2: any crowding input missing -> R2_INPUT_MISSING -> BLOCKED
-    (never the old default-1.0 that silently dropped the overlay)
+  - R2: a MISSING concentration -> R2_INPUT_MISSING -> BLOCKED; a
+    blocked crowding state (circ_mv missing) -> SIGNAL_PACKAGE_BLOCKED
+    (never the old default-1.0 that silently dropped the overlay).
+    rs=None from a blocked=False crowding state is an UNDEFINED ratio
+    (large-quartile 20d return <= 0), not a missing input — rules are
+    then evaluated with rs conditions False (elevated can still fire on
+    concentration alone, v5.5.3 fix 2026-08-06).
   - C3: cross-section < minimum_cross_section -> C3_BLOCKED
   - C3: rank-deficient residual design -> C3_BLOCKED
-  - blocked crowding state -> SIGNAL_PACKAGE_BLOCKED end-to-end
 """
 
 from __future__ import annotations
@@ -79,9 +83,20 @@ def test_missing_concentration_blocks_not_1_0():
         r2_position_multiplier(_crowding(None, 1.30))
 
 
-def test_missing_rs_blocks_not_1_0():
-    with pytest.raises(SignalPackageBlocked, match="R2_INPUT_MISSING"):
-        r2_position_multiplier(_crowding(0.32, None))
+def test_undefined_rs_resolves_on_concentration_not_blocked():
+    # rs=None from a blocked=False crowding state is a mathematically
+    # undefined ratio (large-quartile 20d return <= 0), a valid market
+    # state — NOT a missing input.  conc=0.32 >= 0.25 fires the elevated
+    # OR-rule alone -> 0.70 (v5.5.3 fix 2026-08-06).
+    assert r2_position_multiplier(_crowding(0.32, None)) == 0.70
+
+
+def test_undefined_rs_low_concentration_is_normal():
+    # Undefined rs + low concentration -> no rule fires -> normal 1.0
+    # (rules are evaluated with the rs conditions False; this is NOT the
+    # old silent default — a concentration-triggered rule still fires,
+    # see above).
+    assert r2_position_multiplier(_crowding(0.10, None)) == 1.0
 
 
 def test_missing_both_blocks_not_1_0():
@@ -115,14 +130,17 @@ def test_crowding_state_circ_mv_missing_is_blocked():
 
 
 def test_blocked_crowding_blocks_r2_package():
-    """End-to-end: a blocked crowding state with an R2 candidate raises
-    SIGNAL_PACKAGE_BLOCKED — the run never produces a default-1.0 C2."""
+    """End-to-end: a BLOCKED crowding state (e.g. circ_mv missing) with an
+    R2 candidate raises SIGNAL_PACKAGE_BLOCKED at the point of use — the
+    run never produces a default-1.0 C2."""
     raw = _raw_frame()
     c2 = compute_candidate_scores(raw, RUNTIME["candidates"]["C2"])
-    with pytest.raises(SignalPackageBlocked, match="R2_INPUT_MISSING"):
+    blocked = {**_crowding(None, None), "blocked": True,
+               "block_reason": "circ_mv_missing"}
+    with pytest.raises(SignalPackageBlocked, match="crowding state "
+                                                   "unavailable"):
         build_target_portfolios(
-            {"C2": c2}, _universe(), RUNTIME,
-            crowding_state=_crowding(0.32, None))  # rs missing
+            {"C2": c2}, _universe(), RUNTIME, crowding_state=blocked)
 
 
 def test_normal_crowding_scales_c2_weights():

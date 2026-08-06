@@ -462,6 +462,15 @@ def build_target_portfolios(scores_by_candidate: dict[str, pd.DataFrame],
         overlay = cand.get("risk_overlay", "none")
         mult = 1.0
         if overlay == "r2_crowding" and crowding_state is not None:
+            if crowding_state.get("blocked"):
+                # v5.5.3 A4: a blocked crowding state (e.g. circ_mv
+                # missing) must NEVER degrade to "no overlay adjustment"
+                # for an R2 candidate — fail closed at the point of use,
+                # not only at the run_package call site.
+                raise SignalPackageBlocked(
+                    f"SIGNAL_PACKAGE_BLOCKED: crowding state unavailable "
+                    f"({crowding_state.get('block_reason')}) — R2 overlay "
+                    f"cannot be computed; no default-normal fallback")
             mult = r2_position_multiplier(crowding_state)
         sub["weight_before_overlay"] = weight
         sub["target_weight"] = weight * mult
