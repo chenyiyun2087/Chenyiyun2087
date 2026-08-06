@@ -96,6 +96,7 @@ def run_integrated_audit(
     business_date: str,
     *,
     notify_feishu: bool = False,
+    historical_safe: bool = False,
     historical_reissue: bool = False,
 ) -> dict[str, Any]:
     # Notification delivery is not a duty of every batch task. Audit task
@@ -106,14 +107,29 @@ def run_integrated_audit(
         require_notifications=False,
         historical_reissue=False,
     )
-    digest_row = _digest_delivery_row(business_date)
-    summary["rows"] = list(summary.get("rows") or []) + [digest_row]
+    digest_expected = bool(summary.get("trading_day")) and (
+        not historical_safe or historical_reissue
+    )
+    if digest_expected:
+        summary["rows"] = list(summary.get("rows") or []) + [
+            _digest_delivery_row(business_date)
+        ]
+
     bad_rows = attention_rows(summary)
     summary["notification_mode"] = "ANOMALY_ONLY"
+    summary["digest_delivery_expected"] = digest_expected
     summary["attention_count"] = len(bad_rows)
-    summary["notify_result"] = "skipped_healthy" if not bad_rows else None
+    if historical_safe and not historical_reissue:
+        summary["notify_result"] = "skipped_historical_safe"
+    else:
+        summary["notify_result"] = "skipped_healthy" if not bad_rows else None
 
-    if notify_feishu and bad_rows:
+    should_notify = (
+        notify_feishu
+        and bool(bad_rows)
+        and (not historical_safe or historical_reissue)
+    )
+    if should_notify:
         content = format_audit_notification(summary)
         if historical_reissue:
             content = "【历史补发】\n" + content
@@ -141,11 +157,13 @@ def main() -> None:
     parser.add_argument("--date", default=None)
     parser.add_argument("--notify-feishu", action="store_true")
     parser.add_argument("--no-require-notifications", action="store_true")
+    parser.add_argument("--historical-safe", action="store_true")
     parser.add_argument("--historical-reissue", action="store_true")
     args = parser.parse_args()
     summary = run_integrated_audit(
         normalize_datestr(args.date),
         notify_feishu=args.notify_feishu,
+        historical_safe=args.historical_safe,
         historical_reissue=args.historical_reissue,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
