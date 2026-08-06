@@ -8,9 +8,10 @@ The underlying jobs remain independently executable and auditable:
 - ``run_trusted_strategy_shadow_monitor.py`` persists execution diagnostics;
 - ``run_strategy_performance_review.py`` builds the canonical strategy review.
 
-This wrapper adds the rolling-score snapshot to the canonical performance
-review and emits one Feishu digest. Routine source jobs stay silent; failures,
-blocks, retries and recoveries remain immediate scheduler notifications.
+This wrapper adds candidate scores plus the rolling-score snapshot to the
+canonical performance review and emits one Feishu digest. Routine source jobs
+stay silent; failures, blocks, retries and recoveries remain immediate
+scheduler notifications.
 """
 
 from __future__ import annotations
@@ -151,6 +152,42 @@ def load_rolling_score_snapshot(engine, review_date: str) -> dict[str, Any]:
     }
 
 
+def build_candidate_score_section(candidates: list[dict[str, Any]]) -> str:
+    """Preserve the actionable candidate score content from the old card."""
+    rows = list(candidates or [])
+    rows.sort(
+        key=lambda row: (
+            int(_safe_float(row.get("rank_no") or row.get("rank")) or 999999),
+            str(row.get("symbol") or row.get("ts_code") or ""),
+        )
+    )
+    lines = [
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━",
+        "【今日候选评分】",
+        "━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    if not rows:
+        lines.append("- 无候选评分记录。")
+        return "\n".join(lines)
+
+    for row in rows[:5]:
+        rank = int(_safe_float(row.get("rank_no") or row.get("rank")) or 0)
+        symbol = str(row.get("symbol") or row.get("ts_code") or "-")
+        name = str(row.get("stock_name") or row.get("name") or symbol)
+        lines.append(
+            f"#{rank} {name}({symbol}) | "
+            f"排序分 {_num(row.get('rank_score'), 1)} | "
+            f"动态因子 {_num(row.get('dynamic_factor_score'), 1)} | "
+            f"流动性 {_num(row.get('liquidity_detail_score'), 1)} | "
+            f"目标权重 {_pct(row.get('effective_weight') or row.get('target_weight'))}"
+        )
+    if len(rows) > 5:
+        lines.append(f"其余候选：{len(rows) - 5}只（完整明细保留在生产候选产物与数据库）")
+    lines.append("说明：候选分数用于排序与订单草案，不代表资金授权或保证收益。")
+    return "\n".join(lines)
+
+
 def build_rolling_score_section(snapshot: dict[str, Any]) -> str:
     """Render a compact section for the integrated Feishu digest."""
     rows = list(snapshot.get("rows") or [])
@@ -225,9 +262,16 @@ def run_integrated_review(args: argparse.Namespace) -> dict[str, Any]:
     engine = create_engine(build_sqlalchemy_url())
     try:
         snapshot = load_rolling_score_snapshot(engine, review_date)
+        candidates = list((payload.get("current") or {}).get("candidates") or [])
+        candidate_section = build_candidate_score_section(candidates)
         score_section = build_rolling_score_section(snapshot)
         feishu_path = Path(payload["outputs"]["feishu_text_path"])
-        integrated_text = feishu_path.read_text(encoding="utf-8").rstrip() + score_section + "\n"
+        integrated_text = (
+            feishu_path.read_text(encoding="utf-8").rstrip()
+            + candidate_section
+            + score_section
+            + "\n"
+        )
         feishu_path.write_text(integrated_text, encoding="utf-8")
 
         payload["rolling_strategy_scores"] = snapshot
