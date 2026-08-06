@@ -218,15 +218,24 @@ def replay(log_path: Path,
             elif etype == SELL_PRECOMMITTED:
                 pos = _find_position(machine, ev["challenger_id"],
                                      ev["symbol"])
-                machine.precommit_sell(pos, float(ev["precommit_price"]),
-                                       execution_date=ev["execution_date"],
-                                       order_id=ev["order_id"])
+                machine.precommit_sell(
+                    pos, float(ev["precommit_price"]),
+                    execution_date=ev["execution_date"],
+                    order_id=ev["order_id"],
+                    shares=int(ev["target_shares"]) if ev.get("target_shares")
+                    else None)
             elif etype == SELL_FILLED:
                 pos = _find_position(machine, ev["challenger_id"],
                                      ev["symbol"])
                 machine.fill_sell(pos, float(ev["fill_price"]),
-                                  float(ev.get("slippage_bps", 0.0)))
-                machine.complete_round_trip(pos)
+                                  float(ev.get("slippage_bps", 0.0)),
+                                  shares=int(ev["shares"])
+                                  if ev.get("shares") else None)
+                # v5.5.3: a PARTIAL sell leaves remaining_shares > 0 and
+                # the position HOLDING — only a full exit completes the
+                # round trip.
+                if pos.remaining_shares == 0:
+                    machine.complete_round_trip(pos)
             elif etype == SELL_REJECTED:
                 pos = _find_position(machine, ev["challenger_id"],
                                      ev["symbol"])

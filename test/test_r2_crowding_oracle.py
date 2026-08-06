@@ -144,14 +144,15 @@ def test_empty_bars_blocked():
     assert state["small_vs_large_20d_rs"] is None
 
 
-def test_missing_circ_mv_reports_conc_but_rs_none():
+def test_missing_circ_mv_blocks_rs_required():
     # circ_mv absent: concentration still reported, rs explicitly None —
-    # never a silently wrong ratio.  (This was the production defect: bars
-    # never carried circ_mv, and the OLD code returned rs None while the
-    # caller treated "missing" as "no overlay adjustment".)
+    # never a silently wrong ratio.  v5.5.3 (A4): the state is now
+    # BLOCKED, not merely reported — rs is a REQUIRED R2 input and a
+    # missing input is R2_INPUT_MISSING (the old caller treated "missing"
+    # as "no overlay adjustment" and silently degraded to 1.0).
     bars = _bars(with_circ_mv=False)
     state = _pkg.compute_crowding_state(bars)
-    assert state["blocked"] is False
+    assert state["blocked"] is True
     assert state["top5_turnover_concentration"] is not None
     assert state["small_vs_large_20d_rs"] is None
     assert state["block_reason"] == "circ_mv_missing"

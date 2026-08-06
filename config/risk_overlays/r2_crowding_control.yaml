@@ -9,6 +9,14 @@
 #
 # PRE-REGISTERED: thresholds fixed 2026-08-04.  2025-2026 CONSUMED
 # (report-only). True forward blind starts 2026-08-05.
+#
+# v5.5.3 (2026-08-05, A4 pre-blind fix): rule ORDER corrected to
+# most-severe-first.  The 2026-08-04 file listed crowding_elevated first;
+# its OR-condition subsumes crowding_extreme's AND-condition, so the
+# extreme rule (0.50) was unreachable and the diagnostic layer resolved
+# extreme days to 0.70 while production resolved 0.50.  Threshold VALUES
+# are unchanged — the ordering defect existed before any true-blind day
+# was declared, so no forward evidence is affected.
 # =====================================================================
 
 schema_version: "risk_overlay_v1"
@@ -18,16 +26,16 @@ applies_to_strategy: "p2_style_constrained"
 experiment_id: "exp_alpha_rebuild_202608_r2_crowding_control"
 
 rules:
-  - id: crowding_elevated
-    condition: "top5_turnover_concentration >= 0.25 or small_vs_large_20d_rs >= 1.15"
-    position_multiplier: 0.70
-    rationale: "Top-5% turnover concentration or small-vs-large RS extreme -> trim to 70%"
-
   - id: crowding_extreme
     condition: "top5_turnover_concentration >= 0.30 and small_vs_large_20d_rs >= 1.25"
     position_multiplier: 0.50
     halt_new_entries: true
     rationale: "Concentration AND relative-strength both extreme -> 50% + no new buys"
+
+  - id: crowding_elevated
+    condition: "top5_turnover_concentration >= 0.25 or small_vs_large_20d_rs >= 1.15"
+    position_multiplier: 0.70
+    rationale: "Top-5% turnover concentration or small-vs-large RS extreme -> trim to 70%"
 
 required_market_inputs:
   - top5_turnover_concentration   # share of market amount in top 5% symbols

@@ -56,6 +56,29 @@ PACKAGES_ROOT = PROJECT_ROOT / "exports" / "forward_shadow_evidence" / "packages
 RUNTIME_CFG_PATH = PROJECT_ROOT / "config" / "strategy_runtime" / "forward_shadow_v2.yaml"
 SIGNAL_TIME = "15:30:00+08:00"
 
+# A-share PIT availability conventions (v5.5.3) — the TIME part of each
+# *_available_at gate.  Documented in
+# config/pit_semantics/ashare_pit_semantics_v1.yaml family semantics and
+# implemented identically by scripts/pit/run_snapshot_extract.py
+# (financial T08:00, industry T09:00, adjustment T08:00, benchmark/market
+# T15:30).  The DATE part always comes from REAL DB fields of actually
+# fetched rows (ann_date / effective_date / trade_date) — the convention
+# only supplies the intraday knowability time, and the source of every
+# gate is recorded in the manifest lineage (available_at_source).
+AVAILABLE_AT_CONVENTIONS = {
+    "financial": "T08:00:00+08:00",   # announcement-date convention
+    "industry": "T09:00:00+08:00",    # SCD effective-date convention
+    "adjustment": "T08:00:00+08:00",  # adj-factor daily convention
+    "benchmark": "T15:30:00+08:00",   # index-close convention (= cutoff)
+    "market": "T15:30:00+08:00",      # bar-close convention (= cutoff)
+}
+
+# Real limit_status mapping (tushare dwd_stock_label_daily.limit_type):
+# 10 = 10% daily limit (main board), 20 = 20% (ChiNext/STAR).  Unknown
+# values pass through as their numeric string; NaN stays NaN and the
+# universe contract BLOCKS (status_source_missing:limit_status).
+LIMIT_STATUS_MAP = {10: "NORMAL", 20: "20PCT"}
+
 REQUIRED_PACKAGE_FILES = (
     "input_manifest.json", "data_quality_report.json", "universe.parquet",
     "factor_values.parquet", "scores.parquet", "target_portfolios.parquet",
@@ -217,7 +240,13 @@ def residualize_scores(day: pd.DataFrame, candidate: dict) -> pd.Series:
         mask &= day["industry"].notna()
     sub = day[mask]
     if len(sub) < min_cs:
-        return out
+        # v5.5.3 (A4): the cross-section is below the pre-registered
+        # minimum — C3_BLOCKED, never a silent all-NaN day (the
+        # diagnostic layer already blocked this; production must too).
+        raise SignalPackageBlocked(
+            f"C3_BLOCKED: {candidate.get('challenger_id')} cross-section "
+            f"{len(sub)} < minimum_cross_section={min_cs} — residual "
+            "design is not computable; no silent NaN day")
     if style_cols:
         x_style = sub[style_cols].to_numpy(dtype=float)
         mu, sd = x_style.mean(axis=0), x_style.std(axis=0)
@@ -239,6 +268,16 @@ def residualize_scores(day: pd.DataFrame, candidate: dict) -> pd.Series:
     else:
         design = np.column_stack([np.ones(len(sub)), x_style])
     y = sub["score"].to_numpy(dtype=float)
+    # v5.5.3 (A4): a rank-deficient design has no unique OLS — the old
+    # code returned a minimum-norm lstsq solution silently (observed
+    # 2026-08-04: rank 112/113).  That is C3_BLOCKED, never a "best
+    # effort" residual: the diagnostic layer already blocks; production
+    # must too (with industry fixed effects a full-rank check is exact).
+    if design.shape[1] > 0 and np.linalg.matrix_rank(design) < design.shape[1]:
+        raise SignalPackageBlocked(
+            f"C3_BLOCKED: {candidate.get('challenger_id')} residual design "
+            f"is rank-deficient ({np.linalg.matrix_rank(design)}/"
+            f"{design.shape[1]}) — no unique OLS, no silent minimum-norm fit")
     beta, *_ = np.linalg.lstsq(design, y, rcond=None)
     # np.dot, not `design @ beta`: on this build (numpy 2.2.6 + Accelerate)
     # matmul's kernel emits spurious divide-by-zero/overflow warnings on
@@ -271,8 +310,10 @@ def compute_crowding_state(bars_20d: pd.DataFrame) -> dict:
     Fail-closed contract:
       - empty bars or < 2 symbols -> blocked: True (never fabricate a
         single-symbol 100% concentration value).
-      - circ_mv missing on the latest day -> concentration still reported,
-        rs explicitly None (never a silently wrong ratio).
+      - circ_mv missing on the latest day -> blocked: True (v5.5.3 A4:
+        rs is REQUIRED for the R2 overlay; a missing input is
+        R2_INPUT_MISSING, never a silent partial state that lets the
+        overlay degrade to 1.0).
       - < 20d of history is DEGRADED, not blocked: short_history: True
         marks the row so consumers can decide.
     """
@@ -317,7 +358,11 @@ def compute_crowding_state(bars_20d: pd.DataFrame) -> dict:
             "blocked": False, "block_reason": None,
             "history_days": history_days, "short_history": short_history}
     if "circ_mv" not in latest.columns:
-        return {**base, "block_reason": "circ_mv_missing"}
+        # v5.5.3 A4: rs cannot be computed -> the R2 overlay's required
+        # input is missing.  blocked: True so the package gate refuses
+        # instead of silently using concentration alone.
+        return {**base, "blocked": True,
+                "block_reason": "circ_mv_missing"}
 
     ordered = bars.sort_values(["symbol", "trade_date"])
     first_close = pd.to_numeric(
@@ -330,7 +375,8 @@ def compute_crowding_state(bars_20d: pd.DataFrame) -> dict:
     ret_with_size = returns_20d.to_frame("ret_20d").join(size_map, how="inner")
     ret_with_size = ret_with_size.replace([np.inf, -np.inf], np.nan).dropna()
     if ret_with_size.empty:
-        return {**base, "block_reason": "no_valid_return_size_pairs"}
+        return {**base, "blocked": True,
+                "block_reason": "no_valid_return_size_pairs"}
     size_q = pd.qcut(ret_with_size["circ_mv"].rank(method="first"), 4,
                      labels=False)
     small = ret_with_size.loc[size_q == 0, "ret_20d"].mean()
@@ -339,20 +385,53 @@ def compute_crowding_state(bars_20d: pd.DataFrame) -> dict:
     return {**base, "small_vs_large_20d_rs": rs}
 
 
+_R2_RULES_CACHE: list[dict] | None = None
+
+
+def _load_r2_rules() -> list[dict]:
+    """Pre-registered R2 rules from config/risk_overlays/r2_crowding_control.yaml.
+
+    Loaded once per process (the file is immutable evidence — never
+    expected to change at runtime).  A missing/unparseable rules file
+    raises: the overlay must NEVER run on guessed thresholds.
+    """
+    global _R2_RULES_CACHE
+    if _R2_RULES_CACHE is None:
+        if not R2_OVERLAY_YAML.exists():
+            raise SignalPackageBlocked(
+                "SIGNAL_PACKAGE_BLOCKED: R2 rules file missing at "
+                f"{R2_OVERLAY_YAML.name} — the overlay refuses to run "
+                "without its pre-registered thresholds")
+        doc = yaml.safe_load(R2_OVERLAY_YAML.read_text(encoding="utf-8"))
+        _R2_RULES_CACHE = list((doc or {}).get("rules") or [])
+        if not _R2_RULES_CACHE:
+            raise SignalPackageBlocked(
+                "SIGNAL_PACKAGE_BLOCKED: R2 rules file has no rules — "
+                "the overlay refuses to run with an empty threshold set")
+    return _R2_RULES_CACHE
+
+
 def r2_position_multiplier(state: dict) -> float:
     """R2 position multiplier from the crowding state (weight scaler only
-    — never changes stock selection)."""
-    conc = state.get("top5_turnover_concentration")
-    rs = state.get("small_vs_large_20d_rs")
-    if conc is None or rs is None:
-        return 1.0  # indicator missing -> no overlay adjustment (documented)
-    elevated = conc >= R2_ELEVATED_CONC or rs >= R2_ELEVATED_RS
-    extreme = conc >= R2_EXTREME_CONC and rs >= R2_EXTREME_RS
-    if extreme:
-        return R2_EXTREME_MULT
-    if elevated:
-        return R2_ELEVATED_MULT
-    return 1.0
+    — never changes stock selection).
+
+    v5.5.3 (A4): the PRODUCTION path shares the diagnostic layer's
+    fail-closed gate ``resolve_r2_state`` — a missing crowding input is
+    R2_INPUT_MISSING and BLOCKS the package (the old default-1.0 silently
+    dropped the overlay; the diagnostic side already blocked).  The
+    multiplier is the diagnostic layer's resolution, never a local copy
+    of the thresholds.
+    """
+    from runtime.alpha_candidate_diagnostics import R2_INPUT_MISSING, resolve_r2_state
+    resolved = resolve_r2_state(
+        state.get("top5_turnover_concentration"),
+        state.get("small_vs_large_20d_rs"),
+        _load_r2_rules())
+    if resolved["blocked"] == R2_INPUT_MISSING:
+        raise SignalPackageBlocked(
+            f"SIGNAL_PACKAGE_BLOCKED: R2_INPUT_MISSING — "
+            f"{resolved['reason']} (no default-1.0 fallback)")
+    return float(resolved["position_multiplier"])
 
 
 def build_target_portfolios(scores_by_candidate: dict[str, pd.DataFrame],
@@ -383,6 +462,15 @@ def build_target_portfolios(scores_by_candidate: dict[str, pd.DataFrame],
         overlay = cand.get("risk_overlay", "none")
         mult = 1.0
         if overlay == "r2_crowding" and crowding_state is not None:
+            if crowding_state.get("blocked"):
+                # v5.5.3 A4: a blocked crowding state (e.g. circ_mv
+                # missing) must NEVER degrade to "no overlay adjustment"
+                # for an R2 candidate — fail closed at the point of use,
+                # not only at the run_package call site.
+                raise SignalPackageBlocked(
+                    f"SIGNAL_PACKAGE_BLOCKED: crowding state unavailable "
+                    f"({crowding_state.get('block_reason')}) — R2 overlay "
+                    f"cannot be computed; no default-normal fallback")
             mult = r2_position_multiplier(crowding_state)
         sub["weight_before_overlay"] = weight
         sub["target_weight"] = weight * mult
@@ -671,8 +759,12 @@ def verify_package_sha(package_dir: Path) -> dict:
 
 # Required lineage families — each must be present with a real content SHA
 # and a non-zero row count (v5.5.1: any missing family BLOCKS the package).
+# v5.5.3 adds adjustment/benchmark_index (real data backing the gates) and
+# status_scd/dim_stock (real universe status sources).
 REQUIRED_LINEAGE_FAMILIES = ("market", "market_cap", "basic_financial",
-                             "industry_scd", "labels", "trade_calendar")
+                             "industry_scd", "labels", "trade_calendar",
+                             "adjustment", "benchmark_index",
+                             "status_scd", "dim_stock")
 
 
 def _pit_contract_sha() -> str:
@@ -701,19 +793,28 @@ def _df_content_sha256(df: pd.DataFrame) -> str:
 
 def _family_lineage(name: str, df: pd.DataFrame, query: str, params: tuple,
                     provider: str, snapshot_identity: str,
-                    date_col: str | None = None) -> dict:
-    """One lineage record per input family (v5.5.1 contract).
+                    date_col: str | None = None,
+                    available_at_col: str | None = None) -> dict:
+    """One lineage record per input family (v5.5.1 + v5.5.3 contract).
 
     query/parameter/schema/content SHAs bind WHAT was queried and WHAT
-    came back; min/max_available_at come from the DATA's own dates (never
-    fabricated); retrieved_at is the read time.
+    came back (query_sha256 binds the REAL SQL text executed, never a
+    short label — v5.5.3); min/max_available_at come from the DATA's own
+    dates (never fabricated); retrieved_at is the read time.
+
+    v5.5.3 provenance: ``available_at_col`` names a REAL DB timestamp
+    column when the family has one.  When that column is present AND
+    populated, min/max_available_at_ts carry the real timestamps and
+    available_at_source is "db_timestamp_column"; when the column is
+    absent or all-NULL (the live ingestion does not populate them), the
+    record says so honestly — never fabricated.
     """
     date_vals = []
     if date_col and date_col in df.columns and not df.empty:
         date_vals = sorted({str(v)[:10]
                             for v in df[date_col].dropna().unique()})
     params_json = json.dumps(params, sort_keys=True)
-    return {
+    rec = {
         "family": name,
         "provider": provider,
         "query_sha256": hashlib.sha256(
@@ -730,6 +831,18 @@ def _family_lineage(name: str, df: pd.DataFrame, query: str, params: tuple,
         "retrieved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "snapshot_identity": snapshot_identity,
     }
+    ts_vals = []
+    if available_at_col and available_at_col in df.columns and not df.empty:
+        ts_vals = [str(v) for v in df[available_at_col].dropna().tolist()]
+    if ts_vals:
+        rec["available_at_source"] = "db_timestamp_column"
+        rec["min_available_at_ts"] = min(ts_vals)
+        rec["max_available_at_ts"] = max(ts_vals)
+        rec["row_timestamps_populated"] = True
+    else:
+        rec["available_at_source"] = "business_date_convention"
+        rec["row_timestamps_populated"] = False
+    return rec
 
 
 def _get_conn():
@@ -740,6 +853,113 @@ def _get_conn():
         database="tushare_stock", charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
     )
+
+
+def _begin_consistent_snapshot(conn) -> dict:
+    """Start ONE read-only REPEATABLE READ consistent-snapshot transaction
+    and capture its identity markers (v5.5.3).
+
+    Previously the family queries were independent reads with no
+    transaction — a write between queries could mix database states inside
+    one package.  Now every family is read from the SAME snapshot, and the
+    snapshot identity (server_uuid + GTID/binlog position when the server
+    provides them) is bound to every lineage record.
+
+    The local MySQL has log_bin=0 (formal E3 requires a binlog-enabled
+    replica), so binlog capture is attempted and its absence is recorded
+    HONESTLY in the identity — never fabricated.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        cur.execute("START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT")
+        cur.execute(
+            "SELECT @@server_uuid AS server_uuid, "
+            "@@transaction_isolation AS tx_isolation, "
+            "@@gtid_executed AS gtid_executed")
+        row = cur.fetchone() or {}
+        identity = {
+            "server_uuid": str(row.get("server_uuid") or "unknown"),
+            "transaction_isolation": str(row.get("tx_isolation") or "unknown"),
+            "gtid_executed": str(row.get("gtid_executed") or ""),
+            "binlog_file": None,
+            "binlog_position": None,
+            "consistent_snapshot": True,
+            "snapshot_started_at":
+                datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        try:
+            cur.execute("SHOW BINARY LOG STATUS")
+            brow = cur.fetchone()
+            if brow:
+                identity["binlog_file"] = str(brow[0] if brow else "")
+                identity["binlog_position"] = int(brow[1] if brow else 0)
+        except Exception:
+            # log_bin=0 server — record honestly, never fabricate a marker.
+            identity["binlog_file"] = "unavailable:log_bin_off"
+    return identity
+
+
+def _snapshot_identity_marker(identity: dict) -> str:
+    """Compact snapshot-identity string for lineage records (real, never
+    the old hardcoded 'live_mysql:...' description strings)."""
+    gtid = identity.get("gtid_executed") or ""
+    if gtid:
+        return f"consistent_snapshot:gtid={gtid[:40]}"
+    if identity.get("binlog_file"):
+        return (f"consistent_snapshot:binlog="
+                f"{identity['binlog_file']}:{identity['binlog_position']}")
+    return (f"consistent_snapshot:{identity.get('server_uuid')}@"
+            f"{identity.get('snapshot_started_at')}")
+
+
+def _max_business_date(df: pd.DataFrame, col: str) -> str | None:
+    """The real max business date of a fetched family (v5.5.3 availability
+    gate input — never fabricated).  Accepts int (20260805) or ISO
+    (2026-08-05) forms; returns ISO so the gate's string comparison against
+    trade_date is orderable."""
+    if df is None or df.empty or col not in df.columns:
+        return None
+    vals = []
+    for v in pd.to_numeric(df[col], errors="coerce").dropna().tolist():
+        if pd.isna(v) or v == 0:
+            continue
+        s = str(int(v))
+        if len(s) == 8 and s.isdigit():
+            vals.append(f"{s[:4]}-{s[4:6]}-{s[6:]}")
+        elif len(s) >= 10:
+            vals.append(s[:10])
+    return max(vals) if vals else None
+
+
+def _build_availability_gates(signal_date: str, inputs: dict) -> dict:
+    """REAL *_available_at gates (v5.5.3) — the DATE part comes from real
+    DB fields of actually-fetched rows, the TIME part is the documented
+    family convention (AVAILABLE_AT_CONVENTIONS).  adjustment/benchmark
+    gates are now backed by REAL fetched data (dwd_adj_factor /
+    ods_index_daily CSI300) — previously they were fabricated always-pass
+    no-ops for families that were never fetched at all.
+    """
+    fin_date = _max_business_date(inputs.get("basic"), "ann_date")
+    ind_date = _max_business_date(inputs.get("industry"), "effective_date")
+    adj = inputs.get("adjustment")
+    bench = inputs.get("benchmark")
+    adj_date = signal_date if adj is not None and not adj.empty else None
+    bench_date = (signal_date if bench is not None and not bench.empty
+                  else None)
+    return {
+        "financial_available_at": (
+            f"{fin_date}{AVAILABLE_AT_CONVENTIONS['financial']}"
+            if fin_date else None),
+        "industry_available_at": (
+            f"{ind_date}{AVAILABLE_AT_CONVENTIONS['industry']}"
+            if ind_date else None),
+        "adjustment_available_at": (
+            f"{adj_date}{AVAILABLE_AT_CONVENTIONS['adjustment']}"
+            if adj_date else None),
+        "benchmark_available_at": (
+            f"{bench_date}{AVAILABLE_AT_CONVENTIONS['benchmark']}"
+            if bench_date else None),
+    }
 
 
 def _read_sql(conn, query: str, params=None) -> pd.DataFrame:
@@ -761,9 +981,26 @@ def _trade_dates(conn, up_to: str, limit: int = HISTORY_DAYS) -> list[str]:
 
 
 def fetch_production_inputs(signal_date: str) -> dict:
-    """Fetch + quality-check all live inputs for one signal date."""
+    """Fetch + quality-check all live inputs for one signal date.
+
+    v5.5.3:
+      - ALL families are read inside ONE REPEATABLE READ consistent-
+        snapshot transaction (single connection); the snapshot identity
+        (server_uuid + GTID/binlog when the server provides them) is
+        bound to every lineage record — the package can no longer mix
+        data from different database points in time.
+      - query_sha256 binds the REAL SQL text executed (never a short
+        label).
+      - adjustment / benchmark are now genuinely fetched (dwd_adj_factor /
+        ods_index_daily CSI300) — their availability gates are real, not
+        fabricated always-pass no-ops.
+      - status_scd / dim_stock feed the universe's REAL
+        security_status_transition / is_listed (A2).
+    """
     conn = _get_conn()
     try:
+        snapshot = _begin_consistent_snapshot(conn)
+        marker = _snapshot_identity_marker(snapshot)
         dates = _trade_dates(conn, signal_date)
         if not dates or dates[-1] != signal_date:
             # No bars on the requested date -> BLOCKED (no stale fallback).
@@ -773,27 +1010,26 @@ def fetch_production_inputs(signal_date: str) -> dict:
                 "stale-date substitution is forbidden")
         date_int = int(signal_date.replace("-", ""))
         bar_range = (date_int, int(dates[0].replace("-", "")))
-        bars = _read_sql(
-            conn,
+        market_sql = (
             "SELECT trade_date, ts_code, adj_close, amount "
             "FROM dwd_stock_daily_standard WHERE trade_date <= %s "
-            "AND trade_date >= %s",
-            bar_range)
+            "AND trade_date >= %s")
+        bars = _read_sql(conn, market_sql, bar_range)
         bars["trade_date"] = bars["trade_date"].astype(str).apply(
             lambda x: f"{x[:4]}-{x[4:6]}-{x[6:]}" if len(x) == 8 else x)
-        mcap = _read_sql(
-            conn,
-            "SELECT ts_code, circ_mv FROM dwd_market_cap_daily "
-            "WHERE trade_date = %s", (date_int,))
+        mcap_sql = ("SELECT ts_code, circ_mv FROM dwd_market_cap_daily "
+                    "WHERE trade_date = %s")
+        mcap = _read_sql(conn, mcap_sql, (date_int,))
         # circ_mv over the WHOLE bar window (v5.5.1): R2 crowding needs the
         # latest-day size to assign quartiles AND the 20d window to pair
         # first/last closes.  Previously bars carried no circ_mv at all, so
         # small_vs_large_20d_rs was ALWAYS None in production (the guard at
         # compute_crowding_state saw a column that never existed).
-        mcap_window = _read_sql(
-            conn,
+        mcap_window_sql = (
             "SELECT ts_code, trade_date, circ_mv FROM dwd_market_cap_daily "
-            "WHERE trade_date >= %s AND trade_date <= %s",
+            "WHERE trade_date >= %s AND trade_date <= %s")
+        mcap_window = _read_sql(
+            conn, mcap_window_sql,
             (int(dates[0].replace("-", "")), date_int))
         mcap_window["trade_date"] = mcap_window["trade_date"].astype(str).apply(
             lambda x: f"{x[:4]}-{x[4:6]}-{x[6:]}" if len(x) == 8 else x)
@@ -802,12 +1038,17 @@ def fetch_production_inputs(signal_date: str) -> dict:
         bars = bars.merge(
             mcap_window[["ts_code", "trade_date", "circ_mv"]],
             on=["ts_code", "trade_date"], how="left")
-        basic = _read_sql(
-            conn,
-            "SELECT ts_code, pb, turnover_rate FROM dwd_daily_basic "
-            "WHERE trade_date = %s", (date_int,))
-        industry = _read_sql(
-            conn,
+        # v5.5.3: the financial family carries the REAL announcement date
+        # (dws_fina_pit_daily.ann_date) — the availability gate's DATE part
+        # comes from it, never from a fabricated T15:00.
+        basic_sql = (
+            "SELECT b.ts_code, b.pb, b.turnover_rate, f.ann_date "
+            "FROM dwd_daily_basic b "
+            "LEFT JOIN dws_fina_pit_daily f "
+            "  ON b.ts_code = f.ts_code AND b.trade_date = f.trade_date "
+            "WHERE b.trade_date = %s")
+        basic = _read_sql(conn, basic_sql, (date_int,))
+        industry_sql = (
             # Canonical taxonomy only: the SCD table carries several
             # industry systems (SW2021 L1/L2, TUSHARE_CURRENT L1) that are
             # ALL marked effective on the same date (000001.SZ had 3 rows
@@ -820,12 +1061,35 @@ def fetch_production_inputs(signal_date: str) -> dict:
             "updated_at FROM dwd_stock_industry_scd WHERE "
             "industry_system = 'TUSHARE_CURRENT' AND industry_level = 'L1' "
             "AND (expire_date IS NULL OR expire_date > %s) "
-            "AND effective_date <= %s",
-            (date_int, date_int))
-        labels = _read_sql(
-            conn,
-            "SELECT ts_code, is_st, is_new, market, industry "
-            "FROM dwd_stock_label_daily WHERE trade_date = %s", (date_int,))
+            "AND effective_date <= %s")
+        industry = _read_sql(conn, industry_sql, (date_int, date_int))
+        # v5.5.3: REAL limit_type from the label table feeds the universe's
+        # limit_status (A2) — never a hardcoded "NORMAL".
+        labels_sql = (
+            "SELECT ts_code, is_st, is_new, market, industry, limit_type "
+            "FROM dwd_stock_label_daily WHERE trade_date = %s")
+        labels = _read_sql(conn, labels_sql, (date_int,))
+        # v5.5.3: REAL adjustment data (the old adjustment_available_at was
+        # a fabricated always-pass no-op for a family never fetched).
+        adjustment_sql = (
+            "SELECT trade_date, ts_code, adj_factor FROM dwd_adj_factor "
+            "WHERE trade_date = %s")
+        adjustment = _read_sql(conn, adjustment_sql, (date_int,))
+        # v5.5.3: REAL benchmark data (the old benchmark_available_at was
+        # the same no-op) — CSI 300 close for the signal date.
+        benchmark_sql = (
+            "SELECT trade_date, ts_code, close FROM ods_index_daily "
+            "WHERE ts_code = '000300.SH' AND trade_date = %s")
+        benchmark = _read_sql(conn, benchmark_sql, (date_int,))
+        # v5.5.3: REAL ST/lifecycle intervals (A2 security_status_transition)
+        # and REAL listing intervals (A2 is_listed).
+        status_scd_sql = (
+            "SELECT ts_code, status, effective_date, expire_date "
+            "FROM dim_stock_status_scd WHERE effective_date <= %s "
+            "AND (expire_date IS NULL OR expire_date > %s)")
+        status_scd = _read_sql(conn, status_scd_sql, (date_int, date_int))
+        dim_stock_sql = "SELECT ts_code, list_date, delist_date FROM dim_stock"
+        dim_stock = _read_sql(conn, dim_stock_sql, ())
         quality = {
             "signal_date": signal_date,
             "bar_dates": len(dates),
@@ -835,45 +1099,55 @@ def fetch_production_inputs(signal_date: str) -> dict:
             "basic_rows": len(basic),
             "industry_rows": len(industry),
             "label_rows": len(labels),
+            "adjustment_rows": len(adjustment),
+            "benchmark_rows": len(benchmark),
+            "status_scd_rows": len(status_scd),
+            "dim_stock_rows": len(dim_stock),
         }
         missing = [k for k, v in quality.items()
                    if k != "signal_date" and v == 0]
         if missing:
             raise SignalPackageBlocked(
                 f"data_quality: zero rows for {missing} on {signal_date}")
-        # ── v5.5.1: real PIT lineage — every input family bound to its own
-        # query/parameter/schema/content SHAs + the data's own date extent.
+        # ── v5.5.1/v5.5.3: real PIT lineage — every input family bound to
+        # the REAL SQL text (query_sha256), the data's own date extent, and
+        # the ONE consistent-snapshot identity shared by all families.
         lineage = [
             _family_lineage(
-                "market", bars, "bars", bar_range,
-                "dwd_stock_daily_standard",
-                f"live_mysql:dwd_stock_daily_standard<={date_int}",
+                "market", bars, market_sql, bar_range,
+                "dwd_stock_daily_standard", marker,
                 date_col="trade_date"),
             _family_lineage(
-                "market_cap", mcap, "mcap_signal_date", (date_int,),
-                "dwd_market_cap_daily",
-                f"live_mysql:dwd_market_cap_daily={date_int}"),
+                "market_cap", mcap, mcap_sql, (date_int,),
+                "dwd_market_cap_daily", marker),
             _family_lineage(
-                "basic_financial", basic, "basic_signal_date", (date_int,),
-                "dwd_daily_basic",
-                f"live_mysql:dwd_daily_basic={date_int}"),
+                "basic_financial", basic, basic_sql, (date_int,),
+                "dwd_daily_basic+dws_fina_pit_daily", marker),
             _family_lineage(
-                "industry_scd", industry, "industry_scd", (date_int, date_int),
-                "dwd_stock_industry_scd",
-                f"live_mysql:dwd_stock_industry_scd<=TUSHARE_CURRENT_L1"
-                f"@{date_int}",
+                "industry_scd", industry, industry_sql, (date_int, date_int),
+                "dwd_stock_industry_scd", marker,
                 date_col="effective_date"),
             _family_lineage(
-                "labels", labels, "labels_signal_date", (date_int,),
-                "dwd_stock_label_daily",
-                f"live_mysql:dwd_stock_label_daily={date_int}",
+                "labels", labels, labels_sql, (date_int,),
+                "dwd_stock_label_daily", marker,
                 date_col="trade_date"),
+            _family_lineage(
+                "adjustment", adjustment, adjustment_sql, (date_int,),
+                "dwd_adj_factor", marker, date_col="trade_date"),
+            _family_lineage(
+                "benchmark_index", benchmark, benchmark_sql, (date_int,),
+                "ods_index_daily", marker, date_col="trade_date"),
+            _family_lineage(
+                "status_scd", status_scd, status_scd_sql, (date_int, date_int),
+                "dim_stock_status_scd", marker),
+            _family_lineage(
+                "dim_stock", dim_stock, dim_stock_sql, (),
+                "dim_stock", marker),
             _family_lineage(
                 "trade_calendar",
                 pd.DataFrame({"cal_date": dates}),
                 "dim_trade_cal_open_days", (signal_date,),
-                "dim_trade_cal",
-                f"live_mysql:dim_trade_cal@SSE<={signal_date}",
+                "dim_trade_cal", marker,
                 date_col="cal_date"),
         ]
         got = {rec["family"] for rec in lineage}
@@ -887,36 +1161,106 @@ def fetch_production_inputs(signal_date: str) -> dict:
                 "complete PIT provenance")
         return {"bars": bars, "mcap": mcap, "basic": basic,
                 "industry": industry, "labels": labels,
+                "adjustment": adjustment, "benchmark": benchmark,
+                "status_scd": status_scd, "dim_stock": dim_stock,
+                "snapshot_identity": snapshot,
                 "data_quality": quality, "lineage": lineage}
     finally:
+        conn.rollback()  # end the read-only snapshot
         conn.close()
 
 
-def build_live_universe(labels: pd.DataFrame, signal_date: str,
-                        bars: pd.DataFrame) -> pd.DataFrame:
-    """Universe snapshot from live label data + bar presence.
+def _symbol_map(df: pd.DataFrame, col: str = "ts_code") -> pd.Series:
+    """Normalize a ts_code column to 6-digit symbol strings."""
+    return df[col].astype(str).str.replace(
+        r"\.(SH|SZ|BJ)$", "", regex=True).str.zfill(6)
 
-    is_suspended is DERIVED from bar presence: a listed symbol with no
-    bar on the signal date cannot be traded (the tushare label table
-    carries no suspension flag).  is_st / is_new / industry come from
-    the label table (PIT-visible on the signal date).
+
+def build_live_universe(labels: pd.DataFrame, signal_date: str,
+                        bars: pd.DataFrame, status_scd: pd.DataFrame | None = None,
+                        dim_stock: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Universe snapshot from REAL status sources (v5.5.3).
+
+    - is_listed:            REAL listing intervals from dim_stock
+                            list_date/delist_date — never a hardcoded 1.
+                            A missing dim_stock leaves NaN and the universe
+                            contract BLOCKS (status_source_missing).
+    - limit_status:         REAL limit_type from the label table (10 ->
+                            NORMAL, 20 -> 20PCT) — never "NORMAL" for all.
+    - security_status_transition: REAL ST intervals from
+                            dim_stock_status_scd + the REAL listing day
+                            (LISTED event) — never "NORMAL" for all.
+    - is_suspended:         derived from bar presence (no direct suspension
+                            source exists in the live schema — provenance
+                            recorded in the manifest; functionally correct:
+                            a name with no bar on the signal date cannot be
+                            traded).
+    - is_st / is_new:       REAL from the label table; NaN stays NaN and
+                            the universe contract BLOCKS (never fillna 0).
     """
     out = labels.copy()
-    out["symbol"] = out["ts_code"].astype(str).str.replace(
-        r"\.(SH|SZ|BJ)$", "", regex=True).str.zfill(6)
+    out["symbol"] = _symbol_map(out)
     out["trade_date"] = signal_date
-    out["is_listed"] = 1
+    date_int = int(signal_date.replace("-", ""))
+
+    # ── is_listed: real listing intervals (dim_stock) ──
+    listed_map: dict = {}
+    if dim_stock is not None and not dim_stock.empty:
+        ds = dim_stock.copy()
+        ds["symbol"] = _symbol_map(ds)
+        ds["list_date"] = pd.to_numeric(ds["list_date"],
+                                        errors="coerce").fillna(0)
+        ds["delist_date"] = pd.to_numeric(ds["delist_date"],
+                                          errors="coerce").fillna(0)
+        ds["is_listed"] = (
+            (ds["list_date"] <= date_int)
+            & ((ds["delist_date"] == 0) | (ds["delist_date"] > date_int))
+        ).astype(float)
+        listed_map = ds.set_index("symbol")["is_listed"].to_dict()
+    out["is_listed"] = out["symbol"].map(listed_map)
+
+    # ── security_status_transition: real ST intervals + listing day ──
+    st_symbols: set = set()
+    if status_scd is not None and not status_scd.empty:
+        sc = status_scd[status_scd["status"] == "st"].copy()
+        sc["symbol"] = _symbol_map(sc)
+        sc["effective_date"] = pd.to_numeric(sc["effective_date"],
+                                             errors="coerce")
+        sc["expire_date"] = pd.to_numeric(sc["expire_date"], errors="coerce")
+        active = sc[(sc["effective_date"].fillna(0) <= date_int) &
+                    (sc["expire_date"].fillna(0).eq(0) |
+                     (sc["expire_date"] > date_int))]
+        st_symbols = set(active["symbol"].astype(str).str.zfill(6))
+    listed_today: set = set()
+    if dim_stock is not None and not dim_stock.empty:
+        ds = dim_stock.copy()
+        ds["symbol"] = _symbol_map(ds)
+        ld = pd.to_numeric(ds["list_date"], errors="coerce")
+        listed_today = set(
+            ds.loc[ld.fillna(0).eq(date_int), "symbol"].astype(str).str.zfill(6))
+    out["security_status_transition"] = np.where(
+        out["symbol"].isin(st_symbols), "ST",
+        np.where(out["symbol"].isin(listed_today), "LISTED", "NORMAL"))
+
+    # ── limit_status: real limit_type mapping ──
+    lt = pd.to_numeric(out.get("limit_type"), errors="coerce")
+    out["limit_status"] = lt.map(LIMIT_STATUS_MAP)
+    unknown = lt.map(LIMIT_STATUS_MAP).isna() & lt.notna()
+    out.loc[unknown, "limit_status"] = lt[unknown].astype(int).astype(str)
+    out["limit_status"] = out["limit_status"].astype(object)
+    out.loc[lt.isna(), "limit_status"] = np.nan
+
+    # ── is_suspended: derived from bar presence (see docstring) ──
     bar_sym = (bars["symbol"] if "symbol" in bars.columns else bars["ts_code"])
     traded_symbols = set(bar_sym.astype(str).str.replace(
         r"\.(SH|SZ|BJ)$", "", regex=True).str.zfill(6))
     out["is_suspended"] = (~out["symbol"].isin(traded_symbols)).astype(float)
+
     # v5.5.1: REAL status from the label table — never a default of 0.
     # A missing is_st / is_new stays NaN and the universe contract BLOCKS
     # the package (status_source_missing) instead of assuming "normal".
     out["is_st"] = pd.to_numeric(out["is_st"], errors="coerce")
     out["is_new"] = pd.to_numeric(out["is_new"], errors="coerce")
-    out["limit_status"] = "NORMAL"
-    out["security_status_transition"] = "NORMAL"
     return out[["trade_date", "symbol", "is_listed", "is_st",
                 "is_suspended", "is_new", "limit_status",
                 "security_status_transition"]]
@@ -993,6 +1337,24 @@ def compute_raw_factors(bars: pd.DataFrame, signal_date: str) -> pd.DataFrame:
     return day
 
 
+def _existing_sealed_dir(signal_date: str) -> Path | None:
+    """Package dir when a SEALED manifest already exists for the signal
+    date (idempotent re-seal check, v5.5.3).  Returns None for missing
+    dirs, unreadable/invalid manifests, or non-SEALED status — those all
+    keep the historical build/raise behavior."""
+    pkg = PACKAGES_ROOT / signal_date
+    manifest_path = pkg / "signal_package_manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if manifest.get("package_status") != "SEALED":
+        return None
+    return pkg
+
+
 def run_package(signal_date: str | None = None, dry_run: bool = False,
                 revision_for: str | None = None) -> int:
     """Production entry: fetch -> quality -> universe -> factors -> seal.
@@ -1011,21 +1373,48 @@ def run_package(signal_date: str | None = None, dry_run: bool = False,
     if signal_date is None:
         signal_date = revision_for or datetime.now().strftime("%Y-%m-%d")
 
+    # v5.5.3 idempotent re-seal: a SEALED package for this signal date is
+    # immutable — a retried seal job (e.g. one whose subprocess sealed but
+    # whose in-process verifier failed) reports already_sealed and exits 0
+    # so the artifact verifier re-proves the contract against the existing
+    # manifest.  The package is never rewritten (no revision bump, no
+    # overwrite); a contract violation still FAILs the job at verification.
+    # --revision-for and --dry-run keep their historical behavior.
+    if not dry_run and revision_for is None:
+        sealed = _existing_sealed_dir(signal_date)
+        if sealed is not None:
+            existing_manifest = json.loads(
+                (sealed / "signal_package_manifest.json")
+                .read_text(encoding="utf-8"))
+            print(json.dumps({
+                "already_sealed": True,
+                "signal_date": signal_date,
+                "execution_date": existing_manifest.get("execution_date"),
+                "revision": existing_manifest.get("revision"),
+                "package_dir": str(sealed),
+                "package_sha": True,
+            }, ensure_ascii=False, indent=2))
+            return 0
+
     inputs = fetch_production_inputs(signal_date)
     dq = inputs["data_quality"]
     lineage = inputs["lineage"]
     bars = inputs["bars"]
     mcap, basic, industry, labels = (inputs["mcap"], inputs["basic"],
                                      inputs["industry"], inputs["labels"])
+    status_scd = inputs.get("status_scd")
+    dim_stock = inputs.get("dim_stock")
 
-    # 16:30 — PIT universe freeze (availability gates from live coverage).
-    universe_snapshot = build_live_universe(labels, signal_date, bars)
-    availability = {
-        "financial_available_at": f"{signal_date}T15:00:00+08:00" if not basic.empty else None,
-        "industry_available_at": f"{signal_date}T15:00:00+08:00" if not industry.empty else None,
-        "adjustment_available_at": f"{signal_date}T15:00:00+08:00",
-        "benchmark_available_at": f"{signal_date}T15:00:00+08:00",
-    }
+    # 16:30 — PIT universe freeze.  v5.5.3: the universe snapshot carries
+    # REAL status sources (dim_stock listing intervals, label-table
+    # limit_type, status-SCD ST intervals + the real listing day) and the
+    # availability gates are anchored on REAL data (ann_date /
+    # effective_date / fetched adjustment + benchmark rows) — never the
+    # fabricated T15:00 always-pass gates.
+    universe_snapshot = build_live_universe(labels, signal_date, bars,
+                                            status_scd=status_scd,
+                                            dim_stock=dim_stock)
+    availability = _build_availability_gates(signal_date, inputs)
     uni = build_daily_universe(
         universe_snapshot, signal_date, availability,
         contract=runtime_cfg.get("universe_contract"))
@@ -1108,6 +1497,9 @@ def run_package(signal_date: str | None = None, dry_run: bool = False,
         "pit_contract_sha": _pit_contract_sha(),
         "pit_lineage": lineage,
         "availability_gates": availability,
+        # v5.5.3: the ONE consistent-snapshot transaction identity shared
+        # by every family (server_uuid + GTID/binlog when available).
+        "snapshot_identity": inputs.get("snapshot_identity"),
     }
     if dry_run:
         # v5.5.1 --dry-run contract: run every stage with real data, build

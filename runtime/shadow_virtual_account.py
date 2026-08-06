@@ -102,7 +102,11 @@ class VirtualAccount:
         self.costs_paid += fee + slip
         self._sell_proceeds += proceeds
         cost_basis = shares * pos.avg_cost
-        self.realized_pnl += proceeds - fee - slip - cost_basis
+        # v5.5.3: realized_pnl is GROSS (proceeds - cost basis) — the
+        # fees/slippage live ONLY in costs_paid.  The old net-amount
+        # double-counted sell costs against the conservation law
+        # (cash + held + costs_paid == initial + realized).
+        self.realized_pnl += proceeds - cost_basis
         remaining = pos.shares - shares
         if remaining <= 0:
             del self.positions[symbol]
@@ -112,6 +116,12 @@ class VirtualAccount:
 
     # ── valuation ─────────────────────────────────────────────────────
 
+    @property
+    def available_cash(self) -> float:
+        """v5.5.3: cash-on-hand for BUY sizing (precommit) and the
+        fill-time buying-power check — never the 500k constant."""
+        return self.cash
+
     def market_value(self, close_prices: dict[str, float]) -> float:
         return sum(p.shares * close_prices[p.symbol]
                    for p in self.positions.values()
@@ -119,6 +129,26 @@ class VirtualAccount:
 
     def nav(self, close_prices: dict[str, float]) -> float:
         return self.cash + self.market_value(close_prices)
+
+    def verify_conservation(self) -> None:
+        """v5.5.3: account conservation law, verified AFTER every fill.
+
+          cash + sum(shares * avg_cost) + costs_paid == initial + realized_pnl
+
+        (derivation: every buy's notional is either in cash, in remaining
+        cost basis, or realized; costs are tracked in costs_paid).  A
+        violation raises ACCOUNT_CONSERVATION_ERROR — the fill that broke
+        the law is never silently absorbed.
+        """
+        held_basis = sum(p.shares * p.avg_cost
+                         for p in self.positions.values())
+        lhs = self.cash + held_basis + self.costs_paid
+        rhs = self.initial_cash + self.realized_pnl
+        if abs(lhs - rhs) > 1e-6:
+            raise AccountConservationError(
+                f"{self.candidate_id}: conservation violated after fill — "
+                f"cash+held_basis+costs={lhs:.6f} vs "
+                f"initial+realized={rhs:.6f} (Δ={lhs - rhs:.6f})")
 
     def daily_snapshot(self, date: str,
                        close_prices: dict[str, float]) -> dict:

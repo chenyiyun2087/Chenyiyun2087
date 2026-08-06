@@ -213,15 +213,53 @@ def test_r2_extreme_wins_over_elevated():
     assert out["position_multiplier"] == 0.50
 
 
-def test_r2_missing_input_fails_closed_never_defaults_to_one():
+def test_r2_missing_concentration_fails_closed_never_defaults_to_one():
+    # A MISSING concentration is a genuine input failure -> always blocks.
     for bad in (None, float("nan"), float("inf"), "n/a"):
         out = resolve_r2_state(bad, 1.0, R2_RULES)
         assert out["state"] == "UNKNOWN"
         assert out["position_multiplier"] is None
         assert out["blocked"] == "R2_INPUT_MISSING"
+
+
+def test_r2_garbage_rs_fails_closed():
+    # NaN / inf / non-numeric rs are data ANOMALIES -> still fail closed.
+    for bad in (float("nan"), float("inf"), "n/a"):
         out = resolve_r2_state(0.10, bad, R2_RULES)
         assert out["position_multiplier"] is None
         assert out["blocked"] == "R2_INPUT_MISSING"
+
+
+def test_r2_undefined_rs_is_not_input_missing():
+    # rs=None from a blocked=False crowding state = the ratio is
+    # mathematically undefined (large-quartile 20d return <= 0), a valid
+    # market state.  Rules referencing rs simply don't fire; the elevated
+    # OR-rule can still hit on concentration alone (v5.5.3 fix
+    # 2026-08-06 — this was wrongly blocking whole packages).
+    out = resolve_r2_state(0.10, None, R2_RULES)
+    assert out["blocked"] == "OK"
+    assert out["state"] == "normal"
+    assert out["position_multiplier"] == 1.0
+
+
+def test_r2_undefined_rs_elevated_on_concentration_only():
+    # Today's production case (2026-08-05): conc=0.525, rs undefined.
+    # elevated (conc >= 0.25 OR rs >= 1.15) fires on concentration alone
+    # -> 0.70, NOT a silent 1.0 and NOT a block.
+    out = resolve_r2_state(0.525, None, R2_RULES)
+    assert out["blocked"] == "OK"
+    assert out["state"] == "crowding_elevated"
+    assert out["position_multiplier"] == 0.70
+
+
+def test_r2_undefined_rs_never_reaches_extreme():
+    # extreme needs BOTH conc >= 0.30 AND rs >= 1.25 — undefined rs can
+    # never satisfy the AND, so a high concentration resolves to
+    # elevated (0.70), never to extreme (0.50).
+    out = resolve_r2_state(0.40, None, R2_RULES)
+    assert out["blocked"] == "OK"
+    assert out["state"] == "crowding_elevated"
+    assert out["position_multiplier"] == 0.70
 
 
 # ── H012 ───────────────────────────────────────────────────────────────

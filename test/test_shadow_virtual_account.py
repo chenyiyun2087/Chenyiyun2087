@@ -55,10 +55,15 @@ def test_sell_fill_returns_proceeds_net_of_costs():
     acc.buy_fill("600001", 12500, 10.0)
     acc.sell_fill("600001", 12500, 11.0)
     assert "600001" not in acc.positions  # fully closed
-    # Realized P&L = sell proceeds net of sell-side costs minus the cost
-    # basis (buy-side costs already left the cash balance at buy time).
-    assert acc.realized_pnl == pytest.approx(
-        12500 * 11.0 * (1.0 - 0.00075 - 10.0 / 1e4) - 12500 * 10.0)
+    # v5.5.3: realized_pnl is GROSS (proceeds - cost basis); sell-side
+    # costs live ONLY in costs_paid — otherwise the conservation law
+    # (cash + held_basis + costs_paid == initial + realized) double
+    # counts sell costs.
+    assert acc.realized_pnl == pytest.approx(12500 * 11.0 - 12500 * 10.0)
+    assert acc.costs_paid == pytest.approx(
+        12500 * 10.0 * (0.00075 + 10.0 / 1e4)
+        + 12500 * 11.0 * (0.00075 + 10.0 / 1e4))
+    acc.verify_conservation()  # holds after a full round trip
 
 
 def test_average_cost_on_multiple_buys():

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime as _real_dt
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +40,8 @@ from scripts.ops.run_daily_shadow import (  # noqa: E402
     BUY_FILLED,
     ORDER_PRECOMMITTED,
     compute_order_id,
+    nav,
+    precommit,
     reconcile_from_package,
     round_trips,
     sell_precommit,
@@ -348,3 +351,269 @@ def test_rejected_sell_retried_next_day_completes_round_trip(tmp_path):
     assert out3["status"]["sell_filled"] == 1
     assert round_trips(zone)["round_trips"] == 1
     assert round_trips(zone)["open_positions"] == []
+
+
+# ── v5.5.3 production wiring: date-less runs resolve from the latest
+# ── SEALED package (2026-08-05 defect: open_days[-1] resolved to
+# ── 2026-12-31 because the snapshot calendar extends to year-end, so
+# ── the scheduled precommit/sell tasks crashed with "shadow_blocked:
+# ── no SEALED package for execution_date 2026-12-31").
+
+
+class _FrozenDatetime(_real_dt):
+    """datetime subclass whose now() returns a fixed instant — used to
+    freeze the production wall clock in the staleness-guard tests."""
+    frozen: str = "2099-01-01T12:00:00"
+
+    @classmethod
+    def now(cls):
+        return cls.fromisoformat(cls.frozen)
+
+
+def test_sell_precommit_without_date_resolves_latest_sealed_package(tmp_path):
+    """The T 17:00 sell task runs without --date: it must bind the latest
+    SEALED package's execution_date (the T+1 fill day) — never
+    open_days[-1] (= 2026-12-31 on the real snapshot calendar).  Sealed
+    at D21 (execution D22, ahead of the wall clock)."""
+    _seal_package(tmp_path, D21, D22, [SYM_A], {SYM_A: TW})
+    zone = _zone(tmp_path)
+    out = sell_precommit(execution_zone=zone,
+                         packages_zone=tmp_path / "packages",
+                         prices_path=_base_prices(tmp_path))
+    assert out["execution_date"] == D22
+    assert out["signal_date"] == D21
+    assert out["reason"] == "no_open_positions"
+    marker = zone / D22 / "sell_decisions.json"
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload["reason"] == "no_open_positions"
+    assert payload["signal_date"] == D21
+    assert payload["execution_date"] == D22
+
+
+def test_sell_precommit_without_date_refuses_stale_seal(monkeypatch, tmp_path):
+    """Fail-closed: a seal whose execution day has already passed means
+    there is no fresh T-day signal — the sell engine must refuse stale
+    targets instead of selling against yesterday's package."""
+    monkeypatch.setattr(shadow, "datetime", _FrozenDatetime)
+    _FrozenDatetime.frozen = "2099-01-01T12:00:00"  # after D1
+    _seal_package(tmp_path, D0, D1, [SYM_A], {SYM_A: TW})
+    zone = _zone(tmp_path)
+    with pytest.raises(RuntimeError, match="refusing stale sell targets"):
+        sell_precommit(execution_zone=zone,
+                       packages_zone=tmp_path / "packages",
+                       prices_path=_base_prices(tmp_path))
+
+
+def test_precommit_without_date_resolves_latest_sealed_package(tmp_path):
+    """The T+1 09:25 precommit task runs without --date: it must resolve
+    the T-day seal's execution_date (T+1) — never open_days[-1]."""
+    _seal_package(tmp_path, D21, D22, [SYM_A], {SYM_A: TW})
+    zone = _zone(tmp_path)
+    out = precommit(execution_zone=zone,
+                    packages_zone=tmp_path / "packages",
+                    prices_path=_base_prices(tmp_path))
+    assert out["execution_date"] == D22
+    orders = json.loads((zone / D22 / "orders.json").read_text(encoding="utf-8"))
+    buys = [o for o in orders if o["side"] == "BUY"]
+    assert len(buys) == 1 and buys[0]["symbol"] == SYM_A
+    assert buys[0]["signal_date"] == D21
+    assert buys[0]["execution_date"] == D22
+
+
+def test_precommit_without_date_no_package_fails_closed(tmp_path):
+    zone = _zone(tmp_path)
+    with pytest.raises(RuntimeError, match="no SEALED package"):
+        precommit(execution_zone=zone,
+                  packages_zone=tmp_path / "packages",
+                  prices_path=_base_prices(tmp_path))
+
+
+def test_nav_without_date_snapshots_today(monkeypatch, tmp_path):
+    """NAV at 15:30 marks TODAY's close — a date-less run must not
+    resolve to open_days[-1] (= 2026-12-31 on the snapshot calendar)."""
+    monkeypatch.setattr(shadow, "datetime", _FrozenDatetime)
+    _FrozenDatetime.frozen = "2026-09-10T15:30:00"
+    zone = _zone(tmp_path)
+    out = nav(execution_zone=zone)
+    assert out["date"] == "2026-09-10"
+
+
+# ── v5.5.3 production sequence: sell at T 17:00 then precommit at T+1
+# ── 09:25 write the SAME execution-day orders file — SELL_PRECOMMITTED
+# ── and ORDER_PRECOMMITTED must coexist (2026-08-05 defect: precommit
+# ── raised "already reconciled" on the SELL orders and the morning
+# ── chain crashed).
+
+
+def test_precommit_coexists_with_sell_precommitted_same_day(tmp_path):
+    """The full T → T+1 wiring: a HOLDING position bought earlier is
+    exited at expiry against the D22 package (SELL written at T 17:00);
+    precommit at T+1 09:25 appends the new BUY to the SAME file; the
+    09:35 reconcile fills both in one pass."""
+    _seal_package(tmp_path, D21, D22, [SYM_B], {SYM_B: TW})
+    zone = _zone(tmp_path)
+    _buy_chain(zone, D0, D1)  # held SYM_A, expired by D22 (hold_days=20)
+    prices = _prices(tmp_path, [
+        (D0, SYM_A, 10.0, 10.0, 10.0),
+        (D21, SYM_A, 10.0, 10.0, 10.0),   # sell reference close
+        (D21, SYM_B, 10.0, 10.0, 10.0),   # buy reference close
+        (D22, SYM_A, 9.00, 10.0, 9.00),   # limit-down open
+        (D22, SYM_B, 10.0, 10.0, 10.0),
+    ])
+    # T 17:00 — sell task (date-less: resolves D22 from the D21 seal).
+    out = sell_precommit(execution_zone=zone,
+                         packages_zone=tmp_path / "packages",
+                         prices_path=prices)
+    assert out["sells"] == 1
+    assert out["sells_detail"][0]["reason"] == "rebalance_exit"
+    # T+1 09:25 — precommit must NOT raise "already reconciled".
+    out2 = precommit(execution_zone=zone,
+                     packages_zone=tmp_path / "packages",
+                     prices_path=prices)
+    assert out2["execution_date"] == D22
+    orders = json.loads((zone / D22 / "orders.json").read_text(encoding="utf-8"))
+    sides = {o["side"] for o in orders}
+    assert sides == {"SELL", "BUY"}
+    assert all(o["state"] in ("ORDER_PRECOMMITTED", "SELL_PRECOMMITTED")
+               for o in orders)
+    # T+1 09:35 — one reconcile pass fills both.
+    out3 = reconcile_from_package(D22, execution_zone=zone, prices_path=prices)
+    assert out3["status"]["buy_filled"] == 1
+    assert out3["status"]["sell_rejected"] == 1  # SYM_A opens limit-down
+
+
+# ── v5.5.3 (2026-08-05, FIRST production run) regression tests ──────────
+# The 17:01 run exposed: (1) _live_bars read open/pre_close/close from
+# dwd_stock_daily_standard — that table carries ONLY adjusted prices
+# (adj_*) → Unknown column 'open' crash; the raw canonical source is
+# ods_daily (loaded ~17:00 T).  (2) the execution chain had no
+# execution_eligible gate — the SEALED-but-KNOWN_DEFECT 08-04 prestart
+# package (execution_date 2026-08-05) could be consumed by a stale-datestr
+# precommit/sell/reconcile run.
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = rows
+        self.executed = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.executed = sql
+        return 0
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeConn:
+    def __init__(self, rows):
+        self._rows = rows
+        self._cursor = _FakeCursor(rows)
+
+    def cursor(self):
+        return self._cursor
+
+    def close(self):
+        pass
+
+
+class _FakePymysql:
+    """Stand-in for the pymysql module (sys.modules) used by _live_bars."""
+    cursors = type("_Cursors", (), {"DictCursor": object})()
+
+    def __init__(self, rows):
+        self._rows = rows
+        self._cursor = None
+
+    def connect(self, **kwargs):
+        conn = _FakeConn(self._rows)
+        self._cursor = conn._cursor
+        return conn
+
+    @property
+    def executed_sql(self) -> str:
+        return self._cursor.executed if self._cursor else ""
+
+
+def test_live_bars_reads_raw_ods_daily_columns(monkeypatch):
+    """The live-bars query must target ods_daily (RAW prices) — never
+    dwd_stock_daily_standard (adjusted adj_* only; aliasing adjusted as
+    raw breaks limit up/down bands on ex-dates)."""
+    fake = _FakePymysql([{"trade_date": 20260805, "ts_code": "600001.SH",
+                          "open": 10.0, "pre_close": 9.8, "close": 10.2}])
+    monkeypatch.setitem(sys.modules, "pymysql", fake)
+    frame = shadow._live_bars("2026-08-05")
+    assert "ods_daily" in fake.executed_sql, "query must read ods_daily"
+    assert frame["symbol"].tolist() == ["600001"]
+    assert frame["raw_open"].tolist() == [10.0]
+    assert frame["raw_pre_close"].tolist() == [9.8]
+    assert frame["raw_close"].tolist() == [10.2]
+    assert frame["trade_date"].tolist() == ["2026-08-05"]
+
+
+def _mark_known_defect(pkg: Path) -> None:
+    """Write the classification.json the 08-04 prestart package carries:
+    SEALED but execution_eligible=false."""
+    (pkg / "classification.json").write_text(json.dumps({
+        "schema_version": "package_classification_v1",
+        "package_status": "SEALED",
+        "evidence_eligible": False,
+        "execution_eligible": False,
+        "classification": "KNOWN_DEFECT_PRESTART_PACKAGE",
+        "classified_at": "2026-08-05",
+    }), encoding="utf-8")
+
+
+def test_precommit_refuses_known_defect_package(tmp_path):
+    """A SEALED package classified execution_eligible=false (the prestart
+    KNOWN_DEFECT package) must fail closed — a stale-datestr re-run can
+    never write orders against it."""
+    pkg = _seal_package(tmp_path, D21, D22, [SYM_B], {SYM_B: TW})
+    _mark_known_defect(pkg)
+    prices = _prices(tmp_path, [(D21, SYM_B, 10.0, 10.0, 10.0)])
+    with pytest.raises(RuntimeError, match="not execution-eligible"):
+        precommit(execution_zone=_zone(tmp_path),
+                  packages_zone=tmp_path / "packages",
+                  prices_path=prices)
+
+
+def test_sell_precommit_refuses_known_defect_package(tmp_path):
+    """Same gate for the sell engine: a KNOWN_DEFECT package's target
+    portfolio must never drive sell decisions."""
+    pkg = _seal_package(tmp_path, D21, D22, [SYM_B], {SYM_B: TW})
+    _mark_known_defect(pkg)
+    prices = _prices(tmp_path, [(D21, SYM_B, 10.0, 10.0, 10.0)])
+    with pytest.raises(RuntimeError, match="not execution-eligible"):
+        sell_precommit(execution_zone=_zone(tmp_path),
+                       packages_zone=tmp_path / "packages",
+                       prices_path=prices)
+
+
+def test_reconcile_refuses_known_defect_package(tmp_path):
+    """Reconcile resolves the same package for universe flags — it must
+    refuse it too, never fill against a defective package's universe.
+    (With no orders it returns no_orders_for_execution_date first — the
+    guard matters once orders exist and fills are about to be priced.)"""
+    pkg = _seal_package(tmp_path, D21, D22, [SYM_B], {SYM_B: TW})
+    _mark_known_defect(pkg)
+    zone = _zone(tmp_path)
+    orders_path = zone / D22 / "orders.json"
+    orders_path.parent.mkdir(parents=True, exist_ok=True)
+    orders_path.write_text(json.dumps([{
+        "order_id": compute_order_id(PKG_SHA, CAND, D22, SYM_B, "BUY", 1),
+        "challenger_id": CAND, "symbol": SYM_B, "side": "BUY",
+        "state": "ORDER_PRECOMMITTED", "package_sha": PKG_SHA,
+        "signal_date": D21, "execution_date": D22,
+        "target_shares": SHARES, "lot_adjusted_shares": SHARES,
+    }]), encoding="utf-8")
+    prices = _prices(tmp_path, [(D22, SYM_B, 10.0, 10.0, 10.0)])
+    with pytest.raises(RuntimeError, match="not execution-eligible"):
+        reconcile_from_package(D22, execution_zone=zone,
+                               prices_path=prices,
+                               packages_zone=tmp_path / "packages")

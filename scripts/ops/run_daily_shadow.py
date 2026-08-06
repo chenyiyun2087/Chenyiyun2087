@@ -60,6 +60,7 @@ from runtime.shadow_events import (  # noqa: E402
     replay,
     replay_all,
 )
+from runtime.shadow_execution_state import ROUND_TRIP_COMPLETED  # noqa: E402
 from runtime.shadow_virtual_account import (  # noqa: E402
     AccountConservationError,
     VirtualAccount,
@@ -177,11 +178,20 @@ def _pit_prices_max_date() -> str | None:
 
 
 def _live_bars(date_str: str) -> pd.DataFrame:
-    """Bars for one live date from tushare_stock.dwd_stock_daily_standard.
+    """Raw bars for one live date from tushare_stock.ods_daily.
 
     Columns: trade_date, symbol, raw_open, raw_pre_close, raw_close
-    (aliased for the snapshot-compatible downstream).  Raises RuntimeError
-    on DB failure; returns an EMPTY frame when the date has no bars —
+    (aliased for the snapshot-compatible downstream).
+
+    v5.5.3 (2026-08-05, production first run): this previously read
+    dwd_stock_daily_standard, which carries ONLY ADJUSTED prices
+    (adj_open/adj_high/adj_low/adj_close — no open/pre_close columns at
+    all; the first live run crashed with Unknown column 'open').  Raw
+    prices must NEVER be aliased from adjusted ones: limit up/down bands
+    break on every ex-date.  ods_daily is the raw canonical table and is
+    loaded at ~17:00 T (measured 2026-08-04 17:00:03) — in time for the
+    T 21:35 sell and the T+1 morning precommit.  Raises RuntimeError on
+    DB failure; returns an EMPTY frame when the date has no bars —
     per-order NO_OPEN is then the honest fill outcome.
     """
     import os
@@ -201,7 +211,7 @@ def _live_bars(date_str: str) -> pd.DataFrame:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT trade_date, ts_code, open, pre_close, close "
-                "FROM dwd_stock_daily_standard WHERE trade_date = %s",
+                "FROM ods_daily WHERE trade_date = %s",
                 (date_int,))
             rows = cur.fetchall()
     except Exception as exc:
@@ -576,6 +586,53 @@ def _latest_package_for_execution(execution_date: str,
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if manifest.get("execution_date") == execution_date:
             return pkg_dir
+
+
+def _package_execution_eligible(pkg_dir: Path) -> tuple[bool, str]:
+    """classification.json gate: absent = eligible; present with
+    execution_eligible=False = REFUSE.
+
+    v5.5.3 (2026-08-05, production first run): the 08-04 prestart package
+    is SEALED with execution_date 2026-08-05 but classified
+    KNOWN_DEFECT_PRESTART_PACKAGE (execution_eligible: false).  Without
+    this gate a re-run of precommit with datestr=2026-08-05 would write
+    orders against that defective package — the execution chain must
+    never consume a package its own classification forbids (fail-closed).
+    """
+    cls_path = pkg_dir / "classification.json"
+    if not cls_path.exists():
+        return True, "no classification.json"
+    try:
+        cls = json.loads(cls_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return False, "classification.json corrupt"
+    if cls.get("execution_eligible") is False:
+        return False, f"classification={cls.get('classification')!r}"
+    return True, ""
+    return None
+
+
+def _latest_sealed_package(packages_zone: Path | None = None):
+    """(pkg_dir, manifest) of the newest SEALED package by signal date.
+
+    v5.5.3 (2026-08-05): the production sell/precommit tasks run WITHOUT
+    an explicit execution date and must resolve it from the latest
+    SEALED package — never from open_days[-1] (the snapshot calendar
+    extends to 2026-12-31, so a date-less run used to resolve to year-end
+    and crash with "no SEALED package for execution_date 2026-12-31").
+    """
+    zone = packages_zone or PACKAGES_ZONE
+    if not zone.exists():
+        return None
+    for pkg_dir in sorted(zone.iterdir(), reverse=True):
+        if not pkg_dir.is_dir():
+            continue
+        manifest_path = pkg_dir / "signal_package_manifest.json"
+        if not manifest_path.exists():
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("package_status") == "SEALED":
+            return pkg_dir, manifest
     return None
 
 
@@ -607,9 +664,13 @@ EXECUTION_CONTRACT_PATH = (PROJECT_ROOT / "config" / "strategy_runtime"
 def _candidate_execution_config() -> dict[str, dict]:
     """Per-candidate frozen execution contracts (forward_shadow_v2.yaml).
 
-    Keyed by challenger_id (C0's 'baseline_vls_frozen', C1's
-    'f1_no_value', ...).  Missing file or missing candidate -> fail-closed
-    raise: the sell engine and NAV must NEVER run on guessed parameters.
+    Keyed by the CANDIDATE id (C0/C1/C2/C3/RND — the id that packages,
+    orders and accounts carry).  v5.5.3: keyed by candidate id, NOT by
+    challenger_id ('baseline_vls_frozen' / 'f1_no_value' / ...) — the
+    two had silently diverged and every config.get() on a real order
+    missed, which precommit/sell/NAV must never do.  Missing file or
+    missing candidate -> fail-closed raise: the engines must NEVER run
+    on guessed parameters.
     """
     if not EXECUTION_CONTRACT_PATH.exists():
         raise RuntimeError(
@@ -618,11 +679,11 @@ def _candidate_execution_config() -> dict[str, dict]:
     cfg = yaml.safe_load(EXECUTION_CONTRACT_PATH.read_text(encoding="utf-8"))
     out = {}
     for cand, meta in (cfg.get("candidates") or {}).items():
-        challenger_id = meta.get("challenger_id")
-        if not challenger_id:
+        if not meta:
             continue
         ex = meta.get("execution") or {}
-        out[challenger_id] = {
+        out[cand] = {
+            "challenger_id": meta.get("challenger_id"),
             "hold_days": int(ex.get("hold_days", 20)),
             "rebalance_score_buffer": float(
                 ex.get("rebalance_score_buffer", 0.10)),
@@ -699,7 +760,25 @@ def sell_precommit(execution_date: str | None = None,
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
-        execution_date = open_days[-1] if open_days else None
+        # v5.5.3 (2026-08-05): the production sell task runs at T 17:00
+        # under the queue's datestr=T, but the sells target the NEXT
+        # execution day — the latest SEALED package's execution_date
+        # (the T-day seal's T+1).  open_days[-1] resolved to 2026-12-31
+        # (snapshot calendar extends to year-end) and crashed.  A seal
+        # whose execution day has already passed means there is NO fresh
+        # T-day signal — refuse stale targets (fail-closed).
+        latest = _latest_sealed_package(packages_zone)
+        if latest is None:
+            raise RuntimeError(
+                "shadow_blocked: no SEALED package — the sell engine "
+                "requires the T-day target portfolio")
+        execution_date = latest[1]["execution_date"]
+        if execution_date <= today:
+            raise RuntimeError(
+                f"shadow_blocked: latest SEALED package "
+                f"{latest[1].get('signal_date')} targets execution "
+                f"{execution_date} (already passed {today}) — no fresh "
+                "T-day seal; refusing stale sell targets")
     if execution_date not in open_days:
         raise RuntimeError(
             f"shadow_blocked: {execution_date} is not an open trading day")
@@ -710,6 +789,12 @@ def sell_precommit(execution_date: str | None = None,
             f"shadow_blocked: no SEALED package for execution_date "
             f"{execution_date} — sell engine requires the T-day target "
             "portfolio")
+    eligible, why = _package_execution_eligible(pkg)
+    if not eligible:
+        raise RuntimeError(
+            f"shadow_blocked: package {pkg.name} for execution_date "
+            f"{execution_date} is not execution-eligible ({why}) — the "
+            "sell engine never consumes KNOWN_DEFECT/prestart packages")
     manifest = json.loads((pkg / "signal_package_manifest.json").read_text())
     signal_date = manifest["signal_date"]
     config = _candidate_execution_config()
@@ -738,7 +823,8 @@ def sell_precommit(execution_date: str | None = None,
     seen_events = existing_identities(log_path)
 
     orders = _orders_for_date(execution_date, zone)
-    pending_sells = {o.get("challenger_id"): o.get("symbol")
+    # v5.5.3: (candidate, symbol) SET — one candidate holds several names.
+    pending_sells = {(o.get("challenger_id"), o.get("symbol"))
                      for o in orders
                      if o.get("side") == "SELL"
                      and o.get("state") == "SELL_PRECOMMITTED"}
@@ -750,15 +836,18 @@ def sell_precommit(execution_date: str | None = None,
             raise RuntimeError(
                 f"shadow_blocked: candidate {cand} has no frozen execution "
                 "contract — sell engine refuses to guess hold_days/costs")
-        if sym in pending_sells.get(cand, ""):
+        if (cand, sym) in pending_sells:
             skipped += 1  # already precommitted for this execution day
             continue
         hold_days = contract["hold_days"]
         sig_idx = day_index.get(buy.signal_date, 0)
         expired = (exec_idx - sig_idx) >= hold_days
         target_weight = target.get((cand, sym))
-        shares = pos.sell_order.lot_adjusted_shares if (
-            pos.sell_order is not None) else buy.lot_adjusted_shares or buy.target_shares
+        # v5.5.3: sell quantity = what is still HELD (remaining_shares) —
+        # never the previous sell order's shares (a partial risk_reduction
+        # fill leaves the rest held and re-decidable).
+        shares = pos.remaining_shares if pos.remaining_shares > 0 \
+            else buy.lot_adjusted_shares or buy.target_shares
         precommit_price = float(close_map.get(sym, float("nan")))
         if not pd.notna(precommit_price) or precommit_price <= 0:
             # No T-close reference: cannot precommit a price -> defer to
@@ -894,7 +983,10 @@ def nav(execution_date: str | None = None,
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
-        execution_date = open_days[-1] if open_days else None
+        # v5.5.3: NAV is a mark-to-close of TODAY — never open_days[-1]
+        # (the snapshot calendar extends to 2026-12-31, so a date-less
+        # run would snapshot a nonexistent future day).
+        execution_date = today
     if execution_date not in open_days:
         raise RuntimeError(
             f"shadow_blocked: {execution_date} is not an open trading day")
@@ -979,7 +1071,16 @@ def precommit(execution_date: str | None = None,
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
-        execution_date = open_days[-1] if open_days else None
+        # v5.5.3 (2026-08-05): resolve from the latest SEALED package —
+        # at T+1 09:25 that is the T-day seal's execution_date (T+1).
+        # open_days[-1] resolved to 2026-12-31 (snapshot calendar
+        # extends to year-end) and crashed precommit in production.
+        latest = _latest_sealed_package(packages_zone)
+        if latest is None:
+            raise RuntimeError(
+                "shadow_blocked: no SEALED package — seal the T-day "
+                "package first")
+        execution_date = latest[1]["execution_date"]
     if execution_date not in open_days:
         raise RuntimeError(
             f"shadow_blocked: {execution_date} is not an open trading day")
@@ -988,6 +1089,12 @@ def precommit(execution_date: str | None = None,
         raise RuntimeError(
             f"shadow_blocked: no SEALED package for execution_date "
             f"{execution_date} — seal the T-day package first")
+    eligible, why = _package_execution_eligible(pkg)
+    if not eligible:
+        raise RuntimeError(
+            f"shadow_blocked: package {pkg.name} for execution_date "
+            f"{execution_date} is not execution-eligible ({why}) — the "
+            "execution chain never consumes KNOWN_DEFECT/prestart packages")
     manifest = json.loads((pkg / "signal_package_manifest.json").read_text())
     portfolios = pd.read_parquet(pkg / "target_portfolios.parquet")
     close_map = _t_close_map(manifest["signal_date"], prices_path)
@@ -998,7 +1105,12 @@ def precommit(execution_date: str | None = None,
     existing = []
     if orders_path.exists():
         existing = json.loads(orders_path.read_text(encoding="utf-8"))
-        if any(o.get("state") != "ORDER_PRECOMMITTED" for o in existing):
+        # v5.5.3 (2026-08-05): SELL_PRECOMMITTED orders share the same
+        # execution-day file — the sell task writes them at T 17:00 and
+        # precommit appends BUYs at T+1 09:25.  Only terminal states
+        # (fills/rejects — i.e. the day was reconciled) block a rerun.
+        if any(o.get("state") not in ("ORDER_PRECOMMITTED",
+                                      "SELL_PRECOMMITTED") for o in existing):
             raise RuntimeError(
                 f"shadow_blocked: orders for {execution_date} already "
                 "reconciled — precommit is append-only before fills")
@@ -1025,12 +1137,23 @@ def precommit(execution_date: str | None = None,
     log_path = event_log_path(execution_zone or EXECUTION_ZONE,
                               execution_date)
     seen_events = existing_identities(log_path)
-    held = {p.challenger_id: p.symbol for p in
-            replay_all(execution_zone or EXECUTION_ZONE).positions.values()}
+    # v5.5.3: held is a (candidate, symbol) SET — one candidate can hold
+    # several names (TopN > 1) and a closed round trip is not held.
+    held = {(p.challenger_id, p.symbol) for p in
+            replay_all(execution_zone or EXECUTION_ZONE).positions.values()
+            if p.state != ROUND_TRIP_COMPLETED}
+    # v5.5.3 cash-aware sizing: accounts rebuilt from the fill-event
+    # ledger give each candidate's CURRENT cash — the cap for BUY
+    # notional, never the hardcoded 500k.
+    config = _candidate_execution_config()
+    accounts = _rebuild_accounts(config, execution_zone or EXECUTION_ZONE)
 
     run_orders = []
     idempotent_skipped = 0
     held_skipped = 0
+    # per-candidate reserved cash so consecutive BUYs in one run share
+    # the same pool (TopN > 1: each order reduces what the next can buy).
+    reserved: dict[str, float] = {}
     for seq, (_, row) in enumerate(portfolios.iterrows(), start=1):
         symbol = str(row["symbol"])
         candidate_id = str(row.get("candidate_id", ""))
@@ -1047,13 +1170,38 @@ def precommit(execution_date: str | None = None,
                 f"shadow_blocked: duplicate BUY for candidate {candidate_id} "
                 f"symbol {symbol} on {execution_date} — one precommit per "
                 "(candidate, symbol, execution day)")
-        if held.get(candidate_id) == symbol:
+        if (candidate_id, symbol) in held:
             held_skipped += 1  # already holding — no re-buy (v5.5.2 rule)
             continue
         precommit_price = float(close_map.get(symbol, float("nan")))
-        notional = float(row["target_weight"]) * 500_000.0
+        # v5.5.3 cash-aware sizing: the contract's initial cash defines
+        # the target notional; the account's CURRENT cash caps it (never
+        # the hardcoded 500k).  A candidate whose cash cannot afford one
+        # A-share lot is skipped, not over-leveraged.
+        contract = config.get(candidate_id)
+        if contract is None:
+            raise RuntimeError(
+                f"shadow_blocked: candidate {candidate_id} has no frozen "
+                "execution contract — precommit refuses to size on guesses")
+        acc = accounts.get(candidate_id)
+        available_cash = reserved.get(
+            candidate_id,
+            acc.available_cash if acc is not None
+            else contract["initial_cash_cny"])
+        notional = min(float(row["target_weight"]) * contract["initial_cash_cny"],
+                       available_cash)
         shares = int(notional / precommit_price // 100 * 100) \
             if pd.notna(precommit_price) and precommit_price > 0 else 0
+        if shares <= 0:
+            raise RuntimeError(
+                f"shadow_blocked: candidate {candidate_id} symbol {symbol} "
+                f"has no cash for one lot (available {available_cash:.2f}, "
+                f"close {precommit_price}) — sizing would be zero/negative")
+        # reserve this order's estimated cash outlay — consecutive BUYs
+        # in the same run share one cash pool (never double-spend).
+        est_total = notional * (1.0 + contract["cost_rate"]
+                                + contract["slippage_bps"] / 1e4)
+        reserved[candidate_id] = available_cash - est_total
         order = {
             "signal_date": manifest["signal_date"],
             "execution_date": execution_date,
@@ -1110,8 +1258,13 @@ def reconcile_from_package(execution_date: str | None = None,
     trips are counted only after a later SELL_FILLED (state machine).
 
     v5.5 live: prices come from the PIT snapshot for historical days and
-    from dwd_stock_daily_standard beyond the snapshot end; ST / listing /
+    from ods_daily (raw) beyond the snapshot end; ST / listing /
     suspension flags come from the SEALED package universe (T-day status).
+
+    v5.5.3 (2026-08-05): scheduled at 21:45 T+1 — the execution day's raw
+    bars land in ods_daily at ~17:00 T+1, so a 09:35 run could never see
+    them (every order would NO_OPEN).  The fill uses the recorded OPEN —
+    semantically the T+1 open execution the contract promises.
     """
     zone = execution_zone or EXECUTION_ZONE
     today = datetime.now().date().isoformat()
@@ -1157,6 +1310,13 @@ def reconcile_from_package(execution_date: str | None = None,
     st_map = listed_map = suspended_map = pd.Series(dtype=float)
     pkg = _latest_package_for_execution(
         execution_date, packages_zone or PACKAGES_ZONE)
+    if pkg is not None:
+        eligible, why = _package_execution_eligible(pkg)
+        if not eligible:
+            raise RuntimeError(
+                f"shadow_blocked: package {pkg.name} for execution_date "
+                f"{execution_date} is not execution-eligible ({why}) — "
+                "reconcile never consumes KNOWN_DEFECT/prestart packages")
     if pkg is not None and (pkg / "universe.parquet").exists():
         uni = pd.read_parquet(pkg / "universe.parquet")
         uni["symbol"] = uni["symbol"].astype(str).str.zfill(6)
@@ -1169,6 +1329,11 @@ def reconcile_from_package(execution_date: str | None = None,
 
     filled, failed = 0, 0
     buy_filled = buy_rejected = sell_filled = sell_rejected = 0
+    # v5.5.3: accounts rebuilt from prior fills — the fill-time
+    # buying-power check runs against CURRENT cash (intraday moves can
+    # push a precommitted order beyond the precommit budget).
+    config = _candidate_execution_config()
+    accounts = _rebuild_accounts(config, zone)
     for o in pending:
         symbol = str(o["symbol"])
         side = o.get("side", "BUY")
@@ -1227,6 +1392,43 @@ def reconcile_from_package(execution_date: str | None = None,
             else:
                 buy_rejected += 1
             continue
+        # v5.5.3 fill-time buying power + account conservation: the fill
+        # must clear the account's CURRENT cash (precommit sizing is a
+        # T-day estimate; the open price and concurrent fills move the
+        # true balance).  A cash shortfall rejects THIS order; an account
+        # invariant breach (negative cash / oversell) fails closed.
+        cand = o.get("challenger_id")
+        contract = config.get(cand)
+        if contract is None:
+            raise RuntimeError(
+                f"shadow_blocked: fill for candidate {cand} without a "
+                "frozen execution contract — the account cannot be costed")
+        acc = accounts.get(cand)
+        if acc is None:
+            acc = accounts[cand] = VirtualAccount(
+                cand, initial_cash=contract["initial_cash_cny"],
+                cost_rate=contract["cost_rate"],
+                slippage_bps=contract["slippage_bps"])
+        shares_to_fill = int(o.get("lot_adjusted_shares")
+                             or o.get("target_shares") or 0)
+        try:
+            if side == "BUY":
+                notional = shares_to_fill * open_price
+                total = notional * (1.0 + acc.cost_rate
+                                    + acc.slippage_bps / 1e4)
+                if acc.cash + 1e-9 < total:
+                    _reject("NO_CASH", "insufficient_cash_at_fill")
+                    failed += 1
+                    buy_rejected += 1
+                    continue
+                acc.buy_fill(symbol, shares_to_fill, open_price)
+            else:
+                acc.sell_fill(symbol, shares_to_fill, open_price)
+            acc.verify_conservation()
+        except AccountConservationError as exc:
+            raise RuntimeError(
+                f"shadow_blocked: ACCOUNT_CONSERVATION_ERROR on {side} "
+                f"fill {cand} {symbol}: {exc}") from exc
         o["fill_price"] = float(open_price)
         o["slippage_bps"] = round(
             (open_price / float(o["precommit_price"]) - 1.0) * 1e4, 2) \
