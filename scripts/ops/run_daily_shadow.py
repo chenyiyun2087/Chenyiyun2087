@@ -75,12 +75,15 @@ ACTIVE_CHALLENGERS = (
 )
 
 # True-blind start (config/oos_registry.yaml true_forward_blind.start).
-# WITHDRAWN 2026-08-05 (v5.5.1 prestart): the 2026-08-05 start was
-# declared before the C2/C3/SCD/PIT-lineage correctness fixes; the 08-04
-# SEALED package is KNOWN_DEFECT_PRESTART_PACKAGE.  When start is null
-# (NOT_STARTED) EVERY date is refused — recording is fail-closed until
-# the start is formally re-declared in config/oos_registry.yaml.
-TRUE_BLIND_START = None  # null = NOT_STARTED (re-declare via oos_registry.yaml)
+# DECLARED 2026-08-06 (v5.5.3, Phase 5 first-day audit PASS): the
+# 2026-08-05 start was withdrawn on 2026-08-05 (v5.5.1 prestart) because
+# the 08-04 SEALED package carries known defects; the 08-05 run of the
+# corrected v5.5.3 chain is the FIRST FORMALLY ELIGIBLE signal package
+# (PIT lineage complete, atomic SEALED, precommit idempotent, T+1 fills,
+# position ledger, no legacy fallback).  Dates before the start are
+# refused; the epoch id is v5.5.3-2026-08-05 (see also
+# config/strategy_runtime/forward_shadow_v2.yaml true_blind_epoch_id).
+TRUE_BLIND_START = "2026-08-05"
 
 # Inline import of the canonical execution-market rules.
 _mr = _iu.spec_from_file_location(
@@ -323,11 +326,12 @@ def _signal_date_from_scores() -> str:
 
 
 def _check_true_blind(signal_date: str) -> None:
-    """Refuse recording when the true-blind start is not declared.
+    """Refuse recording before the declared true-blind start.
 
-    v5.5.1 (2026-08-05): start is null (NOT_STARTED) — every date is
-    refused.  When re-declared in config/oos_registry.yaml, dates before
-    the start remain refused.
+    Declared 2026-08-06: TRUE_BLIND_START = 2026-08-05 (v5.5.3 epoch —
+    see config/oos_registry.yaml true_forward_blind and
+    forward_shadow_v2.yaml true_blind_epoch_id).  Dates before the start
+    are refused; null start (NOT_STARTED) refuses every date.
     """
     if TRUE_BLIND_START is None:
         raise RuntimeError(
