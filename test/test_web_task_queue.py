@@ -752,3 +752,54 @@ def test_nav_verifier_still_fails_fills_without_day(monkeypatch, tmp_path):
         None, None, run_options={"datestr": "20260805"})
     assert not ok, lines  # fills exist but no NAV day — real defect
     assert any("no_nav_summary" in ln for ln in lines)
+
+
+def test_latest_sealed_package_multiple_packages(monkeypatch, tmp_path):
+    """v5.5.3 (2026-08-06): the sell verifier's latest-package scan crashed
+    with AttributeError ('dict' object has no attribute 'parent') once a
+    SECOND SEALED package existed — best[0] is the manifest DICT, the
+    Path lives at best[1].  Production hit this on the 08-06 run (three
+    sealed packages: 08-04 / 08-05 / 08-06)."""
+    root = tmp_path / "forward_shadow_evidence"
+    for date_iso in ("2026-08-04", "2026-08-05", "2026-08-06"):
+        pkg_dir = root / "packages" / date_iso
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "signal_package_manifest.json").write_text(json.dumps({
+            "package_status": "SEALED", "signal_date": date_iso,
+            "execution_date": "2026-08-05",
+        }))
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    man, mpath = web_app._latest_sealed_package()
+    assert mpath.parent.name == "2026-08-06"
+    assert man["signal_date"] == "2026-08-06"
+    # both manifests were candidates — the comparison must not crash
+    assert man["package_status"] == "SEALED"
+
+
+def test_sealed_package_for_execution_prefers_latest_revision(monkeypatch, tmp_path):
+    """Revision scan: for one execution date the NEWEST matching revision
+    wins; a non-matching execution_date package is never picked."""
+    root = tmp_path / "forward_shadow_evidence"
+    pkg_dir = root / "packages" / "2026-08-05"
+    pkg_dir.mkdir(parents=True)
+    (pkg_dir / "signal_package_manifest.json").write_text(json.dumps({
+        "package_status": "SEALED", "signal_date": "2026-08-05",
+        "execution_date": "2026-08-06",
+    }))
+    (pkg_dir / "revision_2").mkdir()
+    (pkg_dir / "revision_2" / "signal_package_manifest.json").write_text(
+        json.dumps({
+            "package_status": "SEALED", "signal_date": "2026-08-05",
+            "execution_date": "2026-08-06",
+        }))
+    # a package targeting a different execution day must be ignored
+    other = root / "packages" / "2026-08-06"
+    other.mkdir()
+    (other / "signal_package_manifest.json").write_text(json.dumps({
+        "package_status": "SEALED", "signal_date": "2026-08-06",
+        "execution_date": "2026-08-07",
+    }))
+    monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    man, mpath = web_app._sealed_package_for_execution("2026-08-06")
+    assert mpath.parent.name == "revision_2"
+    assert man["signal_date"] == "2026-08-05"
