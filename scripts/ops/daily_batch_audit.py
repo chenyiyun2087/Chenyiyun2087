@@ -409,7 +409,7 @@ def run_audit(
             # worker after this process exits).
             rows.append({
                 "task_name": AUDIT_TASK_ID,
-                "expected_time": "22:20",
+                "expected_time": "22:40",
                 "status": "OK",
                 "reason": "巡检脚本已完成；业务异常见各任务状态",
                 "queue_id": None,
