@@ -148,6 +148,8 @@ def build_task_script_parts(
         args = ["--notify-feishu"]
         if datestr:
             args.extend(["--date", datestr])
+        if historical_safe:
+            args.append("--historical-safe")
         if historical_reissue:
             args.append("--historical-reissue")
         return [script, *args]
