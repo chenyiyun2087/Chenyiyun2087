@@ -255,3 +255,66 @@ def test_dry_run_seals_nothing(monkeypatch, tmp_path, capsys):
     assert list(tmp_path.iterdir()) == [], \
         f"dry-run wrote into the packages zone: {list(tmp_path.iterdir())}"
     assert not (tmp_path / "2026-08-05").exists()
+
+
+def test_reseal_existing_sealed_package_is_idempotent_noop(
+        monkeypatch, tmp_path, capsys):
+    """v5.5.3 (2026-08-06): a retried seal job whose subprocess already
+    sealed (but whose in-process verifier failed on a tool bug) must NOT
+    dead-end on PackageSealedError.  With a SEALED manifest in place,
+    run_package reports already_sealed, exits 0, never touches inputs or
+    the package, and lets the artifact verifier re-prove the contract."""
+    import json as _json
+
+    from scripts.ops import build_daily_alpha_signal_package as pkg
+
+    pkg_dir = tmp_path / "2026-08-05"
+    pkg_dir.mkdir(parents=True)
+    (pkg_dir / "signal_package_manifest.json").write_text(_json.dumps({
+        "package_status": "SEALED", "signal_date": "2026-08-05",
+        "execution_date": "2026-08-06", "revision": 1,
+    }), encoding="utf-8")
+    before = (pkg_dir / "signal_package_manifest.json").read_bytes()
+
+    def _explode(d):
+        raise AssertionError("fetch_production_inputs must not run on "
+                             "an idempotent re-seal")
+
+    monkeypatch.setattr(pkg, "fetch_production_inputs", _explode)
+    monkeypatch.setattr(pkg, "PACKAGES_ROOT", tmp_path)
+
+    rc = pkg.run_package("2026-08-05")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '"already_sealed": true' in out
+    assert '"revision": 1' in out
+    # the SEALED package is byte-identical — no rewrite, no revision bump
+    assert (pkg_dir / "signal_package_manifest.json").read_bytes() == before
+    assert not (tmp_path / "2026-08-05" / "revision_2").exists()
+
+
+def test_reseal_non_sealed_dir_still_builds(monkeypatch, tmp_path):
+    """An existing dir WITHOUT a SEALED manifest (e.g. a defect/partial
+    write) is not a no-op — the historical build path must run and the
+    package write still fails closed on PackageSealedError."""
+    import json as _json
+
+    from scripts.ops import build_daily_alpha_signal_package as pkg
+
+    pkg_dir = tmp_path / "2026-08-05"
+    pkg_dir.mkdir(parents=True)
+    (pkg_dir / "signal_package_manifest.json").write_text(
+        _json.dumps({"package_status": "KNOWN_DEFECT"}), encoding="utf-8")
+
+    called = []
+
+    def _fake_fetch(d):
+        called.append(d)
+        raise SignalPackageBlocked("boom")
+
+    monkeypatch.setattr(pkg, "fetch_production_inputs", _fake_fetch)
+    monkeypatch.setattr(pkg, "PACKAGES_ROOT", tmp_path)
+
+    with pytest.raises(SignalPackageBlocked, match="boom"):
+        pkg.run_package("2026-08-05")
+    assert called == ["2026-08-05"]

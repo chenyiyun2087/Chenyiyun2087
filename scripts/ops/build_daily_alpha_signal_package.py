@@ -1337,6 +1337,24 @@ def compute_raw_factors(bars: pd.DataFrame, signal_date: str) -> pd.DataFrame:
     return day
 
 
+def _existing_sealed_dir(signal_date: str) -> Path | None:
+    """Package dir when a SEALED manifest already exists for the signal
+    date (idempotent re-seal check, v5.5.3).  Returns None for missing
+    dirs, unreadable/invalid manifests, or non-SEALED status — those all
+    keep the historical build/raise behavior."""
+    pkg = PACKAGES_ROOT / signal_date
+    manifest_path = pkg / "signal_package_manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if manifest.get("package_status") != "SEALED":
+        return None
+    return pkg
+
+
 def run_package(signal_date: str | None = None, dry_run: bool = False,
                 revision_for: str | None = None) -> int:
     """Production entry: fetch -> quality -> universe -> factors -> seal.
@@ -1354,6 +1372,29 @@ def run_package(signal_date: str | None = None, dry_run: bool = False,
     runtime_cfg = yaml.safe_load(RUNTIME_CFG_PATH.read_text(encoding="utf-8"))
     if signal_date is None:
         signal_date = revision_for or datetime.now().strftime("%Y-%m-%d")
+
+    # v5.5.3 idempotent re-seal: a SEALED package for this signal date is
+    # immutable — a retried seal job (e.g. one whose subprocess sealed but
+    # whose in-process verifier failed) reports already_sealed and exits 0
+    # so the artifact verifier re-proves the contract against the existing
+    # manifest.  The package is never rewritten (no revision bump, no
+    # overwrite); a contract violation still FAILs the job at verification.
+    # --revision-for and --dry-run keep their historical behavior.
+    if not dry_run and revision_for is None:
+        sealed = _existing_sealed_dir(signal_date)
+        if sealed is not None:
+            existing_manifest = json.loads(
+                (sealed / "signal_package_manifest.json")
+                .read_text(encoding="utf-8"))
+            print(json.dumps({
+                "already_sealed": True,
+                "signal_date": signal_date,
+                "execution_date": existing_manifest.get("execution_date"),
+                "revision": existing_manifest.get("revision"),
+                "package_dir": str(sealed),
+                "package_sha": True,
+            }, ensure_ascii=False, indent=2))
+            return 0
 
     inputs = fetch_production_inputs(signal_date)
     dq = inputs["data_quality"]
