@@ -47,6 +47,9 @@ jobs:
           test/test_shadow_events_replay.py
           test/test_shadow_sell_decisions.py
           test/test_shadow_virtual_account.py
+          test/test_integrated_batch_notifications.py
+          test/test_integrated_strategy_review.py
+          test/test_integrated_batch_audit.py
       - run: '! rg "from scripts\.research\.strict_execution_ledger|research_trusted_strategy_account_backtest" scripts/research/replay_strict_execution_ledger_v2.py'
   freeze-integrity:
     runs-on: ubuntu-latest

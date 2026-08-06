@@ -44,11 +44,12 @@ def build_task_script_parts(
     if task_name == "sina_bs_consensus":
         return [script, *(["--date", datestr] if datestr else [])]
     if task_name == "rolling_strategy_scorer":
-        args: list[str] = []
+        # The scorer is a digest source. It always persists scores/weights but
+        # never sends its former standalone card; the integrated strategy
+        # review publishes the single routine daily notification.
+        args: list[str] = ["--no-push"]
         if datestr:
-            args.extend(["--calc-date", _iso_date(datestr)])
-        if historical_safe:
-            args.append("--no-push")
+            args[0:0] = ["--calc-date", _iso_date(datestr)]
         return [script, *args]
     if task_name == "pit_forward_shadow_collection":
         return [script, "--as-of", _iso_date(datestr or today)]
@@ -70,15 +71,12 @@ def build_task_script_parts(
             "--max-total-positions",
             str(context.trusted_config["max_total_positions"]),
             "--write-db",
+            "--no-emit-orders" if historical_safe else "--emit-orders",
+            "--write-signal-snapshot",
         ]
-        if not historical_safe or historical_reissue:
-            args.append("--notify-feishu")
-        args.extend(
-            [
-                "--no-emit-orders" if historical_safe else "--emit-orders",
-                "--write-signal-snapshot",
-            ]
-        )
+        # Candidate/order details are included in the integrated review. The
+        # source task remains silent on success and still receives scheduler
+        # failure/block/retry notifications.
         if historical_reissue:
             args.append("--historical-reissue")
         if datestr:
@@ -98,8 +96,8 @@ def build_task_script_parts(
             "--write-db",
             "--allow-empty",
         ]
-        if not historical_safe or historical_reissue:
-            args.append("--notify-feishu")
+        # Shadow metrics are persisted and summarized by the integrated review;
+        # do not emit a second routine card.
         if datestr:
             args.extend(["--execution-date", datestr])
         if historical_reissue:
@@ -145,9 +143,13 @@ def build_task_script_parts(
             args.extend(["--date", _iso_date(datestr)])
         return [script, *args]
     if task_name == context.daily_audit_task:
+        # The integrated audit accepts this flag but sends only when the final
+        # cross-task reconciliation contains an anomaly.
         args = ["--notify-feishu"]
         if datestr:
             args.extend(["--date", datestr])
+        if historical_safe:
+            args.append("--historical-safe")
         if historical_reissue:
             args.append("--historical-reissue")
         return [script, *args]

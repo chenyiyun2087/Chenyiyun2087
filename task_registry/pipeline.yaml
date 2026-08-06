@@ -1,6 +1,6 @@
 # Chenyiyun2087 生产流水线定义
 # 唯一权威来源 — web/app.py worker 读取此文件执行任务
-# 更新日期: 2026-06-24
+# 更新日期: 2026-08-06
 
 daily_close:
   description: "每日收盘后流水线"
@@ -47,6 +47,7 @@ daily_close:
       depends_on: [sina_bs_consensus]
 
     - id: rolling_strategy_scorer
+      description: "滚动策略评分与权重落库（综合简报数据源，正常成功不单独通知）"
       time: "21:30"
       script: scripts/ops/run_rolling_strategy_scorer.py
       type: script
@@ -55,6 +56,7 @@ daily_close:
       depends_on: [trusted_strategy_backtest]
 
     - id: trusted_strategy_candidates
+      description: "可信候选与订单草案落库（综合简报数据源，正常成功不单独通知）"
       time: "21:35"
       script: scripts/ops/export_trusted_strategy_candidates.py
       type: pipeline
@@ -63,6 +65,7 @@ daily_close:
       depends_on: [sina_bs_consensus, rolling_strategy_scorer]
 
     - id: trusted_strategy_shadow_monitor
+      description: "可信策略影子成交与滑点落库（综合简报数据源，正常成功不单独通知）"
       time: "21:40"
       script: scripts/ops/run_trusted_strategy_shadow_monitor.py
       type: script
@@ -71,12 +74,13 @@ daily_close:
       depends_on: [trusted_strategy_candidates]
 
     - id: trusted_strategy_performance_review
+      description: "综合策略简报：收益风险、滚动评分、候选订单与影子成交统一通知"
       time: "21:45"
-      script: scripts/ops/run_strategy_performance_review.py
+      script: scripts/ops/run_integrated_strategy_review.py
       type: script
       trading_day_only: true
       status: enabled
-      depends_on: [trusted_strategy_backtest, trusted_strategy_candidates]
+      depends_on: [trusted_strategy_backtest, rolling_strategy_scorer, trusted_strategy_candidates, trusted_strategy_shadow_monitor]
 
     - id: candle_diag_scan
       time: "21:50"
@@ -103,8 +107,9 @@ daily_close:
       status: enabled
 
     - id: ops_daily_batch_audit
+      description: "日终批量闭环审计（健康日静默，仅异常通知）"
       time: "22:20"
-      script: scripts/ops/daily_batch_audit.py
+      script: scripts/ops/run_integrated_batch_audit.py
       type: script
       trading_day_only: true
       status: enabled
