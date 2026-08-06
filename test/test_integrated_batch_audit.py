@@ -167,6 +167,7 @@ def test_healthy_day_silent_even_with_notify_flag(monkeypatch):
     assert summary["notification_mode"] == "ANOMALY_ONLY"
     assert summary["digest_delivery_expected"] is True
     assert summary["attention_count"] == 0
+    assert summary["status"] == "PASS"
     assert summary["notify_result"] == "skipped_healthy"
     assert calls["sends"] == []
     assert calls["digest_checks"] == 1
@@ -179,6 +180,7 @@ def test_anomaly_day_sends_single_incident_card(monkeypatch):
     ])
     summary = audit_mod.run_integrated_audit("20260805", notify_feishu=True)
     assert summary["attention_count"] == 1
+    assert summary["status"] == "ACTION_REQUIRED"
     assert summary["notify_result"] == "ok"
     assert len(calls["sends"]) == 1
     send = calls["sends"][0]
@@ -240,6 +242,9 @@ def test_missing_digest_delivery_makes_day_anomalous(monkeypatch):
     )
     summary = audit_mod.run_integrated_audit("20260805", notify_feishu=True)
     assert summary["attention_count"] == 1
+    # The digest row is appended AFTER the legacy summary — the status must
+    # be recomputed so a missing digest alone turns the day ACTION_REQUIRED.
+    assert summary["status"] == "ACTION_REQUIRED"
     assert len(calls["sends"]) == 1  # the missing digest is itself the anomaly
     assert "NOTIFICATION_MISSING" in calls["sends"][0]["content"]
 

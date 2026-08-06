@@ -358,6 +358,21 @@ def test_integrated_review_normalizes_notify_result_to_ok_on_rerun(monkeypatch, 
     assert payload["notify_result"] == "duplicate_delivery_skipped"
 
 
+def test_integrated_review_reissue_prefixes_card(monkeypatch, tmp_path):
+    """An explicit historical reissue prefixes the digest, content intact."""
+    payload, calls, _ = _review_install(monkeypatch, tmp_path)
+    review_mod.run_integrated_review(
+        argparse.Namespace(notify_feishu=True, historical_reissue=True))
+    assert len(calls["sends"]) == 1
+    content = calls["sends"][0]["content"]
+    assert content.startswith("【历史补发】")
+    assert "今日候选评分" in content
+    assert "滚动策略评分与权重" in content
+    # The artifact file itself stays a faithful record of the day (no prefix).
+    assert not Path(payload["outputs"]["feishu_text_path"]).read_text(
+        encoding="utf-8").startswith("【历史补发】")
+
+
 # ── task routing: source jobs silent, digest notifies ───────────────────
 
 

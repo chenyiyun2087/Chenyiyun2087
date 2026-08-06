@@ -281,9 +281,12 @@ def run_integrated_review(args: argparse.Namespace) -> dict[str, Any]:
 
         if notify_requested:
             compact_date = review_date.replace("-", "")
+            send_text = integrated_text
+            if bool(getattr(args, "historical_reissue", False)):
+                send_text = "【历史补发】\n" + send_text
             ok, reason = send_feishu_text_audited(
                 engine,
-                integrated_text,
+                send_text,
                 business_date=compact_date,
                 notification_type="trusted_strategy_performance_review",
                 task_name="trusted_strategy_performance_review",

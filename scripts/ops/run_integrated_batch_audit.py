@@ -119,6 +119,11 @@ def run_integrated_audit(
     summary["notification_mode"] = "ANOMALY_ONLY"
     summary["digest_delivery_expected"] = digest_expected
     summary["attention_count"] = len(bad_rows)
+    # The digest delivery row is appended AFTER the legacy summary was
+    # computed — recompute the status so a missing/failed digest alone
+    # turns the day ACTION_REQUIRED (and the card's conclusion line
+    # matches the anomaly rows it lists).
+    summary["status"] = "ACTION_REQUIRED" if bad_rows else "PASS"
     if historical_safe and not historical_reissue:
         summary["notify_result"] = "skipped_historical_safe"
     else:
@@ -156,7 +161,6 @@ def main() -> None:
     )
     parser.add_argument("--date", default=None)
     parser.add_argument("--notify-feishu", action="store_true")
-    parser.add_argument("--no-require-notifications", action="store_true")
     parser.add_argument("--historical-safe", action="store_true")
     parser.add_argument("--historical-reissue", action="store_true")
     args = parser.parse_args()
