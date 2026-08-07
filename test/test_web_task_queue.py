@@ -620,7 +620,8 @@ def test_sell_verifier_binds_latest_sealed_package_execution_date(monkeypatch, t
     ok, lines = web_app._verify_alpha_signal_sell_precommit_result(
         None, None, run_options={"datestr": "20260805"})
     assert ok, lines
-    assert any("no_open_positions=1" in ln for ln in lines)
+    assert any("reason=no_open_positions" in ln for ln in lines)
+    assert any("skipped=0" in ln for ln in lines)
 
 
 def test_sell_verifier_rejects_stale_sealed_package(monkeypatch, tmp_path):

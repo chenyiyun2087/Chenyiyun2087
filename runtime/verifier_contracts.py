@@ -385,6 +385,7 @@ def check_nav_contract(
     fills: list[dict],
     cost_rate_map: dict[str, float],
     prev_cash_by_candidate: dict[str, float] | None = None,
+    slippage_bps_map: dict[str, float] | None = None,
 ) -> tuple[bool, list[str]]:
     """NAV contract: all candidates, cash >= 0, nav identity, conservation.
 
@@ -398,7 +399,12 @@ def check_nav_contract(
         cash_now == prev_cash - BUY notional - BUY costs
                            + SELL proceeds - SELL costs
     (costs = notional * (cost_rate + slippage_bps / 1e4) per fill;
-    slippage_bps from the event, cost_rate from the frozen contract).
+    cost_rate and slippage_bps from the FROZEN contracts — NOT the
+    event's slippage_bps field, which records the realized fill-price
+    deviation vs the precommit price and may be negative.  The virtual
+    accounts debit the frozen contract rate at fill time; using the
+    event deviation here would double-count price moves that are already
+    inside fill_price.)
     """
     problems: list[str] = []
     snap_by_cand = {s.get("candidate_id"): s for s in snapshots}
@@ -432,6 +438,7 @@ def check_nav_contract(
             if cid not in snap_by_cand:
                 continue
             cost_rate = cost_rate_map.get(cid, 0.0)
+            slip = float((slippage_bps_map or {}).get(cid, 0.0)) / 1e4
             delta = 0.0
             for f in fills:
                 if f.get("challenger_id") != cid:
@@ -440,7 +447,6 @@ def check_nav_contract(
                 shares = f.get("shares") or 0
                 price = f.get("fill_price") or 0.0
                 notional = float(shares) * float(price)
-                slip = float(f.get("slippage_bps") or 0.0) / 1e4
                 if kind == "BUY_FILLED":
                     delta -= notional * (1.0 + cost_rate + slip)
                 elif kind == "SELL_FILLED":

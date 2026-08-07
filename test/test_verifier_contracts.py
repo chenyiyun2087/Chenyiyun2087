@@ -469,7 +469,48 @@ def test_nav_contract_happy_path_with_conservation():
 
 
 def test_nav_contract_fills_reconcile_exactly():
-    # one BUY_FILLED of 1000 @ 10.0 with 10bps slippage on 0.00075 cost
+    # one BUY_FILLED of 1000 @ 10.0 with 10bps CONTRACT slippage on
+    # 0.00075 cost — the virtual account debits the frozen contract rate.
+    notional = 1000 * 10.0
+    cost = notional * (0.00075 + 10 / 1e4)
+    prev = 500_000.0
+    snapshots = [_snapshot("C1", prev - notional - cost, 10_000.0, 1)]
+    fills = [{"event_type": "BUY_FILLED", "challenger_id": "C1",
+              "shares": 1000, "fill_price": 10.0, "slippage_bps": 10}]
+    ok, details = check_nav_contract(
+        snapshots, ["C1"], fills, {"C1": 0.00075},
+        prev_cash_by_candidate={"C1": prev},
+        slippage_bps_map={"C1": 10.0})
+    assert ok, details
+    assert snapshots[0]["cash"] == pytest.approx(prev - notional - cost)
+
+
+def test_nav_contract_ignores_realized_slippage_from_event():
+    """2026-08-07 production FAIL: the contract must cost fills at the
+    FROZEN contract slippage (what the virtual account debits), never the
+    event's realized fill-price deviation vs precommit — which may be
+    NEGATIVE (C0 filled 603609 1400@6.20 vs precommit 6.21 -> -16.1bps).
+    fill_price already contains the price move; using the deviation as an
+    extra cost double-counts it (verifier expected 91.30 vs true 68.65)."""
+    notional = 1400 * 6.2
+    cost = notional * (0.00075 + 10 / 1e4)  # contract 10bps
+    prev = 8763.84
+    snapshots = [_snapshot("C0", prev - notional - cost, 10_000.0, 1)]
+    fills = [{"event_type": "BUY_FILLED", "challenger_id": "C0",
+              "shares": 1400, "fill_price": 6.2, "slippage_bps": -16.1}]
+    ok, details = check_nav_contract(
+        snapshots, ["C0"], fills, {"C0": 0.00075},
+        prev_cash_by_candidate={"C0": prev},
+        slippage_bps_map={"C0": 10.0})
+    assert ok, details
+    # The legacy event-based math would have failed here (68.65 != 91.30).
+    assert snapshots[0]["cash"] == pytest.approx(68.65, abs=1e-6)
+
+
+def test_nav_contract_without_contract_slip_map_fails_closed():
+    """No contract slippage supplied -> costed at 0 bps: an account that
+    debited 10bps no longer reconciles, so the missing map is caught
+    (fail-closed), never silently accepted."""
     notional = 1000 * 10.0
     cost = notional * (0.00075 + 10 / 1e4)
     prev = 500_000.0
@@ -479,8 +520,8 @@ def test_nav_contract_fills_reconcile_exactly():
     ok, details = check_nav_contract(
         snapshots, ["C1"], fills, {"C1": 0.00075},
         prev_cash_by_candidate={"C1": prev})
-    assert ok, details
-    assert snapshots[0]["cash"] == pytest.approx(prev - notional - cost)
+    assert not ok
+    assert any("conservation broken" in d for d in details)
 
 
 def test_nav_contract_negative_cash_rejected():
