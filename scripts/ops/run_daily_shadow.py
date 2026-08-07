@@ -935,6 +935,19 @@ def sell_precommit(execution_date: str | None = None,
     orders_path.parent.mkdir(parents=True, exist_ok=True)
     orders_path.write_text(json.dumps(orders, ensure_ascii=False, indent=2),
                            encoding="utf-8")
+    if not sells:
+        # v5.5.5: a held-position day with zero SELL decisions is still a
+        # legitimate no-op — every position is inside its hold period (or
+        # has no T-close reference).  The verifier needs the same durable
+        # marker the no_open_positions branch writes, so a crash and a
+        # legitimately-sell-nothing day stay distinguishable.  Re-runs
+        # overwrite an identical payload (idempotent).
+        decision_path = orders_path.with_name("sell_decisions.json")
+        decision_path.write_text(json.dumps({
+            "signal_date": signal_date, "execution_date": execution_date,
+            "reason": "no_sells_all_skipped", "skipped": skipped,
+            "decided_at": datetime.now().isoformat(timespec="seconds"),
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"sells": len(sells), "skipped": skipped,
             "execution_date": execution_date, "signal_date": signal_date,
             "sells_detail": [{"challenger_id": o["challenger_id"],

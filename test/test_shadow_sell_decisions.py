@@ -254,6 +254,29 @@ def test_no_close_price_defers_never_invents(tmp_path):
     assert out["skipped"] == 1
 
 
+def test_all_held_skipped_writes_sell_decisions_marker(tmp_path):
+    """v5.5.5: a held-position day with zero SELL decisions (every
+    position inside its 20-day hold period) must still write the durable
+    decision marker — 2026-08-07 production: the sell wrote only an
+    empty orders.json and the verifier FAILed with
+    no_sell_artifacts_for_signal_date even though 0 sells was correct."""
+    _seal_package(tmp_path, D0, D1, [SYM_A], {SYM_A: TW})
+    zone = _zone(tmp_path)
+    _buy_chain(zone, D0, D1)  # HOLDING, pre-expiry, still in target
+    out = sell_precommit(D1, execution_zone=zone,
+                         packages_zone=tmp_path / "packages",
+                         prices_path=_base_prices(tmp_path))
+    assert out["sells"] == 0
+    assert out["skipped"] == 1
+    marker = zone / D1 / "sell_decisions.json"
+    assert marker.exists()
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload["reason"] == "no_sells_all_skipped"
+    assert payload["signal_date"] == D0
+    assert payload["execution_date"] == D1
+    assert payload["skipped"] == 1
+
+
 def test_no_open_positions(tmp_path):
     # A SEALED package exists but no position is held -> nothing to sell.
     _seal_package(tmp_path, D0, D1, [SYM_A], {SYM_A: TW})

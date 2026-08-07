@@ -3136,18 +3136,22 @@ def _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_opti
             marker = FORWARD_EVIDENCE_ROOT / "execution" / iso \
                 / "sell_decisions.json"
             no_pos = False
+            payload = {}
             if marker.exists():
                 try:
                     payload = json.loads(marker.read_text(encoding="utf-8"))
-                    no_pos = (payload.get("reason") == "no_open_positions"
-                              and payload.get("signal_date") == mp["signal_date"])
+                    no_pos = (payload.get("reason")
+                              in ("no_open_positions", "no_sells_all_skipped")
+                              and payload.get("signal_date")
+                              == mp["signal_date"])
                 except ValueError:
                     no_pos = False
             if no_pos:
                 return True, [f"result=PASS; task=alpha_signal_sell_precommit; "
                               f"business_date={target_datestr}; "
                               f"execution_date={iso}; sell_orders=0; "
-                              f"no_open_positions=1"]
+                              f"reason={payload.get('reason')}; "
+                              f"skipped={payload.get('skipped', 0)}"]
             return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
                            f"business_date={target_datestr}; "
                            f"reason=no_sell_artifacts_for_signal_date="
@@ -3209,6 +3213,10 @@ def _verify_alpha_signal_nav_result(started_at, finished_at, run_options=None):
         cost_rate_map = {
             cid: float((meta.get("execution") or {}).get("cost_rate", 0.00075))
             for cid, meta in (cfg.get("candidates") or {}).items()}
+        slippage_bps_map = {
+            cid: float((meta.get("execution") or {})
+                       .get("slippage_bps", 10.0))
+            for cid, meta in (cfg.get("candidates") or {}).items()}
         events, _ = _forward_events(target_datestr)
         fills = [e for e in events if e and e.get("event_type")
                  in ("BUY_FILLED", "SELL_FILLED")]
@@ -3219,7 +3227,8 @@ def _verify_alpha_signal_nav_result(started_at, finished_at, run_options=None):
             prev_cash = {s.get("candidate_id"): s.get("cash")
                          for s in prev_snaps if s.get("candidate_id")}
         ok, details = check_nav_contract(
-            days[iso], candidate_ids, fills, cost_rate_map, prev_cash)
+            days[iso], candidate_ids, fills, cost_rate_map, prev_cash,
+            slippage_bps_map)
     except Exception as exc:  # fail-closed: a broken proof is a FAIL
         return False, [f"result=FAIL; task=alpha_signal_nav; "
                        f"execution_date={target_datestr}; "
