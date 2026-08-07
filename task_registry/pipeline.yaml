@@ -217,15 +217,21 @@ morning:
     # alpha_signal_package_seal comment).  Order precommit 09:25 (uses
     # the SEALED package from T day + T-day close from ods_daily — the
     # raw load lands ~17:00 T, so the 09:25 slot works).  Reconcile moved
-    # from 09:35 to 21:45 (v5.5.3, FIRST production run): the T+1 open
+    # from 09:35 to 21:35 (v5.5.3, FIRST production run): the T+1 open
     # bars simply do not exist at 09:35 — ods_daily gets T+1 rows only
     # at ~17:00 T+1 — so a 09:35 run NO_OPENs every order (day burned).
-    # The 21:45 fill uses the recorded T+1 open — the same T+1 open
-    # execution the contract promises.  NOTE: no depends_on here — the
-    # cross-day binding (T-day seal -> T+1) is enforced in-code:
-    # precommit/reconcile RAISE shadow_blocked when the SEALED package
-    # or orders are missing (fail-closed), matching the existing
-    # morning-task pattern.
+    # The 21:35 fill uses the recorded T+1 open — the same T+1 open
+    # execution the contract promises.  The sell_precommit depends on the
+    # reconcile (v5.5.4): BUY_FILLED events land in the ledger when the
+    # reconcile fills the day's orders, and the sell's held-position
+    # replay needs them — a sell scheduled before the reconcile would
+    # see zero HOLDING and write no_open_positions (2026-08-06:
+    # reconcile 22:55:55 wrote the fills 13s AFTER the sell 22:55:42 —
+    # no sells, no cash next morning, precommit fail-closed at 09:25).
+    # NOTE: no depends_on here — the cross-day binding (T-day seal ->
+    # T+1) is enforced in-code: precommit/reconcile RAISE shadow_blocked
+    # when the SEALED package or orders are missing (fail-closed),
+    # matching the existing morning-task pattern.
     - id: alpha_signal_precommit
       time: "09:25"
       script: scripts/ops/run_daily_shadow.py
@@ -235,7 +241,7 @@ morning:
       status: enabled  # RE-ENABLED 2026-08-05 — see alpha_signal_package_seal
 
     - id: alpha_signal_execution_reconcile
-      time: "21:45"
+      time: "21:35"
       script: scripts/ops/run_daily_shadow.py
       args: ["--mode", "reconcile"]
       type: script
@@ -249,7 +255,7 @@ morning:
     # checklist (event ledger + state machine + round-trip counting
     # verified in production; true blind re-declared).
     - id: alpha_signal_sell_precommit
-      time: "21:35"
+      time: "21:50"
       script: scripts/ops/run_daily_shadow.py
       args: ["--mode", "sell-precommit"]
       type: script
@@ -260,10 +266,15 @@ morning:
       # (v5.5.3: both moved from 17:00 — see the seal's data-availability
       # comment; the sell itself resolves T+1 from the latest seal and
       # uses T-day close from ods_daily, loaded ~17:00 T).
-      depends_on: [alpha_signal_package_seal]
+      # v5.5.4 (2026-08-07): sell now runs AFTER the reconcile — the
+      # sell's held-position replay needs the day's BUY_FILLED events,
+      # which only exist once the reconcile has filled the day's orders.
+      # A sell before the reconcile sees zero HOLDING and emits
+      # no_open_positions, starving the next morning's precommit of cash.
+      depends_on: [alpha_signal_package_seal, alpha_signal_execution_reconcile]
 
     - id: alpha_signal_nav
-      time: "21:50"
+      time: "21:55"
       script: scripts/ops/run_daily_shadow.py
       args: ["--mode", "nav"]
       type: script
@@ -271,7 +282,8 @@ morning:
       status: enabled  # RE-ENABLED 2026-08-05 — see alpha_signal_package_seal
       # v5.5.3 (moved from 15:30): NAV marks to the execution-day CLOSE —
       # ods_daily gets T+1 rows at ~17:00 T+1, so 15:30 could never see
-      # the close; 21:50 runs after the 21:45 reconcile fills.
+      # the close; 21:55 runs after the 21:50 sell completes (v5.5.4:
+      # reconcile 21:35 -> sell 21:50 -> nav 21:55).
 
 weekly:
   description: "每周任务"

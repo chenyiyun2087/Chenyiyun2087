@@ -1180,8 +1180,15 @@ def precommit(execution_date: str | None = None,
         precommit_price = float(close_map.get(symbol, float("nan")))
         # v5.5.3 cash-aware sizing: the contract's initial cash defines
         # the target notional; the account's CURRENT cash caps it (never
-        # the hardcoded 500k).  A candidate whose cash cannot afford one
-        # A-share lot is skipped, not over-leveraged.
+        # the hardcoded 500k).  v5.5.4 (2026-08-07): the cap is cost-aware
+        # — notional may never exceed cash/(1+rate), so the first order
+        # cannot eat the whole cash AND its costs (2026-08-06: C0's
+        # first order reserved -15.34 and the NEXT symbol 601163
+        # fail-closed the entire morning precommit).  A candidate whose
+        # cash cannot afford one A-share lot still gets its order at
+        # zero shares (the portfolio contract demands one order per row)
+        # — the reconcile rejects it with NO_CASH, and the shortfall
+        # never blocks other candidates with intact cash.
         contract = config.get(candidate_id)
         if contract is None:
             raise RuntimeError(
@@ -1192,20 +1199,18 @@ def precommit(execution_date: str | None = None,
             candidate_id,
             acc.available_cash if acc is not None
             else contract["initial_cash_cny"])
+        rate_total = 1.0 + contract["cost_rate"] \
+            + contract["slippage_bps"] / 1e4
         notional = min(float(row["target_weight"]) * contract["initial_cash_cny"],
-                       available_cash)
+                       available_cash / rate_total)
         shares = int(notional / precommit_price // 100 * 100) \
             if pd.notna(precommit_price) and precommit_price > 0 else 0
-        if shares <= 0:
-            raise RuntimeError(
-                f"shadow_blocked: candidate {candidate_id} symbol {symbol} "
-                f"has no cash for one lot (available {available_cash:.2f}, "
-                f"close {precommit_price}) — sizing would be zero/negative")
         # reserve this order's estimated cash outlay — consecutive BUYs
         # in the same run share one cash pool (never double-spend).
-        est_total = notional * (1.0 + contract["cost_rate"]
-                                + contract["slippage_bps"] / 1e4)
-        reserved[candidate_id] = available_cash - est_total
+        # Zero-share (insufficient-cash) orders reserve nothing.
+        if shares > 0:
+            est_total = notional * rate_total
+            reserved[candidate_id] = available_cash - est_total
         order = {
             "signal_date": manifest["signal_date"],
             "execution_date": execution_date,
@@ -1415,6 +1420,20 @@ def reconcile_from_package(execution_date: str | None = None,
                 slippage_bps=contract["slippage_bps"])
         shares_to_fill = int(o.get("lot_adjusted_shares")
                              or o.get("target_shares") or 0)
+        # v5.5.4: zero-share orders (precommitted when a candidate's
+        # cash could not afford one lot — see precommit sizing) never
+        # reach the fill path, where a 0-share BUY would "fill" for
+        # total=0 and mint a 0-share FILLED position.  Reject with
+        # NO_CASH: the order ends terminal (contract satisfied), the
+        # ledger records the rejection.
+        if shares_to_fill <= 0:
+            _reject("NO_CASH", "insufficient_cash_for_one_lot")
+            failed += 1
+            if side == "BUY":
+                buy_rejected += 1
+            else:
+                sell_rejected += 1
+            continue
         try:
             if side == "BUY":
                 notional = shares_to_fill * open_price
