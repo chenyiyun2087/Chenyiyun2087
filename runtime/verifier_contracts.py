@@ -395,9 +395,9 @@ def check_nav_contract(
       - nav == cash + positions_mv (mark identity)
       - position_count >= 0
     When the previous day's cash is provided, the day's fills must
-    reconcile EXACTLY:
-        cash_now == prev_cash - BUY notional - BUY costs
-                           + SELL proceeds - SELL costs
+    reconcile to within one fen:
+        cash_now ~= prev_cash - BUY notional - BUY costs
+                            + SELL proceeds - SELL costs
     (costs = notional * (cost_rate + slippage_bps / 1e4) per fill;
     cost_rate and slippage_bps from the FROZEN contracts — NOT the
     event's slippage_bps field, which records the realized fill-price
@@ -405,6 +405,15 @@ def check_nav_contract(
     accounts debit the frozen contract rate at fill time; using the
     event deviation here would double-count price moves that are already
     inside fill_price.)
+
+    The tolerance is one fen (0.01), NOT float-exact: VirtualAccount
+    keeps full-precision cash but daily_snapshot rounds every field to
+    cents, and prev_cash arrives from the previous rounded snapshot.
+    Each rounding carries at most 0.005 error, so the two-sided bound
+    is 0.005 + 0.005 = 0.01.  The per-fill delta uses the same
+    piecewise form as the account (notional + fee + slip, subtracted
+    per fill) so the arithmetic agrees bit-for-bit; real conservation
+    breaks (missing fills, wrong prices) land far beyond one fen.
     """
     problems: list[str] = []
     snap_by_cand = {s.get("candidate_id"): s for s in snapshots}
@@ -448,12 +457,11 @@ def check_nav_contract(
                 price = f.get("fill_price") or 0.0
                 notional = float(shares) * float(price)
                 if kind == "BUY_FILLED":
-                    delta -= notional * (1.0 + cost_rate + slip)
+                    delta -= notional + notional * cost_rate + notional * slip
                 elif kind == "SELL_FILLED":
-                    delta += notional * (1.0 - cost_rate - slip)
+                    delta += notional - notional * cost_rate - notional * slip
             expected_cash = float(prev_cash) + delta
-            if abs(expected_cash - float(snap_by_cand[cid]["cash"])) > \
-                    1e-6 * max(1.0, abs(expected_cash)):
+            if abs(expected_cash - float(snap_by_cand[cid]["cash"])) > 0.01 + 1e-6:
                 problems.append(
                     f"candidate {cid}: fill conservation broken — "
                     f"prev_cash {prev_cash:.2f} + fill delta {delta:.2f} = "
