@@ -561,6 +561,40 @@ def test_nav_contract_broken_conservation_rejected():
     assert any("conservation broken" in d for d in details)
 
 
+def test_nav_contract_one_fen_rounding_tolerance():
+    """2026-08-07 C3 production FAIL: prev cash 6632.11 is the ROUNDED
+    08-06 snapshot (true full-precision 6632.1145), and the 08-07 snapshot
+    cash 1263.74 is the rounded true 1263.73625.  Two cents-roundings put
+    the full-precision expectation 0.00825 away from the snapshot — inside
+    one fen.  The verifier must accept, not fail a legitimately booked day.
+
+    True account chain (full precision):
+        500000 - 493367.8855 (10 buys 08-06) = 6632.1145
+        6632.1145 - (5359 + 5359*0.00075 + 5359*0.001) = 1263.73625
+    """
+    notional = 100 * 53.59
+    fee = notional * 0.00075
+    slip = notional * 10 / 1e4
+    snapshots = [_snapshot("C3", 1263.74, 509_996.0, 11)]
+    fills = [{"event_type": "BUY_FILLED", "challenger_id": "C3",
+              "shares": 100, "fill_price": 53.59, "slippage_bps": 12.0}]
+    ok, details = check_nav_contract(
+        snapshots, ["C3"], fills, {"C3": 0.00075},
+        prev_cash_by_candidate={"C3": 6632.11},
+        slippage_bps_map={"C3": 10.0})
+    assert ok, details
+    # Sanity: the pre-fix 1e-6 tolerance would have failed here
+    # (expected 1263.73175, cash 1263.74, diff 0.00825 > 1e-6).
+    assert abs((6632.11 - notional - fee - slip) - 1263.74) > 1e-6
+    # A real conservation break (one fill missing) still fails.
+    ok2, details2 = check_nav_contract(
+        snapshots, ["C3"], [], {"C3": 0.00075},
+        prev_cash_by_candidate={"C3": 6632.11},
+        slippage_bps_map={"C3": 10.0})
+    assert not ok2
+    assert any("conservation broken" in d for d in details2)
+
+
 # ── E4 ─────────────────────────────────────────────────────────────────
 
 
