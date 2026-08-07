@@ -222,18 +222,25 @@ def _safe_float(val, default=0.0):
 
 
 def find_latest_review_dir() -> Optional[str]:
-    """自动查找最新的全策略回测输出目录"""
+    """自动查找最新的全策略回测输出目录
+
+    兼容两种命名（目录名前缀均为 YYYYMMDD_HHMMSS，字典序=时间序）：
+      - 旧版: <ts>_production_all_strategy_review（run_daily_strategy_backtest 早期输出）
+      - 现行: <ts>_<us>_trusted_account_backtest（research_trusted_strategy_account_backtest 输出）
+    """
     exports_base = os.path.join(
         PROJECT_ROOT, "exports", "signal_research"
     )
     if not os.path.isdir(exports_base):
         return None
 
-    # 匹配 production_all_strategy_review 目录
     candidates = []
     for name in os.listdir(exports_base):
         full = os.path.join(exports_base, name)
-        if os.path.isdir(full) and "production_all_strategy_review" in name:
+        if not os.path.isdir(full):
+            continue
+        if ("production_all_strategy_review" in name
+                or "trusted_account_backtest" in name):
             candidates.append(full)
 
     if not candidates:
@@ -243,9 +250,18 @@ def find_latest_review_dir() -> Optional[str]:
     return candidates[0]
 
 
+def _pick_csv(review_dir: str, plain_name: str, prefixed_name: str) -> str:
+    """优先旧版裸文件名，退回现行带前缀文件名"""
+    for name in (plain_name, prefixed_name):
+        path = os.path.join(review_dir, name)
+        if os.path.exists(path):
+            return path
+    return os.path.join(review_dir, plain_name)
+
+
 def load_nav_data(review_dir: str) -> dict[str, StrategyNAV]:
-    """加载 nav.csv，过滤死策略"""
-    nav_path = os.path.join(review_dir, "nav.csv")
+    """加载 nav.csv（或 trusted_account_backtest_nav.csv），过滤死策略"""
+    nav_path = _pick_csv(review_dir, "nav.csv", "trusted_account_backtest_nav.csv")
     if not os.path.exists(nav_path):
         raise FileNotFoundError(f"nav.csv 不存在: {nav_path}")
 
@@ -287,8 +303,14 @@ def load_nav_data(review_dir: str) -> dict[str, StrategyNAV]:
 
 
 def load_full_history_refs(review_dir: str) -> dict[str, FullHistoryRef]:
-    """从 strategy_summary.csv 读取全历史锚定数据"""
-    path = os.path.join(review_dir, "strategy_summary.csv")
+    """从 strategy_summary.csv（或 trusted_account_backtest_summary.csv）读取全历史锚定数据
+
+    现行 backtest 输出缺少 sharpe/calmar/completed_round_trips 列，按可行数据推导：
+      - completed_round_trips = min(buy_count, sell_count)，缺买卖列时用 trade_count
+      - calmar = annualized_return / |max_drawdown|，缺列时按该式推导
+    """
+    path = _pick_csv(review_dir, "strategy_summary.csv",
+                     "trusted_account_backtest_summary.csv")
     refs = {}
     if not os.path.exists(path):
         return refs
@@ -302,6 +324,16 @@ def load_full_history_refs(review_dir: str) -> dict[str, FullHistoryRef]:
             sharpe = _safe_float(row.get("sharpe"))
             calmar = _safe_float(row.get("calmar"))
             trades = int(_safe_float(row.get("completed_round_trips")))
+            if trades <= 0:
+                buy = _safe_float(row.get("buy_count"))
+                sell = _safe_float(row.get("sell_count"))
+                if buy > 0 or sell > 0:
+                    trades = int(min(buy, sell))
+                else:
+                    trades = int(_safe_float(row.get("trade_count")))
+            if calmar == 0.0 and mdd != 0.0:
+                ann_ret = _safe_float(row.get("annualized_return"))
+                calmar = ann_ret / abs(mdd)
             if trades <= 0 and total_ret == 0.0:
                 continue
             refs[s] = FullHistoryRef(
@@ -563,7 +595,12 @@ def load_prev_weights(conn, strategies: list[str]) -> dict[str, float]:
 def save_perf(conn, calc_date: str, perfs: dict[str, Rolling3MPerf],
               raw_scores: dict[str, float], final_scores: dict[str, float],
               qualified: set):
-    """保存滚动3月表现到数据库"""
+    """保存滚动3月表现到数据库（先清该日期旧行，保证幂等）"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM ads_rolling_3m_strategy_perf WHERE calc_date = %s",
+            (calc_date,),
+        )
     sql = """
         INSERT INTO ads_rolling_3m_strategy_perf
             (calc_date, strategy, window_start, window_end, trading_days,
@@ -597,7 +634,16 @@ def save_weights(conn, calc_date: str, scores: dict[str, float],
                  weights: dict[str, float], target_weights: dict[str, float],
                  prev_weights: dict[str, float], effective_exposure: float,
                  cb_active: bool, cb_reason: str):
-    """保存权重分配到数据库"""
+    """保存权重分配到数据库（先清该日期旧行，保证幂等）
+
+    策略命名可能变更（如 backtest 输出改名），upsert 会留下同日期新旧两套
+    行并存；改为先 DELETE 该 calc_date 全部行再插入。
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM ads_rolling_strategy_weights WHERE calc_date = %s",
+            (calc_date,),
+        )
     sql = """
         INSERT INTO ads_rolling_strategy_weights
             (calc_date, strategy, target_weight, smooth_weight,
