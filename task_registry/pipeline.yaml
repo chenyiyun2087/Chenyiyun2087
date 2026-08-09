@@ -22,7 +22,14 @@ daily_close:
 
     - id: sina_score
       description: "全A股评分"
-      time: "21:12"
+      # v5.5.6 (2026-08-09): moved from 21:12 — the adjusted bars
+      # (dwd_stock_daily_standard) for day T are written at ~21:20:03
+      # (measured 08-03/04/06/07; 08-05 loaded 22:42:44), so a 21:12 run
+      # ALWAYS fails "qfq 无数据" on the first 1-2 attempts and depends on
+      # DATA_READINESS retries; on late-load days all 24 retries burn out
+      # (12 wasted runs on 08-05).  21:28 lands safely after the 21:20 load;
+      # late days are still covered by the 5-min DATA_READINESS retry loop.
+      time: "21:28"
       script: scoreRank/run_daily.py
       type: script
       trading_day_only: true
@@ -31,7 +38,9 @@ daily_close:
 
     - id: sina_bs_consensus
       description: "B点综合评分建议"
-      time: "21:20"
+      # v5.5.6: moved from 21:20 to follow sina_score's 21:28 start
+      # (sina_score takes ~2-3 min, so 21:35 is safe).
+      time: "21:35"
       script: scoreRank/cli/build_bs_consensus.py
       type: script
       trading_day_only: true

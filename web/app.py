@@ -7877,10 +7877,74 @@ def run_task(task_name):
     )
 
 
+# v5.5.6 (2026-08-09): once-per-day guard for the stale-job cleanup sweep.
+# The 2026-06-26 cascade left 1647 BLOCKED jobs with no automatic reaper;
+# every downstream failure stacked a new BLOCKED job per task per day forever.
+_last_queue_cleanup_date = None
+
+
+def _cleanup_stale_queue_jobs():
+    """Cancel BLOCKED jobs >7 days old and FAILED jobs >14 days old.
+
+    Runs once per calendar day from the scheduler loop.  Both conditions free
+    active_dedupe_key (UNIQUE) so a fresh run for the same task+date can be
+    enqueued again.  business_date is VARCHAR(8) — never compare it against a
+    DATE value; format the cutoff as a 'YYYYMMDD' string first.
+    """
+    global _last_queue_cleanup_date
+    today = datetime.now().strftime("%Y%m%d")
+    if _last_queue_cleanup_date == today:
+        return
+    blocked_cleaned = failed_cleaned = 0
+    conn = _connect_db()
+    try:
+        with conn.cursor() as cursor:
+            _ensure_task_management_schema(cursor)
+            cursor.execute(
+                """
+                UPDATE app_task_queue
+                SET status='CANCELLED', active_dedupe_key=NULL,
+                    finished_at=NOW(),
+                    message='Auto-cleanup: stale blocked job older than 7 days'
+                WHERE status='BLOCKED'
+                  AND business_date < %s
+                  AND business_date <> '00000000'
+                """,
+                (datetime.now() - timedelta(days=7)).strftime("%Y%m%d"),
+            )
+            blocked_cleaned = cursor.rowcount
+            cursor.execute(
+                """
+                UPDATE app_task_queue
+                SET status='CANCELLED', active_dedupe_key=NULL,
+                    finished_at=NOW(),
+                    message='Auto-cleanup: stale failed job older than 14 days'
+                WHERE status='FAILED'
+                  AND business_date < %s
+                  AND business_date <> '00000000'
+                """,
+                (datetime.now() - timedelta(days=14)).strftime("%Y%m%d"),
+            )
+            failed_cleaned = cursor.rowcount
+        conn.commit()
+    except Exception as exc:
+        # Never let a cleanup failure take down the scheduler loop.
+        print(f"Task queue cleanup error: {exc}")
+    finally:
+        conn.close()
+    if blocked_cleaned or failed_cleaned:
+        print(
+            f"Task queue cleanup: cancelled {blocked_cleaned} stale BLOCKED"
+            f", {failed_cleaned} stale FAILED (day {today})"
+        )
+    _last_queue_cleanup_date = today
+
+
 def _run_scheduled_tasks_loop():
     while True:
         try:
             now = datetime.now()
+            _cleanup_stale_queue_jobs()
             is_trade_day = _is_trading_day(now.date())
             # The production batch is a trading-day pipeline.  Stop at the
             # scheduler boundary on weekends, exchange holidays, missing

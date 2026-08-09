@@ -157,6 +157,18 @@ def score_asof_date(
     # 取截面
     d = qfq_feat[qfq_feat["trade_date"] == asof_date].copy()
     if d.empty:
+        # v5.5.6 (2026-08-09): 区分「当日数据尚未导入」(可重试) 与
+        # 「历史数据永久缺失」(重试无意义)。调度器在 21:28 运行，当日
+        # 复权 bars 21:20 写入；若目标日期已落后 3 天以上还无数据，
+        # DATA_READINESS 24 次重试只会浪费 ~2-3 分钟/次 的 CPU，
+        # 直接以 RuntimeError 退出（不匹配 DATA_READINESS 标记 → 不重试）。
+        from datetime import datetime, timedelta
+        stale_cutoff = pd.Timestamp(datetime.now() - timedelta(days=3)).normalize()
+        if asof_date < stale_cutoff:
+            raise RuntimeError(
+                f"qfq 数据缺口: {asof_date.date()} 无数据且已超过 3 天"
+                f"（DATA_GAP，历史数据永久缺失，重试无意义）"
+            )
         raise ValueError(f"qfq 在 {asof_date.date()} 无数据，检查导入或日期对齐。")
 
     liq = raw_liq[raw_liq["trade_date"] == asof_date].copy()
