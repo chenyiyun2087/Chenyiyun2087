@@ -27,10 +27,16 @@ Chenyiyun2087 is a Chinese A-share quantitative research and execution system co
 ## Common Commands
 
 ```bash
-# Web console (primary production scheduler + dashboard)
-bash start_web_console.sh           # starts on port 5001 by default
-# Or directly:
-python -m flask --app web.app run --host 0.0.0.0 --port 5001 --no-debugger --no-reload
+# Web console + durable scheduler are launchd-managed (KeepAlive) — the
+# production start path. Restart after any web/app.py or pipeline.yaml change:
+launchctl kickstart -k gui/$(id -u)/com.chenyiyun.web-console
+launchctl kickstart -k gui/$(id -u)/com.chenyiyun.task-worker   # MUST restart too —
+# it runs the durable scheduler (task_queue_worker.py) that loads pipeline.yaml
+# at its own startup; a stale worker enqueues the old task times.
+# Logs: ~/Library/Logs/Chenyiyun2087/web-console.{stdout,stderr}.log,
+#       ~/Library/Logs/Chenyiyun2087/task-worker.{stdout,stderr}.log
+# start_web_console.sh is only for manual dev runs (its pgrep guard refuses to
+# start while launchd owns port 5001).
 
 # Standalone scheduler (historical, not the primary scheduler)
 bash start_scheduler.sh
