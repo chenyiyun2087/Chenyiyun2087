@@ -37,6 +37,15 @@ class Trade:
 
 
 @dataclass(slots=True)
+class OrderRejection:
+    ts: str
+    symbol: str
+    side: Side
+    qty: int
+    reason: str
+
+
+@dataclass(slots=True)
 class Position:
     symbol: str
     qty: int = 0

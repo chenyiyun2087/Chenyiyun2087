@@ -107,9 +107,9 @@ def _scale_observations(
 
     ``portfolio_weight`` is preferred because it is capital invariant.  A
     legacy observation may instead declare ``base_capital_cny``; otherwise
-    the registered 500k baseline is used.  Filled amount is scaled with the
-    plan only when it is explicitly supplied, preserving the observed fill
-    ratio under a capacity stress.
+    the registered 500k baseline is used. Executable notional is recomputed
+    at the registered 10% ADV ceiling, so fill ratios cannot improve merely
+    because scenario capital increased.
     """
     scaled: list[dict[str, Any]] = []
     for source in observations:
@@ -121,12 +121,15 @@ def _scale_observations(
         else:
             baseline = baseline if baseline > 0 else base_capital_cny
             planned = max(0.0, _float(row, "planned_notional", "planned_amount", "notional")) * capital / baseline
-        original_planned = max(0.0, _float(row, "planned_notional", "planned_amount", "notional"))
-        original_filled = _float(row, "filled_notional", "filled_amount", default=float("nan"))
         row["planned_notional"] = planned
-        if math.isfinite(original_filled):
-            ratio = original_filled / original_planned if original_planned > 0 else 0.0
-            row["filled_notional"] = planned * max(0.0, min(1.0, ratio))
+        adv = max(0.0, _float(row, "adv", "adv20", "adv20_cny"))
+        executable = min(planned, 0.10 * adv)
+        row["filled_notional"] = executable
+        row["fill_ratio"] = executable / planned if planned > 0 else 1.0
+        row["delayed_fill_days"] = (
+            max(0, math.ceil(planned / (0.10 * adv)) - 1)
+            if planned > 0 and adv > 0 else 0
+        )
         row["base_capital_cny"] = baseline
         scaled.append(row)
     return scaled

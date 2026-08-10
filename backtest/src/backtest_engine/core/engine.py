@@ -7,7 +7,7 @@ from backtest_engine.config import BacktestConfig
 from backtest_engine.core.broker import Broker
 from backtest_engine.core.portfolio import Portfolio
 from backtest_engine.core.strategy import Strategy
-from backtest_engine.core.types import Bar, Order, Trade
+from backtest_engine.core.types import Bar, Order, Trade, OrderRejection
 from backtest_engine.datafeed.base import DataFeed
 
 
@@ -17,6 +17,7 @@ class BacktestResult:
     trades: list[Trade]
     positions: list[tuple[str, dict[str, int]]]
     daily_turnover: list[tuple[str, float]]
+    rejections: list[OrderRejection]
 
 
 class BacktestEngine:
@@ -38,6 +39,7 @@ class BacktestEngine:
         trades: list[Trade] = []
         snapshots: list[tuple[str, dict[str, int]]] = []
         daily_turnover: list[tuple[str, float]] = []
+        rejections: list[OrderRejection] = []
 
         ordered_ts = sorted(grouped.keys())
         pending: dict[str, list[Order]] = defaultdict(list)
@@ -46,20 +48,25 @@ class BacktestEngine:
             price_map = {b.symbol: b.close for b in bars}
             ts_turnover = 0.0
 
+            bar_map = {bar.symbol: bar for bar in bars}
+            for pending_order in pending.pop(ts, []):
+                bar = bar_map.get(pending_order.symbol)
+                if bar is None:
+                    rejections.append(OrderRejection(ts, pending_order.symbol, pending_order.side, pending_order.qty, "missing_execution_bar"))
+                    continue
+                if pending_order.side == "SELL":
+                    available = self.portfolio.positions.get(pending_order.symbol, 0)
+                    trade = self.broker.match_order(pending_order, bar, available_qty=available, trusted=True, available_cash=self.portfolio.cash)
+                else:
+                    trade = self.broker.match_order(pending_order, bar, trusted=True, available_cash=self.portfolio.cash)
+                if trade is None:
+                    if self.broker.last_rejection is not None:
+                        rejections.append(self.broker.last_rejection)
+                    continue
+                self.portfolio.apply_trade(trade)
+                trades.append(trade)
+                ts_turnover += trade.qty * trade.price
             for bar in bars:
-                for pending_order in pending.pop(ts, []):
-                    if pending_order.symbol != bar.symbol:
-                        continue
-                    if pending_order.side == "SELL":
-                        available = self.portfolio.positions.get(pending_order.symbol, 0)
-                        trade = self.broker.match_order(pending_order, bar, available_qty=available, trusted=True)
-                    else:
-                        trade = self.broker.match_order(pending_order, bar, trusted=True)
-                    if trade is None:
-                        continue
-                    self.portfolio.apply_trade(trade)
-                    trades.append(trade)
-                    ts_turnover += trade.qty * trade.price
                 context = {
                     "cash": self.portfolio.cash,
                     "positions": dict(self.portfolio.positions),
@@ -79,10 +86,12 @@ class BacktestEngine:
                         continue
                     if order.side == "SELL":
                         available = self.portfolio.positions.get(order.symbol, 0)
-                        trade = self.broker.match_order(order, bar, available_qty=available)
+                        trade = self.broker.match_order(order, bar, available_qty=available, available_cash=self.portfolio.cash)
                     else:
-                        trade = self.broker.match_order(order, bar)
+                        trade = self.broker.match_order(order, bar, available_cash=self.portfolio.cash)
                     if trade is None:
+                        if self.broker.last_rejection is not None:
+                            rejections.append(self.broker.last_rejection)
                         continue
                     self.portfolio.apply_trade(trade)
                     trades.append(trade)
@@ -97,4 +106,5 @@ class BacktestEngine:
             trades=trades,
             positions=snapshots,
             daily_turnover=daily_turnover,
+            rejections=rejections,
         )

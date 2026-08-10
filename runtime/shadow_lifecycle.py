@@ -297,7 +297,7 @@ def evaluate_shadow_lifecycle(
     }
     metric_rows = [row for row in accepted if canary_keys.intersection(row)]
     metric_source = next((row for row in reversed(metric_rows) if row), {})
-    if strict and metric_rows:
+    if metric_rows:
         def _metric(*names: str):
             for name in names:
                 if name in metric_source:
@@ -349,17 +349,25 @@ def evaluate_shadow_lifecycle(
     else:
         alpha_t = adjusted_p = positive_excess_ratio = sharpe = max_drawdown = None
         cost_2x_passed = shadow_zero_difference = manual_approval = None
+        blockers.append("ECONOMIC_METRICS_MISSING")
 
     blockers = sorted(set(blockers))
-    ready = not blockers
+    approval_blockers = {"MANUAL_APPROVAL_MISSING"}
+    non_approval_blockers = set(blockers) - approval_blockers
+    economic_gate_pass = not non_approval_blockers
+    capital_approved = economic_gate_pass and manual_approval is True
     if not formal_evidence_verified:
         state = "RESEARCH_BLOCKED"
     elif not technical_pass:
         state = "DISABLED_SHADOW"
-    elif not ready:
-        state = "ECONOMIC_SHADOW"
+    elif capital_approved:
+        state = "CAPITAL_APPROVED"
+    elif economic_gate_pass:
+        state = "ECONOMIC_GATE_PASS"
+    elif len(technical) == TECHNICAL_DAYS and len(economic) == ECONOMIC_DAYS:
+        state = "FORWARD_ARTIFACT_COMPLETE"
     else:
-        state = "MANUAL_CANARY_ELIGIBLE"
+        state = "ECONOMIC_SHADOW"
     return ShadowLifecycleStatus(
         state=state,
         technical_days=len(technical),
@@ -372,7 +380,7 @@ def evaluate_shadow_lifecycle(
         rejected_rows=len(rejection_reasons),
         blockers=tuple(blockers),
         evidence_sha256=str(expected_formal_evidence_sha256 or ""),
-        canary_approval_package_allowed=ready,
+        canary_approval_package_allowed=economic_gate_pass,
         alpha_t=float(alpha_t) if alpha_t is not None else None,
         adjusted_p=float(adjusted_p) if adjusted_p is not None else None,
         positive_excess_ratio=float(positive_excess_ratio) if positive_excess_ratio is not None else None,

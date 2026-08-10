@@ -12,17 +12,18 @@ pit_evidence:
     - corporate_actions
     - benchmark_index
   formal_cutoff_timezone: Asia/Shanghai
+  decision_contract_id: ashare_t2130_t1_v1
   formal_cutoff_default: "21:30:00"
-  formal_cutoff_hard: "23:00:00"
+  formal_cutoff_hard: "21:30:00"
   require_provider_snapshot_token: true
   require_same_consistent_snapshot: true
   require_independent_e3_qualifier: true
 minimum_start_date: "2022-01-01"
-minimum_score_coverage: 0.5
-minimum_universe_price_coverage: 0.5
-minimum_universe_adjustment_coverage: 0.5
-minimum_lifecycle_daily_coverage: 0.5
-minimum_trade_date_coverage: 0.5
+minimum_score_coverage: 0.95
+minimum_universe_price_coverage: 0.95
+minimum_universe_adjustment_coverage: 0.95
+minimum_lifecycle_daily_coverage: 0.95
+minimum_trade_date_coverage: 0.95
 latest_complete_trade_date: "2024-12-31"
 authoritative_calendar:
   source: tushare_stock.dim_trade_cal

@@ -1,13 +1,14 @@
 schema_version: research_preregistration_v1
 hypothesis_id: H-W4-PURE-ALPHA-001
-strategy_id: pure_alpha_residual_v1
+strategy_id: pure_alpha_residual_v1_t2130
+decision_contract_id: ashare_t2130_t1_v1
 experiment_id: exp_wave4_pure_alpha_residual_v1
 created_at: "2026-08-10"
-formula: "residualize factor returns on industry + size + market_beta with intercept via QR"
+formula: "same-day cross-sectional QR residual of the registered base signal on industry + log_float_market_cap + market_beta"
 direction: "positive residual benchmark excess"
 availability:
   signal_time: T_21:30_AFTER_DATA_COMPLETE
-  decision_cutoff: "23:00:00+08:00"
+  decision_cutoff: "21:30:00+08:00"
   timezone: Asia/Shanghai
   source_published_at_lte: decision_cutoff
   warehouse_loaded_at_lte: decision_cutoff
@@ -62,6 +63,10 @@ tests:
   - permutation_test
   - orthogonal_factor_attribution
   - canonical_cost_risk_capacity
+candidate_registry:
+  candidates: [equal_3f, leaveout_reversal, leaveout_liquidity, leaveout_low_vol]
+  inner_selection: [net_excess_sharpe_desc, turnover_asc, candidate_id_asc]
+  outer_split: {train_days: 252, validation_days: 63, test_days: 63, purge_days: 20, embargo_days: 20}
 failure_conditions:
   - consumed_development_sample_2022_2026
   - no_formal_blind_epoch
@@ -70,8 +75,8 @@ failure_conditions:
   - volatility_above_15_percent
   - max_drawdown_worse_than_25_percent
   - missing_canonical_execution_contract
-code_hash: 1809a5d8524f76c50c305565feb553c404d5e20ccc790b02e12698e81920b500
-config_hash: edad0dc3b7f61d1251594a79fd6aa2f43d278e02129eea879b5e75cc2662d548
+code_hash: 14aea487923c2d92ec8a04ffea671e4ba26fe26b86943dedf40ea0a53a48008f
+config_hash: d67303aca0d6ab01369954691e6d79d9587cb0af4d3b05bc1465eaa9fbac81b3
 code_path: scripts/research/run_pure_alpha_challenge.py
 definition_path: config/strategy_definitions/pure_alpha_residual_v1.yaml
 sample_policy:

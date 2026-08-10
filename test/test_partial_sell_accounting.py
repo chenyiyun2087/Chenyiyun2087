@@ -249,6 +249,10 @@ def test_precommit_sizes_from_contract_not_500k(monkeypatch, tmp_path):
     monkeypatch.setattr(shadow, "_t_close_map",
                         lambda d, p: {"600001": 10.0, "600002": 10.0})
     monkeypatch.setattr(shadow, "_package_sha", lambda p: "sha-pkg")
+    monkeypatch.setattr(
+        shadow, "load_trade_calendar",
+        lambda need_date=None: [day.date().isoformat() for day in pd.bdate_range("2026-08-03", "2026-08-07")],
+    )
     monkeypatch.setattr(shadow, "_candidate_execution_config", lambda: {
         "C1": {"challenger_id": "f1_no_value", "hold_days": 20,
                "rebalance_score_buffer": 0.1, "weight_drift_band": 0.0,

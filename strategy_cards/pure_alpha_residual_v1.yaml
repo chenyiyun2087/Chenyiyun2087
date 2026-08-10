@@ -1,14 +1,15 @@
-strategy_id: pure_alpha_residual_v1
-strategy_version: "1.0.0-wave4"
-release_id: research-wave4-pure-alpha-residual-v1
+strategy_id: pure_alpha_residual_v1_t2130
+strategy_version: "1.0.0-v5.7-t2130"
+release_id: research-v5.7-pure-alpha-t2130-v1
+decision_contract_id: ashare_t2130_t1_v1
 owner: chenyiyun
 status: RESEARCH
 description: >-
-  Wave 4 Pure Alpha residual research-only card: QR/residualized factors
-  against a matched industry/size/beta benchmark. It cannot generate orders,
-  change capital, or inherit VLS identity.
+  Pure Alpha research-only card: same-day cross-sectional QR residual of the
+  registered base signal against industry, log float market cap and market
+  beta. It never uses future returns to construct a tradable score.
 signal_time: T_21:30_AFTER_DATA_COMPLETE
-decision_cutoff: "23:00:00+08:00"
+decision_cutoff: "21:30:00+08:00"
 timezone: Asia/Shanghai
 source_published_at_lte: decision_cutoff
 warehouse_loaded_at_lte: decision_cutoff

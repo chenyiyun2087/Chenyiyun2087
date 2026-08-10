@@ -34,10 +34,16 @@ snapshot:
   require_provider_snapshot_token: true
   provider_snapshot_token_query: ""
   forbid_timestamp_fallback: true
-  semantic_contract: config/pit_semantics/ashare_pit_semantics_v1.yaml
+  semantic_contract: config/pit_semantics/ashare_t2130_t1_v1.yaml
+  decision_contract_id: ashare_t2130_t1_v1
   formal_cutoff_timezone: Asia/Shanghai
   formal_cutoff_default: "21:30:00"
-  formal_cutoff_hard: "23:00:00"
+  formal_cutoff_hard: "21:30:00"
+
+# Optional SELECTs executed inside the same transaction. Each must return the
+# family primary key plus real source_published_at and warehouse_loaded_at.
+# An absent query keeps the release diagnostic and blocks E3.
+lineage_queries: {}
 
 families:
   market:

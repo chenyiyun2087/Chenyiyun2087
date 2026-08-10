@@ -314,8 +314,10 @@ def test_independent_qualifier_binds_all_nine_families(tmp_path):
             "rows": 1,
         }
         audit_details[family] = {"file_sha256": sha, "blockers": []}
-    adapter = {
-        "status": "QUALIFIED", "evidence_origin": "HISTORICAL_REAL",
+        adapter = {
+            "status": "QUALIFIED", "evidence_origin": "HISTORICAL_REAL",
+            "release_id": "release-fixture",
+            "decision_contract_id": "ashare_t2130_t1_v1",
         "claimed_evidence_level": "E1", "field_definition_hash": get_contract_sha256(),
         "sources": sources,
         "snapshot_identity": {

@@ -62,7 +62,7 @@ FORMAL_PIT_RUNS_ROOT = PROJECT_ROOT / "exports" / "formal_pit_runs"
 DEPENDENCY_LOCK_PATH = PROJECT_ROOT / "requirements.lock.txt"
 # Formal PIT identity is bound to the canonical semantic contract itself, not
 # to a separate factor registry that can drift from the eight source families.
-FIELD_SEMANTICS_PATH = PROJECT_ROOT / "config" / "pit_semantics" / "ashare_pit_semantics_v1.yaml"
+FIELD_SEMANTICS_PATH = PROJECT_ROOT / "config" / "pit_semantics" / "ashare_t2130_t1_v1.yaml"
 
 
 def _file_sha(path: Path) -> str:

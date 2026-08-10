@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import yaml
+from runtime.pit_semantic_contract import get_source_families
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -393,16 +394,59 @@ def verify_preregistration_source_bindings(
 
 def validate_formal_evidence(
     *,
-    pit_qualifier: Mapping[str, Any] | None,
-    forward_evidence: Mapping[str, Any] | None,
-    formal_epoch: Mapping[str, Any] | None,
+    pit_qualifier: Mapping[str, Any] | None = None,
+    forward_evidence: Mapping[str, Any] | None = None,
+    formal_epoch: Mapping[str, Any] | None = None,
     returns_dates: Sequence[str] | None = None,
+    pit_qualifier_path: str | Path | None = None,
+    pit_manifest_path: str | Path | None = None,
+    snapshots_dir: str | Path | None = None,
+    strategy_card_path: str | Path | None = None,
+    forward_evidence_path: str | Path | None = None,
+    epoch_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Require an independent E3 PIT qualifier and bound forward evidence."""
+    """Recompute and bind E3, nine files, strategy, release and epoch.
+
+    Formal validation is path-only. In-memory dictionaries are intentionally
+    rejected because a caller could otherwise self-declare E3 and a 64-byte
+    string without providing the underlying evidence objects.
+    """
 
     try:
-        if not isinstance(pit_qualifier, Mapping):
-            raise PreregistrationError("pit_qualifier_required")
+        required_paths = {
+            "pit_qualifier_path": pit_qualifier_path,
+            "pit_manifest_path": pit_manifest_path,
+            "snapshots_dir": snapshots_dir,
+            "strategy_card_path": strategy_card_path,
+            "forward_evidence_path": forward_evidence_path,
+            "epoch_manifest_path": epoch_manifest_path,
+        }
+        missing_paths = [name for name, value in required_paths.items() if value is None]
+        if missing_paths:
+            raise PreregistrationError("formal_evidence_paths_required:" + ",".join(missing_paths))
+        qualifier_file = Path(str(pit_qualifier_path))
+        manifest_file = Path(str(pit_manifest_path))
+        strategy_file = Path(str(strategy_card_path))
+        forward_file = Path(str(forward_evidence_path))
+        epoch_file = Path(str(epoch_manifest_path))
+        for label, path in (("pit_qualifier", qualifier_file), ("pit_manifest", manifest_file),
+                            ("strategy_card", strategy_file), ("forward_evidence", forward_file),
+                            ("epoch_manifest", epoch_file)):
+            if not path.is_file():
+                raise PreregistrationError(f"{label}_missing")
+        pit_qualifier = json.loads(qualifier_file.read_text(encoding="utf-8"))
+        pit_manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        strategy_card = yaml.safe_load(strategy_file.read_text(encoding="utf-8")) or {}
+        forward_evidence = json.loads(forward_file.read_text(encoding="utf-8"))
+        epoch_registry = yaml.safe_load(epoch_file.read_text(encoding="utf-8")) or {}
+        if not all(isinstance(value, Mapping) for value in (pit_qualifier, pit_manifest, strategy_card, forward_evidence, epoch_registry)):
+            raise PreregistrationError("formal_evidence_object_invalid")
+        declared = _hash_field(pit_qualifier.get("content_sha256"), "pit_content_hash")
+        actual = sha256_payload({k: v for k, v in pit_qualifier.items() if k != "content_sha256"})
+        if declared != actual:
+            raise PreregistrationError("pit_qualifier_content_hash_invalid")
+        if str(pit_qualifier.get("component")) != "independent_pit_qualifier":
+            raise PreregistrationError("pit_qualifier_component_invalid")
         component = str(pit_qualifier.get("component") or "").strip()
         pit_status = str(pit_qualifier.get("status") or "").upper()
         qualified_level = str(
@@ -416,13 +460,45 @@ def validate_formal_evidence(
         if qualified_level not in {"E3", "DATA_E3_QUALIFIED", "E3_QUALIFIED"}:
             raise PreregistrationError("pit_qualifier_e3_required")
         pit_hash = _hash_field(pit_hash, "pit_content_hash")
-        if not isinstance(forward_evidence, Mapping):
-            raise PreregistrationError("forward_evidence_required")
+        manifest_sha = sha256_file(manifest_file)
+        if str(pit_qualifier.get("source_manifest_sha256") or "") != manifest_sha:
+            raise PreregistrationError("pit_manifest_hash_mismatch")
+        release_id = str(pit_qualifier.get("release_id") or "")
+        if not release_id or str(pit_manifest.get("release_id") or "") != release_id:
+            raise PreregistrationError("pit_release_id_mismatch")
+        if str(pit_qualifier.get("decision_contract_id") or "") != "ashare_t2130_t1_v1":
+            raise PreregistrationError("decision_contract_mismatch")
+        root = Path(str(snapshots_dir))
+        family_hashes = pit_qualifier.get("file_sha256") or {}
+        if set(family_hashes) != set(get_source_families()):
+            raise PreregistrationError("nine_family_hashes_required")
+        for family, expected in family_hashes.items():
+            path = root / f"{family}.parquet"
+            if not path.is_file() or sha256_file(path) != str(expected):
+                raise PreregistrationError(f"pit_family_hash_mismatch:{family}")
+        strategy_id = str(strategy_card.get("strategy_id") or "")
+        if strategy_id not in {"smart_beta_v1_t2130", "pure_alpha_residual_v1_t2130"}:
+            raise PreregistrationError("strategy_identity_not_t2130")
+        if str(strategy_card.get("decision_contract_id") or strategy_card.get("availability", {}).get("decision_contract_id") or "") != "ashare_t2130_t1_v1":
+            raise PreregistrationError("strategy_decision_contract_mismatch")
+        epochs = epoch_registry.get("epochs") or []
+        epoch_id_from_forward = str(forward_evidence.get("epoch_id") or "")
+        formal_epoch = next((item for item in epochs if str(item.get("epoch_id")) == epoch_id_from_forward), None)
         if not isinstance(formal_epoch, Mapping) or not formal_epoch.get("epoch_id") or not formal_epoch.get("start"):
             raise PreregistrationError("formal_epoch_required")
         epoch_id = str(formal_epoch["epoch_id"])
         if str(forward_evidence.get("epoch_id") or "") != epoch_id:
             raise PreregistrationError("forward_epoch_id_mismatch")
+        if str(forward_evidence.get("strategy_id") or "") != strategy_id:
+            raise PreregistrationError("forward_strategy_id_mismatch")
+        if str(forward_evidence.get("release_id") or "") != release_id:
+            raise PreregistrationError("forward_release_id_mismatch")
+        if str(forward_evidence.get("pit_qualifier_sha256") or "") != pit_hash:
+            raise PreregistrationError("forward_pit_qualifier_hash_mismatch")
+        if str(forward_evidence.get("pit_manifest_sha256") or "") != manifest_sha:
+            raise PreregistrationError("forward_pit_manifest_hash_mismatch")
+        if dict(forward_evidence.get("pit_family_sha256") or {}) != dict(family_hashes):
+            raise PreregistrationError("forward_nine_family_hash_mismatch")
         forward_start = _date(
             forward_evidence.get("start")
             or forward_evidence.get("epoch_start")

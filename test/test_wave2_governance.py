@@ -227,9 +227,32 @@ def test_e4_builder_requires_real_bound_sources_and_complete_round_trips(tmp_pat
         reconciliation=recon,
         sse_calendar=calendar,
     )
-    assert package["status"] == "ECONOMIC_PASS"
+    assert package["status"] == "FORWARD_ARTIFACT_COMPLETE"
+    assert package["artifact_state"] == "FORWARD_ARTIFACT_COMPLETE"
+    assert package["economic_state"] == "ECONOMIC_GATE_NOT_EVALUATED"
+    assert package["capital_state"] == "CAPITAL_BLOCKED"
     assert package["gate"]["contract_status"] == "CONTRACT_VALID"
     assert package["completed_round_trips"] == 30
+
+
+def test_e4_economic_and_capital_layers_are_independent(tmp_path):
+    epoch, packages, events, nav, recon, calendar = _e4_fixture(tmp_path)
+    metrics = {"alpha_t": 2.0, "adjusted_p": 0.05, "positive_excess_ratio": 0.60,
+               "sharpe": 1.0, "max_drawdown": -0.25, "cost_2x_passed": True}
+    economic = build_e4_evidence_package(
+        epoch, release_id="release-fixture", signal_packages=packages,
+        event_ledger=events, nav_snapshots=nav, reconciliation=recon,
+        sse_calendar=calendar, economic_metrics=metrics,
+    )
+    assert economic["economic_state"] == "ECONOMIC_GATE_PASS"
+    assert economic["capital_state"] == "CAPITAL_BLOCKED"
+    approved = build_e4_evidence_package(
+        epoch, release_id="release-fixture", signal_packages=packages,
+        event_ledger=events, nav_snapshots=nav, reconciliation=recon,
+        sse_calendar=calendar, economic_metrics=metrics,
+        manual_approval={"approved": True, "approved_by": "reviewer", "approved_at": "2026-12-01T00:00:00+08:00"},
+    )
+    assert approved["capital_state"] == "CAPITAL_APPROVED"
 
 
 def test_e4_builder_rejects_missing_unsealed_fake_and_incomplete_sources(tmp_path):

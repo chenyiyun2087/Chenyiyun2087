@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import yaml
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -35,12 +36,13 @@ from scripts.research.research_preregistration import (
     validate_formal_evidence,
     verify_preregistration_source_bindings,
 )
+from scripts.research.t2130_research_pipeline import run_t2130_pipeline, write_research_bundle
 
 
 DEFAULT_CARD = PROJECT_ROOT / "config" / "alpha_challengers" / "smart_beta_v1.yaml"
 DEFAULT_DEFINITION = PROJECT_ROOT / "config" / "strategy_definitions" / "smart_beta_v1.yaml"
 SCHEMA_VERSION = "smart_beta_research_runner_v1"
-STRATEGY_ID = "smart_beta_v1"
+STRATEGY_ID = "smart_beta_v1_t2130"
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -108,6 +110,14 @@ def run_smart_beta_research(
     e3_available: bool | None = None,
     pit_qualifier: Mapping[str, Any] | None = None,
     forward_evidence: Mapping[str, Any] | None = None,
+    pit_qualifier_path: str | Path | None = None,
+    pit_manifest_path: str | Path | None = None,
+    snapshots_dir: str | Path | None = None,
+    strategy_card_path: str | Path | None = None,
+    forward_evidence_path: str | Path | None = None,
+    epoch_manifest_path: str | Path | None = None,
+    panel_path: str | Path | None = None,
+    bundle_dir: str | Path | None = None,
     returns_dates: Sequence[str] | None = None,
     initial_capital: float = 0.0,
     output: str | Path | None = None,
@@ -155,12 +165,20 @@ def run_smart_beta_research(
             "evidence_binding": {"status": "BLOCKED", "evidence_level": "E0", "reason": "no_formal_epoch"},
             "capital_cny": 0.0,
         }
+        if bundle_dir is not None:
+            result["bundle_manifest"] = write_research_bundle(result, bundle_dir)
         return _finalize(result, output=output or output_path, registry_output=registry_output, p_raw=None)
     evidence_binding = validate_formal_evidence(
         pit_qualifier=pit_qualifier,
         forward_evidence=forward_evidence,
         formal_epoch=epoch["formal_epoch"],
         returns_dates=returns_dates,
+        pit_qualifier_path=pit_qualifier_path,
+        pit_manifest_path=pit_manifest_path,
+        snapshots_dir=snapshots_dir,
+        strategy_card_path=strategy_card_path or card_path,
+        forward_evidence_path=forward_evidence_path,
+        epoch_manifest_path=epoch_manifest_path or forward_epochs_path,
     )
     if evidence_binding.get("status") != "PASS":
         result = {
@@ -174,7 +192,16 @@ def run_smart_beta_research(
             "evidence_binding": evidence_binding,
             "capital_cny": 0.0,
         }
+        if bundle_dir is not None:
+            result["bundle_manifest"] = write_research_bundle(result, bundle_dir)
         return _finalize(result, output=output or output_path, registry_output=registry_output, p_raw=None)
+    if panel_path is not None:
+        source = Path(panel_path)
+        panel = pd.read_parquet(source) if source.suffix.lower() in {".parquet", ".pq"} else pd.read_csv(source)
+        pipeline = run_t2130_pipeline(panel, strategy_id=STRATEGY_ID, n_permutations=n_permutations, seed=seed)
+        if bundle_dir is not None:
+            pipeline["bundle_manifest"] = write_research_bundle(pipeline, bundle_dir)
+        return pipeline
     diagnostics: dict[str, Any] = {}
     if returns is not None:
         diagnostics["statistics"] = validate_nested_statistics(

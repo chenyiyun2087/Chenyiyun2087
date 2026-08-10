@@ -15,7 +15,7 @@ VLS 的改名、别名或生产替换。
   nested walk-forward、block bootstrap、DSR、CSCV/PBO、BH/FDR、9999 permutation
   和 append-only experiment ledger 已落地；P2：正交化归因、匹配基准和
   Smart Beta/Pure Alpha 研究 runner 只做诊断。
-- 信号时点为 T 日 21:30（数据完成后），hard cutoff 为 23:00 Asia/Shanghai；
+- 新契约信号时点与 hard cutoff 均为 T 日 21:30 Asia/Shanghai；旧 T15:30 样本已消耗且隔离；
   `source_published_at` 与 `warehouse_loaded_at` 必须不晚于 cutoff，执行为 T+1 SSE raw open。
 - 旧 epoch 的工程 soak 仍只计工程质量，不计 E3/E4；真实 20/60 交易日和
   30 个完整 round trips 仍待积累。

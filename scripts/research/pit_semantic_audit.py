@@ -227,7 +227,7 @@ def run_semantic_audit(
 
         # ── Future-data leakage check ──
         # Formal lineage uses the row's explicit decision cutoff (default
-        # 21:30 Asia/Shanghai, hard limit 23:00), not the trading signal's
+        # 21:30 Asia/Shanghai hard limit), not the trading signal's
         # 15:30 execution cutoff.  The shared lineage validator above already
         # checks this relation; keep a family-scoped diagnostic for callers
         # that inspect the audit report without parsing generic blockers.

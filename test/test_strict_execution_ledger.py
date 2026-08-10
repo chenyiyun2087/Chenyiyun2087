@@ -102,7 +102,7 @@ def test_planned_partial_fill_and_cancel_are_full_event_lifecycle():
     order = PrecommitOrder("000001", "BUY", 100, 9.0, 900.0, 0.0, "2026-01-01", "2026-01-02", "o1")
     ledger.plan(order)
     result = ledger.execute(order, fill_price=10.0, tradable=True, fee_rate=0.0, lot_size=100)
-    assert result["order_status"] == PARTIAL_FILL
+    assert result["order_status"] == REJECTED_T1_NOT_TRADABLE
     assert result["filled_shares"] == 0
     assert ledger.event_rows[0]["order_status"] == PLANNED
     assert ledger.event_rows[-1]["order_status"] == CANCELLED

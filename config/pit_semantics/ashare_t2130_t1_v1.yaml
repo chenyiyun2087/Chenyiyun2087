@@ -1,0 +1,263 @@
+# A-Share PIT Semantic Contract — T21:30 / T+1 v1
+# Single authoritative contract for all PIT data families.
+# Adapter, Semantic Audit, Factor Builder, Package, and Readiness
+# MUST derive their field definitions from this file.
+schema_version: "ashare_pit_semantics_v2"
+contract_id: ashare_t2130_t1_v1
+contract_status: ACTIVE_RESEARCH
+description: "A-Share Point-in-Time data semantics for Chenyiyun2087 Formal Evidence Backbone"
+timezone: "Asia/Shanghai"
+signal_cutoff: "T21:30:00+08:00"
+# The source lineage cutoff is deliberately separate from the trading signal
+# cutoff.  Providers may publish/warehouse a historical row after the close,
+# but a formal release is only admissible when all three provenance timestamps
+# are inside the same T-day decision window. 21:30 is the versioned hard bound;
+# a later timestamp is never a qualification target.
+formal_cutoff:
+  timezone: "Asia/Shanghai"
+  default_time: "21:30:00"
+  hard_time: "21:30:00"
+  policy: "real source_published_at,warehouse_loaded_at,available_at <= decision_cutoff"
+
+legacy_contracts_forbidden: [ashare_pit_semantics_v1, "T15:30:00+08:00"]
+missing_lineage_policy:
+  business_availability: NEXT_SSE_SESSION
+  source_published_at: null
+  warehouse_loaded_at: null
+  formal_e3: BLOCKED
+minimum_coverage: 0.95
+trade_calendar_minimum_coverage: 0.98
+corporate_action_minimum_coverage: 1.0
+
+# These fields are required on every canonical family.  They are lineage
+# facts, not factor values, and must never be inferred from a release creation
+# timestamp.  A date-only financial announcement is handled conservatively by
+# the adapter (next trading session) and marked in availability_source.
+lineage_columns:
+  - source_published_at
+  - warehouse_loaded_at
+  - decision_cutoff
+  - availability_source
+
+canonical_families:
+  - market
+  - universe
+  - financial
+  - industry
+  - adjustment
+  - trade_calendar
+  - security_lifecycle
+  - corporate_actions
+  - benchmark_index
+
+families:
+  market:
+    required_columns:
+      - trade_date
+      - symbol
+      - open
+      - close
+      - pre_close
+      - amount
+      - circ_mv
+      - market_return
+      - market_regime
+      - market_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [trade_date, symbol]
+    business_time_column: trade_date
+    available_at_column: market_available_at
+    timezone_requirement: explicit_offset
+    coverage_policy: "universe_symbols_must_have_market_data"
+    canonical_execution_columns: [high, low, volume]
+
+  universe:
+    required_columns:
+      - trade_date
+      - symbol
+      - is_listed
+      - is_st
+      - is_suspended
+      - limit_status
+      - security_status_transition
+      - universe_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [trade_date, symbol]
+    business_time_column: trade_date
+    available_at_column: universe_available_at
+    timezone_requirement: explicit_offset
+    coverage_policy: "all_listed_symbols_on_trade_date"
+
+  financial:
+    required_columns:
+      - trade_date
+      - symbol
+      - pb
+      - financial_period_end
+      - announcement_date
+      - financial_available_at
+      - revision_id
+      - revision_sequence
+      - financial_source_snapshot_sha
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [symbol, financial_period_end, revision_id]
+    business_time_column: trade_date
+    available_at_column: financial_available_at
+    timezone_requirement: explicit_offset
+    revision_policy:
+      sequence_continuous: true
+      id_unique_per_period: true
+      available_at_monotonic: true
+      announcement_date_le_available_at: true
+    coverage_policy: "pb_must_be_present"
+
+  industry:
+    required_columns:
+      - trade_date
+      - symbol
+      - industry
+      - industry_available_at
+      - valid_from
+      - valid_to
+      - industry_code
+      - industry_name
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [symbol, valid_from]
+    business_time_column: trade_date
+    available_at_column: industry_available_at
+    timezone_requirement: explicit_offset
+    scd_policy:
+      valid_from_le_trade_date: true
+      trade_date_lt_valid_to: true
+
+  adjustment:
+    required_columns:
+      - trade_date
+      - symbol
+      - adj_factor
+      - corporate_action_type
+      - ex_date
+      - record_date
+      - adjustment_factor_version
+      - adjustment_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [trade_date, symbol]
+    business_time_column: trade_date
+    available_at_column: adjustment_available_at
+    timezone_requirement: explicit_offset
+
+  trade_calendar:
+    required_columns:
+      - cal_date
+      - exchange
+      - is_open
+      - source
+      - available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [cal_date]
+    business_time_column: cal_date
+    available_at_column: available_at
+    timezone_requirement: explicit_offset
+    coverage_policy: "SSE_calendar_coverage_ge_98pct"
+
+  security_lifecycle:
+    required_columns:
+      - trade_date
+      - symbol
+      - is_listed
+      - is_st
+      - is_suspended
+      - listed_date
+      - security_status_transition
+      - lifecycle_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [trade_date, symbol]
+    business_time_column: trade_date
+    available_at_column: lifecycle_available_at
+    timezone_requirement: explicit_offset
+
+  corporate_actions:
+    required_columns:
+      - trade_date
+      - symbol
+      - corporate_action_type
+      - source_event_id
+      - ex_date
+      - record_date
+      - event_id
+      - effective_date
+      - as_of_timestamp
+      - source_complete
+      - event_hash
+      - corporate_action_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [symbol, event_id]
+    business_time_column: trade_date
+    available_at_column: corporate_action_available_at
+    timezone_requirement: explicit_offset
+    economic_columns:
+      - cash_dividend
+      - bonus_ratio
+      - split_ratio
+      - rights_issue_ratio
+      - rights_issue_price
+
+  # v5.3: 9th family — real benchmark index klines (CSI 300/500/1000).
+  # Required by the three-benchmark excess gate and market-state inputs
+  # (market_hs300_pct_chg / market_hs300_ret_20 for adaptive risk control).
+  benchmark_index:
+    required_columns:
+      - trade_date
+      - index_code
+      - index_label
+      - open
+      - high
+      - low
+      - close
+      - pre_close
+      - pct_chg
+      - vol
+      - amount
+      - benchmark_available_at
+      - ret_5d
+      - ret_10d
+      - ret_20d
+      - ret_60d
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
+    primary_key: [index_code, trade_date]
+    business_time_column: trade_date
+    available_at_column: benchmark_available_at
+    timezone_requirement: explicit_offset
+
+# Canonical self-hash rules
+canonical_hash:
+  default_self_hash_field: content_sha256
+  default_excluded_fields: [content_sha256]
+  encoding: "json_canonical_utf8"

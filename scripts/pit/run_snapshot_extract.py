@@ -38,6 +38,7 @@ from runtime.pit_semantic_contract import (
     conservative_financial_availability,
     get_source_families,
     get_lineage_columns,
+    get_primary_key,
 )
 
 # v5.3: shared listing-day detection for security_status_transition
@@ -47,6 +48,55 @@ from scripts.pit.post_extract_enrich import _is_listing_day
 
 CONFIG_PATH = PROJECT_ROOT / "config" / "data_sources" / "mysql_pit.yaml"
 OUTPUT_ROOT = PROJECT_ROOT / "data" / "pit" / "releases"
+DECISION_CONTRACT_ID = "ashare_t2130_t1_v1"
+
+
+def _next_open_timestamp(values: pd.Series, open_dates: list[pd.Timestamp]) -> pd.Series:
+    """Conservative availability used only when real lineage is unavailable."""
+    normalized = sorted({pd.Timestamp(value).normalize() for value in open_dates if pd.notna(value)})
+    def one(value: Any) -> pd.Timestamp:
+        day = pd.to_datetime(value, errors="coerce")
+        if pd.isna(day):
+            return pd.NaT
+        following = [item for item in normalized if item > day.normalize()]
+        target = following[0] if following else day.normalize() + pd.offsets.BDay(1)
+        return pd.Timestamp(f"{target.date().isoformat()}T21:30:00+08:00")
+    return values.map(one)
+
+
+def _bind_real_lineage(
+    frame: pd.DataFrame,
+    family: str,
+    *,
+    conn: Any,
+    config: dict[str, Any],
+    open_dates: list[pd.Timestamp],
+) -> tuple[pd.DataFrame, bool]:
+    """Merge explicitly configured provider lineage; never invent timestamps."""
+    query = str((config.get("lineage_queries") or {}).get(family) or "").strip()
+    available_column = get_available_at_column(family)
+    if query:
+        lineage = pd.read_sql(query, conn)
+        keys = [key for key in get_primary_key(family) if key in frame.columns and key in lineage.columns]
+        required = {"source_published_at", "warehouse_loaded_at"}
+        if not keys or not required.issubset(lineage.columns):
+            raise RuntimeError(f"lineage_query_invalid:{family}")
+        frame = frame.drop(columns=list(required & set(frame.columns)), errors="ignore").merge(
+            lineage[keys + sorted(required)], on=keys, how="left", validate="many_to_one"
+        )
+        for column in required:
+            frame[column] = pd.to_datetime(frame[column], errors="coerce", utc=True)
+        complete = bool(frame[list(required)].notna().all(axis=None))
+        frame["availability_source"] = f"mysql:{family}:real_provider_lineage"
+        return frame, complete
+    business_column = "cal_date" if family == "trade_calendar" else "trade_date"
+    business = frame.get(business_column, pd.Series(pd.NaT, index=frame.index))
+    if available_column in frame.columns:
+        frame[available_column] = _next_open_timestamp(business, open_dates)
+    frame["source_published_at"] = pd.NaT
+    frame["warehouse_loaded_at"] = pd.NaT
+    frame["availability_source"] = "conservative_next_sse_session_missing_real_lineage"
+    return frame, False
 
 
 def _load_config() -> dict[str, Any]:
@@ -493,6 +543,7 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
         blocked = {
             "schema_version": "pit_release_manifest_v1",
             "release_id": release_id,
+            "decision_contract_id": DECISION_CONTRACT_ID,
             "field_definition_hash": get_contract_sha256(),
             "status": "BLOCKED",
             "data_status": "BLOCKED_DATA",
@@ -516,7 +567,7 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
             "formal_cutoff": {
                 "timezone": "Asia/Shanghai",
                 "default": "21:30:00+08:00",
-                "hard": "23:00:00+08:00",
+                "hard": "21:30:00+08:00",
             },
             "transaction_started_at": None,
             "transaction_finished_at": None,
@@ -549,6 +600,7 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
 
     results: dict[str, Any] = {
         "release_id": release_id,
+        "decision_contract_id": DECISION_CONTRACT_ID,
         # ``snapshot_token`` is a compatibility alias for a real provider
         # token only; GTID is retained separately as provenance.
         "snapshot_token": txn_info.get("provider_snapshot_token", ""),
@@ -595,7 +647,7 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                 # and the suffix made the timestamp unparseable for the E1
                 # adapter (source_available_at_unparseable).
                 df["market_available_at"] = df["trade_date"].apply(
-                    lambda x: f"{_int_to_iso(x)}T15:30:00+08:00")
+                    lambda x: f"{_int_to_iso(x)}T21:30:00+08:00")
                 # v5.3: market_return is NOT computed here — the previous
                 # cross-sectional `pct_change().mean()` per trade_date was
                 # semantically wrong (sequential jumps of symbol-sorted rows,
@@ -696,32 +748,28 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                 )
                 df = df.drop(columns=["close_num"], errors="ignore")
 
-            # Every canonical family carries the same explicit lineage shape.
-            # Source publication and warehouse load timestamps are provider
-            # facts; for the extractor's historical tables the best legal
-            # value is the family availability timestamp, never extraction
-            # wall-clock time.  The source marker makes this convention
-            # auditable and prevents E3 promotion by an adapter alone.
+            # Every canonical family carries explicit real lineage. Missing
+            # lineage shifts business availability to the next SSE session,
+            # leaves both lineage facts unknown and therefore blocks E3.
             available_column = get_available_at_column(family)
             if available_column in df.columns:
-                availability = pd.to_datetime(df[available_column], errors="coerce", utc=True)
-                df["source_published_at"] = availability
-                df["warehouse_loaded_at"] = availability
                 business_col = "cal_date" if family == "trade_calendar" else "trade_date"
                 business = pd.to_datetime(
                     df.get(business_col, pd.Series(dtype="object")).apply(_int_to_iso),
                     errors="coerce",
                 )
                 df["decision_cutoff"] = formal_cutoff_for_dates(business)
-                df["availability_source"] = f"mysql:{family}:provider_timestamp"
-                if family == "financial" and "financial_availability_source" in df.columns:
-                    conservative_rows = df["financial_availability_source"].astype(str).ne(
-                        "provider_timestamp"
-                    )
-                    df.loc[conservative_rows, "availability_source"] = df.loc[
-                        conservative_rows, "financial_availability_source"
-                    ]
-                    df = df.drop(columns=["financial_availability_source"])
+                calendar_query = FAMILY_QUERIES["trade_calendar"]
+                calendar_frame = pd.read_sql(calendar_query, conn)
+                open_dates = pd.to_datetime(
+                    calendar_frame.loc[calendar_frame["is_open"].astype(bool), "cal_date"], errors="coerce"
+                ).dropna().tolist()
+                df, lineage_complete = _bind_real_lineage(
+                    df, family, conn=conn, config=config, open_dates=open_dates
+                )
+                if not lineage_complete:
+                    blockers.append(f"real_lineage_missing:{family}")
+                df = df.drop(columns=["financial_availability_source"], errors="ignore")
 
             # Convert all integer date columns to YYYY-MM-DD strings
             DATE_COLS = ["trade_date", "cal_date", "announcement_date", "financial_period_end",

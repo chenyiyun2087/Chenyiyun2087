@@ -317,6 +317,8 @@ def build_e4_evidence_package(
     reconciliation: Path | str | Mapping[str, Any] | None,
     sse_calendar: Path | str | Iterable[str] | Mapping[str, Any] | None = None,
     trading_dates: Iterable[str] | Path | str | None = None,
+    economic_metrics: Mapping[str, Any] | Path | str | None = None,
+    manual_approval: Mapping[str, Any] | Path | str | None = None,
 ) -> dict[str, Any]:
     epoch, epoch_sha, errors = _epoch(epoch_manifest)
     formal = not errors and str(epoch.get("status") or "") in {"FROZEN", "ACTIVE", "ACCUMULATING"}
@@ -387,7 +389,7 @@ def build_e4_evidence_package(
         errors.append("CONSERVATION_ERRORS_NONZERO")
 
     contract_valid = not errors
-    complete = bool(
+    artifact_complete = bool(
         contract_valid
         and formal
         and len(dates) >= 60
@@ -399,12 +401,33 @@ def build_e4_evidence_package(
     if not epoch_sha or not event_sha or not nav_sha or not recon_sha:
         artifact_status = ArtifactStatus.ARTIFACT_MISSING
     contract_status = ContractStatus.CONTRACT_VALID if contract_valid else ContractStatus.CONTRACT_INVALID
-    economic_status = GateEconomicStatus.ECONOMIC_PASS if complete else GateEconomicStatus.ECONOMIC_FAIL if formal and (len(dates) >= 60 or errors) else GateEconomicStatus.ECONOMIC_NOT_EVALUATED
+    metric_payload, metric_sha, metric_errors = _source_payload(
+        economic_metrics, name="economic_metrics",
+        required_fields=("alpha_t", "adjusted_p", "positive_excess_ratio", "sharpe", "max_drawdown", "cost_2x_passed"),
+    ) if economic_metrics is not None else (None, None, ["ECONOMIC_METRICS_REQUIRED"])
+    economic_reasons = list(metric_errors)
+    economic_pass = False
+    if metric_payload is not None:
+        try:
+            if float(metric_payload["alpha_t"]) < 2.0: economic_reasons.append("ALPHA_T_LT_2")
+            if float(metric_payload["adjusted_p"]) > 0.05: economic_reasons.append("ADJUSTED_P_GT_005")
+            if float(metric_payload["positive_excess_ratio"]) < 0.60: economic_reasons.append("POSITIVE_EXCESS_RATIO_LT_060")
+            if float(metric_payload["sharpe"]) < 1.0: economic_reasons.append("SHARPE_LT_1")
+            if abs(float(metric_payload["max_drawdown"])) > 0.25: economic_reasons.append("MDD_GT_025")
+            if metric_payload["cost_2x_passed"] is not True: economic_reasons.append("COST_2X_NOT_PASSED")
+        except (KeyError, TypeError, ValueError):
+            economic_reasons.append("ECONOMIC_METRICS_INVALID")
+        economic_pass = artifact_complete and not economic_reasons
+    approval_payload, approval_sha, approval_errors = _source_payload(
+        manual_approval, name="manual_approval", required_fields=("approved", "approved_by", "approved_at")
+    ) if manual_approval is not None else (None, None, ["MANUAL_APPROVAL_REQUIRED"])
+    capital_approved = bool(economic_pass and approval_payload and approval_payload.get("approved") is True and not approval_errors)
+    economic_status = GateEconomicStatus.ECONOMIC_PASS if economic_pass else GateEconomicStatus.ECONOMIC_FAIL if metric_payload is not None else GateEconomicStatus.ECONOMIC_NOT_EVALUATED
     gate = make_gate_status(
         artifact_status=artifact_status,
         contract_status=contract_status,
         economic_status=economic_status,
-        reasons=tuple(dict.fromkeys(errors or (["E4_REQUIREMENTS_ACCUMULATING"] if not complete else []))),
+        reasons=tuple(dict.fromkeys(errors + economic_reasons + approval_errors)),
     )
     payload = {
         "schema_version": "e4_evidence_package_v1",
@@ -416,12 +439,19 @@ def build_e4_evidence_package(
         "event_ledger_sha256": event_sha,
         "nav_sha256": nav_sha,
         "reconciliation_sha256": recon_sha,
+        "economic_metrics_sha256": metric_sha,
+        "manual_approval_sha256": approval_sha,
         "formal_trading_days": len(dates) if formal and contract_valid else 0,
         "completed_round_trips": round_trips if formal and contract_valid else 0,
         "reconciliation_errors": reconciliation_error_count,
         "conservation_errors": conservation_error_count,
         "gate": gate.to_dict(),
-        "status": "ECONOMIC_PASS" if complete else "ACCUMULATING",
+        "artifact_state": "FORWARD_ARTIFACT_COMPLETE" if artifact_complete else "FORWARD_ARTIFACT_INCOMPLETE",
+        "economic_state": "ECONOMIC_GATE_PASS" if economic_pass else "ECONOMIC_GATE_NOT_EVALUATED" if metric_payload is None else "ECONOMIC_GATE_FAIL",
+        "capital_state": "CAPITAL_APPROVED" if capital_approved else "CAPITAL_BLOCKED",
+        "status": "CAPITAL_APPROVED" if capital_approved else "ECONOMIC_GATE_PASS" if economic_pass else "FORWARD_ARTIFACT_COMPLETE" if artifact_complete else "ACCUMULATING",
+        "economic_blockers": sorted(set(economic_reasons)),
+        "capital_blockers": [] if capital_approved else sorted(set(approval_errors or ["ECONOMIC_GATE_NOT_PASSED"])),
         "capital_authority": False,
         "allowed_new_capital_cny": 0,
     }
@@ -437,6 +467,8 @@ def main() -> int:
     parser.add_argument("--event-ledger", type=Path, required=True)
     parser.add_argument("--nav", type=Path, required=True)
     parser.add_argument("--reconciliation", type=Path, required=True)
+    parser.add_argument("--economic-metrics", type=Path)
+    parser.add_argument("--manual-approval", type=Path)
     calendar_group = parser.add_mutually_exclusive_group(required=True)
     calendar_group.add_argument("--sse-calendar", type=Path)
     calendar_group.add_argument("--trading-dates", type=Path)
@@ -455,6 +487,8 @@ def main() -> int:
         reconciliation=args.reconciliation,
         sse_calendar=args.sse_calendar,
         trading_dates=trading_dates,
+        economic_metrics=args.economic_metrics,
+        manual_approval=args.manual_approval,
     )
     encoded = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
     if args.output:

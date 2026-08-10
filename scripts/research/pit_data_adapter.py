@@ -334,7 +334,7 @@ def _write_blocked(
         "lineage_columns": list(get_lineage_columns()),
         "formal_cutoff": {
             "default": "21:30:00+08:00",
-            "hard": "23:00:00+08:00",
+            "hard": "21:30:00+08:00",
             "timezone": "Asia/Shanghai",
         },
         "transaction_started_at": None,
@@ -813,7 +813,7 @@ def build_pit_adapter_manifest(
         "lineage_columns": list(get_lineage_columns()),
         "formal_cutoff": {
             "default": "21:30:00+08:00",
-            "hard": "23:00:00+08:00",
+            "hard": "21:30:00+08:00",
             "timezone": "Asia/Shanghai",
         },
         "capital_authority": False,

@@ -1,10 +1,11 @@
 schema_version: "2.0"
 manifest_schema: pit_snapshot_v2
-market_data_cutoff: "{snapshot_date}T15:30:00+08:00"
+decision_contract_id: ashare_t2130_t1_v1
+market_data_cutoff: "{snapshot_date}T21:30:00+08:00"
 formal_cutoff:
   timezone: Asia/Shanghai
   default_time: "21:30:00"
-  hard_time: "23:00:00"
+  hard_time: "21:30:00"
 canonical_families:
   - market
   - universe

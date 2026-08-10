@@ -97,6 +97,14 @@ def adapt_fill(payload: Mapping[str, Any] | object, *, trusted: bool = True, sou
     raw_price = raw_explicit if raw_explicit is not None else _get(payload, "filled_price", "price", default=None)
     if raw_price is None:
         raise ValueError(f"{source}_raw_price_missing")
+    if trusted:
+        kernel_id = _get(payload, "canonical_kernel_id", "kernel_id", default="")
+        kernel_version = _get(payload, "canonical_kernel_version", "kernel_version", default="")
+        proof = _get(payload, "kernel_execution_sha256", default="")
+        if str(kernel_id) != CANONICAL_KERNEL_ID or str(kernel_version) != CANONICAL_KERNEL_VERSION:
+            raise ValueError(f"{source}_canonical_kernel_identity_required")
+        if not isinstance(proof, str) or len(proof) != 64:
+            raise ValueError(f"{source}_canonical_kernel_execution_proof_required")
     order_id = _get(payload, "order_id", "broker_order_id")
     symbol = _get(payload, "symbol", "ts_code")
     side = _get(payload, "side", "direction")

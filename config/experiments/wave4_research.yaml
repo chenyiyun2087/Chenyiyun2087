@@ -46,7 +46,8 @@ execution_and_risk:
   max_drawdown_gate: 0.25
   initial_capital_cny: 0.0
   signal_time: T_21:30_AFTER_DATA_COMPLETE
-  decision_cutoff: "23:00:00+08:00"
+  decision_contract_id: ashare_t2130_t1_v1
+  decision_cutoff: "21:30:00+08:00"
   execution_time: T+1_SSE_RAW_OPEN
   cost_model_schema: scripts.research.execution_costs.ExecutionCostModel
   cost_components: [commission, min_commission, stamp_duty, transfer_fee, open_auction_slippage, gap, spread, adv_impact, missed_fill]

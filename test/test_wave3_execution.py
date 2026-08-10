@@ -66,7 +66,9 @@ def test_golden_adapters_and_same_day_sentinel():
         adapt_event({"event_type": "order", "symbol": "000001", "side": "BUY", "shares": 100, "signal_date": "2026-01-01", "execution_date": "2026-01-01", "trading_dates": ["2026-01-01", "2026-01-02"]})
     with pytest.raises(ValueError, match="raw_price_proof"):
         adapt_event({"event_type": "fill", "fill_id": "f", "order_id": "o", "symbol": "000001", "side": "BUY", "shares": 100, "price": 10, "execution_date": "2026-01-02"})
-    adapt_event({"event_type": "fill", "fill_id": "f", "order_id": "o", "symbol": "000001", "side": "BUY", "shares": 100, "price": 10, "raw_price_basis": "raw_open", "execution_date": "2026-01-02"})
+    with pytest.raises(ValueError, match="canonical_kernel_identity_required"):
+        adapt_event({"event_type": "fill", "fill_id": "f", "order_id": "o", "symbol": "000001", "side": "BUY", "shares": 100, "price": 10, "raw_price_basis": "raw_open", "execution_date": "2026-01-02"})
+    adapt_event({"event_type": "fill", "fill_id": "f", "order_id": "o", "symbol": "000001", "side": "BUY", "shares": 100, "price": 10, "raw_price_basis": "raw_open", "execution_date": "2026-01-02", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": "1.0.0", "kernel_execution_sha256": "a" * 64})
     with pytest.raises(ValueError, match="corporate_action_proof"):
         adapt_event({"event_type": "corporate_action", "symbol": "000001", "action_type": "dividend_cash", "ex_date": "2026-01-02"})
 

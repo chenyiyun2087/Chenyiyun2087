@@ -60,9 +60,9 @@ def test_sell_fill_returns_proceeds_net_of_costs():
     # (cash + held_basis + costs_paid == initial + realized) double
     # counts sell costs.
     assert acc.realized_pnl == pytest.approx(12500 * 11.0 - 12500 * 10.0)
-    assert acc.costs_paid == pytest.approx(
+    assert acc.costs_paid == pytest.approx(round(
         12500 * 10.0 * (0.00075 + 10.0 / 1e4)
-        + 12500 * 11.0 * (0.00075 + 10.0 / 1e4))
+        + 12500 * 11.0 * (0.00075 + 10.0 / 1e4), 2))
     acc.verify_conservation()  # holds after a full round trip
 
 

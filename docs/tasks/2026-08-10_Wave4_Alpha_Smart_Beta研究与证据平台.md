@@ -6,7 +6,7 @@
 - [x] 固定预注册公式、方向、可得性、Universe、持有期、TopN、风险、成本、
       基准、统计测试、失败条件和 code/config hash。
 - [x] 2022--2026-08-09 标记 `CONSUMED_DEVELOPMENT_SAMPLE`，禁止 independent OOS。
-- [x] 信号时点固定为 T 21:30 after data complete，23:00 Asia/Shanghai hard cutoff，
+- [x] 新契约信号时点及 hard cutoff 固定为 T 21:30；旧 T15:30 样本隔离，
       T+1 SSE raw open；来源发布时间与仓库加载时间均须不晚于 cutoff。
 - [x] nested walk-forward、block bootstrap、DSR、CSCV/PBO、BH/FDR、9999
       permutation、append-only registry、QR 归因闭合和诊断 runner。

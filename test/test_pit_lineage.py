@@ -82,5 +82,5 @@ def test_pit_contract_sha_binds_real_contract():
     sha = _pit_contract_sha()
     assert len(sha) == 64
     contract = PROJECT_ROOT / "config" / "pit_semantics" / \
-        "ashare_pit_semantics_v1.yaml"
+        "ashare_t2130_t1_v1.yaml"
     assert sha == hashlib.sha256(contract.read_bytes()).hexdigest()

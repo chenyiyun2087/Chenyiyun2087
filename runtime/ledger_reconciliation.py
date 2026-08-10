@@ -8,6 +8,7 @@ import pandas as pd
 
 from runtime.contracts import LedgerReconciliationReport, ReconciliationDifference
 from runtime.canonical_execution_contract import CANONICAL_KERNEL_ID, CANONICAL_KERNEL_VERSION
+from runtime.independent_ledger import ORACLE_ID, ORACLE_VERSION
 
 
 def reconcile_ledgers(
@@ -40,20 +41,24 @@ def reconcile_ledgers(
         # Trusted frames must identify the economic kernel.  Empty frames are
         # allowed (e.g. an all-rejected strategy) but non-empty legacy frames
         # are diagnostic only and cannot silently pass formal reconciliation.
-        if not frame.empty and "canonical_kernel_id" in frame.columns:
-            bad = frame[frame["canonical_kernel_id"].astype(str) != CANONICAL_KERNEL_ID]
+        id_column = "canonical_kernel_id" if name == "primary" else "oracle_id"
+        expected_id = CANONICAL_KERNEL_ID if name == "primary" else ORACLE_ID
+        version_column = "canonical_kernel_version" if name == "primary" else "oracle_version"
+        expected_version = CANONICAL_KERNEL_VERSION if name == "primary" else ORACLE_VERSION
+        if not frame.empty and id_column in frame.columns:
+            bad = frame[frame[id_column].astype(str) != expected_id]
             if not bad.empty:
                 differences.append(ReconciliationDifference(
                     scope="ORDER", key=f"{name}:kernel_id", primary_value=name,
-                    oracle_value=CANONICAL_KERNEL_ID, classification="KERNEL_ID_MISMATCH",
-                    detail="trusted ledger frame is not produced by canonical kernel",
+                    oracle_value=expected_id, classification="KERNEL_ID_MISMATCH",
+                    detail="ledger frame has the wrong implementation identity",
                 ))
-        if not frame.empty and "canonical_kernel_version" in frame.columns:
-            bad = frame[frame["canonical_kernel_version"].astype(str) != CANONICAL_KERNEL_VERSION]
+        if not frame.empty and version_column in frame.columns:
+            bad = frame[frame[version_column].astype(str) != expected_version]
             if not bad.empty:
                 differences.append(ReconciliationDifference(
                     scope="ORDER", key=f"{name}:kernel_version", primary_value=name,
-                    oracle_value=CANONICAL_KERNEL_VERSION, classification="KERNEL_VERSION_MISMATCH",
+                    oracle_value=expected_version, classification="KERNEL_VERSION_MISMATCH",
                     detail="trusted ledger frame uses a different kernel version",
                 ))
     primary_by_order = primary_trades.set_index("order_id", drop=False)

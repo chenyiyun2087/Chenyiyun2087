@@ -30,6 +30,8 @@ from runtime.canonical_execution_contract import (
     Position as CanonicalPosition,
     Cash as CanonicalCash,
 )
+from runtime.canonical_execution_kernel import AccountState, execute_order
+from scripts.research.execution_costs import ExecutionCostModel
 
 DEFAULT_COST_RATE = 0.00075
 DEFAULT_SLIPPAGE_BPS = 10.0
@@ -82,15 +84,20 @@ class VirtualAccount:
                 f"{self.candidate_id}: invalid buy fill {symbol} "
                 f"{shares}@{price}")
         notional = shares * price
-        fee, slip, costs = self._cost_components(notional, "BUY")
-        total = notional + fee + slip
-        if self.cash + 1e-9 < total:
+        state = AccountState(self.cash, {key: value.shares for key, value in self.positions.items()})
+        result = execute_order(
+            state, order_id=f"{self.candidate_id}:BUY:{len(self.fill_events)}",
+            symbol=symbol, side="BUY", planned_shares=shares, price=price,
+            tradable=True, lot_size=1, cost_model=self._execution_cost_model(),
+        )
+        if result.filled_shares != shares:
             raise AccountConservationError(
                 f"{self.candidate_id}: buy {symbol} {shares}@{price} needs "
-                f"{total:.2f} but cash is {self.cash:.2f} — sizing/cash "
+                f"more than cash {self.cash:.2f} — sizing/cash "
                 "mismatch, refusing to go negative")
-        self.cash -= total
-        self.costs_paid += fee + slip
+        self.cash = state.cash
+        costs = dict(result.costs)
+        self.costs_paid += float(costs["total_cost"])
         self._buy_cost += notional
         pos = self.positions.get(symbol)
         if pos is None:
@@ -100,7 +107,7 @@ class VirtualAccount:
             new_shares = pos.shares + shares
             self.positions[symbol] = AccountPosition(
                 symbol, new_shares, (prev_mv + notional) / new_shares)
-        self.fill_events.append({"side": "BUY", "symbol": symbol, "shares": int(shares), "price": float(price), "notional": float(notional), "costs": costs, "kernel_id": CANONICAL_KERNEL_ID, "kernel_version": CANONICAL_KERNEL_VERSION})
+        self.fill_events.append({"side": "BUY", "symbol": symbol, "shares": int(shares), "price": float(price), "notional": float(notional), "costs": costs, "kernel_id": result.canonical_kernel_id, "kernel_version": result.canonical_kernel_version, "kernel_execution_sha256": result.kernel_execution_sha256})
 
     def sell_fill(self, symbol: str, shares: int, price: float) -> None:
         """Apply a SELL_FILLED.  Raises on over-selling a position."""
@@ -111,9 +118,17 @@ class VirtualAccount:
                 f"{'shares' if pos is None else pos.shares} held — "
                 "short positions are not allowed")
         proceeds = shares * price
-        fee, slip, costs = self._cost_components(proceeds, "SELL")
-        self.cash += proceeds - fee - slip
-        self.costs_paid += fee + slip
+        state = AccountState(self.cash, {key: value.shares for key, value in self.positions.items()})
+        result = execute_order(
+            state, order_id=f"{self.candidate_id}:SELL:{len(self.fill_events)}",
+            symbol=symbol, side="SELL", planned_shares=shares, price=price,
+            tradable=True, lot_size=1, cost_model=self._execution_cost_model(),
+        )
+        if result.filled_shares != shares:
+            raise AccountConservationError(f"{self.candidate_id}: kernel rejected sell {symbol}")
+        self.cash = state.cash
+        costs = dict(result.costs)
+        self.costs_paid += float(costs["total_cost"])
         self._sell_proceeds += proceeds
         cost_basis = shares * pos.avg_cost
         # v5.5.3: realized_pnl is GROSS (proceeds - cost basis) — the
@@ -127,7 +142,20 @@ class VirtualAccount:
         else:
             self.positions[symbol] = AccountPosition(
                 symbol, remaining, pos.avg_cost)
-        self.fill_events.append({"side": "SELL", "symbol": symbol, "shares": int(shares), "price": float(price), "notional": float(proceeds), "costs": costs, "kernel_id": CANONICAL_KERNEL_ID, "kernel_version": CANONICAL_KERNEL_VERSION})
+        self.fill_events.append({"side": "SELL", "symbol": symbol, "shares": int(shares), "price": float(price), "notional": float(proceeds), "costs": costs, "kernel_id": result.canonical_kernel_id, "kernel_version": result.canonical_kernel_version, "kernel_execution_sha256": result.kernel_execution_sha256})
+
+    def _execution_cost_model(self) -> ExecutionCostModel:
+        if self.cost_model is not None:
+            if isinstance(self.cost_model, ExecutionCostModel):
+                return self.cost_model
+            return ExecutionCostModel.from_mapping(vars(self.cost_model))
+        return ExecutionCostModel(
+            commission_rate=self.cost_rate,
+            stamp_duty_rate=0.0,
+            transfer_fee_rate=0.0,
+            open_auction_slippage_bps=self.slippage_bps,
+            min_commission_cny=0.0,
+        )
 
     def _cost_components(self, notional: float, side: str) -> tuple[float, float, dict[str, float]]:
         """Compute shadow costs using the shared parameter contract.

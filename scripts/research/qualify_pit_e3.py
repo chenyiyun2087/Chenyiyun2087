@@ -187,6 +187,11 @@ def qualify_pit_e3(
         blockers.append("semantic_audit_contract_sha_mismatch")
     if adapter.get("field_definition_hash") != get_contract_sha256():
         blockers.append("adapter_contract_sha_mismatch")
+    release_id = str(adapter.get("release_id") or "").strip()
+    if not release_id:
+        blockers.append("release_id_missing")
+    if str(adapter.get("decision_contract_id") or "") != "ashare_t2130_t1_v1":
+        blockers.append("decision_contract_mismatch")
 
     identity = _identity(adapter)
     token = _provider_token(identity)
@@ -260,6 +265,8 @@ def qualify_pit_e3(
     result: dict[str, Any] = {
         "schema_version": "pit_e3_qualifier_v1",
         "component": "independent_pit_qualifier",
+        "release_id": release_id or None,
+        "decision_contract_id": "ashare_t2130_t1_v1",
         "status": status,
         "claimed_evidence_level": "E1" if status == "PASS" else "E0",
         "qualified_evidence_level": "E3" if status == "PASS" else None,

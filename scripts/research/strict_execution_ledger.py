@@ -22,6 +22,7 @@ from runtime.canonical_execution_contract import (
     normalize_symbol,
 )
 from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
+from runtime.canonical_execution_kernel import AccountState, execute_order
 
 
 LEDGER_SCHEMA_VERSION = "strict_daily_ledger_v2"
@@ -260,84 +261,37 @@ class ExecutionLedger:
         if key in self._order_results:
             return dict(self._order_results[key])
         planned = max(0, int(order.planned_shares))
-        if reject_reason or not tradable or fill_price is None or fill_price <= 0:
-            status = (
-                REJECTED_LIMIT_BLOCK
-                if reject_reason in {"limit_block", "limit_up_block", "limit_down_block"}
-                else REJECTED_T1_NOT_TRADABLE
-            )
-            reason = reject_reason or "t1_not_tradable"
-            result = {"order_status": status, "filled_shares": 0, "filled_price": None, "filled_notional": 0.0,
-                      "fee": 0.0, "total_cost": 0.0, "costs": {}, "reject_reason": reason, "remaining_shares": planned,
-                      "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION}
-            self._append("order", order_id=key, symbol=order.symbol, side=order.side, event_timestamp=f"{order.execution_date}T09:30:00+08:00",
-                         signal_date=order.signal_date, execution_date=order.execution_date, planned_shares=planned, **result)
-            self.cancel(order, planned, reason)
-            self._order_results[key] = dict(result)
-            return result
-
-        price = float(fill_price)
-        # The expanded model is the formal path.  ``fee_rate`` is retained as
-        # an explicitly noncanonical compatibility mode.
-        breakdown_for_order = None
-        if order.side == "BUY":
-            if cost_model is not None:
-                # Conservative affordability uses the model's proportional
-                # rates; the minimum commission is checked after sizing.
-                proportional = (
-                    cost_model.commission_rate + cost_model.transfer_fee_rate
-                    + cost_model.effective_open_auction_rate
-                    + cost_model.effective_gap_rate + cost_model.effective_spread_rate
-                    + cost_model.effective_impact_rate
-                )
-                affordable = int(self.cash // (price * (1.0 + proportional)))
-            else:
-                affordable = int(self.cash // (price * (1.0 + float(fee_rate))))
-            filled = min(planned, affordable)
-            if lot_size > 0:
-                filled = filled // int(lot_size) * int(lot_size)
-            gross = filled * price
-            if cost_model is not None:
-                # Re-check the fixed minimum commission after proportional
-                # sizing; shrink one lot until the cash invariant holds.
-                while filled > 0:
-                    gross = filled * price
-                    candidate = CostBreakdown.calculate(gross, "BUY", cost_model)
-                    if gross + candidate.total_cost <= self.cash + 1e-9:
-                        breakdown_for_order = candidate
-                        break
-                    filled -= int(lot_size) if lot_size > 0 else 1
-                if filled <= 0:
-                    gross = 0.0
-                    breakdown_for_order = CostBreakdown.calculate(0.0, "BUY", cost_model)
-                fee = breakdown_for_order.total_cost
-            else:
-                fee = gross * float(fee_rate)
-            self.cash -= gross + fee
-            self.shares[order.symbol] = int(self.shares.get(order.symbol, 0)) + filled
-        else:
-            filled = min(planned, int(self.shares.get(order.symbol, 0)))
-            gross = filled * price
-            if cost_model is not None:
-                breakdown_for_order = CostBreakdown.calculate(gross, "SELL", cost_model)
-                fee = breakdown_for_order.total_cost
-            else:
-                fee = gross * float(fee_rate)
-            self.cash += gross - fee
-            self.shares[order.symbol] = int(self.shares.get(order.symbol, 0)) - filled
-        remaining = planned - filled
-        status = FILLED if remaining == 0 else PARTIAL_FILL
-        result = {"order_status": status, "filled_shares": filled, "filled_price": price if filled else None,
-                  "filled_notional": gross, "fee": fee, "total_cost": fee,
-                  "costs": breakdown_for_order.canonical_dict() if breakdown_for_order is not None else {},
-                  "reject_reason": "" if filled else "insufficient_cash_or_shares",
-                  "remaining_shares": remaining,
-                  "canonical_kernel_id": CANONICAL_KERNEL_ID,
-                  "canonical_kernel_version": CANONICAL_KERNEL_VERSION}
+        active_model = cost_model or ExecutionCostModel(
+            commission_rate=float(fee_rate), stamp_duty_rate=0.0,
+            transfer_fee_rate=0.0, min_commission_cny=0.0
+        )
+        state = AccountState(float(self.cash), self.shares)
+        executed = execute_order(
+            state, order_id=key, symbol=order.symbol, side=order.side,
+            planned_shares=planned, price=fill_price, tradable=tradable,
+            reject_reason=reject_reason, lot_size=int(lot_size or order.lot_size or 1),
+            cost_model=active_model,
+        ).as_dict()
+        self.cash = state.cash
+        status = executed["status"]
+        if status == "REJECTED":
+            status = REJECTED_LIMIT_BLOCK if executed["reject_reason"] in {"limit_block", "limit_up_block", "limit_down_block"} else REJECTED_T1_NOT_TRADABLE
+        filled = int(executed["filled_shares"])
+        remaining = int(executed["remaining_shares"])
+        fee = float((executed.get("costs") or {}).get("total_cost", 0.0))
+        result = {
+            "order_status": status, "filled_shares": filled,
+            "filled_price": executed["filled_price"], "filled_notional": executed["filled_notional"],
+            "fee": fee, "total_cost": fee, "costs": dict(executed.get("costs") or {}),
+            "reject_reason": executed["reject_reason"], "remaining_shares": remaining,
+            "canonical_kernel_id": executed["canonical_kernel_id"],
+            "canonical_kernel_version": executed["canonical_kernel_version"],
+            "kernel_execution_sha256": executed["kernel_execution_sha256"],
+        }
         self._append("order", order_id=key, symbol=order.symbol, side=order.side, event_timestamp=f"{order.execution_date}T09:30:00+08:00",
                      signal_date=order.signal_date, execution_date=order.execution_date, planned_shares=planned, **result)
         if remaining:
-            self.cancel(order, remaining, "unfilled_at_t1_close")
+            self.cancel(order, remaining, executed["reject_reason"] or "unfilled_at_t1_close")
         self._order_results[key] = dict(result)
         return result
 

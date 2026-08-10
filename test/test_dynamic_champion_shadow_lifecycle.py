@@ -73,16 +73,32 @@ def test_twenty_real_days_with_event_quality_enters_economic_shadow():
     assert "ECONOMIC_SHADOW_LT_60_REAL_DAYS" in status.blockers
 
 
-def test_eighty_real_days_and_thirty_round_trips_are_manual_canary_eligible():
+def test_eighty_real_days_without_economic_metrics_only_complete_artifacts():
     status = _evaluate(_rows())
-    assert status.state == "MANUAL_CANARY_ELIGIBLE"
+    assert status.state == "FORWARD_ARTIFACT_COMPLETE"
     assert status.technical_days == 20
     assert status.economic_days == 60
     assert status.completed_round_trips == 30
-    assert status.blockers == ()
-    assert status.canary_approval_package_allowed is True
+    assert "ECONOMIC_METRICS_MISSING" in status.blockers
+    assert status.canary_approval_package_allowed is False
     assert status.canary_capital_authorized is False
     assert status.to_dict()["allowed_capital_cny"] == 0
+
+
+def test_economic_gate_and_manual_capital_state_are_separate():
+    rows = _rows()
+    rows[-1].update({
+        "formal_epoch_declared": True, "alpha_t": 2.0, "adjusted_p": 0.05,
+        "positive_excess_ratio": 0.60, "sharpe": 1.0, "max_drawdown": -0.25,
+        "cost_2x_passed": True, "shadow_zero_difference": True,
+    })
+    economic = _evaluate(rows)
+    assert economic.state == "ECONOMIC_GATE_PASS"
+    assert economic.canary_approval_package_allowed is True
+    rows[-1]["manual_approval"] = True
+    approved = _evaluate(rows)
+    assert approved.state == "CAPITAL_APPROVED"
+    assert approved.to_dict()["allowed_capital_cny"] == 0
 
 
 def test_wrong_release_partial_pit_backfill_and_simulated_dates_never_count():

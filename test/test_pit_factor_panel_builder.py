@@ -46,7 +46,7 @@ def _write_qualified_inputs(root: Path, *, late_market: bool = False):
                     "market_return": market_return,
                     "market_regime": date_index % 3,
                     "market_available_at": (
-                        f"{day}T16:00:00+08:00"
+                        f"{day}T21:31:00+08:00"
                         if late_market
                         else f"{day}T15:00:00+08:00"
                     ),

@@ -1,5 +1,6 @@
 schema_version: strategy_definition_wave4_v1
-strategy_id: pure_alpha_residual_v1
+strategy_id: pure_alpha_residual_v1_t2130
+decision_contract_id: ashare_t2130_t1_v1
 strategy_display_name: "A股 Pure Alpha Residual v1（研究卡）"
 status: RESEARCH_ONLY
 research_only: true
@@ -17,14 +18,15 @@ formula: >-
   - beta_size*size - beta_market*market_beta; rank residual factors.
 direction: "residualized_factor:+; matched_benchmark_excess:+"
 factor_weights:
-  residual_momentum_reversal: 0.25
-  residual_liquidity: 0.25
-  residual_low_volatility: 0.25
-  residual_quality: 0.25
+  residual_momentum_reversal: 0.3333333333
+  residual_liquidity: 0.3333333333
+  residual_low_volatility: 0.3333333334
+  residual_quality: 0.0
 
 availability:
   signal_time: "T_21:30_AFTER_DATA_COMPLETE"
-  decision_cutoff: "23:00:00+08:00"
+  decision_cutoff: "21:30:00+08:00"
+  decision_contract_id: ashare_t2130_t1_v1
   timezone: "Asia/Shanghai"
   data_cutoff: "source_published_at <= decision_cutoff AND warehouse_loaded_at <= decision_cutoff"
   source_published_at_lte: decision_cutoff
@@ -99,8 +101,8 @@ failure_conditions:
 code_entry: scripts.research.run_pure_alpha_challenge.run_pure_alpha_challenge
 code_path: scripts/research/run_pure_alpha_challenge.py
 definition_path: config/strategy_definitions/pure_alpha_residual_v1.yaml
-code_hash: 1809a5d8524f76c50c305565feb553c404d5e20ccc790b02e12698e81920b500
-config_hash: edad0dc3b7f61d1251594a79fd6aa2f43d278e02129eea879b5e75cc2662d548
+code_hash: 14aea487923c2d92ec8a04ffea671e4ba26fe26b86943dedf40ea0a53a48008f
+config_hash: d67303aca0d6ab01369954691e6d79d9587cb0af4d3b05bc1465eaa9fbac81b3
 sample_policy:
   status: CONSUMED_DEVELOPMENT_SAMPLE
   start: "2022-01-01"

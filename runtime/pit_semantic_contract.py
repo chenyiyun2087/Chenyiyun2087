@@ -3,7 +3,7 @@
 
 All formal modules (Adapter, Semantic Audit, Factor Builder, Package Builder,
 Readiness) MUST use this module to load field definitions from the canonical
-contract at config/pit_semantics/ashare_pit_semantics_v1.yaml.
+contract at config/pit_semantics/ashare_t2130_t1_v1.yaml.
 
 No module may maintain its own hardcoded REQUIRED_COLUMNS or EXPECTED_SCHEMAS.
 """
@@ -20,7 +20,7 @@ import pandas as pd
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_PATH = PROJECT_ROOT / "config" / "pit_semantics" / "ashare_pit_semantics_v1.yaml"
+CONTRACT_PATH = PROJECT_ROOT / "config" / "pit_semantics" / "ashare_t2130_t1_v1.yaml"
 
 _contract_cache: dict[str, Any] | None = None
 _contract_sha_cache: str | None = None
@@ -87,7 +87,7 @@ def get_business_time_column(family: str) -> str:
 
 def get_signal_cutoff() -> str:
     """Return the canonical T-day signal cutoff from the contract."""
-    return str(_load_raw_contract().get("signal_cutoff") or "T15:30:00+08:00")
+    return str(_load_raw_contract().get("signal_cutoff") or "T21:30:00+08:00")
 
 
 def get_source_families() -> tuple[str, ...]:
@@ -123,7 +123,7 @@ def get_formal_cutoff_config() -> dict[str, str]:
     return {
         "timezone": str(raw.get("timezone") or _load_raw_contract().get("timezone") or "Asia/Shanghai"),
         "default_time": str(raw.get("default_time") or "21:30:00"),
-        "hard_time": str(raw.get("hard_time") or "23:00:00"),
+        "hard_time": str(raw.get("hard_time") or "21:30:00"),
     }
 
 
@@ -142,7 +142,7 @@ def formal_cutoff_for_dates(
 ) -> pd.Series:
     """Build timezone-aware lineage cutoff timestamps for business dates."""
     cfg = get_formal_cutoff_config()
-    clock = _parse_clock(cfg["hard_time"] if hard else cfg["default_time"], "23:00:00" if hard else "21:30:00")
+    clock = _parse_clock(cfg["hard_time"] if hard else cfg["default_time"], "21:30:00")
     parsed = pd.to_datetime(
         dates if isinstance(dates, pd.Series) else pd.Series(dates),
         errors="coerce",

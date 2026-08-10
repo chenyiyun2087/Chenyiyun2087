@@ -14,12 +14,13 @@ from typing import Iterable
 import pandas as pd
 
 from runtime.canonical_execution_contract import (
-    CANONICAL_KERNEL_ID,
-    CANONICAL_KERNEL_VERSION,
     CANONICAL_SCHEMA_VERSION,
     deterministic_order_id,
     normalize_symbol,
 )
+
+ORACLE_ID = "independent_decimal_oracle"
+ORACLE_VERSION = "1.0.0"
 
 
 CENT = Decimal("0.01")
@@ -279,7 +280,7 @@ def replay_orders(
             try:
                 snap = market_index.loc[(trade_date, symbol)]
             except KeyError:
-                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "missing_market_snapshot", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "missing_market_snapshot", "oracle_id": ORACLE_ID, "oracle_version": ORACLE_VERSION})
                 continue
             if isinstance(snap, pd.DataFrame):
                 raise ValueError(f"oracle_duplicate_market_snapshot:{trade_date}:{symbol}")
@@ -287,14 +288,14 @@ def replay_orders(
             open_price = Decimal(str(snap["raw_open"])) if pd.notna(snap["raw_open"]) else Decimal("0")
             previous_close = Decimal(str(snap["prev_raw_close"])) if pd.notna(snap["prev_raw_close"]) else Decimal("0")
             if not tradable or open_price <= 0 or previous_close <= 0:
-                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "t1_not_tradable", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "t1_not_tradable", "oracle_id": ORACLE_ID, "oracle_version": ORACLE_VERSION})
                 continue
             tick = Decimal(str(snap["price_tick"] or "0.01"))
             ratio = _limit_ratio(symbol, _flag(snap["is_st"]))
             upper = _rounded_price(previous_close * (Decimal("1") + ratio), tick)
             lower = _rounded_price(previous_close * (Decimal("1") - ratio), tick)
             if (side == "BUY" and open_price >= upper) or (side == "SELL" and open_price <= lower):
-                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "limit_block", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "limit_block", "oracle_id": ORACLE_ID, "oracle_version": ORACLE_VERSION})
                 continue
             # Cost model parameters are supplied by the package.  A scalar
             # cost_rate remains a diagnostic/noncanonical fallback only.
@@ -321,12 +322,12 @@ def replay_orders(
                         break
                     fill_shares -= lot_size if lot_size > 1 else 1
                 if fill_shares <= 0:
-                    rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_cash", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+                    rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_cash", "oracle_id": ORACLE_ID, "oracle_version": ORACLE_VERSION})
                     continue
             else:
                 fill_shares = min(fill_shares, int(holdings.get(symbol, 0)))
                 if fill_shares <= 0:
-                    rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_shares", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+                    rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_shares", "oracle_id": ORACLE_ID, "oracle_version": ORACLE_VERSION})
                     continue
             notional = _money(open_price * Decimal(fill_shares))
             costs = _oracle_costs(notional, side, active_model)
@@ -353,8 +354,8 @@ def replay_orders(
                 "side": side, "filled_shares": fill_shares, "filled_price": float(open_price),
                 "filled_notional": float(notional), "fee": float(fee), "total_cost": float(fee),
                 "costs": {key: float(value) for key, value in costs.items()},
-                "canonical_kernel_id": CANONICAL_KERNEL_ID,
-                "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+                "oracle_id": ORACLE_ID,
+                "oracle_version": ORACLE_VERSION,
                 "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
                 "cash_after": float(cash),
             })
@@ -368,9 +369,9 @@ def replay_orders(
             close_price = Decimal(str(close_value))
             value = _money(close_price * Decimal(shares))
             market_value += value
-            position_rows.append({"trade_date": trade_date, "symbol": symbol, "shares": shares, "unit_cost": float(unit_costs.get(symbol, Decimal("0"))), "close_price": float(close_price), "market_value": float(value), "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+            position_rows.append({"trade_date": trade_date, "symbol": symbol, "shares": shares, "unit_cost": float(unit_costs.get(symbol, Decimal("0"))), "close_price": float(close_price), "market_value": float(value), "oracle_id": ORACLE_ID, "oracle_version": ORACLE_VERSION})
         nav = cash + market_value
-        nav_rows.append({"trade_date": trade_date, "cash": float(cash), "market_value": float(market_value), "nav": float(nav), "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+        nav_rows.append({"trade_date": trade_date, "cash": float(cash), "market_value": float(market_value), "nav": float(nav), "oracle_id": ORACLE_ID, "oracle_version": ORACLE_VERSION})
 
     nav_frame = pd.DataFrame(nav_rows)
     if nav_frame.empty:

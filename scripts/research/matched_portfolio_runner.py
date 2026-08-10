@@ -31,6 +31,7 @@ import pandas as pd
 
 from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
 from runtime.canonical_execution_contract import CANONICAL_KERNEL_ID, CANONICAL_KERNEL_VERSION, CANONICAL_SCHEMA_VERSION
+from runtime.canonical_execution_kernel import AccountState as KernelAccountState, execute_order
 from scripts.research.execution_market_rules import (
     can_buy_at_open,
     can_sell_at_open,
@@ -326,7 +327,25 @@ class MatchedPortfolioRunner:
             return 0
         gross = buy_shares * float(price)
         breakdown = CostBreakdown.calculate(gross, "BUY", self.cost_model)
-        account.cash -= gross + breakdown.total_cost
+        kernel_identity: dict[str, Any] = {}
+        if self.spec.trusted_kernel:
+            kernel_state = KernelAccountState(account.cash, {key: value.shares for key, value in account.positions.items()})
+            executed = execute_order(
+                kernel_state, order_id=f"{trade_date}:{symbol}:BUY:{len(rows)}",
+                symbol=symbol, side="BUY", planned_shares=buy_shares, price=price,
+                tradable=True, lot_size=self.spec.lot_size, cost_model=self.cost_model,
+            )
+            if executed.filled_shares != buy_shares:
+                return 0
+            account.cash = kernel_state.cash
+            kernel_identity = {
+                "canonical_kernel_id": executed.canonical_kernel_id,
+                "canonical_kernel_version": executed.canonical_kernel_version,
+                "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+                "kernel_execution_sha256": executed.kernel_execution_sha256,
+            }
+        else:
+            account.cash -= gross + breakdown.total_cost
         if symbol in account.positions:
             account.positions[symbol].shares += buy_shares
         else:
@@ -341,9 +360,7 @@ class MatchedPortfolioRunner:
             "cost": float(breakdown.total_cost), **breakdown.to_dict(),
             "cash_after": float(account.cash),
             "reason": reason,
-            "canonical_kernel_id": CANONICAL_KERNEL_ID,
-            "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
-            "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+            **kernel_identity,
         })
         return buy_shares
 
@@ -365,7 +382,25 @@ class MatchedPortfolioRunner:
             return 0
         gross = sell_shares * float(price)
         breakdown = CostBreakdown.calculate(gross, "SELL", self.cost_model)
-        account.cash += gross - breakdown.total_cost
+        kernel_identity: dict[str, Any] = {}
+        if self.spec.trusted_kernel:
+            kernel_state = KernelAccountState(account.cash, {key: value.shares for key, value in account.positions.items()})
+            executed = execute_order(
+                kernel_state, order_id=f"{trade_date}:{symbol}:SELL:{len(rows)}",
+                symbol=symbol, side="SELL", planned_shares=sell_shares, price=price,
+                tradable=True, lot_size=self.spec.lot_size, cost_model=self.cost_model,
+            )
+            if executed.filled_shares != sell_shares:
+                return 0
+            account.cash = kernel_state.cash
+            kernel_identity = {
+                "canonical_kernel_id": executed.canonical_kernel_id,
+                "canonical_kernel_version": executed.canonical_kernel_version,
+                "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+                "kernel_execution_sha256": executed.kernel_execution_sha256,
+            }
+        else:
+            account.cash += gross - breakdown.total_cost
         position.shares -= sell_shares
         rows.append({
             "trade_date": trade_date, "symbol": symbol, "name": position.name,
@@ -374,9 +409,7 @@ class MatchedPortfolioRunner:
             "gross_amount": float(gross), "cost": float(breakdown.total_cost),
             **breakdown.to_dict(),
             "cash_after": float(account.cash), "reason": reason,
-            "canonical_kernel_id": CANONICAL_KERNEL_ID,
-            "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
-            "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+            **kernel_identity,
         })
         if position.shares <= 0:
             account.positions.pop(symbol, None)
@@ -503,7 +536,7 @@ class MatchedPortfolioRunner:
                 if np.isfinite(close) and close > 0:
                     market_value += float(pos.shares) * close
             total_equity = account.cash + market_value
-            nav_rows.append({
+            nav_row = {
                 "trade_date": trade_date,
                 "cash": account.cash,
                 "market_value": market_value,
@@ -511,10 +544,14 @@ class MatchedPortfolioRunner:
                 "nav": total_equity / self.initial_cash,
                 "position_count": len(account.positions),
                 "curve": curve_name,
-                "canonical_kernel_id": CANONICAL_KERNEL_ID,
-                "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
-                "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
-            })
+            }
+            if self.spec.trusted_kernel:
+                nav_row.update({
+                    "canonical_kernel_id": CANONICAL_KERNEL_ID,
+                    "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+                    "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+                })
+            nav_rows.append(nav_row)
 
             # --- Rebalance ---
             signal_date = exec_to_signal.get(trade_date)

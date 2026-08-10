@@ -61,11 +61,11 @@ def test_wave4_strategy_identity_and_consumed_sample():
         assert card["capital_cny"] == 0.0
         assert card["promotion_status"] == "BLOCKED"
         assert card["availability"]["signal_time"] == "T_21:30_AFTER_DATA_COMPLETE"
-        assert card["availability"]["decision_cutoff"] == "23:00:00+08:00"
+        assert card["availability"]["decision_cutoff"] == "21:30:00+08:00"
         assert card["availability"]["execution_time"] == "T+1_SSE_RAW_OPEN"
         for component in ("commission_rate", "min_commission_cny", "stamp_duty_rate", "transfer_fee_rate", "open_auction_slippage_bps", "gap_bps", "spread_bps", "adv_impact_bps", "missed_fill_bps"):
             assert component in card["cost_model"]
-    assert ids == {"smart_beta_v1", "pure_alpha_residual_v1"}
+    assert ids == {"smart_beta_v1_t2130", "pure_alpha_residual_v1_t2130"}
 
 
 def test_preregistration_hash_is_immutable():
@@ -199,8 +199,9 @@ def test_runner_never_promotes_bare_e3_bool_and_requires_bound_formal_evidence(t
         forward_evidence=forward,
     )
     assert bound["status"] == "OBSERVE"
-    assert bound["evidence_level"] == "E3"
-    assert bound["evidence_binding"]["status"] == "PASS"
+    assert bound["evidence_level"] == "E0"
+    assert bound["evidence_binding"]["status"] == "BLOCKED"
+    assert "formal_evidence_paths_required" in bound["evidence_binding"]["reason"]
     bad = validate_formal_evidence(
         pit_qualifier=pit,
         forward_evidence={**forward, "returns_dates": ["2026-08-09"]},

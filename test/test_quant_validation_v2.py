@@ -138,7 +138,9 @@ def test_shadow_lifecycle_never_authorizes_capital():
             "risk_gate_false_negative": 0, "historical_simulation": False,
         })
     status = evaluate_shadow_lifecycle(rows)
-    assert status.canary_approval_package_allowed is True
+    assert status.state == "FORWARD_ARTIFACT_COMPLETE"
+    assert status.canary_approval_package_allowed is False
+    assert "ECONOMIC_METRICS_MISSING" in status.blockers
     assert status.canary_capital_authorized is False
     assert status.to_dict()["capital_status"] == "NO_SCALE"
 
