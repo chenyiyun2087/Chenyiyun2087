@@ -26,8 +26,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def build_package(run_dir: Path) -> dict[str, object]:
-    """Create dual_ledger_packages/<strategy>/ under the run dir."""
+def build_package(run_dir: Path, *, formal: bool = True, allow_legacy: bool = False) -> dict[str, object]:
+    """Create a diagnostic legacy package.
+
+    The singular builder predates the canonical kernel and is intentionally
+    refused for formal/trusted runs.  Use ``build_dual_ledger_packages.py``
+    for the complete ReleaseIdentity + kernel manifest package.
+    """
+    if formal and not allow_legacy:
+        raise RuntimeError(
+            "legacy_dual_ledger_builder_rejected:use_build_dual_ledger_packages"
+        )
     frozen = run_dir / "frozen_inputs"
     account = run_dir / "account_backtest"
     manifest = json.loads((run_dir / "formal_run_manifest.json").read_text(encoding="utf-8"))
@@ -84,8 +93,13 @@ def build_package(run_dir: Path) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--allow-legacy", action="store_true", help="diagnostic-only; never formal")
     args = parser.parse_args()
-    result = build_package(args.run_dir)
+    try:
+        result = build_package(args.run_dir, formal=not args.allow_legacy, allow_legacy=args.allow_legacy)
+    except RuntimeError as exc:
+        print(str(exc))
+        raise SystemExit(2) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if result["status"] != "PASS":
         raise SystemExit(2)

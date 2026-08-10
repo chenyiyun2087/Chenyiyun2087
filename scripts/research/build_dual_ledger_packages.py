@@ -23,10 +23,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from runtime.canonical_execution_contract import (
+    CANONICAL_KERNEL_ID,
+    CANONICAL_KERNEL_VERSION,
+    CANONICAL_SCHEMA_VERSION,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 DUAL_LEDGER_PACKAGES_DIRNAME = "dual_ledger_packages"
+CANONICAL_KERNEL_MANIFEST_NAME = "canonical_kernel.json"
 
 
 def _sha(path: Path) -> str:
@@ -56,6 +63,9 @@ def _build_orders(ledger_events: pd.DataFrame, strategy: str,
     orders["lot_size"] = pd.to_numeric(df.get("lot_size", 100), errors="coerce").fillna(100).astype(int)
     orders["release_id"] = release_id
     orders["run_id"] = run_id
+    orders["canonical_kernel_id"] = CANONICAL_KERNEL_ID
+    orders["canonical_kernel_version"] = CANONICAL_KERNEL_VERSION
+    orders["canonical_schema_version"] = CANONICAL_SCHEMA_VERSION
     return orders
 
 
@@ -235,11 +245,25 @@ def build_dual_ledger_packages(
 
     dual_root = account_dir / DUAL_LEDGER_PACKAGES_DIRNAME
     dual_root.mkdir(parents=True, exist_ok=True)
+    kernel_manifest = {
+        "canonical_kernel_id": CANONICAL_KERNEL_ID,
+        "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+        "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+        "builder": "scripts.research.build_dual_ledger_packages",
+        "builder_version": "1.0.0",
+        "trusted": True,
+    }
+    (dual_root / CANONICAL_KERNEL_MANIFEST_NAME).write_text(
+        json.dumps(kernel_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     results: dict[str, dict[str, Any]] = {}
     for strategy in strategies:
         pkg_dir = dual_root / strategy
         pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / CANONICAL_KERNEL_MANIFEST_NAME).write_text(
+            json.dumps(kernel_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
         # orders.parquet
         orders = _build_orders(ledger_events, strategy, release_id, run_id)
@@ -264,10 +288,17 @@ def build_dual_ledger_packages(
 
         # cost_model.json (must be before release_identity for cost_model_id)
         cost_model = {
-            "trade_cost_rate": 0.00075,
-            "slippage_bps": 10,
-            "stamp_duty_bps": 10,
+            "commission_rate": 0.00075,
             "min_commission_cny": 5.0,
+            "stamp_duty_rate": 0.0005,
+            "transfer_fee_rate": 0.00001,
+            "open_auction_slippage_bps": 10,
+            "gap_bps": 0,
+            "spread_bps": 0,
+            "adv_impact_bps": 0,
+            "missed_fill_bps": 0,
+            "stamp_duty_bps": 10,
+            "cost_contract": "canonical_componentized_v1",
         }
         (pkg_dir / "cost_model.json").write_text(
             json.dumps(cost_model, ensure_ascii=False, indent=2))
@@ -321,6 +352,8 @@ def build_dual_ledger_packages(
             "orders": len(orders),
             "market_rows": len(market_snapshot),
             "package_dir": str(pkg_dir),
+            "canonical_kernel_id": CANONICAL_KERNEL_ID,
+            "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
         }
 
     return {
@@ -328,6 +361,8 @@ def build_dual_ledger_packages(
         "strategies": strategies,
         "packages": results,
         "dual_root": str(dual_root),
+        "canonical_kernel_id": CANONICAL_KERNEL_ID,
+        "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
     }
 
 

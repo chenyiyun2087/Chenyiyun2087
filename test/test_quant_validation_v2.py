@@ -99,13 +99,20 @@ def test_pit_v2_has_exact_fourteen_fail_closed_components():
     expected = {
         "trade_calendar", "raw_daily_price", "adjusted_daily_price", "adjustment_factor",
         "limit_rule", "st_name_history", "suspend_resume_history", "list_delist_history",
-        "corporate_actions", "industry_membership_history", "theme_membership_history",
-        "financial_disclosure_visibility", "factor_source_snapshot", "score_schema",
+            "corporate_actions", "industry_membership_history", "theme_membership_history",
+            "financial_disclosure_visibility", "factor_source_snapshot", "score_schema",
+            "benchmark_index",
     }
     assert config["schema_version"] == "2.0"
     assert {item["name"] for item in config["components"]} == expected
     for item in config["components"]:
-        assert {"event_date", "publish_date", "available_at", "ingested_at", "snapshot_sha", "schema_version"}.issubset(item["required_columns"])
+        if item["name"] == "benchmark_index":
+            # Benchmark series use the index-specific availability contract;
+            # they are not event/SCD families and therefore do not carry the
+            # six security-event metadata columns.
+            assert {"trade_date", "benchmark_available_at", "source_published_at", "warehouse_loaded_at", "decision_cutoff", "availability_source"}.issubset(item["required_columns"])
+        else:
+            assert {"event_date", "publish_date", "available_at", "ingested_at", "snapshot_sha", "schema_version"}.issubset(item["required_columns"])
 
 
 def test_minimum_holding_is_preference_not_prohibition():

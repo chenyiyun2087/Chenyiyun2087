@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
+from runtime.canonical_execution_contract import CANONICAL_KERNEL_ID, CANONICAL_KERNEL_VERSION, CANONICAL_SCHEMA_VERSION
 from scripts.research.execution_market_rules import (
     can_buy_at_open,
     can_sell_at_open,
@@ -114,6 +115,7 @@ class MatchedExperimentSpec:
     transfer_fee_rate: float = 0.00001
     impact_rate: float = 0.0
     strict_execution_metadata: bool = True
+    trusted_kernel: bool = False
 
 
 @dataclass
@@ -248,6 +250,8 @@ class MatchedPortfolioRunner:
         symbol: str,
         side: str,
         price_info: dict[str, Any],
+        *,
+        trusted: bool = False,
     ) -> tuple[bool, str, float | None]:
         """T+1 execution gate.  Returns (allowed, reason, execution_price).
 
@@ -263,6 +267,8 @@ class MatchedPortfolioRunner:
 
         # Use raw_open for limit check (what the exchange sees)
         raw_open = _safe_float(price_info.get("raw_open"), np.nan)
+        if trusted and (not np.isfinite(raw_open) or raw_open <= 0):
+            return False, "raw_open_required_for_trusted_execution", None
         open_price = _safe_float(price_info.get("adj_open"), np.nan)
         # If raw_open is not available, fall back to adj_open
         limit_check_price = raw_open if np.isfinite(raw_open) and raw_open > 0 else open_price
@@ -284,8 +290,9 @@ class MatchedPortfolioRunner:
 
         if not allowed:
             return False, reason, None
-        # Return adj_open for execution price (adjusted for P&L)
-        exec_price = open_price if np.isfinite(open_price) and open_price > 0 else limit_check_price
+        # Trusted economics settle on raw exchange prices.  Adjusted opens are
+        # retained for feature research only.
+        exec_price = limit_check_price if trusted else (open_price if np.isfinite(open_price) and open_price > 0 else limit_check_price)
         return True, "", float(exec_price)
 
     # ------------------------------------------------------------------
@@ -334,6 +341,9 @@ class MatchedPortfolioRunner:
             "cost": float(breakdown.total_cost), **breakdown.to_dict(),
             "cash_after": float(account.cash),
             "reason": reason,
+            "canonical_kernel_id": CANONICAL_KERNEL_ID,
+            "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+            "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
         })
         return buy_shares
 
@@ -364,6 +374,9 @@ class MatchedPortfolioRunner:
             "gross_amount": float(gross), "cost": float(breakdown.total_cost),
             **breakdown.to_dict(),
             "cash_after": float(account.cash), "reason": reason,
+            "canonical_kernel_id": CANONICAL_KERNEL_ID,
+            "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+            "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
         })
         if position.shares <= 0:
             account.positions.pop(symbol, None)
@@ -482,7 +495,7 @@ class MatchedPortfolioRunner:
             market_value = 0.0
             for pos in account.positions.values():
                 close = _safe_float(
-                    price_day.loc[pos.symbol, "adj_close"]
+                    price_day.loc[pos.symbol, "raw_close" if self.spec.trusted_kernel and "raw_close" in price_day.columns else "adj_close"]
                     if pos.symbol in price_day.index
                     else None,
                     np.nan,
@@ -498,6 +511,9 @@ class MatchedPortfolioRunner:
                 "nav": total_equity / self.initial_cash,
                 "position_count": len(account.positions),
                 "curve": curve_name,
+                "canonical_kernel_id": CANONICAL_KERNEL_ID,
+                "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+                "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
             })
 
             # --- Rebalance ---
@@ -569,7 +585,7 @@ class MatchedPortfolioRunner:
                 if not should_sell and (holding_days < int(self.spec.hold_days) or extended):
                     locked_symbols.add(symbol)
                     pos_price = _safe_float(
-                        price_day.loc[symbol, "adj_open"]
+                        price_day.loc[symbol, "raw_open" if self.spec.trusted_kernel and "raw_open" in price_day.columns else "adj_open"]
                         if symbol in price_day.index
                         else None,
                         np.nan,
@@ -586,7 +602,7 @@ class MatchedPortfolioRunner:
                 if symbol in price_day.index:
                     price_info = price_day.loc[symbol].to_dict()
                 allowed, t1_reason, exec_price = self._t1_gate(
-                    symbol, "SELL", price_info
+                    symbol, "SELL", price_info, trusted=self.spec.trusted_kernel
                 )
                 if allowed and exec_price is not None:
                     self._execute_sell(
@@ -609,7 +625,7 @@ class MatchedPortfolioRunner:
                     if symbol in price_day.index:
                         price_info = price_day.loc[symbol].to_dict()
                     allowed, reason, exec_price = self._t1_gate(
-                        symbol, "SELL", price_info
+                        symbol, "SELL", price_info, trusted=self.spec.trusted_kernel
                     )
                     if allowed and exec_price is not None:
                         self._execute_sell(
@@ -624,7 +640,7 @@ class MatchedPortfolioRunner:
             equity = account.cash
             for pos in account.positions.values():
                 pos_open = _safe_float(
-                    price_day.loc[pos.symbol, "adj_open"]
+                    price_day.loc[pos.symbol, "raw_open" if self.spec.trusted_kernel and "raw_open" in price_day.columns else "adj_open"]
                     if pos.symbol in price_day.index
                     else None,
                     np.nan,
@@ -647,7 +663,7 @@ class MatchedPortfolioRunner:
                 if symbol in price_day.index:
                     price_info = price_day.loc[symbol].to_dict()
                 allowed, reason, exec_price = self._t1_gate(
-                    symbol, "BUY", price_info
+                    symbol, "BUY", price_info, trusted=self.spec.trusted_kernel
                 )
                 if not allowed or exec_price is None:
                     rejection_rows.append({"trade_date": trade_date, "signal_date": signal_date, "symbol": symbol, "side": "BUY", "reason": reason or "unknown_execution_state", "curve": curve_name})

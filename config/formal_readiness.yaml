@@ -1,5 +1,22 @@
 schema_version: formal_readiness_v2
 success_status: READY_FOR_FORMAL_RUN
+pit_evidence:
+  canonical_families:
+    - market
+    - universe
+    - financial
+    - industry
+    - adjustment
+    - trade_calendar
+    - security_lifecycle
+    - corporate_actions
+    - benchmark_index
+  formal_cutoff_timezone: Asia/Shanghai
+  formal_cutoff_default: "21:30:00"
+  formal_cutoff_hard: "23:00:00"
+  require_provider_snapshot_token: true
+  require_same_consistent_snapshot: true
+  require_independent_e3_qualifier: true
 minimum_start_date: "2022-01-01"
 minimum_score_coverage: 0.5
 minimum_universe_price_coverage: 0.5
@@ -37,6 +54,7 @@ canonical_required_objects:
   - trade_calendar.parquet
   - security_lifecycle.parquet
   - corporate_actions.parquet
+  - benchmark_index.parquet
 primary_keys:
   trade_calendar.csv: [cal_date, exchange]
   tradable_universe.csv: [trade_date, symbol]

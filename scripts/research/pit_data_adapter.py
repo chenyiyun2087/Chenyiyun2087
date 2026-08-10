@@ -27,8 +27,12 @@ from runtime.acceptance_config import canonical_sha
 from runtime.pit_semantic_contract import (
     get_available_at_column,
     get_contract_sha256,
+    get_lineage_columns,
+    formal_cutoff_for_dates,
+    conservative_financial_availability,
     get_required_columns,
     get_source_families,
+    validate_lineage_frame,
     validate_explicit_timezone,
     validate_frame_schema,
 )
@@ -82,8 +86,166 @@ def _parameter_sha(params: Any = None) -> str:
 
 
 def _snapshot_identity_from_config(config: dict[str, Any]) -> str:
-    value = str(config.get("snapshot_id") or config.get("snapshot_token") or "")
-    return value.strip()
+    value = str(
+        config.get("provider_snapshot_token")
+        or config.get("snapshot_token")
+        or config.get("snapshot_id")
+        or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN")
+        or ""
+    )
+    value = value.strip()
+    normalized = value.lower()
+    if normalized.startswith("gtid:") or normalized.startswith("binlog:"):
+        # Replication provenance is not a provider-issued immutable token.
+        return ""
+    return value
+
+
+def _looks_like_replication_provenance(value: Any) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized.startswith("gtid:") or normalized.startswith("binlog:")
+
+
+def _default_lineage_for_synthetic(frame: pd.DataFrame, family: str) -> pd.DataFrame:
+    """Add diagnostic-only lineage fields for legacy synthetic fixtures.
+
+    Synthetic fixtures are allowed to exercise factor math, but these values
+    are explicitly marked synthetic and can never satisfy the strict E3
+    qualifier.  Historical/strict sources must provide provider fields and do
+    not use this function.
+    """
+    frame = frame.copy()
+    avail = get_available_at_column(family)
+    business_col = "cal_date" if family == "trade_calendar" else "trade_date"
+    business = frame.get(business_col, pd.Series(index=frame.index, dtype="object"))
+    default_dates = pd.to_datetime(business, errors="coerce")
+    if avail not in frame.columns:
+        frame[avail] = default_dates.dt.strftime("%Y-%m-%dT15:00:00+08:00")
+    if "source_published_at" not in frame.columns:
+        frame["source_published_at"] = frame[avail]
+    if "warehouse_loaded_at" not in frame.columns:
+        frame["warehouse_loaded_at"] = frame[avail]
+    if "decision_cutoff" not in frame.columns:
+        frame["decision_cutoff"] = formal_cutoff_for_dates(default_dates)
+    if "availability_source" not in frame.columns:
+        frame["availability_source"] = "synthetic_fixture_diagnostic"
+    if family == "financial":
+        # Existing fixture fields often use compact period dates; only fill the
+        # chain marker, never a financial value.
+        if "revision_sequence" not in frame.columns:
+            frame["revision_sequence"] = 1
+    if family == "industry":
+        if "valid_from" not in frame.columns:
+            frame["valid_from"] = frame.get("trade_date")
+        if "valid_to" not in frame.columns:
+            frame["valid_to"] = "2099-12-31"
+        if "industry_code" not in frame.columns:
+            frame["industry_code"] = frame.get("industry", "UNKNOWN")
+        if "industry_name" not in frame.columns:
+            frame["industry_name"] = frame.get("industry", "UNKNOWN")
+    return frame
+
+
+def _normalize_financial_frame(
+    frame: pd.DataFrame,
+    *,
+    trade_calendar: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Apply the conservative next-session rule to date-only financial data.
+
+    A date-only provider value is ambiguous at the session boundary.  Every
+    lineage timestamp which carries that value (availability, publication and
+    warehouse load) is moved to the next open session and marked explicitly.
+    Leaving one of the three columns as a bare date would make the strict
+    timezone/lineage validator reject the family, while normalising only
+    ``financial_available_at`` would silently claim a publication/load time
+    that was never supplied by the provider.
+    """
+    frame = frame.copy()
+
+    def _date_only(value: Any) -> bool:
+        return bool(
+            value is not None
+            and not (isinstance(value, float) and pd.isna(value))
+            and bool(re.fullmatch(r"\d{8}|\d{4}-\d{2}-\d{2}", str(value).strip()))
+        )
+
+    date_only_mask = pd.Series(False, index=frame.index, dtype=bool)
+    for column in (
+        "financial_available_at",
+        "source_published_at",
+        "warehouse_loaded_at",
+    ):
+        if column in frame.columns:
+            date_only_mask |= frame[column].map(_date_only)
+    if not date_only_mask.any():
+        return frame
+
+    # Keep a missing canonical availability column as a schema blocker.  If
+    # only a secondary lineage column is date-only, normalize that value but do
+    # not infer the missing provider availability fact.
+    if "financial_available_at" not in frame.columns:
+        for column in ("source_published_at", "warehouse_loaded_at"):
+            if column not in frame.columns:
+                continue
+            values = frame[column].copy()
+            column_mask = values.map(_date_only)
+            normalized_values, column_markers = conservative_financial_availability(
+                values, trade_calendar=trade_calendar
+            )
+            frame.loc[column_mask, column] = normalized_values.loc[column_mask]
+            if "availability_source" not in frame.columns:
+                frame["availability_source"] = ""
+            frame.loc[column_mask, "availability_source"] = column_markers.loc[
+                column_mask
+            ]
+        return frame
+
+    financial_date_only = frame["financial_available_at"].map(_date_only)
+    normalized_lineage_mask = financial_date_only.copy()
+    normalized, markers = conservative_financial_availability(
+        frame["financial_available_at"],
+        trade_calendar=trade_calendar,
+    )
+    # Preserve provider timestamp representations on unaffected rows so a
+    # FILE adapter's frozen bytes remain byte-identical unless a date-only
+    # value actually requires the conservative transformation.
+    frame.loc[financial_date_only, "financial_available_at"] = normalized.loc[
+        financial_date_only
+    ]
+    # The provider may expose date-only values in any lineage column.  Use the
+    # availability date as the canonical conservative session and apply the
+    # same legal instant to the other columns when they are date-only (or
+    # missing).  We never overwrite an explicit provider timestamp.
+    for column in ("source_published_at", "warehouse_loaded_at"):
+        if column not in frame.columns:
+            continue
+        values = frame[column].copy()
+        column_date_only = values.map(_date_only)
+        normalized_values, column_markers = conservative_financial_availability(
+            values,
+            trade_calendar=trade_calendar,
+        )
+        # When the provider gave a date-only value in a secondary lineage
+        # column, use its own next-session marker; otherwise keep the marker
+        # derived from financial_available_at.
+        apply_mask = financial_date_only | column_date_only
+        normalized_lineage_mask |= column_date_only
+        frame.loc[apply_mask, column] = normalized_values.loc[apply_mask]
+        markers = markers.where(
+            ~column_date_only,
+            column_markers,
+        )
+    if "availability_source" not in frame.columns:
+        frame["availability_source"] = markers
+    else:
+        source = frame["availability_source"].astype(str)
+        source_missing = source.str.strip().isin({"", "nan", "none", "null"})
+        source_mask = normalized_lineage_mask | source_missing
+        frame.loc[source_mask, "availability_source"] = markers.loc[
+            source_mask
+        ]
+    return frame
 
 
 def _validate_source_timezones(
@@ -103,6 +265,55 @@ def _validate_source_timezones(
         parsed = pd.to_datetime(frame[column], errors="coerce", utc=True)
         if parsed.isna().any():
             blockers.append(f"source_available_at_unparseable:{name}")
+        blockers.extend(
+            validate_lineage_frame(frame, name, strict=strict)
+        )
+
+
+def _validate_strict_semantics(
+    frames: dict[str, pd.DataFrame], blockers: list[str]
+) -> None:
+    """Reject placeholder/constant PIT dimensions before manifest creation."""
+    for family in ("universe", "security_lifecycle"):
+        frame = frames.get(family)
+        if frame is None:
+            continue
+        if "is_suspended" in frame.columns and frame["is_suspended"].dropna().nunique() <= 1:
+            blockers.append(f"suspension_placeholder_or_constant:{family}")
+        if "security_status_transition" in frame.columns and frame[
+            "security_status_transition"
+        ].dropna().nunique() <= 1:
+            blockers.append(f"lifecycle_transition_placeholder_or_constant:{family}")
+    financial = frames.get("financial")
+    if financial is not None:
+        if "revision_id" not in financial.columns or financial["revision_id"].dropna().nunique() <= 1:
+            blockers.append("financial_revision_chain_constant_or_missing")
+        if "revision_sequence" not in financial.columns or pd.to_numeric(
+            financial["revision_sequence"], errors="coerce"
+        ).nunique() <= 1:
+            blockers.append("financial_revision_sequence_constant_or_missing")
+    industry = frames.get("industry")
+    if industry is not None:
+        if "valid_to" not in industry.columns or industry["valid_to"].isna().all():
+            blockers.append("industry_scd_valid_to_missing_or_constant")
+        if "industry_available_at" in industry.columns and industry[
+            "industry_available_at"
+        ].dropna().nunique() <= 1:
+            blockers.append("industry_scd_availability_constant_or_backfilled")
+    actions = frames.get("corporate_actions")
+    if actions is not None:
+        if actions.empty:
+            blockers.append("corporate_actions_empty")
+        for column in ("source_event_id", "event_id", "event_hash"):
+            if column not in actions.columns or actions[column].isna().all() or actions[column].astype(str).nunique() <= 1:
+                blockers.append(f"corporate_action_{column}_placeholder_or_constant")
+        if "source_complete" in actions.columns and actions["source_complete"].nunique() <= 1:
+            blockers.append("corporate_action_source_complete_constant")
+    benchmark = frames.get("benchmark_index")
+    if benchmark is not None:
+        codes = set(benchmark.get("index_code", pd.Series(dtype="object")).dropna().astype(str))
+        if codes != {"000300.SH", "000905.SH", "000852.SH"}:
+            blockers.append("benchmark_codes_incomplete")
 
 
 def _write_blocked(
@@ -116,6 +327,26 @@ def _write_blocked(
         "blockers": sorted(set(blockers)),
         "historical_evidence_level": "E0",
         "synthetic_evidence_level": "S0",
+        "claimed_evidence_level": "E0",
+        "qualified_evidence_level": None,
+        "data_status": "BLOCKED_DATA",
+        "canonical_families": list(SOURCE_NAMES),
+        "lineage_columns": list(get_lineage_columns()),
+        "formal_cutoff": {
+            "default": "21:30:00+08:00",
+            "hard": "23:00:00+08:00",
+            "timezone": "Asia/Shanghai",
+        },
+        "transaction_started_at": None,
+        "transaction_finished_at": None,
+        "transaction_isolation": None,
+        "server_identity": {},
+        "provider_snapshot_token": None,
+        "gtid_provenance": {},
+        "binlog_provenance": {},
+        "query_sha256": {name: "" for name in SOURCE_NAMES},
+        "parameter_sha256": {name: "" for name in SOURCE_NAMES},
+        "file_sha256": {name: "" for name in SOURCE_NAMES},
         "capital_authority": False,
     }
     report["content_sha256"] = canonical_sha(
@@ -208,6 +439,7 @@ def build_pit_adapter_manifest(
     configured_snapshot_id = _snapshot_identity_from_config(config)
     if strict_contract and adapter_type == "FILE" and not configured_snapshot_id:
         blockers.append("file_snapshot_id_missing")
+        blockers.append("provider_snapshot_token_missing")
     if strict_contract and adapter_type == "MYSQL" and not (
         str(config.get("snapshot_token") or "")
         or str(config.get("snapshot_token_query") or "")
@@ -224,15 +456,27 @@ def build_pit_adapter_manifest(
     source_query_sha: dict[str, str] = {}
     snapshot_meta: dict[str, Any] = {
         "snapshot_id": configured_snapshot_id or None,
+        "configured_snapshot_id": configured_snapshot_id or None,
         "transaction_isolation": None,
         "transaction_started_at": None,
         "transaction_finished_at": None,
         "snapshot_token": None,
+        "provider_snapshot_token": None,
         "snapshot_token_query_sha256": None,
         "gtid_or_binlog_position": None,
+        "server_identity": {},
+        "gtid_provenance": {},
+        "binlog_provenance": {},
     }
     if adapter_type == "FILE":
         import shutil
+        snapshot_meta["provider_snapshot_token"] = configured_snapshot_id or None
+        snapshot_meta["snapshot_token"] = configured_snapshot_id or None
+        snapshot_meta["transaction_isolation"] = "FILE_IMMUTABLE"
+        snapshot_meta["transaction_started_at"] = pd.Timestamp(retrieved_at).isoformat() if pd.notna(retrieved_at) else None
+        snapshot_meta["transaction_finished_at"] = snapshot_meta["transaction_started_at"]
+        snapshot_meta["consistent_snapshot"] = True
+        snapshot_meta["server_identity"] = {"provider": str(config.get("provider") or "")}
         # The frozen copy is part of the release output.  Keeping it under
         # ``output_dir/snapshots`` makes the manifest, semantic audit, builder,
         # and downstream registry all bind the same bytes.
@@ -256,6 +500,8 @@ def build_pit_adapter_manifest(
             shutil.copy2(path, frozen)
             paths[name] = frozen
             frames[name] = _read_table(frozen)
+            if not strict_contract:
+                frames[name] = _default_lineage_for_synthetic(frames[name], name)
             source_query_sha[name] = _query_sha(
                 str((source_config.get(name) or {}).get("query") or ""),
                 (source_config.get(name) or {}).get("params"),
@@ -275,19 +521,42 @@ def build_pit_adapter_manifest(
             with engine.connect() as conn:
                 conn.execute(text("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
                 conn.execute(text("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY"))
+                snapshot_meta["consistent_snapshot"] = True
                 snapshot_meta["transaction_started_at"] = datetime.now(timezone.utc).isoformat()
                 isolation_row = conn.execute(
                     text("SELECT @@SESSION.transaction_isolation")
                 ).fetchone()
                 snapshot_meta["transaction_isolation"] = str(isolation_row[0]) if isolation_row else ""
-                token_query = str(config.get("snapshot_token_query") or "").strip()
+                identity_row = conn.execute(
+                    text("SELECT @@server_uuid, @@server_id, @@hostname")
+                ).fetchone()
+                if identity_row:
+                    snapshot_meta["server_identity"] = {
+                        "server_uuid": str(identity_row[0] or ""),
+                        "server_id": str(identity_row[1] or ""),
+                        "server_hostname": str(identity_row[2] or ""),
+                    }
+                # Provider token and replication provenance are independent
+                # facts.  Never use @@GLOBAL.gtid_executed or binlog position
+                # as a provider-issued immutable read-view token.
+                token_query = str(
+                    config.get("provider_snapshot_token_query")
+                    or config.get("snapshot_token_query")
+                    or ""
+                ).strip()
                 if token_query:
-                    snapshot_meta["snapshot_token_query_sha256"] = _query_sha(
-                        token_query, config.get("snapshot_token_params")
-                    )
-                    if not _safe_select(token_query):
-                        blockers.append("mysql_snapshot_token_query_not_read_only_select")
+                    normalized_token_query = " ".join(token_query.split()).lower()
+                    if (
+                        not _safe_select(token_query)
+                        or "@@global.gtid_executed" in normalized_token_query
+                        or "@@gtid_executed" in normalized_token_query
+                        or "binlog" in normalized_token_query
+                    ):
+                        blockers.append("mysql_provider_snapshot_token_query_invalid")
                     else:
+                        snapshot_meta["snapshot_token_query_sha256"] = _query_sha(
+                            token_query, config.get("snapshot_token_params")
+                        )
                         token_params = config.get("snapshot_token_params") or {}
                         token_row = (
                             conn.execute(text(token_query), token_params)
@@ -296,26 +565,51 @@ def build_pit_adapter_manifest(
                         ).fetchone()
                         token_value = token_row[0] if token_row else None
                         if token_value in (None, ""):
-                            blockers.append("mysql_snapshot_token_empty")
-                        snapshot_meta["snapshot_token"] = str(token_value or "")
-                elif config.get("snapshot_token") or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN"):
-                    snapshot_meta["snapshot_token"] = str(
-                        config.get("snapshot_token")
+                            blockers.append("mysql_provider_snapshot_token_empty")
+                        elif _looks_like_replication_provenance(token_value):
+                            blockers.append("mysql_provider_snapshot_token_is_gtid_or_binlog")
+                        else:
+                            snapshot_meta["provider_snapshot_token"] = str(token_value)
+                elif (
+                    config.get("provider_snapshot_token")
+                    or config.get("snapshot_token")
+                    or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN")
+                ):
+                    configured_token = str(
+                        config.get("provider_snapshot_token")
+                        or config.get("snapshot_token")
                         or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN")
                     )
-                elif not config.get("require_gtid", False):
-                    blockers.append("mysql_snapshot_token_query_missing")
-                else:
+                    if _looks_like_replication_provenance(configured_token):
+                        blockers.append("mysql_provider_snapshot_token_is_gtid_or_binlog")
+                    else:
+                        snapshot_meta["provider_snapshot_token"] = configured_token
+
+                if config.get("require_gtid", False):
                     gtid_row = conn.execute(text("SELECT @@GLOBAL.gtid_executed")).fetchone()
                     gtid_value = gtid_row[0] if gtid_row else None
                     if not gtid_value:
                         blockers.append("mysql_gtid_empty")
-                    snapshot_meta["snapshot_token"] = str(gtid_value or "")
                     snapshot_meta["gtid_or_binlog_position"] = str(gtid_value or "")
-                if snapshot_meta.get("snapshot_token") and config.get("require_gtid"):
-                    snapshot_meta["gtid_or_binlog_position"] = snapshot_meta[
-                        "snapshot_token"
-                    ]
+                snapshot_meta["gtid_provenance"] = {
+                    "gtid_or_binlog_position": snapshot_meta.get("gtid_or_binlog_position") or "",
+                }
+                # SHOW BINARY LOG STATUS is provider-specific; keep the
+                # provenance field explicit when the driver supports it.
+                try:
+                    binlog_row = conn.execute(text("SHOW BINARY LOG STATUS")).fetchone()
+                    if binlog_row:
+                        snapshot_meta["binlog_provenance"] = {
+                            "file": str(binlog_row[0] or ""),
+                            "position": int(binlog_row[1] or 0),
+                        }
+                except Exception:
+                    blockers.append("mysql_binlog_provenance_unavailable")
+                # ``snapshot_token`` is a compatibility alias for the real
+                # provider token only; it is never populated from GTID.
+                snapshot_meta["snapshot_token"] = snapshot_meta.get(
+                    "provider_snapshot_token"
+                ) or None
                 for name in active_names:
                     payload = source_config.get(name) or {}
                     query = str(payload.get("query") or "")
@@ -335,15 +629,31 @@ def build_pit_adapter_manifest(
                 snapshot_meta["transaction_finished_at"] = datetime.now(timezone.utc).isoformat()
                 conn.execute(text("COMMIT"))
             engine.dispose()
-            if not snapshot_meta.get("snapshot_token"):
-                blockers.append("mysql_snapshot_identity_missing")
+            if not snapshot_meta.get("provider_snapshot_token"):
+                blockers.append("provider_snapshot_token_missing")
             expected_token = str(
                 config.get("snapshot_token")
                 or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN")
                 or ""
             )
-            if expected_token and str(snapshot_meta.get("snapshot_token")) != expected_token:
+            if expected_token and str(snapshot_meta.get("provider_snapshot_token")) != expected_token:
                 blockers.append("mysql_snapshot_identity_mismatch")
+    # Financial date-only handling is intentionally deferred until the whole
+    # source set is loaded so an extracted trade calendar can identify the
+    # actual next open session.  Explicit provider timestamps remain untouched;
+    # only rows carrying a date-only value are rewritten.
+    if "financial" in frames:
+        financial_before = frames["financial"].copy(deep=True)
+        frames["financial"] = _normalize_financial_frame(
+            frames["financial"], trade_calendar=frames.get("trade_calendar")
+        )
+        if not frames["financial"].equals(financial_before):
+            financial_path = paths.get("financial")
+            if financial_path is not None:
+                if financial_path.suffix.lower() == ".csv":
+                    frames["financial"].to_csv(financial_path, index=False)
+                else:
+                    frames["financial"].to_parquet(financial_path, index=False)
     for name, frame in frames.items():
         missing_columns = sorted(REQUIRED_COLUMNS[name] - set(frame.columns))
         if strict_contract:
@@ -359,11 +669,22 @@ def build_pit_adapter_manifest(
             blockers.append(f"source_schema_hash_mismatch:{name}")
         if strict_contract:
             blockers.extend(validate_frame_schema(frame, name))
+        elif name == "trade_calendar":
+            if "cal_date" not in frame.columns:
+                blockers.append(f"source_key_missing:{name}")
+        elif name == "benchmark_index":
+            if "trade_date" not in frame.columns or "index_code" not in frame.columns:
+                blockers.append(f"source_key_missing:{name}")
         elif "trade_date" not in frame.columns or "symbol" not in frame.columns:
             blockers.append(f"source_key_missing:{name}")
     _validate_source_timezones(frames, blockers, strict=strict_contract)
+    if strict_contract:
+        _validate_strict_semantics(frames, blockers)
     if len(frames) != len(active_names):
         blockers.append("source_family_incomplete")
+    for name, frame in frames.items():
+        if strict_contract and len(frame) == 0:
+            blockers.append(f"source_family_empty:{name}")
     if blockers:
         return _write_blocked(output_dir, blockers, config_path)
     sources: dict[str, Any] = {}
@@ -453,12 +774,48 @@ def build_pit_adapter_manifest(
             **snapshot_meta,
             "configured_snapshot_id": configured_snapshot_id or None,
         },
+        # Keep the transaction/provenance fields at the manifest root as well
+        # as under ``snapshot_identity``.  This makes the extractor and
+        # adapter manifests interchangeable to audit tooling while retaining
+        # one nested identity object for downstream binding.
+        "transaction_started_at": snapshot_meta.get("transaction_started_at"),
+        "transaction_finished_at": snapshot_meta.get("transaction_finished_at"),
+        "transaction_isolation": snapshot_meta.get("transaction_isolation"),
+        "server_identity": snapshot_meta.get("server_identity") or {},
+        "provider_snapshot_token": snapshot_meta.get("provider_snapshot_token"),
+        "snapshot_token": snapshot_meta.get("snapshot_token"),
+        "gtid_provenance": snapshot_meta.get("gtid_provenance") or {},
+        "binlog_provenance": snapshot_meta.get("binlog_provenance") or {},
+        "query_sha256": {
+            name: str((sources.get(name) or {}).get("query_sha256") or "")
+            for name in SOURCE_NAMES
+        },
+        "parameter_sha256": {
+            name: str((sources.get(name) or {}).get("parameter_sha256") or "")
+            for name in SOURCE_NAMES
+        },
+        "file_sha256": {
+            name: str((sources.get(name) or {}).get("content_sha256") or "")
+            for name in SOURCE_NAMES
+        },
         "coverage_start": min(coverage_values).date().isoformat() if coverage_values else None,
         "coverage_end": max(coverage_values).date().isoformat() if coverage_values else None,
         "historical_evidence_level": (
             "E1" if origin == "HISTORICAL_REAL" else "E0"
         ),
         "synthetic_evidence_level": "S1" if origin == "SYNTHETIC" else "S0",
+        # Adapter qualification is a claim about source binding only.  It is
+        # never the independent strict qualifier required for historical E3.
+        "claimed_evidence_level": "E1" if origin == "HISTORICAL_REAL" else "S1",
+        "qualified_evidence_level": None,
+        "data_status": "DATA_E1_CLAIMED" if origin == "HISTORICAL_REAL" else "SYNTHETIC_DIAGNOSTIC",
+        "canonical_families": list(SOURCE_NAMES),
+        "lineage_columns": list(get_lineage_columns()),
+        "formal_cutoff": {
+            "default": "21:30:00+08:00",
+            "hard": "23:00:00+08:00",
+            "timezone": "Asia/Shanghai",
+        },
         "capital_authority": False,
         "adapter_config_sha256": (
             _file_sha(config_path) if config_path and config_path.exists() else None
@@ -492,6 +849,10 @@ def build_pit_adapter_manifest(
         "coverage_end": manifest.get("coverage_end"),
         "historical_evidence_level": manifest["historical_evidence_level"],
         "synthetic_evidence_level": manifest["synthetic_evidence_level"],
+        "claimed_evidence_level": manifest["claimed_evidence_level"],
+        "qualified_evidence_level": None,
+        "data_status": manifest["data_status"],
+        "canonical_families": list(SOURCE_NAMES),
         "capital_authority": False,
         "blockers": [],
     }

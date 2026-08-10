@@ -13,6 +13,14 @@ import math
 import numpy as np
 import pandas as pd
 
+# JoinQuant is an execution source, never the economic oracle.  This import is
+# only used by the offline exporter below; the strategy itself can still run
+# inside JQ's sandbox.
+try:  # pragma: no cover - jqdata is unavailable in local unit tests
+    from scripts.research.canonical_execution_adapters import adapt_events
+except Exception:  # pragma: no cover
+    adapt_events = None
+
 
 def initialize(context):
     set_benchmark('000905.XSHG')
@@ -243,3 +251,24 @@ def report(context):
            if p.total_amount > 0 and p.avg_cost > 0]
     log.info('total=%.2f cash=%.2f positions=%s' %
              (context.portfolio.total_value, context.portfolio.available_cash, pos))
+
+
+def export_canonical_events(events, *, trusted: bool = True, trading_dates=None):
+    """Export JQ orders/fills/rejects/CA/raw marks through one adapter.
+
+    The returned records are suitable for local dual replay, but are never
+    accepted as evidence merely because JQ produced them.
+    """
+    if adapt_events is None:
+        raise RuntimeError("canonical_adapter_unavailable")
+    prepared = []
+    for event in events:
+        item = dict(event)
+        if trading_dates is not None and str(item.get("event_type", item.get("type", ""))).lower() in {"order", "planned", "submit", "buy", "sell"}:
+            item.setdefault("trading_dates", [str(value) for value in trading_dates])
+        prepared.append(item)
+    records = adapt_events(prepared, trusted=trusted, source="joinquant")
+    for record in records:
+        record["source_lane"] = "joinquant"
+        record["evidence_status"] = "DIAGNOSTIC"
+    return records

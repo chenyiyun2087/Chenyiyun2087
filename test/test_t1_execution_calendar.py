@@ -70,9 +70,9 @@ def test_strictly_after_semantics():
 
 
 def test_true_blind_start_enforced():
-    # DECLARED 2026-08-06 (v5.5.3, Phase 5 first-day audit PASS):
-    # TRUE_BLIND_START = 2026-08-05.  Dates before the start are refused
-    # (pre-blind — never shadow evidence); the start date and later pass.
-    with pytest.raises(RuntimeError, match="precedes true_forward_blind.start"):
+    # The former epoch is now engineering-soak legacy.  Until a formal epoch
+    # is declared in config/forward_epochs.yaml, every date is blocked.
+    with pytest.raises(RuntimeError, match="no formal forward epoch"):
         _shadow._check_true_blind("2026-08-03")
-    _shadow._check_true_blind("2026-08-05")  # start date allowed
+    with pytest.raises(RuntimeError, match="no formal forward epoch"):
+        _shadow._check_true_blind("2026-08-05")

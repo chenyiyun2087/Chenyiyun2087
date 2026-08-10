@@ -1,5 +1,11 @@
 # 回测报告索引
 
+## 2026-08-10 Wave 4 研究计划（非回测结论）
+
+- [Wave 4 研究计划摘要](2026-08-10_Wave4_研究计划摘要.md)：仅链接预注册卡、统计与
+  归因入口；2022--2026-08-09 是 `CONSUMED_DEVELOPMENT_SAMPLE`，无未来 Formal Blind
+  epoch，不伪造收益或 E3/E4/Alpha 通过结论。
+
 ## 2026-08-01 Formal Happy-path 与 TopK Challenger
 
 - 实施记录：[Formal Happy-path 与 50 万元 TopK Challenger 升级记录](../tasks/2026-08-01_Formal_HappyPath_TopK_Challenger升级.md)。

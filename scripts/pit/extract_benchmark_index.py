@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark index extractor — real index daily data for the PIT release.
+"""Diagnostic benchmark view helper.
 
 Reads REAL index klines from ``tushare_stock.ods_index_daily`` (Tushare raw
 layer — full history; the dwd_index_daily layer only holds incremental rows
@@ -18,23 +18,23 @@ This replaces the never-implemented cross-sectional market_return as the
 market-state source for adaptive risk control (market_hs300_pct_chg,
 market_hs300_ret_20 etc. must consume this file, not zero constants).
 
-Usage:
-  python scripts/pit/extract_benchmark_index.py \
-    --release-dir data/pit/releases/20260803 \
-    --start-date 2018-01-01
+Formal releases must use ``scripts.pit.run_snapshot_extract``.  That entry
+point executes the benchmark query in the same repeatable-read transaction as
+the other eight canonical families.  This module intentionally refuses to
+open an independent connection; callers may pass an already-open transaction
+connection for diagnostic use only.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-import pymysql
+
+from runtime.pit_semantic_contract import formal_cutoff_for_dates
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -47,24 +47,6 @@ BENCHMARK_CODES = {
 OUTPUT_FILENAME = "benchmark_index.parquet"
 
 
-def _connection():
-    password = os.getenv("CHENYIYUN_DB_PASSWORD", "")
-    if not password:
-        raise RuntimeError(
-            "Benchmark index extraction requires explicit database credentials. "
-            "Set CHENYIYUN_DB_PASSWORD."
-        )
-    return pymysql.connect(
-        host=os.getenv("CHENYIYUN_DB_HOST", "127.0.0.1"),
-        port=int(os.getenv("CHENYIYUN_DB_PORT", "3306")),
-        user=os.getenv("CHENYIYUN_DB_USER", "root"),
-        password=password,
-        database="tushare_stock",
-        charset="utf8mb4",
-        connect_timeout=10,
-    )
-
-
 def _int_date_to_iso(value) -> str:
     if pd.isna(value) or value == "" or value == 0:
         return ""
@@ -74,10 +56,25 @@ def _int_date_to_iso(value) -> str:
     return s
 
 
-def extract_benchmark_index(release_dir: Path, start_date: str = "2018-01-01") -> dict:
-    """Extract real index klines into benchmark_index.parquet in release_dir."""
+def extract_benchmark_index(
+    release_dir: Path,
+    start_date: str = "2018-01-01",
+    *,
+    connection=None,
+) -> dict:
+    """Extract a diagnostic benchmark view using an existing connection.
+
+    ``connection`` is mandatory by design.  A missing connection used to
+    trigger a second MySQL connection after the stock transaction, creating a
+    mixed-snapshot formal release; that path is now explicitly disabled.
+    """
+    if connection is None:
+        raise RuntimeError(
+            "independent_benchmark_snapshot_forbidden: pass the active PIT "
+            "transaction connection or use run_snapshot_extract"
+        )
     start_int = int(start_date.replace("-", ""))
-    conn = _connection()
+    conn = connection
     frames = []
     coverage: dict[str, dict] = {}
     try:
@@ -111,7 +108,9 @@ def extract_benchmark_index(release_dir: Path, start_date: str = "2018-01-01") -
                 "gap": "" if len(df) > 0 else "NO_DATA",
             }
     finally:
-        conn.close()
+        # Ownership of the connection remains with the enclosing PIT
+        # transaction; never close or commit it here.
+        pass
 
     if not frames:
         raise RuntimeError(
@@ -127,9 +126,14 @@ def extract_benchmark_index(release_dir: Path, start_date: str = "2018-01-01") -
     # to every family.
     out["benchmark_available_at"] = out["trade_date"].apply(
         lambda x: f"{x}T15:00:00+08:00" if x else "")
+    out["source_published_at"] = out["benchmark_available_at"]
+    out["warehouse_loaded_at"] = out["benchmark_available_at"]
+    out["decision_cutoff"] = formal_cutoff_for_dates(out["trade_date"])
+    out["availability_source"] = "mysql:benchmark_index:provider_timestamp"
     out = out[["trade_date", "index_code", "index_label", "open", "high", "low",
                "close", "pre_close", "pct_chg", "vol", "amount",
-               "benchmark_available_at",
+               "benchmark_available_at", "source_published_at",
+               "warehouse_loaded_at", "decision_cutoff", "availability_source",
                "ret_5d", "ret_10d", "ret_20d", "ret_60d"]]
 
     path = release_dir / OUTPUT_FILENAME
@@ -146,7 +150,7 @@ def extract_benchmark_index(release_dir: Path, start_date: str = "2018-01-01") -
         "start_date": start_date,
         "coverage": coverage,
         "rolling_returns": ["ret_5d", "ret_10d", "ret_20d", "ret_60d"],
-        "extracted_at": datetime.now(timezone.utc).isoformat(),
+        "transaction_bound": True,
     }
 
 

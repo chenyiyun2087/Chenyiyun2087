@@ -21,6 +21,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from runtime.canonical_execution_contract import (
+    CANONICAL_KERNEL_ID,
+    CANONICAL_KERNEL_VERSION,
+    CANONICAL_SCHEMA_VERSION,
+    Fill as CanonicalFill,
+    NAV as CanonicalNAV,
+    Position as CanonicalPosition,
+    Cash as CanonicalCash,
+)
+
 DEFAULT_COST_RATE = 0.00075
 DEFAULT_SLIPPAGE_BPS = 10.0
 DEFAULT_INITIAL_CASH = 500_000.0
@@ -48,12 +58,17 @@ class VirtualAccount:
     initial_cash: float = DEFAULT_INITIAL_CASH
     cost_rate: float = DEFAULT_COST_RATE
     slippage_bps: float = DEFAULT_SLIPPAGE_BPS
+    cost_model: object | None = None
     cash: float = field(init=False)
     positions: dict[str, AccountPosition] = field(default_factory=dict)
     realized_pnl: float = 0.0
     costs_paid: float = 0.0
     _buy_cost: float = 0.0
     _sell_proceeds: float = 0.0
+    fill_events: list[dict] = field(default_factory=list)
+    canonical_kernel_id: str = field(default=CANONICAL_KERNEL_ID, init=False)
+    canonical_kernel_version: str = field(default=CANONICAL_KERNEL_VERSION, init=False)
+    canonical_schema_version: str = field(default=CANONICAL_SCHEMA_VERSION, init=False)
 
     def __post_init__(self) -> None:
         self.cash = float(self.initial_cash)
@@ -67,8 +82,7 @@ class VirtualAccount:
                 f"{self.candidate_id}: invalid buy fill {symbol} "
                 f"{shares}@{price}")
         notional = shares * price
-        fee = notional * self.cost_rate
-        slip = notional * self.slippage_bps / 1e4
+        fee, slip, costs = self._cost_components(notional, "BUY")
         total = notional + fee + slip
         if self.cash + 1e-9 < total:
             raise AccountConservationError(
@@ -86,6 +100,7 @@ class VirtualAccount:
             new_shares = pos.shares + shares
             self.positions[symbol] = AccountPosition(
                 symbol, new_shares, (prev_mv + notional) / new_shares)
+        self.fill_events.append({"side": "BUY", "symbol": symbol, "shares": int(shares), "price": float(price), "notional": float(notional), "costs": costs, "kernel_id": CANONICAL_KERNEL_ID, "kernel_version": CANONICAL_KERNEL_VERSION})
 
     def sell_fill(self, symbol: str, shares: int, price: float) -> None:
         """Apply a SELL_FILLED.  Raises on over-selling a position."""
@@ -96,8 +111,7 @@ class VirtualAccount:
                 f"{'shares' if pos is None else pos.shares} held — "
                 "short positions are not allowed")
         proceeds = shares * price
-        fee = proceeds * self.cost_rate
-        slip = proceeds * self.slippage_bps / 1e4
+        fee, slip, costs = self._cost_components(proceeds, "SELL")
         self.cash += proceeds - fee - slip
         self.costs_paid += fee + slip
         self._sell_proceeds += proceeds
@@ -113,6 +127,33 @@ class VirtualAccount:
         else:
             self.positions[symbol] = AccountPosition(
                 symbol, remaining, pos.avg_cost)
+        self.fill_events.append({"side": "SELL", "symbol": symbol, "shares": int(shares), "price": float(price), "notional": float(proceeds), "costs": costs, "kernel_id": CANONICAL_KERNEL_ID, "kernel_version": CANONICAL_KERNEL_VERSION})
+
+    def _cost_components(self, notional: float, side: str) -> tuple[float, float, dict[str, float]]:
+        """Compute shadow costs using the shared parameter contract.
+
+        The account keeps a tiny compatibility path for old callers that only
+        supplied ``cost_rate`` and ``slippage_bps``; formal callers pass the
+        expanded model and receive the same component names as strict/oracle.
+        """
+        model = self.cost_model
+        if model is None:
+            fee = notional * self.cost_rate
+            slip = notional * self.slippage_bps / 1e4
+            return fee, slip, {"commission": fee, "open_auction_slippage": slip, "total_cost": fee + slip}
+        commission_raw = notional * float(getattr(model, "commission_rate", self.cost_rate))
+        commission_floor = float(getattr(model, "min_commission_cny", 0.0))
+        commission = commission_raw if notional > 0 else 0.0
+        min_component = max(0.0, commission_floor - commission_raw) if notional > 0 else 0.0
+        stamp = notional * float(getattr(model, "stamp_duty_rate", 0.0)) if str(side).upper() == "SELL" else 0.0
+        transfer = notional * float(getattr(model, "transfer_fee_rate", 0.0))
+        open_slip = notional * (float(getattr(model, "slippage_rate", 0.0)) + float(getattr(model, "open_auction_slippage_bps", 0.0)) / 1e4)
+        gap = notional * (float(getattr(model, "opening_gap_rate", 0.0)) + float(getattr(model, "gap_bps", 0.0)) / 1e4)
+        spread = notional * (float(getattr(model, "spread_rate", 0.0)) + float(getattr(model, "spread_bps", 0.0)) / 1e4)
+        impact = notional * (float(getattr(model, "impact_rate", 0.0)) + float(getattr(model, "adv_impact_rate", 0.0)) + float(getattr(model, "adv_impact_bps", 0.0)) / 1e4)
+        total = commission + min_component + stamp + transfer + open_slip + gap + spread + impact
+        components = {"commission": commission, "min_commission": min_component, "sell_stamp": stamp, "transfer_fee": transfer, "open_auction_slippage": open_slip, "gap": gap, "spread": spread, "adv_impact": impact, "missed_unfilled_cost": 0.0, "total_cost": total}
+        return total, 0.0, components
 
     # ── valuation ─────────────────────────────────────────────────────
 
@@ -172,7 +213,37 @@ class VirtualAccount:
             "costs_paid": round(self.costs_paid, 2),
             "realized_pnl": round(self.realized_pnl, 2),
             "position_count": len(self.positions),
+            "canonical_kernel_id": CANONICAL_KERNEL_ID,
+            "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+            "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
         }
+
+    def canonical_positions(self, date: str, close_prices: dict[str, float]) -> list[CanonicalPosition]:
+        """Export holdings through the canonical adapter boundary."""
+        missing = [p.symbol for p in self.positions.values() if p.symbol not in close_prices]
+        if missing:
+            raise AccountConservationError(f"{self.candidate_id} {date}: no close for held {sorted(missing)}")
+        return [CanonicalPosition(symbol=p.symbol, shares=p.shares, unit_cost=p.avg_cost, mark_price=close_prices[p.symbol], as_of_date=date) for p in self.positions.values()]
+
+    def canonical_cash(self, date: str) -> CanonicalCash:
+        return CanonicalCash(amount=self.cash, as_of_date=date)
+
+    def canonical_nav(self, date: str, close_prices: dict[str, float]) -> CanonicalNAV:
+        positions = self.canonical_positions(date, close_prices)
+        market_value = sum((p.market_value for p in positions), 0.0)
+        return CanonicalNAV(trade_date=date, cash=self.cash, market_value=market_value)
+
+    def canonical_event_records(self, events, *, trading_dates=None, trusted: bool = True):
+        """Adapt shadow events through the same trusted boundary as local/JQ."""
+        from scripts.research.canonical_execution_adapters import adapt_events
+        prepared = []
+        for event in events:
+            item = dict(event)
+            kind = str(item.get("event_type", item.get("type", ""))).lower()
+            if kind in {"order", "planned", "submit", "buy", "sell"} and trading_dates is not None:
+                item.setdefault("trading_dates", [str(value) for value in trading_dates])
+            prepared.append(item)
+        return adapt_events(prepared, trusted=trusted, source="shadow")
 
     @property
     def total_notional(self) -> float:

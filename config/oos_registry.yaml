@@ -34,9 +34,14 @@
   },
   "true_forward_blind": {
     "label": "v5.5.3_epoch_2026-08-05",
-    "start": "2026-08-05",
+    "start": null,
+    "legacy_start": "2026-08-05",
+    "epoch_id": "v5.5.3-2026-08-05",
     "end": null,
-    "status": "ACCUMULATING",
+    "status": "ENGINEERING_SOAK_LEGACY",
+    "e4_status": "INVALID_FOR_E4",
+    "selection_status": "INVALID_FOR_SELECTION",
+    "formal_epoch_declared": false,
     "min_shadow_days": 60,
     "min_completed_round_trips": 30,
     "recording": "daily_shadow_log"

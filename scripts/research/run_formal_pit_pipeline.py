@@ -54,6 +54,7 @@ from runtime.formal_evidence_contract import (
 )
 from scripts.research.pit_data_adapter import build_pit_adapter_manifest
 from scripts.research.pit_factor_panel_builder import build_pit_factor_panel
+from scripts.research.qualify_pit_e3 import qualify_pit_e3
 
 FORMAL_PIT_RUNS_ROOT = PROJECT_ROOT / "exports" / "formal_pit_runs"
 
@@ -84,15 +85,17 @@ def _db_snapshot_identity(adapter_config_path: Path) -> str:
     """Return a provider-issued immutable snapshot identity.
 
     A timestamp or server UUID is not a database snapshot.  Formal runs must
-    bind to a configured snapshot token/GTID and the adapter later verifies
-    that the same token was observed inside its repeatable-read transaction.
+    bind to a configured provider-issued snapshot token and the adapter later
+    verifies that the same token was observed inside its repeatable-read
+    transaction.  GTID/binlog values are provenance only.
     """
     try:
         config = json.loads(adapter_config_path.read_text(encoding="utf-8"))
     except Exception:
         return ""
     identity = str(
-        config.get("snapshot_token")
+        config.get("provider_snapshot_token")
+        or config.get("snapshot_token")
         or config.get("snapshot_id")
         or os.getenv("CHENYIYUN_DB_SNAPSHOT_TOKEN")
         or ""
@@ -135,7 +138,9 @@ def _check_prerequisites(
     adapter_type = str(adapter_cfg.get("adapter_type") or "").upper()
     if adapter_type == "MYSQL" and not os.getenv("CHENYIYUN_DB_URL"):
         blockers.append("CHENYIYUN_DB_URL_not_configured")
-    if not _db_snapshot_identity(adapter_config_path):
+    if not _db_snapshot_identity(adapter_config_path) and not str(
+        adapter_cfg.get("provider_snapshot_token_query") or ""
+    ).strip():
         blockers.append("database_snapshot_identity_not_configured")
     # Dependency lock must exist
     if not DEPENDENCY_LOCK_PATH.exists():
@@ -413,11 +418,49 @@ def run_formal_pit_pipeline(
                                f"audit_exception:{type(exc).__name__}", exception=exc)
 
     _write_stage_report(audit_dir, "semantic_audit", audit_result)
+    audit_full_path = audit_dir / "semantic_audit_result.json"
+    audit_full_path.write_text(
+        json.dumps(audit_result, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
     if audit_result.get("status") != "PASS":
         return _block_and_seal(building_dir, run_id, git_sha, "semantic_audit",
                                f"semantic_audit_not_pass:{audit_result.get('status')}",
                                extra={"blockers": audit_result.get("blockers", [])})
+
+    # Stage 2.5: independent E3 qualifier.  The audit remains E1/contract
+    # valid; only this separately-bound component may produce E3.
+    qualifier_dir = building_dir / "qualifier"
+    qualifier_dir.mkdir()
+    qualifier_path = qualifier_dir / "qualify_pit_e3_report.json"
+    try:
+        qualifier_result = qualify_pit_e3(
+            snapshots_dir=snapshots_dir,
+            adapter_manifest_path=manifest_path,
+            audit_report_path=audit_full_path,
+            strict_profile_path=PROJECT_ROOT / "config" / "validation_profiles" / "formal_e3_strict.yaml",
+            output_path=qualifier_path,
+        )
+    except Exception as exc:
+        return _block_and_seal(
+            building_dir,
+            run_id,
+            git_sha,
+            "qualifier",
+            f"qualifier_exception:{type(exc).__name__}",
+            exception=exc,
+        )
+    _write_stage_report(qualifier_dir, "pit_e3_qualifier", qualifier_result)
+    if qualifier_result.get("status") != "PASS":
+        return _block_and_seal(
+            building_dir,
+            run_id,
+            git_sha,
+            "qualifier",
+            "pit_e3_qualifier_not_pass",
+            extra={"blockers": qualifier_result.get("blockers", [])},
+        )
 
     # ═══════════════════════════════════════════════════════════════════════
     # Stage 3: Factor Builder
@@ -434,11 +477,13 @@ def run_formal_pit_pipeline(
             trade_calendar_path=snapshots_dir / "trade_calendar.parquet",
             security_lifecycle_path=snapshots_dir / "security_lifecycle.parquet",
             corporate_actions_path=snapshots_dir / "corporate_actions.parquet",
+            benchmark_index_path=snapshots_dir / "benchmark_index.parquet",
             source_manifest_path=manifest_path,
             adapter_report_path=adapter_report_path,
             output_dir=builder_dir,
             profile_name=acceptance_profile,
             fixture_mode=False,
+            strict_qualifier_path=qualifier_path,
         )
     except Exception as exc:
         return _block_and_seal(building_dir, run_id, git_sha, "builder",
@@ -476,9 +521,13 @@ def run_formal_pit_pipeline(
                                extra={"blockers": score_result.get("blockers", [])})
 
     adapter_manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    adapter_sources = {
+        **(adapter_manifest_payload.get("sources") or {}),
+        **(adapter_manifest_payload.get("families") or {}),
+    }
     input_snapshot_sha256 = canonical_sha({
         name: (info or {}).get("content_sha256") or (info or {}).get("sha256")
-        for name, info in sorted((adapter_manifest_payload.get("sources") or {}).items())
+        for name, info in sorted(adapter_sources.items())
     })
     _write_alpha_evidence_placeholders(
         building_dir,
@@ -506,12 +555,27 @@ def run_formal_pit_pipeline(
         "scores_sha256": scores_sha,
         "source_manifest_sha256": _file_sha(manifest_path),
         "adapter_report_sha256": _file_sha(adapter_report_path),
-        "semantic_audit_sha256": _file_sha(audit_dir / "semantic_audit_report.json"),
+        "semantic_audit_sha256": _file_sha(audit_full_path),
+        "qualifier_sha256": _file_sha(qualifier_path),
+        "independent_qualifier": str(qualifier_path),
         "snapshot_identity": adapter_manifest_payload.get("snapshot_identity"),
+        "canonical_families": [
+            "market", "universe", "financial", "industry", "adjustment",
+            "trade_calendar", "security_lifecycle", "corporate_actions",
+            "benchmark_index",
+        ],
+        "claimed_evidence_level": str(
+            builder_result.get("claimed_evidence_level")
+            or adapter_manifest_payload.get("claimed_evidence_level")
+            or "E0"
+        ),
+        "qualified_evidence_level": builder_result.get("qualified_evidence_level"),
+        "data_status": builder_result.get("data_status") or "DATA_E0_DIAGNOSTIC",
+        "benchmark_index_bound": True,
         "input_snapshot_sha256": canonical_sha({
             name: (info or {}).get("content_sha256") or (info or {}).get("sha256")
-            for name, info in sorted((adapter_manifest_payload.get("sources") or {}).items())
-        }) if adapter_manifest_payload.get("sources") else "",
+            for name, info in sorted(adapter_sources.items())
+        }) if adapter_sources else "",
         "scores_path": str((scores_dir / "formal_scores.parquet").relative_to(building_dir)),
         "factor_panel_path": str(factor_panel_path.relative_to(building_dir)),
         "evidence_status": EvidenceStatus().as_dict(),

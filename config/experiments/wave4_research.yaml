@@ -1,0 +1,68 @@
+schema_version: wave4_research_manifest_v1
+experiment_id: wave4_alpha_smart_beta_202608
+created_at: "2026-08-10"
+project_positioning: "A股 Alpha/Smart Beta研究与证据平台"
+status: RESEARCH_ONLY
+strategies:
+  smart_beta_v1:
+    card: config/alpha_challengers/smart_beta_v1.yaml
+    definition: config/strategy_definitions/smart_beta_v1.yaml
+    strategy_card: strategy_cards/smart_beta_v1.yaml
+    hypothesis_id: H-W4-SMART-BETA-001
+  pure_alpha_residual_v1:
+    card: config/alpha_challengers/pure_alpha_residual_v1.yaml
+    definition: config/strategy_definitions/pure_alpha_residual_v1.yaml
+    strategy_card: strategy_cards/pure_alpha_residual_v1.yaml
+    hypothesis_id: H-W4-PURE-ALPHA-001
+
+sample_policy:
+  consumed_development_sample:
+    status: CONSUMED_DEVELOPMENT_SAMPLE
+    start: "2022-01-01"
+    end: "2026-08-09"
+    selection_allowed: false
+    independent_oos: false
+    reporting: DIAGNOSTIC_ONLY
+  formal_conclusion_source: config/forward_epochs.yaml
+  formal_epoch_kind: FORMAL_BLIND
+  no_formal_epoch_status: BLOCKED_FORWARD_EVIDENCE
+
+statistics:
+  seed: 20260810
+  block_bootstrap_iterations: 9999
+  permutation_iterations: 9999
+  sequential_monte_carlo_requires_explicit_plan: true
+  multiple_testing: benjamini_hochberg
+  pbo: cscv
+  nested_walk_forward: true
+  fail_closed_on_insufficient_sample: true
+
+execution_and_risk:
+  canonical_cost_adapter: scripts/research/execution_costs.py
+  canonical_execution_adapter: scripts/research/canonical_execution_adapters.py
+  canonical_risk_adapter: runtime/portfolio_risk.py
+  canonical_capacity_adapter: scripts/research/build_capacity_stress_matrix.py
+  target_annualized_volatility: 0.15
+  max_drawdown_gate: 0.25
+  initial_capital_cny: 0.0
+  signal_time: T_21:30_AFTER_DATA_COMPLETE
+  decision_cutoff: "23:00:00+08:00"
+  execution_time: T+1_SSE_RAW_OPEN
+  cost_model_schema: scripts.research.execution_costs.ExecutionCostModel
+  cost_components: [commission, min_commission, stamp_duty, transfer_fee, open_auction_slippage, gap, spread, adv_impact, missed_fill]
+  promotion_allowed: false
+  capital_change_allowed: false
+
+registry:
+  append_only: true
+  schema: experiment_registry_v1
+  explicit_output_required: true
+  default_output: null
+  path: config/experiments/experiment_registry.jsonl
+
+forbidden_claims:
+  - E3
+  - E4
+  - ALPHA_PASS
+  - CAPITAL_READY
+  - LIVE_ALPHA

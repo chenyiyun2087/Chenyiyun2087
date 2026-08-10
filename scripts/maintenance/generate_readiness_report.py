@@ -34,6 +34,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from runtime.evidence_gate_status import evaluate_gate
+from runtime.formal_status_semantics import GateStatus
+
 REGISTRY = PROJECT_ROOT / "exports/formal_evidence_registry/unified_formal_registry.json"
 SEAL_REGISTRY = PROJECT_ROOT / "exports/formal_evidence_registry/seal_registry.json"
 PIT_RELEASES = PROJECT_ROOT / "data/pit/releases"
@@ -108,7 +111,7 @@ def _random_null_p_value() -> float | None:
         return None
 
 
-def _evidence_gate_status() -> dict[str, tuple[str, str]]:
+def _legacy_evidence_gate_status() -> dict[str, tuple[str, str]]:
     """Evidence-driven gate verdicts for the frozen VLS champion.
 
     Returns {gate: (status, justification)} with status in
@@ -237,6 +240,41 @@ def _evidence_gate_status() -> dict[str, tuple[str, str]]:
     return gates
 
 
+def _evidence_gate_status() -> dict[str, GateStatus]:
+    """Expose legacy evidence as canonical three-layer gate records.
+
+    A file/report being present populates only ``artifact_status``.  The old
+    textual PASS claim is never copied into ``economic_status``; explicit
+    economic qualification evidence is required before resolution can be PASS.
+    """
+
+    legacy = _legacy_evidence_gate_status()
+    result: dict[str, GateStatus] = {}
+    for gate, (status, why) in legacy.items():
+        text = str(why)
+        artifact_present = status != "BLOCKED" and "missing" not in text.lower()
+        contract_valid = status == "PASS"
+        # Historical report labels do not carry machine-verifiable E4
+        # statistics.  Keep economic NOT_EVALUATED unless a future producer
+        # explicitly adds a structured qualification marker.
+        economic_pass = bool(
+            status == "PASS"
+            and gate == "economic_shadow"
+            and "economic_qualification=PASS" in text
+        )
+        required = ("artifact", "contract", "economic")
+        if gate in {"core_history", "factor_compute_lineage", "factor_ic", "alpha_attribution", "manual_approval"}:
+            required = ("artifact", "contract")
+        result[gate] = evaluate_gate(
+            artifact_status="ARTIFACT_PRESENT" if artifact_present else "MISSING",
+            contract_status="CONTRACT_VALID" if contract_valid else "NOT_EVALUATED",
+            economic_status="ECONOMIC_PASS" if economic_pass else "NOT_APPLICABLE" if "economic" not in required else "NOT_EVALUATED",
+            required_dimensions=required,
+            reasons=(why,),
+        )
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
@@ -276,15 +314,26 @@ def main() -> int:
     else:
         gate_status = _evidence_gate_status()
         for g in CANARY_GATES:
-            status, why = gate_status.get(g, ("BLOCKED", "no evidence recorded"))
-            lines.append(f"- {g}: **{status}** — {why}")
+            gate = gate_status.get(g)
+            if gate is None:
+                lines.append(f"- {g}: **BLOCKED** — no evidence recorded")
+            else:
+                lines.append(
+                    f"- {g}: **{gate.resolved_status}** — "
+                    f"artifact={gate.artifact_status.value}; "
+                    f"contract={gate.contract_status.value}; "
+                    f"economic={gate.economic_status.value}; "
+                    f"reason={'; '.join(gate.reasons)}"
+                )
         lines += [
             "",
             "### Remaining blockers to CANARY_50K",
         ]
         for g in CANARY_GATES:
-            status, why = gate_status.get(g, ("BLOCKED", ""))
-            if status != "PASS":
+            gate = gate_status.get(g)
+            if gate is None or gate.resolved_status != "PASS":
+                status = gate.resolved_status if gate else "BLOCKED"
+                why = "; ".join(gate.reasons) if gate else "no evidence recorded"
                 lines.append(f"  - {g} ({status}): {why}")
         lines += [
             "",

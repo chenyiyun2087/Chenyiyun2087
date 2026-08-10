@@ -7,11 +7,27 @@ actions, and mark-to-market equity.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from decimal import Decimal
 from typing import Iterable
+
+from runtime.canonical_execution_contract import (
+    CANONICAL_KERNEL_ID,
+    CANONICAL_KERNEL_VERSION,
+    CANONICAL_SCHEMA_VERSION,
+    Fill as CanonicalFill,
+    Order as CanonicalOrder,
+    Reject as CanonicalReject,
+    canonical_hash,
+    deterministic_order_id,
+    normalize_symbol,
+)
+from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
 
 
 LEDGER_SCHEMA_VERSION = "strict_daily_ledger_v2"
 STRICT_SIZING_VERSION = "t_raw_close_limit_capped_10pct_v1"
+CANONICAL_EXECUTION_KERNEL_ID = CANONICAL_KERNEL_ID
+CANONICAL_EXECUTION_KERNEL_VERSION = CANONICAL_KERNEL_VERSION
 
 PLANNED = "PLANNED"
 REJECTED_T1_NOT_TRADABLE = "REJECTED_T1_NOT_TRADABLE"
@@ -41,6 +57,28 @@ class PrecommitOrder:
     order_id: str = ""
     cost_rate: float = 0.0
     lot_size: int = 0
+
+    @property
+    def canonical_order_id(self) -> str:
+        return self.order_id or deterministic_order_id(
+            self.symbol, self.side, self.planned_shares, self.signal_date,
+            self.execution_date,
+        )
+
+    def to_canonical(self) -> CanonicalOrder:
+        """Adapt the legacy order shape into the trusted wire contract."""
+        return CanonicalOrder(
+            order_id=self.canonical_order_id,
+            symbol=self.symbol,
+            side=self.side,
+            shares=int(self.planned_shares),
+            planned_price=self.planned_price,
+            planned_notional=self.planned_notional,
+            signal_date=self.signal_date,
+            execution_date=self.execution_date,
+            lot_size=int(self.lot_size or 100),
+            cost_model_id="legacy_rate" if self.cost_rate else "",
+        )
 
 
 @dataclass(frozen=True)
@@ -79,12 +117,23 @@ class ExecutionLedger:
     expected_equity: float | None = None
     event_rows: list[dict] = field(default_factory=list)
     applied_corporate_action_ids: set[str] = field(default_factory=set)
+    _order_results: dict[str, dict] = field(default_factory=dict, init=False, repr=False)
 
     def _append(self, event_type: str, **payload: object) -> None:
-        self.event_rows.append({"event_type": event_type, "mark_price_basis": "raw", **payload})
+        self.event_rows.append({
+            "event_type": event_type,
+            "mark_price_basis": "raw",
+            "canonical_kernel_id": CANONICAL_KERNEL_ID,
+            "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+            "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+            **payload,
+        })
 
     def plan(self, order: PrecommitOrder) -> None:
-        self._append("order", order_status=PLANNED, event_timestamp=f"{order.signal_date}T15:00:00+08:00", **asdict(order))
+        order_payload = asdict(order)
+        order_payload["order_id"] = order.canonical_order_id
+        order_payload["canonical_order_hash"] = canonical_hash(order.to_canonical())
+        self._append("order", order_status=PLANNED, event_timestamp=f"{order.signal_date}T15:00:00+08:00", **order_payload)
 
     def apply_corporate_actions(self, actions: Iterable[CorporateAction]) -> None:
         actions = list(actions)
@@ -203,7 +252,13 @@ class ExecutionLedger:
         fee_rate: float,
         reject_reason: str = "",
         lot_size: int = 0,
+        cost_model: ExecutionCostModel | None = None,
     ) -> dict:
+        # Replaying the exact order is idempotent.  Returning a copy protects
+        # callers from mutating the ledger's stored result.
+        key = order.canonical_order_id
+        if key in self._order_results:
+            return dict(self._order_results[key])
         planned = max(0, int(order.planned_shares))
         if reject_reason or not tradable or fill_price is None or fill_price <= 0:
             status = (
@@ -213,42 +268,82 @@ class ExecutionLedger:
             )
             reason = reject_reason or "t1_not_tradable"
             result = {"order_status": status, "filled_shares": 0, "filled_price": None, "filled_notional": 0.0,
-                      "fee": 0.0, "reject_reason": reason, "remaining_shares": planned}
-            self._append("order", order_id=order.order_id, symbol=order.symbol, side=order.side, event_timestamp=f"{order.execution_date}T09:30:00+08:00",
+                      "fee": 0.0, "total_cost": 0.0, "costs": {}, "reject_reason": reason, "remaining_shares": planned,
+                      "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION}
+            self._append("order", order_id=key, symbol=order.symbol, side=order.side, event_timestamp=f"{order.execution_date}T09:30:00+08:00",
                          signal_date=order.signal_date, execution_date=order.execution_date, planned_shares=planned, **result)
             self.cancel(order, planned, reason)
+            self._order_results[key] = dict(result)
             return result
 
         price = float(fill_price)
+        # The expanded model is the formal path.  ``fee_rate`` is retained as
+        # an explicitly noncanonical compatibility mode.
+        breakdown_for_order = None
         if order.side == "BUY":
-            affordable = int(self.cash // (price * (1.0 + float(fee_rate))))
+            if cost_model is not None:
+                # Conservative affordability uses the model's proportional
+                # rates; the minimum commission is checked after sizing.
+                proportional = (
+                    cost_model.commission_rate + cost_model.transfer_fee_rate
+                    + cost_model.effective_open_auction_rate
+                    + cost_model.effective_gap_rate + cost_model.effective_spread_rate
+                    + cost_model.effective_impact_rate
+                )
+                affordable = int(self.cash // (price * (1.0 + proportional)))
+            else:
+                affordable = int(self.cash // (price * (1.0 + float(fee_rate))))
             filled = min(planned, affordable)
             if lot_size > 0:
                 filled = filled // int(lot_size) * int(lot_size)
             gross = filled * price
-            fee = gross * float(fee_rate)
+            if cost_model is not None:
+                # Re-check the fixed minimum commission after proportional
+                # sizing; shrink one lot until the cash invariant holds.
+                while filled > 0:
+                    gross = filled * price
+                    candidate = CostBreakdown.calculate(gross, "BUY", cost_model)
+                    if gross + candidate.total_cost <= self.cash + 1e-9:
+                        breakdown_for_order = candidate
+                        break
+                    filled -= int(lot_size) if lot_size > 0 else 1
+                if filled <= 0:
+                    gross = 0.0
+                    breakdown_for_order = CostBreakdown.calculate(0.0, "BUY", cost_model)
+                fee = breakdown_for_order.total_cost
+            else:
+                fee = gross * float(fee_rate)
             self.cash -= gross + fee
             self.shares[order.symbol] = int(self.shares.get(order.symbol, 0)) + filled
         else:
             filled = min(planned, int(self.shares.get(order.symbol, 0)))
             gross = filled * price
-            fee = gross * float(fee_rate)
+            if cost_model is not None:
+                breakdown_for_order = CostBreakdown.calculate(gross, "SELL", cost_model)
+                fee = breakdown_for_order.total_cost
+            else:
+                fee = gross * float(fee_rate)
             self.cash += gross - fee
             self.shares[order.symbol] = int(self.shares.get(order.symbol, 0)) - filled
         remaining = planned - filled
         status = FILLED if remaining == 0 else PARTIAL_FILL
         result = {"order_status": status, "filled_shares": filled, "filled_price": price if filled else None,
-                  "filled_notional": gross, "fee": fee, "reject_reason": "" if filled else "insufficient_cash_or_shares",
-                  "remaining_shares": remaining}
-        self._append("order", order_id=order.order_id, symbol=order.symbol, side=order.side, event_timestamp=f"{order.execution_date}T09:30:00+08:00",
+                  "filled_notional": gross, "fee": fee, "total_cost": fee,
+                  "costs": breakdown_for_order.canonical_dict() if breakdown_for_order is not None else {},
+                  "reject_reason": "" if filled else "insufficient_cash_or_shares",
+                  "remaining_shares": remaining,
+                  "canonical_kernel_id": CANONICAL_KERNEL_ID,
+                  "canonical_kernel_version": CANONICAL_KERNEL_VERSION}
+        self._append("order", order_id=key, symbol=order.symbol, side=order.side, event_timestamp=f"{order.execution_date}T09:30:00+08:00",
                      signal_date=order.signal_date, execution_date=order.execution_date, planned_shares=planned, **result)
         if remaining:
             self.cancel(order, remaining, "unfilled_at_t1_close")
+        self._order_results[key] = dict(result)
         return result
 
     def cancel(self, order: PrecommitOrder, shares: int, reason: str) -> None:
         if shares > 0:
-            self._append("order", order_id=order.order_id, symbol=order.symbol, side=order.side, event_timestamp=f"{order.execution_date}T15:00:00+08:00",
+            self._append("order", order_id=order.canonical_order_id, symbol=order.symbol, side=order.side, event_timestamp=f"{order.execution_date}T15:00:00+08:00",
                          signal_date=order.signal_date, execution_date=order.execution_date,
                          order_status=CANCELLED_T1_CLOSE, cancelled_shares=int(shares), cancel_reason=reason,
                          remaining_shares=0)

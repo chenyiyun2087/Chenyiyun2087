@@ -12,9 +12,18 @@ from __future__ import annotations
 
 import numpy as np
 
+from runtime.canonical_execution_contract import (
+    CANONICAL_KERNEL_ID,
+    CANONICAL_KERNEL_VERSION,
+    CanonicalContractError,
+    validate_t_plus_one,
+)
+
 # Included in strict evidence/config fingerprints.  Bump only with an audited
 # market-rule contract change so a replay cannot silently mix rule versions.
 MARKET_RULES_VERSION = "ashare_daily_limit_tick_v3_strict_snapshot"
+CANONICAL_EXECUTION_KERNEL_ID = CANONICAL_KERNEL_ID
+CANONICAL_EXECUTION_KERNEL_VERSION = CANONICAL_KERNEL_VERSION
 DEFAULT_PRICE_TICK = 0.01
 
 # Stocks listed within this many calendar days are exempt from price limits.
@@ -62,6 +71,8 @@ def limit_ratio(symbol: object, is_st: object) -> float:
     so callers may pass raw symbols with or without exchange suffixes.
     """
     code = normalize_symbol(symbol)
+    if isinstance(is_st, str):
+        is_st = is_st.strip().lower() in {"1", "true", "yes", "y", "st", "*st"}
     if bool(float(is_st or 0)):
         return 0.05
     if code.startswith(("300", "301", "688", "689")):
@@ -270,3 +281,45 @@ def can_sell_at_open(
         return False, "limit_down_block"
 
     return True, ""
+
+
+def assert_t_plus_one(signal_date: object, execution_date: object) -> None:
+    """Fail closed when a legacy lane attempts same-bar execution."""
+    try:
+        validate_t_plus_one(signal_date, execution_date)
+    except CanonicalContractError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def execution_price_at_open(
+    market_row: dict[str, object] | object,
+    *,
+    trusted: bool = True,
+) -> float:
+    """Return the exchange raw open, never an adjusted feature price.
+
+    Adjusted opens remain useful for signal research but are explicitly barred
+    from the trusted economic path.  A row with no raw open is a hard failure,
+    not a silent fallback to close/adjusted data.
+    """
+    getter = market_row.get if isinstance(market_row, dict) else lambda key, default=None: getattr(market_row, key, default)
+    raw = getter("raw_open", None)
+    if raw is None or not np.isfinite(float(raw)) or float(raw) <= 0:
+        if trusted:
+            raise ValueError("raw_execution_open_missing")
+        adjusted = getter("adj_open", None)
+        if adjusted is None or not np.isfinite(float(adjusted)) or float(adjusted) <= 0:
+            raise ValueError("execution_open_missing")
+        return float(adjusted)
+    return float(raw)
+
+
+def canonical_execution_metadata() -> dict[str, str]:
+    return {
+        "market_rules_version": MARKET_RULES_VERSION,
+        "canonical_kernel_id": CANONICAL_KERNEL_ID,
+        "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+        "price_basis": "raw_open",
+        "signal_timing": "T_CLOSE",
+        "execution_timing": "T_PLUS_1_OPEN",
+    }

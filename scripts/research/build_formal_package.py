@@ -42,6 +42,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from runtime.acceptance_config import canonical_sha
 from runtime.artifact_seal import seal_directory, verify_seal
 from runtime.fail_closed import blocked_report
+from runtime.pit_semantic_contract import get_source_families, get_contract_sha256
 
 FORMAL_PACKAGES_ROOT = PROJECT_ROOT / "exports" / "formal_packages"
 
@@ -65,6 +66,46 @@ def _copy_file_safe(src: Path, dst: Path) -> dict[str, str]:
     # copied transport file writable in the private .building directory.
     dst.chmod(dst.stat().st_mode | stat.S_IWUSR)
     return {"path": str(dst.relative_to(dst.parent)), "sha256": _file_sha(dst)}
+
+
+def _verify_bound_qualifier(
+    qualifier_path: Path,
+    source_manifest_path: Path,
+) -> tuple[dict[str, Any], list[str]]:
+    """Verify qualifier self-hash and its adapter/audit bindings."""
+    blockers: list[str] = []
+    if not qualifier_path.exists():
+        return {}, ["independent_pit_qualifier_missing"]
+    try:
+        payload = json.loads(qualifier_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {}, [f"independent_pit_qualifier_unreadable:{type(exc).__name__}"]
+    declared = str(payload.get("content_sha256") or "")
+    actual = canonical_sha({key: value for key, value in payload.items() if key != "content_sha256"})
+    if not declared or declared != actual:
+        blockers.append("independent_pit_qualifier_content_sha256_invalid")
+    if payload.get("component") != "independent_pit_qualifier" or payload.get("status") != "PASS":
+        blockers.append("independent_pit_qualifier_not_pass")
+    if payload.get("qualified_evidence_level") != "E3":
+        blockers.append("independent_pit_qualifier_level_not_e3")
+    if str(payload.get("source_manifest_sha256") or "") != _file_sha(source_manifest_path):
+        blockers.append("independent_pit_qualifier_source_manifest_sha_mismatch")
+    audit_path = Path(str(payload.get("audit_report_path") or ""))
+    audit_sha = str(payload.get("audit_sha256") or "")
+    if not audit_path.exists() or not audit_sha or _file_sha(audit_path) != audit_sha:
+        blockers.append("independent_pit_qualifier_audit_sha_mismatch")
+    else:
+        try:
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            if audit.get("status") != "PASS" or audit.get("qualified_evidence_level") not in (None, ""):
+                blockers.append("independent_pit_qualifier_audit_not_contract_valid")
+            if audit.get("content_sha256") != canonical_sha(
+                {key: value for key, value in audit.items() if key != "content_sha256"}
+            ):
+                blockers.append("independent_pit_qualifier_audit_content_sha_invalid")
+        except Exception as exc:
+            blockers.append(f"independent_pit_qualifier_audit_unreadable:{type(exc).__name__}")
+    return payload, sorted(set(blockers))
 
 
 PACKAGE_CONTRACT_VERSION = "formal_package_v5_1_3"
@@ -127,6 +168,7 @@ def build_formal_package(
             blockers.append(f"seal_reason:{seal_result['reason']}")
 
     # Verify pit_run_manifest
+    pit_manifest: dict[str, Any] = {}
     pit_manifest_path = pit_run_dir / "pit_run_manifest.json"
     if not pit_manifest_path.exists():
         blockers.append("pit_run_manifest_not_found")
@@ -171,6 +213,13 @@ def build_formal_package(
     missing: list[str] = []
 
     # ── Required entries (all mandatory for formal package) ──
+    qualifier_asserted = bool(
+        pit_manifest.get("qualified_evidence_level") == "E3"
+        or pit_manifest.get("independent_qualifier")
+    )
+    qualifier_source_path = Path(str(pit_manifest.get("independent_qualifier") or ""))
+    if qualifier_source_path and not qualifier_source_path.is_absolute():
+        qualifier_source_path = pit_run_dir / qualifier_source_path
     ENTRIES = {
         # Core evidence
         "scores.parquet": pit_run_dir / "scores" / "formal_scores.parquet",
@@ -184,7 +233,9 @@ def build_formal_package(
         # Keep the upstream PIT seal under a distinct name; the package gets
         # its own root seal_manifest.json when it is sealed below.
         "pit_seal_manifest.json": pit_run_dir / "seal_manifest.json",
-        # Snapshots — ALL mandatory (v5.1.6: 8 families)
+        # Snapshots — ALL nine canonical families are mandatory.  Benchmark
+        # index is copied from the same adapter transaction; it is never
+        # reconstructed from prices or fetched independently here.
         "market.parquet": pit_run_dir / "adapter" / "snapshots" / "market.parquet",
         "universe.parquet": pit_run_dir / "adapter" / "snapshots" / "universe.parquet",
         "financial.parquet": pit_run_dir / "adapter" / "snapshots" / "financial.parquet",
@@ -193,6 +244,7 @@ def build_formal_package(
         "trade_calendar.parquet": pit_run_dir / "adapter" / "snapshots" / "trade_calendar.parquet",
         "security_lifecycle.parquet": pit_run_dir / "adapter" / "snapshots" / "security_lifecycle.parquet",
         "corporate_actions.parquet": pit_run_dir / "adapter" / "snapshots" / "corporate_actions.parquet",
+        "benchmark_index.parquet": pit_run_dir / "adapter" / "snapshots" / "benchmark_index.parquet",
         # Downstream Alpha/Promotion reports are copied as evidence, even
         # when they are explicitly BLOCKED for missing OOS/Shadow inputs.
         "alpha_attribution_report.json": pit_run_dir / "reports" / "alpha_attribution_report.json",
@@ -204,6 +256,8 @@ def build_formal_package(
         "promotion_gate_report.json": pit_run_dir / "reports" / "promotion_gate_report.json",
         "strategy_scorecard.json": pit_run_dir / "reports" / "strategy_scorecard.json",
     }
+    if qualifier_asserted:
+        ENTRIES["qualifier_report.json"] = qualifier_source_path
 
     for rel_name, src_path in sorted(ENTRIES.items()):
         if not src_path.exists():
@@ -287,7 +341,6 @@ def build_formal_package(
     # (CSV views and the canonical account) have been materialised.  Keep the
     # adapter manifest hash separately: including the package source manifest
     # in its own object map would create a circular hash dependency.
-    from runtime.pit_semantic_contract import get_contract_sha256
     adapter_source_manifest: dict[str, Any] = {}
     adapter_source_path = building_dir / "source_manifest.json"
     adapter_source_manifest_sha = _file_sha(adapter_source_path) if adapter_source_path.exists() else ""
@@ -310,7 +363,40 @@ def build_formal_package(
         for family in ("corporate_actions", "security_lifecycle"):
             if adapter_completeness.get(family) is not True:
                 blockers.append(f"adapter_source_completeness_missing:{family}")
-    for family, info in sorted((adapter_source_manifest.get("sources") or {}).items()):
+    adapter_sources = adapter_source_manifest.get("sources") or {}
+    adapter_sources.update(adapter_source_manifest.get("families") or {})
+    for family in get_source_families():
+        if family not in adapter_sources:
+            blockers.append(f"adapter_source_family_missing:{family}")
+    snapshot_identity = adapter_source_manifest.get("snapshot_identity") or {}
+    if not snapshot_identity:
+        snapshot_identity = {
+            key: adapter_source_manifest.get(key)
+            for key in (
+                "provider_snapshot_token",
+                "snapshot_token",
+                "transaction_started_at",
+                "transaction_finished_at",
+                "transaction_isolation",
+                "consistent_snapshot",
+                "server_identity",
+                "gtid_provenance",
+                "binlog_provenance",
+                "gtid_or_binlog_position",
+            )
+            if adapter_source_manifest.get(key) is not None
+        }
+    if not str(
+        snapshot_identity.get("provider_snapshot_token")
+        or snapshot_identity.get("snapshot_token")
+        or ""
+    ):
+        blockers.append("provider_snapshot_token_missing")
+    if not snapshot_identity.get("transaction_started_at"):
+        blockers.append("transaction_started_at_missing")
+    if not snapshot_identity.get("transaction_finished_at"):
+        blockers.append("transaction_finished_at_missing")
+    for family, info in sorted(adapter_sources.items()):
         if not str((info or {}).get("parameter_sha256") or ""):
             blockers.append(f"adapter_parameter_sha_missing:{family}")
     source_snapshot_sha = canonical_sha(
@@ -322,9 +408,32 @@ def build_formal_package(
                 "coverage_start": (info or {}).get("coverage_start"),
                 "coverage_end": (info or {}).get("coverage_end"),
             }
-            for name, info in sorted((adapter_source_manifest.get("sources") or {}).items())
+            for name, info in sorted(adapter_sources.items())
         }
     )
+    claimed_evidence_level = str(
+        adapter_source_manifest.get("claimed_evidence_level")
+        or adapter_source_manifest.get("historical_evidence_level")
+        or "E0"
+    )
+    # Package construction is not an independent qualifier.  An E3 value is
+    # propagated only when the separately-produced qualifier is explicitly
+    # bound and its content/audit/source hashes verify.
+    run_qualified_level = str(pit_manifest.get("qualified_evidence_level") or "")
+    qualifier_payload: dict[str, Any] = {}
+    qualifier_blockers: list[str] = []
+    if qualifier_asserted:
+        qualifier_payload, qualifier_blockers = _verify_bound_qualifier(
+            qualifier_source_path, adapter_source_path
+        )
+        blockers.extend(qualifier_blockers)
+    independent_qualifier = bool(
+        qualifier_asserted
+        and run_qualified_level == "E3"
+        and not qualifier_blockers
+        and qualifier_payload.get("qualified_evidence_level") == "E3"
+    )
+    qualified_evidence_level = "E3" if independent_qualifier else None
     snapshot_manifest = {
         "schema_version": "strict_snapshot_manifest_v5_1_6",
         "snapshot_schema_version": "strict_snapshot_manifest_v5_1_6",
@@ -332,7 +441,15 @@ def build_formal_package(
         "generated_at": adapter_source_manifest.get("retrieved_at") or datetime.now(timezone.utc).isoformat(),
         "formal_pit_run_id": formal_pit_run_id,
         "package_id": package_id,
-        "data_evidence": "DATA_E0",
+        "data_evidence": "DATA_E3" if qualified_evidence_level == "E3" else "DATA_E0",
+        "claimed_evidence_level": claimed_evidence_level,
+        "qualified_evidence_level": qualified_evidence_level,
+        "data_status": "DATA_E3_QUALIFIED" if qualified_evidence_level == "E3" else "DATA_E0_DIAGNOSTIC",
+        "independent_qualifier": qualifier_payload.get("qualified_evidence_level") == "E3",
+        "qualifier_content_sha256": qualifier_payload.get("content_sha256"),
+        "qualifier_source_manifest_sha256": qualifier_payload.get("source_manifest_sha256"),
+        "qualifier_audit_sha256": qualifier_payload.get("audit_sha256"),
+        "canonical_families": list(get_source_families()),
         "semantic_contract_sha256": get_contract_sha256(),
         "snapshot_identity": adapter_source_manifest.get("snapshot_identity"),
         "source_manifest_sha256": adapter_source_manifest_sha,
@@ -345,13 +462,13 @@ def build_formal_package(
         if (building_dir / "strict_security_lifecycle.csv").exists()
         else "",
         "source_sha256": (
-            ((adapter_source_manifest.get("sources") or {}).get("corporate_actions") or {}).get("content_sha256")
-            or ((adapter_source_manifest.get("sources") or {}).get("corporate_actions") or {}).get("sha256")
+            (adapter_sources.get("corporate_actions") or {}).get("content_sha256")
+            or (adapter_sources.get("corporate_actions") or {}).get("sha256")
             or ""
         ),
         "lifecycle_source_sha256": (
-            ((adapter_source_manifest.get("sources") or {}).get("security_lifecycle") or {}).get("content_sha256")
-            or ((adapter_source_manifest.get("sources") or {}).get("security_lifecycle") or {}).get("sha256")
+            (adapter_sources.get("security_lifecycle") or {}).get("content_sha256")
+            or (adapter_sources.get("security_lifecycle") or {}).get("sha256")
             or ""
         ),
         # This map intentionally excludes the package source manifest and the
@@ -435,6 +552,13 @@ def build_formal_package(
         "coverage_end": max(ends) if ends else None,
         "semantic_contract_sha256": get_contract_sha256(),
         "field_definition_hash": adapter_field_hash,
+        "canonical_families": list(get_source_families()),
+        "lineage_columns": [
+            "source_published_at",
+            "warehouse_loaded_at",
+            "decision_cutoff",
+            "availability_source",
+        ],
         "corporate_action_complete": bool(
             adapter_source_manifest.get("corporate_action_complete")
             or adapter_completeness.get("corporate_actions")
@@ -452,8 +576,15 @@ def build_formal_package(
         "retrieved_at": adapter_source_manifest.get("retrieved_at"),
         "evidence_origin": adapter_source_manifest.get("evidence_origin"),
         "snapshot_identity": adapter_source_manifest.get("snapshot_identity"),
+        "claimed_evidence_level": claimed_evidence_level,
+        "qualified_evidence_level": qualified_evidence_level,
+        "data_status": "DATA_E3_QUALIFIED" if qualified_evidence_level == "E3" else "DATA_E0_DIAGNOSTIC",
+        "independent_qualifier": qualifier_payload.get("qualified_evidence_level") == "E3",
+        "qualifier_content_sha256": qualifier_payload.get("content_sha256"),
+        "qualifier_source_manifest_sha256": qualifier_payload.get("source_manifest_sha256"),
+        "qualifier_audit_sha256": qualifier_payload.get("audit_sha256"),
         "input_snapshot_sha256": source_snapshot_sha,
-        "sources": adapter_source_manifest.get("sources") or {},
+        "sources": adapter_sources,
         "objects": {
             name: {"sha256": info["sha256"]}
             for name, info in sorted(required_objects.items())
@@ -489,6 +620,16 @@ def build_formal_package(
         "release_id": release_id,
         "strategy_set": strategy_set,
         "initial_account_cny": initial_account_cny,
+        "canonical_families": list(get_source_families()),
+        "claimed_evidence_level": claimed_evidence_level,
+        "qualified_evidence_level": qualified_evidence_level,
+        "data_status": "DATA_E3_QUALIFIED" if qualified_evidence_level == "E3" else "DATA_E0_DIAGNOSTIC",
+        "independent_qualifier": qualifier_payload.get("qualified_evidence_level") == "E3",
+        "qualifier_content_sha256": qualifier_payload.get("content_sha256"),
+        "qualifier_source_manifest_sha256": qualifier_payload.get("source_manifest_sha256"),
+        "qualifier_audit_sha256": qualifier_payload.get("audit_sha256"),
+        "benchmark_index_bound": "benchmark_index.parquet" in required_objects,
+        "snapshot_identity": snapshot_identity,
         "package_builder_code_sha256": builder_code_sha,
         "git_commit_sha": git_sha,
         "required_objects": required_objects,

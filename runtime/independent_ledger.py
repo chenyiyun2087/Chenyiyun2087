@@ -13,12 +13,22 @@ from typing import Iterable
 
 import pandas as pd
 
+from runtime.canonical_execution_contract import (
+    CANONICAL_KERNEL_ID,
+    CANONICAL_KERNEL_VERSION,
+    CANONICAL_SCHEMA_VERSION,
+    deterministic_order_id,
+    normalize_symbol,
+)
+
 
 CENT = Decimal("0.01")
 
 
 def _money(value: object) -> Decimal:
-    return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        value = 0
+    return Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def _flag(value: object) -> bool:
@@ -63,14 +73,62 @@ class OracleReplayResult:
     metrics: dict[str, float]
 
 
+def _model_value(model: object | None, name: str, default: Decimal = Decimal("0")) -> Decimal:
+    """Read a cost parameter without importing the primary implementation."""
+    if model is None:
+        return default
+    value = getattr(model, name, default)
+    try:
+        return Decimal(str(value))
+    except (ValueError, TypeError, ArithmeticError):
+        return default
+
+
+def _oracle_costs(notional: Decimal, side: str, model: object | None, *, filled: bool = True) -> dict[str, Decimal]:
+    """Independent arithmetic for the expanded cost contract.
+
+    This intentionally duplicates the equations instead of calling
+    ``CostBreakdown.calculate`` so parity tests exercise two implementations.
+    """
+    gross = max(notional, Decimal("0"))
+    commission_rate = _model_value(model, "commission_rate", Decimal("0"))
+    minimum = _model_value(model, "min_commission_cny", Decimal("0"))
+    commission_raw = gross * commission_rate
+    commission = commission_raw if gross > 0 else Decimal("0")
+    min_component = max(Decimal("0"), minimum - commission_raw) if gross > 0 else Decimal("0")
+    stamp = gross * _model_value(model, "stamp_duty_rate", Decimal("0")) if str(side).upper() == "SELL" else Decimal("0")
+    transfer = gross * _model_value(model, "transfer_fee_rate", Decimal("0"))
+    open_rate = _model_value(model, "slippage_rate") + _model_value(model, "open_auction_slippage_bps") / Decimal("10000")
+    gap_rate = _model_value(model, "opening_gap_rate") + _model_value(model, "gap_bps") / Decimal("10000")
+    spread_rate = _model_value(model, "spread_rate") + _model_value(model, "spread_bps") / Decimal("10000")
+    impact_rate = (_model_value(model, "impact_rate") + _model_value(model, "adv_impact_rate")
+                   + _model_value(model, "adv_impact_bps") / Decimal("10000"))
+    missed_rate = _model_value(model, "unfilled_opportunity_rate") + _model_value(model, "missed_fill_bps") / Decimal("10000")
+    costs = {
+        "commission": _money(commission),
+        "min_commission": _money(min_component),
+        "sell_stamp": _money(stamp),
+        "transfer_fee": _money(transfer),
+        "open_auction_slippage": _money(gross * open_rate),
+        "gap": _money(gross * gap_rate),
+        "spread": _money(gross * spread_rate),
+        "adv_impact": _money(gross * impact_rate),
+        "missed_unfilled_cost": _money(gross * missed_rate) if not filled else Decimal("0.00"),
+        "delayed_fill": Decimal("0.00"),
+    }
+    costs["total_cost"] = _money(sum(costs.values(), Decimal("0")))
+    return costs
+
+
 def replay_orders(
     orders: pd.DataFrame,
     market_snapshot: pd.DataFrame,
     *,
     initial_capital: float,
     corporate_actions: pd.DataFrame | None = None,
+    cost_model: object | None = None,
 ) -> OracleReplayResult:
-    required_orders = {"order_id", "execution_date", "symbol", "side", "shares", "cost_rate"}
+    required_orders = {"order_id", "execution_date", "symbol", "side", "shares"}
     required_market = {
         "trade_date", "symbol", "raw_open", "raw_close", "prev_raw_close",
         "is_tradable", "is_suspended", "is_listed", "is_st", "price_tick",
@@ -88,12 +146,25 @@ def replay_orders(
     market = market_snapshot.copy()
     order_frame["execution_date"] = order_frame["execution_date"].astype(str)
     market["trade_date"] = market["trade_date"].astype(str)
-    order_frame["symbol"] = order_frame["symbol"].astype(str)
-    market["symbol"] = market["symbol"].astype(str)
+    order_frame["symbol"] = order_frame["symbol"].map(normalize_symbol)
+    market["symbol"] = market["symbol"].map(normalize_symbol)
     if order_frame["order_id"].astype(str).duplicated().any():
         raise ValueError("oracle_duplicate_order_id")
     if market.duplicated(["trade_date", "symbol"]).any():
         raise ValueError("oracle_duplicate_market_snapshot")
+    # If signal dates are present, execution must be the next available
+    # trading session.  Missing signal dates are accepted only for legacy
+    # diagnostic packages and are never inferred from adjusted data.
+    if "signal_date" in order_frame.columns:
+        trading_days = sorted(market["trade_date"].unique().tolist())
+        for row in order_frame.itertuples(index=False):
+            signal = str(getattr(row, "signal_date") or "")
+            execution = str(getattr(row, "execution_date") or "")
+            if not signal or signal.lower() in {"nan", "none"}:
+                continue
+            following = [day for day in trading_days if str(day) > signal]
+            if not following or str(following[0]) != execution:
+                raise ValueError(f"oracle_not_t_plus_one:{getattr(row, 'order_id', '')}")
 
     actions = corporate_actions.copy() if corporate_actions is not None else pd.DataFrame()
     if not actions.empty:
@@ -117,6 +188,7 @@ def replay_orders(
     rejection_rows: list[dict[str, object]] = []
     market_index = market.set_index(["trade_date", "symbol"], drop=False)
 
+    seen_order_ids: set[str] = set()
     for trade_date in sorted(market["trade_date"].unique()):
         if not actions.empty:
             for action in actions[actions["trade_date"].eq(trade_date)].itertuples(index=False):
@@ -196,12 +268,18 @@ def replay_orders(
             symbol = str(order.symbol)
             side = str(order.side).upper()
             shares = int(order.shares)
+            # The canonical contract is fail-closed on duplicate order IDs;
+            # replaying the same frozen package is idempotent but a package
+            # containing two duplicate rows is an input error.
+            if order_id in seen_order_ids:
+                raise ValueError(f"oracle_duplicate_order_id:{order_id}")
+            seen_order_ids.add(order_id)
             if side not in {"BUY", "SELL"} or shares <= 0:
                 raise ValueError(f"oracle_invalid_order:{order_id}")
             try:
                 snap = market_index.loc[(trade_date, symbol)]
             except KeyError:
-                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "missing_market_snapshot"})
+                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "missing_market_snapshot", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
                 continue
             if isinstance(snap, pd.DataFrame):
                 raise ValueError(f"oracle_duplicate_market_snapshot:{trade_date}:{symbol}")
@@ -209,25 +287,55 @@ def replay_orders(
             open_price = Decimal(str(snap["raw_open"])) if pd.notna(snap["raw_open"]) else Decimal("0")
             previous_close = Decimal(str(snap["prev_raw_close"])) if pd.notna(snap["prev_raw_close"]) else Decimal("0")
             if not tradable or open_price <= 0 or previous_close <= 0:
-                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "t1_not_tradable"})
+                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "t1_not_tradable", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
                 continue
             tick = Decimal(str(snap["price_tick"] or "0.01"))
             ratio = _limit_ratio(symbol, _flag(snap["is_st"]))
             upper = _rounded_price(previous_close * (Decimal("1") + ratio), tick)
             lower = _rounded_price(previous_close * (Decimal("1") - ratio), tick)
             if (side == "BUY" and open_price >= upper) or (side == "SELL" and open_price <= lower):
-                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "limit_block"})
+                rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "limit_block", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
                 continue
-            notional = _money(open_price * Decimal(shares))
-            fee = _money(notional * Decimal(str(order.cost_rate)))
+            # Cost model parameters are supplied by the package.  A scalar
+            # cost_rate remains a diagnostic/noncanonical fallback only.
+            if cost_model is None and hasattr(order, "cost_rate"):
+                class _LegacyModel:
+                    commission_rate = Decimal(str(getattr(order, "cost_rate", 0.0)))
+                    stamp_duty_rate = Decimal("0")
+                    transfer_fee_rate = Decimal("0")
+                    min_commission_cny = Decimal("0")
+                active_model: object | None = _LegacyModel()
+            else:
+                active_model = cost_model
+            lot_size = int(getattr(order, "lot_size", 100) or 100)
+            fill_shares = shares
+            if side == "BUY":
+                # Size down in board lots until gross + expanded costs fit
+                # cash.  This mirrors the primary ledger's partial fill rule
+                # but intentionally uses independent Decimal arithmetic.
+                fill_shares = (fill_shares // lot_size) * lot_size if lot_size > 1 else fill_shares
+                while fill_shares > 0:
+                    candidate_notional = _money(open_price * Decimal(fill_shares))
+                    candidate_costs = _oracle_costs(candidate_notional, side, active_model)
+                    if candidate_notional + candidate_costs["total_cost"] <= cash:
+                        break
+                    fill_shares -= lot_size if lot_size > 1 else 1
+                if fill_shares <= 0:
+                    rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_cash", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+                    continue
+            else:
+                fill_shares = min(fill_shares, int(holdings.get(symbol, 0)))
+                if fill_shares <= 0:
+                    rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_shares", "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
+                    continue
+            notional = _money(open_price * Decimal(fill_shares))
+            costs = _oracle_costs(notional, side, active_model)
+            fee = costs["total_cost"]
             if side == "BUY":
                 required = notional + fee
-                if required > cash:
-                    rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_cash"})
-                    continue
                 cash -= required
                 prior_shares = holdings.get(symbol, 0)
-                new_shares = prior_shares + shares
+                new_shares = prior_shares + fill_shares
                 unit_costs[symbol] = (
                     unit_costs.get(symbol, Decimal("0")) * Decimal(prior_shares)
                     + notional
@@ -235,18 +343,20 @@ def replay_orders(
                 ) / Decimal(new_shares)
                 holdings[symbol] = new_shares
             else:
-                if holdings.get(symbol, 0) < shares:
-                    rejection_rows.append({"order_id": order_id, "trade_date": trade_date, "symbol": symbol, "reason": "insufficient_shares"})
-                    continue
                 cash += notional - fee
-                holdings[symbol] -= shares
+                holdings[symbol] -= fill_shares
                 if holdings[symbol] == 0:
                     del holdings[symbol]
                     unit_costs.pop(symbol, None)
             trade_rows.append({
                 "order_id": order_id, "trade_date": trade_date, "symbol": symbol,
-                "side": side, "filled_shares": shares, "filled_price": float(open_price),
-                "filled_notional": float(notional), "fee": float(fee), "cash_after": float(cash),
+                "side": side, "filled_shares": fill_shares, "filled_price": float(open_price),
+                "filled_notional": float(notional), "fee": float(fee), "total_cost": float(fee),
+                "costs": {key: float(value) for key, value in costs.items()},
+                "canonical_kernel_id": CANONICAL_KERNEL_ID,
+                "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+                "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+                "cash_after": float(cash),
             })
 
         market_value = Decimal("0")
@@ -258,9 +368,9 @@ def replay_orders(
             close_price = Decimal(str(close_value))
             value = _money(close_price * Decimal(shares))
             market_value += value
-            position_rows.append({"trade_date": trade_date, "symbol": symbol, "shares": shares, "unit_cost": float(unit_costs.get(symbol, Decimal("0"))), "close_price": float(close_price), "market_value": float(value)})
+            position_rows.append({"trade_date": trade_date, "symbol": symbol, "shares": shares, "unit_cost": float(unit_costs.get(symbol, Decimal("0"))), "close_price": float(close_price), "market_value": float(value), "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
         nav = cash + market_value
-        nav_rows.append({"trade_date": trade_date, "cash": float(cash), "market_value": float(market_value), "nav": float(nav)})
+        nav_rows.append({"trade_date": trade_date, "cash": float(cash), "market_value": float(market_value), "nav": float(nav), "canonical_kernel_id": CANONICAL_KERNEL_ID, "canonical_kernel_version": CANONICAL_KERNEL_VERSION})
 
     nav_frame = pd.DataFrame(nav_rows)
     if nav_frame.empty:

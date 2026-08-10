@@ -8,6 +8,13 @@ from __future__ import annotations
 from typing import Any
 
 from runtime.ledger_runtime import OrderStatus, validate_order_transition
+from scripts.research.canonical_execution_adapters import (
+    adapt_corporate_action as adapt_canonical_corporate_action,
+    adapt_event as adapt_canonical_event,
+    adapt_fill as adapt_canonical_fill,
+    adapt_order as adapt_canonical_order,
+    adapt_reject as adapt_canonical_reject,
+)
 
 _STATUS_MAP = {
     "PLANNED": OrderStatus.PLANNED, "PARTIAL_FILL": OrderStatus.PARTIAL,
@@ -41,3 +48,24 @@ def validate_legacy_event_sequence(events: list[dict[str, Any]]) -> None:
                 validate_order_transition(previous[order_id], current)
         if order_id:
             previous[order_id] = current
+
+
+def adapt_order(payload: dict[str, Any], *, trusted: bool = True):
+    """Canonical order adapter; same-day legacy paths fail closed."""
+    return adapt_canonical_order(payload, trusted=trusted, source="strict_ledger")
+
+
+def adapt_fill(payload: dict[str, Any], *, trusted: bool = True):
+    return adapt_canonical_fill(payload, trusted=trusted, source="strict_ledger")
+
+
+def adapt_reject(payload: dict[str, Any], *, trusted: bool = True):
+    return adapt_canonical_reject(payload, source="strict_ledger")
+
+
+def adapt_corporate_action(payload: dict[str, Any]):
+    return adapt_canonical_corporate_action(payload, source="strict_ledger")
+
+
+def adapt_event_canonical(payload: dict[str, Any], *, trusted: bool = True) -> dict[str, Any]:
+    return adapt_canonical_event(payload, trusted=trusted, source="strict_ledger")

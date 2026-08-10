@@ -22,6 +22,43 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = PROJECT_ROOT / "data" / "evidence_store"
 
 
+def canonical_inventory_sha256(files: dict[str, str]) -> str:
+    """Hash a canonical relative-path -> SHA-256 inventory.
+
+    This is the root SHA used by forward packages and verifier contracts.  It
+    intentionally excludes mutable metadata such as timestamps and paths.
+    """
+
+    payload = json.dumps(
+        {str(name): str(value) for name, value in sorted(files.items())},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def verify_inventory_root(inventory: dict[str, object], *, required_files: Iterable[str] = ()) -> tuple[bool, list[str]]:
+    """Verify package inventory root SHA and required file completeness."""
+
+    payload = inventory.get("files")
+    if not isinstance(payload, dict):
+        payload = inventory
+    files = {
+        str(name): str(value)
+        for name, value in payload.items()
+        if name not in {"package_sha256", "schema_version", "package_dir"}
+    }
+    reasons: list[str] = []
+    missing = sorted(set(required_files) - set(files))
+    if missing:
+        reasons.append(f"required_files_missing:{missing}")
+    declared = inventory.get("package_sha256")
+    if isinstance(declared, str) and len(declared) == 64:
+        actual = canonical_inventory_sha256(files)
+        if actual != declared:
+            reasons.append(f"inventory_root_sha_mismatch:{declared}!={actual}")
+    return not reasons, reasons
+
+
 @dataclass(frozen=True)
 class EvidenceObject:
     sha256: str

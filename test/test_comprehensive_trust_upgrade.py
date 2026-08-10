@@ -115,6 +115,12 @@ def test_risk_covariance_and_capital_gate_fail_closed():
 
 def test_canary_requires_explicit_user_authorization_and_offline_reconciliation():
     evidence = {
+        "e3_passed": True, "formal_new_epoch": True,
+        "formal_shadow_days": 60, "completed_round_trips": 30,
+        "alpha_t": 2.0, "adjusted_p": 0.05,
+        "positive_excess_ratio": 0.60, "sharpe": 1.0,
+        "mdd": 0.25, "cost_2x_passed": True,
+        "shadow_zero_difference": True,
         "dual_ledger_verified": True, "data_quality_passed": True,
         "drawdown_within_budget": True, "slippage_within_model": True,
         "strategy_drift_absent": True, "cost_after_live_return_positive": True,
@@ -122,9 +128,9 @@ def test_canary_requires_explicit_user_authorization_and_offline_reconciliation(
         "reconciliation_errors": 0,
     }
     blocked = evaluate_capital_stage("CANARY", evidence)
-    assert not blocked.eligible and "user_capital_authorization_missing" in blocked.reasons
+    assert not blocked.eligible and "manual_approval_missing" in blocked.reasons
     approved = evaluate_capital_stage("CANARY", {**evidence, "user_capital_authorization": True})
-    assert approved.eligible and approved.maximum_capital == 100_000
+    assert approved.eligible and approved.maximum_capital == 50_000
 
 
 def test_qmt_boundary_is_permanently_disabled():

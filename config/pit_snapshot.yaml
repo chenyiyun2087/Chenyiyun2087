@@ -1,6 +1,21 @@
 schema_version: "2.0"
 manifest_schema: pit_snapshot_v2
 market_data_cutoff: "{snapshot_date}T15:30:00+08:00"
+formal_cutoff:
+  timezone: Asia/Shanghai
+  default_time: "21:30:00"
+  hard_time: "23:00:00"
+canonical_families:
+  - market
+  - universe
+  - financial
+  - industry
+  - adjustment
+  - trade_calendar
+  - security_lifecycle
+  - corporate_actions
+  - benchmark_index
+lineage_columns: [source_published_at, warehouse_loaded_at, decision_cutoff, availability_source]
 minimum_trade_day_coverage: 0.98
 common_required_columns: &lineage
   [event_date, publish_date, available_at, ingested_at, source, data_version, snapshot_sha, schema_version]
@@ -19,3 +34,7 @@ components:
   - {name: financial_disclosure_visibility, source: tushare_stock.dwd_financial_disclosure_visibility, business_date_column: event_date, visible_at_column: available_at, primary_key: [ts_code, report_period, publish_date, schema_version], minimum_start: "2013-01-01", required_columns: [event_date, publish_date, available_at, ingested_at, source, data_version, snapshot_sha, schema_version, report_period], query: "SELECT * FROM tushare_stock.dwd_financial_disclosure_visibility WHERE event_date <= :snapshot_date"}
   - {name: factor_source_snapshot, source: chenyiyun.factor_source_snapshot, business_date_column: event_date, visible_at_column: available_at, primary_key: [event_date, ts_code, factor_schema_version], minimum_start: "2013-01-01", required_columns: [event_date, publish_date, available_at, ingested_at, source, data_version, snapshot_sha, schema_version, factor_schema_version], query: "SELECT * FROM chenyiyun.factor_source_snapshot WHERE event_date <= :snapshot_date"}
   - {name: score_schema, source: chenyiyun.score_schema_history, business_date_column: event_date, visible_at_column: available_at, primary_key: [event_date, score_schema_version], minimum_start: "2013-01-01", required_columns: [event_date, publish_date, available_at, ingested_at, source, data_version, snapshot_sha, schema_version, score_schema_version, config_sha], query: "SELECT * FROM chenyiyun.score_schema_history WHERE event_date <= :snapshot_date"}
+  # Canonical PIT benchmark family.  It is extracted by run_snapshot_extract
+  # in the same MySQL transaction as the other eight families; this component
+  # exists so freeze/audit tooling can discover the family from one contract.
+  - {name: benchmark_index, source: tushare_stock.ods_index_daily, business_date_column: trade_date, visible_at_column: benchmark_available_at, primary_key: [index_code, trade_date], minimum_start: "2013-01-01", required_columns: [trade_date, index_code, index_label, open, high, low, close, pre_close, pct_chg, vol, amount, benchmark_available_at, ret_5d, ret_10d, ret_20d, ret_60d, source_published_at, warehouse_loaded_at, decision_cutoff, availability_source], query: "SELECT trade_date, ts_code AS index_code, open, high, low, close, pre_close, pct_chg, vol, amount FROM tushare_stock.ods_index_daily WHERE ts_code IN ('000300.SH','000905.SH','000852.SH') AND trade_date <= :snapshot_date"}

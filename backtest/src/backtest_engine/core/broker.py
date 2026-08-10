@@ -10,7 +10,17 @@ from backtest_engine.core.types import Bar, Order, Trade
 class Broker:
     config: BacktestConfig
 
-    def match_order(self, order: Order, bar: Bar, available_qty: int | None = None) -> Trade | None:
+    def match_order(
+        self,
+        order: Order,
+        bar: Bar,
+        available_qty: int | None = None,
+        *,
+        trusted: bool = False,
+        execution_price: float | None = None,
+    ) -> Trade | None:
+        if trusted and str(order.ts)[:10] >= str(bar.ts)[:10]:
+            raise ValueError("same_day_execution_forbidden")
         if order.qty <= 0:
             return None
         if available_qty is not None and order.side == "SELL":
@@ -21,7 +31,8 @@ class Broker:
             order_qty = order.qty
 
         slip_ratio = self.config.slippage_bps / 10000.0
-        fill_price = bar.close * (1 + slip_ratio) if order.side == "BUY" else bar.close * (1 - slip_ratio)
+        base_price = float(execution_price if execution_price is not None else (bar.open if trusted else bar.close))
+        fill_price = base_price * (1 + slip_ratio) if order.side == "BUY" else base_price * (1 - slip_ratio)
         turnover = fill_price * order_qty
         commission = turnover * self.config.commission_rate
         slippage = abs(fill_price - bar.close) * order_qty

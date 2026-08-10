@@ -32,7 +32,8 @@ from runtime.pit_semantic_contract import (
     get_contract_sha256, get_required_columns, get_primary_key,
     get_available_at_column, get_business_time_column, signal_time_for_trade_dates,
     get_canonical_execution_columns, get_economic_columns,
-    validate_frame_schema, validate_explicit_timezone,
+    get_source_families, get_lineage_columns, validate_frame_schema,
+    validate_explicit_timezone, validate_lineage_frame,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -48,22 +49,22 @@ def _file_sha(path: Path) -> str:
 
 # v5.1.6: Schemas are loaded from the canonical contract, not hardcoded
 SNAPSHOT_NAMES = {
-    "market.parquet": "market",
-    "universe.parquet": "universe",
-    "financial.parquet": "financial",
-    "industry.parquet": "industry",
-    "adjustment.parquet": "adjustment",
-    "trade_calendar.parquet": "trade_calendar",
-    "security_lifecycle.parquet": "security_lifecycle",
-    "corporate_actions.parquet": "corporate_actions",
-    # v5.3: 9th family — real benchmark index data (CSI 300/500/1000).
-    "benchmark_index.parquet": "benchmark_index",
+    f"{family}.parquet": family for family in get_source_families()
 }
+
+
+def _manifest_sources(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Accept adapter ``sources`` and extractor ``families`` layouts."""
+    merged: dict[str, Any] = {}
+    merged.update(manifest.get("sources") or {})
+    merged.update(manifest.get("families") or {})
+    return merged
 
 
 def run_semantic_audit(
     snapshots_dir: Path,
     manifest_path: Path,
+    qualifier_path: Path | None = None,
 ) -> dict[str, Any]:
     """Audit PIT snapshots for schema, semantics, coverage, and provenance.
 
@@ -96,17 +97,82 @@ def run_semantic_audit(
     elif adapter_field_hash != contract_sha:
         blockers.append(f"field_definition_hash_mismatch:adapter={adapter_field_hash[:16]}... contract={contract_sha[:16]}...")
 
+    canonical_families = list(get_source_families())
+    declared_sources = _manifest_sources(adapter_manifest)
+    if adapter_manifest.get("status") not in {"QUALIFIED", "PASS"}:
+        blockers.append("adapter_manifest_not_qualified")
+    # Adapter manifests keep a nested identity object; extractor manifests
+    # expose the same fields at the root.  Normalize both layouts here so the
+    # audit binds one transaction/provenance contract regardless of producer.
+    identity = dict(adapter_manifest.get("snapshot_identity") or {})
+    if not identity:
+        identity = {
+            key: adapter_manifest.get(key)
+            for key in (
+                "provider_snapshot_token",
+                "snapshot_token",
+                "transaction_started_at",
+                "transaction_finished_at",
+                "transaction_isolation",
+                "consistent_snapshot",
+                "server_identity",
+                "gtid_provenance",
+                "binlog_provenance",
+                "gtid_or_binlog_position",
+            )
+            if adapter_manifest.get(key) is not None
+        }
+    provider_token = str(
+        identity.get("provider_snapshot_token")
+        or identity.get("snapshot_token")
+        or adapter_manifest.get("provider_snapshot_token")
+        or ""
+    )
+    if not provider_token:
+        blockers.append("provider_snapshot_token_missing")
+    if not identity.get("transaction_started_at"):
+        blockers.append("transaction_started_at_missing")
+    if not identity.get("transaction_finished_at"):
+        blockers.append("transaction_finished_at_missing")
+    if identity.get("transaction_isolation") not in {"REPEATABLE READ", "FILE_IMMUTABLE"}:
+        blockers.append("transaction_isolation_invalid")
+    if identity.get("transaction_isolation") == "REPEATABLE READ" and identity.get("consistent_snapshot") is False:
+        blockers.append("consistent_snapshot_required")
+    if not identity.get("server_identity"):
+        blockers.append("server_identity_missing")
+    if not identity.get("gtid_provenance") and not identity.get("gtid_or_binlog_position"):
+        blockers.append("gtid_provenance_missing")
+    if not identity.get("binlog_provenance") and not identity.get("gtid_or_binlog_position"):
+        blockers.append("binlog_provenance_missing")
+    missing_manifest_families = [name for name in canonical_families if name not in declared_sources]
+    blockers.extend(f"manifest_family_missing:{name}" for name in missing_manifest_families)
+
     # ── Check each snapshot ──
     for filename, family in sorted(SNAPSHOT_NAMES.items()):
+        family_blocker_start = len(blockers)
         snapshot_path = snapshots_dir / filename
         if not snapshot_path.exists():
             blockers.append(f"snapshot_missing:{filename}")
+            audit_details[family] = {
+                "filename": filename,
+                "rows": 0,
+                "file_sha256": None,
+                "blockers": [f"snapshot_missing:{filename}"],
+                "lineage_columns": [],
+            }
             continue
 
         try:
             df = pd.read_parquet(snapshot_path)
         except Exception as exc:
             blockers.append(f"snapshot_unreadable:{filename}:{type(exc).__name__}")
+            audit_details[family] = {
+                "filename": filename,
+                "rows": 0,
+                "file_sha256": None,
+                "blockers": [f"snapshot_unreadable:{filename}:{type(exc).__name__}"],
+                "lineage_columns": [],
+            }
             continue
 
         # v5.1.6: Schema from canonical contract
@@ -121,7 +187,22 @@ def run_semantic_audit(
                 f"schema_missing_economic_column:{family}:{column}"
                 for column in sorted(get_economic_columns(family) - set(df.columns))
             )
-        blockers.extend(contract_blockers)
+            blockers.extend(contract_blockers)
+        else:
+            blockers.extend(contract_blockers)
+
+        # Shared lineage contract: all nine canonical families carry explicit
+        # publication, warehouse-load, decision-cutoff and availability-source
+        # facts.  Keep these blockers family-scoped in the report.
+        business_values = df.get(
+            get_business_time_column(family),
+            pd.Series(index=df.index, dtype="object"),
+        )
+        blockers.extend(
+            validate_lineage_frame(
+                df, family, strict=True, business_dates=business_values
+            )
+        )
 
         actual_cols = set(df.columns)
         expected_cols = get_required_columns(family)
@@ -145,26 +226,30 @@ def run_semantic_audit(
             blockers.append(f"available_at_missing:{family}")
 
         # ── Future-data leakage check ──
-        # v5.1.4: Check that available_at is NOT after the signal cutoff time.
-        # Signal cutoff = trade_date 15:30 Asia/Shanghai.
-        # available_at > signal_cutoff → data not yet available at signal time → leak.
+        # Formal lineage uses the row's explicit decision cutoff (default
+        # 21:30 Asia/Shanghai, hard limit 23:00), not the trading signal's
+        # 15:30 execution cutoff.  The shared lineage validator above already
+        # checks this relation; keep a family-scoped diagnostic for callers
+        # that inspect the audit report without parsing generic blockers.
         business_col = get_business_time_column(family)
         if business_col in df.columns and avail_col in df.columns:
             try:
-                td = pd.to_datetime(df[business_col], errors="coerce", utc=True)
                 av = pd.to_datetime(df[avail_col], errors="coerce", utc=True)
-                if td.notna().any() and av.notna().any():
-                    signal_cutoff = signal_time_for_trade_dates(
-                        pd.to_datetime(df[business_col], errors="coerce")
-                    )
-                    if (av > signal_cutoff).any():
-                        future_count = int((av > signal_cutoff).sum())
-                        blockers.append(f"future_data_leak:{family}:{future_count}_rows")
+                decision = pd.to_datetime(
+                    df.get("decision_cutoff", pd.Series(index=df.index, dtype="object")),
+                    errors="coerce",
+                    utc=True,
+                )
+                if av.notna().any() and decision.notna().any() and (av > decision).any():
+                    future_count = int((av > decision).sum())
+                    blockers.append(f"future_data_leak:{family}:{future_count}_rows")
             except Exception as exc:
                 blockers.append(f"future_leak_check_error:{family}:{type(exc).__name__}")
 
         # ── Financial revision chain ──
         if family == "financial":
+            if len(df) == 0:
+                blockers.append("financial_revision_chain_empty")
             if "revision_id" in df.columns and df["revision_id"].notna().any():
                 period_col = "financial_period_end"
                 if period_col in df.columns and "revision_sequence" in df.columns and "symbol" in df.columns:
@@ -203,6 +288,12 @@ def run_semantic_audit(
                                 blockers.append(f"financial_announcement_after_available:{int(bad.sum())}")
                     except Exception as exc:
                         blockers.append(f"financial_revision_check_error:{type(exc).__name__}")
+            if "revision_id" in df.columns and df["revision_id"].dropna().nunique() <= 1:
+                blockers.append("financial_revision_chain_constant_or_missing")
+            if "revision_sequence" in df.columns and pd.to_numeric(
+                df["revision_sequence"], errors="coerce"
+            ).nunique() <= 1:
+                blockers.append("financial_revision_sequence_constant_or_missing")
 
         # ── Industry SCD ──
         if family == "industry":
@@ -238,6 +329,38 @@ def run_semantic_audit(
                                     blockers.append("industry_scd_overlap")
                 except Exception as exc:
                     blockers.append(f"industry_scd_check_error:{type(exc).__name__}")
+            if "valid_to" not in df.columns or df["valid_to"].isna().all():
+                blockers.append("industry_scd_valid_to_missing_or_constant")
+            if "industry_available_at" in df.columns and df["industry_available_at"].dropna().nunique() <= 1:
+                blockers.append("industry_scd_availability_constant_or_backfilled")
+
+        # Security status and corporate-action fields are frequently populated
+        # with constants in historical backfills.  Such sources are never
+        # accepted for strict PIT regardless of schema completeness.
+        if family in {"universe", "security_lifecycle"}:
+            if "is_suspended" in df.columns and df["is_suspended"].dropna().nunique() <= 1:
+                blockers.append(f"suspension_placeholder_or_constant:{family}")
+            if "security_status_transition" in df.columns and df["security_status_transition"].dropna().nunique() <= 1:
+                blockers.append(f"lifecycle_transition_placeholder_or_constant:{family}")
+        if family == "corporate_actions":
+            if len(df) == 0:
+                blockers.append("corporate_actions_empty")
+            for column in ("source_event_id", "event_id", "event_hash"):
+                if column not in df.columns or df[column].isna().all() or df[column].astype(str).nunique() <= 1:
+                    blockers.append(f"corporate_action_{column}_placeholder_or_constant")
+            if "source_complete" in df.columns and df["source_complete"].nunique() <= 1:
+                blockers.append("corporate_action_source_complete_constant")
+            if "corporate_action_type" in df.columns and df["corporate_action_type"].dropna().nunique() <= 1:
+                blockers.append("corporate_action_type_placeholder_or_constant")
+        if family == "benchmark_index":
+            codes = set(df.get("index_code", pd.Series(dtype="object")).dropna().astype(str))
+            required_codes = {"000300.SH", "000905.SH", "000852.SH"}
+            if codes != required_codes:
+                blockers.append(f"benchmark_codes_incomplete:{sorted(codes)}")
+            if {"index_code", "trade_date"}.issubset(df.columns) and df.duplicated(
+                ["index_code", "trade_date"]
+            ).any():
+                blockers.append("benchmark_duplicate_index_dates")
 
         # ── Source SHA verification (v5.3: FAIL-CLOSED) ──
         # Previously this block only blocked when a declared SHA was present
@@ -268,6 +391,10 @@ def run_semantic_audit(
             "rows": row_count,
             "file_sha256": snapshot_sha,
             "has_available_at": avail_col in df.columns,
+            "blockers": sorted(set(blockers[family_blocker_start:])),
+            "lineage_columns": [
+                column for column in get_lineage_columns() if column in df.columns
+            ],
         }
 
     # ── Universe coverage check ──
@@ -289,6 +416,15 @@ def run_semantic_audit(
             blockers.append(f"universe_coverage_check_error:{type(exc).__name__}")
 
     status = "PASS" if not blockers else "BLOCKED"
+    # Semantic audit is deliberately not an E3 qualifier.  It reports only
+    # contract-valid E1 evidence; the independent qualifier runs afterwards
+    # and binds this exact report by SHA.
+    qualified_level = None
+    claimed_level = str(
+        adapter_manifest.get("claimed_evidence_level")
+        or adapter_manifest.get("historical_evidence_level")
+        or "E0"
+    )
 
     report = {
         "schema_version": "pit_semantic_audit_v5_1_3",
@@ -296,6 +432,13 @@ def run_semantic_audit(
         "component": "semantic_audit",
         "blockers": sorted(set(blockers)),
         "semantic_contract_sha256": contract_sha,
+        "canonical_families": list(get_source_families()),
+        "lineage_columns": list(get_lineage_columns()),
+        "claimed_evidence_level": claimed_level,
+        "qualified_evidence_level": qualified_level,
+        "data_status": "BLOCKED_DATA" if blockers else "DATA_E1_CLAIMED",
+        "contract_status": "BLOCKED" if blockers else "CONTRACT_VALID",
+        "independent_qualifier": None,
         "snapshots_audited": sorted(audit_details.keys()),
         "audit_details": audit_details,
         "capital_authority": False,

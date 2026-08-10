@@ -27,19 +27,19 @@ shadow_id: "forward_shadow_v2"
 # consumed for execution, never counted for E4.  Its corrected
 # revision_2/ (v5.5.1 code, 2026-08-05) is engineering comparison only.
 #
-# DECLARED 2026-08-06 (v5.5.3, Phase 5 first-day audit PASS): the
-# v5.5.3 chain's 2026-08-05 run passed the full first-day audit (PIT
-# lineage complete, atomic SEALED, precommit idempotent, T+1 fills,
-# position ledger, no legacy fallback), so true_blind_start is now
-# formally written.  Epoch id v5.5.3-2026-08-05; dates before
-# 2026-08-05 are never shadow evidence (08-04 package stays
-# KNOWN_DEFECT_PRESTART_PACKAGE).  Mirrored in
-# config/oos_registry.yaml true_forward_blind and enforced by
-# run_daily_shadow.py TRUE_BLIND_START.
+# The former v5.5.3-2026-08-05 declaration is retained only as an
+# ENGINEERING_SOAK_LEGACY record.  It is INVALID_FOR_E4 and
+# INVALID_FOR_SELECTION; no formal blind epoch currently exists.  The
+# canonical manifest is config/forward_epochs.yaml and is read at runtime.
 forward_shadow_status: ENABLED_ACCUMULATING
-true_blind_epoch_id: "v5.5.3-2026-08-05"
-true_blind_start: "2026-08-05"
-true_blind_status: ACCUMULATING
+true_blind_epoch_id: null
+true_blind_start: null
+true_blind_status: ENGINEERING_SOAK_LEGACY
+legacy_epoch:
+  epoch_id: "v5.5.3-2026-08-05"
+  status: ENGINEERING_SOAK_LEGACY
+  e4_status: INVALID_FOR_E4
+  selection_status: INVALID_FOR_SELECTION
 capital_authority: false
 allowed_new_capital_cny: 0
 signal_time: "T15:30:00+08:00"

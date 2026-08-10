@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -91,7 +92,189 @@ def get_signal_cutoff() -> str:
 
 def get_source_families() -> tuple[str, ...]:
     """Return all source families in deterministic contract order."""
-    return tuple(sorted(_load_raw_contract().get("families", {}).keys()))
+    contract = _load_raw_contract()
+    configured = contract.get("canonical_families") or []
+    families = tuple(str(value) for value in configured)
+    if families:
+        # A typo in the registry must fail closed instead of silently dropping
+        # a canonical family from adapter/audit/package traversal.
+        declared = set(contract.get("families", {}).keys())
+        missing = [name for name in families if name not in declared]
+        if missing:
+            raise ValueError(f"canonical_families_not_declared:{','.join(missing)}")
+        return families
+    return tuple(sorted(contract.get("families", {}).keys()))
+
+
+def get_lineage_columns() -> tuple[str, ...]:
+    """Return the four provenance columns required on every canonical frame."""
+    values = _load_raw_contract().get("lineage_columns") or [
+        "source_published_at",
+        "warehouse_loaded_at",
+        "decision_cutoff",
+        "availability_source",
+    ]
+    return tuple(str(value) for value in values)
+
+
+def get_formal_cutoff_config() -> dict[str, str]:
+    """Return the release-lineage cutoff policy from the canonical contract."""
+    raw = _load_raw_contract().get("formal_cutoff") or {}
+    return {
+        "timezone": str(raw.get("timezone") or _load_raw_contract().get("timezone") or "Asia/Shanghai"),
+        "default_time": str(raw.get("default_time") or "21:30:00"),
+        "hard_time": str(raw.get("hard_time") or "23:00:00"),
+    }
+
+
+def _parse_clock(value: str, fallback: str) -> time:
+    text = str(value or fallback).strip().replace("T", "")
+    try:
+        return datetime.strptime(text[:8], "%H:%M:%S").time()
+    except ValueError:
+        return datetime.strptime(fallback, "%H:%M:%S").time()
+
+
+def formal_cutoff_for_dates(
+    dates: pd.Series,
+    *,
+    hard: bool = False,
+) -> pd.Series:
+    """Build timezone-aware lineage cutoff timestamps for business dates."""
+    cfg = get_formal_cutoff_config()
+    clock = _parse_clock(cfg["hard_time"] if hard else cfg["default_time"], "23:00:00" if hard else "21:30:00")
+    parsed = pd.to_datetime(
+        dates if isinstance(dates, pd.Series) else pd.Series(dates),
+        errors="coerce",
+    )
+    # Timestamp construction with an explicit offset is intentionally done via
+    # the timezone name; this handles Asia/Shanghai consistently and rejects
+    # naive provider strings later in the validation layer.
+    return pd.to_datetime(
+        parsed.dt.strftime("%Y-%m-%d") + f"T{clock.strftime('%H:%M:%S')}",
+        errors="coerce",
+    ).dt.tz_localize(cfg["timezone"], ambiguous="NaT", nonexistent="NaT").dt.tz_convert("UTC")
+
+
+def _is_date_only(value: Any) -> bool:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return False
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "nat", "none"}:
+        return False
+    # YYYYMMDD and YYYY-MM-DD are date-only; a timestamp has a time marker.
+    return bool(re.fullmatch(r"\d{8}|\d{4}-\d{2}-\d{2}", text))
+
+
+def conservative_financial_availability(
+    values: pd.Series,
+    *,
+    trade_calendar: pd.DataFrame | None = None,
+    session_time: str = "09:00:00",
+) -> tuple[pd.Series, pd.Series]:
+    """Normalize financial date-only availability conservatively.
+
+    A date-only announcement is not assumed to be visible during that day's
+    session.  It is moved to the next open trading session (or next business
+    day when no calendar is supplied) and the returned source marker identifies
+    the conservative transformation.  Existing timezone-aware timestamps are
+    preserved byte-for-byte at the semantic level.
+    """
+    raw = values.copy()
+    parsed = pd.to_datetime(raw, errors="coerce", utc=True)
+    markers = pd.Series("provider_timestamp", index=raw.index, dtype="object")
+    open_dates: list[pd.Timestamp] = []
+    if trade_calendar is not None and not trade_calendar.empty:
+        date_col = "cal_date" if "cal_date" in trade_calendar.columns else "trade_date"
+        if date_col in trade_calendar.columns:
+            cal = pd.to_datetime(trade_calendar[date_col], errors="coerce").dt.normalize()
+            is_open = pd.to_numeric(trade_calendar.get("is_open", 1), errors="coerce").fillna(0).astype(bool)
+            open_dates = sorted(cal[is_open & cal.notna()].drop_duplicates().tolist())
+    for idx, value in raw.items():
+        if not _is_date_only(value):
+            continue
+        date = pd.to_datetime(value, errors="coerce")
+        if pd.isna(date):
+            continue
+        if open_dates:
+            candidates = [item for item in open_dates if item > date.normalize()]
+            next_day = candidates[0] if candidates else date.normalize() + pd.offsets.BDay(1)
+        else:
+            next_day = date.normalize() + pd.offsets.BDay(1)
+        parsed.loc[idx] = pd.Timestamp(
+            f"{next_day.date().isoformat()}T{session_time}+08:00"
+        ).tz_convert("UTC")
+        markers.loc[idx] = "financial_date_only_conservative_next_session"
+    return parsed, markers
+
+
+def validate_lineage_frame(
+    frame: pd.DataFrame,
+    family: str,
+    *,
+    strict: bool = True,
+    business_dates: pd.Series | None = None,
+) -> list[str]:
+    """Validate source publication/loading/availability provenance.
+
+    This helper is shared by Adapter, Semantic Audit, and Factor Builder so a
+    file source cannot pass one stage using a different timestamp interpretation.
+    """
+    blockers: list[str] = []
+    required = get_lineage_columns()
+    missing = [column for column in required if column not in frame.columns]
+    if missing and strict:
+        blockers.extend(f"lineage_column_missing:{family}:{column}" for column in missing)
+        return blockers
+    avail_col = get_available_at_column(family)
+    if avail_col not in frame.columns:
+        if strict:
+            blockers.append(f"available_at_missing:{family}:{avail_col}")
+        return blockers
+    date_series = business_dates
+    if date_series is None:
+        business_col = get_business_time_column(family)
+        date_series = frame.get(business_col, pd.Series(index=frame.index, dtype="object"))
+    decision = frame.get("decision_cutoff")
+    if decision is None:
+        if strict:
+            blockers.append(f"lineage_column_missing:{family}:decision_cutoff")
+        return blockers
+    parsed_dates = pd.to_datetime(date_series, errors="coerce")
+    default_cutoff = formal_cutoff_for_dates(pd.Series(parsed_dates, index=frame.index))
+    hard_cutoff = formal_cutoff_for_dates(pd.Series(parsed_dates, index=frame.index), hard=True)
+    decision_ts = pd.to_datetime(decision, errors="coerce", utc=True)
+    if decision_ts.isna().any():
+        blockers.append(f"lineage_decision_cutoff_invalid:{family}")
+    if (decision_ts > hard_cutoff).fillna(False).any():
+        blockers.append(f"lineage_decision_cutoff_after_hard_limit:{family}")
+    if (decision_ts > default_cutoff).fillna(False).any():
+        blockers.append(f"lineage_decision_cutoff_after_formal_cutoff:{family}")
+    for column in ("source_published_at", "warehouse_loaded_at", avail_col):
+        if column not in frame.columns:
+            if strict:
+                blockers.append(f"lineage_column_missing:{family}:{column}")
+            continue
+        values = frame[column]
+        offenders = validate_explicit_timezone(values)
+        if offenders:
+            blockers.append(f"lineage_timezone_missing:{family}:{column}")
+        parsed = pd.to_datetime(values, errors="coerce", utc=True)
+        if parsed.isna().any():
+            blockers.append(f"lineage_timestamp_invalid:{family}:{column}")
+        if (parsed > decision_ts).fillna(False).any():
+            blockers.append(f"lineage_{column}_after_decision_cutoff:{family}")
+        if (parsed > hard_cutoff).fillna(False).any():
+            blockers.append(f"lineage_{column}_after_hard_limit:{family}")
+    if "availability_source" in frame.columns:
+        source = frame["availability_source"].astype(str).str.strip()
+        if source.eq("").any() or source.str.lower().isin({"nan", "none", "null"}).any():
+            blockers.append(f"lineage_availability_source_missing:{family}")
+        if strict and source.str.contains(r"placeholder|fake|dummy|constant|data_e0", case=False, regex=True).any():
+            blockers.append(f"lineage_availability_source_placeholder:{family}")
+    elif strict:
+        blockers.append(f"lineage_column_missing:{family}:availability_source")
+    return sorted(set(blockers))
 
 
 def signal_time_for_trade_dates(trade_dates: pd.Series) -> pd.Series:

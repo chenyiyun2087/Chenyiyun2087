@@ -606,7 +606,7 @@ def test_e4_contract_not_started_rejected():
 
 def test_e4_contract_prestart_dates_rejected():
     ok, details = check_e4_contract(
-        "2026-08-05", "v5.5.3-2026-08-05",
+        "2026-08-10", "formal-epoch-2026-08-10",
         ["2026-08-04", "2026-08-06"], 3)
     assert not ok
     assert any("predate the declared start" in d for d in details)
@@ -614,10 +614,12 @@ def test_e4_contract_prestart_dates_rejected():
 
 def test_e4_contract_happy_path():
     ok, details = check_e4_contract(
-        "2026-08-05", "v5.5.3-2026-08-05", ["2026-08-05", "2026-08-06"], 3)
+        "2026-08-10", "formal-epoch-2026-08-10", ["2026-08-10", "2026-08-11"], 3,
+        epoch_status="FROZEN", formal_epoch=True)
     assert ok, details
 
 
 def test_e4_contract_negative_round_trips_rejected():
-    ok, details = check_e4_contract("2026-08-05", "v5.5.3-2026-08-05", [], -1)
+    ok, details = check_e4_contract("2026-08-10", "formal-epoch-2026-08-10", [], -1,
+                                    epoch_status="FROZEN", formal_epoch=True)
     assert not ok

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PIT Snapshot Extractor — extract all 8 families from MySQL with GTID binding.
+"""PIT Snapshot Extractor — extract all 9 canonical families from MySQL.
 
 Usage:
   python scripts/pit/run_snapshot_extract.py --release-id 20260801
@@ -8,7 +8,7 @@ Output:
   data/pit/releases/<release_id>/
     market.parquet, universe.parquet, financial.parquet, industry.parquet,
     adjustment.parquet, trade_calendar.parquet, security_lifecycle.parquet,
-    corporate_actions.parquet
+    corporate_actions.parquet, benchmark_index.parquet
     manifest.json
 """
 
@@ -30,7 +30,15 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from runtime.pit_semantic_contract import get_required_columns, get_contract_sha256
+from runtime.pit_semantic_contract import (
+    get_required_columns,
+    get_contract_sha256,
+    get_available_at_column,
+    formal_cutoff_for_dates,
+    conservative_financial_availability,
+    get_source_families,
+    get_lineage_columns,
+)
 
 # v5.3: shared listing-day detection for security_status_transition
 # (LISTED event).  Defined in post_extract_enrich so the extractor rewrite
@@ -97,6 +105,12 @@ def _get_transaction_config(config: dict[str, Any]) -> dict[str, Any]:
         "require_binlog_position": bool(
             config.get("snapshot", {}).get("require_binlog_position", True)
         ),
+        "require_provider_snapshot_token": bool(
+            config.get("snapshot", {}).get("require_provider_snapshot_token", True)
+        ),
+        "provider_snapshot_token_query": str(
+            config.get("snapshot", {}).get("provider_snapshot_token_query") or ""
+        ).strip(),
         "forbid_timestamp_fallback": bool(
             config.get("snapshot", {}).get("forbid_timestamp_fallback", True)
         ),
@@ -124,12 +138,52 @@ def _begin_consistent_snapshot(conn, config: dict[str, Any]) -> dict[str, Any]:
             cur.execute("START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT")
         else:
             cur.execute("START TRANSACTION WITH CONSISTENT SNAPSHOT")
-        cur.execute("SELECT @@server_uuid, @@transaction_isolation, @@gtid_executed")
+        cur.execute(
+            "SELECT @@server_uuid, @@server_id, @@hostname, "
+            "@@transaction_isolation, @@gtid_executed"
+        )
         row = cur.fetchone()
         if row:
             info["server_uuid"] = str(row[0])
-            info["transaction_isolation"] = str(row[1])
-            info["gtid_executed"] = str(row[2]) if row[2] else ""
+            if len(row) >= 5:
+                info["server_id"] = str(row[1])
+                info["server_hostname"] = str(row[2])
+                info["transaction_isolation"] = str(row[3])
+                info["gtid_executed"] = str(row[4]) if row[4] else ""
+            else:
+                # Compatibility with older MySQL drivers used by diagnostic
+                # tests; formal qualification still requires the token below.
+                info["transaction_isolation"] = str(row[1]) if len(row) > 1 else ""
+                info["gtid_executed"] = str(row[2]) if len(row) > 2 and row[2] else ""
+        # GTID is replication provenance, never a provider-issued read-view
+        # token.  A provider token may be queried only through an explicit,
+        # separate configured SELECT.
+        info["provider_snapshot_token"] = ""
+
+        token_query = txn.get("provider_snapshot_token_query") or ""
+        if token_query:
+            normalized = " ".join(token_query.split()).lower()
+            if (
+                not normalized.startswith("select ")
+                or "@@global.gtid_executed" in normalized
+                or "@@gtid_executed" in normalized
+                or "binlog" in normalized
+            ):
+                conn.rollback()
+                raise RuntimeError(
+                    "PIT consistency: provider_snapshot_token_query must be a "
+                    "provider-issued token SELECT, not GTID/binlog provenance"
+                )
+            cur.execute(token_query)
+            token_row = cur.fetchone()
+            if token_row and token_row[0] not in (None, ""):
+                token_value = str(token_row[0]).strip()
+                if token_value.lower().startswith(("gtid:", "binlog:")):
+                    conn.rollback()
+                    raise RuntimeError(
+                        "PIT consistency: provider token value is GTID/binlog provenance"
+                    )
+                info["provider_snapshot_token"] = token_value
 
         # MySQL 9.x uses SHOW BINARY LOG STATUS — fail-closed, NOT silent.
         try:
@@ -157,8 +211,24 @@ def _begin_consistent_snapshot(conn, config: dict[str, Any]) -> dict[str, Any]:
     if txn["forbid_timestamp_fallback"] and not info.get("gtid_executed"):
         conn.rollback()
         raise RuntimeError("PIT consistency: timestamp fallback forbidden by config")
+    # Missing provider token is intentionally non-fatal here.  The extractor
+    # still emits a same-transaction diagnostic snapshot, and the final
+    # manifest is BLOCKED_DATA/E0.  This preserves provenance for diagnosis
+    # without allowing GTID/binlog to masquerade as a token.
 
     info["snapshot_started_at"] = datetime.now(timezone.utc).isoformat()
+    info["transaction_started_at"] = info["snapshot_started_at"]
+    info["server_identity"] = {
+        key: info.get(key, "")
+        for key in ("server_uuid", "server_id", "server_hostname")
+    }
+    info["gtid_provenance"] = {
+        "gtid_executed": info.get("gtid_executed", ""),
+    }
+    info["binlog_provenance"] = {
+        "file": info.get("binlog_file", ""),
+        "position": info.get("binlog_position", 0),
+    }
     info["consistent_snapshot"] = True
     return info
 
@@ -353,6 +423,23 @@ FAMILY_QUERIES = {
           AND ann_date != 0
         ORDER BY symbol, trade_date
     """,
+    # The benchmark is deliberately part of this map.  It is executed by the
+    # same ``pd.read_sql`` loop and therefore the same connection/transaction
+    # as the eight stock PIT families.  ``extract_benchmark_index.py`` is a
+    # diagnostic-only wrapper and must not open a second connection.
+    "benchmark_index": """
+        SELECT trade_date, ts_code AS index_code,
+               CASE ts_code
+                 WHEN '000300.SH' THEN 'csi300'
+                 WHEN '000905.SH' THEN 'csi500'
+                 WHEN '000852.SH' THEN 'csi1000'
+               END AS index_label,
+               open, high, low, close, pre_close, pct_chg, vol, amount
+        FROM tushare_stock.ods_index_daily
+        WHERE ts_code IN ('000300.SH', '000905.SH', '000852.SH')
+          AND trade_date >= 20180101
+        ORDER BY ts_code, trade_date
+    """,
 }
 
 FAMILY_FILENAMES = {
@@ -364,11 +451,20 @@ FAMILY_FILENAMES = {
     "trade_calendar": "trade_calendar.parquet",
     "security_lifecycle": "security_lifecycle.parquet",
     "corporate_actions": "corporate_actions.parquet",
+    "benchmark_index": "benchmark_index.parquet",
 }
+
+# Keep the SQL registry and the semantic contract in lock-step.  A missing
+# family must fail at extraction time rather than silently producing an
+# eight-family release that downstream stages misinterpret.
+if set(FAMILY_QUERIES) != set(get_source_families()) or set(FAMILY_FILENAMES) != set(
+    get_source_families()
+):
+    raise RuntimeError("pit_family_registry_mismatch_with_semantic_contract")
 
 
 def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dict[str, Any]:
-    """Extract all 8 snapshot families and write manifest.
+    """Extract all 9 snapshot families and write manifest.
 
     v5.3: all family queries run inside ONE read-only consistent-snapshot
     transaction (REPEATABLE READ + START TRANSACTION READ ONLY WITH
@@ -390,17 +486,83 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
             txn_info = _begin_consistent_snapshot(conn, config)
     except Exception as exc:
         conn.close()
-        raise RuntimeError(f"PIT snapshot transaction could not be established: {exc}") from exc
+        # Materialize a fail-closed manifest rather than throwing away the
+        # provenance decision.  Formal callers can inspect BLOCKED_DATA and
+        # the exact reason (for example a missing provider token) without
+        # mistaking an exception for a completed release.
+        blocked = {
+            "schema_version": "pit_release_manifest_v1",
+            "release_id": release_id,
+            "field_definition_hash": get_contract_sha256(),
+            "status": "BLOCKED",
+            "data_status": "BLOCKED_DATA",
+            "claimed_evidence_level": "E0",
+            "qualified_evidence_level": None,
+            "consistent_snapshot": False,
+            "provider_snapshot_token": None,
+            "families": {
+                family: {
+                    "filename": FAMILY_FILENAMES[family],
+                    "rows": 0,
+                    "sha256": "",
+                    "query_sha256": "",
+                    "parameter_sha256": "",
+                    "status": "NOT_EXTRACTED",
+                }
+                for family in get_source_families()
+            },
+            "canonical_families": list(get_source_families()),
+            "lineage_columns": list(get_lineage_columns()),
+            "formal_cutoff": {
+                "timezone": "Asia/Shanghai",
+                "default": "21:30:00+08:00",
+                "hard": "23:00:00+08:00",
+            },
+            "transaction_started_at": None,
+            "transaction_finished_at": None,
+            "transaction_isolation": None,
+            "server_identity": {},
+            "gtid_provenance": {},
+            "binlog_provenance": {},
+            "query_sha256": {family: "" for family in get_source_families()},
+            "parameter_sha256": {family: "" for family in get_source_families()},
+            "file_sha256": {family: "" for family in get_source_families()},
+            "blockers": [
+                f"pit_snapshot_transaction_unavailable:{type(exc).__name__}:{exc}",
+                "provider_snapshot_token_missing",
+                "family_missing:all",
+            ],
+            "capital_authority": False,
+        }
+        blocked["content_sha256"] = hashlib.sha256(
+            json.dumps(
+                {key: value for key, value in blocked.items() if key != "content_sha256"},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        (output_dir / "manifest.json").write_text(
+            json.dumps(blocked, ensure_ascii=False, indent=2, sort_keys=True)
+        )
+        return blocked
 
     results: dict[str, Any] = {
         "release_id": release_id,
-        "snapshot_token": txn_info.get("gtid_executed", ""),
+        # ``snapshot_token`` is a compatibility alias for a real provider
+        # token only; GTID is retained separately as provenance.
+        "snapshot_token": txn_info.get("provider_snapshot_token", ""),
+        "provider_snapshot_token": txn_info.get("provider_snapshot_token", ""),
         "gtid": txn_info.get("gtid_executed", ""),
         "binlog": f"{txn_info.get('binlog_file', '')}:{txn_info.get('binlog_position', '')}",
         "server_uuid": txn_info.get("server_uuid", ""),
+        "server_identity": txn_info.get("server_identity", {}),
+        "gtid_provenance": txn_info.get("gtid_provenance", {}),
+        "binlog_provenance": txn_info.get("binlog_provenance", {}),
         "semantic_contract_sha256": contract_sha,
         "transaction_isolation": txn_info.get("transaction_isolation", ""),
         "snapshot_started_at": txn_info["snapshot_started_at"],
+        "transaction_started_at": txn_info.get("transaction_started_at", txn_info["snapshot_started_at"]),
         "consistent_snapshot": txn_info.get("consistent_snapshot", False),
         "families": {},
     }
@@ -462,9 +624,17 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                         else "NORMAL"
                     ), axis=1)
             elif family == "financial":
-                # DATA_E0: announcement assumed available before market open
+                # A date-only announcement is conservatively visible only in
+                # the next session; the marker is persisted in the lineage
+                # source field and prevents accidental same-day use.
                 df["financial_available_at"] = df["financial_available_at"].apply(
-                    lambda x: f"{_int_to_iso(x)}T08:00:00+08:00" if pd.notna(x) and x != 0 else "")
+                    lambda x: _int_to_iso(x) if pd.notna(x) and x != 0 else ""
+                )
+                normalized, marker = conservative_financial_availability(
+                    df["financial_available_at"], trade_calendar=None
+                )
+                df["financial_available_at"] = normalized
+                df["financial_availability_source"] = marker
             elif family == "industry":
                 df["industry_available_at"] = df["trade_date"].apply(
                     lambda x: f"{_int_to_iso(x)}T09:00:00+08:00")
@@ -511,6 +681,47 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                 # v5.3: economic fields come REAL from ods_dividend
                 # (cash_dividend=cash_div, bonus_ratio=stk_div); rights issues
                 # and splits have no dedicated source yet — honest NULLs.
+            elif family == "benchmark_index":
+                # All three benchmark codes are computed from the rows read in
+                # this transaction; no second connection or independent
+                # snapshot is permitted.
+                df["trade_date"] = df["trade_date"].apply(_int_to_iso)
+                df["close_num"] = pd.to_numeric(df["close"], errors="coerce")
+                for window in (5, 10, 20, 60):
+                    df[f"ret_{window}d"] = df.groupby("index_code", sort=False)["close_num"].transform(
+                        lambda values, window=window: values / values.shift(window) - 1.0
+                    )
+                df["benchmark_available_at"] = df["trade_date"].apply(
+                    lambda x: f"{x}T15:00:00+08:00" if x else ""
+                )
+                df = df.drop(columns=["close_num"], errors="ignore")
+
+            # Every canonical family carries the same explicit lineage shape.
+            # Source publication and warehouse load timestamps are provider
+            # facts; for the extractor's historical tables the best legal
+            # value is the family availability timestamp, never extraction
+            # wall-clock time.  The source marker makes this convention
+            # auditable and prevents E3 promotion by an adapter alone.
+            available_column = get_available_at_column(family)
+            if available_column in df.columns:
+                availability = pd.to_datetime(df[available_column], errors="coerce", utc=True)
+                df["source_published_at"] = availability
+                df["warehouse_loaded_at"] = availability
+                business_col = "cal_date" if family == "trade_calendar" else "trade_date"
+                business = pd.to_datetime(
+                    df.get(business_col, pd.Series(dtype="object")).apply(_int_to_iso),
+                    errors="coerce",
+                )
+                df["decision_cutoff"] = formal_cutoff_for_dates(business)
+                df["availability_source"] = f"mysql:{family}:provider_timestamp"
+                if family == "financial" and "financial_availability_source" in df.columns:
+                    conservative_rows = df["financial_availability_source"].astype(str).ne(
+                        "provider_timestamp"
+                    )
+                    df.loc[conservative_rows, "availability_source"] = df.loc[
+                        conservative_rows, "financial_availability_source"
+                    ]
+                    df = df.drop(columns=["financial_availability_source"])
 
             # Convert all integer date columns to YYYY-MM-DD strings
             DATE_COLS = ["trade_date", "cal_date", "announcement_date", "financial_period_end",
@@ -530,13 +741,21 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
             path = output_dir / filename
             df.to_parquet(path, index=False)
             sha = hashlib.sha256(path.read_bytes()).hexdigest()
+            query_sha = hashlib.sha256(" ".join(query.strip().split()).encode()).hexdigest()
+            parameter_sha = hashlib.sha256(b"{}").hexdigest()
             results["families"][family] = {
                 "filename": filename,
                 "rows": len(df),
                 "columns": sorted(df.columns.tolist()),
                 "sha256": sha,
+                "query_sha256": query_sha,
+                "query_text_sha256": query_sha,
+                "parameter_sha256": parameter_sha,
+                "availability_column": available_column,
                 "status": "EXTRACTED",
             }
+            if len(df) == 0:
+                blockers.append(f"family_missing_or_empty:{family}")
             print(f"  {family}: {len(df)} rows → {filename}")
         except Exception as exc:
             blockers.append(f"extract_failed:{family}:{type(exc).__name__}:{exc}")
@@ -546,32 +765,15 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
                 "sha256": "", "status": f"FAILED:{type(exc).__name__}",
             }
 
-    # Release the read-only snapshot transaction, then close.
+    # Release the read-only snapshot transaction, then close.  The end marker
+    # is captured before rollback so the manifest records the actual enclosing
+    # transaction for all nine families.
+    results["transaction_finished_at"] = datetime.now(timezone.utc).isoformat()
+    results["snapshot_finished_at"] = results["transaction_finished_at"]
     try:
         conn.rollback()
     finally:
         conn.close()
-
-    # v5.3: benchmark_index family — real CSI 300/500/1000 klines from
-    # tushare_stock.ods_index_daily (9th family; powers three-benchmark
-    # excess and market-state inputs for adaptive risk control).
-    try:
-        from scripts.pit.extract_benchmark_index import extract_benchmark_index
-        bench = extract_benchmark_index(output_dir)
-        results["families"]["benchmark_index"] = {
-            "filename": bench["filename"],
-            "rows": bench["rows"],
-            "columns": sorted(pd.read_parquet(output_dir / bench["filename"]).columns.tolist()),
-            "sha256": bench["sha256"],
-            "status": "EXTRACTED",
-            "coverage": bench["coverage"],
-        }
-        print(f"  benchmark_index: {bench['rows']} rows → {bench['filename']}")
-        for label, cov in bench["coverage"].items():
-            if cov.get("gap"):
-                blockers.append(f"benchmark_coverage_gap:{label}")
-    except Exception as exc:
-        blockers.append(f"extract_failed:benchmark_index:{type(exc).__name__}:{exc}")
 
     # v5.3: enrich — market_return (single source of truth), circ_mv window,
     # PIT-aware transforms.  Runs BEFORE the manifest is written so the
@@ -597,6 +799,18 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
         info["rows"] = len(df)
         info["columns"] = sorted(df.columns.tolist())
         info["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    results["query_sha256"] = {
+        family: str((info or {}).get("query_sha256") or "")
+        for family, info in sorted(results["families"].items())
+    }
+    results["parameter_sha256"] = {
+        family: str((info or {}).get("parameter_sha256") or "")
+        for family, info in sorted(results["families"].items())
+    }
+    results["file_sha256"] = {
+        family: str((info or {}).get("sha256") or "")
+        for family, info in sorted(results["families"].items())
+    }
 
     # Check required columns
     for family in FAMILY_FILENAMES:
@@ -608,12 +822,82 @@ def extract_all(release_id: str, skip_consistency_snapshot: bool = False) -> dic
             if missing:
                 blockers.append(f"schema_missing:{family}:{sorted(missing)}")
 
+    # A formal release is never complete when a canonical family was skipped,
+    # empty, or extracted outside the transaction.  Keep this explicit even
+    # when a lower-level query reported an error so downstream consumers see a
+    # stable BLOCKED_DATA reason.
+    for family, filename in FAMILY_FILENAMES.items():
+        info = results["families"].get(family) or {}
+        if info.get("status") != "EXTRACTED" or not (output_dir / filename).exists():
+            blockers.append(f"family_missing:{family}")
+    if not results.get("provider_snapshot_token"):
+        blockers.append("provider_snapshot_token_missing")
+    if not results.get("consistent_snapshot"):
+        blockers.append("consistent_snapshot_required")
+
+    # The extractor itself is fail-closed for known placeholder dimensions;
+    # downstream audit repeats these checks for frozen FILE sources.  This
+    # prevents a raw SQL run from being labelled a formal candidate merely
+    # because all columns happened to exist.
+    extracted_frames: dict[str, pd.DataFrame] = {}
+    for family, info in results["families"].items():
+        if info.get("status") != "EXTRACTED":
+            continue
+        path = output_dir / str(info.get("filename") or "")
+        if path.exists():
+            try:
+                extracted_frames[family] = pd.read_parquet(path)
+            except Exception:
+                continue
+    for family in ("universe", "security_lifecycle"):
+        frame = extracted_frames.get(family)
+        if frame is None:
+            continue
+        if "is_suspended" in frame.columns and frame["is_suspended"].dropna().nunique() <= 1:
+            blockers.append(f"suspension_placeholder_or_constant:{family}")
+        if "security_status_transition" in frame.columns and frame[
+            "security_status_transition"
+        ].dropna().nunique() <= 1:
+            blockers.append(f"lifecycle_transition_placeholder_or_constant:{family}")
+    financial = extracted_frames.get("financial")
+    if financial is not None:
+        if "revision_id" not in financial.columns or financial["revision_id"].dropna().nunique() <= 1:
+            blockers.append("financial_revision_chain_constant_or_missing")
+        if "revision_sequence" not in financial.columns or pd.to_numeric(
+            financial["revision_sequence"], errors="coerce"
+        ).nunique() <= 1:
+            blockers.append("financial_revision_sequence_constant_or_missing")
+    industry = extracted_frames.get("industry")
+    if industry is not None and (
+        "valid_to" not in industry.columns or industry["valid_to"].isna().all()
+    ):
+        blockers.append("industry_scd_valid_to_missing_or_constant")
+    actions = extracted_frames.get("corporate_actions")
+    if actions is not None:
+        if actions.empty:
+            blockers.append("corporate_actions_empty")
+        for column in ("source_event_id", "event_id", "event_hash"):
+            if column not in actions.columns or actions[column].isna().all() or actions[column].astype(str).nunique() <= 1:
+                blockers.append(f"corporate_action_{column}_placeholder_or_constant")
+        if "source_complete" in actions.columns and actions["source_complete"].nunique() <= 1:
+            blockers.append("corporate_action_source_complete_constant")
+    benchmark = extracted_frames.get("benchmark_index")
+    if benchmark is not None:
+        codes = set(benchmark.get("index_code", pd.Series(dtype="object")).dropna().astype(str))
+        if codes != {"000300.SH", "000905.SH", "000852.SH"}:
+            blockers.append("benchmark_codes_incomplete")
+
     # Write manifest
     manifest = {
         "schema_version": "pit_release_manifest_v1",
         "field_definition_hash": contract_sha,
         **results,
         "status": "PASS" if not blockers else "BLOCKED",
+        "data_status": "DATA_E3_CANDIDATE" if not blockers else "BLOCKED_DATA",
+        "claimed_evidence_level": "E1" if not blockers else "E0",
+        # The extractor is not an independent qualifier and therefore can
+        # never assert E3 on its own.
+        "qualified_evidence_level": None,
         "blockers": blockers,
         "content_sha256": hashlib.sha256(
             json.dumps(results, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()

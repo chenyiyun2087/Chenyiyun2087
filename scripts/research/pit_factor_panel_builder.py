@@ -33,6 +33,10 @@ from runtime.pit_semantic_contract import (
     get_primary_key,
     get_canonical_execution_columns,
     get_economic_columns,
+    get_lineage_columns,
+    get_business_time_column,
+    validate_lineage_frame,
+    conservative_financial_availability,
     signal_time_for_trade_dates,
     validate_explicit_timezone,
 )
@@ -192,10 +196,16 @@ def _blocked_report(
         "profile": profile_name,
         "status": "BLOCKED",
         "evidence_level": "E0",
+        "claimed_evidence_level": "E0",
+        "qualified_evidence_level": None,
+        "data_status": "BLOCKED_DATA",
         "synthetic_evidence_level": "S0",
         "panel_qualified": False,
         "historical_evidence_qualified": False,
         "synthetic_contract_qualified": False,
+        "benchmark_index_bound": False,
+        "canonical_families": list(CANONICAL_SOURCE_NAMES),
+        "lineage_columns": list(get_lineage_columns()),
         "source_paths": {
             name: str(path) if path is not None else None
             for name, path in source_paths.items()
@@ -215,6 +225,48 @@ def _blocked_report(
     return report
 
 
+def _validate_strict_qualifier(
+    qualifier_path: Path | None,
+    source_manifest_path: Path,
+) -> tuple[bool, list[str]]:
+    """Verify the independent qualifier's content and upstream bindings."""
+    blockers: list[str] = []
+    if qualifier_path is None or not qualifier_path.exists():
+        return False, ["independent_pit_qualifier_missing"]
+    try:
+        qualifier = json.loads(qualifier_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, [f"independent_pit_qualifier_unreadable:{type(exc).__name__}"]
+    declared = str(qualifier.get("content_sha256") or "")
+    actual = canonical_sha({key: value for key, value in qualifier.items() if key != "content_sha256"})
+    if not declared or declared != actual:
+        blockers.append("independent_pit_qualifier_content_sha256_invalid")
+    if qualifier.get("component") != "independent_pit_qualifier":
+        blockers.append("independent_pit_qualifier_component_invalid")
+    if qualifier.get("status") != "PASS" or qualifier.get("qualified_evidence_level") != "E3":
+        blockers.append("independent_pit_qualifier_not_e3")
+    source_sha = str(qualifier.get("source_manifest_sha256") or "")
+    if source_sha != _file_sha(source_manifest_path):
+        blockers.append("independent_pit_qualifier_source_manifest_sha_mismatch")
+    audit_path = Path(str(qualifier.get("audit_report_path") or ""))
+    audit_sha = str(qualifier.get("audit_sha256") or "")
+    if not audit_path.exists() or not audit_sha or _file_sha(audit_path) != audit_sha:
+        blockers.append("independent_pit_qualifier_audit_sha_mismatch")
+    else:
+        try:
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            if audit.get("status") != "PASS" or audit.get("qualified_evidence_level") not in (None, ""):
+                blockers.append("independent_pit_qualifier_audit_not_contract_valid")
+            audit_declared = str(audit.get("content_sha256") or "")
+            if audit_declared != canonical_sha(
+                {key: value for key, value in audit.items() if key != "content_sha256"}
+            ):
+                blockers.append("independent_pit_qualifier_audit_content_sha_invalid")
+        except Exception as exc:
+            blockers.append(f"independent_pit_qualifier_audit_unreadable:{type(exc).__name__}")
+    return not blockers, sorted(set(blockers))
+
+
 def build_pit_factor_panel(
     *,
     market_path: Path | None,
@@ -230,6 +282,8 @@ def build_pit_factor_panel(
     trade_calendar_path: Path | None = None,
     security_lifecycle_path: Path | None = None,
     corporate_actions_path: Path | None = None,
+    benchmark_index_path: Path | None = None,
+    strict_qualifier_path: Path | None = None,
 ) -> dict[str, Any]:
     profile = load_validation_profile(profile_name)
     source_paths = {
@@ -244,6 +298,7 @@ def build_pit_factor_panel(
         "trade_calendar": trade_calendar_path,
         "security_lifecycle": security_lifecycle_path,
         "corporate_actions": corporate_actions_path,
+        "benchmark_index": benchmark_index_path,
     }
     source_paths.update({k: v for k, v in optional_paths.items() if v is not None})
     try:
@@ -257,6 +312,8 @@ def build_pit_factor_panel(
             trade_calendar_path=trade_calendar_path,
             security_lifecycle_path=security_lifecycle_path,
             corporate_actions_path=corporate_actions_path,
+            benchmark_index_path=benchmark_index_path,
+            strict_qualifier_path=strict_qualifier_path,
             profile=profile, source_paths=source_paths,
         )
     except Exception as exc:
@@ -281,6 +338,8 @@ def _build_pit_factor_panel_impl(
     trade_calendar_path: Path | None,
     security_lifecycle_path: Path | None,
     corporate_actions_path: Path | None,
+    benchmark_index_path: Path | None,
+    strict_qualifier_path: Path | None,
     profile: dict[str, Any],
     source_paths: dict[str, Path | None],
 ) -> dict[str, Any]:
@@ -320,9 +379,17 @@ def _build_pit_factor_panel_impl(
         )
     evidence_origin = str(manifest.get("evidence_origin") or "")
     semantic_version = str(manifest.get("schema_semantic_version") or "")
-    strict_contract = evidence_origin == "HISTORICAL_REAL" or any(
-        path is not None
-        for path in (trade_calendar_path, security_lifecycle_path, corporate_actions_path)
+    strict_contract = evidence_origin == "HISTORICAL_REAL" or (
+        evidence_origin not in {"", "SYNTHETIC"}
+        and any(
+            path is not None
+            for path in (
+                trade_calendar_path,
+                security_lifecycle_path,
+                corporate_actions_path,
+                benchmark_index_path,
+            )
+        )
     )
     synthetic_compat = evidence_origin == "SYNTHETIC"
     legacy_fixture = synthetic_compat and semantic_version.startswith("fixture-")
@@ -330,6 +397,7 @@ def _build_pit_factor_panel_impl(
         "trade_calendar": trade_calendar_path,
         "security_lifecycle": security_lifecycle_path,
         "corporate_actions": corporate_actions_path,
+        "benchmark_index": benchmark_index_path,
     }
     strict_optional_blockers = (
         [f"{name}_snapshot_missing" for name, path in optional_paths.items() if path is None]
@@ -347,6 +415,54 @@ def _build_pit_factor_panel_impl(
         if path is not None:
             frames[name] = _read_table(path)
     blockers: list[str] = strict_optional_blockers
+    if strict_contract:
+        identity = dict(manifest.get("snapshot_identity") or {})
+        if not identity:
+            identity = {
+                key: manifest.get(key)
+                for key in (
+                    "provider_snapshot_token",
+                    "snapshot_token",
+                    "transaction_started_at",
+                    "transaction_finished_at",
+                    "transaction_isolation",
+                    "consistent_snapshot",
+                    "server_identity",
+                    "gtid_provenance",
+                    "binlog_provenance",
+                    "gtid_or_binlog_position",
+                )
+                if manifest.get(key) is not None
+            }
+        if not str(
+            identity.get("provider_snapshot_token")
+            or identity.get("snapshot_token")
+            or ""
+        ):
+            blockers.append("provider_snapshot_token_missing")
+        if not identity.get("transaction_started_at"):
+            blockers.append("transaction_started_at_missing")
+        if not identity.get("transaction_finished_at"):
+            blockers.append("transaction_finished_at_missing")
+        if identity.get("transaction_isolation") not in {
+            "REPEATABLE READ",
+            "FILE_IMMUTABLE",
+        }:
+            blockers.append("transaction_isolation_invalid")
+        if identity.get("transaction_isolation") == "REPEATABLE READ" and identity.get(
+            "consistent_snapshot"
+        ) is not True:
+            blockers.append("consistent_snapshot_required")
+        if not identity.get("server_identity"):
+            blockers.append("server_identity_missing")
+        if not identity.get("gtid_provenance") and not identity.get(
+            "gtid_or_binlog_position"
+        ):
+            blockers.append("gtid_provenance_missing")
+        if not identity.get("binlog_provenance") and not identity.get(
+            "gtid_or_binlog_position"
+        ):
+            blockers.append("binlog_provenance_missing")
     for name, frame in frames.items():
         absent = sorted(get_required_columns(name) - set(frame.columns))
         # Legacy aliases/defaults are restricted to explicitly synthetic
@@ -394,6 +510,18 @@ def _build_pit_factor_panel_impl(
             blockers.extend(
                 f"corporate_action_economic_column_missing:{column}"
                 for column in sorted(get_economic_columns(name) - set(frame.columns))
+            )
+        if strict_contract:
+            blockers.extend(
+                validate_lineage_frame(
+                    frame,
+                    name,
+                    strict=True,
+                    business_dates=frame.get(
+                        get_business_time_column(name),
+                        pd.Series(index=frame.index, dtype="object"),
+                    ),
+                )
             )
     if str(manifest.get("status")) != "QUALIFIED":
         blockers.append("source_manifest_not_qualified")
@@ -498,7 +626,7 @@ def _build_pit_factor_panel_impl(
                     blockers.append(f"duplicate_key:{name}:{duplicate_count}")
             elif not key_columns_present and strict_contract:
                 blockers.append(f"primary_key_columns_missing:{name}")
-        if name != "trade_calendar":
+        if name not in {"trade_calendar", "benchmark_index"}:
             frame["symbol"] = (
                 frame.get("symbol", pd.Series(index=frame.index, dtype="object"))
                 .astype(str)
@@ -508,8 +636,11 @@ def _build_pit_factor_panel_impl(
             )
         invalid_business_time = frame["trade_date"].isna().any()
         invalid_symbol = (
-            name != "trade_calendar" and frame["symbol"].isna().any()
+            name not in {"trade_calendar", "benchmark_index"}
+            and frame["symbol"].isna().any()
         )
+        if name == "benchmark_index" and frame.get("index_code", pd.Series(index=frame.index)).isna().any():
+            invalid_symbol = True
         if invalid_business_time or invalid_symbol:
             blockers.append(f"invalid_key:{name}")
     # Continue through semantic checks even when an upstream identity/schema
@@ -568,6 +699,36 @@ def _build_pit_factor_panel_impl(
     panel = panel.merge(
         frames["adjustment"], on=["trade_date", "symbol"], how="left"
     )
+    # Bind the primary benchmark (and its 5/10/20/60-day returns) to each
+    # stock signal date.  The benchmark rows themselves remain in the adapter
+    # snapshot; this merge simply makes the PIT dependency visible in the
+    # factor panel and downstream package.
+    if "benchmark_index" in frames:
+        benchmark = frames["benchmark_index"].copy()
+        primary = benchmark.loc[
+            benchmark.get("index_code", pd.Series(index=benchmark.index)).astype(str).eq("000300.SH")
+        ].copy()
+        if primary.empty:
+            blockers.append("benchmark_primary_missing:000300.SH")
+        else:
+            benchmark_columns = [
+                column
+                for column in (
+                    "trade_date", "ret_5d", "ret_10d", "ret_20d", "ret_60d",
+                    "benchmark_available_at",
+                )
+                if column in primary.columns
+            ]
+            primary = primary[benchmark_columns].drop_duplicates("trade_date")
+            panel = panel.merge(primary, on="trade_date", how="left")
+        codes = set(benchmark.get("index_code", pd.Series(dtype="object")).dropna().astype(str))
+        required_codes = {"000300.SH", "000905.SH", "000852.SH"}
+        if codes != required_codes:
+            blockers.append(f"benchmark_codes_incomplete:{sorted(codes)}")
+        if {"index_code", "trade_date"}.issubset(benchmark.columns) and benchmark.duplicated(
+            ["index_code", "trade_date"]
+        ).any():
+            blockers.append("benchmark_duplicate_index_dates")
     # Bind the remaining canonical snapshots when supplied by the formal
     # pipeline.  Corporate actions can contain multiple events per day; keep
     # one deterministic diagnostic row so the factor panel does not fan out.
@@ -606,6 +767,11 @@ def _build_pit_factor_panel_impl(
         "revision_sequence",
         "financial_source_snapshot_sha",
         "market_regime",
+        "ret_5d",
+        "ret_10d",
+        "ret_20d",
+        "ret_60d",
+        "benchmark_available_at",
         "security_status_transition",
     ):
         if column not in panel.columns:
@@ -617,6 +783,8 @@ def _build_pit_factor_panel_impl(
     for name in ("security_lifecycle",):
         if name in frames:
             availability_columns.append(get_available_at_column(name))
+    if "benchmark_index" in frames:
+        availability_columns.append(get_available_at_column("benchmark_index"))
     for column in availability_columns:
         if column not in panel.columns:
             blockers.append(f"missing_available_at:{column}:0")
@@ -975,6 +1143,15 @@ def _build_pit_factor_panel_impl(
             blockers.append("security_status_transition_constant_or_missing")
         if qualified["corporate_action_type"].dropna().nunique() <= 1:
             blockers.append("corporate_action_type_constant_or_missing")
+        for family in ("universe", "security_lifecycle"):
+            source = frames.get(family)
+            if source is None:
+                blockers.append(f"{family}_snapshot_missing")
+                continue
+            if "is_suspended" in source.columns and source["is_suspended"].dropna().nunique() <= 1:
+                blockers.append(f"suspension_placeholder_or_constant:{family}")
+            if "security_status_transition" in source.columns and source["security_status_transition"].dropna().nunique() <= 1:
+                blockers.append(f"lifecycle_transition_placeholder_or_constant:{family}")
         # Financial revision chain
         rev_ids = qualified["revision_id"].dropna()
         if rev_ids.empty or rev_ids.nunique() <= 1:
@@ -997,11 +1174,27 @@ def _build_pit_factor_panel_impl(
         ind_avail = qualified["industry_available_at"].dropna()
         if not ind_avail.empty and ind_avail.nunique() <= 1:
             blockers.append("industry_scd_suspected_current_backfill")
+        if "industry" in frames:
+            industry_source = frames["industry"]
+            if "valid_to" not in industry_source.columns or industry_source["valid_to"].isna().all():
+                blockers.append("industry_scd_valid_to_missing_or_constant")
+        benchmark_source = frames.get("benchmark_index")
+        if benchmark_source is None:
+            blockers.append("benchmark_index_snapshot_missing")
+        else:
+            codes = set(benchmark_source.get("index_code", pd.Series(dtype="object")).dropna().astype(str))
+            if codes != {"000300.SH", "000905.SH", "000852.SH"}:
+                blockers.append("benchmark_index_required_codes_missing")
     elif fdh.startswith("matCHANGEME"):
         blockers.append("field_definition_hash_is_placeholder")
     status = "PASS" if not blockers else "BLOCKED"
+    strict_qualifier_passed, qualifier_blockers = _validate_strict_qualifier(
+        strict_qualifier_path, source_manifest_path
+    )
+    if evidence_origin == "HISTORICAL_REAL":
+        blockers.extend(qualifier_blockers)
     historical_qualified = (
-        status == "PASS" and evidence_origin == "HISTORICAL_REAL"
+        status == "PASS" and evidence_origin == "HISTORICAL_REAL" and strict_qualifier_passed
     )
     synthetic_qualified = (
         status == "PASS" and evidence_origin == "SYNTHETIC"
@@ -1079,6 +1272,15 @@ def _build_pit_factor_panel_impl(
         "profile": profile_name,
         "status": status,
         "evidence_level": "E3" if historical_qualified else "E0",
+        "claimed_evidence_level": "E1" if evidence_origin == "HISTORICAL_REAL" else "S3",
+        "qualified_evidence_level": "E3" if historical_qualified else None,
+        "data_status": "DATA_E3_QUALIFIED" if historical_qualified else (
+            "BLOCKED_DATA" if blockers else "DATA_E1_CLAIMED"
+        ),
+        "strict_qualifier": str(strict_qualifier_path) if strict_qualifier_path else None,
+        "benchmark_index_bound": "benchmark_index" in frames,
+        "canonical_families": list(CANONICAL_SOURCE_NAMES),
+        "lineage_columns": list(get_lineage_columns()),
         "synthetic_evidence_level": "S3" if synthetic_qualified else "S0",
         "panel_qualified": status == "PASS",
         "historical_evidence_qualified": historical_qualified,
@@ -1137,6 +1339,8 @@ def main() -> None:
     parser.add_argument("--trade-calendar", type=Path)
     parser.add_argument("--security-lifecycle", type=Path)
     parser.add_argument("--corporate-actions", type=Path)
+    parser.add_argument("--benchmark-index", type=Path)
+    parser.add_argument("--strict-qualifier", type=Path)
     parser.add_argument("--source-manifest", type=Path)
     parser.add_argument("--adapter-report", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -1152,6 +1356,8 @@ def main() -> None:
         trade_calendar_path=args.trade_calendar,
         security_lifecycle_path=args.security_lifecycle,
         corporate_actions_path=args.corporate_actions,
+        benchmark_index_path=args.benchmark_index,
+        strict_qualifier_path=args.strict_qualifier,
         source_manifest_path=args.source_manifest,
         output_dir=args.output_dir,
         profile_name=args.profile,

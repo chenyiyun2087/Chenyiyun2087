@@ -61,6 +61,7 @@ def check_package_contract(
     portfolios_df: pd.DataFrame,
     lineage_records: list[dict],
     required_families: tuple[str, ...],
+    required_inventory_files: tuple[str, ...] | None = None,
 ) -> tuple[bool, list[str]]:
     """Sealed-package contract: status, classification, file SHAs,
     lineage completeness, weight sum + cash residual = 1 per candidate.
@@ -117,6 +118,30 @@ def check_package_contract(
         payloads = inventory.get("files")
         if not isinstance(payloads, dict):
             payloads = inventory
+        # New builders bind the canonical inventory map itself.  A legacy
+        # fixture may carry a non-SHA sentinel; that remains readable during
+        # migration, while a real declared root SHA is always checked.
+        declared_root_sha = inventory.get("package_sha256") if isinstance(inventory, dict) else None
+        root_check_requested = bool(
+            required_inventory_files
+            or manifest.get("required_inventory_files")
+            or inventory.get("root_sha_algorithm")
+            or inventory.get("inventory_sha256")
+        )
+        if root_check_requested and _is_sha256(declared_root_sha):
+            canonical_inventory = json.dumps(
+                {str(name): str(value) for name, value in sorted(payloads.items())
+                 if name not in ("package_sha256", "schema_version", "package_dir")},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            ).encode()
+            actual_root_sha = _sha256_bytes(canonical_inventory)
+            if actual_root_sha != declared_root_sha:
+                problems.append(f"inventory root SHA mismatch: {declared_root_sha} != {actual_root_sha}")
+        required = required_inventory_files or tuple(manifest.get("required_inventory_files") or ())
+        if required:
+            missing_inventory = sorted(set(required) - set(payloads))
+            if missing_inventory:
+                problems.append(f"inventory required file set incomplete: {missing_inventory}")
         for fname, expected in payloads.items():
             if fname in ("package_sha256", "schema_version", "package_dir"):
                 continue
@@ -322,6 +347,123 @@ def check_reconcile_contract(
                   f"pending={len(pending)}; terminal_events={len(terminal_by_order)}"]
 
 
+# ── Event ledger / projection ────────────────────────────────────────
+
+
+def check_event_projection_contract(
+    events: list[dict] | tuple[dict, ...] | Path,
+    projected_orders: list[dict] | tuple[dict, ...],
+) -> tuple[bool, list[str]]:
+    """Prove that ``orders.json`` is exactly the event-ledger projection.
+
+    The append-only event ledger is the source of truth.  This pure checker
+    catches orphan projection rows, missing terminal transitions, duplicate
+    event identities, and binding-field drift.  A path is accepted as a
+    convenience for operator verifiers; no writes occur.
+    """
+
+    problems: list[str] = []
+    if isinstance(events, Path):
+        try:
+            from runtime.shadow_events import iter_all_events, iter_events
+            if events.is_dir():
+                source_events = list(iter_all_events(events))
+            else:
+                source_events = list(iter_events(events))
+        except Exception as exc:  # pragma: no cover - defensive I/O path
+            return False, [f"result=FAIL; task=event_projection_contract; reasons=event_log_corrupt:{exc}"]
+    else:
+        source_events = [dict(event) for event in events]
+    projected = [dict(order) for order in projected_orders]
+    by_id: dict[str, dict] = {}
+    identities: set[tuple[str, str | None]] = set()
+    for event in source_events:
+        etype = event.get("event_type")
+        if etype not in TERMINAL_EVENT_KINDS and etype not in {"ORDER_PRECOMMITTED", "SELL_PRECOMMITTED", "NAV_SNAPSHOT"}:
+            problems.append(f"unknown_event_type:{etype}")
+            continue
+        if etype == "NAV_SNAPSHOT":
+            continue
+        oid = event.get("order_id")
+        if not oid:
+            problems.append(f"event_without_order_id:{etype}")
+            continue
+        identity = (str(etype), str(oid))
+        if identity in identities:
+            problems.append(f"duplicate_event_identity:{identity}")
+        identities.add(identity)
+        if etype == "ORDER_PRECOMMITTED":
+            if oid in by_id:
+                problems.append(f"duplicate_order_precommit:{oid}")
+                continue
+            by_id[oid] = {
+                "order_id": oid,
+                "signal_date": event.get("signal_date"),
+                "execution_date": event.get("execution_date"),
+                "challenger_id": event.get("challenger_id"),
+                "symbol": event.get("symbol"),
+                "side": event.get("side", "BUY"),
+                "target_weight": event.get("target_weight"),
+                "target_shares": event.get("target_shares"),
+                "precommit_price": event.get("precommit_price"),
+                "package_sha": event.get("source_package_sha", event.get("package_sha")),
+                "state": "ORDER_PRECOMMITTED",
+            }
+            continue
+        if etype == "SELL_PRECOMMITTED":
+            if oid in by_id:
+                problems.append(f"duplicate_order_precommit:{oid}")
+                continue
+            by_id[oid] = {
+                "order_id": oid,
+                "signal_date": event.get("signal_date"),
+                "execution_date": event.get("execution_date"),
+                "challenger_id": event.get("challenger_id"),
+                "symbol": event.get("symbol"),
+                "side": "SELL",
+                "target_weight": event.get("target_weight"),
+                "target_shares": event.get("target_shares"),
+                "precommit_price": event.get("precommit_price"),
+                "package_sha": event.get("source_package_sha", event.get("package_sha")),
+                "state": "SELL_PRECOMMITTED",
+            }
+            continue
+        if oid not in by_id:
+            problems.append(f"terminal_event_orphan:{oid}")
+            continue
+        expected_side = _SIDE_OF_EVENT[etype]
+        if by_id[oid].get("side") != expected_side:
+            problems.append(f"event_side_mismatch:{oid}")
+        by_id[oid]["state"] = etype
+        by_id[oid]["fill_status"] = "FILLED" if etype.endswith("FILLED") else "REJECTED"
+        if event.get("fill_price") is not None:
+            by_id[oid]["fill_price"] = event.get("fill_price")
+        if event.get("rejection_reason") is not None:
+            by_id[oid]["rejection_reason"] = event.get("rejection_reason")
+    projection_by_id = {order.get("order_id"): order for order in projected if order.get("order_id")}
+    if len(projection_by_id) != len(projected):
+        problems.append("projection_missing_or_duplicate_order_id")
+    if set(by_id) != set(projection_by_id):
+        problems.append(f"projection_order_set_mismatch:events={sorted(by_id)} projection={sorted(projection_by_id)}")
+    binding_fields = ("signal_date", "execution_date", "challenger_id", "symbol", "side", "state")
+    for oid, expected in by_id.items():
+        actual = projection_by_id.get(oid)
+        if actual is None:
+            continue
+        for field in binding_fields:
+            if actual.get(field) != expected.get(field):
+                problems.append(f"projection_mismatch:{oid}:{field}:{actual.get(field)!r}!={expected.get(field)!r}")
+    if problems:
+        return False, [f"result=FAIL; task=event_projection_contract; reasons={problems[0]}"] + problems
+    return True, [f"result=PASS; task=event_projection_contract; orders={len(by_id)}; events={len(source_events)}"]
+
+
+# Verbose aliases make the contract discoverable to callers that name the
+# two proof obligations separately.
+check_event_replay_projection_contract = check_event_projection_contract
+check_event_replay_contract = check_event_projection_contract
+
+
 # ── Sell ───────────────────────────────────────────────────────────────
 
 
@@ -483,6 +625,11 @@ def check_e4_contract(
     registry_epoch_id: str | None,
     valid_dates: list[str],
     counted_round_trips: int,
+    *,
+    epoch_status: str | None = None,
+    selection_status: str | None = None,
+    e4_status: str | None = None,
+    formal_epoch: bool | None = None,
 ) -> tuple[bool, list[str]]:
     """E4 counting contract.
 
@@ -496,9 +643,16 @@ def check_e4_contract(
     if not registry_start:
         problems.append("true_blind_start is null — epoch NOT_STARTED, "
                         "no E4 evidence exists yet")
-    if registry_epoch_id and not registry_epoch_id.startswith("v5.5.3"):
-        problems.append(f"epoch_id {registry_epoch_id!r} not a v5.5.3 "
-                        "declaration")
+    if registry_epoch_id and (registry_epoch_id.startswith("v5.5.3") or "2026-08-05" in registry_epoch_id):
+        problems.append(f"epoch_id {registry_epoch_id!r} is a legacy engineering-soak epoch")
+    if epoch_status in {"ENGINEERING_SOAK", "ENGINEERING_SOAK_LEGACY", "INVALID_FOR_E4", "LEGACY"}:
+        problems.append(f"epoch_status {epoch_status!r} is invalid for E4")
+    if selection_status == "INVALID_FOR_SELECTION":
+        problems.append("epoch invalid for selection")
+    if e4_status == "INVALID_FOR_E4":
+        problems.append("epoch invalid for E4")
+    if formal_epoch is False:
+        problems.append("formal epoch not declared")
     prestart = [d for d in valid_dates
                 if registry_start and d < registry_start]
     if prestart:

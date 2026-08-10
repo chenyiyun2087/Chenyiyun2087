@@ -31,6 +31,14 @@ class ShadowLifecycleStatus:
     evidence_sha256: str
     canary_approval_package_allowed: bool
     canary_capital_authorized: bool = False
+    alpha_t: float | None = None
+    adjusted_p: float | None = None
+    positive_excess_ratio: float | None = None
+    sharpe: float | None = None
+    max_drawdown: float | None = None
+    cost_2x_passed: bool | None = None
+    shadow_zero_difference: bool | None = None
+    manual_approval: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +56,14 @@ class ShadowLifecycleStatus:
             "evidence_sha256": self.evidence_sha256,
             "canary_approval_package_allowed": self.canary_approval_package_allowed,
             "canary_capital_authorized": False,
+            "alpha_t": self.alpha_t,
+            "adjusted_p": self.adjusted_p,
+            "positive_excess_ratio": self.positive_excess_ratio,
+            "sharpe": self.sharpe,
+            "max_drawdown": self.max_drawdown,
+            "cost_2x_passed": self.cost_2x_passed,
+            "shadow_zero_difference": self.shadow_zero_difference,
+            "manual_approval": self.manual_approval,
             "promotion_status": (
                 "ELIGIBLE_FOR_MANUAL_APPROVAL"
                 if self.canary_approval_package_allowed
@@ -269,6 +285,71 @@ def evaluate_shadow_lifecycle(
     if any(int(row.get("risk_gate_false_negative") or 0) > 0 for row in accepted):
         blockers.append("RISK_GATE_FALSE_NEGATIVE")
 
+    # New canary economics are evaluated when the producer supplies the
+    # structured fields.  Legacy fixtures without any of these fields remain
+    # engineering lifecycle fixtures; they cannot silently claim capital.
+    canary_keys = {
+        "alpha_t", "alpha_tstat", "adjusted_p", "adjusted_p_value",
+        "positive_excess_ratio", "sharpe", "sharpe_ratio", "max_drawdown",
+        "mdd", "cost_2x_passed", "cost2x_passed", "shadow_zero_difference",
+        "zero_shadow_diff", "manual_approval", "manual_approved",
+        "formal_epoch_declared", "new_formal_epoch",
+    }
+    metric_rows = [row for row in accepted if canary_keys.intersection(row)]
+    metric_source = next((row for row in reversed(metric_rows) if row), {})
+    if strict and metric_rows:
+        def _metric(*names: str):
+            for name in names:
+                if name in metric_source:
+                    return metric_source.get(name)
+            return None
+
+        alpha_t = _metric("alpha_t", "alpha_tstat")
+        adjusted_p = _metric("adjusted_p", "adjusted_p_value")
+        positive_excess_ratio = _metric("positive_excess_ratio")
+        sharpe = _metric("sharpe", "sharpe_ratio")
+        max_drawdown = _metric("max_drawdown", "mdd")
+        cost_2x_passed = _metric("cost_2x_passed", "cost2x_passed")
+        shadow_zero_difference = _metric("shadow_zero_difference", "zero_shadow_diff")
+        manual_approval = _metric("manual_approval", "manual_approved")
+        if not bool(_metric("formal_epoch_declared", "new_formal_epoch")):
+            blockers.append("FORMAL_NEW_EPOCH_REQUIRED")
+        try:
+            if alpha_t is None or float(alpha_t) < 2:
+                blockers.append("ALPHA_T_LT_2")
+        except (TypeError, ValueError):
+            blockers.append("ALPHA_T_INVALID")
+        try:
+            if adjusted_p is None or float(adjusted_p) > 0.05:
+                blockers.append("ADJUSTED_P_GT_005")
+        except (TypeError, ValueError):
+            blockers.append("ADJUSTED_P_INVALID")
+        try:
+            if positive_excess_ratio is None or float(positive_excess_ratio) < 0.60:
+                blockers.append("POSITIVE_EXCESS_RATIO_LT_060")
+        except (TypeError, ValueError):
+            blockers.append("POSITIVE_EXCESS_RATIO_INVALID")
+        try:
+            if sharpe is None or float(sharpe) < 1:
+                blockers.append("SHARPE_LT_1")
+        except (TypeError, ValueError):
+            blockers.append("SHARPE_INVALID")
+        try:
+            if max_drawdown is None or abs(float(max_drawdown)) > 0.25:
+                blockers.append("MDD_GT_025")
+        except (TypeError, ValueError):
+            blockers.append("MDD_INVALID")
+        if cost_2x_passed is not True:
+            blockers.append("COST_2X_NOT_PASSED")
+        if shadow_zero_difference is not True:
+            blockers.append("SHADOW_ZERO_DIFFERENCE_NOT_PROVEN")
+        # Missing manual approval is never interpreted as approval.
+        if manual_approval is not True:
+            blockers.append("MANUAL_APPROVAL_MISSING")
+    else:
+        alpha_t = adjusted_p = positive_excess_ratio = sharpe = max_drawdown = None
+        cost_2x_passed = shadow_zero_difference = manual_approval = None
+
     blockers = sorted(set(blockers))
     ready = not blockers
     if not formal_evidence_verified:
@@ -292,4 +373,12 @@ def evaluate_shadow_lifecycle(
         blockers=tuple(blockers),
         evidence_sha256=str(expected_formal_evidence_sha256 or ""),
         canary_approval_package_allowed=ready,
+        alpha_t=float(alpha_t) if alpha_t is not None else None,
+        adjusted_p=float(adjusted_p) if adjusted_p is not None else None,
+        positive_excess_ratio=float(positive_excess_ratio) if positive_excess_ratio is not None else None,
+        sharpe=float(sharpe) if sharpe is not None else None,
+        max_drawdown=float(max_drawdown) if max_drawdown is not None else None,
+        cost_2x_passed=cost_2x_passed if isinstance(cost_2x_passed, bool) else None,
+        shadow_zero_difference=shadow_zero_difference if isinstance(shadow_zero_difference, bool) else None,
+        manual_approval=manual_approval if isinstance(manual_approval, bool) else None,
     )

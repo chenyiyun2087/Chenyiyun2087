@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from runtime.contracts import LedgerReconciliationReport, ReconciliationDifference
+from runtime.canonical_execution_contract import CANONICAL_KERNEL_ID, CANONICAL_KERNEL_VERSION
 
 
 def reconcile_ledgers(
@@ -36,6 +37,25 @@ def reconcile_ledgers(
             raise ValueError(f"{name}_trades_missing:{','.join(missing)}")
         if frame["order_id"].astype(str).duplicated().any():
             raise ValueError(f"{name}_duplicate_order_id")
+        # Trusted frames must identify the economic kernel.  Empty frames are
+        # allowed (e.g. an all-rejected strategy) but non-empty legacy frames
+        # are diagnostic only and cannot silently pass formal reconciliation.
+        if not frame.empty and "canonical_kernel_id" in frame.columns:
+            bad = frame[frame["canonical_kernel_id"].astype(str) != CANONICAL_KERNEL_ID]
+            if not bad.empty:
+                differences.append(ReconciliationDifference(
+                    scope="ORDER", key=f"{name}:kernel_id", primary_value=name,
+                    oracle_value=CANONICAL_KERNEL_ID, classification="KERNEL_ID_MISMATCH",
+                    detail="trusted ledger frame is not produced by canonical kernel",
+                ))
+        if not frame.empty and "canonical_kernel_version" in frame.columns:
+            bad = frame[frame["canonical_kernel_version"].astype(str) != CANONICAL_KERNEL_VERSION]
+            if not bad.empty:
+                differences.append(ReconciliationDifference(
+                    scope="ORDER", key=f"{name}:kernel_version", primary_value=name,
+                    oracle_value=CANONICAL_KERNEL_VERSION, classification="KERNEL_VERSION_MISMATCH",
+                    detail="trusted ledger frame uses a different kernel version",
+                ))
     primary_by_order = primary_trades.set_index("order_id", drop=False)
     oracle_by_order = oracle_trades.set_index("order_id", drop=False)
     for order_id in sorted(set(primary_by_order.index) | set(oracle_by_order.index)):
@@ -62,6 +82,30 @@ def reconcile_ledgers(
                     oracle_value=rv, difference=(float(lv) - float(rv)) if numeric else None,
                     classification="ORDER_ECONOMICS_MISMATCH", detail=f"order field {column} differs",
                 ))
+        # Expanded cost components are part of the economic identity.  The
+        # legacy ``fee`` field is compared above for old packages; when a
+        # canonical costs mapping is available compare every component too.
+        if "costs" in left and "costs" in right:
+            def _cost_mapping(value: object) -> dict[str, float]:
+                if isinstance(value, dict):
+                    return {str(k): float(v) for k, v in value.items()}
+                if isinstance(value, str):
+                    try:
+                        import json
+                        parsed = json.loads(value)
+                        return {str(k): float(v) for k, v in parsed.items()} if isinstance(parsed, dict) else {}
+                    except Exception:
+                        return {}
+                return {}
+            left_costs, right_costs = _cost_mapping(left["costs"]), _cost_mapping(right["costs"])
+            for cost_name in sorted(set(left_costs) | set(right_costs)):
+                lv, rv = left_costs.get(cost_name, 0.0), right_costs.get(cost_name, 0.0)
+                if abs(lv - rv) > 0.01 + 1e-12:
+                    differences.append(ReconciliationDifference(
+                        scope="ORDER", key=f"{order_id}:cost:{cost_name}", primary_value=lv,
+                        oracle_value=rv, difference=lv - rv,
+                        classification="COST_COMPONENT_MISMATCH", detail="canonical cost component differs",
+                    ))
 
     if primary_rejections is not None or oracle_rejections is not None:
         left_rejections = primary_rejections if primary_rejections is not None else pd.DataFrame()

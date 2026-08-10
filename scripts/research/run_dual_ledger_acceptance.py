@@ -12,9 +12,11 @@ from pathlib import Path
 import pandas as pd
 
 from runtime.independent_ledger import replay_orders
+from runtime.canonical_execution_contract import CANONICAL_KERNEL_ID, CANONICAL_KERNEL_VERSION, CANONICAL_SCHEMA_VERSION
 from runtime.contracts import ReleaseIdentity
 from runtime.ledger_reconciliation import reconcile_ledgers
 from scripts.research.strict_execution_ledger import CorporateAction, ExecutionLedger, PrecommitOrder
+from scripts.research.execution_costs import ExecutionCostModel
 
 
 def _read(path: Path) -> pd.DataFrame:
@@ -39,7 +41,7 @@ def _rounded_price(value: Decimal, tick: Decimal) -> Decimal:
 
 
 def _primary_replay(orders: pd.DataFrame, market: pd.DataFrame, corporate_actions: pd.DataFrame,
-                    initial_capital: float) -> dict[str, object]:
+                    initial_capital: float, cost_model: ExecutionCostModel | None = None) -> dict[str, object]:
     ledger = ExecutionLedger(cash=float(initial_capital))
     trades: list[dict[str, object]] = []
     positions: list[dict[str, object]] = []
@@ -88,7 +90,7 @@ def _primary_replay(orders: pd.DataFrame, market: pd.DataFrame, corporate_action
             try:
                 snap = index.loc[(trade_date, order.symbol)]
             except KeyError:
-                result = ledger.execute(order, None, False, order.cost_rate, "missing_market_snapshot", order.lot_size)
+                result = ledger.execute(order, None, False, order.cost_rate, "missing_market_snapshot", order.lot_size, cost_model=cost_model)
             else:
                 tradable = _flag(snap["is_tradable"]) and _flag(snap["is_listed"]) and not _flag(snap["is_suspended"])
                 open_price = float(snap["raw_open"]) if pd.notna(snap["raw_open"]) else None
@@ -98,7 +100,7 @@ def _primary_replay(orders: pd.DataFrame, market: pd.DataFrame, corporate_action
                 upper = _rounded_price(Decimal(str(prev)) * (Decimal("1") + ratio), tick)
                 lower = _rounded_price(Decimal(str(prev)) * (Decimal("1") - ratio), tick)
                 blocked = open_price is not None and ((order.side == "BUY" and Decimal(str(open_price)) >= upper) or (order.side == "SELL" and Decimal(str(open_price)) <= lower))
-                result = ledger.execute(order, open_price, tradable, order.cost_rate, "limit_block" if blocked else "", order.lot_size)
+                result = ledger.execute(order, open_price, tradable, order.cost_rate, "limit_block" if blocked else "", order.lot_size, cost_model=cost_model)
             if int(result["filled_shares"] or 0) > 0:
                 trades.append({"order_id": order.order_id, "trade_date": trade_date, "symbol": order.symbol,
                                "side": order.side, **{key: result[key] for key in ("filled_shares", "filled_price", "filled_notional", "fee")}})
@@ -131,11 +133,20 @@ def run(package: Path, output: Path) -> dict[str, object]:
         "release_identity.json", "orders.parquet", "market_snapshot.parquet",
         "corporate_actions.parquet", "security_lifecycle.parquet", "calendar.parquet",
         "cost_model.json", "execution_model.json",
+        "canonical_kernel.json",
     }
     missing_files = sorted(name for name in required_files if not (package / name).is_file())
     if missing_files:
         raise FileNotFoundError(f"dual_ledger_package_incomplete:{','.join(missing_files)}")
     identity_payload = json.loads((package / "release_identity.json").read_text(encoding="utf-8"))
+    kernel_manifest = json.loads((package / "canonical_kernel.json").read_text(encoding="utf-8"))
+    expected_kernel = {
+        "canonical_kernel_id": CANONICAL_KERNEL_ID,
+        "canonical_kernel_version": CANONICAL_KERNEL_VERSION,
+        "canonical_schema_version": CANONICAL_SCHEMA_VERSION,
+    }
+    if any(kernel_manifest.get(key) != value for key, value in expected_kernel.items()) or not kernel_manifest.get("trusted"):
+        raise ValueError("dual_ledger_kernel_manifest_mismatch")
     identity = ReleaseIdentity(**identity_payload)
     component_hashes = {
         "data_snapshot_sha": package / "market_snapshot.parquet",
@@ -155,8 +166,10 @@ def run(package: Path, output: Path) -> dict[str, object]:
         raise ValueError("dual_ledger_orders_identity_mismatch")
     market = _read(package / "market_snapshot.parquet")
     actions = _read(package / "corporate_actions.parquet")
-    primary = _primary_replay(orders, market, actions, float(identity.initial_capital))
-    oracle = replay_orders(orders, market, initial_capital=float(identity.initial_capital), corporate_actions=actions)
+    cost_payload = json.loads((package / "cost_model.json").read_text(encoding="utf-8"))
+    cost_model = ExecutionCostModel.from_mapping(cost_payload)
+    primary = _primary_replay(orders, market, actions, float(identity.initial_capital), cost_model=cost_model)
+    oracle = replay_orders(orders, market, initial_capital=float(identity.initial_capital), corporate_actions=actions, cost_model=cost_model)
     report = reconcile_ledgers(
         release_id=identity.release_id, run_id=identity.run_id,
         primary_trades=primary["trades"], oracle_trades=oracle.trades,

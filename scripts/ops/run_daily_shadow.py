@@ -13,8 +13,8 @@ v5.4.1 evidence-repair status:
     limit-DOWN (not limit-UP).  Delegates to the canonical
     scripts/research/execution_market_rules.py (can_buy_at_open /
     can_sell_at_open) — Defect 4 fixed.
-  - True-blind gate: recording refuses dates before
-    config/oos_registry.yaml true_forward_blind.start (2026-08-05).
+  - Forward-epoch gate: recording resolves the start only from
+    config/forward_epochs.yaml; no date is embedded in runtime code.
   - Reconcile uses the execution date given by the calendar, not
     "latest score date" — Defect 3.
 
@@ -65,6 +65,10 @@ from runtime.shadow_virtual_account import (  # noqa: E402
     AccountConservationError,
     VirtualAccount,
 )
+from runtime.epoch_governance import (  # noqa: E402
+    DEFAULT_FORWARD_EPOCHS_PATH,
+    load_forward_epoch_manifest,
+)
 
 CHALLENGER_ROOT = PROJECT_ROOT / "exports" / "formal_evidence" / "alpha_challengers"
 ACTIVE_CHALLENGERS = (
@@ -74,16 +78,9 @@ ACTIVE_CHALLENGERS = (
     "r1_market_regime", "r2_crowding_control",
 )
 
-# True-blind start (config/oos_registry.yaml true_forward_blind.start).
-# DECLARED 2026-08-06 (v5.5.3, Phase 5 first-day audit PASS): the
-# 2026-08-05 start was withdrawn on 2026-08-05 (v5.5.1 prestart) because
-# the 08-04 SEALED package carries known defects; the 08-05 run of the
-# corrected v5.5.3 chain is the FIRST FORMALLY ELIGIBLE signal package
-# (PIT lineage complete, atomic SEALED, precommit idempotent, T+1 fills,
-# position ledger, no legacy fallback).  Dates before the start are
-# refused; the epoch id is v5.5.3-2026-08-05 (see also
-# config/strategy_runtime/forward_shadow_v2.yaml true_blind_epoch_id).
-TRUE_BLIND_START = "2026-08-05"
+# Forward dates are resolved from config/forward_epochs.yaml.  There is no
+# hard-coded start date: until a formal epoch is frozen, all rows remain
+# engineering soak and are invalid for E4/selection.
 
 # Inline import of the canonical execution-market rules.
 _mr = _iu.spec_from_file_location(
@@ -155,7 +152,7 @@ def _live_open_days(after_date: str) -> list[str]:
     out: list[str] = []
     for row in rows:
         value = str(row["cal_date"])
-        # normalize 20260805 -> 2026-08-05
+        # normalize compact YYYYMMDD values to ISO dates
         if len(value) == 8 and value.isdigit():
             value = f"{value[:4]}-{value[4:6]}-{value[6:]}"
         out.append(value)
@@ -186,7 +183,7 @@ def _live_bars(date_str: str) -> pd.DataFrame:
     Columns: trade_date, symbol, raw_open, raw_pre_close, raw_close
     (aliased for the snapshot-compatible downstream).
 
-    v5.5.3 (2026-08-05, production first run): this previously read
+    The previous implementation read
     dwd_stock_daily_standard, which carries ONLY ADJUSTED prices
     (adj_open/adj_high/adj_low/adj_close — no open/pre_close columns at
     all; the first live run crashed with Unknown column 'open').  Raw
@@ -326,24 +323,17 @@ def _signal_date_from_scores() -> str:
 
 
 def _check_true_blind(signal_date: str) -> None:
-    """Refuse recording before the declared true-blind start.
-
-    Declared 2026-08-06: TRUE_BLIND_START = 2026-08-05 (v5.5.3 epoch —
-    see config/oos_registry.yaml true_forward_blind and
-    forward_shadow_v2.yaml true_blind_epoch_id).  Dates before the start
-    are refused; null start (NOT_STARTED) refuses every date.
-    """
-    if TRUE_BLIND_START is None:
+    """Refuse recording until the canonical manifest declares a formal epoch."""
+    manifest = load_forward_epoch_manifest(DEFAULT_FORWARD_EPOCHS_PATH)
+    epoch = manifest.formal_epoch
+    if epoch is None or not epoch.start:
         raise RuntimeError(
-            f"shadow_blocked: true_forward_blind.start is NOT_STARTED "
-            "(withdrawn 2026-08-05, v5.5.1 prestart) — {signal_date} "
-            "cannot be shadow evidence until the start is re-declared in "
-            "config/oos_registry.yaml")
-    if signal_date < TRUE_BLIND_START:
+            "shadow_blocked: no formal forward epoch declared; active "
+            "engineering soak is invalid for E4 and selection")
+    if signal_date < epoch.start:
         raise RuntimeError(
-            f"shadow_blocked: {signal_date} precedes true_forward_blind.start "
-            f"({TRUE_BLIND_START}) — pre-blind records cannot be shadow "
-            "evidence (see exports/forward_shadow_smoke_tests/20260803/)")
+            f"shadow_blocked: {signal_date} precedes formal epoch start "
+            f"({epoch.start}) — pre-epoch records cannot be shadow evidence")
 
 
 def _load_universe(signal_date: str) -> pd.DataFrame:
@@ -428,7 +418,8 @@ def record(signal_date: str | None = None) -> dict:
     frame = pd.DataFrame(rows)
     if frame.empty:
         return {"recorded": 0, "signal_date": signal_date,
-                "execution_date": execution_date, "total_rows": 0}
+                "execution_date": execution_date, "total_rows": 0,
+                "capital_authority": False, "allowed_new_capital_cny": 0}
     required_cols = ["signal_date", "execution_date", "challenger_id",
                      "symbol", "score", "formal_rank", "target_weight",
                      "reference_price_t_close", "recorded_at",
@@ -444,7 +435,8 @@ def record(signal_date: str | None = None) -> dict:
             .drop_duplicates(["signal_date", "challenger_id", "symbol"], keep="last")
     frame.to_parquet(LOG_PATH, index=False, compression="zstd")
     return {"recorded": len(rows), "signal_date": signal_date,
-            "execution_date": execution_date, "total_rows": len(frame)}
+            "execution_date": execution_date, "total_rows": len(frame),
+            "capital_authority": False, "allowed_new_capital_cny": 0}
 
 
 def reconcile(execution_date: str | None = None,
@@ -553,11 +545,24 @@ def _status_from_log(log: pd.DataFrame,
     days = log.dropna(subset=["fill_price"])
     round_trips = int(days.groupby(["challenger_id", "symbol"]).size().ge(2).sum()) \
         if not days.empty else 0
+    try:
+        formal_epoch = load_forward_epoch_manifest(DEFAULT_FORWARD_EPOCHS_PATH).formal_epoch
+    except (FileNotFoundError, ValueError):
+        formal_epoch = None
+    valid_dates = log["signal_date"].astype(str).unique().tolist() if "signal_date" in log.columns else []
+    if formal_epoch and formal_epoch.start:
+        valid_dates = [value for value in valid_dates if value >= formal_epoch.start]
+    else:
+        valid_dates = []
     status = {
         "shadow_days": int(log["signal_date"].nunique()),
         "round_trips": round_trips,
         "failed_fills": int((log["fill_status"].fillna("PENDING") != "FILLED").sum()),
-        "e4_gate_met": log["signal_date"].nunique() >= 60 and round_trips >= 30,
+        "formal_epoch_id": formal_epoch.epoch_id if formal_epoch else None,
+        "formal_epoch_days": len(valid_dates),
+        "e4_gate_met": bool(formal_epoch and len(valid_dates) >= 60 and round_trips >= 30),
+        "capital_authority": False,
+        "allowed_new_capital_cny": 0,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     if write_back:
@@ -596,15 +601,26 @@ def _package_execution_eligible(pkg_dir: Path) -> tuple[bool, str]:
     """classification.json gate: absent = eligible; present with
     execution_eligible=False = REFUSE.
 
-    v5.5.3 (2026-08-05, production first run): the 08-04 prestart package
-    is SEALED with execution_date 2026-08-05 but classified
+    Legacy prestart packages may be SEALED but carry
     KNOWN_DEFECT_PRESTART_PACKAGE (execution_eligible: false).  Without
-    this gate a re-run of precommit with datestr=2026-08-05 would write
-    orders against that defective package — the execution chain must
-    never consume a package its own classification forbids (fail-closed).
+    this gate a re-run could write orders against a defective package — the
+    execution chain must never consume a package its classification forbids.
     """
     cls_path = pkg_dir / "classification.json"
     if not cls_path.exists():
+        # A package carrying an explicitly legacy/soak epoch is never
+        # execution/E4 eligible, even when its classification file is absent.
+        manifest_path = pkg_dir / "signal_package_manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                epoch_id = manifest.get("epoch_id")
+                if epoch_id:
+                    epoch = load_forward_epoch_manifest(DEFAULT_FORWARD_EPOCHS_PATH).active_epoch
+                    if epoch is None or epoch.epoch_id != str(epoch_id) or not epoch.formal:
+                        return False, "epoch_not_formal_or_not_active"
+            except (ValueError, OSError, json.JSONDecodeError):
+                return False, "signal_package_manifest_corrupt"
         return True, "no classification.json"
     try:
         cls = json.loads(cls_path.read_text(encoding="utf-8"))
@@ -612,6 +628,17 @@ def _package_execution_eligible(pkg_dir: Path) -> tuple[bool, str]:
         return False, "classification.json corrupt"
     if cls.get("execution_eligible") is False:
         return False, f"classification={cls.get('classification')!r}"
+    manifest_path = pkg_dir / "signal_package_manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            epoch_id = manifest.get("epoch_id")
+            if epoch_id:
+                epoch = load_forward_epoch_manifest(DEFAULT_FORWARD_EPOCHS_PATH).active_epoch
+                if epoch is None or epoch.epoch_id != str(epoch_id) or not epoch.formal:
+                    return False, "epoch_not_formal_or_not_active"
+        except (ValueError, OSError, json.JSONDecodeError):
+            return False, "signal_package_manifest_corrupt"
     return True, ""
     return None
 
@@ -619,8 +646,8 @@ def _package_execution_eligible(pkg_dir: Path) -> tuple[bool, str]:
 def _latest_sealed_package(packages_zone: Path | None = None):
     """(pkg_dir, manifest) of the newest SEALED package by signal date.
 
-    v5.5.3 (2026-08-05): the production sell/precommit tasks run WITHOUT
-    an explicit execution date and must resolve it from the latest
+    Production sell/precommit tasks run WITHOUT an explicit execution date
+    and must resolve it from the latest
     SEALED package — never from open_days[-1] (the snapshot calendar
     extends to 2026-12-31, so a date-less run used to resolve to year-end
     and crash with "no SEALED package for execution_date 2026-12-31").
@@ -764,7 +791,7 @@ def sell_precommit(execution_date: str | None = None,
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
-        # v5.5.3 (2026-08-05): the production sell task runs at T 17:00
+        # The production sell task runs at T 17:00
         # under the queue's datestr=T, but the sells target the NEXT
         # execution day — the latest SEALED package's execution_date
         # (the T-day seal's T+1).  open_days[-1] resolved to 2026-12-31
@@ -1088,7 +1115,7 @@ def precommit(execution_date: str | None = None,
     today = datetime.now().date().isoformat()
     open_days = load_trade_calendar(need_date=execution_date or today)
     if execution_date is None:
-        # v5.5.3 (2026-08-05): resolve from the latest SEALED package —
+        # Resolve from the latest SEALED package —
         # at T+1 09:25 that is the T-day seal's execution_date (T+1).
         # open_days[-1] resolved to 2026-12-31 (snapshot calendar
         # extends to year-end) and crashed precommit in production.
@@ -1122,7 +1149,7 @@ def precommit(execution_date: str | None = None,
     existing = []
     if orders_path.exists():
         existing = json.loads(orders_path.read_text(encoding="utf-8"))
-        # v5.5.3 (2026-08-05): SELL_PRECOMMITTED orders share the same
+        # SELL_PRECOMMITTED orders share the same
         # execution-day file — the sell task writes them at T 17:00 and
         # precommit appends BUYs at T+1 09:25.  Only terminal states
         # (fills/rejects — i.e. the day was reconciled) block a rerun.
@@ -1283,8 +1310,8 @@ def reconcile_from_package(execution_date: str | None = None,
     from ods_daily (raw) beyond the snapshot end; ST / listing /
     suspension flags come from the SEALED package universe (T-day status).
 
-    v5.5.3 (2026-08-05): scheduled at 21:45 T+1 — the execution day's raw
-    bars land in ods_daily at ~17:00 T+1, so a 09:35 run could never see
+    Scheduled after the execution day's raw bars land in ods_daily; a
+    pre-open run could otherwise see no bars and mark every order NO_OPEN.
     them (every order would NO_OPEN).  The fill uses the recorded OPEN —
     semantically the T+1 open execution the contract promises.
     """

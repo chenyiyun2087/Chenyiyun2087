@@ -20,14 +20,16 @@ class BacktestResult:
 
 
 class BacktestEngine:
-    def __init__(self, feed: DataFeed, strategy: Strategy, config: BacktestConfig):
+    def __init__(self, feed: DataFeed, strategy: Strategy, config: BacktestConfig, *, trusted: bool = False):
         self.feed = feed
         self.strategy = strategy
         self.config = config
         self.broker = Broker(config)
         self.portfolio = Portfolio(cash=config.initial_cash)
+        self.trusted = bool(trusted)
 
-    def run(self, start: str, end: str, universe: list[str], freq: str = "1d") -> BacktestResult:
+    def run(self, start: str, end: str, universe: list[str], freq: str = "1d", *, trusted: bool | None = None) -> BacktestResult:
+        trusted_mode = self.trusted if trusted is None else bool(trusted)
         grouped: dict[str, list[Bar]] = defaultdict(list)
         for bar in self.feed.iter_bars(start, end, universe, fields=None, freq=freq):
             grouped[bar.ts].append(bar)
@@ -37,12 +39,27 @@ class BacktestEngine:
         snapshots: list[tuple[str, dict[str, int]]] = []
         daily_turnover: list[tuple[str, float]] = []
 
-        for ts in sorted(grouped.keys()):
+        ordered_ts = sorted(grouped.keys())
+        pending: dict[str, list[Order]] = defaultdict(list)
+        for ts_index, ts in enumerate(ordered_ts):
             bars = grouped[ts]
             price_map = {b.symbol: b.close for b in bars}
             ts_turnover = 0.0
 
             for bar in bars:
+                for pending_order in pending.pop(ts, []):
+                    if pending_order.symbol != bar.symbol:
+                        continue
+                    if pending_order.side == "SELL":
+                        available = self.portfolio.positions.get(pending_order.symbol, 0)
+                        trade = self.broker.match_order(pending_order, bar, available_qty=available, trusted=True)
+                    else:
+                        trade = self.broker.match_order(pending_order, bar, trusted=True)
+                    if trade is None:
+                        continue
+                    self.portfolio.apply_trade(trade)
+                    trades.append(trade)
+                    ts_turnover += trade.qty * trade.price
                 context = {
                     "cash": self.portfolio.cash,
                     "positions": dict(self.portfolio.positions),
@@ -51,6 +68,14 @@ class BacktestEngine:
                 orders = self.strategy.on_bar(bar, context) or []
                 for order in orders:
                     if order.symbol != bar.symbol:
+                        continue
+                    if trusted_mode:
+                        if ts_index + 1 >= len(ordered_ts):
+                            raise ValueError("trusted_signal_without_t_plus_one_session")
+                        next_ts = ordered_ts[ts_index + 1]
+                        if str(order.ts)[:10] >= str(next_ts)[:10]:
+                            raise ValueError("same_day_execution_forbidden")
+                        pending[next_ts].append(order)
                         continue
                     if order.side == "SELL":
                         available = self.portfolio.positions.get(order.symbol, 0)

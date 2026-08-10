@@ -15,6 +15,12 @@ import numpy as np
 import pandas as pd
 
 
+TARGET_ANNUALIZED_VOL = 0.15
+MAX_ALLOWED_DRAWDOWN = 0.25
+MAX_RISK_CONTRIBUTION = 0.45
+MAX_LIQUIDITY_PARTICIPATION = 0.10
+
+
 def compute_pit_volatility(
     prices: pd.DataFrame,
     window: int = 20,
@@ -144,6 +150,77 @@ def compute_top2_risk_contribution(
     sorted_contrib = np.sort(risk_contrib / total)[::-1]
     top2 = sorted_contrib[:2].sum()
     return float(top2)
+
+
+def compute_pit_beta(
+    returns: pd.DataFrame,
+    benchmark_returns: pd.Series,
+    *,
+    window: int = 60,
+) -> pd.DataFrame:
+    """Point-in-time rolling beta (each row uses observations through date)."""
+    required = {"symbol", "trade_date", "daily_ret"}
+    missing = required - set(returns.columns)
+    if missing:
+        raise ValueError(f"pit_beta_missing:{','.join(sorted(missing))}")
+    bench = pd.Series(benchmark_returns, dtype=float)
+    rows: list[dict[str, object]] = []
+    for symbol, frame in returns.sort_values("trade_date").groupby("symbol"):
+        for end in range(len(frame)):
+            current = frame.iloc[max(0, end - window + 1): end + 1]
+            idx = current.index.intersection(bench.index)
+            if len(idx) < 5:
+                continue
+            x = pd.to_numeric(current.loc[idx, "daily_ret"], errors="coerce")
+            y = pd.to_numeric(bench.loc[idx], errors="coerce")
+            valid = x.notna() & y.notna()
+            if valid.sum() < 5 or float(y[valid].var(ddof=0)) <= 1e-14:
+                continue
+            rows.append({"symbol": symbol, "trade_date": current.iloc[-1]["trade_date"], "pit_beta": float(x[valid].cov(y[valid]) / y[valid].var(ddof=0))})
+    return pd.DataFrame(rows, columns=["symbol", "trade_date", "pit_beta"])
+
+
+def validate_canonical_risk_gate(
+    *,
+    beta: float | None,
+    liquidity_participation: float | None,
+    risk_contribution: float | None,
+    annualized_volatility: float | None,
+    max_drawdown: float | None,
+    target_volatility: float = TARGET_ANNUALIZED_VOL,
+    max_drawdown_limit: float = MAX_ALLOWED_DRAWDOWN,
+    max_liquidity: float = MAX_LIQUIDITY_PARTICIPATION,
+    max_risk_contribution: float = MAX_RISK_CONTRIBUTION,
+    target_beta: float = 1.0,
+    beta_tolerance: float = 0.25,
+) -> tuple[bool, tuple[str, ...]]:
+    """Fail-closed risk gate for trusted portfolio construction."""
+    values = {
+        "beta": beta, "liquidity": liquidity_participation,
+        "risk_contribution": risk_contribution,
+        "annualized_volatility": annualized_volatility,
+        "max_drawdown": max_drawdown,
+    }
+    violations: list[str] = []
+    for name, value in values.items():
+        try:
+            if value is None or not np.isfinite(float(value)):
+                violations.append(f"missing_{name}")
+        except (TypeError, ValueError):
+            violations.append(f"invalid_{name}")
+    if violations:
+        return False, tuple(violations)
+    if abs(float(beta) - target_beta) > beta_tolerance:
+        violations.append("beta_limit")
+    if float(liquidity_participation) > max_liquidity:
+        violations.append("liquidity_limit")
+    if float(risk_contribution) > max_risk_contribution:
+        violations.append("risk_contribution_limit")
+    if float(annualized_volatility) > target_volatility:
+        violations.append("annualized_volatility_limit")
+    if float(max_drawdown) > max_drawdown_limit:
+        violations.append("max_drawdown_limit")
+    return not violations, tuple(violations)
 
 
 # ---------------------------------------------------------------------------

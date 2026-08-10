@@ -22,12 +22,22 @@ connection:
 transaction:
   isolation: REPEATABLE READ
   read_only: true
+  consistent_snapshot: true
 
 snapshot:
   require_gtid: true
   require_binlog_position: true
+  # GTID/binlog identify replication provenance only.  They are not a
+  # provider-issued immutable read-view token and must never be promoted to
+  # ``provider_snapshot_token``.  Configure a real provider token query or
+  # value for formal qualification; absent token => diagnostic BLOCKED_DATA.
+  require_provider_snapshot_token: true
+  provider_snapshot_token_query: ""
   forbid_timestamp_fallback: true
   semantic_contract: config/pit_semantics/ashare_pit_semantics_v1.yaml
+  formal_cutoff_timezone: Asia/Shanghai
+  formal_cutoff_default: "21:30:00"
+  formal_cutoff_hard: "23:00:00"
 
 families:
   market:
@@ -54,3 +64,7 @@ families:
   corporate_actions:
     source_table: tushare_stock.dwd_corporate_action_event_v2
     query_timeout_seconds: 60
+  benchmark_index:
+    source_table: tushare_stock.ods_index_daily
+    required_codes: ["000300.SH", "000905.SH", "000852.SH"]
+    query_timeout_seconds: 120

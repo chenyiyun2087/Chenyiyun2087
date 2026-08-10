@@ -1,0 +1,18 @@
+schema_version: forward_epochs_v1
+
+# There is deliberately no formal blind epoch at this time.  The active
+# record is an engineering soak retained for auditability; it is invalid for
+# E4 counting and candidate selection.
+active_epoch_id: engineering-soak-v5.5.3-2026-08-05
+formal_epoch_id: null
+
+epochs:
+  - epoch_id: engineering-soak-v5.5.3-2026-08-05
+    kind: ENGINEERING_SOAK
+    status: ENGINEERING_SOAK
+    start: "2026-08-05"
+    release_id: v5.5.3-2026-08-05
+    legacy_epoch_id: v5.5.3-2026-08-05
+    selection_status: INVALID_FOR_SELECTION
+    e4_status: INVALID_FOR_E4
+    reason: "v5.5.3 first-day chain retained as engineering soak; no formal blind epoch declared"

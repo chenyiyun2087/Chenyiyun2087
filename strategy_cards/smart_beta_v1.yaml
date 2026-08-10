@@ -1,0 +1,43 @@
+strategy_id: smart_beta_v1
+strategy_version: "1.0.0-wave4"
+release_id: research-wave4-smart-beta-v1
+owner: chenyiyun
+status: RESEARCH
+description: >-
+  Wave 4 Smart Beta research-only card: momentum reversal, liquidity,
+  low-volatility and quality with industry/size/beta neutralization and risk
+  contribution sizing. It is not a VLS variant and cannot generate orders.
+signal_time: T_21:30_AFTER_DATA_COMPLETE
+decision_cutoff: "23:00:00+08:00"
+timezone: Asia/Shanghai
+source_published_at_lte: decision_cutoff
+warehouse_loaded_at_lte: decision_cutoff
+execution_time: T+1_SSE_RAW_OPEN
+universe: ashare_common_equity_pit_tradable
+holding_days: 20
+max_positions: 20
+candidate_pool: research_only
+pool_role: WAVE4_RESEARCH
+allowed_regimes: [research]
+max_budget_share: 0.0
+risk_budget:
+  target_exposure: 0.0
+  target_annualized_volatility: 0.15
+  vol_target: 0.15
+  max_drawdown_gate: 0.25
+  mdd_gate: 0.25
+capital_cny: 0.0
+promotion_status: BLOCKED
+strategy_definition: config/strategy_definitions/smart_beta_v1.yaml
+cost_model:
+  schema: scripts.research.execution_costs.ExecutionCostModel
+  canonical_kernel: runtime.canonical_execution_contract.CANONICAL_KERNEL_ID
+  commission_rate: 0.00075
+  min_commission_cny: 5.0
+  stamp_duty_rate: 0.0005
+  transfer_fee_rate: 0.00001
+  open_auction_slippage_bps: 10.0
+  gap_bps: 0.0
+  spread_bps: 3.0
+  adv_impact_bps: 5.0
+  missed_fill_bps: 0.0

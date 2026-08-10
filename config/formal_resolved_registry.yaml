@@ -1,0 +1,6 @@
+schema_version: formal_resolved_registry_v1
+
+# Canonical resolved entries are intentionally empty until a formal epoch is
+# frozen and every evidence gate has a contract-backed economic result.
+# Legacy unified/seal/release indexes are migration inputs only.
+entries: []

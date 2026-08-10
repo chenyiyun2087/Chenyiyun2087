@@ -1,0 +1,112 @@
+schema_version: strategy_definition_wave4_v1
+strategy_id: smart_beta_v1
+strategy_display_name: "A股 Smart Beta v1（研究卡）"
+status: RESEARCH_ONLY
+research_only: true
+legacy_identity_forbidden:
+  - vls_mom_contrarian_v1
+  - vls_mom_contrarian_v1_frozen
+  - vls_value_size_liquidity_v1
+
+hypothesis_id: H-W4-SMART-BETA-001
+hypothesis: >-
+  Momentum reversal, liquidity, low-volatility and quality can form a
+  diversified smart-beta sleeve after industry/size/beta neutralization and
+  risk-contribution sizing.
+formula: >-
+  score = 0.25*momentum_reversal + 0.25*liquidity + 0.25*low_volatility
+  + 0.25*quality; rank after cross-sectional neutralization.
+direction: "momentum_reversal:+; liquidity:+; low_volatility:+; quality:+"
+factor_weights:
+  momentum_reversal: 0.25
+  liquidity: 0.25
+  low_volatility: 0.25
+  quality: 0.25
+
+availability:
+  signal_time: "T_21:30_AFTER_DATA_COMPLETE"
+  decision_cutoff: "23:00:00+08:00"
+  timezone: "Asia/Shanghai"
+  data_cutoff: "source_published_at <= decision_cutoff AND warehouse_loaded_at <= decision_cutoff"
+  source_published_at_lte: decision_cutoff
+  warehouse_loaded_at_lte: decision_cutoff
+  execution_time: "T+1_SSE_RAW_OPEN"
+  forbid_future_fields: true
+universe:
+  name: "A-share common equity, PIT tradable universe"
+  exclusions: [ST, suspended, delisted, limit_up_buy, limit_down_sell]
+  point_in_time: true
+hold_period: 20
+top_n: 20
+selection: "descending score, equal risk-contribution weights"
+
+neutralization:
+  method: "cross_sectional_QR_residualization"
+  factors: [industry, size, market_beta]
+  intercept: true
+  fitted_residual_only: true
+risk_constraints:
+  target_annualized_volatility: 0.15
+  vol_target: 0.15
+  annualized_vol_target: 0.15
+  max_drawdown_gate: 0.25
+  mdd_gate: 0.25
+  max_mdd: 0.25
+  max_single_name_weight: 0.10
+  industry_neutral: true
+  size_neutral: true
+  beta_neutral: true
+  risk_contribution_sizing: true
+  max_gross_exposure: 1.0
+  capital_cny: 0.0
+cost_model:
+  id: cn_stock_v2
+  schema: scripts.research.execution_costs.ExecutionCostModel
+  canonical_kernel: runtime.canonical_execution_contract.CANONICAL_KERNEL_ID
+  canonical_cost_schema: scripts.research.execution_costs.CostBreakdown
+  commission_rate: 0.00075
+  min_commission_cny: 5.0
+  stamp_duty_rate: 0.0005
+  transfer_fee_rate: 0.00001
+  open_auction_slippage_bps: 10.0
+  gap_bps: 0.0
+  spread_bps: 3.0
+  adv_impact_bps: 5.0
+  missed_fill_bps: 0.0
+  slippage_bps: 10
+  price_basis: raw_open
+  signal_execution: "T 21:30 after data complete / T+1 SSE raw open"
+benchmark:
+  type: matched_style_benchmark
+  index: "000905.SH"
+  matching_fields: [industry, size, market_beta]
+tests:
+  - nested_walk_forward_splits_with_purge_embargo
+  - block_bootstrap_9999
+  - deflated_sharpe_ratio
+  - cscv_pbo
+  - benjamini_hochberg_fdr
+  - permutation_test_9999
+  - orthogonal_factor_attribution_closure
+  - canonical_cost_risk_capacity_adapter
+failure_conditions:
+  - "2022-08-09 sample is CONSUMED_DEVELOPMENT_SAMPLE and cannot count as independent OOS"
+  - "no future FORMAL_BLIND epoch in config/forward_epochs.yaml"
+  - "annualized volatility target exceeds 15% or max drawdown is worse than -25%"
+  - "neutralization or attribution return closure fails"
+  - "any canonical T+1, cost, risk or capacity contract is missing"
+  - "single-factor weighted combination is used as formal evidence"
+code_entry: scripts.research.run_smart_beta_research.run_smart_beta_research
+code_path: scripts/research/run_smart_beta_research.py
+definition_path: config/strategy_definitions/smart_beta_v1.yaml
+code_hash: 5919d5fd0868849e2b7f256c19a65c5cd1e3c920485e2feb0e31089b9f2e6e8b
+config_hash: a23a31a7a245b5586cf1c6495e29e35d19752188e52b1c80dc8d3cf2b3dff733
+sample_policy:
+  status: CONSUMED_DEVELOPMENT_SAMPLE
+  start: "2022-01-01"
+  end: "2026-08-09"
+  selection_allowed: false
+  independent_oos: false
+  reporting: DIAGNOSTIC_ONLY
+promotion_status: BLOCKED
+capital_cny: 0.0

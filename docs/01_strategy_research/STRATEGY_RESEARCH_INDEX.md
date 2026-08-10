@@ -1,5 +1,13 @@
 # 策略研究索引
 
+## 2026-08-10 Wave 4 Alpha / Smart Beta 研究
+
+- [Wave 4 研究预注册](2026-08-10_Wave4_Alpha_Smart_Beta研究预注册.md)：项目正式定位为
+  “A股 Alpha/Smart Beta研究与证据平台”；`smart_beta_v1` 与
+  `pure_alpha_residual_v1` 是独立研究身份，不冒充 VLS。
+- 2022--2026-08-09 为 `CONSUMED_DEVELOPMENT_SAMPLE`，旧 epoch 仅工程 soak；当前无未来
+  `FORMAL_BLIND`，结论保持 `BLOCKED_FORWARD_EVIDENCE` / `OBSERVE`、0 CNY。
+
 | 主题 | 目录/文件 | 当前状态 | 最新结论 |
 |---|---|---|---|
 | Formal Happy-path 与 TopK Challenger | `docs/tasks/2026-08-01_Formal_HappyPath_TopK_Challenger升级.md` | 工程链路已实现，真实证据阻断 | 8 类 canonical PIT、封存/Readiness/Runner 唯一路径与独立 Top5/Top10 Challenger（含 IC/衰减/容量/成本证据）已接入；缺真实 PIT/OOS/Shadow 时保持 `BLOCKED / NO_SCALE / 0元`。 |

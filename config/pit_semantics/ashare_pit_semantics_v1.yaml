@@ -6,6 +6,37 @@ schema_version: "ashare_pit_semantics_v1"
 description: "A-Share Point-in-Time data semantics for Chenyiyun2087 Formal Evidence Backbone"
 timezone: "Asia/Shanghai"
 signal_cutoff: "T15:30:00+08:00"
+# The source lineage cutoff is deliberately separate from the trading signal
+# cutoff.  Providers may publish/warehouse a historical row after the close,
+# but a formal release is only admissible when all three provenance timestamps
+# are inside the same T-day decision window.  23:00 is a hard upper bound and
+# is never a qualification target.
+formal_cutoff:
+  timezone: "Asia/Shanghai"
+  default_time: "21:30:00"
+  hard_time: "23:00:00"
+  policy: "source_published_at,warehouse_loaded_at,available_at <= decision_cutoff <= 21:30"
+
+# These fields are required on every canonical family.  They are lineage
+# facts, not factor values, and must never be inferred from a release creation
+# timestamp.  A date-only financial announcement is handled conservatively by
+# the adapter (next trading session) and marked in availability_source.
+lineage_columns:
+  - source_published_at
+  - warehouse_loaded_at
+  - decision_cutoff
+  - availability_source
+
+canonical_families:
+  - market
+  - universe
+  - financial
+  - industry
+  - adjustment
+  - trade_calendar
+  - security_lifecycle
+  - corporate_actions
+  - benchmark_index
 
 families:
   market:
@@ -20,6 +51,10 @@ families:
       - market_return
       - market_regime
       - market_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [trade_date, symbol]
     business_time_column: trade_date
     available_at_column: market_available_at
@@ -37,6 +72,10 @@ families:
       - limit_status
       - security_status_transition
       - universe_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [trade_date, symbol]
     business_time_column: trade_date
     available_at_column: universe_available_at
@@ -54,6 +93,10 @@ families:
       - revision_id
       - revision_sequence
       - financial_source_snapshot_sha
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [symbol, financial_period_end, revision_id]
     business_time_column: trade_date
     available_at_column: financial_available_at
@@ -75,6 +118,10 @@ families:
       - valid_to
       - industry_code
       - industry_name
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [symbol, valid_from]
     business_time_column: trade_date
     available_at_column: industry_available_at
@@ -93,6 +140,10 @@ families:
       - record_date
       - adjustment_factor_version
       - adjustment_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [trade_date, symbol]
     business_time_column: trade_date
     available_at_column: adjustment_available_at
@@ -105,6 +156,10 @@ families:
       - is_open
       - source
       - available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [cal_date]
     business_time_column: cal_date
     available_at_column: available_at
@@ -121,6 +176,10 @@ families:
       - listed_date
       - security_status_transition
       - lifecycle_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [trade_date, symbol]
     business_time_column: trade_date
     available_at_column: lifecycle_available_at
@@ -140,6 +199,10 @@ families:
       - source_complete
       - event_hash
       - corporate_action_available_at
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [symbol, event_id]
     business_time_column: trade_date
     available_at_column: corporate_action_available_at
@@ -172,6 +235,10 @@ families:
       - ret_10d
       - ret_20d
       - ret_60d
+      - source_published_at
+      - warehouse_loaded_at
+      - decision_cutoff
+      - availability_source
     primary_key: [index_code, trade_date]
     business_time_column: trade_date
     available_at_column: benchmark_available_at

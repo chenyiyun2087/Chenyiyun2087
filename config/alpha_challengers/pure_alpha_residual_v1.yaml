@@ -1,0 +1,86 @@
+schema_version: research_preregistration_v1
+hypothesis_id: H-W4-PURE-ALPHA-001
+strategy_id: pure_alpha_residual_v1
+experiment_id: exp_wave4_pure_alpha_residual_v1
+created_at: "2026-08-10"
+formula: "residualize factor returns on industry + size + market_beta with intercept via QR"
+direction: "positive residual benchmark excess"
+availability:
+  signal_time: T_21:30_AFTER_DATA_COMPLETE
+  decision_cutoff: "23:00:00+08:00"
+  timezone: Asia/Shanghai
+  source_published_at_lte: decision_cutoff
+  warehouse_loaded_at_lte: decision_cutoff
+  data_cutoff: "source_published_at <= decision_cutoff AND warehouse_loaded_at <= decision_cutoff"
+  execution_time: T+1_SSE_RAW_OPEN
+  forbid_future_fields: true
+universe:
+  name: ashare_common_equity_pit_tradable
+  point_in_time: true
+hold_period: 20
+top_n: 20
+risk_constraints:
+  target_annualized_volatility: 0.15
+  vol_target: 0.15
+  annualized_vol_target: 0.15
+  max_drawdown_gate: 0.25
+  mdd_gate: 0.25
+  max_mdd: 0.25
+  industry_neutral: true
+  size_neutral: true
+  beta_neutral: true
+  benchmark_tracking_error_cap: 0.08
+  max_single_name_weight: 0.10
+  capital_cny: 0.0
+cost_model:
+  id: cn_stock_v2
+  schema: scripts.research.execution_costs.ExecutionCostModel
+  canonical_kernel: runtime.canonical_execution_contract.CANONICAL_KERNEL_ID
+  canonical_cost_schema: scripts.research.execution_costs.CostBreakdown
+  commission_rate: 0.00075
+  min_commission_cny: 5.0
+  stamp_duty_rate: 0.0005
+  transfer_fee_rate: 0.00001
+  open_auction_slippage_bps: 10.0
+  gap_bps: 0.0
+  spread_bps: 3.0
+  adv_impact_bps: 5.0
+  missed_fill_bps: 0.0
+  slippage_bps: 10
+  price_basis: raw_open
+  execution_mode: strict_t1_open_precommit
+benchmark:
+  type: matched_benchmark
+  index: 000905.SH
+  matching_fields: [industry, size, market_beta]
+tests:
+  - nested_walk_forward_splits
+  - block_bootstrap
+  - deflated_sharpe_ratio
+  - cscv_pbo
+  - benjamini_hochberg_fdr
+  - permutation_test
+  - orthogonal_factor_attribution
+  - canonical_cost_risk_capacity
+failure_conditions:
+  - consumed_development_sample_2022_2026
+  - no_formal_blind_epoch
+  - residual_attribution_closure_failure
+  - benchmark_explains_all_return
+  - volatility_above_15_percent
+  - max_drawdown_worse_than_25_percent
+  - missing_canonical_execution_contract
+code_hash: 1809a5d8524f76c50c305565feb553c404d5e20ccc790b02e12698e81920b500
+config_hash: edad0dc3b7f61d1251594a79fd6aa2f43d278e02129eea879b5e75cc2662d548
+code_path: scripts/research/run_pure_alpha_challenge.py
+definition_path: config/strategy_definitions/pure_alpha_residual_v1.yaml
+sample_policy:
+  status: CONSUMED_DEVELOPMENT_SAMPLE
+  start: "2022-01-01"
+  end: "2026-08-09"
+  selection_allowed: false
+  independent_oos: false
+  reporting: DIAGNOSTIC_ONLY
+status: PRE_REGISTERED
+promotion_status: BLOCKED
+capital_cny: 0.0

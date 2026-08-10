@@ -16,6 +16,8 @@ from typing import Optional
 import pandas as pd
 import pymysql
 
+from scripts.research.canonical_execution_adapters import adapt_events
+
 
 @dataclass
 class DBConfig:
@@ -286,6 +288,26 @@ class LocalHighDividendStrategy:
         picked["signal"] = "BUY"
         picked["target_weight"] = 1.0 / len(picked)
         return picked[["trade_date", "ts_code", "signal", "target_weight", "rank"]]
+
+    def canonical_orders(self, signals: pd.DataFrame, *, execution_date: date | str, trading_dates: list[date | str] | None = None) -> list[dict]:
+        """Convert local signal output to canonical T+1 orders.
+
+        A same-day ``execution_date`` is rejected by the adapter rather than
+        being silently replayed using the local close.
+        """
+        if signals is None or signals.empty:
+            return []
+        events = []
+        for row in signals.to_dict("records"):
+            events.append({
+                "event_type": "order", "order_id": row.get("order_id", ""),
+                "symbol": row.get("ts_code", row.get("symbol")), "side": row.get("signal", "BUY"),
+                "shares": int(row.get("shares", row.get("planned_shares", 100))),
+                "signal_date": str(row.get("trade_date")), "execution_date": str(execution_date),
+                "trading_dates": [str(item) for item in trading_dates] if trading_dates is not None else None,
+                "planned_price": row.get("planned_price", 0), "planned_notional": row.get("planned_notional", 0),
+            })
+        return adapt_events(events, trusted=True, source="local")
 
     def save_daily_signals(self, signals: pd.DataFrame, table: str = "ads_local_strategy_signals") -> None:
         if signals is None or signals.empty:
