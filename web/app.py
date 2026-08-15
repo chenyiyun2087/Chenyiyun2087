@@ -1302,9 +1302,17 @@ def _get_batch_monitor_data(business_date):
 
 
 def _run_daily_batch_audit_now(business_date, notify_feishu=False):
-    from scripts.ops.daily_batch_audit import run_audit
+    from scripts.ops.run_integrated_batch_audit import run_integrated_audit
 
-    return run_audit(business_date, notify_feishu=notify_feishu)
+    # The operations page must use the same anomaly-only contract as the
+    # scheduled audit. Historical refreshes must not demand routine task
+    # notifications or resend the historical digest.
+    historical_safe = business_date < datetime.now().strftime("%Y%m%d")
+    return run_integrated_audit(
+        business_date,
+        notify_feishu=notify_feishu,
+        historical_safe=historical_safe,
+    )
 
 
 def _enqueue_replay_required_jobs(business_date):
