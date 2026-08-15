@@ -103,7 +103,8 @@ def _accounts(monkeypatch, cash: float):
     """Pin C1's rebuilt account cash — simulates a cash-poor candidate."""
     monkeypatch.setattr(
         shadow, "_rebuild_accounts",
-        lambda config, zone: {"C1": SimpleNamespace(available_cash=cash)})
+        lambda config, zone, **kwargs: {
+            "C1": SimpleNamespace(available_cash=cash)})
 
 
 def test_cost_aware_cap_keeps_reserved_non_negative(tmp_path, monkeypatch):

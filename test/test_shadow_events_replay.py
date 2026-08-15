@@ -359,6 +359,30 @@ def test_replay_all_across_dates(tmp_path):
     assert pos.sell_order.execution_date == "2026-08-05"
 
 
+def test_replay_all_can_cut_off_future_execution_dates(tmp_path):
+    zone = tmp_path / "exec"
+    log1 = event_log_path(zone, "2026-08-10")
+    seen1 = set()
+    for ev in (_order_precommit_event(exec_date="2026-08-10"),
+               _buy_filled_event(exec_date="2026-08-10")):
+        append_event(log1, dict(ev), seen=seen1)
+        seen1 = existing_identities(log1)
+    log2 = event_log_path(zone, "2026-08-11")
+    seen2 = set()
+    for ev in (_order_precommit_event(exec_date="2026-08-11",
+                                      symbol="000002", order_id="buy2"),
+               _buy_filled_event(exec_date="2026-08-11",
+                                 symbol="000002", order_id="buy2")):
+        append_event(log2, dict(ev), seen=seen2)
+        seen2 = existing_identities(log2)
+
+    machine = replay_all(zone, as_of_date="2026-08-10")
+
+    assert len(machine.orders) == 1
+    assert (CAND, SYM) in machine.positions
+    assert (CAND, "000002") not in machine.positions
+
+
 def test_exported_orders_projection_has_identity_fields(tmp_path):
     log = _write_events(tmp_path, [
         _order_precommit_event(),

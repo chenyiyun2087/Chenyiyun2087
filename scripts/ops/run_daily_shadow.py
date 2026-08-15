@@ -843,7 +843,7 @@ def sell_precommit(execution_date: str | None = None,
     signal_date = manifest["signal_date"]
     config = _candidate_execution_config()
     target = _target_map(pkg)
-    machine = replay_all(zone)
+    machine = replay_all(zone, as_of_date=logical_date)
     held = _held_positions(machine)
     if not held:
         # v5.5.1 verifier contract: a no-position day still writes a
@@ -997,11 +997,12 @@ def sell_precommit(execution_date: str | None = None,
 
 
 def _rebuild_accounts(config: dict[str, dict],
-                      execution_zone: Path | None = None):
+                      execution_zone: Path | None = None,
+                      as_of_date: str | None = None):
     """Replay all fill events into per-candidate VirtualAccounts."""
     zone = execution_zone or EXECUTION_ZONE
     accounts: dict[str, VirtualAccount] = {}
-    for ev in iter_all_events(zone):
+    for ev in iter_all_events(zone, as_of_date=as_of_date):
         etype = ev["event_type"]
         if etype not in (BUY_FILLED, SELL_FILLED):
             continue
@@ -1048,8 +1049,19 @@ def nav(execution_date: str | None = None,
         raise RuntimeError(
             f"shadow_blocked: {execution_date} is not an open trading day")
     config = _candidate_execution_config()
-    accounts = _rebuild_accounts(config, zone)
+    accounts = _rebuild_accounts(config, zone, as_of_date=execution_date)
     if not accounts:
+        summary_path = zone / "nav" / "nav_summary.json"
+        if summary_path.exists():
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            days = summary.get("days") or {}
+            if execution_date in days:
+                days.pop(execution_date, None)
+                summary["generated_at"] = datetime.now().isoformat(
+                    timespec="seconds")
+                summary_path.write_text(
+                    json.dumps(summary, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
         return {"date": execution_date, "accounts": [], "reason": "no_fills"}
     prices = _load_execution_prices(execution_date, prices_path)
     close_map = (prices.set_index("symbol")["raw_close"].to_dict()
@@ -1196,14 +1208,17 @@ def precommit(execution_date: str | None = None,
     seen_events = existing_identities(log_path)
     # v5.5.3: held is a (candidate, symbol) SET — one candidate can hold
     # several names (TopN > 1) and a closed round trip is not held.
+    replay_as_of = manifest["signal_date"]
     held = {(p.challenger_id, p.symbol) for p in
-            replay_all(execution_zone or EXECUTION_ZONE).positions.values()
+            replay_all(execution_zone or EXECUTION_ZONE,
+                       as_of_date=replay_as_of).positions.values()
             if p.state != ROUND_TRIP_COMPLETED}
     # v5.5.3 cash-aware sizing: accounts rebuilt from the fill-event
     # ledger give each candidate's CURRENT cash — the cap for BUY
     # notional, never the hardcoded 500k.
     config = _candidate_execution_config()
-    accounts = _rebuild_accounts(config, execution_zone or EXECUTION_ZONE)
+    accounts = _rebuild_accounts(
+        config, execution_zone or EXECUTION_ZONE, as_of_date=replay_as_of)
 
     run_orders = []
     idempotent_skipped = 0
@@ -1395,7 +1410,7 @@ def reconcile_from_package(execution_date: str | None = None,
     # buying-power check runs against CURRENT cash (intraday moves can
     # push a precommitted order beyond the precommit budget).
     config = _candidate_execution_config()
-    accounts = _rebuild_accounts(config, zone)
+    accounts = _rebuild_accounts(config, zone, as_of_date=execution_date)
     for o in pending:
         symbol = str(o["symbol"])
         side = o.get("side", "BUY")

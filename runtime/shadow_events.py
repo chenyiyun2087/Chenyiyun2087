@@ -253,7 +253,8 @@ def replay(log_path: Path,
     return machine
 
 
-def replay_all(execution_zone: Path) -> ShadowStateMachine:
+def replay_all(execution_zone: Path,
+               as_of_date: str | None = None) -> ShadowStateMachine:
     """Replay every dated event file (sorted) — the full accumulated
     execution truth across all execution dates.  ONE shared machine, so
     cross-day chains (buy on day E, sell on a later day) reconstruct."""
@@ -262,6 +263,8 @@ def replay_all(execution_zone: Path) -> ShadowStateMachine:
     if not events_dir.exists():
         return machine
     for path in sorted(events_dir.glob("*.jsonl")):
+        if as_of_date and path.stem > as_of_date:
+            continue
         machine = replay(path, machine)
     return machine
 
@@ -323,10 +326,13 @@ def exported_orders(machine: ShadowStateMachine) -> list[dict]:
     return out
 
 
-def iter_all_events(execution_zone: Path) -> Iterable[dict]:
+def iter_all_events(execution_zone: Path,
+                    as_of_date: str | None = None) -> Iterable[dict]:
     """Every event across all dates (sorted) — for account rebuilding."""
     events_dir = execution_zone / "events"
     if not events_dir.exists():
         return
     for path in sorted(events_dir.glob("*.jsonl")):
+        if as_of_date and path.stem > as_of_date:
+            continue
         yield from iter_events(path)
