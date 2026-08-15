@@ -132,6 +132,15 @@ def build_task_script_parts(
         if datestr:
             args.extend(["--date", _iso_date(datestr)])
         return [script, *args]
+    if task_name == "alpha_signal_sell_precommit":
+        # Production sell-precommit deliberately resolves the T+1 execution
+        # date from the latest SEALED package. Historical replay must instead
+        # pin the logical T-day so a newer package/current wall clock cannot
+        # bind to the wrong day.
+        args = list(task_config.get("args") or [])
+        if historical_safe and datestr:
+            args.extend(["--business-date", _iso_date(datestr)])
+        return [script, *args]
     if task_name in ("alpha_challenger_shadow_record",
                      "alpha_challenger_shadow_reconcile",
                      "daily_vls_scores",

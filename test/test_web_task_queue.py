@@ -594,6 +594,12 @@ def test_alpha_signal_tasks_carry_queue_date_except_sell():
     assert "--date" not in sell, sell
     assert sell[1:3] == ["--mode", "sell-precommit"], sell
 
+    historical_sell = web_app._build_task_script_parts(
+        "alpha_signal_sell_precommit",
+        {"datestr": "20260805", "historical_safe": True},
+    )
+    assert historical_sell[-2:] == ["--business-date", "2026-08-05"], historical_sell
+
 
 def test_sell_verifier_binds_latest_sealed_package_execution_date(monkeypatch, tmp_path):
     """The sell task runs at T 17:00 (datestr=T); its sells land under

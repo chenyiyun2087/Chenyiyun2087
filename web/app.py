@@ -3107,13 +3107,22 @@ def _verify_alpha_signal_sell_precommit_result(started_at, finished_at, run_opti
     target_datestr = _queue_business_date(run_options)
     try:
         from runtime.verifier_contracts import check_sell_contract
-        pkg = _latest_sealed_package()
+        historical_safe = bool((run_options or {}).get("historical_safe"))
+        pkg = (
+            _forward_sealed_manifest(target_datestr)
+            if historical_safe else _latest_sealed_package()
+        )
         if pkg is None:
             return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
                            f"business_date={target_datestr}; "
                            f"reason=no_sealed_package"]
         mp, mpath = pkg
         iso = mp.get("execution_date")
+        if historical_safe and mp.get("signal_date") != _evidence_iso(target_datestr):
+            return False, [f"result=FAIL; task=alpha_signal_sell_precommit; "
+                           f"business_date={target_datestr}; "
+                           f"reason=historical_package_mismatch; "
+                           f"signal_date={mp.get('signal_date')}"]
         if not iso or iso <= _evidence_iso(target_datestr):
             # fail-closed: a seal whose execution day is not ahead of the
             # queue date means the sell task had no fresh signal to bind —
@@ -7592,7 +7601,11 @@ def retry_task_job(job_id):
     conn = get_db()
     with conn.cursor() as cursor:
         _ensure_task_management_schema(cursor)
-        cursor.execute("SELECT task_name, business_date, status FROM app_task_queue WHERE id=%s FOR UPDATE", (job_id,))
+        cursor.execute(
+            "SELECT task_name, business_date, status, run_options "
+            "FROM app_task_queue WHERE id=%s FOR UPDATE",
+            (job_id,),
+        )
         job = cursor.fetchone()
         if not job:
             flash("作业不存在。", "danger")
@@ -7605,11 +7618,27 @@ def retry_task_job(job_id):
             if active_job:
                 flash(f"已有活动作业 #{active_job['id']}，不能重复重试。", "warning")
             else:
+                try:
+                    run_options = json.loads(job.get("run_options") or "{}")
+                except (TypeError, ValueError):
+                    run_options = {}
+                try:
+                    historical = datetime.strptime(
+                        str(job.get("business_date") or ""), "%Y%m%d"
+                    ).date() < datetime.now().date()
+                except ValueError:
+                    historical = False
+                if historical:
+                    run_options.update({
+                        "datestr": str(job.get("business_date") or ""),
+                        "historical_safe": True,
+                    })
                 cursor.execute(
                     """UPDATE app_task_queue SET status='PENDING', available_at=NOW(), finished_at=NULL,
-                       exit_code=NULL, error_kind=NULL, attempt_count=0, active_dedupe_key=%s,
+                       exit_code=NULL, error_kind=NULL, attempt_count=0, run_options=%s,
+                       active_dedupe_key=%s,
                        message='手动重试：等待领取' WHERE id=%s""",
-                    (dedupe_key, job_id),
+                    (json.dumps(run_options, ensure_ascii=False), dedupe_key, job_id),
                 )
                 conn.commit()
                 flash(f"作业 #{job_id} 已进入重试队列。", "success")

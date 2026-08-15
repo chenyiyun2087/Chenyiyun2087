@@ -643,7 +643,8 @@ def _package_execution_eligible(pkg_dir: Path) -> tuple[bool, str]:
     return None
 
 
-def _latest_sealed_package(packages_zone: Path | None = None):
+def _latest_sealed_package(packages_zone: Path | None = None,
+                           as_of_date: str | None = None):
     """(pkg_dir, manifest) of the newest SEALED package by signal date.
 
     Production sell/precommit tasks run WITHOUT an explicit execution date
@@ -663,6 +664,8 @@ def _latest_sealed_package(packages_zone: Path | None = None):
             continue
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if manifest.get("package_status") == "SEALED":
+            if as_of_date and str(manifest.get("signal_date") or "") > as_of_date:
+                continue
             return pkg_dir, manifest
     return None
 
@@ -767,7 +770,8 @@ def _orders_for_date(execution_date: str,
 def sell_precommit(execution_date: str | None = None,
                    execution_zone: Path | None = None,
                    packages_zone: Path | None = None,
-                   prices_path: Path | None = None) -> dict:
+                   prices_path: Path | None = None,
+                   business_date: str | None = None) -> dict:
     """T 17:00 — decide which HOLDING positions to SELL on T+1.
 
     Per the frozen contracts (hold_days / rebalance_score_buffer /
@@ -789,7 +793,8 @@ def sell_precommit(execution_date: str | None = None,
     """
     zone = execution_zone or EXECUTION_ZONE
     today = datetime.now().date().isoformat()
-    open_days = load_trade_calendar(need_date=execution_date or today)
+    logical_date = business_date or today
+    open_days = load_trade_calendar(need_date=execution_date or logical_date)
     if execution_date is None:
         # The production sell task runs at T 17:00
         # under the queue's datestr=T, but the sells target the NEXT
@@ -798,18 +803,26 @@ def sell_precommit(execution_date: str | None = None,
         # (snapshot calendar extends to year-end) and crashed.  A seal
         # whose execution day has already passed means there is NO fresh
         # T-day signal — refuse stale targets (fail-closed).
-        latest = _latest_sealed_package(packages_zone)
+        latest = _latest_sealed_package(
+            packages_zone,
+            as_of_date=business_date,
+        )
         if latest is None:
             raise RuntimeError(
                 "shadow_blocked: no SEALED package — the sell engine "
                 "requires the T-day target portfolio")
         execution_date = latest[1]["execution_date"]
-        if execution_date <= today:
+        if business_date and latest[1].get("signal_date") != business_date:
+            raise RuntimeError(
+                f"shadow_blocked: no SEALED package for business date "
+                f"{business_date} — refusing a stale historical sell target")
+        if execution_date <= logical_date:
             raise RuntimeError(
                 f"shadow_blocked: latest SEALED package "
                 f"{latest[1].get('signal_date')} targets execution "
-                f"{execution_date} (already passed {today}) — no fresh "
+                f"{execution_date} (already passed {logical_date}) — no fresh "
                 "T-day seal; refusing stale sell targets")
+        open_days = load_trade_calendar(need_date=execution_date)
     if execution_date not in open_days:
         raise RuntimeError(
             f"shadow_blocked: {execution_date} is not an open trading day")
@@ -1563,6 +1576,10 @@ def main() -> int:
                                            "legacy-reconcile-audit", "status"],
                         default="record")
     parser.add_argument("--date", default=None, help="signal/execution date YYYY-MM-DD")
+    parser.add_argument(
+        "--business-date", default=None,
+        help="historical T-day for sell-precommit replay (YYYY-MM-DD)",
+    )
     args = parser.parse_args()
     try:
         if args.mode == "record":
@@ -1577,7 +1594,9 @@ def main() -> int:
                              ensure_ascii=False))
         elif args.mode == "sell-precommit":
             # v5.5.2: T 17:00 sell decisions for T+1 execution.
-            print(json.dumps(sell_precommit(args.date), ensure_ascii=False))
+            print(json.dumps(sell_precommit(
+                args.date, business_date=args.business_date),
+                ensure_ascii=False))
         elif args.mode == "nav":
             # v5.5.2: T+1 close per-candidate NAV snapshot.
             print(json.dumps(nav(args.date), ensure_ascii=False))

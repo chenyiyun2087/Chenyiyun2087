@@ -1329,7 +1329,9 @@ def compute_raw_factors(bars: pd.DataFrame, signal_date: str) -> pd.DataFrame:
     def _beta_group(g: pd.DataFrame) -> pd.Series:
         return (g["ret_1d"].rolling(20, min_periods=10).cov(g["market_ret"])
                 / g["market_ret"].rolling(20, min_periods=10).var().replace(0, np.nan))
-    b["beta_raw"] = b.groupby("symbol", group_keys=False).apply(
+    b["beta_raw"] = b.groupby("symbol", group_keys=False)[
+        ["ret_1d", "market_ret"]
+    ].apply(
         _beta_group).reset_index(level=0, drop=True)
     day = b[b["trade_date"] == signal_date].copy()
     if day.empty:
