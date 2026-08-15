@@ -3051,7 +3051,10 @@ def _verify_alpha_signal_precommit_result(started_at, finished_at, run_options=N
                 (str(r["candidate_id"]), str(r["symbol"]))
                 for _, r in portfolios.iterrows()]
         zone = FORWARD_EVIDENCE_ROOT / "execution"
-        machine = replay_all(zone)
+        # Historical verification must see only the ledger state that was
+        # available when this package was sealed.  Replaying later event
+        # files would make a retry depend on future fills.
+        machine = replay_all(zone, as_of_date=mp["signal_date"])
         held_keys = {(p.challenger_id, p.symbol) for p in
                      machine.positions.values()
                      if p.state != ROUND_TRIP_COMPLETED}

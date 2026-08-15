@@ -6,6 +6,7 @@ from pathlib import Path
 os.environ.setdefault("DISABLE_APP_SCHEDULER_LOOP", "1")
 
 from web import app as web_app
+from runtime import shadow_events
 from scripts.ops import feishu_notifier
 from scripts.ops.daily_batch_audit import (
     ExpectedTask,
@@ -693,10 +694,19 @@ def test_precommit_verifier_unpacks_manifest_path_convention(monkeypatch, tmp_pa
     # replay_all reads the REAL execution zone — a hermetic run without
     # precommitted events must not crash the contract (held_keys = {}).
     monkeypatch.setattr(web_app, "FORWARD_EVIDENCE_ROOT", root)
+    replay_calls = {}
+    real_replay_all = shadow_events.replay_all
+
+    def replay_with_cutoff(zone, as_of_date=None):
+        replay_calls["as_of_date"] = as_of_date
+        return real_replay_all(zone, as_of_date=as_of_date)
+
+    monkeypatch.setattr(shadow_events, "replay_all", replay_with_cutoff)
     ok, lines = web_app._verify_alpha_signal_precommit_result(
         None, None, run_options={"datestr": "20260806"})
     assert ok, lines
     assert any("buys=1" in ln for ln in lines)
+    assert replay_calls["as_of_date"] == "2026-08-05"
 
 
 # ── A5 vacuous contracts (v5.5.3 first-run discovery) ──────────────────
