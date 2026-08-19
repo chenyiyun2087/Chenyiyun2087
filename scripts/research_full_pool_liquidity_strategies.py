@@ -261,12 +261,16 @@ def load_scores(
     start_date: str | None = None,
     end_date: str | None = None,
     min_pool_size: int = 5000,
+    require_verified_lineage: bool = False,
 ) -> pd.DataFrame:
     try:
         with engine.connect() as conn:
             score_columns = {str(row["Field"]) for row in conn.execute(text("SHOW COLUMNS FROM score_rank_daily")).mappings()}
     except Exception:
         score_columns = set()
+
+    if require_verified_lineage and "lineage_status" not in score_columns:
+        raise RuntimeError("score_rank_daily is missing lineage_status; refusing non-PIT score data")
 
     def score_expr(column: str, default: str = "NULL") -> str:
         if not score_columns or column in score_columns:
@@ -281,6 +285,8 @@ def load_scores(
     if end_date:
         where.append("s.trade_date <= :end_date")
         params["end_date"] = end_date
+    if require_verified_lineage:
+        where.append("s.lineage_status = 'VERIFIED'")
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     sql = f"""
         SELECT
@@ -312,7 +318,8 @@ def load_scores(
             s.market_hs300_ret_20,
             s.market_bs_ratio,
             s.pool_type,
-            s.bs_gate_label
+            s.bs_gate_label,
+            {score_expr("lineage_status", "'LEGACY_UNVERIFIED'")}
         FROM score_rank_daily s
         LEFT JOIN tushare_stock.dim_stock ds
           ON ds.ts_code = CASE

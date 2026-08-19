@@ -30,6 +30,45 @@ def _score_01_centered(x: float, center: float, half_range: float) -> float:
     return _clip01(1.0 - abs(x - center) / half_range)
 
 
+def apply_score_transform(
+    raw_score: pd.Series,
+    trend_adjustment: pd.Series | None = None,
+) -> pd.Series:
+    """Apply the bounded technical-score transform.
+
+    The previous cubic adjustment was unbounded.  Once ``raw_score`` moved
+    more than one ``half_width`` below the center, subtracting a negative
+    cubic adjustment could overshoot the center and clip at 100.  That made
+    very low raw scores rank above high raw scores.
+
+    We retain the intended pull toward the center, but cap the correction to
+    ``strength * distance_from_center`` outside the central interval.  The
+    resulting transform is bounded and monotone, so a lower raw score cannot
+    become a higher final score solely because of the transform.
+    """
+    cfg = CONFIG.get("score_transform", {})
+    center = float(cfg.get("center", 60.0))
+    half_width = float(cfg.get("half_width", 20.0))
+    strength = float(cfg.get("strength", 0.30))
+    if half_width <= 0 or strength < 0:
+        raise ValueError("score_transform requires half_width > 0 and strength >= 0")
+
+    raw = pd.to_numeric(raw_score, errors="coerce").fillna(0.0).clip(0.0, 100.0)
+    deviation = (raw - center) / half_width
+    correction_magnitude = (
+        np.minimum(np.abs(deviation) ** 3, np.abs(deviation))
+        * half_width
+        * strength
+    )
+    adjustment = np.sign(deviation) * correction_magnitude
+    transformed = raw - adjustment
+    if trend_adjustment is not None:
+        transformed = transformed + pd.to_numeric(
+            trend_adjustment, errors="coerce"
+        ).fillna(0.0)
+    return transformed.clip(0.0, 100.0)
+
+
 def apply_industry_resonance(frame: pd.DataFrame) -> pd.DataFrame:
     """Apply the industry overlay and retain row-level audit evidence."""
     d = frame.copy()
@@ -282,17 +321,10 @@ def score_asof_date(
     # === 原始评分 ===
     raw_score = (d["base_score"] - d["penalty"]).clip(0, 100)
 
-    # === 非线性变换（2026-06-23，网格搜索最优参数）===
-    # 原理：双系统验证高分(>75)与低分(<30)均表现不佳，中分(30-60)是甜区
-    # 三次方收缩：偏离中心越远，修正越大，压低极端高分、抬升极端低分
-    # 网格搜索结果：center=60, half_width=20, strength=0.30 时Spearman r最优
-    center = 60.0
-    half_width = 20.0
-    deviation = (raw_score - center) / half_width
-    adjustment = (deviation ** 3) * half_width * 0.30
-    # 对<30分区域额外温和抬升（三次方对称性不足覆盖极低端）
+    # === 有界单调变换（2026-08-15）===
+    # 保留向中心收缩的研究意图，但限制修正幅度，禁止低分反转为高分。
     d["base_score_raw"] = raw_score  # 保留原始值用于诊断
-    d["score"] = (raw_score - adjustment + d["s_trend_label"]).clip(0, 100)
+    d["score"] = apply_score_transform(raw_score, d["s_trend_label"])
 
     # === 行业共振调整（2026-06-23）===
     d = apply_industry_resonance(d)

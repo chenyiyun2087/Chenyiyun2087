@@ -9,7 +9,8 @@ training dataset.
 Usage:
     python scripts/research/build_bs_training_dataset.py \
         --output data/processed/bs_training_dataset.parquet \
-        --lookback 60
+        --lookback 60 \
+        --batch-name config_1
 """
 
 import argparse
@@ -96,19 +97,37 @@ def stock_code_to_ts_code(code: str) -> str:
         return f"{code}.SZ"  # default
 
 
-def load_labels(engine) -> pd.DataFrame:
-    """Load OCR labels from bs_detection_results and clean multi-day B/S runs."""
-    query = """
+def load_labels(engine, batch_name: str = "config_1") -> pd.DataFrame:
+    """Load labels from exactly one B/S source batch."""
+    if not batch_name or batch_name.strip() != batch_name:
+        raise ValueError("batch_name must be a non-empty, trimmed value")
+
+    query = text("""
     SELECT
         stock_code,
         batch_date,
         has_buy_signal,
-        has_sell_signal
+        has_sell_signal,
+        batch_name AS label_batch_name
     FROM bs_detection_results
-    WHERE batch_name NOT LIKE 'ml_detect%%'
+    WHERE batch_name = :batch_name
     ORDER BY batch_date, stock_code
-    """
-    df = pd.read_sql(query, engine)
+    """)
+    df = pd.read_sql(query, engine, params={"batch_name": batch_name})
+    if df.empty:
+        raise ValueError(f"No B/S labels found for batch_name={batch_name!r}")
+
+    duplicate_mask = df.duplicated(subset=["stock_code", "batch_date"], keep=False)
+    if duplicate_mask.any():
+        sample = df.loc[duplicate_mask, ["stock_code", "batch_date"]].head(10).to_dict("records")
+        raise ValueError(
+            "Duplicate labels for (stock_code, batch_date) in "
+            f"batch_name={batch_name!r}: sample={sample}"
+        )
+
+    if set(df["label_batch_name"].dropna().unique()) != {batch_name}:
+        raise ValueError("Label query returned mixed batch_name values")
+
     df["ts_code"] = df["stock_code"].apply(stock_code_to_ts_code)
 
     # --- Label cleaning: keep only FIRST day of each B/S run ---
@@ -126,8 +145,9 @@ def load_labels(engine) -> pd.DataFrame:
         n_orig = int(df[signal_col].sum())
         n_cleaned = int(df[f"{signal_col}_is_new"].sum())
         n_removed = n_orig - n_cleaned
+        removed_pct = n_removed / n_orig * 100 if n_orig else 0.0
         print(f"[Labels] {signal_col}: {n_orig} original → {n_cleaned} after dedup "
-              f"(removed {n_removed} continuation days, {n_removed/n_orig*100:.1f}%)")
+              f"(removed {n_removed} continuation days, {removed_pct:.1f}%)")
         # Replace original signal with cleaned version
         df[signal_col] = df[f"{signal_col}_is_new"]
 
@@ -451,13 +471,14 @@ def build_dataset(
     lookback: int = 60,
     train_end: str = "20260430",
     val_end: str = "20260531",
+    batch_name: str = "config_1",
 ):
     """Main pipeline: load labels + factors, engineer features, split, save."""
     engine_cy = create_engine(require_sqlalchemy_url(database="chenyiyun"))
     engine_ts = create_engine(require_sqlalchemy_url(database="tushare_stock"))
 
     # 1. Load labels
-    labels = load_labels(engine_cy)
+    labels = load_labels(engine_cy, batch_name=batch_name)
     if labels.empty:
         print("ERROR: No OCR labels found in bs_detection_results")
         sys.exit(1)
@@ -528,7 +549,7 @@ def build_dataset(
     # 7. Identify and drop non-feature columns before saving
     meta_cols = [
         "stock_code", "batch_date", "ts_code", "trade_date",
-        "has_buy_signal", "has_sell_signal", "split",
+        "has_buy_signal", "has_sell_signal", "label_batch_name", "split",
     ]
     # Also drop intermediate derived columns that shouldn't be features
     drop_patterns = ["macd_hist_prev", "macd_dif_prev", "macd_dea_prev",
@@ -591,6 +612,8 @@ def main():
                         help="End date for training set (YYYYMMDD)")
     parser.add_argument("--val-end", default="20260531",
                         help="End date for validation set (YYYYMMDD)")
+    parser.add_argument("--batch-name", default="config_1",
+                        help="Exact B/S label batch (default: config_1)")
     args = parser.parse_args()
 
     build_dataset(
@@ -598,6 +621,7 @@ def main():
         lookback=args.lookback,
         train_end=args.train_end,
         val_end=args.val_end,
+        batch_name=args.batch_name,
     )
 
 

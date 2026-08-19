@@ -4,8 +4,9 @@ Tests combinations of (center, half_width, strength) on historical data
 to find parameters that maximize the Spearman rank correlation between
 transformed score and forward 1-week return.
 
-The transformation:  score' = clip(raw - (deviation^3) * half_width * strength, 0, 100)
-  where deviation = (raw - center) / half_width
+The transformation is a bounded cubic pull toward ``center``.  The cubic
+correction is capped at ``strength * distance_from_center`` outside the
+central interval, so it cannot reverse the ordering of raw scores.
 """
 
 from __future__ import annotations
@@ -27,9 +28,14 @@ from scoreRank.core.db_config import build_sqlalchemy_url
 
 
 def apply_transform(raw_score: pd.Series, center: float, half_width: float, strength: float) -> pd.Series:
-    """Apply cubic contraction transformation."""
+    """Apply a bounded, monotone cubic contraction transformation."""
     deviation = (raw_score - center) / half_width
-    adjustment = (deviation ** 3) * half_width * strength
+    adjustment = (
+        np.sign(deviation)
+        * np.minimum(np.abs(deviation) ** 3, np.abs(deviation))
+        * half_width
+        * strength
+    )
     return (raw_score - adjustment).clip(0, 100)
 
 
@@ -254,7 +260,10 @@ def main():
     print(f"center = {best['center']}")
     print(f"half_width = {best['half_width']}")
     print(f"# deviation = (raw_score - center) / half_width")
-    print(f"# adjustment = (deviation ** 3) * half_width * {best['strength']}")
+    print(
+        "# adjustment = sign(deviation) * min(abs(deviation)**3, abs(deviation)) "
+        f"* half_width * {best['strength']}"
+    )
     print(f"# score = (raw_score - adjustment).clip(0, 100)")
 
 

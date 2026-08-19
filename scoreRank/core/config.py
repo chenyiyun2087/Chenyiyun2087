@@ -26,6 +26,16 @@ CONFIG = {
     "bs_model_rank_watch_threshold": 48, # 原 52
     "max_trade_pool": 80,
 
+    # 评分变换：保留向中心收缩的意图，但限制三次方修正不穿越中心，
+    # 防止低 raw score 被反转为最高分。该变换只影响技术总分，不改变
+    # bs_score_v2 / bs_consensus_score 的独立计算。
+    "score_transform": {
+        "method": "bounded_cubic_pull_v1",
+        "center": 60.0,
+        "half_width": 20.0,
+        "strength": 0.30,
+    },
+
     # 资金200万：用成交额门槛过滤小票（单位取决于你库中amount单位）
     "min_avg_amount20": 50_000_000,           # 近20日平均成交额下限（示例：5000万）
     "bias_abs_max": 0.05,                     # 乖离率绝对值上限（5%）

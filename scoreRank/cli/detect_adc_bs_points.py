@@ -21,6 +21,7 @@ from sqlalchemy import create_engine, text
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from scoreRank.core.db_config import require_sqlalchemy_url
+from integration.snapshot_cache import ensure_chenyiyun_lineage_schema
 
 
 def to_ts_code(code: str) -> str:
@@ -133,6 +134,10 @@ def detect(engine_ts, engine_cy, trade_date: str, stock_codes: list, batch_name:
             'process_time': now,
             'image_path': None,
             'created_at': now,
+            'source_version': f'adc:{batch_name}',
+            'available_at': now,
+            'lineage_status': 'VERIFIED',
+            'lineage_reason': None,
         })
 
     # Upsert
@@ -141,18 +146,22 @@ def detect(engine_ts, engine_cy, trade_date: str, stock_codes: list, batch_name:
         (batch_name, batch_date, stock_code, has_buy_signal, has_sell_signal,
          buy_signal_description, sell_signal_description,
          total_b_points, total_s_points, buy_points_count, sell_points_count,
-         process_time, image_path, created_at)
+         process_time, image_path, created_at,
+         source_version, available_at, lineage_status, lineage_reason)
     VALUES (:batch_name, :batch_date, :stock_code, :has_buy_signal, :has_sell_signal,
             :buy_signal_description, :sell_signal_description,
             :total_b_points, :total_s_points, :buy_points_count, :sell_points_count,
-            :process_time, :image_path, :created_at)
+            :process_time, :image_path, :created_at,
+            :source_version, :available_at, :lineage_status, :lineage_reason)
     ON DUPLICATE KEY UPDATE
         has_buy_signal=VALUES(has_buy_signal), has_sell_signal=VALUES(has_sell_signal),
         buy_signal_description=VALUES(buy_signal_description),
         sell_signal_description=VALUES(sell_signal_description),
         total_b_points=VALUES(total_b_points), total_s_points=VALUES(total_s_points),
         buy_points_count=VALUES(buy_points_count), sell_points_count=VALUES(sell_points_count),
-        process_time=VALUES(process_time), image_path=VALUES(image_path), created_at=VALUES(created_at)
+        process_time=VALUES(process_time), image_path=VALUES(image_path), created_at=VALUES(created_at),
+        source_version=VALUES(source_version), available_at=VALUES(available_at),
+        lineage_status=VALUES(lineage_status), lineage_reason=VALUES(lineage_reason)
     """
 
     with engine_cy.begin() as conn:
@@ -177,6 +186,7 @@ def main():
 
     engine_ts = create_engine(require_sqlalchemy_url(database="tushare_stock"))
     engine_cy = create_engine(require_sqlalchemy_url(database="chenyiyun"))
+    ensure_chenyiyun_lineage_schema(engine_cy)
 
     stock_codes = get_self_selected(engine_cy)
     print(f"[ADC] Self-selected pool: {len(stock_codes)} stocks")

@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS bs_detection_results (
     process_time VARCHAR(32),
     image_path TEXT,
     created_at DATETIME NOT NULL,
+    source_version VARCHAR(64),
+    available_at DATETIME,
+    lineage_status VARCHAR(24) NOT NULL DEFAULT 'LEGACY_UNVERIFIED',
+    lineage_reason VARCHAR(128),
     UNIQUE KEY uniq_bs_detection (batch_name, batch_date, stock_code),
     KEY idx_bs_batch_stock (batch_date, stock_code),
     KEY idx_bs_stock_state (stock_code, batch_date, has_buy_signal, has_sell_signal)
@@ -35,9 +39,13 @@ INSERT INTO bs_detection_results (
     sell_points_count,
     process_time,
     image_path,
-    created_at
+    created_at,
+    source_version,
+    available_at,
+    lineage_status,
+    lineage_reason
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
 )
 ON DUPLICATE KEY UPDATE
     has_buy_signal = VALUES(has_buy_signal),
@@ -50,4 +58,8 @@ ON DUPLICATE KEY UPDATE
     sell_points_count = VALUES(sell_points_count),
     process_time = VALUES(process_time),
     image_path = VALUES(image_path),
-    created_at = VALUES(created_at);
+    created_at = VALUES(created_at),
+    source_version = VALUES(source_version),
+    available_at = VALUES(available_at),
+    lineage_status = VALUES(lineage_status),
+    lineage_reason = VALUES(lineage_reason);

@@ -149,7 +149,11 @@ def _prepare_scores(
     end_date: str,
 ) -> pd.DataFrame:
     scores = load_scores(
-        engine, start_date=start_date, end_date=end_date, min_pool_size=0
+        engine,
+        start_date=start_date,
+        end_date=end_date,
+        min_pool_size=0,
+        require_verified_lineage=True,
     )
     if scores.empty:
         raise RuntimeError("formal_score_source_empty")

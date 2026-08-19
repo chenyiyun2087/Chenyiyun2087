@@ -21,7 +21,20 @@ from scoreRank.strategies.technical import TechnicalScorer
 # We still need build_features_from_qfq and attach_liquidity_from_raw to verify intermediate steps 
 # if we want white-box testing, OR we can trust TechnicalScorer to call them.
 # Let's test TechnicalScorer.score() primarily, mocking data fetching.
-from scoreRank.core.scorer import build_features_from_qfq, score_asof_date
+from scoreRank.core.scorer import apply_score_transform, build_features_from_qfq, score_asof_date
+
+
+class TestScoreTransform(unittest.TestCase):
+    def test_transform_is_bounded_and_monotone(self):
+        raw = pd.Series(np.arange(0.0, 101.0, 1.0))
+        transformed = apply_score_transform(raw, pd.Series(0.0, index=raw.index))
+
+        self.assertTrue(((transformed >= 0) & (transformed <= 100)).all())
+        self.assertTrue((transformed.diff().dropna() >= 0).all())
+        self.assertEqual(float(transformed.iloc[0]), 18.0)
+        self.assertEqual(float(transformed.iloc[60]), 60.0)
+        self.assertEqual(float(transformed.iloc[100]), 88.0)
+        self.assertLess(float(transformed.iloc[0]), float(transformed.iloc[-1]))
 
 class TestTechnicalScorer(unittest.TestCase):
     def setUp(self):

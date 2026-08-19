@@ -20,6 +20,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from scoreRank.core.db_config import require_sqlalchemy_url
+from integration.snapshot_cache import ensure_chenyiyun_lineage_schema
 
 # QFQ (前复权) factor columns needed for inference
 PRICE_COLS = [
@@ -125,6 +126,14 @@ class BSPointInferrer:
         # Load thresholds
         self.buy_threshold = self._load_threshold("buy_threshold.txt", 0.5)
         self.sell_threshold = self._load_threshold("sell_threshold.txt", 0.5)
+
+        metadata_path = os.path.join(model_dir, "model_metadata.json")
+        metadata = {}
+        if os.path.exists(metadata_path):
+            with open(metadata_path, encoding="utf-8") as metadata_file:
+                metadata = json.load(metadata_file)
+        model_timestamp = str(metadata.get("timestamp") or "unknown")
+        self.source_version = f"ml_detect_v3@{model_timestamp}"
 
         print(f"[BSPointInferrer] Loaded from {model_dir}")
         print(f"  Buy model: {self.buy_model.__class__.__name__}, threshold={self.buy_threshold:.4f}")
@@ -566,8 +575,9 @@ class BSPointInferrer:
             chenyiyun_url = require_sqlalchemy_url(database="chenyiyun")
 
         engine = create_engine(chenyiyun_url)
+        ensure_chenyiyun_lineage_schema(engine)
 
-        now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = pd.Timestamp.now().to_pydatetime()
         rows = []
         for _, r in predictions.iterrows():
             rows.append({
@@ -585,6 +595,10 @@ class BSPointInferrer:
                 "process_time": now,
                 "image_path": None,
                 "created_at": now,
+                "source_version": self.source_version,
+                "available_at": now,
+                "lineage_status": "VERIFIED",
+                "lineage_reason": None,
             })
 
         if not rows:
@@ -596,12 +610,14 @@ class BSPointInferrer:
             (batch_name, batch_date, stock_code, has_buy_signal, has_sell_signal,
              buy_signal_description, sell_signal_description,
              total_b_points, total_s_points, buy_points_count, sell_points_count,
-             process_time, image_path, created_at)
+             process_time, image_path, created_at,
+             source_version, available_at, lineage_status, lineage_reason)
         VALUES
             (:batch_name, :batch_date, :stock_code, :has_buy_signal, :has_sell_signal,
-             :buy_signal_description, :sell_signal_description,
-             :total_b_points, :total_s_points, :buy_points_count, :sell_points_count,
-             :process_time, :image_path, :created_at)
+            :buy_signal_description, :sell_signal_description,
+            :total_b_points, :total_s_points, :buy_points_count, :sell_points_count,
+            :process_time, :image_path, :created_at,
+            :source_version, :available_at, :lineage_status, :lineage_reason)
         ON DUPLICATE KEY UPDATE
             has_buy_signal = VALUES(has_buy_signal),
             has_sell_signal = VALUES(has_sell_signal),
@@ -613,7 +629,11 @@ class BSPointInferrer:
             sell_points_count = VALUES(sell_points_count),
             process_time = VALUES(process_time),
             image_path = VALUES(image_path),
-            created_at = VALUES(created_at)
+            created_at = VALUES(created_at),
+            source_version = VALUES(source_version),
+            available_at = VALUES(available_at),
+            lineage_status = VALUES(lineage_status),
+            lineage_reason = VALUES(lineage_reason)
         """
 
         with engine.begin() as conn:

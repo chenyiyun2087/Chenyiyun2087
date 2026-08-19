@@ -4,9 +4,11 @@ from datetime import timedelta, datetime
 from pathlib import Path
 import sys
 import os
+import subprocess
 
 import pandas as pd
 import pymysql
+from sqlalchemy import text
 
 from scoreRank.core.config import CONFIG
 from scoreRank.core.db_io import (
@@ -28,6 +30,8 @@ from scoreRank.core.external_features import EXTERNAL_FEATURE_COLUMNS, attach_ex
 from scoreRank.core.logging_utils import get_score_rank_logger
 from scoreRank.core.market_context import MARKET_CONTEXT_COLUMNS, attach_market_context, build_daily_market_context
 from scoreRank.core.perf_utils import enrich_scored_with_market_metrics
+from integration.snapshot_cache import ensure_chenyiyun_lineage_schema, write_snapshot
+from integration.snapshot_validator import validate_snapshot_integrity
 
 # Strategy Imports
 from scoreRank.strategies.technical import TechnicalScorer
@@ -61,6 +65,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 logger = get_score_rank_logger(__name__)
+
+RESEARCH_FEATURE_VERSION = "factor_2026.06.23.1"
 
 
 def _announce(message: str, *args) -> None:
@@ -193,6 +199,9 @@ def _ensure_score_rank_daily_schema(cursor):
         "trend_label": "ALTER TABLE score_rank_daily ADD COLUMN trend_label VARCHAR(8) NULL COMMENT '趋势方向标签(看涨/看跌/震荡)' AFTER score",
         "s_trend_label": "ALTER TABLE score_rank_daily ADD COLUMN s_trend_label DECIMAL(10,2) NULL COMMENT '趋势标签调整分' AFTER trend_label",
         "base_score_raw": "ALTER TABLE score_rank_daily ADD COLUMN base_score_raw DECIMAL(10,2) NULL COMMENT '非线性变换前的原始base_score' AFTER s_trend_label",
+        "lineage_status": "ALTER TABLE score_rank_daily ADD COLUMN lineage_status VARCHAR(24) NOT NULL DEFAULT 'LEGACY_UNVERIFIED' COMMENT '数据血缘状态'",
+        "lineage_reason": "ALTER TABLE score_rank_daily ADD COLUMN lineage_reason VARCHAR(128) NULL COMMENT '数据血缘原因'",
+        "bs_source_batch": "ALTER TABLE score_rank_daily ADD COLUMN bs_source_batch VARCHAR(64) NULL COMMENT 'B/S来源批次'",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -293,27 +302,35 @@ def describe_scoring(
     print(scored[score_columns].to_string(index=False))
 
 
-def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
-    """
-    Saves the scored dataframe to database.
-    Assumes df_save has 'pool_type' and 'is_self_selected' columns.
+def save_scores_to_db(
+    df_save: pd.DataFrame,
+    asof_date: pd.Timestamp,
+    bs_source_batch: str = "ml_detect_v3",
+    snapshot_id: str | None = None,
+    connection=None,
+) -> str | None:
+    """Write one scoring run, optionally as part of the caller's transaction.
+
+    New rows start as ``PENDING``.  ``run_daily`` registers the immutable
+    snapshot, writes the derived layers, and promotes the same rows to
+    ``VERIFIED`` before committing the transaction.
     """
     if df_save.empty:
         print("No records to save.")
-        return
-        
-    db_conf = get_engine()
-    
+        return None
+
     df_save = df_save.copy()
     df_save["symbol"] = df_save["symbol"].map(_normalize_symbol)
     df_save = df_save[df_save["symbol"].notna()].copy()
-    df_save['trade_date'] = asof_date.date()
-    # 2026-06-23: 附带快照ID
-    snapshot_id = _generate_snapshot_id(asof_date.date())
+    df_save["trade_date"] = asof_date.date()
+    snapshot_id = snapshot_id or _generate_snapshot_id(asof_date.date())
     df_save["research_snapshot_id"] = snapshot_id
-    # Drop duplicates to prevent database constraint violation
-    df_save = df_save.drop_duplicates(subset=['symbol'])
-    
+    df_save["lineage_status"] = "PENDING"
+    df_save["lineage_reason"] = "SNAPSHOT_PENDING"
+    df_save["bs_source_batch"] = bs_source_batch
+    # Drop duplicates to prevent database constraint violation.
+    df_save = df_save.drop_duplicates(subset=["symbol"])
+
     cols_map = {
         'symbol': 'symbol',
         'name': 'name',
@@ -389,8 +406,11 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         'trend_label': 'trend_label',
         's_trend_label': 's_trend_label',
         'base_score_raw': 'base_score_raw',
-        # 2026-06-23: 快照ID
+        # Snapshot and lineage metadata.
         'research_snapshot_id': 'research_snapshot_id',
+        'lineage_status': 'lineage_status',
+        'lineage_reason': 'lineage_reason',
+        'bs_source_batch': 'bs_source_batch',
     }
     
     # Ensure all cols exist
@@ -398,31 +418,50 @@ def save_scores_to_db(df_save: pd.DataFrame, asof_date: pd.Timestamp):
         if c not in df_save.columns:
             if c == 'is_limit_up': df_save[c] = 0
             elif c == 'is_self_selected': df_save[c] = 0
+            elif c == 'lineage_status': df_save[c] = 'PENDING'
+            elif c == 'lineage_reason': df_save[c] = 'SNAPSHOT_PENDING'
+            elif c == 'bs_source_batch': df_save[c] = bs_source_batch
             else: df_save[c] = None
 
     df_db = df_save[list(cols_map.keys())].rename(columns=cols_map)
-    
+
     print("正在保存评分结果到数据库...")
-    conn = pymysql.connect(**db_conf)
-    try:
-        with conn.cursor() as cursor:
-            _ensure_score_rank_daily_schema(cursor)
-            # Keep canonical named-parameter SQL for readability/auditing.
-            delete_sql = "DELETE FROM score_rank_daily WHERE trade_date = :trade_date"
-            cursor.execute(
-                delete_sql.replace(":trade_date", "%(trade_date)s"),
-                {"trade_date": asof_date.date()},
-            )
-            cols = list(df_db.columns)
-            col_sql = ", ".join(cols)
-            val_sql = ", ".join(["%s"] * len(cols))
-            sql = f"INSERT INTO score_rank_daily ({col_sql}) VALUES ({val_sql})"
-            records = [_normalize_record_values(rec) for rec in df_db.itertuples(index=False, name=None)]
-            cursor.executemany(sql, records)
-        conn.commit()
-    finally:
-        conn.close()
+
+    def _write(conn):
+        conn.execute(
+            text("DELETE FROM score_rank_daily WHERE trade_date = :trade_date"),
+            {"trade_date": asof_date.date()},
+        )
+        # SQLAlchemy keeps this insert in the same transaction as the
+        # snapshot registry and layer writes when a connection is supplied.
+        df_db.to_sql(
+            "score_rank_daily",
+            conn,
+            if_exists="append",
+            index=False,
+            method="multi",
+            chunksize=2000,
+        )
+
+    if connection is not None:
+        _write(connection)
+    else:
+        # Backward-compatible direct callers still get schema checks and an
+        # atomic single-table write.
+        db_conf = get_engine()
+        schema_conn = pymysql.connect(**db_conf)
+        try:
+            with schema_conn.cursor() as cursor:
+                _ensure_score_rank_daily_schema(cursor)
+            schema_conn.commit()
+        finally:
+            schema_conn.close()
+        engine = get_engine(as_sqlalchemy=True)
+        ensure_chenyiyun_lineage_schema(engine)
+        with engine.begin() as conn:
+            _write(conn)
     print(f"成功保存 {len(df_db)} 条记录到 score_rank_daily")
+    return snapshot_id
 
 
 def _generate_snapshot_id(asof_date) -> str:
@@ -435,63 +474,209 @@ def _generate_snapshot_id(asof_date) -> str:
     return f"rs_{date_str}_{now.strftime('%H%M%S')}_{rand}"
 
 
-def _dual_write_layer_tables(df_save, asof_date, snapshot_id: str):
-    """双写：除 score_rank_daily 外，同步写入五层模型表。"""
+def _current_git_commit() -> str:
+    """Return the exact source revision used for a verified scoring run."""
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    commit = result.stdout.strip()
+    if not commit:
+        raise RuntimeError("snapshot_source_commit_unavailable")
+    return commit
+
+
+def _ensure_score_schema_in_db() -> None:
+    """Apply the score table's idempotent column migration before the run."""
+    db_conf = get_engine()
+    conn = pymysql.connect(**db_conf)
+    try:
+        with conn.cursor() as cursor:
+            _ensure_score_rank_daily_schema(cursor)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _register_snapshot_and_layers(
+    df_save: pd.DataFrame,
+    asof_date: pd.Timestamp,
+    snapshot_id: str,
+    bs_source_batch: str,
+) -> None:
+    """Atomically persist scores, registry metadata, and derived layers."""
+    if df_save.empty:
+        raise RuntimeError("cannot_register_empty_scoring_snapshot")
+
+    engine = get_engine(as_sqlalchemy=True)
+    _ensure_score_schema_in_db()
+    ensure_chenyiyun_lineage_schema(engine)
+
+    pool_counts = {
+        str(pool): int((df_save.get("pool_type", pd.Series(dtype=object)) == pool).sum())
+        for pool in ("TRADE", "WATCH", "CORE", "SCAN", "BASE")
+    }
+    payload = {
+        "as_of_date": asof_date.strftime("%Y-%m-%d"),
+        "scored_count": int(len(df_save)),
+        "trade_pool": pool_counts["TRADE"],
+        "watch_pool": pool_counts["WATCH"],
+        "core_pool": pool_counts["CORE"],
+        "scan_pool": pool_counts["SCAN"],
+        "base_pool": pool_counts["BASE"],
+        "bs_source_batch": bs_source_batch,
+    }
+    source_commit = _current_git_commit()
+
+    # This validation is deliberately outside the write transaction: any
+    # failure prevents all rows from being committed and remains fail-closed.
+    validate_snapshot_integrity(
+        snapshot_id=snapshot_id,
+        as_of_date=asof_date.date(),
+        feature_version=RESEARCH_FEATURE_VERSION,
+        payload=payload,
+        engine=engine,
+    )
+
+    with engine.begin() as conn:
+        save_scores_to_db(
+            df_save,
+            asof_date,
+            bs_source_batch=bs_source_batch,
+            snapshot_id=snapshot_id,
+            connection=conn,
+        )
+        write_snapshot(
+            engine,
+            snapshot_id=snapshot_id,
+            as_of_date=asof_date.date(),
+            feature_version=RESEARCH_FEATURE_VERSION,
+            label_version=f"bs:{bs_source_batch}",
+            source_commit=source_commit,
+            payload=payload,
+            connection=conn,
+        )
+        _dual_write_layer_tables(
+            df_save,
+            asof_date.date(),
+            snapshot_id,
+            bs_source_batch=bs_source_batch,
+            connection=conn,
+        )
+        result = conn.execute(
+            text(
+                """
+                UPDATE score_rank_daily
+                SET lineage_status = 'VERIFIED',
+                    lineage_reason = NULL,
+                    bs_source_batch = :bs_batch
+                WHERE trade_date = :trade_date
+                  AND research_snapshot_id = :snapshot_id
+                """
+            ),
+            {
+                "bs_batch": bs_source_batch,
+                "trade_date": asof_date.date(),
+                "snapshot_id": snapshot_id,
+            },
+        )
+        if not result.rowcount:
+            raise RuntimeError("snapshot_score_rows_not_written")
+
+    print(
+        "Snapshot %s registered: %s scores, pools=%s, bs_batch=%s"
+        % (snapshot_id, len(df_save), pool_counts, bs_source_batch)
+    )
+
+
+def _dual_write_layer_tables(
+    df_save,
+    asof_date,
+    snapshot_id: str,
+    bs_source_batch: str = "ml_detect_v3",
+    connection=None,
+):
+    """Write the derived layers using the caller's transaction when supplied."""
     if df_save.empty:
         return
-    engine = get_engine(as_sqlalchemy=True)
+
     date_val = asof_date if hasattr(asof_date, "strftime") else asof_date
 
-    # Layer 2: Rule Features
-    rule_cols = [
-        "symbol", "score", "base_score", "base_score_raw", "penalty",
-        "s_trend", "s_bull_align", "s_breakout", "s_volume", "s_vol_mild",
-        "s_rs", "s_contraction", "s_bias", "s_chip", "s_liquidity",
-        "s_trend_label", "trend_label",
-    ]
-    rule_cols = [c for c in rule_cols if c in df_save.columns]
-    if rule_cols:
-        rule_df = df_save[rule_cols].copy()
-        rule_df["research_snapshot_id"] = snapshot_id
-        rule_df["trade_date"] = date_val
-        rule_df.to_sql("ads_rule_features", engine, if_exists="append", index=False,
-                       method="multi", chunksize=2000)
-        print(f"  Layer 2 (rule_features): {len(rule_df)} rows")
+    def _write_layers(conn):
+        # Layer 2: Rule Features
+        rule_cols = [
+            "symbol", "score", "base_score", "base_score_raw", "penalty",
+            "s_trend", "s_bull_align", "s_breakout", "s_volume", "s_vol_mild",
+            "s_rs", "s_contraction", "s_bias", "s_chip", "s_liquidity",
+            "s_trend_label", "trend_label",
+        ]
+        rule_cols = [c for c in rule_cols if c in df_save.columns]
+        if rule_cols:
+            rule_df = df_save[rule_cols].copy()
+            rule_df["research_snapshot_id"] = snapshot_id
+            rule_df["trade_date"] = date_val
+            rule_df["lineage_status"] = "VERIFIED"
+            rule_df["lineage_reason"] = None
+            rule_df.to_sql(
+                "ads_rule_features", conn, if_exists="append", index=False,
+                method="multi", chunksize=2000,
+            )
+            print(f"  Layer 2 (rule_features): {len(rule_df)} rows")
 
-    # Layer 3: B/S Events
-    bs_cols = [
-        "symbol", "bs_score", "bs_entry_score", "bs_score_v2", "bs_score_v2_label",
-        "bs_research_score", "bs_research_label", "bs_research_reason",
-        "bs_gate_score", "bs_gate_pass", "bs_gate_label", "bs_gate_reason",
-        "bs_model_prob", "bs_model_expected_mdd", "bs_model_risk_score",
-        "bs_model_rank_score", "bs_model_version",
-        "bs_consensus_score", "bs_consensus_label", "bs_consensus_reason",
-        "is_bs_candidate",
-    ]
-    bs_cols = [c for c in bs_cols if c in df_save.columns]
-    if bs_cols:
-        bs_df = df_save[bs_cols].copy()
-        bs_df["research_snapshot_id"] = snapshot_id
-        bs_df["trade_date"] = date_val
-        bs_df.to_sql("ads_bs_events", engine, if_exists="append", index=False,
-                     method="multi", chunksize=2000)
-        print(f"  Layer 3 (bs_events): {len(bs_df)} rows")
+        # Layer 3: B/S Events
+        bs_cols = [
+            "symbol", "bs_score", "bs_entry_score", "bs_score_v2", "bs_score_v2_label",
+            "bs_research_score", "bs_research_label", "bs_research_reason",
+            "bs_gate_score", "bs_gate_pass", "bs_gate_label", "bs_gate_reason",
+            "bs_model_prob", "bs_model_expected_mdd", "bs_model_risk_score",
+            "bs_model_rank_score", "bs_model_version",
+            "bs_consensus_score", "bs_consensus_label", "bs_consensus_reason",
+            "is_bs_candidate",
+        ]
+        bs_cols = [c for c in bs_cols if c in df_save.columns]
+        if bs_cols:
+            bs_df = df_save[bs_cols].copy()
+            bs_df["research_snapshot_id"] = snapshot_id
+            bs_df["trade_date"] = date_val
+            bs_df["lineage_status"] = "VERIFIED"
+            bs_df["lineage_reason"] = None
+            bs_df["bs_source_batch"] = bs_source_batch
+            bs_df.to_sql(
+                "ads_bs_events", conn, if_exists="append", index=False,
+                method="multi", chunksize=2000,
+            )
+            print(f"  Layer 3 (bs_events): {len(bs_df)} rows")
 
-    # Layer 4: LLM Insights (claude_score downgraded — display only)
-    llm_cols = [
-        "symbol", "claude_score", "score_momentum", "score_value",
-        "score_quality", "score_technical", "score_capital", "score_chip",
-    ]
-    llm_cols = [c for c in llm_cols if c in df_save.columns]
-    if llm_cols:
-        llm_df = df_save[llm_cols].copy()
-        llm_df["research_snapshot_id"] = snapshot_id
-        llm_df["trade_date"] = date_val
-        llm_df.to_sql("ads_llm_insights", engine, if_exists="append", index=False,
-                      method="multi", chunksize=2000)
-        print(f"  Layer 4 (llm_insights): {len(llm_df)} rows")
+        # Layer 4: LLM Insights (claude_score downgraded — display only)
+        llm_cols = [
+            "symbol", "claude_score", "score_momentum", "score_value",
+            "score_quality", "score_technical", "score_capital", "score_chip",
+        ]
+        llm_cols = [c for c in llm_cols if c in df_save.columns]
+        if llm_cols:
+            llm_df = df_save[llm_cols].copy()
+            llm_df["research_snapshot_id"] = snapshot_id
+            llm_df["trade_date"] = date_val
+            llm_df["lineage_status"] = "VERIFIED"
+            llm_df["lineage_reason"] = None
+            llm_df.to_sql(
+                "ads_llm_insights", conn, if_exists="append", index=False,
+                method="multi", chunksize=2000,
+            )
+            print(f"  Layer 4 (llm_insights): {len(llm_df)} rows")
 
-    print(f"  Layer 5 (signal_decisions): deferred to candidate export")
+        print(f"  Layer 5 (signal_decisions): deferred to candidate export")
+
+    if connection is not None:
+        _write_layers(connection)
+    else:
+        engine = get_engine(as_sqlalchemy=True)
+        ensure_chenyiyun_lineage_schema(engine)
+        with engine.begin() as conn:
+            _write_layers(conn)
 
 
 def calculate_opt_score(scored: pd.DataFrame, asof_date: pd.Timestamp) -> pd.DataFrame:
@@ -887,24 +1072,14 @@ def main():
         # Limit pools logic (optional, respecting config if needed)
         # For simplicity, we save all qualifying.
         
-        # 保存到数据库
-        # Need to pass dfs but save_scores_to_db was designed for separate DFs / params.
-        # We repurposed it to take the final DF.
-        save_scores_to_db(df_to_save, asof_date)
-        # 2026-06-23: 快照 fail-closed 校验
-        snapshot_id = df_to_save["research_snapshot_id"].iloc[0] if "research_snapshot_id" in df_to_save.columns else _generate_snapshot_id(asof_date.date())
-        try:
-            from integration.snapshot_validator import validate_snapshot_integrity
-            validate_snapshot_integrity(
-                snapshot_id=snapshot_id,
-                as_of_date=asof_date.date(),
-                feature_version="factor_2026.06.23.1",
-                payload={"scored_count": len(df_to_save), "trade_pool": 0, "watch_pool": 0},
-            )
-        except Exception as e:
-            print(f"Snapshot validation WARNING: {e} (non-blocking for legacy compat)")
-        # 双写到五层模型表
-        _dual_write_layer_tables(df_to_save, asof_date.date(), snapshot_id)
+        # 评分、快照注册、规则/B/S/LLM 层写入必须一起成功，否则整体回滚。
+        snapshot_id = _generate_snapshot_id(asof_date.date())
+        _register_snapshot_and_layers(
+            df_to_save,
+            asof_date,
+            snapshot_id=snapshot_id,
+            bs_source_batch=args.bs_batch,
+        )
 
     except Exception as e:
         logger.exception("Execution failed")

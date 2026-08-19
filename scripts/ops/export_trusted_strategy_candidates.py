@@ -253,9 +253,14 @@ def _normalize_date(raw: str | None) -> str | None:
 
 def _latest_score_date(engine) -> str:
     with engine.connect() as conn:
-        value = conn.execute(text("SELECT MAX(trade_date) FROM score_rank_daily")).scalar()
+        value = conn.execute(
+            text(
+                "SELECT MAX(trade_date) FROM score_rank_daily "
+                "WHERE lineage_status = 'VERIFIED'"
+            )
+        ).scalar()
     if value is None:
-        raise RuntimeError("score_rank_daily has no rows.")
+        raise RuntimeError("score_rank_daily has no VERIFIED rows; candidate export is fail-closed.")
     return pd.Timestamp(value).strftime("%Y-%m-%d")
 
 
@@ -430,6 +435,7 @@ def _validate_order_prerequisites(engine, asof_date: str, min_pool_size: int) ->
         "s_liquidity",
         "bs_score_v2",
         "bs_consensus_score",
+        "lineage_status",
     }
     columns = _columns_for_table(engine, "chenyiyun.score_rank_daily")
     missing_cols = sorted(required_cols - columns)
@@ -444,9 +450,10 @@ def _validate_order_prerequisites(engine, asof_date: str, min_pool_size: int) ->
             SUM(CASE WHEN score IS NULL THEN 1 ELSE 0 END) AS null_score,
             SUM(CASE WHEN s_liquidity IS NULL THEN 1 ELSE 0 END) AS null_liquidity,
             SUM(CASE WHEN bs_score_v2 IS NULL THEN 1 ELSE 0 END) AS null_bs_v2,
-            SUM(CASE WHEN bs_consensus_score IS NULL THEN 1 ELSE 0 END) AS null_consensus
+            SUM(CASE WHEN bs_consensus_score IS NULL THEN 1 ELSE 0 END) AS null_consensus,
+            SUM(CASE WHEN lineage_status <> 'VERIFIED' THEN 1 ELSE 0 END) AS non_verified_lineage
         FROM chenyiyun.score_rank_daily
-        WHERE trade_date = :asof_date
+        WHERE trade_date = :asof_date AND lineage_status = 'VERIFIED'
         """
     )
     with engine.connect() as conn:
@@ -459,6 +466,7 @@ def _validate_order_prerequisites(engine, asof_date: str, min_pool_size: int) ->
         "null_liquidity": int(row.get("null_liquidity") or 0) == 0,
         "null_bs_v2": int(row.get("null_bs_v2") or 0) == 0,
         "null_consensus": int(row.get("null_consensus") or 0) == 0,
+        "non_verified_lineage": int(row.get("non_verified_lineage") or 0) == 0,
     }
     failed = [name for name, ok in checks.items() if not ok]
     if failed:
@@ -2370,6 +2378,7 @@ def export_candidates(args: argparse.Namespace) -> dict:
         start_date=start_date,
         end_date=asof_date,
         min_pool_size=args.min_pool_size,
+        require_verified_lineage=True,
     )
     if scores.empty:
         raise RuntimeError("No score rows loaded after filters.")

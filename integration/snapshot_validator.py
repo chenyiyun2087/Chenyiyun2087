@@ -98,8 +98,30 @@ def validate_research_snapshot_ready(
             {"aod": as_of_date},
         ).mappings().first()
 
+        if row is not None:
+            verified_score_count = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM chenyiyun.score_rank_daily
+                    WHERE trade_date = :aod
+                      AND research_snapshot_id = :sid
+                      AND lineage_status = 'VERIFIED'
+                    """
+                ),
+                {"aod": as_of_date, "sid": row["snapshot_id"]},
+            ).scalar_one()
+        else:
+            verified_score_count = 0
+
     if row is None:
         return False, f"No research snapshot found for {as_of_date} — fail-closed"
+
+    if not verified_score_count:
+        return False, (
+            f"Snapshot {row['snapshot_id']} has no VERIFIED score rows for "
+            f"{as_of_date} — fail-closed"
+        )
 
     if required_feature_version and row["feature_version"] != required_feature_version:
         return False, (
