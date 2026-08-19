@@ -2747,7 +2747,7 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
                        FROM ads_candle_diag_daily c
                        LEFT JOIN tushare_stock.dim_stock s ON s.symbol = c.symbol
                        WHERE c.trade_date = %s""",
-                    (date_iso, date_iso, date_iso),
+                    (target_datestr, target_datestr, date_iso),
                 )
                 row = cursor.fetchone() or {}
         finally:
