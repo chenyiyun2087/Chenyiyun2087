@@ -2738,17 +2738,16 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
                     """SELECT
                            COUNT(*) AS rows_cnt,
                            COALESCE(SUM(s.market = '北交所'), 0) AS bj_rows,
-                           (SELECT COUNT(*)
-                              FROM tushare_stock.dim_stock
-                             WHERE (delist_date IS NULL OR delist_date = '' OR delist_date = '0')) AS expected_rows,
-                           (SELECT COUNT(*)
-                              FROM tushare_stock.dim_stock
-                             WHERE market = '北交所'
-                               AND (delist_date IS NULL OR delist_date = '' OR delist_date = '0')) AS expected_bj_rows
+                           (SELECT COUNT(DISTINCT ts_code)
+                              FROM tushare_stock.dwd_stock_daily_standard
+                             WHERE trade_date = %s) AS expected_rows,
+                           (SELECT COUNT(DISTINCT ts_code)
+                              FROM tushare_stock.dwd_stock_daily_standard
+                             WHERE trade_date = %s AND ts_code LIKE '%%.BJ') AS expected_bj_rows
                        FROM ads_candle_diag_daily c
                        LEFT JOIN tushare_stock.dim_stock s ON s.symbol = c.symbol
                        WHERE c.trade_date = %s""",
-                    (date_iso,),
+                    (date_iso, date_iso, date_iso),
                 )
                 row = cursor.fetchone() or {}
         finally:
@@ -2758,13 +2757,13 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
         expected_rows = int(row.get("expected_rows") or 0)
         expected_bj_rows = int(row.get("expected_bj_rows") or 0)
         # The scanner resolves the active dim_stock universe, then excludes
-        # symbols without a usable lookback window.  Compare against that
-        # same active universe; counting historical/delisted rows in dim_stock
-        # made every otherwise complete scan fail at ~5543/5884 and also
-        # mismatched the active 北交所 count.
-        # Accept >= 94% coverage and exact active-universe BJ match.
-        coverage_ok = expected_rows > 0 and rows_cnt >= int(expected_rows * 0.94)
-        bj_ok = bj_rows == expected_bj_rows
+        # symbols without a usable lookback window.  Use the target-day bar
+        # universe as the historical baseline: current dim_stock contains
+        # later delistings/new listings and is not a PIT-stable denominator.
+        # A small tolerance covers symbols whose lookback window is not yet
+        # mature while still blocking material coverage loss.
+        coverage_ok = expected_rows > 0 and rows_cnt >= int(expected_rows * 0.99)
+        bj_ok = expected_bj_rows > 0 and bj_rows >= int(expected_bj_rows * 0.98)
         ok = coverage_ok and bj_ok
         return ok, [
             f"result={'PASS' if ok else 'FAIL'}; task=candle_diag_scan; business_date={target_datestr}; "
