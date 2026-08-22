@@ -7,8 +7,13 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+SOURCE_ROOT = Path(__file__).resolve().parents[2]
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
 from scripts.ops.release_runtime import DEFAULT_RELEASE_MANIFEST
 
@@ -128,7 +133,7 @@ def _write_release_manifest(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish a clean production runtime release.")
-    parser.add_argument("--source-root", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--source-root", type=Path, default=SOURCE_ROOT)
     parser.add_argument("--release-id")
     parser.add_argument("--release-root", type=Path, default=DEFAULT_RELEASE_ROOT)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_RELEASE_MANIFEST)
