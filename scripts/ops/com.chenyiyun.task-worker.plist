@@ -6,9 +6,9 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/python3.14</string>
-    <string>/Volumes/extension/projects/Chenyiyun2087/scripts/ops/task_worker_launcher.py</string>
+    <string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087/releases/current/scripts/ops/task_worker_launcher.py</string>
   </array>
-  <key>WorkingDirectory</key><string>/Volumes/extension/projects/Chenyiyun2087</string>
+  <key>WorkingDirectory</key><string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087/releases/current</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>CHENYIYUN_RELEASE_MANIFEST</key>

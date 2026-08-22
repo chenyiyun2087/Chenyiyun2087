@@ -133,6 +133,17 @@ def _write_release_manifest(
     temporary.replace(path)
 
 
+def _publish_current_link(current_link: Path, target: Path) -> None:
+    current_link.parent.mkdir(parents=True, exist_ok=True)
+    if current_link.exists() and not current_link.is_symlink():
+        raise RuntimeError(f"release_current_link_conflict:{current_link}")
+    temporary = current_link.with_name(f".{current_link.name}.{os.getpid()}.tmp")
+    if temporary.exists() or temporary.is_symlink():
+        temporary.unlink()
+    temporary.symlink_to(target, target_is_directory=True)
+    temporary.replace(current_link)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish a clean production runtime release.")
     parser.add_argument("--source-root", type=Path, default=SOURCE_ROOT)
@@ -162,6 +173,7 @@ def main() -> None:
     if not runtime_python.is_file():
         raise SystemExit(f"FATAL: runtime Python is missing: {runtime_python}")
     target = (args.release_root.expanduser().resolve() / f"{release_id}-{commit_sha[:12]}")
+    current_link = args.release_root.expanduser().resolve() / "current"
     manifest = args.manifest.expanduser().resolve()
 
     plan = {
@@ -170,6 +182,7 @@ def main() -> None:
         "project_root": str(target),
         "runtime_python": str(runtime_python),
         "manifest": str(manifest),
+        "current_link": str(current_link),
     }
     if args.dry_run:
         print(json.dumps({"dry_run": True, **plan}, ensure_ascii=False, indent=2))
@@ -187,6 +200,7 @@ def main() -> None:
         runtime_python=runtime_python,
         source_repo=source_root,
     )
+    _publish_current_link(current_link, target)
     print(json.dumps({"published": True, **plan}, ensure_ascii=False, indent=2))
 
 
