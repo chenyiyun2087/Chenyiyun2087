@@ -16,8 +16,11 @@ RUNTIME_STATUS_EXCLUDES = (
     ":(exclude)exports/**",
     ":(exclude)reports/**",
     ":(exclude)data/pit/**",
+    ":(exclude)data/pit",
     ":(exclude)logs/score_backfill/**",
+    ":(exclude)logs/score_backfill",
     ":(exclude)logs/web/**",
+    ":(exclude)logs/web",
     ":(exclude)sina/bs_detection/SinaAppBS/**",
 )
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)

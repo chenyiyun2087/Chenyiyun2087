@@ -504,8 +504,11 @@ GIT_STATUS_PATHS = [
     ":(exclude)exports/**",
     ":(exclude)reports/**",
     ":(exclude)data/pit/**",
+    ":(exclude)data/pit",
     ":(exclude)logs/score_backfill/**",
+    ":(exclude)logs/score_backfill",
     ":(exclude)logs/web/**",
+    ":(exclude)logs/web",
     ":(exclude)sina/bs_detection/SinaAppBS/**",
 ]
 
