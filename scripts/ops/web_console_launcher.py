@@ -11,7 +11,9 @@ from pathlib import Path
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
+PROJECT_ROOT = SOURCE_ROOT
 ENV_FILE = Path(os.environ.get("CHENYIYUN_ENV_FILE", "~/.config/chenyiyun/web.env")).expanduser()
+VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 
 def load_env(path: Path) -> None:
@@ -34,7 +36,8 @@ def main() -> None:
     if not (os.environ.get("CHENYIYUN_DB_URL") or os.environ.get("CHENYIYUN_DB_PASSWORD")):
         raise SystemExit(f"FATAL: database credentials are missing from {ENV_FILE}")
     os.chdir(release.project_root)
-    python = str(release.runtime_python)
+    VENV_PYTHON = release.runtime_python
+    python = str(VENV_PYTHON)
     os.execvpe(
         python,
         [
