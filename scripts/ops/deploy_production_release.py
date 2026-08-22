@@ -18,7 +18,9 @@ if str(SOURCE_ROOT) not in sys.path:
 from scripts.ops.release_runtime import DEFAULT_RELEASE_MANIFEST
 
 
-DEFAULT_RELEASE_ROOT = Path("/Volumes/extension/runtime/Chenyiyun2087/releases")
+DEFAULT_RELEASE_ROOT = Path(
+    "~/Library/Application Support/Chenyiyun2087/releases"
+).expanduser()
 SHARED_RUNTIME_ROOTS = (
     "exports",
     "sina/bs_detection/SinaAppBS",
