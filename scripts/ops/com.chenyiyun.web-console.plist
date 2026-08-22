@@ -11,6 +11,13 @@
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/chenyiyun</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CHENYIYUN_RELEASE_MANIFEST</key>
+    <string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087/production_release.json</string>
+    <key>CHENYIYUN_REQUIRE_RELEASE</key>
+    <string>1</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

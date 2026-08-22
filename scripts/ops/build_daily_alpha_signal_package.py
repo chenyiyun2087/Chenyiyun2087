@@ -517,7 +517,20 @@ def _git_info() -> dict:
             cwd=PROJECT_ROOT, check=True).stdout.strip())
     except subprocess.CalledProcessError:
         dirty = True  # fail-closed: cannot verify -> treat as dirty
-    return {"git_commit_sha": sha, "worktree_clean": not dirty}
+    expected_sha = os.environ.get("CHENYIYUN_RELEASE_SHA", "").strip().lower()
+    release_sha_match = not expected_sha or sha.lower() == expected_sha
+    runtime_release_id = str(
+        os.environ.get("CHENYIYUN_RUNTIME_RELEASE_ID")
+        or os.environ.get("CHENYIYUN_RELEASE_ID")
+        or ""
+    ).strip()
+    return {
+        "git_commit_sha": sha,
+        "worktree_clean": not dirty and release_sha_match,
+        "release_sha_match": release_sha_match,
+        "runtime_release_id": runtime_release_id,
+        "release_root": str(PROJECT_ROOT),
+    }
 
 
 def _config_shas() -> dict:
@@ -579,6 +592,15 @@ def seal_signal_package(
         raise SignalPackageBlocked(
             "worktree is dirty — formal Signal Package BLOCKED "
             "(immutability requires a clean worktree; commit or stash first)")
+    if git.get("release_sha_match") is False:
+        raise SignalPackageBlocked(
+            "release commit mismatch — formal Signal Package BLOCKED "
+            "(worker must execute the published release checkout)")
+    if os.environ.get("CHENYIYUN_REQUIRE_RELEASE") == "1" and not str(
+        git.get("runtime_release_id") or ""
+    ).strip():
+        raise SignalPackageBlocked(
+            "runtime release identity missing — formal Signal Package BLOCKED")
 
     if package_dir.exists():
         if not allow_revision:
@@ -696,6 +718,9 @@ def _write_package_payloads(
         "parent_package_sha256": parent_package_sha,
         "git_commit_sha": git.get("git_commit_sha"),
         "worktree_clean": bool(git.get("worktree_clean")),
+        "release_id": git.get("runtime_release_id") or None,
+        "runtime_release_id": git.get("runtime_release_id") or None,
+        "release_root": git.get("release_root") or str(PROJECT_ROOT),
         "strategy_config_shas": _config_shas(),
         "source_snapshot_shas": input_manifest.get("source_snapshot_shas", {}),
         "pit_contract_sha": input_manifest.get("pit_contract_sha"),

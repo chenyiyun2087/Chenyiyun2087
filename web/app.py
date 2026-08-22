@@ -1674,6 +1674,10 @@ def _queue_options_json(run_options):
     return json.dumps(run_options or {}, ensure_ascii=False, sort_keys=True)
 
 
+def _runtime_release_id() -> str:
+    return str(os.environ.get("CHENYIYUN_RUNTIME_RELEASE_ID") or "").strip()
+
+
 def _enqueue_task(task_name, trigger_type="manual", run_options=None, scheduled_for=None):
     """Create one durable job, or return the active job for the same business day."""
     if task_name not in TASKS:
@@ -1730,7 +1734,7 @@ def _enqueue_task(task_name, trigger_type="manual", run_options=None, scheduled_
                     f"{TRUSTED_PRODUCTION_STRATEGY}_{business_date}_"
                     f"{TRUSTED_PRODUCTION_CONFIG['config_sha']}"
                 )
-            release_id = release_id or "UNASSIGNED_BLOCKED"
+            release_id = release_id or _runtime_release_id() or "UNASSIGNED_BLOCKED"
             run_id = f"task:{job_id}:{task_name}:{business_date}"
             cursor.execute(
                 "UPDATE app_task_queue SET run_id=%s,release_id=%s WHERE id=%s",
@@ -2736,8 +2740,8 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
             with conn.cursor() as cursor:
                 cursor.execute(
                     """SELECT
-                           COUNT(*) AS rows_cnt,
-                           COALESCE(SUM(s.market = '北交所'), 0) AS bj_rows,
+                           COUNT(DISTINCT c.symbol) AS rows_cnt,
+                           COUNT(DISTINCT CASE WHEN s.market = '北交所' THEN c.symbol END) AS bj_rows,
                            (SELECT COUNT(DISTINCT ts_code)
                               FROM tushare_stock.dwd_stock_daily_standard
                              WHERE trade_date = %s) AS expected_rows,
@@ -2762,12 +2766,22 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
         # later delistings/new listings and is not a PIT-stable denominator.
         # A small tolerance covers symbols whose lookback window is not yet
         # mature while still blocking material coverage loss.
-        coverage_ok = expected_rows > 0 and rows_cnt >= int(expected_rows * 0.99)
-        bj_ok = expected_bj_rows > 0 and bj_rows >= int(expected_bj_rows * 0.98)
+        if expected_rows <= 0 or expected_bj_rows <= 0:
+            return False, [
+                f"result=BLOCKED; task=candle_diag_scan; business_date={target_datestr}; "
+                f"reason=missing_pit_baseline; baseline_rows={expected_rows}; "
+                f"baseline_bj_rows={expected_bj_rows}; verification_blocked=true"
+            ]
+        coverage_ratio = rows_cnt / expected_rows
+        bj_coverage_ratio = bj_rows / expected_bj_rows
+        coverage_ok = coverage_ratio >= 0.99
+        bj_ok = bj_coverage_ratio >= 0.98
         ok = coverage_ok and bj_ok
         return ok, [
             f"result={'PASS' if ok else 'FAIL'}; task=candle_diag_scan; business_date={target_datestr}; "
-            f"rows={rows_cnt}; expected_rows={expected_rows}; bj_rows={bj_rows}; expected_bj_rows={expected_bj_rows}"
+            f"rows={rows_cnt}; expected_rows={expected_rows}; coverage_ratio={coverage_ratio:.6f}; "
+            f"bj_rows={bj_rows}; expected_bj_rows={expected_bj_rows}; "
+            f"bj_coverage_ratio={bj_coverage_ratio:.6f}"
         ]
     except Exception as e:
         return False, [f"result=FAIL; verifier_error={e}"]

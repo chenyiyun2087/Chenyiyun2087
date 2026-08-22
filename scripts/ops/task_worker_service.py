@@ -126,7 +126,7 @@ def classify_task_failure(history_status: str, exit_code: int, message: object) 
         return "TEST_GATE", False
     if any(marker.lower() in body for marker in DATA_READINESS_FAILURE_MARKERS):
         return "DATA_READINESS", True
-    if "[verify]" in body and "result=fail" in body:
+    if "[verify]" in body and ("result=fail" in body or "result=blocked" in body):
         return "VERIFICATION", False
     if any(marker in body for marker in TRANSIENT_FAILURE_MARKERS):
         return "TRANSIENT", True

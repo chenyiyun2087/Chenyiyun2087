@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_ROOT = Path(__file__).resolve().parents[2]
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 ENV_FILE = Path(os.environ.get("CHENYIYUN_ENV_FILE", "~/.config/chenyiyun/web.env")).expanduser()
-VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 
 def load_env(path: Path) -> None:
@@ -24,9 +26,15 @@ def load_env(path: Path) -> None:
 
 def main() -> None:
     load_env(ENV_FILE)
-    os.chdir(PROJECT_ROOT)
-    python = str(VENV_PYTHON)
-    os.execvpe(python, [python, "scripts/ops/task_queue_worker.py"], os.environ)
+    from scripts.ops.release_runtime import apply_runtime_release_environment
+
+    release = apply_runtime_release_environment()
+    os.chdir(release.project_root)
+    python = str(release.runtime_python)
+    worker_script = release.project_root / "scripts" / "ops" / "task_queue_worker.py"
+    if not worker_script.is_file():
+        raise SystemExit(f"FATAL: release worker is missing: {worker_script}")
+    os.execvpe(python, [python, str(worker_script)], os.environ)
 
 
 if __name__ == "__main__":
