@@ -499,7 +499,15 @@ def _sha256_file(p: Path) -> str:
 # committed (parquet-bloat policy) — they must not block formal packaging.
 # Same pathspecs as the strict-ledger backtest worktree gate
 # (scripts/research_trusted_strategy_account_backtest.py).
-GIT_STATUS_PATHS = [".", ":(exclude)exports/**", ":(exclude)reports/**"]
+GIT_STATUS_PATHS = [
+    ".",
+    ":(exclude)exports/**",
+    ":(exclude)reports/**",
+    ":(exclude)data/pit/**",
+    ":(exclude)logs/score_backfill/**",
+    ":(exclude)logs/web/**",
+    ":(exclude)sina/bs_detection/SinaAppBS/**",
+]
 
 
 def _git_info() -> dict:

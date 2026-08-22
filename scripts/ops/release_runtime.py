@@ -12,6 +12,14 @@ from pathlib import Path
 DEFAULT_RELEASE_MANIFEST = Path(
     "/Users/chenyiyun/Library/Application Support/Chenyiyun2087/production_release.json"
 )
+RUNTIME_STATUS_EXCLUDES = (
+    ":(exclude)exports/**",
+    ":(exclude)reports/**",
+    ":(exclude)data/pit/**",
+    ":(exclude)logs/score_backfill/**",
+    ":(exclude)logs/web/**",
+    ":(exclude)sina/bs_detection/SinaAppBS/**",
+)
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 

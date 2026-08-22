@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts.ops.release_runtime import RUNTIME_STATUS_EXCLUDES
+
 
 PROJECT_ROOT = Path(
     os.environ.get("CHENYIYUN_PROJECT_ROOT") or Path(__file__).resolve().parents[2]
@@ -18,7 +20,7 @@ PROJECT_PYTHON = Path(
 ).expanduser().resolve()
 REQUIRED_MODULES = ("pandas", "pymysql", "sqlalchemy", "yaml")
 MIN_PYTHON = (3, 11)
-GIT_STATUS_PATHS = (".", ":(exclude)exports/**", ":(exclude)reports/**")
+GIT_STATUS_PATHS = (".", *RUNTIME_STATUS_EXCLUDES)
 
 
 def _release_required() -> bool:
