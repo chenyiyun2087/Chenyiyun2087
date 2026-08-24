@@ -42,3 +42,27 @@ def test_load_runtime_release_rejects_bad_commit(tmp_path):
 
     with pytest.raises(RuntimeError, match="commit_sha"):
         release_runtime.load_runtime_release(manifest)
+
+
+def test_load_runtime_release_preserves_venv_python_path(tmp_path):
+    project_root = tmp_path / "release"
+    project_root.mkdir()
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    base_python = tmp_path / "base-python"
+    base_python.write_text("", encoding="utf-8")
+    venv_python = tmp_path / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(base_python)
+    manifest = tmp_path / "release.json"
+    manifest.write_text(json.dumps({
+        "release_id": "chenyiyun-prod-venv",
+        "commit_sha": "b" * 40,
+        "project_root": str(project_root),
+        "runtime_python": str(venv_python),
+        "source_repo": str(source_repo),
+    }), encoding="utf-8")
+
+    release = release_runtime.load_runtime_release(manifest)
+
+    assert release.runtime_python == venv_python

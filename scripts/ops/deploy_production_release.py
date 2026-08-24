@@ -169,7 +169,9 @@ def main() -> None:
             "FATAL: source checkout has tracked/runtime changes; commit the release first."
         )
     release_id = args.release_id or f"chenyiyun-prod-{commit_sha[:12]}"
-    runtime_python = (args.runtime_python or source_root / ".venv" / "bin" / "python").expanduser().resolve()
+    # Keep a venv launcher path intact. Resolving its symlink would publish
+    # the base interpreter instead of the dependency-complete runtime.
+    runtime_python = (args.runtime_python or source_root / ".venv" / "bin" / "python").expanduser()
     if not runtime_python.is_file():
         raise SystemExit(f"FATAL: runtime Python is missing: {runtime_python}")
     target = (args.release_root.expanduser().resolve() / f"{release_id}-{commit_sha[:12]}")

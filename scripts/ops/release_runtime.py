@@ -66,7 +66,9 @@ def load_runtime_release(
         raise RuntimeError("release_manifest_invalid:missing_paths")
 
     project_root = Path(project_root_raw).expanduser().resolve()
-    runtime_python = Path(runtime_python_raw).expanduser().resolve()
+    # Keep a venv launcher path intact. Resolving its symlink would silently
+    # bypass the venv and drop packages installed only in that runtime.
+    runtime_python = Path(runtime_python_raw).expanduser()
     source_repo = Path(source_repo_raw).expanduser().resolve()
     if not project_root.is_dir():
         raise RuntimeError(f"release_project_missing:{project_root}")

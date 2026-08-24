@@ -3882,7 +3882,7 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
         script_abs_path = project_root / script_parts[0]
         runtime_python = str(os.environ.get("CHENYIYUN_RUNTIME_PYTHON") or "").strip()
         project_python = (
-            Path(runtime_python).expanduser().resolve()
+            Path(runtime_python).expanduser()
             if runtime_python
             else project_root / ".venv" / "bin" / "python"
         )
