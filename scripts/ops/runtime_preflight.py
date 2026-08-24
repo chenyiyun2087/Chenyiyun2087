@@ -18,7 +18,14 @@ PROJECT_PYTHON = Path(
     os.environ.get("CHENYIYUN_RUNTIME_PYTHON")
     or (PROJECT_ROOT / ".venv" / "bin" / "python")
 ).expanduser().resolve()
-REQUIRED_MODULES = ("pandas", "pymysql", "sqlalchemy", "yaml")
+REQUIRED_MODULES = (
+    "pandas",
+    "pymysql",
+    "sqlalchemy",
+    "yaml",
+    "selenium",
+    "webdriver_manager",
+)
 MIN_PYTHON = (3, 11)
 GIT_STATUS_PATHS = (".", *RUNTIME_STATUS_EXCLUDES)
 
