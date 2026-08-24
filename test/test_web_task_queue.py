@@ -2,12 +2,14 @@ import os
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("DISABLE_APP_SCHEDULER_LOOP", "1")
 
 from web import app as web_app
 from runtime import shadow_events
 from scripts.ops import feishu_notifier
+from scripts.ops import task_worker_service
 from scripts.ops.daily_batch_audit import (
     ExpectedTask,
     _recovered_artifact,
@@ -384,6 +386,37 @@ def test_task_subprocess_env_exposes_job_identity():
     assert env["CHENYIYUN_TASK_JOB_ID"] == "88"
     assert env["CHENYIYUN_TASK_ATTEMPT"] == "2"
     assert env["CHENYIYUN_TASK_BUSINESS_DATE"] == "20260715"
+
+
+def test_task_execution_uses_manifest_runtime_python(monkeypatch, tmp_path):
+    release_root = tmp_path / "release"
+    (release_root / "web").mkdir(parents=True)
+    runtime_python = tmp_path / "shared-python"
+    runtime_python.write_text("", encoding="utf-8")
+    monkeypatch.setattr(web_app.app, "root_path", str(release_root / "web"))
+    monkeypatch.setenv("CHENYIYUN_RUNTIME_PYTHON", str(runtime_python))
+    monkeypatch.setattr(web_app, "_build_task_script_parts", lambda *args, **kwargs: ["dummy.py"])
+    monkeypatch.setattr(web_app, "_build_task_subprocess_env", lambda *args, **kwargs: {})
+    monkeypatch.setattr(web_app, "update_task_db", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_app, "_insert_task_history", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_app, "_send_task_completion_notification", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_app, "_mark_task_lock_finished", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_app, "_run_task_result_verification", lambda *args, **kwargs: (True, ["result=PASS"]))
+    captured = {}
+
+    def fake_execute(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(exit_code=0, stdout="", stderr="")
+
+    monkeypatch.setattr(task_worker_service, "execute_subprocess", fake_execute)
+    web_app._execute_locked_task(
+        "sina_picture",
+        "manual",
+        run_options={"datestr": "20260824"},
+    )
+
+    assert captured["cmd"][0] == str(runtime_python)
+    assert captured["cmd"][1].endswith("/release/dummy.py")
 
 
 def test_daily_batch_audit_classifies_missing_and_non_trading_skip():

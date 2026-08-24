@@ -3880,9 +3880,14 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
     try:
         script_parts = _build_task_script_parts(task_name, run_options=run_options)
         script_abs_path = project_root / script_parts[0]
-        project_python = project_root / ".venv" / "bin" / "python"
-        if not project_python.exists():
-            raise RuntimeError(f"project Python is missing: {project_python}")
+        runtime_python = str(os.environ.get("CHENYIYUN_RUNTIME_PYTHON") or "").strip()
+        project_python = (
+            Path(runtime_python).expanduser().resolve()
+            if runtime_python
+            else project_root / ".venv" / "bin" / "python"
+        )
+        if not project_python.is_file():
+            raise RuntimeError(f"runtime Python is missing: {project_python}")
         cmd = [str(project_python), str(script_abs_path)] + script_parts[1:]
         env = _build_task_subprocess_env(
             task_name, project_root, queue_job=queue_job, run_options=run_options
