@@ -25,6 +25,9 @@ REQUIRED_MODULES = (
     "yaml",
     "selenium",
     "webdriver_manager",
+    "cv2",
+    "pytesseract",
+    "PIL",
 )
 MIN_PYTHON = (3, 11)
 GIT_STATUS_PATHS = (".", *RUNTIME_STATUS_EXCLUDES)
