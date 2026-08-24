@@ -3981,6 +3981,16 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
 
 def _build_task_subprocess_env(task_name, project_root, queue_job=None, run_options=None):
     env = build_direct_network_env(os.environ, pythonpath_prefix=str(project_root))
+    # The repository's sitecustomize.py is intentionally first on PYTHONPATH
+    # for direct-network setup. Preserve the interpreter's installed package
+    # directories as well; otherwise that local sitecustomize shadows
+    # Homebrew's sitecustomize and pandas/numpy disappear from child jobs.
+    pythonpath_parts = [item for item in str(env.get("PYTHONPATH") or "").split(os.pathsep) if item]
+    for item in sys.path:
+        if item and ("site-packages" in item or "dist-packages" in item) and item not in pythonpath_parts:
+            pythonpath_parts.append(item)
+    if pythonpath_parts:
+        env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
     env["CHENYIYUN_TASK_NAME"] = str(task_name)
     env["CHENYIYUN_TASK_BUSINESS_DATE"] = _queue_business_date(run_options)
     if queue_job:

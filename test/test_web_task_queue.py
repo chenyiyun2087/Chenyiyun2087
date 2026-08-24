@@ -386,6 +386,10 @@ def test_task_subprocess_env_exposes_job_identity():
     assert env["CHENYIYUN_TASK_JOB_ID"] == "88"
     assert env["CHENYIYUN_TASK_ATTEMPT"] == "2"
     assert env["CHENYIYUN_TASK_BUSINESS_DATE"] == "20260715"
+    assert any(
+        "site-packages" in item
+        for item in env.get("PYTHONPATH", "").split(os.pathsep)
+    )
 
 
 def test_task_execution_uses_manifest_runtime_python(monkeypatch, tmp_path):
