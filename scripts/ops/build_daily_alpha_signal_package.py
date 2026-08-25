@@ -789,7 +789,7 @@ def _write_package_payloads(
     file_shas["signal_package_manifest.json"] = _sha256_file(
         out_dir / "signal_package_manifest.json")
     try:
-        package_dir_str = str(final_dir.relative_to(PROJECT_ROOT))
+        package_dir_str = str(final_dir.relative_to(EVIDENCE_ROOT))
     except ValueError:
         package_dir_str = str(final_dir)  # test/tmp out-of-repo paths
     sha_payload = {
@@ -1611,10 +1611,14 @@ def run_package(signal_date: str | None = None, dry_run: bool = False,
         # (the revision now exists, so a second next_revision_dir() call
         # would skip ahead to the next free number).
         out_dir = PACKAGES_ROOT / signal_date / f"revision_{rev}"
+    try:
+        package_dir_str = str(out_dir.relative_to(EVIDENCE_ROOT))
+    except ValueError:
+        package_dir_str = str(out_dir)
     print(json.dumps({"package_sealed": manifest["signal_date"],
                       "execution_date": exec_date,
                       "revision": manifest.get("revision"),
-                      "package_dir": str(out_dir.relative_to(PROJECT_ROOT)),
+                      "package_dir": package_dir_str,
                       "candidates": manifest["candidate_ids"],
                       "universe": uni.n_tradeable,
                       "package_sha": (out_dir /
