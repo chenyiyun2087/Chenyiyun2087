@@ -237,10 +237,9 @@ morning:
     # see zero HOLDING and write no_open_positions (2026-08-06:
     # reconcile 22:55:55 wrote the fills 13s AFTER the sell 22:55:42 —
     # no sells, no cash next morning, precommit fail-closed at 09:25).
-    # NOTE: no depends_on here — the cross-day binding (T-day seal ->
-    # T+1) is enforced in-code: precommit/reconcile RAISE shadow_blocked
-    # when the SEALED package or orders are missing (fail-closed),
-    # matching the existing morning-task pattern.
+    # The precommit queue entry remains PENDING until the previous T-day's
+    # SEALED package is visible.  This is a cross-day dependency and cannot
+    # be represented by the same-business-date depends_on list.
     - id: alpha_signal_precommit
       time: "09:25"
       script: scripts/ops/run_daily_shadow.py
@@ -256,6 +255,7 @@ morning:
       type: script
       trading_day_only: true
       status: enabled  # RE-ENABLED 2026-08-05 — see alpha_signal_package_seal
+      depends_on: [alpha_signal_precommit]
 
     # v5.5.2 execution loop (REGISTERED but PAUSED): the sell engine and
     # NAV close the execution cycle (hold-expiry exits, rebalance exits,

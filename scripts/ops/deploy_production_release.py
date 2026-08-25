@@ -72,6 +72,12 @@ def _share_untracked_subdirectories(
     if not target.is_dir():
         raise RuntimeError(f"release_runtime_path_not_directory:{target}")
     for child in sorted(source.iterdir()):
+        # Never project build scratch space into a release.  In particular,
+        # packages/.staging must stay local to the writer: sharing it across
+        # the development and release volumes makes atomic directory renames
+        # fail with EXDEV.
+        if child.name.startswith("."):
+            continue
         if child.is_dir() and not child.is_symlink():
             child_relative = f"{relative}/{child.name}"
             _share_untracked_subdirectories(

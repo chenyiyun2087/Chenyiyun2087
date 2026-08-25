@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from scripts.ops import deploy_production_release
 from scripts.ops import release_runtime
 
 
@@ -66,3 +67,46 @@ def test_load_runtime_release_preserves_venv_python_path(tmp_path):
     release = release_runtime.load_runtime_release(manifest)
 
     assert release.runtime_python == venv_python
+
+
+def test_apply_runtime_release_exports_persistent_source_root(tmp_path):
+    project_root = tmp_path / "release"
+    project_root.mkdir()
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    runtime_python = tmp_path / "python"
+    runtime_python.write_text("", encoding="utf-8")
+    manifest = tmp_path / "release.json"
+    manifest.write_text(json.dumps({
+        "release_id": "chenyiyun-prod-source-root",
+        "commit_sha": "c" * 40,
+        "project_root": str(project_root),
+        "runtime_python": str(runtime_python),
+        "source_repo": str(source_repo),
+    }), encoding="utf-8")
+
+    env = {"CHENYIYUN_RELEASE_MANIFEST": str(manifest)}
+    release_runtime.apply_runtime_release_environment(env)
+
+    assert env["CHENYIYUN_SOURCE_REPO"] == str(source_repo.resolve())
+
+
+def test_release_sharing_skips_forward_package_staging_dirs(tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "release"
+    package_root = source / "exports" / "forward_shadow_evidence" / "packages"
+    (package_root / "2026-08-04").mkdir(parents=True)
+    (package_root / "2026-08-04" / "classification.json").write_text("{}")
+    (package_root / ".staging" / "partial").mkdir(parents=True)
+    (source / "exports" / "forward_shadow_evidence" / "README.md").write_text("evidence")
+
+    tracked = {
+        "exports/forward_shadow_evidence/README.md",
+        "exports/forward_shadow_evidence/packages/2026-08-04/classification.json",
+    }
+    deploy_production_release._share_untracked_subdirectories(
+        source, target, "exports", tracked
+    )
+
+    assert not (target / "exports" / "forward_shadow_evidence" /
+                "packages" / ".staging").exists()

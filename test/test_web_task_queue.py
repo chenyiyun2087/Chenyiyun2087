@@ -74,6 +74,40 @@ def test_dependency_state_accepts_verified_recovery_artifact(monkeypatch):
     assert not message
 
 
+def test_precommit_waits_for_cross_day_sealed_package(monkeypatch):
+    cursor = FakeCursor([])
+    monkeypatch.setattr(web_app, "_sealed_package_for_execution", lambda _: None)
+
+    state, message = web_app._dependency_state(
+        cursor, "alpha_signal_precommit", "20260825", "schedule"
+    )
+
+    assert state == "WAITING"
+    assert "20260825" in message
+
+
+def test_precommit_becomes_ready_after_cross_day_package_is_sealed(monkeypatch):
+    cursor = FakeCursor([])
+    monkeypatch.setattr(
+        web_app,
+        "_sealed_package_for_execution",
+        lambda execution_date: ({"execution_date": execution_date}, Path("manifest")),
+    )
+
+    state, message = web_app._dependency_state(
+        cursor, "alpha_signal_precommit", "20260825", "schedule"
+    )
+
+    assert state == "READY"
+    assert not message
+
+
+def test_reconcile_depends_on_same_day_precommit():
+    assert web_app.TASK_DEPENDENCIES["alpha_signal_execution_reconcile"] == (
+        "alpha_signal_precommit",
+    )
+
+
 def test_bs_compare_depends_on_same_day_adc_detection():
     assert web_app.TASK_DEPENDENCIES["bs_ocr_adc_compare"] == ("adc_bs_detect",)
     cursor = FakeCursor([])

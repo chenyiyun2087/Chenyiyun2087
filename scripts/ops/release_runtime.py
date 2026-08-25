@@ -97,6 +97,10 @@ def apply_runtime_release_environment(
     target["CHENYIYUN_RUNTIME_RELEASE_ID"] = release.release_id
     target["CHENYIYUN_RELEASE_SHA"] = release.commit_sha
     target["CHENYIYUN_RUNTIME_PYTHON"] = str(release.runtime_python)
+    # Generated evidence must survive release rotation.  Keep this identity
+    # separate from the immutable code checkout so producers and verifiers
+    # agree on one persistent evidence root.
+    target["CHENYIYUN_SOURCE_REPO"] = str(release.source_repo)
     target["CHENYIYUN_RELEASE_MANIFEST"] = str(release.manifest_path)
     target["CHENYIYUN_REQUIRE_RELEASE"] = "1"
     return release

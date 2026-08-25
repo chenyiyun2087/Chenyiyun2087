@@ -39,6 +39,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,9 +51,16 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Production workers execute from an immutable detached release checkout.
+# Evidence is shared with the source worktree so a package sealed by one
+# release remains visible to the next release and to the web verifier.
+EVIDENCE_ROOT = Path(
+    os.environ.get("CHENYIYUN_SOURCE_REPO") or PROJECT_ROOT
+).expanduser().resolve()
+
 from runtime.pit_universe import build_daily_universe  # noqa: E402
 
-PACKAGES_ROOT = PROJECT_ROOT / "exports" / "forward_shadow_evidence" / "packages"
+PACKAGES_ROOT = EVIDENCE_ROOT / "exports" / "forward_shadow_evidence" / "packages"
 RUNTIME_CFG_PATH = PROJECT_ROOT / "config" / "strategy_runtime" / "forward_shadow_v2.yaml"
 SIGNAL_TIME = "15:30:00+08:00"
 
@@ -570,6 +578,36 @@ def next_revision_dir(package_dir: Path) -> Path:
     return package_dir / f"revision_{(max(existing) + 1) if existing else 2}"
 
 
+def _new_staging_dir(out_dir: Path) -> Path:
+    """Create staging on the same filesystem as the final package.
+
+    Release checkouts may contain ``packages/.staging`` as a symlink to the
+    development volume.  Renaming a directory from that link into the
+    release volume raises ``EXDEV`` even though both paths look adjacent.
+    Prefer the normal local staging directory; when it is a symlink or a
+    foreign mount, fall back to a hidden temporary sibling directly under the
+    final parent.  A sibling created with ``dir=out_dir.parent`` is guaranteed
+    to share the target filesystem, preserving atomic directory publication.
+    """
+    parent = out_dir.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    shared_staging = parent / ".staging"
+    use_shared = False
+    if not shared_staging.is_symlink():
+        try:
+            shared_staging.mkdir(parents=True, exist_ok=True)
+            use_shared = (
+                os.stat(shared_staging).st_dev == os.stat(parent).st_dev
+            )
+        except OSError:
+            use_shared = False
+    if use_shared:
+        return Path(tempfile.mkdtemp(
+            prefix=f"{out_dir.name}-", dir=str(shared_staging)))
+    return Path(tempfile.mkdtemp(
+        prefix=f".{out_dir.name}.staging-", dir=str(parent)))
+
+
 def seal_signal_package(
     package_dir: Path,
     *,
@@ -594,8 +632,8 @@ def seal_signal_package(
     packaging requires a clean worktree) or required inputs are empty.
 
     v5.5.1 atomicity: everything is written into a fresh staging dir and
-    moved to the target with a single os.rename (same filesystem).  Any
-    failure leaves NO partially-written package behind — staging is
+    moved to the target with a single os.rename on the target filesystem.
+    Any failure leaves NO partially-written package behind — staging is
     removed and the error surfaces as SIGNAL_PACKAGE_BLOCKED.
     """
     git = git_info or _git_info()
@@ -625,10 +663,7 @@ def seal_signal_package(
         out_dir = package_dir
         revision_n = 1
 
-    staging = out_dir.parent / ".staging" / \
-        f"{out_dir.name}-{uuid.uuid4().hex[:8]}"
-    staging.parent.mkdir(parents=True, exist_ok=True)
-    staging.mkdir(parents=True, exist_ok=False)  # fresh staging only
+    staging = _new_staging_dir(out_dir)
 
     try:
         _write_package_payloads(

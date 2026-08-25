@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from scripts.ops.build_daily_alpha_signal_package import (  # noqa: E402
     seal_signal_package,
     verify_package_sha,
 )
+import scripts.ops.build_daily_alpha_signal_package as package_builder  # noqa: E402
 
 CLEAN_GIT = {"git_commit_sha": "test-sha", "worktree_clean": True}
 
@@ -86,6 +88,31 @@ def test_failed_write_leaves_no_partial_package(tmp_path, monkeypatch):
     # Nothing at the target, nothing left in staging.
     assert not pkg_dir.exists()
     assert not list(pkg_dir.parent.glob(".staging/*"))
+
+
+def test_seal_avoids_cross_volume_staging_symlink(tmp_path, monkeypatch):
+    """A release's shared ``.staging`` link must not feed an atomic rename."""
+    pkg_parent = tmp_path / "packages"
+    pkg_parent.mkdir()
+    foreign_staging = tmp_path / "persistent-volume-staging"
+    foreign_staging.mkdir()
+    (pkg_parent / ".staging").symlink_to(foreign_staging, target_is_directory=True)
+    pkg_dir = pkg_parent / "2026-08-05"
+
+    renamed = []
+    real_rename = os.rename
+
+    def capture_rename(source, target):
+        renamed.append((Path(source), Path(target)))
+        return real_rename(source, target)
+
+    monkeypatch.setattr(package_builder.os, "rename", capture_rename)
+    seal_signal_package(pkg_dir, **_payloads(), git_info=CLEAN_GIT)
+
+    assert renamed
+    assert renamed[0][0].resolve().parent != foreign_staging.resolve()
+    assert pkg_dir.joinpath("signal_package_manifest.json").exists()
+    assert not list(foreign_staging.iterdir())
 
 
 def test_sealed_package_never_overwritten(tmp_path):

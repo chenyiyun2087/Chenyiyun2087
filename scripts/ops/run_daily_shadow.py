@@ -32,6 +32,7 @@ import argparse
 import hashlib
 import importlib.util as _iu
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -39,7 +40,10 @@ import pandas as pd
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SHADOW_ROOT = PROJECT_ROOT / "exports" / "formal_evidence" / "alpha_challengers" / "shadow"
+EVIDENCE_ROOT = Path(
+    os.environ.get("CHENYIYUN_SOURCE_REPO") or PROJECT_ROOT
+).expanduser().resolve()
+SHADOW_ROOT = EVIDENCE_ROOT / "exports" / "formal_evidence" / "alpha_challengers" / "shadow"
 LOG_PATH = SHADOW_ROOT / "daily_log.parquet"
 STATUS_PATH = SHADOW_ROOT / "shadow_status.json"
 
@@ -70,7 +74,7 @@ from runtime.epoch_governance import (  # noqa: E402
     load_forward_epoch_manifest,
 )
 
-CHALLENGER_ROOT = PROJECT_ROOT / "exports" / "formal_evidence" / "alpha_challengers"
+CHALLENGER_ROOT = EVIDENCE_ROOT / "exports" / "formal_evidence" / "alpha_challengers"
 ACTIVE_CHALLENGERS = (
     "f1_no_value", "f1p1_top20_diversified",
     "f2_liquidity_clipped", "f3_vol_risk_penalty",
@@ -576,8 +580,8 @@ def _status_from_log(log: pd.DataFrame,
 # v5.5 execution zone — precommit + reconcile from SEALED packages
 # ══════════════════════════════════════════════════════════════════
 
-EXECUTION_ZONE = PROJECT_ROOT / "exports" / "forward_shadow_evidence" / "execution"
-PACKAGES_ZONE = PROJECT_ROOT / "exports" / "forward_shadow_evidence" / "packages"
+EXECUTION_ZONE = EVIDENCE_ROOT / "exports" / "forward_shadow_evidence" / "execution"
+PACKAGES_ZONE = EVIDENCE_ROOT / "exports" / "forward_shadow_evidence" / "packages"
 
 
 def _latest_package_for_execution(execution_date: str,

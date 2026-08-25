@@ -1754,7 +1754,23 @@ def _enqueue_task(task_name, trigger_type="manual", run_options=None, scheduled_
             conn.close()
 
 
-def _dependency_state(cursor, task_name, business_date):
+def _dependency_state(cursor, task_name, business_date, trigger_type=None):
+    # alpha_signal_precommit consumes the previous T-day's package while its
+    # queue row is dated T+1.  A same-business-date depends_on cannot express
+    # that edge.  Keep the scheduled row pending until the exact execution
+    # date has a SEALED package, so a transient seal/publish failure does not
+    # become a misleading precommit process failure.
+    if task_name == "alpha_signal_precommit" and trigger_type in (None, "schedule"):
+        normalized = _normalize_datestr(business_date)
+        if normalized:
+            execution_iso = (
+                f"{normalized[:4]}-{normalized[4:6]}-{normalized[6:8]}"
+            )
+            if _sealed_package_for_execution(execution_iso) is None:
+                return (
+                    "WAITING",
+                    f"等待 T 日 SEALED 信号包：execution_date={business_date}",
+                )
     dependencies = TASK_DEPENDENCIES.get(task_name, ())
     if not dependencies:
         return "READY", ""
@@ -1861,7 +1877,12 @@ def _claim_next_queued_task():
                    ORDER BY requested_at, id LIMIT 25 FOR UPDATE"""
             )
             for job in cursor.fetchall():
-                dep_state, dep_message = _dependency_state(cursor, job["task_name"], job["business_date"])
+                dep_state, dep_message = _dependency_state(
+                    cursor,
+                    job["task_name"],
+                    job["business_date"],
+                    job.get("trigger_type"),
+                )
                 if dep_state == "WAITING":
                     cursor.execute("UPDATE app_task_queue SET message = %s WHERE id = %s", (dep_message, job["id"]))
                     continue
@@ -2879,7 +2900,10 @@ def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
 # exports/forward_shadow_evidence/ (SEALED packages, orders, event ledger,
 # NAV summaries).  Verification is artifact-based — the packages and the
 # event ledger ARE the evidence, so these verifiers need no DB access.
-FORWARD_EVIDENCE_ROOT = Path(__file__).resolve().parents[1] / "exports" / "forward_shadow_evidence"
+FORWARD_EVIDENCE_ROOT = (
+    Path(os.environ.get("CHENYIYUN_SOURCE_REPO") or Path(__file__).resolve().parents[1])
+    .expanduser().resolve() / "exports" / "forward_shadow_evidence"
+)
 
 
 def _forward_sealed_manifest(target_datestr: str):
