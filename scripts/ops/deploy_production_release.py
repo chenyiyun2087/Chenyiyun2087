@@ -18,8 +18,14 @@ if str(SOURCE_ROOT) not in sys.path:
 from scripts.ops.release_runtime import DEFAULT_RELEASE_MANIFEST
 
 
+# Keep immutable release worktrees on the project volume.  The home/data
+# volume already contains historical releases and is space-constrained, while
+# this volume is also the source/evidence volume used by production workers.
 DEFAULT_RELEASE_ROOT = Path(
-    "~/Library/Application Support/Chenyiyun2087/releases"
+    os.environ.get(
+        "CHENYIYUN_RELEASE_ROOT",
+        "/Volumes/extension/projects/chenyiyun-production-releases",
+    )
 ).expanduser()
 SHARED_RUNTIME_ROOTS = (
     "exports",
