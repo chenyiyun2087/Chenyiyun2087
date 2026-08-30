@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.ops.run_candle_diag_daily_scan import _validate_scan_report
+from scripts.ops.run_candle_diag_daily_scan import _limit_kline_to_trade_date, _validate_scan_report
 
 
 def _report(*, total=2, failed=0, dates=("2026-07-16", "2026-07-16")):
@@ -34,3 +34,12 @@ def test_validate_scan_report_rejects_future_data_date():
 def test_validate_scan_report_rejects_market_not_ready_for_target_date():
     with pytest.raises(RuntimeError, match="全市场未到目标日"):
         _validate_scan_report(_report(dates=("2026-07-15", "2026-07-15")), "2026-07-16")
+
+
+def test_limit_kline_to_trade_date_removes_future_bars():
+    import pandas as pd
+
+    frame = pd.DataFrame({"date": ["2026-08-24", "2026-08-25", "2026-08-28"], "close": [1, 2, 3]})
+    result = _limit_kline_to_trade_date(frame, "2026-08-24")
+
+    assert result["date"].tolist() == ["2026-08-24"]

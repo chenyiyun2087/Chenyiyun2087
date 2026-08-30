@@ -104,6 +104,17 @@ def _count_today(engine, trade_date: str) -> int:
     return int(row[0]) if row else 0
 
 
+def _limit_kline_to_trade_date(df: pd.DataFrame | None, trade_date: str) -> pd.DataFrame | None:
+    """Prevent a historical replay from diagnosing against later bars."""
+    if df is None or df.empty:
+        return df
+    if "date" not in df.columns:
+        return pd.DataFrame()
+    cutoff = pd.Timestamp(trade_date)
+    dates = pd.to_datetime(df["date"], errors="coerce")
+    return df.loc[dates.notna() & (dates <= cutoff)].reset_index(drop=True)
+
+
 def _delete_today(engine, trade_date: str) -> int:
     """删除当日已有记录（用于重跑）。"""
     sql = "DELETE FROM ads_candle_diag_daily WHERE trade_date = :d"
@@ -178,14 +189,34 @@ def run_daily_scan(
     else:
         print("   （全市场 ~5000 只股票）")
 
-    report = scanner.scan(
-        scope="all",
-        top=top_n,
-        min_abs_score=0,
-        risk_filter=None,
-        show_progress=True,
-        source="db",
-    )
+    # The dependency's public scanner API is latest-bar based.  For a
+    # historical replay, constrain every per-stock frame before diagnosis so
+    # the report cannot silently use a later market day and write it under the
+    # requested date.
+    from ashare_candle_diag.scanner import market_scanner as scanner_module
+
+    original_get_daily_kline = scanner_module.get_daily_kline
+
+    def get_daily_kline_as_of(symbol, lookback_days=365, source=None):
+        frame = original_get_daily_kline(
+            symbol,
+            lookback_days=lookback_days,
+            source=source,
+        )
+        return _limit_kline_to_trade_date(frame, trade_date)
+
+    scanner_module.get_daily_kline = get_daily_kline_as_of
+    try:
+        report = scanner.scan(
+            scope="all",
+            top=top_n,
+            min_abs_score=0,
+            risk_filter=None,
+            show_progress=True,
+            source="db",
+        )
+    finally:
+        scanner_module.get_daily_kline = original_get_daily_kline
 
     elapsed = time.time() - t0
     print(f"  扫描完成: 成功 {report.scanned} / 失败 {report.failed} / 共 {report.total}")
