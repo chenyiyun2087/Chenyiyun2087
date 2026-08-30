@@ -29,7 +29,6 @@ REPLAY_TASK_ORDER = (
 HEALTHY_QUEUE_STATUSES = {"SUCCESS"}
 HEALTHY_HISTORY_STATUSES = {"SUCCESS"}
 FAILED_STATUSES = {"FAILED", "BLOCKED", "FAILURE"}
-HEALTHY_AUDIT_STATUSES = {"OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"}
 
 
 def _normalize_date(raw: str) -> str:
@@ -83,12 +82,18 @@ def _latest_state(cursor, task_name: str, business_date: str) -> dict[str, Any]:
 
 def _audit_state(cursor, business_date: str) -> dict[str, Any] | None:
     cursor.execute(
-        """SELECT status, reason, replay_required, updated_at
+        """SELECT COUNT(*) AS row_count,
+                  SUM(CASE WHEN status NOT IN ('OK', 'SKIPPED_NON_TRADING', 'SKIPPED_SCHEDULE')
+                           THEN 1 ELSE 0 END) AS bad_count,
+                  MAX(updated_at) AS updated_at
            FROM app_daily_batch_audit
-           WHERE business_date=%s AND task_name=%s""",
-        (business_date, "ops_daily_batch_audit"),
+           WHERE business_date=%s""",
+        (business_date,),
     )
-    return cursor.fetchone()
+    state = cursor.fetchone() or {}
+    if int(state.get("row_count") or 0) == 0:
+        return None
+    return state
 
 
 def _package_is_sealed(business_date: str) -> bool:
@@ -138,8 +143,8 @@ def build_replay_plan(
                 continue
             if task_name == "ops_daily_batch_audit":
                 audit = _audit_state(cursor, business_date)
-                audit_status = str((audit or {}).get("status") or "").upper()
-                if audit_status in HEALTHY_AUDIT_STATUSES:
+                bad_count = int((audit or {}).get("bad_count") or 0)
+                if audit and bad_count == 0:
                     plan.append({
                         "task_name": task_name,
                         "business_date": business_date,
@@ -150,10 +155,7 @@ def build_replay_plan(
                 if audit is None:
                     should_replay, reason = True, "audit_missing"
                 else:
-                    should_replay, reason = (
-                        audit_status not in HEALTHY_AUDIT_STATUSES,
-                        f"audit_{audit_status.lower() or 'unknown'}",
-                    )
+                    should_replay, reason = True, f"audit_bad_rows_{bad_count}"
             else:
                 should_replay, reason = _needs_replay(state)
             plan.append({
