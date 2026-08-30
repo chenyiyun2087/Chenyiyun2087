@@ -1929,6 +1929,13 @@ DATA_READINESS_FAILURE_MARKERS = (
     "expected_stocks=0",
     "adjust_factor_coverage",
     "prescoregate: blocked",
+    "data_quality: no bars",
+    "no bars for ",
+    "latest available",
+    "stale-date substitution is forbidden",
+    "same_day_snapshot",
+    "same_day_collection_eligible",
+    "waiting_same_day_complete_snapshot",
 )
 
 

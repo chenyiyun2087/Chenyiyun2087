@@ -38,6 +38,18 @@ def test_retry_allows_data_readiness_failures():
         1,
         "ValueError: qfq 在 2026-07-08 无数据，检查导入或日期对齐。",
     ) == ("DATA_READINESS", True)
+
+
+def test_retry_allows_late_same_day_snapshot_failures():
+    messages = [
+        "data_quality: no bars for 2026-08-26 (latest available 2026-08-25)",
+        "same_day_snapshot,same_day_collection_eligible",
+        "WAITING_SAME_DAY_COMPLETE_SNAPSHOT",
+    ]
+    for message in messages:
+        assert web_app._classify_task_failure("Failed", 3, message) == (
+            "DATA_READINESS", True
+        )
     assert web_app._classify_task_failure(
         "Failed",
         1,

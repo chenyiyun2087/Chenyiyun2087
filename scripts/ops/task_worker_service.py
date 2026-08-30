@@ -26,6 +26,16 @@ TRANSIENT_FAILURE_MARKERS = (
 DATA_READINESS_FAILURE_MARKERS = (
     "qfq 在", "无数据，检查导入或日期对齐", "loading data for 0 stocks",
     "expected_stocks=0", "adjust_factor_coverage", "prescoregate: blocked",
+    # Post-close producers can finish after the scheduled slot. These are
+    # fail-closed verification messages, but the missing same-day input is
+    # safe to retry while the upstream loader catches up.
+    "data_quality: no bars",
+    "no bars for ",
+    "latest available",
+    "stale-date substitution is forbidden",
+    "same_day_snapshot",
+    "same_day_collection_eligible",
+    "waiting_same_day_complete_snapshot",
 )
 
 

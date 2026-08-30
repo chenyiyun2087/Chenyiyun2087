@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay only failed/blocked batch links for 2026-08-17..2026-08-21."""
+"""Replay failed/blocked batch links for an explicit recent-date scope."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,16 +15,16 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-DEFAULT_ENV_FILE = Path("~/.config/chenyiyun/web.env").expanduser()
-DEFAULT_DATES = ("20260817", "20260818", "20260819", "20260820", "20260821")
-REPLAY_ORDER = (
-    ("alpha_signal_package_seal", ("20260817", "20260818", "20260819")),
-    ("candle_diag_scan", ("20260817", "20260818", "20260819")),
-    ("alpha_signal_precommit", ("20260818", "20260819")),
-    ("alpha_signal_sell_precommit", ("20260818", "20260819")),
-    ("alpha_signal_execution_reconcile", ("20260818", "20260819")),
-    ("alpha_signal_nav", ("20260818", "20260819")),
-    ("ops_daily_batch_audit", DEFAULT_DATES),
+DEFAULT_LOOKBACK_DAYS = 7
+REPLAY_TASK_ORDER = (
+    "alpha_signal_package_seal",
+    "candle_diag_scan",
+    "alpha_signal_precommit",
+    "alpha_signal_sell_precommit",
+    "alpha_signal_execution_reconcile",
+    "alpha_signal_nav",
+    "sina_bs_image_weekly_cleanup",
+    "ops_daily_batch_audit",
 )
 HEALTHY_QUEUE_STATUSES = {"SUCCESS"}
 HEALTHY_HISTORY_STATUSES = {"SUCCESS"}
@@ -32,22 +32,33 @@ FAILED_STATUSES = {"FAILED", "BLOCKED", "FAILURE"}
 HEALTHY_AUDIT_STATUSES = {"OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"}
 
 
-def _load_env(path: Path) -> None:
-    if not path.is_file():
-        raise SystemExit(f"FATAL: missing credentials env file: {path}")
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        os.environ[key.strip()] = value.strip().strip('"').strip("'")
-
-
 def _normalize_date(raw: str) -> str:
     value = str(raw or "").strip().replace("-", "")
     if len(value) != 8 or not value.isdigit():
         raise ValueError(f"invalid business date: {raw}")
     return value
+
+
+def _default_dates() -> tuple[str, ...]:
+    end = date.today()
+    start = end - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+    return tuple(
+        (start + timedelta(days=offset)).strftime("%Y%m%d")
+        for offset in range((end - start).days + 1)
+        if (start + timedelta(days=offset)).weekday() < 5
+    )
+
+
+def _dates_for_task(task_name: str, dates: tuple[str, ...]) -> tuple[str, ...]:
+    if task_name != "sina_bs_image_weekly_cleanup":
+        return dates
+    return tuple(
+        business_date
+        for business_date in dates
+        if date.fromisoformat(
+            f"{business_date[:4]}-{business_date[4:6]}-{business_date[6:]}"
+        ).weekday() == 4
+    )
 
 
 def _latest_state(cursor, task_name: str, business_date: str) -> dict[str, Any]:
@@ -112,8 +123,8 @@ def build_replay_plan(
 ) -> list[dict[str, Any]]:
     date_set = set(dates)
     plan: list[dict[str, Any]] = []
-    for task_name, task_dates in REPLAY_ORDER:
-        for business_date in task_dates:
+    for task_name in REPLAY_TASK_ORDER:
+        for business_date in _dates_for_task(task_name, dates):
             if business_date not in date_set:
                 continue
             state = _latest_state(cursor, task_name, business_date)
@@ -180,7 +191,6 @@ def execute_replay_plan(runtime, plan: list[dict[str, Any]], *, historical_safe:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Safely replay the weekly failed batch chain.")
     parser.add_argument("--date", dest="dates", action="append", help="Business date YYYYMMDD (repeatable).")
-    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     parser.add_argument("--dry-run", action="store_true", help="Inspect and print actions without enqueueing.")
     parser.add_argument(
         "--historical-safe",
@@ -188,11 +198,12 @@ def main() -> None:
         help="Required for historical execution; suppresses orders and success notifications.",
     )
     args = parser.parse_args()
-    dates = tuple(_normalize_date(item) for item in (args.dates or list(DEFAULT_DATES)))
+    dates = tuple(_normalize_date(item) for item in (args.dates or list(_default_dates())))
     today = date.today().strftime("%Y%m%d")
     if any(item < today for item in dates) and not args.historical_safe:
         raise SystemExit("FATAL: historical dates require --historical-safe")
-    _load_env(args.env_file.expanduser())
+    if not (os.environ.get("CHENYIYUN_DB_URL") or os.environ.get("CHENYIYUN_DB_PASSWORD")):
+        raise SystemExit("FATAL: provide database credentials through the credential manager")
     os.environ.setdefault("CHENYIYUN_RUNTIME_ROLE", "maintenance")
 
     from web import app as runtime

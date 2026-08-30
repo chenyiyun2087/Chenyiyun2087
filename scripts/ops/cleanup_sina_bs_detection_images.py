@@ -12,13 +12,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_IMAGE_ROOT = PROJECT_ROOT / "sina" / "bs_detection" / "SinaAppBS" / "config_1"
+
+
+def default_image_root() -> Path:
+    """Use the persistent source tree when running from an immutable release."""
+    source_repo = str(os.environ.get("CHENYIYUN_SOURCE_REPO") or "").strip()
+    base = Path(source_repo).expanduser() if source_repo else PROJECT_ROOT
+    return base / "sina" / "bs_detection" / "SinaAppBS" / "config_1"
+
+
+DEFAULT_IMAGE_ROOT = default_image_root()
 
 
 def _normalize_date(raw: str | None) -> date:
@@ -52,14 +62,33 @@ def collect_previous_week_image_dirs(root: Path, target: date) -> tuple[date, da
     if not root.exists():
         return start, end, []
     dirs: list[Path] = []
+    seen: set[Path] = set()
     for child in sorted(root.iterdir()):
-        if not child.is_dir():
-            continue
+        if child.is_symlink():
+            # Production releases share generated date folders as symlinks
+            # back to the persistent source tree. rmtree() intentionally
+            # refuses symlinks; clean the real target instead, but only when
+            # it still has the expected YYYYMMDD/config_1 shape.
+            try:
+                candidate = child.resolve(strict=True)
+            except OSError:
+                continue
+            if not candidate.is_dir() or candidate.name != child.name:
+                continue
+            if candidate.parent.name != root.name:
+                continue
+        else:
+            if not child.is_dir():
+                continue
+            candidate = child
         folder_date = _date_from_folder_name(child)
         if folder_date is None:
             continue
         if start <= folder_date <= end:
-            dirs.append(child)
+            candidate = candidate.resolve()
+            if candidate not in seen:
+                dirs.append(candidate)
+                seen.add(candidate)
     return start, end, dirs
 
 
@@ -69,7 +98,7 @@ def _folder_file_count(path: Path) -> int:
 
 def run_cleanup(args: argparse.Namespace) -> dict[str, object]:
     target_date = _normalize_date(args.date)
-    root = Path(args.root).expanduser().resolve()
+    root = Path(args.root or default_image_root()).expanduser().resolve()
     start, end, dirs = collect_previous_week_image_dirs(root, target_date)
     friday_only = bool(args.friday_only)
     should_execute = bool(args.execute)
@@ -108,7 +137,7 @@ def run_cleanup(args: argparse.Namespace) -> dict[str, object]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Delete previous-week Sina B/S detection image folders.")
     parser.add_argument("--date", default=None, help="Reference date, YYYY-MM-DD or YYYYMMDD. Defaults to today.")
-    parser.add_argument("--root", default=str(DEFAULT_IMAGE_ROOT), help="Image root containing YYYYMMDD folders.")
+    parser.add_argument("--root", default=None, help="Image root containing YYYYMMDD folders.")
     parser.add_argument("--execute", action="store_true", help="Actually delete folders. Without this, only dry-runs.")
     parser.add_argument("--friday-only", action="store_true", default=True, help="Execute only when --date is Friday.")
     parser.add_argument("--allow-non-friday", action="store_false", dest="friday_only", help="Allow execution on non-Friday dates.")
