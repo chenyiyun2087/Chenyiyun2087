@@ -1,0 +1,43 @@
+{
+  "schema_version": "signal_package_v1",
+  "signal_date": "2026-08-18",
+  "signal_time": "15:30:00+08:00",
+  "execution_date": "2026-08-19",
+  "revision": 1,
+  "parent_package_sha256": null,
+  "git_commit_sha": "bb426b9f6200708f7c227dfe963b01c3dc008dc2",
+  "worktree_clean": true,
+  "strategy_config_shas": {
+    "config/strategy_runtime/forward_shadow_v2.yaml": "a1a9acb5b39e40f07eb3b08f3b2008b1667fa4e6a330230d9d2d14af0c99f663",
+    "config/alpha_challengers/f1_no_value.yaml": "e30e3b659412f0660d633f122bab73a3cafb9c38a39db4fc4e87b0f0dabbbccf",
+    "config/strategy_definitions/vls_mom_contrarian_v1_frozen.yaml": "08154914c5e379d256470becb01fe0e4d2a549ab3497c5f995605211a7ea34a4",
+    "config/risk_overlays/r2_crowding_control.yaml": "53fc6babb19f97a50182239cff8b357e1cd89dfa4575e5ef7fc38d7341662838"
+  },
+  "source_snapshot_shas": {
+    "market": "06c058404e9cefd1dab3f87d170b4bcd971c2406376aec90e182b2396b717983",
+    "market_cap": "2c3b1eb845d0af9b19d08690d371c0b0d3b6465bf689f802727a324f1713706b",
+    "basic_financial": "d7d348f4b86c8e89ec01b880891ebfbdbbd3b84c1b11d103ce78ff155de4eae6",
+    "industry_scd": "4050fbb7220a9c693b17e623e6cf89222adce31710da7e6cf0f12dfb720a32d1",
+    "labels": "0b8282319cb758b86a0d20e89c5bce2839e32bc470cf007069d3b81363db789a",
+    "adjustment": "821f6dcad9ebfb76f22644b9e1bbe776554f5a653dccf6bf36ea2d80a2524e20",
+    "benchmark_index": "6456470dc1da5470968bb6f580690f5ff2904b197e4c30a58e10fdba267b1588",
+    "status_scd": "89b52b5df6c23f883def2bb6c11abcb234d040216fc7d0d98bd1796b5817109e",
+    "dim_stock": "a5b1d1d7bee3d59a379caa877f6f46fdbc8e5a27fa019e1302c9bd521369a1d8",
+    "trade_calendar": "7a9078f189a91bff63f43b8f1c89550f5e918febe63bf3da3154a6177b565389"
+  },
+  "pit_contract_sha": "60b31b010295b6367861fefa10efb696770e1807aad524a8dafa3218c722c9cf",
+  "universe_sha": "02f1a98146f8d800a8db732f0a599cf2dd9a9854ffbfd72a330681bb805b7334",
+  "factor_values_sha": "301c159a14a5f7bc441283694633160e5a10d73b45b3fa09bd2854d974f8292c",
+  "scores_sha": "301c159a14a5f7bc441283694633160e5a10d73b45b3fa09bd2854d974f8292c",
+  "target_portfolio_sha": "36324e4c2fa3035e578f9e2ee5476d9b0492484c5b01be321aa70c94342dd67a",
+  "candidate_ids": [
+    "C0",
+    "C1",
+    "C2",
+    "C3",
+    "RND"
+  ],
+  "package_status": "SEALED",
+  "revision_reason": null,
+  "sealed_at": "2026-08-19T16:40:59+00:00"
+}

@@ -1,0 +1,195 @@
+{
+  "selected_rows": 253172,
+  "changed_rows": 5981,
+  "score_changed_rows": 5981,
+  "pool_type_changed_rows": 0,
+  "old_score_100": 0,
+  "new_score_100": 0,
+  "old_low_raw_to_100": 0,
+  "new_low_raw_to_100": 0,
+  "formula": {
+    "method": "bounded_cubic_pull_v1",
+    "center": 60.0,
+    "half_width": 20.0,
+    "strength": 0.3
+  },
+  "database": "chenyiyun",
+  "table": "score_rank_daily",
+  "backup_table": "score_rank_daily_repair_backup_20260815",
+  "mode": "execute",
+  "backup_rows": 253172,
+  "updated_rows": 5981,
+  "post_verify": {
+    "table_integrity": {
+      "n": 4430820,
+      "transformed_rows": 253172.0,
+      "low_raw_to_100": 0.0,
+      "out_of_range": 0.0,
+      "latest_date": "2026-08-14"
+    },
+    "latest_top20": [
+      {
+        "symbol": "000831",
+        "name": "中国稀土",
+        "score": 74.36,
+        "base_score_raw": 73.01,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "601991",
+        "name": "大唐发电",
+        "score": 74.21,
+        "base_score_raw": 72.78,
+        "pool_type": "WATCH"
+      },
+      {
+        "symbol": "600578",
+        "name": "京能电力",
+        "score": 73.57,
+        "base_score_raw": 71.8,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "002437",
+        "name": "誉衡药业",
+        "score": 73.26,
+        "base_score_raw": 71.36,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "603629",
+        "name": "利通电子",
+        "score": 73.23,
+        "base_score_raw": 71.32,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "002920",
+        "name": "德赛西威",
+        "score": 73.2,
+        "base_score_raw": 71.27,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "300404",
+        "name": "博济医药",
+        "score": 72.89,
+        "base_score_raw": 70.85,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "300017",
+        "name": "网宿科技",
+        "score": 72.48,
+        "base_score_raw": 70.3,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "302132",
+        "name": "中航成飞",
+        "score": 72.2,
+        "base_score_raw": 69.93,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "688485",
+        "name": "九州一轨",
+        "score": 72.02,
+        "base_score_raw": 69.7,
+        "pool_type": "BASE"
+      },
+      {
+        "symbol": "002229",
+        "name": "鸿博股份",
+        "score": 71.9,
+        "base_score_raw": 69.55,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "300951",
+        "name": "博硕科技",
+        "score": 71.79,
+        "base_score_raw": 69.42,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "603659",
+        "name": "璞泰来",
+        "score": 71.79,
+        "base_score_raw": 69.41,
+        "pool_type": "WATCH"
+      },
+      {
+        "symbol": "603979",
+        "name": "金诚信",
+        "score": 71.72,
+        "base_score_raw": 69.33,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "301282",
+        "name": "金禄电子",
+        "score": 71.71,
+        "base_score_raw": 69.32,
+        "pool_type": "TRADE"
+      },
+      {
+        "symbol": "601886",
+        "name": "江河集团",
+        "score": 71.56,
+        "base_score_raw": 69.13,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "600726",
+        "name": "华电能源",
+        "score": 71.53,
+        "base_score_raw": 69.1,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "600985",
+        "name": "淮北矿业",
+        "score": 71.51,
+        "base_score_raw": 69.07,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "002149",
+        "name": "西部材料",
+        "score": 71.45,
+        "base_score_raw": 68.99,
+        "pool_type": "CORE"
+      },
+      {
+        "symbol": "300818",
+        "name": "耐普矿机",
+        "score": 71.41,
+        "base_score_raw": 68.95,
+        "pool_type": "CORE"
+      }
+    ],
+    "latest_pool_counts": [
+      {
+        "pool_type": "BASE",
+        "n": 3796
+      },
+      {
+        "pool_type": "CORE",
+        "n": 44
+      },
+      {
+        "pool_type": "SCAN",
+        "n": 1182
+      },
+      {
+        "pool_type": "TRADE",
+        "n": 3
+      },
+      {
+        "pool_type": "WATCH",
+        "n": 153
+      }
+    ]
+  }
+}

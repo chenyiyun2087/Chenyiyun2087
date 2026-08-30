@@ -1,0 +1,46 @@
+{
+  "schema_version": "signal_package_v1",
+  "signal_date": "2026-08-28",
+  "signal_time": "15:30:00+08:00",
+  "execution_date": "2026-08-31",
+  "revision": 1,
+  "parent_package_sha256": null,
+  "git_commit_sha": "80ec66b18a41f8ecae8939724bb2c25f89578611",
+  "worktree_clean": true,
+  "release_id": "chenyiyun-prod-20260825-alpha-signal-fix3",
+  "runtime_release_id": "chenyiyun-prod-20260825-alpha-signal-fix3",
+  "release_root": "/Volumes/extension/projects/chenyiyun-production-releases/chenyiyun-prod-20260825-alpha-signal-fix3-80ec66b18a41",
+  "strategy_config_shas": {
+    "config/strategy_runtime/forward_shadow_v2.yaml": "a1a9acb5b39e40f07eb3b08f3b2008b1667fa4e6a330230d9d2d14af0c99f663",
+    "config/alpha_challengers/f1_no_value.yaml": "e30e3b659412f0660d633f122bab73a3cafb9c38a39db4fc4e87b0f0dabbbccf",
+    "config/strategy_definitions/vls_mom_contrarian_v1_frozen.yaml": "08154914c5e379d256470becb01fe0e4d2a549ab3497c5f995605211a7ea34a4",
+    "config/risk_overlays/r2_crowding_control.yaml": "53fc6babb19f97a50182239cff8b357e1cd89dfa4575e5ef7fc38d7341662838"
+  },
+  "source_snapshot_shas": {
+    "market": "3ac17671aa4add64815e3bf7d21a0060de91edbcbc53afbe8dd09ff08802874b",
+    "market_cap": "2476433b6ef5b23fdcaa5a174e7e969fad3efc98211480fab71d649c1aa26c87",
+    "basic_financial": "3b5ec1550b7a2dc62d6aed3b0d47a380e11a19385134b2346204e225ad73a4d3",
+    "industry_scd": "907c7d8df0b8272244dd283f58ee57497f24b2fe703e86efc6f64a585cf8889e",
+    "labels": "0827b1faa77fe0235f236b793741ff3a798c1725b392ee9a9ba6e38c62898cf2",
+    "adjustment": "23d066f65eaeb2d5fa4baee4efe62e83fa33a04f85788b36929cef88b7185c7b",
+    "benchmark_index": "2570881afcd1207a149e398cb44735d5c80bcd65e8bba007057090c15f32be5f",
+    "status_scd": "89b52b5df6c23f883def2bb6c11abcb234d040216fc7d0d98bd1796b5817109e",
+    "dim_stock": "a5b1d1d7bee3d59a379caa877f6f46fdbc8e5a27fa019e1302c9bd521369a1d8",
+    "trade_calendar": "12e96cc23afeee75128586649ecd7da9b518c0db6f6b2da3e44650187169447c"
+  },
+  "pit_contract_sha": "60b31b010295b6367861fefa10efb696770e1807aad524a8dafa3218c722c9cf",
+  "universe_sha": "089a0c0c1ce2d0c9b4cd6aeccb9e7ccc99d2abe38b8381ccedc72f292fe0977b",
+  "factor_values_sha": "b0750a7ffd5b7ef7b19eb344e8a6d7846267744b78174ba20ea78c48b71f700d",
+  "scores_sha": "b0750a7ffd5b7ef7b19eb344e8a6d7846267744b78174ba20ea78c48b71f700d",
+  "target_portfolio_sha": "0f3cd8e13c2145ba95eaeb7f059edc0ba2a9c76d71335a740f124208a0dc2b3d",
+  "candidate_ids": [
+    "C0",
+    "C1",
+    "C2",
+    "C3",
+    "RND"
+  ],
+  "package_status": "SEALED",
+  "revision_reason": null,
+  "sealed_at": "2026-08-28T13:43:50+00:00"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "package_sha256_v1",
+  "package_dir": "exports/forward_shadow_evidence/packages/2026-08-28",
+  "files": {
+    "data_quality_report.json": "a65503644a50ef40c0be2e7ab685d218771f3bd1de118cba7cede51a9bdeee38",
+    "factor_values.parquet": "b0750a7ffd5b7ef7b19eb344e8a6d7846267744b78174ba20ea78c48b71f700d",
+    "input_manifest.json": "2955f37454d0bed81e19f68b9882287d83be1d5a19b60098ea29062d19eb8985",
+    "scores.parquet": "b0750a7ffd5b7ef7b19eb344e8a6d7846267744b78174ba20ea78c48b71f700d",
+    "signal_package_manifest.json": "2627c332a31e0f7da321175c8ce1e2bf490df04a69125ac3141a67f32a231a88",
+    "target_portfolios.parquet": "0f3cd8e13c2145ba95eaeb7f059edc0ba2a9c76d71335a740f124208a0dc2b3d",
+    "universe.parquet": "089a0c0c1ce2d0c9b4cd6aeccb9e7ccc99d2abe38b8381ccedc72f292fe0977b"
+  },
+  "package_sha256": "8749429be1a00c8c732bd1ec189f44ef97586cf8e13f8d697979d19ff209ed1f"
+}

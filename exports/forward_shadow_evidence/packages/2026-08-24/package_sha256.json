@@ -1,0 +1,14 @@
+{
+  "schema_version": "package_sha256_v1",
+  "package_dir": "/Volumes/extension/projects/Chenyiyun2087/exports/forward_shadow_evidence/packages/2026-08-24",
+  "files": {
+    "data_quality_report.json": "df07393e7675e0dd8db97d3ae847846e705bef219f2a3c1a294ab77fe1a81d9f",
+    "factor_values.parquet": "9b77e1b9afe8aa0d611a2649e7076b3f6d9b541f1f7a0b2ccaa0c01f51136fd0",
+    "input_manifest.json": "3be8bf8b2c6850ae45fee7ffc97ed4a0247fd511eda7446c07138e138d8addaa",
+    "scores.parquet": "9b77e1b9afe8aa0d611a2649e7076b3f6d9b541f1f7a0b2ccaa0c01f51136fd0",
+    "signal_package_manifest.json": "2e52f51d54364ab81e5fe7ce4c0f5ed1361446383f86248da96370bb49414cea",
+    "target_portfolios.parquet": "74b075b1b22dd16f7fca7068f23b06958f3a6c5dcfc90497f1e356cd6d915a1c",
+    "universe.parquet": "d634e6d4e35d478b8be4e362fffec2bac47b1ff687b4900dd1e6cdb5d01214a3"
+  },
+  "package_sha256": "f984844b2a26ae7649272e0070e41240bd7214e5f70b78cd4e56db3564522d2b"
+}

@@ -1,0 +1,41 @@
+{
+  "signal_date": "2026-08-18",
+  "bar_dates": 30,
+  "bar_rows": 165848,
+  "bar_symbols": 5549,
+  "mcap_rows": 5540,
+  "basic_rows": 5540,
+  "industry_rows": 5219,
+  "label_rows": 5538,
+  "adjustment_rows": 5559,
+  "benchmark_rows": 1,
+  "status_scd_rows": 6208,
+  "dim_stock_rows": 5884,
+  "missing_factor_report": {
+    "C0": {
+      "total_universe": 5539,
+      "missing_factor_rows": 65,
+      "missing_factor_pct": 0.011735
+    },
+    "C1": {
+      "total_universe": 5539,
+      "missing_factor_rows": 22,
+      "missing_factor_pct": 0.003972
+    },
+    "C2": {
+      "total_universe": 5539,
+      "missing_factor_rows": 22,
+      "missing_factor_pct": 0.003972
+    },
+    "C3": {
+      "total_universe": 5539,
+      "missing_factor_rows": 22,
+      "missing_factor_pct": 0.003972
+    },
+    "RND": {
+      "total_universe": 5539,
+      "missing_factor_rows": 0,
+      "missing_factor_pct": 0.0
+    }
+  }
+}
