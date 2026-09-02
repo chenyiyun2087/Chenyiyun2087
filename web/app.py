@@ -1930,6 +1930,7 @@ DATA_READINESS_FAILURE_MARKERS = (
     "adjust_factor_coverage",
     "prescoregate: blocked",
     "data_quality: no bars",
+    "data_quality: zero rows for",
     "no bars for ",
     "latest available",
     "stale-date substitution is forbidden",
@@ -2815,8 +2816,50 @@ def _verify_candle_diag_scan_result(started_at, finished_at, run_options=None):
         return False, [f"result=FAIL; verifier_error={e}"]
 
 
+def _monthly_cycle_skip_reason(target_datestr):
+    """Return the runner's legal skip reason, or None when the calendar is unavailable."""
+    try:
+        target = datetime.strptime(target_datestr, "%Y%m%d")
+        ymd = target.strftime("%Y%m%d")
+        month_start = target.replace(day=1).strftime("%Y%m%d")
+        conn = _connect_db()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """SELECT
+                         MAX(CASE WHEN cal_date = %s THEN is_open ELSE NULL END) AS target_is_open,
+                         MIN(CASE WHEN is_open = 1 THEN cal_date ELSE NULL END) AS first_open_date
+                       FROM chenyiyun.dim_trade_cal
+                      WHERE exchange = 'SSE'
+                        AND cal_date >= %s
+                        AND cal_date <= %s""",
+                    (ymd, month_start, ymd),
+                )
+                row = cursor.fetchone() or {}
+        finally:
+            conn.close()
+    except Exception:
+        # Missing calendar data must remain fail-closed; only a confirmed
+        # calendar result can turn a missing manifest into a legal skip.
+        return None
+    if row.get("target_is_open") is None:
+        return None
+    if int(row.get("target_is_open") or 0) != 1:
+        return "non_trading_day"
+    first_open_date = str(row.get("first_open_date") or "")
+    if first_open_date and first_open_date != ymd:
+        return f"not_first_trading_day:first_open={first_open_date}"
+    return None
+
+
 def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
+    skip_reason = _monthly_cycle_skip_reason(target_datestr)
+    if skip_reason:
+        return True, [
+            f"result=SKIP; task=bs_signal_monthly_cycle; "
+            f"business_date={target_datestr}; reason={skip_reason}"
+        ]
     target_month = f"{target_datestr[:4]}-{target_datestr[4:6]}"
     run_root = Path(app.root_path).parent / "exports" / "bs_signal_cycles"
     recent_manifests = []

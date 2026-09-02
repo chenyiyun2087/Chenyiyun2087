@@ -30,6 +30,7 @@ DATA_READINESS_FAILURE_MARKERS = (
     # fail-closed verification messages, but the missing same-day input is
     # safe to retry while the upstream loader catches up.
     "data_quality: no bars",
+    "data_quality: zero rows for",
     "no bars for ",
     "latest available",
     "stale-date substitution is forbidden",

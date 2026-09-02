@@ -55,6 +55,11 @@ def test_retry_allows_late_same_day_snapshot_failures():
         1,
         "[stdout_tail]\n[Features] Loading data for 0 stocks on 20260709",
     ) == ("DATA_READINESS", True)
+    assert web_app._classify_task_failure(
+        "Failed",
+        1,
+        "data_quality: zero rows for ['benchmark_rows'] on 2026-09-01",
+    ) == ("DATA_READINESS", True)
 
 
 def test_runtime_preflight_detects_wrong_interpreter(monkeypatch, tmp_path):

@@ -32,6 +32,23 @@ class FakeCursor:
     def fetchone(self):
         return self.rows[0] if self.rows else None
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+
+class FakeConnection:
+    def __init__(self, rows):
+        self.cursor_obj = FakeCursor(rows)
+
+    def cursor(self):
+        return self.cursor_obj
+
+    def close(self):
+        pass
+
 
 def test_queue_business_date_prefers_explicit_replay_date():
     assert web_app._queue_business_date({"datestr": "2026-06-20"}) == "20260620"
@@ -224,6 +241,25 @@ def test_monthly_bs_verifier_rejects_prior_month_cycle(monkeypatch, tmp_path):
 
     assert ok is False
     assert "reason=no_completed_manifest" in lines[0]
+
+
+def test_monthly_bs_verifier_accepts_legal_non_first_day_skip(monkeypatch, tmp_path):
+    monkeypatch.setattr(web_app.app, "root_path", str(tmp_path / "web"))
+    monkeypatch.setattr(
+        web_app,
+        "_connect_db",
+        lambda: FakeConnection([{"target_is_open": 1, "first_open_date": "20260901"}]),
+    )
+
+    ok, lines = web_app._verify_monthly_bs_cycle_result(
+        datetime(2026, 9, 2, 22, 0),
+        datetime(2026, 9, 2, 22, 1),
+        run_options={"datestr": "20260902"},
+    )
+
+    assert ok is True
+    assert "result=SKIP" in lines[0]
+    assert "not_first_trading_day:first_open=20260901" in lines[0]
 
 
 def test_queue_contract_keeps_active_deduplication_and_single_retry():
