@@ -1,0 +1,23 @@
+[
+  {
+    "signal_date": "2026-09-02",
+    "execution_date": "2026-09-03",
+    "challenger_id": "C2",
+    "symbol": "688055",
+    "side": "SELL",
+    "target_weight": 0.06999999999999999,
+    "target_shares": 200,
+    "lot_adjusted_shares": 200,
+    "precommit_price": 3.79,
+    "fill_price": null,
+    "fill_status": null,
+    "slippage_bps": null,
+    "rejection_reason": null,
+    "state": "SELL_PRECOMMITTED",
+    "package_sha": "411c69df29d216e3008e7982e0fbf34828176821775820e0cfd33633612b5850",
+    "order_id": "1db95d1a37894451",
+    "precommit_run_id": "20260902T233955133854",
+    "exit_reason": "risk_reduction",
+    "precommitted_at": "2026-09-02T23:39:55"
+  }
+]

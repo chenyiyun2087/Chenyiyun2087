@@ -937,7 +937,208 @@
         "canonical_kernel_version": "1.0.0",
         "canonical_schema_version": "canonical_execution_contract_v1"
       }
+    ],
+    "2026-08-31": [
+      {
+        "date": "2026-08-31",
+        "candidate_id": "C0",
+        "cash": 46.62,
+        "positions_mv": 499738.0,
+        "nav": 499784.62,
+        "costs_paid": 873.38,
+        "realized_pnl": 0.0,
+        "position_count": 11,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-08-31",
+        "candidate_id": "C1",
+        "cash": 55.61,
+        "positions_mv": 495482.0,
+        "nav": 495537.61,
+        "costs_paid": 873.39,
+        "realized_pnl": 0.0,
+        "position_count": 11,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-08-31",
+        "candidate_id": "C2",
+        "cash": 7664.8,
+        "positions_mv": 505628.0,
+        "nav": 513292.8,
+        "costs_paid": 1173.2,
+        "realized_pnl": -2744.0,
+        "position_count": 19,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-08-31",
+        "candidate_id": "C3",
+        "cash": 238.92,
+        "positions_mv": 491857.0,
+        "nav": 492095.92,
+        "costs_paid": 873.08,
+        "realized_pnl": 0.0,
+        "position_count": 13,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-08-31",
+        "candidate_id": "RND",
+        "cash": 44.58,
+        "positions_mv": 511629.0,
+        "nav": 511673.58,
+        "costs_paid": 873.42,
+        "realized_pnl": 0.0,
+        "position_count": 12,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      }
+    ],
+    "2026-09-01": [
+      {
+        "date": "2026-09-01",
+        "candidate_id": "C0",
+        "cash": 46.62,
+        "positions_mv": 507446.0,
+        "nav": 507492.62,
+        "costs_paid": 873.38,
+        "realized_pnl": 0.0,
+        "position_count": 11,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-09-01",
+        "candidate_id": "C1",
+        "cash": 55.61,
+        "positions_mv": 497811.0,
+        "nav": 497866.61,
+        "costs_paid": 873.39,
+        "realized_pnl": 0.0,
+        "position_count": 11,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-09-01",
+        "candidate_id": "C2",
+        "cash": 1534.09,
+        "positions_mv": 512162.0,
+        "nav": 513696.09,
+        "costs_paid": 1183.91,
+        "realized_pnl": -2744.0,
+        "position_count": 20,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-09-01",
+        "candidate_id": "C3",
+        "cash": 238.92,
+        "positions_mv": 493406.0,
+        "nav": 493644.92,
+        "costs_paid": 873.08,
+        "realized_pnl": 0.0,
+        "position_count": 13,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-09-01",
+        "candidate_id": "RND",
+        "cash": 44.58,
+        "positions_mv": 515633.0,
+        "nav": 515677.58,
+        "costs_paid": 873.42,
+        "realized_pnl": 0.0,
+        "position_count": 12,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      }
+    ],
+    "2026-09-02": [
+      {
+        "date": "2026-09-02",
+        "candidate_id": "C0",
+        "cash": 46.62,
+        "positions_mv": 499735.0,
+        "nav": 499781.62,
+        "costs_paid": 873.38,
+        "realized_pnl": 0.0,
+        "position_count": 11,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-09-02",
+        "candidate_id": "C1",
+        "cash": 55.61,
+        "positions_mv": 490202.0,
+        "nav": 490257.61,
+        "costs_paid": 873.39,
+        "realized_pnl": 0.0,
+        "position_count": 11,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-09-02",
+        "candidate_id": "C2",
+        "cash": 31.46,
+        "positions_mv": 506636.0,
+        "nav": 506667.46,
+        "costs_paid": 1186.54,
+        "realized_pnl": -2744.0,
+        "position_count": 21,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-09-02",
+        "candidate_id": "C3",
+        "cash": 238.92,
+        "positions_mv": 486310.0,
+        "nav": 486548.92,
+        "costs_paid": 873.08,
+        "realized_pnl": 0.0,
+        "position_count": 13,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      },
+      {
+        "date": "2026-09-02",
+        "candidate_id": "RND",
+        "cash": 44.58,
+        "positions_mv": 515121.0,
+        "nav": 515165.58,
+        "costs_paid": 873.42,
+        "realized_pnl": 0.0,
+        "position_count": 12,
+        "canonical_kernel_id": "ashare_canonical_economic_kernel",
+        "canonical_kernel_version": "1.0.0",
+        "canonical_schema_version": "canonical_execution_contract_v1"
+      }
     ]
   },
-  "generated_at": "2026-08-28T22:03:31"
+  "generated_at": "2026-09-02T23:42:13"
 }
