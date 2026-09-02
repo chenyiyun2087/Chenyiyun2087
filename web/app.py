@@ -1502,6 +1502,7 @@ def _reconcile_stale_task_states():
                         q.message = '服务恢复：重新领取过期运行作业'
                     WHERE q.task_name = %s AND q.status = 'RUNNING'
                       AND (l.status IS NULL OR l.status <> 'RUNNING'
+                           OR l.heartbeat_at IS NULL
                            OR l.heartbeat_at < DATE_SUB(NOW(), INTERVAL %s SECOND))
                     """,
                     (task_name, TASK_STALE_TIMEOUT_SECONDS),
@@ -1516,6 +1517,7 @@ def _reconcile_stale_task_states():
                        q.message='服务恢复：重新领取过期运行作业'
                    WHERE q.status='RUNNING'
                      AND (l.status IS NULL OR l.status <> 'RUNNING'
+                          OR l.heartbeat_at IS NULL
                           OR l.heartbeat_at < DATE_SUB(NOW(), INTERVAL %s SECOND))""",
                 (TASK_STALE_TIMEOUT_SECONDS,),
             )
@@ -2854,12 +2856,6 @@ def _monthly_cycle_skip_reason(target_datestr):
 
 def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
-    skip_reason = _monthly_cycle_skip_reason(target_datestr)
-    if skip_reason:
-        return True, [
-            f"result=SKIP; task=bs_signal_monthly_cycle; "
-            f"business_date={target_datestr}; reason={skip_reason}"
-        ]
     target_month = f"{target_datestr[:4]}-{target_datestr[4:6]}"
     run_root = Path(app.root_path).parent / "exports" / "bs_signal_cycles"
     recent_manifests = []
@@ -2889,6 +2885,16 @@ def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
         _, manifest_path, payload = max(monthly_manifests, key=lambda item: item[0])
         evidence = "existing_monthly_cycle"
     else:
+        # Verify durable evidence before accepting a schedule skip.  A
+        # committed cycle must remain verifiable on every later trading day;
+        # otherwise the calendar shortcut would hide a valid run (or accept
+        # a prior-month artifact) as a generic SKIP.
+        skip_reason = _monthly_cycle_skip_reason(target_datestr)
+        if skip_reason:
+            return True, [
+                f"result=SKIP; task=bs_signal_monthly_cycle; "
+                f"business_date={target_datestr}; reason={skip_reason}"
+            ]
         return False, [f"result=FAIL; reason=no_completed_manifest; business_date={target_datestr}"]
     ok = payload.get("status") == "completed" and bool(payload.get("activation", {}).get("committed"))
     return ok, [
@@ -4089,8 +4095,16 @@ def _trigger_task_execution(task_name, trigger_type="manual", run_options=None, 
 
 def _run_queued_tasks_loop():
     """Durable worker. A job stays in MySQL while its subprocess is running."""
+    last_stale_reconcile_at = 0.0
     while True:
         try:
+            now_monotonic = time.monotonic()
+            if now_monotonic - last_stale_reconcile_at >= TASK_STALE_TIMEOUT_SECONDS:
+                # Recovery must not depend on an operator opening /admin.  A
+                # worker restart or an exception between queue claim and lock
+                # finalization can otherwise leave a RUNNING row stranded.
+                _reconcile_stale_task_states()
+                last_stale_reconcile_at = now_monotonic
             job = _claim_next_queued_task()
             if not job:
                 time.sleep(TASK_QUEUE_SCAN_INTERVAL_SECONDS)

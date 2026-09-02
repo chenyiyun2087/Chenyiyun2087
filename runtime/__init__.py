@@ -26,6 +26,12 @@ from runtime.independent_ledger import replay_orders
 from runtime.ledger_reconciliation import reconcile_ledgers
 from runtime.open_execution import evaluate_opening_execution
 from runtime.llm_governance import validate_llm_feature_usage
+from runtime.production_stability_hold import (
+    ProductionStabilityHold,
+    ProductionUpgradePaused,
+    assert_production_upgrade_allowed,
+    load_production_stability_hold,
+)
 
 __all__ = [
     "ReleaseManifest",
@@ -53,4 +59,8 @@ __all__ = [
     "reconcile_ledgers",
     "evaluate_opening_execution",
     "validate_llm_feature_usage",
+    "ProductionStabilityHold",
+    "ProductionUpgradePaused",
+    "assert_production_upgrade_allowed",
+    "load_production_stability_hold",
 ]

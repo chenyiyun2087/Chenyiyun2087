@@ -1,0 +1,14 @@
+{
+  "schema_version": "production_stability_hold_v1",
+  "status": "PAUSED",
+  "activated_at": "2026-09-02T00:00:00+08:00",
+  "reason": "全面稳定性审计期间暂停生产升级、策略晋级和资本扩张",
+  "scope": [
+    "production_release_publish",
+    "strategy_release_activation",
+    "promotion_approval",
+    "capital_scale_up"
+  ],
+  "allow_stability_hotfix": true,
+  "resume_requires": "人工复核稳定性审计结论并明确解除本文件"
+}

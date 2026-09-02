@@ -213,6 +213,11 @@ def test_monthly_bs_verifier_accepts_existing_committed_cycle(monkeypatch, tmp_p
         encoding="utf-8",
     )
     monkeypatch.setattr(web_app.app, "root_path", str(tmp_path / "web"))
+    monkeypatch.setattr(
+        web_app,
+        "_monthly_cycle_skip_reason",
+        lambda _target: "not_first_trading_day:first_open=20260701",
+    )
 
     ok, lines = web_app._verify_monthly_bs_cycle_result(
         datetime(2026, 7, 2, 22, 0),
@@ -238,6 +243,9 @@ def test_monthly_bs_verifier_rejects_prior_month_cycle(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setattr(web_app.app, "root_path", str(tmp_path / "web"))
+    # This is an artifact-selection test; isolate it from the live calendar
+    # so a valid schedule skip cannot hide the missing July artifact.
+    monkeypatch.setattr(web_app, "_monthly_cycle_skip_reason", lambda _target: None)
 
     ok, lines = web_app._verify_monthly_bs_cycle_result(
         datetime(2026, 7, 2, 22, 0),

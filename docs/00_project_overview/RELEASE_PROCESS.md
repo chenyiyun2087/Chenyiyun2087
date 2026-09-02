@@ -74,3 +74,14 @@ Any release can be rolled back within one trading day:
 - 20-day drawdown ≤ -15% → reduce to defensive
 - Peak drawdown ≤ -25% → freeze new buys
 - Peak drawdown ≤ -30% → stop strategy, post-mortem
+
+## Stability hold (2026-09-02)
+
+`config/release_freeze/production_stability_hold.json` is the active
+production stability control. While it is `PAUSED`, new production release
+publishes, strategy release activation, promotion approvals and capital scale
+ups are blocked. Research, backtests and read-only audits remain available.
+
+Only a stability-only emergency fix may pass the release writer with the
+explicit `--stability-hotfix` flag. Removing or changing the hold requires
+manual review of the stability audit and an explicit operator decision.

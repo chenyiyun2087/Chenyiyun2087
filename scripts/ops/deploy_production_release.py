@@ -16,6 +16,10 @@ if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
 from scripts.ops.release_runtime import DEFAULT_RELEASE_MANIFEST
+from runtime.production_stability_hold import (
+    ProductionUpgradePaused,
+    assert_production_upgrade_allowed,
+)
 
 
 # Keep immutable release worktrees on the project volume.  The home/data
@@ -164,9 +168,21 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, default=DEFAULT_RELEASE_MANIFEST)
     parser.add_argument("--runtime-python", type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--stability-hotfix",
+        action="store_true",
+        help="allow a reviewed stability-only release during the production upgrade hold",
+    )
     args = parser.parse_args()
 
     source_root = args.source_root.expanduser().resolve()
+    try:
+        assert_production_upgrade_allowed(
+            source_root / "config" / "release_freeze" / "production_stability_hold.json",
+            stability_hotfix=args.stability_hotfix,
+        )
+    except ProductionUpgradePaused as exc:
+        raise SystemExit(f"FATAL: {exc}") from None
     commit_sha = _git(source_root, "rev-parse", "HEAD").lower()
     status = _git(
         source_root,

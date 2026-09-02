@@ -798,6 +798,20 @@ def sell_precommit(execution_date: str | None = None,
     zone = execution_zone or EXECUTION_ZONE
     today = datetime.now().date().isoformat()
     logical_date = business_date or today
+    if execution_date is None and business_date is None:
+        # Queue workers persist the business date in the subprocess
+        # environment.  Prefer that identity over wall-clock time so a retry
+        # cannot cross midnight and bind the sell decision to the wrong day.
+        task_date = str(os.environ.get("CHENYIYUN_TASK_BUSINESS_DATE") or "").strip()
+        if task_date:
+            if len(task_date) == 8 and task_date.isdigit():
+                task_date = f"{task_date[:4]}-{task_date[4:6]}-{task_date[6:]}"
+            try:
+                logical_date = datetime.strptime(task_date, "%Y-%m-%d").date().isoformat()
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"shadow_blocked: invalid task business date {task_date!r}"
+                ) from exc
     open_days = load_trade_calendar(need_date=execution_date or logical_date)
     if execution_date is None:
         # The production sell task runs at T 17:00

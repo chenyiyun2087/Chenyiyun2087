@@ -74,6 +74,9 @@ def _env(monkeypatch):
                "weight_drift_band": 0.0, "cost_rate": 0.00075,
                "slippage_bps": 10.0, "initial_cash_cny": 500000.0},
     })
+    # Date-less production runs receive this identity from the queue worker;
+    # keep the fixture deterministic as the real calendar advances.
+    monkeypatch.setenv("CHENYIYUN_TASK_BUSINESS_DATE", D21)
 
 
 def _seal_package(tmp: Path, signal_date: str, execution_date: str,

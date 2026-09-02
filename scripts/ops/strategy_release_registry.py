@@ -11,6 +11,8 @@ import json as json_module
 from datetime import datetime
 from typing import Any
 
+from runtime.production_stability_hold import assert_production_upgrade_allowed
+
 DDL_RELEASE_REGISTRY = """
 CREATE TABLE IF NOT EXISTS chenyiyun.strategy_release_registry (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -82,6 +84,7 @@ def ensure_registry_tables(engine) -> None:
 
 def record_promotion_approval(engine, registry_release_id: int, action: str, *, strategy_id: str, runtime_release_id: str, gate_evidence_sha: str, actor: str) -> None:
     """Record a human approval bound to exactly one strategy run and evidence set."""
+    assert_production_upgrade_allowed()
     allowed = {"PROMOTE_ENABLED_SHADOW", "PROMOTE_CANARY", "PROMOTE_SCALE_UP"}
     if action not in allowed or not all((strategy_id, runtime_release_id, gate_evidence_sha, actor)):
         raise ValueError("invalid_promotion_approval")
@@ -140,6 +143,7 @@ def register_release(
     config_snapshot: dict[str, Any] | None = None,
     release_notes: str = "",
     is_canary: bool = False,
+    stability_hotfix: bool = False,
 ) -> int:
     """Register a new release, supersede the current active, and return the new ID.
 
@@ -149,6 +153,8 @@ def register_release(
       3. Writes audit log entries for both actions.
     """
     from sqlalchemy import text
+
+    assert_production_upgrade_allowed(stability_hotfix=stability_hotfix)
 
     from scripts.ops.production_config import load_production_config
     from scripts.strategy_display import strategy_display_name

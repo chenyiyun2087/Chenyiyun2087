@@ -108,3 +108,11 @@ def test_failed_preflight_writes_failure_manifest_without_activation(monkeypatch
     manifest = json.loads((tmp_path / "cycle_manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "failed"
     assert manifest["activation"]["committed"] is False
+
+
+def test_queue_worker_reconciles_stale_rows_without_admin_page():
+    source = Path("web/app.py").read_text(encoding="utf-8")
+
+    assert "last_stale_reconcile_at" in source
+    assert "_reconcile_stale_task_states()" in source
+    assert "l.heartbeat_at IS NULL" in source
