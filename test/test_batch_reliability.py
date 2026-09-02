@@ -13,6 +13,14 @@ def test_pipeline_is_only_scheduling_authority():
     assert web_app.TASKS["db_bs_detect"]["schedule_enabled"] is False
 
 
+def test_startup_disables_orphaned_task_schedules():
+    source = Path("web/app.py").read_text(encoding="utf-8")
+
+    assert "known_task_names = tuple(TASKS)" in source
+    assert "SET schedule_enabled=0, next_run=NULL" in source
+    assert "task_name NOT IN ({placeholders})" in source
+
+
 def test_all_daily_commands_receive_explicit_business_date():
     options = {"datestr": "20260701"}
     assert web_app._build_task_script_parts("adc_bs_detect", options)[-2:] == ["--date", "20260701"]

@@ -4205,6 +4205,24 @@ def init_tasks():
         conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
+            # A task removed from the authoritative pipeline may still have a
+            # legacy app_task_status row.  The scheduler whitelist already
+            # prevents execution, but stale schedule_enabled/next_run values
+            # make the operations view report a false overdue task and can be
+            # reactivated by old admin data.  Keep its history, disable only
+            # the orphaned schedule state.
+            known_task_names = tuple(TASKS)
+            if known_task_names:
+                placeholders = ",".join(["%s"] * len(known_task_names))
+                cursor.execute(
+                    f"""
+                    UPDATE app_task_status
+                    SET schedule_enabled=0, next_run=NULL
+                    WHERE task_name NOT IN ({placeholders})
+                      AND (schedule_enabled <> 0 OR next_run IS NOT NULL)
+                    """,
+                    known_task_names,
+                )
             cursor.execute("SELECT * FROM app_task_status")
             rows = cursor.fetchall()
             with TASKS_LOCK:
