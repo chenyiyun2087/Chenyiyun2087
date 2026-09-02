@@ -289,6 +289,7 @@ morning:
       type: script
       trading_day_only: true
       status: enabled  # RE-ENABLED 2026-08-05 — see alpha_signal_package_seal
+      depends_on: [alpha_signal_sell_precommit]
       # v5.5.3 (moved from 15:30): NAV marks to the execution-day CLOSE —
       # ods_daily gets T+1 rows at ~17:00 T+1, so 15:30 could never see
       # the close; 21:55 runs after the 21:50 sell completes (v5.5.4:

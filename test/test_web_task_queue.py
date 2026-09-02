@@ -125,6 +125,12 @@ def test_reconcile_depends_on_same_day_precommit():
     )
 
 
+def test_nav_depends_on_sell_precommit():
+    assert web_app.TASK_DEPENDENCIES["alpha_signal_nav"] == (
+        "alpha_signal_sell_precommit",
+    )
+
+
 def test_bs_compare_depends_on_same_day_adc_detection():
     assert web_app.TASK_DEPENDENCIES["bs_ocr_adc_compare"] == ("adc_bs_detect",)
     cursor = FakeCursor([])
