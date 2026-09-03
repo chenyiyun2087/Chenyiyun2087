@@ -276,6 +276,49 @@ def test_monthly_bs_verifier_accepts_legal_non_first_day_skip(monkeypatch, tmp_p
     assert "not_first_trading_day:first_open=20260901" in lines[0]
 
 
+def test_monthly_bs_verifier_accepts_active_upgrade_pause_skip(monkeypatch, tmp_path):
+    run_root = tmp_path / "exports" / "bs_signal_cycles" / "20260901_paused"
+    run_root.mkdir(parents=True)
+    manifest = run_root / "cycle_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "status": "skipped",
+                "reason": "production_upgrade_paused",
+                "activation": {"committed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    hold_path = tmp_path / "config" / "release_freeze" / "production_stability_hold.json"
+    hold_path.parent.mkdir(parents=True)
+    hold_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "production_stability_hold_v1",
+                "status": "PAUSED",
+                "activated_at": "2026-09-02T00:00:00+08:00",
+                "reason": "test",
+                "scope": ["model_pointer_switch"],
+                "allow_stability_hotfix": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_app.app, "root_path", str(tmp_path / "web"))
+    started_at = datetime.now()
+
+    ok, lines = web_app._verify_monthly_bs_cycle_result(
+        started_at,
+        datetime.now(),
+        run_options={"datestr": "20260901"},
+    )
+
+    assert ok is True
+    assert "reason=production_upgrade_paused" in lines[0]
+
+
 def test_queue_contract_keeps_active_deduplication_and_single_retry():
     source = open(web_app.__file__, encoding="utf-8").read()
     assert "UNIQUE KEY uniq_queue_active_dedupe" in source

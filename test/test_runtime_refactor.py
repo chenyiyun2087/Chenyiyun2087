@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 from scoreRank.core import db_runtime
 from scripts.ops.candidate_export.metadata import (
@@ -90,6 +91,14 @@ def test_connect_pymysql_applies_bounded_timeout_defaults(monkeypatch):
     assert captured["connect_timeout"] == 10
     assert captured["read_timeout"] == 120
     assert captured["write_timeout"] == 120
+
+
+def test_task_worker_lease_uses_bounded_connection_factory():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "scripts" / "ops" / "task_queue_worker.py").read_text(encoding="utf-8")
+
+    assert "runtime.connect_pymysql(runtime.DB_CONFIG)" in source
+    assert "runtime.pymysql.connect(**runtime.DB_CONFIG)" not in source
 
 
 def test_sqlalchemy_engine_is_reused_and_disposable(monkeypatch):

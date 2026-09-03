@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from scripts.ops import runtime_preflight
@@ -84,6 +85,21 @@ def test_runtime_preflight_rejects_python_before_311(monkeypatch):
 
 def test_model_activation_is_atomic_and_preserves_previous_pointer(monkeypatch, tmp_path):
     monkeypatch.setattr(cycle, "MODEL_ROOT", tmp_path)
+    resumed_hold = tmp_path / "production_stability_hold.json"
+    resumed_hold.write_text(
+        json.dumps(
+            {
+                "schema_version": "production_stability_hold_v1",
+                "status": "RESUMED",
+                "activated_at": "2026-09-02T00:00:00+08:00",
+                "reason": "test",
+                "scope": ["model_pointer_switch"],
+                "allow_stability_hotfix": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cycle, "PRODUCTION_STABILITY_HOLD_PATH", resumed_hold)
     old = {"model_dir": "/models/old", "model_path": "/models/old/model.joblib"}
     (tmp_path / "active_model.json").write_text(json.dumps(old), encoding="utf-8")
     summary = {
@@ -100,6 +116,63 @@ def test_model_activation_is_atomic_and_preserves_previous_pointer(monkeypatch, 
     assert previous == old
     assert json.loads(active_path.read_text(encoding="utf-8"))["model_dir"] == "/models/new"
     assert not list(tmp_path.glob(".active_model.*.tmp"))
+
+
+def test_model_activation_rejects_invalid_previous_pointer(monkeypatch, tmp_path):
+    monkeypatch.setattr(cycle, "MODEL_ROOT", tmp_path)
+    resumed_hold = tmp_path / "production_stability_hold.json"
+    resumed_hold.write_text(
+        json.dumps(
+            {
+                "schema_version": "production_stability_hold_v1",
+                "status": "RESUMED",
+                "activated_at": "2026-09-02T00:00:00+08:00",
+                "reason": "test",
+                "scope": ["model_pointer_switch"],
+                "allow_stability_hotfix": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cycle, "PRODUCTION_STABILITY_HOLD_PATH", resumed_hold)
+    (tmp_path / "active_model.json").write_text("{bad", encoding="utf-8")
+
+    try:
+        cycle._activate_model({"output_dir": "/models/new", "model_path": "/models/new/model.joblib"})
+    except RuntimeError as exc:
+        assert "active_model.json is invalid" in str(exc)
+    else:
+        raise AssertionError("invalid active pointer must block activation")
+
+
+def test_model_cycle_records_pause_before_side_effects(monkeypatch, tmp_path):
+    monkeypatch.setattr(cycle, "RUN_ROOT", tmp_path / "runs")
+    hold = tmp_path / "production_stability_hold.json"
+    hold.write_text(
+        json.dumps(
+            {
+                "schema_version": "production_stability_hold_v1",
+                "status": "PAUSED",
+                "activated_at": "2026-09-02T00:00:00+08:00",
+                "reason": "test pause",
+                "scope": ["model_pointer_switch"],
+                "allow_stability_hotfix": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cycle, "PRODUCTION_STABILITY_HOLD_PATH", hold)
+    monkeypatch.setattr(sys, "argv", ["run_bs_signal_enhancement_cycle.py", "--skip-tests"])
+
+    cycle.main()
+
+    manifests = list((tmp_path / "runs").glob("*/cycle_manifest.json"))
+    assert len(manifests) == 1
+    payload = json.loads(manifests[0].read_text(encoding="utf-8"))
+    assert payload["status"] == "skipped"
+    assert payload["reason"] == "production_upgrade_paused"
+    assert payload["activation"]["committed"] is False
+    assert not list((tmp_path / "runs").glob("*/train.log"))
 
 
 def test_failed_preflight_writes_failure_manifest_without_activation(monkeypatch, tmp_path):

@@ -62,6 +62,17 @@ def test_malformed_hold_fails_closed(tmp_path):
         load_production_stability_hold(hold)
 
 
+def test_hold_schema_and_timestamp_are_validated(tmp_path):
+    hold = tmp_path / "hold.json"
+    _write_hold(hold, schema_version="unknown")
+    with pytest.raises(ProductionUpgradePaused, match="schema_version"):
+        load_production_stability_hold(hold)
+
+    _write_hold(hold, activated_at="not-a-timestamp")
+    with pytest.raises(ProductionUpgradePaused, match="activated_at"):
+        load_production_stability_hold(hold)
+
+
 def test_deploy_entrypoint_blocks_normal_dry_run_during_hold(monkeypatch):
     from scripts.ops import deploy_production_release
 
@@ -92,3 +103,10 @@ def test_promotion_approval_entrypoint_respects_hold():
             gate_evidence_sha="a" * 64,
             actor="operator",
         )
+
+
+def test_rollback_entrypoint_respects_hold():
+    from scripts.ops.strategy_release_registry import rollback_release
+
+    with pytest.raises(ProductionUpgradePaused, match="production_upgrade_paused"):
+        rollback_release(None, "primary_strategy")

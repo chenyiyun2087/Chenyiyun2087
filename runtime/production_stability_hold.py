@@ -1,14 +1,16 @@
 """Fail-closed production upgrade freeze used by release writers.
 
-The hold blocks new production releases and promotion approvals while the
-system is under a stability review.  Read-only research remains available;
-an explicitly marked stability hotfix is the only permitted write-through.
+The hold blocks new production releases, model pointer switches, strategy
+activation/rollback, and promotion approvals while the system is under a
+stability review.  Read-only research remains available; an explicitly marked
+stability hotfix is the only permitted write-through.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HOLD_PATH = (
     PROJECT_ROOT / "config" / "release_freeze" / "production_stability_hold.json"
 )
+EXPECTED_SCHEMA_VERSION = "production_stability_hold_v1"
 
 
 class ProductionUpgradePaused(RuntimeError):
@@ -48,6 +51,13 @@ def load_production_stability_hold(
     if not isinstance(payload, dict):
         raise ProductionUpgradePaused("production_upgrade_hold_invalid:object_required")
 
+    schema_version = str(payload.get("schema_version") or "").strip()
+    if schema_version != EXPECTED_SCHEMA_VERSION:
+        raise ProductionUpgradePaused(
+            "production_upgrade_hold_invalid:"
+            f"schema_version={schema_version or 'missing'}"
+        )
+
     status = str(payload.get("status") or "").strip().upper()
     if status not in {"PAUSED", "RESUMED"}:
         raise ProductionUpgradePaused(
@@ -60,9 +70,17 @@ def load_production_stability_hold(
         raise ProductionUpgradePaused(
             "production_upgrade_hold_invalid:missing_reason_timestamp_or_scope"
         )
-    scope = tuple(str(item).strip() for item in raw_scope)
-    if not scope or any(not item for item in scope):
+    try:
+        datetime.fromisoformat(activated_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ProductionUpgradePaused(
+            "production_upgrade_hold_invalid:activated_at"
+        ) from exc
+    if not raw_scope or any(not isinstance(item, str) or not item.strip() for item in raw_scope):
         raise ProductionUpgradePaused("production_upgrade_hold_invalid:scope")
+    scope = tuple(item.strip() for item in raw_scope)
+    if len(set(scope)) != len(scope):
+        raise ProductionUpgradePaused("production_upgrade_hold_invalid:duplicate_scope")
     allow_hotfix = payload.get("allow_stability_hotfix", False)
     if not isinstance(allow_hotfix, bool):
         raise ProductionUpgradePaused(

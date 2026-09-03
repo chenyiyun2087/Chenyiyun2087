@@ -21,7 +21,10 @@ def main() -> None:
     assert_runtime()
     from web import app as runtime
 
-    conn = runtime.pymysql.connect(**runtime.DB_CONFIG)
+    # Use the shared bounded connection factory for the worker lease as well.
+    # A stalled MySQL connect must not prevent launchd from supervising the
+    # worker or leave startup blocked indefinitely.
+    conn = runtime.connect_pymysql(runtime.DB_CONFIG)
     with conn.cursor() as cursor:
         cursor.execute("SELECT GET_LOCK('chenyiyun.task_queue_worker', 0) AS acquired")
         acquired = int((cursor.fetchone() or {}).get("acquired") or 0)

@@ -14,6 +14,16 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_ROOT = PROJECT_ROOT / "exports" / "bs_signal_cycles"
 MODEL_ROOT = PROJECT_ROOT / "exports" / "bs_signal_models"
+PRODUCTION_STABILITY_HOLD_PATH = (
+    PROJECT_ROOT / "config" / "release_freeze" / "production_stability_hold.json"
+)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from runtime.production_stability_hold import (
+    ProductionUpgradePaused,
+    assert_production_upgrade_allowed,
+)
 
 
 def _run(cmd: list[str]) -> tuple[dict, str]:
@@ -144,7 +154,9 @@ def _activation_blocked_reason() -> str | None:
     try:
         data = json.loads(active_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
+        return "active_model.json is invalid; refusing to overwrite the active pointer"
+    if not isinstance(data, dict):
+        return "active_model.json must contain an object; refusing to overwrite the active pointer"
     if data.get("auto_activate") is False:
         return data.get(
             "activation_frozen_reason",
@@ -162,6 +174,10 @@ def _repo_relative(path: Path) -> str:
 
 
 def _activate_model(summary: dict) -> tuple[Path, dict | None]:
+    # This is the final defense-in-depth gate.  The cycle entry point checks
+    # before any export/training/import side effects, while this function also
+    # protects direct callers and tests that invoke the commit point alone.
+    assert_production_upgrade_allowed(PRODUCTION_STABILITY_HOLD_PATH)
     blocker = _activation_blocked_reason()
     if blocker is not None:
         raise RuntimeError(
@@ -198,14 +214,23 @@ def _activate_model(summary: dict) -> tuple[Path, dict | None]:
         except (OSError, ValueError):
             previous = None
     MODEL_ROOT.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=MODEL_ROOT, prefix=".active_model.", suffix=".tmp", delete=False
-    ) as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-        handle.flush()
-        os.fsync(handle.fileno())
-        staged_path = Path(handle.name)
-    os.replace(staged_path, active_path)
+    staged_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=MODEL_ROOT, prefix=".active_model.", suffix=".tmp", delete=False
+        ) as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+            staged_path = Path(handle.name)
+        os.replace(staged_path, active_path)
+        staged_path = None
+    finally:
+        if staged_path is not None:
+            try:
+                staged_path.unlink()
+            except OSError:
+                pass
     return active_path, previous
 
 
@@ -239,6 +264,33 @@ def main() -> None:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = RUN_ROOT / stamp
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # A production stability hold must stop this upgrade workflow before it
+    # exports data, trains models, imports scores, or touches the pointer.  A
+    # legal skip is persisted so the scheduler can verify the control-flow
+    # decision without turning a deliberate pause into a false failure.
+    try:
+        assert_production_upgrade_allowed(PRODUCTION_STABILITY_HOLD_PATH)
+    except ProductionUpgradePaused as exc:
+        detail = str(exc)
+        if not detail.startswith("production_upgrade_paused;"):
+            raise
+        manifest = {
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "target": args.target,
+            "model_kind": args.model_kind,
+            "deploy_model_kind": args.deploy_model_kind,
+            "status": "skipped",
+            "reason": "production_upgrade_paused",
+            "pause_detail": detail,
+            "activation": {"committed": False},
+            "tests": {"enabled": not args.skip_tests, "passed": None},
+        }
+        (run_dir / "cycle_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps({**manifest, "run_dir": str(run_dir)}, ensure_ascii=False, indent=2))
+        return
 
     # A deterministic code/test failure must happen before exporting data,
     # training models, importing scores, or changing the active model pointer.

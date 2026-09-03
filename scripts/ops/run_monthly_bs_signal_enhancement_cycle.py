@@ -169,6 +169,20 @@ def main() -> None:
         return
 
     cycle_summary, _ = _run_cycle(args)
+    if cycle_summary.get("status") == "skipped":
+        print(
+            json.dumps(
+                {
+                    "status": "skipped",
+                    "target_date": target.isoformat(),
+                    "reason": cycle_summary.get("reason") or "cycle_skipped",
+                    "cycle": cycle_summary,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
     print(
         json.dumps(
             {

@@ -41,12 +41,19 @@ def _release_required() -> bool:
 
 def _collect_release_issues() -> list[str]:
     from scripts.ops.release_runtime import load_runtime_release
+    from runtime.production_stability_hold import load_production_stability_hold
 
     issues: list[str] = []
     try:
         release = load_runtime_release()
     except RuntimeError as exc:
         return [str(exc)]
+
+    hold_path = PROJECT_ROOT / "config" / "release_freeze" / "production_stability_hold.json"
+    try:
+        load_production_stability_hold(hold_path)
+    except RuntimeError as exc:
+        issues.append(str(exc))
 
     if release.project_root != PROJECT_ROOT:
         issues.append(

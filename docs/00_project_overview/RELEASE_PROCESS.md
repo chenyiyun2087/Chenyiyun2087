@@ -79,8 +79,10 @@ Any release can be rolled back within one trading day:
 
 `config/release_freeze/production_stability_hold.json` is the active
 production stability control. While it is `PAUSED`, new production release
-publishes, strategy release activation, promotion approvals and capital scale
-ups are blocked. Research, backtests and read-only audits remain available.
+publishes, model pointer switches, strategy release activation/rollback,
+promotion approvals and capital scale-ups are blocked. Research, backtests and
+read-only audits remain available. The scheduled monthly model cycle records a
+verified legal skip before any export, training or score import side effect.
 
 Only a stability-only emergency fix may pass the release writer with the
 explicit `--stability-hotfix` flag. Removing or changing the hold requires

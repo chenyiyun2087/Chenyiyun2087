@@ -2854,6 +2854,20 @@ def _monthly_cycle_skip_reason(target_datestr):
     return None
 
 
+def _production_upgrade_hold_is_active():
+    """Return whether the current runtime has a valid active stability hold."""
+    from runtime.production_stability_hold import load_production_stability_hold
+
+    hold_path = (
+        Path(app.root_path).parent
+        / "config"
+        / "release_freeze"
+        / "production_stability_hold.json"
+    )
+    hold = load_production_stability_hold(hold_path)
+    return bool(hold is not None and hold.status == "PAUSED")
+
+
 def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
     target_month = f"{target_datestr[:4]}-{target_datestr[4:6]}"
@@ -2878,6 +2892,20 @@ def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
     if recent_manifests:
         _, manifest_path, payload = max(recent_manifests, key=lambda item: item[0])
         evidence = "current_run"
+        if (
+            payload.get("status") == "skipped"
+            and payload.get("reason") == "production_upgrade_paused"
+        ):
+            if not _production_upgrade_hold_is_active():
+                return False, [
+                    "result=FAIL; task=bs_signal_monthly_cycle; "
+                    "reason=upgrade_pause_skip_without_active_hold"
+                ]
+            return True, [
+                f"result=SKIP; task=bs_signal_monthly_cycle; "
+                f"business_date={target_datestr}; reason=production_upgrade_paused",
+                f"manifest={manifest_path}; hold_active=true",
+            ]
     elif monthly_manifests:
         # The monthly runner is idempotent: on later trading days it exits cleanly
         # when a committed cycle already exists for the month. Treat that durable

@@ -233,12 +233,17 @@ def register_release(
 
 
 def rollback_release(
-    engine, registry_key: str, actor: str = "operator"
+    engine,
+    registry_key: str,
+    actor: str = "operator",
+    *,
+    stability_hotfix: bool = False,
 ) -> dict[str, Any]:
     """Rollback to the previous active release.
 
     Raises RuntimeError if no previous release exists to roll back to.
     """
+    assert_production_upgrade_allowed(stability_hotfix=stability_hotfix)
     from sqlalchemy import text
 
     current = get_active_release(engine, registry_key)
