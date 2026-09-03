@@ -8,12 +8,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.ops.release_runtime import RUNTIME_STATUS_EXCLUDES
-
-
 PROJECT_ROOT = Path(
     os.environ.get("CHENYIYUN_PROJECT_ROOT") or Path(__file__).resolve().parents[2]
 ).expanduser().resolve()
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.ops.release_runtime import RUNTIME_STATUS_EXCLUDES
+
+
 PROJECT_PYTHON = Path(
     os.environ.get("CHENYIYUN_RUNTIME_PYTHON")
     or (PROJECT_ROOT / ".venv" / "bin" / "python")
@@ -166,3 +169,8 @@ def assert_runtime(*, require_database: bool = True) -> None:
     issues = collect_runtime_issues(require_database=require_database)
     if issues:
         raise RuntimeError("runtime preflight failed: " + " | ".join(issues))
+
+
+if __name__ == "__main__":
+    assert_runtime()
+    print("runtime_preflight_ok")
