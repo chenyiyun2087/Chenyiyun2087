@@ -37,7 +37,13 @@ SHARED_RUNTIME_ROOTS = (
     "data",
     "logs",
 )
-GIT_STATUS_PATHS = (".", ":(exclude)exports/**", ":(exclude)reports/**")
+GIT_STATUS_PATHS = (
+    ".",
+    ":(exclude)exports/**",
+    ":(exclude)reports/**",
+    ":(exclude)data/evidence_store/**",
+    ":(exclude)data/evidence_store",
+)
 
 
 def _git(source_root: Path, *args: str) -> str:
