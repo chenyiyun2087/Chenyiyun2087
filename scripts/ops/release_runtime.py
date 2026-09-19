@@ -17,6 +17,8 @@ RUNTIME_STATUS_EXCLUDES = (
     ":(exclude)reports/**",
     ":(exclude)data/pit/**",
     ":(exclude)data/pit",
+    ":(exclude)data/evidence_store/**",
+    ":(exclude)data/evidence_store",
     ":(exclude)logs/score_backfill/**",
     ":(exclude)logs/score_backfill",
     ":(exclude)logs/web/**",
