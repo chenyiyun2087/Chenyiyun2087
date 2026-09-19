@@ -1763,21 +1763,57 @@ def _enqueue_task(task_name, trigger_type="manual", run_options=None, scheduled_
 
 
 def _dependency_state(cursor, task_name, business_date, trigger_type=None):
+    normalized = _normalize_datestr(business_date)
     # alpha_signal_precommit consumes the previous T-day's package while its
     # queue row is dated T+1.  A same-business-date depends_on cannot express
     # that edge.  Keep the scheduled row pending until the exact execution
     # date has a SEALED package, so a transient seal/publish failure does not
     # become a misleading precommit process failure.
-    if task_name == "alpha_signal_precommit" and trigger_type in (None, "schedule"):
-        normalized = _normalize_datestr(business_date)
-        if normalized:
-            execution_iso = (
-                f"{normalized[:4]}-{normalized[4:6]}-{normalized[6:8]}"
+    if task_name == "alpha_signal_precommit" and normalized:
+        execution_iso = (
+            f"{normalized[:4]}-{normalized[4:6]}-{normalized[6:8]}"
+        )
+        if trigger_type in (None, "schedule") \
+                and _sealed_package_for_execution(execution_iso) is None:
+            return (
+                "WAITING",
+                f"等待 T 日 SEALED 信号包：execution_date={business_date}",
             )
-            if _sealed_package_for_execution(execution_iso) is None:
+
+        # The precommit sizing and held-position snapshot consume the prior
+        # execution day's fill ledger.  Same-day dependencies alone are not
+        # enough: a historical replay can otherwise claim 2026-09-16 before
+        # 2026-09-15 reconciliation has rebuilt cash/positions, producing
+        # duplicate BUYs and a later ACCOUNT_CONSERVATION_ERROR.  Gate every
+        # trigger type on the latest prior SSE execution reconcile row.
+        cursor.execute(
+            """SELECT MAX(cal_date) AS previous_date
+               FROM chenyiyun.dim_trade_cal
+               WHERE exchange='SSE' AND is_open=1 AND cal_date < %s""",
+            (normalized,),
+        )
+        previous_row = cursor.fetchone() or {}
+        previous_date = str(previous_row.get("previous_date") or "")
+        if previous_date:
+            cursor.execute(
+                """SELECT status
+                   FROM app_task_queue
+                   WHERE task_name='alpha_signal_execution_reconcile'
+                     AND business_date=%s
+                   ORDER BY id DESC LIMIT 1""",
+                (previous_date,),
+            )
+            previous_job = cursor.fetchone() or {}
+            previous_status = str(previous_job.get("status") or "").upper()
+            if previous_status in {"FAILED", "CANCELLED", "BLOCKED"}:
+                return (
+                    "BLOCKED",
+                    f"前一交易日执行复核失败：{previous_date}",
+                )
+            if previous_status != "SUCCESS":
                 return (
                     "WAITING",
-                    f"等待 T 日 SEALED 信号包：execution_date={business_date}",
+                    f"等待前一交易日执行复核：{previous_date}",
                 )
     dependencies = TASK_DEPENDENCIES.get(task_name, ())
     if not dependencies:

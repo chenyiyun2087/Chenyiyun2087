@@ -106,7 +106,7 @@ def test_precommit_waits_for_cross_day_sealed_package(monkeypatch):
 
 
 def test_precommit_becomes_ready_after_cross_day_package_is_sealed(monkeypatch):
-    cursor = FakeCursor([])
+    cursor = FakeCursor([{"previous_date": "20260822", "status": "SUCCESS"}])
     monkeypatch.setattr(
         web_app,
         "_sealed_package_for_execution",
@@ -119,6 +119,38 @@ def test_precommit_becomes_ready_after_cross_day_package_is_sealed(monkeypatch):
 
     assert state == "READY"
     assert not message
+
+
+def test_precommit_waits_for_previous_execution_reconcile(monkeypatch):
+    cursor = FakeCursor([{"previous_date": "20260822"}])
+    monkeypatch.setattr(
+        web_app,
+        "_sealed_package_for_execution",
+        lambda execution_date: ({"execution_date": execution_date}, Path("manifest")),
+    )
+
+    state, message = web_app._dependency_state(
+        cursor, "alpha_signal_precommit", "20260825", "replay"
+    )
+
+    assert state == "WAITING"
+    assert "前一交易日执行复核" in message
+
+
+def test_precommit_blocks_after_previous_execution_reconcile_failure(monkeypatch):
+    cursor = FakeCursor([{"previous_date": "20260822", "status": "FAILED"}])
+    monkeypatch.setattr(
+        web_app,
+        "_sealed_package_for_execution",
+        lambda execution_date: ({"execution_date": execution_date}, Path("manifest")),
+    )
+
+    state, message = web_app._dependency_state(
+        cursor, "alpha_signal_precommit", "20260825", "replay"
+    )
+
+    assert state == "BLOCKED"
+    assert "前一交易日执行复核失败" in message
 
 
 def test_reconcile_depends_on_same_day_precommit():

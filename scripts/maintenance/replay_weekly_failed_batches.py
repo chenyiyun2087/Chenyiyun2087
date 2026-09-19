@@ -29,6 +29,7 @@ REPLAY_TASK_ORDER = (
 HEALTHY_QUEUE_STATUSES = {"SUCCESS"}
 HEALTHY_HISTORY_STATUSES = {"SUCCESS"}
 FAILED_STATUSES = {"FAILED", "BLOCKED", "FAILURE"}
+HISTORICAL_FORWARD_ONLY_TASKS = {"pit_forward_shadow_collection"}
 
 
 def _normalize_date(raw: str) -> str:
@@ -132,6 +133,15 @@ def build_replay_plan(
         for business_date in _dates_for_task(task_name, dates):
             if business_date not in date_set:
                 continue
+            if historical_safe and task_name in HISTORICAL_FORWARD_ONLY_TASKS:
+                plan.append({
+                    "task_name": task_name,
+                    "business_date": business_date,
+                    "action": "skip",
+                    "reason": "forward_only_task_not_replayed_historically",
+                    "historical_safe": historical_safe,
+                })
+                continue
             state = _latest_state(cursor, task_name, business_date)
             if task_name == "alpha_signal_package_seal" and _package_is_sealed(business_date):
                 plan.append({
@@ -176,6 +186,13 @@ def execute_replay_plan(runtime, plan: list[dict[str, Any]], *, historical_safe:
             continue
         task_name = str(item["task_name"])
         business_date = str(item["business_date"])
+        if historical_safe and task_name in HISTORICAL_FORWARD_ONLY_TASKS:
+            results.append({
+                **item,
+                "action": "skip",
+                "reason": "forward_only_task_not_replayed_historically",
+            })
+            continue
         job, created, reason = runtime._enqueue_task(
             task_name,
             trigger_type="replay",
