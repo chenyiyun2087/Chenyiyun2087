@@ -147,6 +147,44 @@ def _validate_scan_report(report, trade_date: str, top_n: int | None = None) -> 
         )
 
 
+def _filter_universe_to_target_date(symbols: pd.DataFrame, trade_date: str, db_source) -> pd.DataFrame:
+    """Exclude stocks that were not listed yet on a historical target date.
+
+    ``dim_stock`` is a current universe.  A historical replay must not count
+    stocks whose first bar is after the target date as scan failures; they were
+    not eligible securities at that point in time.
+    """
+    if symbols is None or symbols.empty:
+        return symbols
+
+    engine = db_source._get_engine()
+    if engine is None:
+        raise RuntimeError("无法建立历史扫描资格查询连接，拒绝使用当前 universe 代替目标日 universe。")
+
+    target_ymd = int(pd.Timestamp(trade_date).strftime("%Y%m%d"))
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT DISTINCT ts_code FROM dwd_daily WHERE trade_date <= :target_date"),
+                {"target_date": target_ymd},
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"历史扫描资格查询失败：target={trade_date}; error={exc}") from exc
+
+    eligible_ts_codes = {str(row[0]).strip().upper() for row in rows if row and row[0]}
+    if not eligible_ts_codes:
+        raise RuntimeError(f"目标日没有可用股票日线资格：target={trade_date}")
+
+    filtered = symbols.copy()
+    filtered["_ts_code"] = filtered["symbol"].map(db_source.symbol_to_ts_code).str.upper()
+    filtered = filtered[filtered["_ts_code"].isin(eligible_ts_codes)].drop(columns=["_ts_code"])
+    print(
+        f"历史扫描 universe: current={len(symbols)}, eligible_as_of={len(filtered)}, "
+        f"excluded_not_listed={len(symbols) - len(filtered)}, target={trade_date}"
+    )
+    return filtered.reset_index(drop=True)
+
+
 def run_daily_scan(
     engine,
     trade_date: str,
@@ -195,6 +233,7 @@ def run_daily_scan(
     # requested date.
     from ashare_candle_diag.scanner import market_scanner as scanner_module
 
+    original_get_all_symbols = scanner_module.get_all_symbols
     original_get_daily_kline = scanner_module.get_daily_kline
 
     def get_daily_kline_as_of(symbol, lookback_days=365, source=None):
@@ -205,6 +244,9 @@ def run_daily_scan(
         )
         return _limit_kline_to_trade_date(frame, trade_date)
 
+    current_symbols = original_get_all_symbols(source="db")
+    target_symbols = _filter_universe_to_target_date(current_symbols, trade_date, db_source)
+    scanner_module.get_all_symbols = lambda source=None: target_symbols.copy()
     scanner_module.get_daily_kline = get_daily_kline_as_of
     try:
         report = scanner.scan(
@@ -216,6 +258,7 @@ def run_daily_scan(
             source="db",
         )
     finally:
+        scanner_module.get_all_symbols = original_get_all_symbols
         scanner_module.get_daily_kline = original_get_daily_kline
 
     elapsed = time.time() - t0
