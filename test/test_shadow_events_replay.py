@@ -245,6 +245,33 @@ def test_replay_corrupt_duplicate_buy_position(tmp_path):
         replay(log)
 
 
+def test_replay_allows_reentry_after_completed_round_trip(tmp_path):
+    """A closed position may be opened again on a later execution date."""
+    zone = tmp_path / "exec"
+    first = event_log_path(zone, "2026-08-04")
+    seen = set()
+    for event in (
+        _order_precommit_event(exec_date="2026-08-04", order_id="buy1"),
+        _buy_filled_event(exec_date="2026-08-04", order_id="buy1"),
+        _sell_precommit_event(exec_date="2026-08-05", order_id="sell1"),
+        _sell_filled_event(exec_date="2026-08-05", order_id="sell1"),
+    ):
+        append_event(first, dict(event), seen=seen)
+        seen = existing_identities(first)
+
+    second = event_log_path(zone, "2026-08-06")
+    for event in (
+        _order_precommit_event(exec_date="2026-08-06", order_id="buy2"),
+        _buy_filled_event(exec_date="2026-08-06", order_id="buy2"),
+    ):
+        append_event(second, dict(event), seen=existing_identities(second))
+
+    machine = replay_all(zone)
+    assert machine.completed_round_trips() == 1
+    assert machine.positions[(CAND, SYM)].buy_order.order_id == "buy2"
+    assert machine.positions[(CAND, SYM)].state == HOLDING
+
+
 # ── round-trip counting ───────────────────────────────────────────────
 
 

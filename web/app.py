@@ -2934,11 +2934,18 @@ def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
 def _verify_weekly_image_cleanup_result(started_at, finished_at, run_options=None):
     """On its scheduled Friday, no previous-week image directory may remain."""
     _ = started_at, finished_at
-    from scripts.ops.cleanup_sina_bs_detection_images import collect_previous_week_image_dirs
+    from scripts.ops.cleanup_sina_bs_detection_images import (
+        collect_previous_week_image_dirs,
+        default_image_root,
+    )
 
     target_datestr = _queue_business_date(run_options)
     target_date = datetime.strptime(target_datestr, "%Y%m%d").date()
-    root = Path(app.root_path).parent / "sina" / "bs_detection" / "SinaAppBS" / "config_1"
+    # The worker executes immutable-release code while generated Sina images
+    # live in CHENYIYUN_SOURCE_REPO.  Use the same resolver as the cleanup
+    # task; otherwise a successful deletion is verified against the release
+    # checkout and is reported as a false failure.
+    root = default_image_root()
     week_start, week_end, remaining = collect_previous_week_image_dirs(root, target_date)
     scheduled = target_date.weekday() == 4
     ok = scheduled and not remaining

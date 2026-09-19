@@ -156,6 +156,10 @@ class ShadowStateMachine:
     def __init__(self) -> None:
         self.orders: list[ShadowOrder] = []
         self.positions: dict[tuple[str, str], ShadowPosition] = {}
+        # ``positions`` is the current-position index.  Keep the completed
+        # count separately so a later, valid re-entry can replace a terminal
+        # position without erasing the historical round trip from metrics.
+        self._completed_round_trips = 0
 
     def add_order(self, order: ShadowOrder) -> ShadowOrder:
         if order.state != SIGNAL_CREATED:
@@ -175,7 +179,8 @@ class ShadowStateMachine:
         filled = self._apply(order, BUY_FILLED, fill_price=fill_price,
                              fill_status="FILLED", slippage_bps=slippage_bps)
         key = (filled.challenger_id, filled.symbol)
-        if key in self.positions:
+        existing = self.positions.get(key)
+        if existing is not None and existing.state != ROUND_TRIP_COMPLETED:
             raise ValueError(f"position already open for {key}")
         shares = filled.lot_adjusted_shares or filled.target_shares or 0
         self.positions[key] = ShadowPosition(
@@ -279,11 +284,11 @@ class ShadowStateMachine:
                 f"{position.remaining_shares} shares — a partial sell "
                 "is not a round trip")
         position.state = ROUND_TRIP_COMPLETED
+        self._completed_round_trips += 1
         return position
 
     def completed_round_trips(self) -> int:
-        return sum(1 for p in self.positions.values()
-                   if p.round_trip_complete)
+        return self._completed_round_trips
 
     def _apply(self, order: ShadowOrder, to_state: str, **updates) -> ShadowOrder:
         idx = self.orders.index(order)

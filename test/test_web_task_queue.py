@@ -189,6 +189,7 @@ def test_weekly_cleanup_verifier_rejects_remaining_previous_week_dir(monkeypatch
     root = tmp_path / "sina" / "bs_detection" / "SinaAppBS" / "config_1"
     (root / "20260626").mkdir(parents=True)
     monkeypatch.setattr(web_app.app, "root_path", str(tmp_path / "web"))
+    monkeypatch.setenv("CHENYIYUN_SOURCE_REPO", str(tmp_path))
 
     ok, lines = web_app._verify_weekly_image_cleanup_result(
         datetime(2026, 7, 3, 22, 5), datetime(2026, 7, 3, 22, 6),
