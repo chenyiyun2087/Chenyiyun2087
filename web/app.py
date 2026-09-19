@@ -1527,6 +1527,12 @@ def _reconcile_stale_task_states():
     return fixed_rows
 
 
+def _reconcile_stale_task_states_in_worker():
+    """Run stale-state recovery with the Flask context required by ``get_db``."""
+    with app.app_context():
+        return _reconcile_stale_task_states()
+
+
 def _try_acquire_task_lock(task_name, trigger_type="manual", queue_id=None):
     if task_name not in TASKS:
         return False, "unknown task"
@@ -4138,7 +4144,7 @@ def _run_queued_tasks_loop():
                 # Recovery must not depend on an operator opening /admin.  A
                 # worker restart or an exception between queue claim and lock
                 # finalization can otherwise leave a RUNNING row stranded.
-                _reconcile_stale_task_states()
+                _reconcile_stale_task_states_in_worker()
                 last_stale_reconcile_at = now_monotonic
             job = _claim_next_queued_task()
             if not job:

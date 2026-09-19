@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from flask import has_app_context
+
 os.environ.setdefault("DISABLE_APP_SCHEDULER_LOOP", "1")
 
 from web import app as web_app
@@ -123,6 +125,19 @@ def test_reconcile_depends_on_same_day_precommit():
     assert web_app.TASK_DEPENDENCIES["alpha_signal_execution_reconcile"] == (
         "alpha_signal_precommit",
     )
+
+
+def test_worker_stale_reconcile_runs_inside_flask_app_context(monkeypatch):
+    observed = []
+    monkeypatch.setattr(
+        web_app,
+        "_reconcile_stale_task_states",
+        lambda: observed.append(has_app_context()),
+    )
+
+    web_app._reconcile_stale_task_states_in_worker()
+
+    assert observed == [True]
 
 
 def test_nav_depends_on_sell_precommit():
