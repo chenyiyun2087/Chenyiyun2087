@@ -611,6 +611,18 @@ def test_daily_batch_audit_classifies_missing_and_non_trading_skip():
     assert skipped["replay_required"] == 0
 
 
+def test_daily_batch_audit_skips_historical_forward_only_collection():
+    cursor = FakeCursor([])
+    expected = ExpectedTask(
+        "pit_forward_shadow_collection", "21:55", "collect.py", True,
+    )
+
+    skipped = classify_task(cursor, expected, "20260918", trading_day=True)
+
+    assert skipped["status"] == "SKIPPED_HISTORICAL"
+    assert skipped["replay_required"] == 0
+
+
 def test_adc_recovery_evidence_requires_ml_batch():
     cursor = FakeCursor([{"c": 435}])
     assert _recovered_artifact(cursor, "adc_bs_detect", "20260629")

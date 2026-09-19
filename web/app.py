@@ -1192,7 +1192,7 @@ def _build_batch_monitor_rows(definitions, audit_rows, queue_rows, history_rows,
             display_status = "NOT_STARTED"
 
         normalized = display_status.upper()
-        if normalized in {"OK", "SUCCESS", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"}:
+        if normalized in {"OK", "SUCCESS", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE", "SKIPPED_HISTORICAL"}:
             status_tone = "success"
         elif normalized in {"RUNNING", "PENDING", "WAITING", "QUEUED"}:
             status_tone = "running"
@@ -3018,7 +3018,7 @@ def _verify_daily_batch_audit_result(started_at, finished_at, run_options=None):
     if not rows:
         return False, [f"result=FAIL; reason=no_audit_rows; business_date={target_datestr}"]
     replay_required = sum(int(row.get("replay_required") or 0) for row in rows)
-    bad = [row for row in rows if row.get("status") not in {"OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"}]
+    bad = [row for row in rows if row.get("status") not in {"OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE", "SKIPPED_HISTORICAL"}]
     lines = [
         f"result=PASS; business_date={target_datestr}; rows={len(rows)}; replay_required={replay_required}",
         "status=" + ("ACTION_REQUIRED" if bad else "PASS"),

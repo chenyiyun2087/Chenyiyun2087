@@ -84,7 +84,7 @@ def _latest_state(cursor, task_name: str, business_date: str) -> dict[str, Any]:
 def _audit_state(cursor, business_date: str) -> dict[str, Any] | None:
     cursor.execute(
         """SELECT COUNT(*) AS row_count,
-                  SUM(CASE WHEN status NOT IN ('OK', 'SKIPPED_NON_TRADING', 'SKIPPED_SCHEDULE')
+                  SUM(CASE WHEN status NOT IN ('OK', 'SKIPPED_NON_TRADING', 'SKIPPED_SCHEDULE', 'SKIPPED_HISTORICAL')
                            THEN 1 ELSE 0 END) AS bad_count,
                   MAX(updated_at) AS updated_at
            FROM app_daily_batch_audit

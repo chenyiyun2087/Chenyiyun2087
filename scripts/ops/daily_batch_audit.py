@@ -24,6 +24,10 @@ from scripts.ops.feishu_notifier import send_feishu_text_audited
 
 PIPELINE_PATH = PROJECT_ROOT / "task_registry" / "pipeline.yaml"
 AUDIT_TASK_ID = "ops_daily_batch_audit"
+HISTORICAL_FORWARD_ONLY_TASKS = frozenset({"pit_forward_shadow_collection"})
+HEALTHY_AUDIT_STATUSES = frozenset({
+    "OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE", "SKIPPED_HISTORICAL",
+})
 @dataclass(frozen=True)
 class ExpectedTask:
     task_name: str
@@ -283,6 +287,21 @@ def classify_task(
             "notification_status": None,
             "replay_required": 0,
         }
+    if (
+        expected.task_name in HISTORICAL_FORWARD_ONLY_TASKS
+        and business_day < date.today()
+    ):
+        return {
+            "task_name": expected.task_name,
+            "expected_time": expected.schedule_time,
+            "status": "SKIPPED_HISTORICAL",
+            "reason": "合法跳过：历史日期不执行实时 PIT 前向采集",
+            "queue_id": None,
+            "queue_status": None,
+            "history_status": "Success",
+            "notification_status": None,
+            "replay_required": 0,
+        }
 
     queue = _latest_queue(cursor, expected.task_name, business_date)
     history = _latest_history(cursor, expected.task_name, business_date)
@@ -371,7 +390,7 @@ def persist_audit_row(cursor, business_date: str, row: dict[str, Any]) -> None:
 
 
 def format_audit_notification(summary: dict[str, Any]) -> str:
-    bad_rows = [r for r in summary["rows"] if r.get("status") not in {"OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"}]
+    bad_rows = [r for r in summary["rows"] if r.get("status") not in HEALTHY_AUDIT_STATUSES]
     lines = [
         "【日终批量巡检】",
         f"日期：{summary['business_date']}",
@@ -425,7 +444,7 @@ def run_audit(
         conn.close()
 
     replay_required_count = sum(int(row.get("replay_required") or 0) for row in rows)
-    bad_count = sum(1 for row in rows if row.get("status") not in {"OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"})
+    bad_count = sum(1 for row in rows if row.get("status") not in HEALTHY_AUDIT_STATUSES)
     summary = {
         "business_date": business_date,
         "trading_day": trading_day,
