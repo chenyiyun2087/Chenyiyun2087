@@ -28,7 +28,12 @@ from scripts.ops.daily_batch_audit import (
 )
 from scripts.ops.feishu_notifier import send_feishu_text_audited
 
-HEALTHY_STATUSES = {"OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE"}
+HEALTHY_STATUSES = {
+    "OK",
+    "SKIPPED_NON_TRADING",
+    "SKIPPED_SCHEDULE",
+    "SKIPPED_HISTORICAL",
+}
 DIGEST_TASK = "trusted_strategy_performance_review"
 
 
