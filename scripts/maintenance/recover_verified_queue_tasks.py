@@ -26,6 +26,7 @@ RECOVERABLE_TASKS = (
     "alpha_signal_execution_reconcile",
     "alpha_signal_sell_precommit",
     "alpha_signal_nav",
+    "ops_daily_batch_audit",
 )
 
 
