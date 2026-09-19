@@ -91,6 +91,23 @@ def main() -> int:
                         })
                         continue
                     if str(job.get("status") or "").upper() == "SUCCESS":
+                        if not args.dry_run:
+                            cursor.execute(
+                                """UPDATE app_task_lock
+                                   SET status='COMPLETE', queue_id=NULL,
+                                       finished_at=COALESCE(finished_at, NOW()),
+                                       heartbeat_at=NOW(),
+                                       message='recovered artifact verified'
+                                   WHERE task_name=%s""",
+                                (task_name,),
+                            )
+                            cursor.execute(
+                                """UPDATE app_task_status
+                                   SET status='Success', last_run=NOW(),
+                                       switched_day=1, updated_at=NOW()
+                                   WHERE task_name=%s""",
+                                (task_name,),
+                            )
                         results.append({
                             "task_name": task_name,
                             "business_date": business_date,
@@ -144,6 +161,21 @@ def main() -> int:
                          runtime.TASKS.get(task_name, {}).get("name") or task_name,
                          business_date, finished_at, finished_at,
                          message[-6000:]),
+                    )
+                    cursor.execute(
+                        """UPDATE app_task_lock
+                           SET status='COMPLETE', queue_id=NULL,
+                               finished_at=%s, heartbeat_at=%s,
+                               message='recovered artifact verified'
+                           WHERE task_name=%s""",
+                        (finished_at, finished_at, task_name),
+                    )
+                    cursor.execute(
+                        """UPDATE app_task_status
+                           SET status='Success', last_run=%s,
+                               switched_day=1, updated_at=%s
+                           WHERE task_name=%s""",
+                        (finished_at, finished_at, task_name),
                     )
                     results.append(result)
         if not args.dry_run:
