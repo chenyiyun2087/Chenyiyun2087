@@ -176,6 +176,19 @@ def test_git_info_ignores_untracked_evidence_exports(tmp_path, monkeypatch):
     assert info["worktree_clean"] is True
 
 
+def test_git_info_ignores_shared_runtime_evidence_store(tmp_path, monkeypatch):
+    """Shared runtime evidence data must not make an immutable release dirty."""
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(pkg_mod, "PROJECT_ROOT", tmp_path)
+    evidence = tmp_path / "data" / "evidence_store" / "batch"
+    evidence.mkdir(parents=True)
+    (evidence / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+    info = pkg_mod._git_info()
+
+    assert info["worktree_clean"] is True
+
+
 def test_git_info_blocks_untracked_source(tmp_path, monkeypatch):
     _init_git_repo(tmp_path)
     monkeypatch.setattr(pkg_mod, "PROJECT_ROOT", tmp_path)
