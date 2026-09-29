@@ -7,8 +7,12 @@ import time
 import zipfile
 from datetime import datetime, timedelta
 
-from BSpointChecker import main as capture_main
-from SinaBSDetector import batch_process_images, get_base_dir
+if __package__:
+    from .BSpointChecker import main as capture_main
+    from .SinaBSDetector import batch_process_images, get_base_dir
+else:
+    from BSpointChecker import main as capture_main
+    from SinaBSDetector import batch_process_images, get_base_dir
 import pymysql
 from scoreRank.core.db_config import require_pymysql_config
 

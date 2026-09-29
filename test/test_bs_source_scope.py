@@ -81,3 +81,20 @@ def test_signal_stats_api_defaults_to_ocr_batch(monkeypatch):
     assert response.status_code == 200
     assert cursor.calls[-1][1] == ("config_1",)
     assert "where batch_name = %s" in " ".join(cursor.calls[-1][0].split()).lower()
+
+
+def test_homepage_redirects_to_positions_with_stock_lookup_form(monkeypatch):
+    monkeypatch.setattr(
+        web_app,
+        "get_db",
+        lambda: SourceScopedConnection(SourceScopedCursor()),
+    )
+
+    client = web_app.app.test_client()
+    home_response = client.get("/")
+    positions_response = client.get("/sina/positions")
+
+    assert home_response.status_code == 302
+    assert home_response.headers["Location"].endswith("/sina/positions")
+    assert positions_response.status_code == 200
+    assert 'id="bs-lookup-form"' in positions_response.get_data(as_text=True)

@@ -110,3 +110,46 @@ def test_release_sharing_skips_forward_package_staging_dirs(tmp_path):
 
     assert not (target / "exports" / "forward_shadow_evidence" /
                 "packages" / ".staging").exists()
+
+
+def test_release_sharing_follows_symlinked_runtime_directories(tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "release"
+    package_root = source / "exports" / "forward_shadow_evidence" / "packages"
+    package_root.mkdir(parents=True)
+    persistent_day = tmp_path / "persistent" / "current-day"
+    persistent_day.mkdir(parents=True)
+    (persistent_day / "result.json").write_text("{}", encoding="utf-8")
+    (package_root / "current-day").symlink_to(persistent_day, target_is_directory=True)
+    (source / "exports" / "forward_shadow_evidence" / "README.md").write_text(
+        "evidence", encoding="utf-8"
+    )
+
+    tracked = {"exports/forward_shadow_evidence/README.md"}
+    deploy_production_release._share_untracked_subdirectories(
+        source, target, "exports", tracked
+    )
+
+    current_day = target / "exports" / "forward_shadow_evidence" / "packages" / "current-day"
+    assert current_day.is_symlink()
+    assert (current_day / "result.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_release_shares_explicit_symlinked_runtime_roots(tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "release"
+    persistent = tmp_path / "persistent"
+    (persistent / "sha256").mkdir(parents=True)
+    (persistent / "sha256" / "artifact.json").write_text("{}", encoding="utf-8")
+    (source / "data").mkdir(parents=True)
+    (source / "data" / "evidence_store").symlink_to(
+        persistent, target_is_directory=True
+    )
+
+    deploy_production_release._share_untracked_subdirectories(
+        source, target, "data/evidence_store", set()
+    )
+
+    shared = target / "data" / "evidence_store"
+    assert shared.is_symlink()
+    assert (shared / "sha256" / "artifact.json").read_text(encoding="utf-8") == "{}"

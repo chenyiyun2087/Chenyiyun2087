@@ -39,6 +39,40 @@
     </div>
 </div>
 
+<section class="panel" style="margin-bottom: 18px; padding: 14px;">
+    <div class="panel-header">
+        <div class="panel-title">查询今日指定股票 B/S 扫描</div>
+    </div>
+    <form id="bs-lookup-form" class="form-inline" style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+        <input id="bs-lookup-codes" type="text" autocomplete="off"
+            placeholder="输入代码，例如 600519 或 600519,000001"
+            aria-label="股票代码，多个代码用逗号分隔"
+            style="flex: 1 1 360px; min-width: 220px; padding: 8px 10px;">
+        <button id="bs-lookup-button" type="submit" class="btn">查询并补扫</button>
+    </form>
+    <p class="muted" style="margin: 8px 0; font-size: 12px;">
+        先读取本地数据库今日结果；没有结果的代码会调用 Sina OCR 截图与 B/S 检测流程。单次最多 100 只。
+    </p>
+    <div id="bs-lookup-message" class="muted" aria-live="polite"></div>
+    <div id="bs-lookup-summary" style="margin: 8px 0; white-space: pre-wrap;"></div>
+    <div class="table-container" style="overflow-x: auto;">
+        <table id="bs-lookup-table" style="min-width: 900px;">
+            <thead>
+                <tr>
+                    <th>日期</th>
+                    <th>代码</th>
+                    <th>来源</th>
+                    <th>B 点</th>
+                    <th>S 点</th>
+                    <th>说明</th>
+                    <th>状态</th>
+                </tr>
+            </thead>
+            <tbody id="bs-lookup-table-body"></tbody>
+        </table>
+    </div>
+</section>
+
 <section class="panel">
     <div class="panel-header">
         <div class="panel-title">现金调整</div>
@@ -148,6 +182,73 @@
                 });
             });
         }
+
+        const lookupForm = document.getElementById('bs-lookup-form');
+        const lookupButton = document.getElementById('bs-lookup-button');
+        const lookupMessage = document.getElementById('bs-lookup-message');
+        const lookupSummary = document.getElementById('bs-lookup-summary');
+        const lookupTableBody = document.getElementById('bs-lookup-table-body');
+
+        lookupForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            lookupButton.disabled = true;
+            lookupMessage.textContent = '正在查询本地数据库；缺少今日结果时将执行 Sina 扫描，请稍候……';
+            try {
+                const response = await fetch('/api/sina/bs-lookup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        codes: document.getElementById('bs-lookup-codes').value,
+                        source: 'config_1'
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || '查询失败');
+
+                const totals = data.summary;
+                const buyCodes = totals.buy_codes.length ? totals.buy_codes.join(', ') : '无';
+                const sellCodes = totals.sell_codes.length ? totals.sell_codes.join(', ') : '无';
+                lookupSummary.textContent =
+                    `共 ${totals.requested_count} 只：数据库已有 ${totals.database_count} 只，本次补扫取得 ${totals.scanned_count} 只，未取得结果 ${totals.not_found_count} 只。\n` +
+                    `买点 ${totals.buy_count} 只（${buyCodes}）；卖点 ${totals.sell_count} 只（${sellCodes}）。`;
+                lookupTableBody.replaceChildren();
+
+                data.results.forEach((item) => {
+                    const row = document.createElement('tr');
+                    const signalDescriptions = [
+                        item.has_buy_signal && item.buy_signal_description
+                            ? `B：${item.buy_signal_description}` : item.has_buy_signal ? 'B：检测到买点' : '',
+                        item.has_sell_signal && item.sell_signal_description
+                            ? `S：${item.sell_signal_description}` : item.has_sell_signal ? 'S：检测到卖点' : ''
+                    ].filter(Boolean).join('；') || (item.status === 'found' ? '无 B/S 信号' : '-');
+                    const buyCount = item.buy_points_count || item.total_b_points || 0;
+                    const sellCount = item.sell_points_count || item.total_s_points || 0;
+                    const values = [
+                        item.batch_date,
+                        item.stock_code,
+                        item.origin,
+                        item.has_buy_signal ? `有（${buyCount}）` : '无',
+                        item.has_sell_signal ? `有（${sellCount}）` : '无',
+                        signalDescriptions,
+                        item.status === 'found' ? '已取得' : '未生成结果'
+                    ];
+                    values.forEach((value) => {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.appendChild(cell);
+                    });
+                    lookupTableBody.appendChild(row);
+                });
+
+                lookupMessage.textContent = data.scan_error
+                    ? `查询完成，但补扫未完整成功：${data.scan_error}`
+                    : `查询完成，数据日期：${data.batch_date}`;
+            } catch (error) {
+                lookupMessage.textContent = error.message || '查询失败';
+            } finally {
+                lookupButton.disabled = false;
+            }
+        });
     })();
 </script>
 {% endblock %}

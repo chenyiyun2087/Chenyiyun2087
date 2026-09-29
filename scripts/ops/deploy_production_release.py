@@ -15,7 +15,7 @@ SOURCE_ROOT = Path(__file__).resolve().parents[2]
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from scripts.ops.release_runtime import DEFAULT_RELEASE_MANIFEST
+from scripts.ops.release_runtime import DEFAULT_RELEASE_MANIFEST, RUNTIME_STATUS_EXCLUDES
 from runtime.production_stability_hold import (
     ProductionUpgradePaused,
     assert_production_upgrade_allowed,
@@ -35,15 +35,13 @@ SHARED_RUNTIME_ROOTS = (
     "exports",
     "sina/bs_detection/SinaAppBS",
     "data",
+    "data/pit",
+    "data/evidence_store",
     "logs",
+    "logs/web",
+    "sina/bs_detection/SinaAppBS/archive",
 )
-GIT_STATUS_PATHS = (
-    ".",
-    ":(exclude)exports/**",
-    ":(exclude)reports/**",
-    ":(exclude)data/evidence_store/**",
-    ":(exclude)data/evidence_store",
-)
+GIT_STATUS_PATHS = (".", *RUNTIME_STATUS_EXCLUDES)
 
 
 def _git(source_root: Path, *args: str) -> str:
@@ -69,12 +67,17 @@ def _share_untracked_subdirectories(
     release_root: Path,
     relative: str,
     tracked: set[str],
+    _resolved_chain: frozenset[Path] = frozenset(),
 ) -> None:
     """Share generated directories without replacing tracked release files."""
     source = source_root / relative
     target = release_root / relative
     if not source.exists():
         return
+    resolved_source = source.resolve()
+    if resolved_source in _resolved_chain:
+        return
+    resolved_chain = _resolved_chain | {resolved_source}
     if target.is_symlink():
         if target.resolve() != source.resolve():
             raise RuntimeError(f"release_runtime_path_conflict:{target}")
@@ -94,10 +97,14 @@ def _share_untracked_subdirectories(
         # fail with EXDEV.
         if child.name.startswith("."):
             continue
-        if child.is_dir() and not child.is_symlink():
+        if child.is_dir():
             child_relative = f"{relative}/{child.name}"
             _share_untracked_subdirectories(
-                source_root, release_root, child_relative, tracked
+                source_root,
+                release_root,
+                child_relative,
+                tracked,
+                _resolved_chain=resolved_chain,
             )
 
 

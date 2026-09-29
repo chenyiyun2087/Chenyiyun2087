@@ -1,5 +1,6 @@
 from flask import Flask, render_template, g, request, redirect, url_for, flash, jsonify
 import sys
+import re
 import os
 import pymysql
 import json
@@ -92,11 +93,166 @@ BS_SOURCE_OPTIONS = {
     },
 }
 DEFAULT_BS_SOURCE = "config_1"
+MAX_SINA_BS_LOOKUP_CODES = 100
+SINA_BS_SCAN_LOCK = threading.Lock()
+
 
 
 def _resolve_bs_source(value):
     source = str(value or DEFAULT_BS_SOURCE).strip()
     return source if source in BS_SOURCE_OPTIONS else DEFAULT_BS_SOURCE
+
+def _normalize_sina_bs_lookup_codes(raw_codes):
+    if isinstance(raw_codes, list):
+        raw_codes = ",".join(str(code) for code in raw_codes)
+    if not isinstance(raw_codes, str):
+        raise ValueError("请输入股票代码")
+
+    tokens = [token for token in re.split(r"[,，;；\s]+", raw_codes.strip()) if token]
+    if not tokens:
+        raise ValueError("请输入股票代码")
+
+    codes = []
+    invalid = []
+    for token in tokens:
+        match = re.fullmatch(r"(?i)(?:sh|sz|bj)?(\d{1,6})", token)
+        if not match:
+            invalid.append(token)
+            continue
+        code = match.group(1).zfill(6)
+        if code not in codes:
+            codes.append(code)
+
+    if invalid:
+        raise ValueError(f"无法识别的股票代码：{', '.join(invalid)}")
+    if len(codes) > MAX_SINA_BS_LOOKUP_CODES:
+        raise ValueError(f"单次最多查询 {MAX_SINA_BS_LOOKUP_CODES} 只股票")
+    return codes
+
+
+def _fetch_today_sina_bs_lookup(codes, batch_date):
+    if not codes:
+        return {}
+
+    placeholders = ", ".join(["%s"] * len(codes))
+    query = f"""
+        SELECT batch_date, stock_code, has_buy_signal, has_sell_signal,
+               buy_signal_description, sell_signal_description,
+               total_b_points, total_s_points, buy_points_count, sell_points_count
+        FROM bs_detection_results
+        WHERE batch_name = %s AND batch_date = %s AND stock_code IN ({placeholders})
+        ORDER BY stock_code
+    """
+    conn = _connect_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, tuple(["config_1", batch_date, *codes]))
+            rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    return {
+        str(row["stock_code"]).zfill(6): {
+            "batch_date": str(row["batch_date"]),
+            "stock_code": str(row["stock_code"]).zfill(6),
+            "has_buy_signal": bool(row["has_buy_signal"]),
+            "has_sell_signal": bool(row["has_sell_signal"]),
+            "buy_signal_description": row.get("buy_signal_description") or "",
+            "sell_signal_description": row.get("sell_signal_description") or "",
+            "total_b_points": row.get("total_b_points") or 0,
+            "total_s_points": row.get("total_s_points") or 0,
+            "buy_points_count": row.get("buy_points_count") or 0,
+            "sell_points_count": row.get("sell_points_count") or 0,
+        }
+        for row in rows
+    }
+
+
+def _run_sina_bs_lookup_scan(codes, batch_date):
+    from sina.bs_detection.main import load_config, run_pipeline
+
+    config_name, config_data = load_config("config_1")
+    mysql_config = build_pymysql_config(dict_cursor=False)
+    mysql_config["autocommit"] = True
+    return run_pipeline(
+        config_name=config_name,
+        date_str=batch_date,
+        config_data=config_data,
+        overrides={
+            "stock_codes": codes,
+            "mysql_config": mysql_config,
+            "archive_days": 0,
+        },
+    )
+
+
+def _lookup_today_sina_bs_signals(codes):
+    batch_date = datetime.now().strftime("%Y%m%d")
+    records = _fetch_today_sina_bs_lookup(codes, batch_date)
+    attempted_codes = []
+    scan_error = None
+    missing_codes = [code for code in codes if code not in records]
+
+    if missing_codes:
+        with SINA_BS_SCAN_LOCK:
+            # Recheck after waiting so simultaneous page requests share completed results.
+            records.update(_fetch_today_sina_bs_lookup(missing_codes, batch_date))
+            missing_codes = [code for code in missing_codes if code not in records]
+            if missing_codes:
+                attempted_codes = list(missing_codes)
+                try:
+                    scan_status = _run_sina_bs_lookup_scan(attempted_codes, batch_date)
+                    if scan_status != 0:
+                        scan_error = f"新浪扫描流程返回状态 {scan_status}"
+                except Exception as exc:
+                    app.logger.exception("按代码执行新浪 B/S 扫描失败")
+                    scan_error = f"新浪扫描失败：{exc}"
+                try:
+                    records.update(_fetch_today_sina_bs_lookup(attempted_codes, batch_date))
+                except Exception as exc:
+                    app.logger.exception("补扫后读取 B/S 结果失败")
+                    scan_error = f"扫描后读取本地结果失败：{exc}"
+
+    results = []
+    for code in codes:
+        row = records.get(code)
+        results.append(
+            {
+                **(row or {}),
+                "stock_code": code,
+                "batch_date": row["batch_date"] if row else batch_date,
+                "has_buy_signal": row["has_buy_signal"] if row else False,
+                "has_sell_signal": row["has_sell_signal"] if row else False,
+                "buy_signal_description": row["buy_signal_description"] if row else "",
+                "sell_signal_description": row["sell_signal_description"] if row else "",
+                "total_b_points": row["total_b_points"] if row else 0,
+                "total_s_points": row["total_s_points"] if row else 0,
+                "buy_points_count": row["buy_points_count"] if row else 0,
+                "sell_points_count": row["sell_points_count"] if row else 0,
+                "origin": "本次补扫" if row and code in attempted_codes else "今日数据库" if row else "未取得结果",
+                "status": "found" if row else "not_found",
+            }
+        )
+
+    found = [row for row in results if row["status"] == "found"]
+    buy_codes = [row["stock_code"] for row in found if row["has_buy_signal"]]
+    sell_codes = [row["stock_code"] for row in found if row["has_sell_signal"]]
+    return {
+        "batch_date": batch_date,
+        "results": results,
+        "summary": {
+            "requested_count": len(codes),
+            "found_count": len(found),
+            "database_count": sum(row["origin"] == "今日数据库" for row in found),
+            "scanned_count": sum(row["origin"] == "本次补扫" for row in found),
+            "not_found_count": len(results) - len(found),
+            "buy_count": len(buy_codes),
+            "sell_count": len(sell_codes),
+            "buy_codes": buy_codes,
+            "sell_codes": sell_codes,
+        },
+        "scan_error": scan_error,
+    }
 
 # Production startup performs schema migration once. Existing request-level
 # compatibility calls then become no-ops, avoiding repeated SHOW/DDL/upserts.
@@ -5977,6 +6133,24 @@ def sina_monitor():
                            bs_source_meta=bs_source_meta,
                            bs_source_options=BS_SOURCE_OPTIONS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+
+@app.route('/api/sina/bs-lookup', methods=['POST'])
+def api_sina_bs_lookup():
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "请求内容格式无效"}), 400
+    if _resolve_bs_source(payload.get("source")) != "config_1":
+        return jsonify({"error": "按代码补扫仅支持 OCR 截图识别数据源，请切换到 config_1"}), 400
+
+    try:
+        codes = _normalize_sina_bs_lookup_codes(payload.get("codes", ""))
+        return jsonify(_lookup_today_sina_bs_signals(codes))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("查询今日新浪 B/S 扫描结果失败")
+        return jsonify({"error": f"查询本地数据库失败：{exc}"}), 500
 
 
 @app.route('/api/signal_stats')
