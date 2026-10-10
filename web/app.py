@@ -3090,6 +3090,15 @@ def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
     if recent_manifests:
         _, manifest_path, payload = max(recent_manifests, key=lambda item: item[0])
         evidence = "current_run"
+        if payload.get("status") == "skipped" and payload.get("reason") == "model_activation_frozen":
+            from scripts.run_bs_signal_enhancement_cycle import _activation_is_frozen
+
+            if not _activation_is_frozen() or payload.get("activation", {}).get("committed") is not False:
+                return False, ["result=FAIL; reason=model_freeze_skip_without_active_freeze"]
+            return True, [
+                f"result=SKIP; task=bs_signal_monthly_cycle; business_date={target_datestr}; reason=model_activation_frozen",
+                f"manifest={manifest_path}; activation_committed=false",
+            ]
         if (
             payload.get("status") == "skipped"
             and payload.get("reason") == "production_upgrade_paused"

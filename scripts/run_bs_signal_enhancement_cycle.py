@@ -158,11 +158,17 @@ def _activation_blocked_reason() -> str | None:
     if not isinstance(data, dict):
         return "active_model.json must contain an object; refusing to overwrite the active pointer"
     if data.get("auto_activate") is False:
-        return data.get(
-            "activation_frozen_reason",
-            "auto_activate=false in active_model.json (P0 freeze 2026-08-04)",
-        )
+        return str(data.get("activation_frozen_reason") or
+                   "auto_activate=false in active_model.json (P0 freeze 2026-08-04)")
     return None
+
+
+def _activation_is_frozen() -> bool:
+    try:
+        payload = json.loads((MODEL_ROOT / "active_model.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("auto_activate") is False
 
 
 def _repo_relative(path: Path) -> str:
@@ -291,6 +297,25 @@ def main() -> None:
         )
         print(json.dumps({**manifest, "run_dir": str(run_dir)}, ensure_ascii=False, indent=2))
         return
+
+    blocker = _activation_blocked_reason()
+    if blocker is not None:
+        # Invalid pointers remain errors; only an explicit freeze is a legal skip.
+        if _activation_is_frozen():
+            manifest = {
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "target": args.target,
+                "status": "skipped",
+                "reason": "model_activation_frozen",
+                "pause_detail": blocker,
+                "activation": {"committed": False},
+            }
+            (run_dir / "cycle_manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            print(json.dumps({**manifest, "run_dir": str(run_dir)}, ensure_ascii=False, indent=2))
+            return
+        raise RuntimeError(f"Activation BLOCKED: {blocker}")
 
     # A deterministic code/test failure must happen before exporting data,
     # training models, importing scores, or changing the active model pointer.
