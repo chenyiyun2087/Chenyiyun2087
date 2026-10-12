@@ -37,6 +37,7 @@ DATA_READINESS_FAILURE_MARKERS = (
     "same_day_snapshot",
     "same_day_collection_eligible",
     "waiting_same_day_complete_snapshot",
+    "financial_available_at:missing",
 )
 
 
@@ -137,6 +138,11 @@ def classify_task_failure(history_status: str, exit_code: int, message: object) 
         return "TEST_GATE", False
     if any(marker.lower() in body for marker in DATA_READINESS_FAILURE_MARKERS):
         return "DATA_READINESS", True
+    # macOS can interrupt Python's path initialization before the task script
+    # starts. The verification wrapper must not turn this startup EINTR into
+    # a permanent artifact failure. Other fatal path errors remain failures.
+    if "error evaluating path" in body and "interruptederror: [errno 4] interrupted system call" in body:
+        return "TRANSIENT", True
     if "[verify]" in body and ("result=fail" in body or "result=blocked" in body):
         return "VERIFICATION", False
     if any(marker in body for marker in TRANSIENT_FAILURE_MARKERS):
