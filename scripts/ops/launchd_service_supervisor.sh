@@ -19,16 +19,20 @@ mkdir -p "$runtime_dir" "$log_dir"
 chmod 700 "$runtime_dir"
 pid_file="$runtime_dir/$role.$$.pid"
 open_pid=""
+runtime_pid=""
+
+read_runtime_pid() {
+  [ -s "$pid_file" ] || return 1
+  read -r runtime_pid < "$pid_file"
+  [[ "$runtime_pid" =~ ^[0-9]+$ ]] && [ "$runtime_pid" -gt 1 ]
+}
 
 terminate_service() {
   trap - TERM INT
-  if [ -s "$pid_file" ]; then
-    read -r runtime_pid < "$pid_file"
-    if [[ "$runtime_pid" =~ ^[0-9]+$ ]] && [ "$runtime_pid" -gt 1 ]; then
-      runtime_uid="$(/bin/ps -p "$runtime_pid" -o uid= | tr -d ' ' || true)"
-      if [ "$runtime_uid" = "$(id -u)" ]; then
-        kill -TERM "$runtime_pid" 2>/dev/null || true
-      fi
+  if read_runtime_pid; then
+    runtime_uid="$(/bin/ps -p "$runtime_pid" -o uid= | tr -d ' ' || true)"
+    if [ "$runtime_uid" = "$(id -u)" ]; then
+      kill -TERM "$runtime_pid" 2>/dev/null || true
     fi
   fi
   if [ -n "$open_pid" ]; then
@@ -39,8 +43,8 @@ terminate_service() {
 trap terminate_service TERM INT
 trap 'rm "$pid_file" 2>/dev/null || true' EXIT
 
-# LaunchServices supplies the desktop launch context; -W keeps this supervisor
-# alive for the application lifetime. The PID survives the launcher's exec.
+# LaunchServices supplies the desktop launch context. The published PID
+# survives the launcher's exec even when GUI application tracking ends.
 /usr/bin/open -n -g -j -W -a "$python_app" \
   --stdout "$log_dir/$role-runtime.stdout.log" \
   --stderr "$log_dir/$role-runtime.stderr.log" \
@@ -49,4 +53,23 @@ trap 'rm "$pid_file" 2>/dev/null || true' EXIT
   --env "CHENYIYUN_REQUIRE_RELEASE=1" \
   --args "$launcher" &
 open_pid=$!
-wait "$open_pid"
+for attempt in {1..300}; do
+  if read_runtime_pid; then
+    break
+  fi
+  if ! kill -0 "$open_pid" 2>/dev/null && [ "$attempt" -ge 5 ]; then
+    echo "FATAL: application exited before publishing its PID" >&2
+    exit 1
+  fi
+  sleep 1
+done
+if ! read_runtime_pid; then
+  echo "FATAL: application startup did not publish its PID" >&2
+  exit 1
+fi
+# An exec can unregister the GUI application while the same Python PID is
+# still running. Supervise the actual process, rather than open's exit alone.
+while kill -0 "$runtime_pid" 2>/dev/null; do
+  sleep 1
+done
+wait "$open_pid" || true
