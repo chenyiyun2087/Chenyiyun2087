@@ -2,24 +2,36 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.chenyiyun.task-worker</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/homebrew/bin/python3.14</string>
-    <string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087/releases/current/scripts/ops/task_worker_launcher.py</string>
-  </array>
-  <key>WorkingDirectory</key><string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087/releases/current</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>CHENYIYUN_RELEASE_MANIFEST</key>
-    <string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087/production_release.json</string>
-    <key>CHENYIYUN_REQUIRE_RELEASE</key><string>1</string>
-  </dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>20</integer>
-  <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>/Users/chenyiyun/Library/Logs/Chenyiyun2087/task-worker.stdout.log</string>
-  <key>StandardErrorPath</key><string>/Users/chenyiyun/Library/Logs/Chenyiyun2087/task-worker.stderr.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>CHENYIYUN_RELEASE_MANIFEST</key>
+		<string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087/production_release.json</string>
+		<key>CHENYIYUN_REQUIRE_RELEASE</key>
+		<string>1</string>
+	</dict>
+	<key>ExitTimeOut</key>
+	<integer>30</integer>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.chenyiyun.task-worker</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087/launchers/launchd_service_supervisor.sh</string>
+		<string>worker</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/chenyiyun/Library/Logs/Chenyiyun2087/task-worker.stderr.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/chenyiyun/Library/Logs/Chenyiyun2087/task-worker.stdout.log</string>
+	<key>ThrottleInterval</key>
+	<integer>20</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/chenyiyun/Library/Application Support/Chenyiyun2087</string>
 </dict>
 </plist>

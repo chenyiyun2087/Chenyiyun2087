@@ -17,6 +17,10 @@ if [ "$mode" != "600" ]; then
 fi
 
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/Chenyiyun2087" "$PROJECT_DIR/logs/web"
+LAUNCHER_ROOT="$HOME/Library/Application Support/Chenyiyun2087/launchers"
+mkdir -p "$LAUNCHER_ROOT"
+cp "$PROJECT_DIR/scripts/ops/launchd_service_supervisor.sh" "$LAUNCHER_ROOT/launchd_service_supervisor.sh"
+chmod 700 "$LAUNCHER_ROOT/launchd_service_supervisor.sh"
 for LABEL in "${LABELS[@]}"; do
   SOURCE_PLIST="$PROJECT_DIR/scripts/ops/$LABEL.plist"
   TARGET_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"

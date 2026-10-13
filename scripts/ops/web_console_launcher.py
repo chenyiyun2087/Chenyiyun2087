@@ -28,6 +28,9 @@ def load_env(path: Path) -> None:
 
 
 def main() -> None:
+    from scripts.ops.launchd_runtime import record_service_pid
+
+    record_service_pid()
     load_env(ENV_FILE)
     from scripts.ops.release_runtime import apply_runtime_release_environment
 

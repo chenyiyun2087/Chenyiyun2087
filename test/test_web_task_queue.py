@@ -761,8 +761,12 @@ def test_launchd_assets_use_user_env_and_keepalive():
     assert ".config/chenyiyun/web.env" in start_source
     assert "CHENYIYUN_DB_PASSWORD" not in plist_source
     assert "<key>KeepAlive</key>" in plist_source
-    assert "/opt/homebrew/bin/python3.14" in plist_source
-    assert "web_console_launcher.py" in plist_source
+    assert "launchd_service_supervisor.sh" in plist_source
+    supervisor_source = (root / "scripts/ops/launchd_service_supervisor.sh").read_text(encoding="utf-8")
+    assert "web_console_launcher.py" in supervisor_source
+    assert "/usr/bin/open -n -g -j -W" in supervisor_source
+    assert 'trap terminate_service TERM INT' in supervisor_source
+    assert 'CHENYIYUN_SERVICE_PID_FILE=$pid_file' in supervisor_source
     assert 'VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"' in launcher_source
     assert "python = str(VENV_PYTHON)" in launcher_source
     assert "os.execvpe(\n        python," in launcher_source
