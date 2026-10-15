@@ -595,6 +595,41 @@ def test_nav_contract_one_fen_rounding_tolerance():
     assert any("conservation broken" in d for d in details2)
 
 
+def test_nav_contract_multi_fill_cent_rounding():
+    """2026-10-14 C0 production failure: 7 sell fills where individual
+    cent-rounding under CostBreakdown creates 0.0115 CNY difference from continuous
+    float math (prev_cash 98.67, unrounded expected 334813.89, actual cash 334813.88).
+    The verifier must accept canonical kernel rounding conservation.
+    """
+    fills = [
+        {"event_type": "SELL_FILLED", "challenger_id": "C0", "symbol": "000869", "shares": 2900, "fill_price": 17.93},
+        {"event_type": "SELL_FILLED", "challenger_id": "C0", "symbol": "001213", "shares": 14000, "fill_price": 3.56},
+        {"event_type": "SELL_FILLED", "challenger_id": "C0", "symbol": "600076", "shares": 18000, "fill_price": 2.17},
+        {"event_type": "SELL_FILLED", "challenger_id": "C0", "symbol": "601163", "shares": 3900, "fill_price": 12.34},
+        {"event_type": "SELL_FILLED", "challenger_id": "C0", "symbol": "601827", "shares": 6200, "fill_price": 8.1},
+        {"event_type": "SELL_FILLED", "challenger_id": "C0", "symbol": "688366", "shares": 1600, "fill_price": 30.41},
+        {"event_type": "SELL_FILLED", "challenger_id": "C0", "symbol": "688819", "shares": 2300, "fill_price": 20.61},
+    ]
+    snapshots = [_snapshot("C0", 334813.88, 151866.0, 6)]
+    ok, details = check_nav_contract(
+        snapshots, ["C0"], fills, {"C0": 0.00075},
+        prev_cash_by_candidate={"C0": 98.67},
+        slippage_bps_map={"C0": 10.0},
+    )
+    assert ok, details
+
+    # But an altered fill (wrong price / missing fill) must still fail closed:
+    corrupted_fills = fills[:-1]
+    ok_corrupt, details_corrupt = check_nav_contract(
+        snapshots, ["C0"], corrupted_fills, {"C0": 0.00075},
+        prev_cash_by_candidate={"C0": 98.67},
+        slippage_bps_map={"C0": 10.0},
+    )
+    assert not ok_corrupt
+    assert any("conservation broken" in d for d in details_corrupt)
+
+
+
 # ── E4 ─────────────────────────────────────────────────────────────────
 
 

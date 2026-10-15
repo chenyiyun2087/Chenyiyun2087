@@ -589,25 +589,73 @@ def check_nav_contract(
             if cid not in snap_by_cand:
                 continue
             cost_rate = cost_rate_map.get(cid, 0.0)
-            slip = float((slippage_bps_map or {}).get(cid, 0.0)) / 1e4
-            delta = 0.0
+            slip_bps = float((slippage_bps_map or {}).get(cid, 0.0))
+            slip = slip_bps / 1e4
+            delta_kernel = 0.0
+            delta_continuous = 0.0
+            cand_fills_count = 0
+
+            has_kernel = False
+            try:
+                from scripts.research.execution_costs import CostBreakdown, ExecutionCostModel
+                model = ExecutionCostModel(
+                    commission_rate=cost_rate,
+                    stamp_duty_rate=0.0,
+                    transfer_fee_rate=0.0,
+                    open_auction_slippage_bps=slip_bps,
+                    min_commission_cny=0.0,
+                )
+                has_kernel = True
+            except Exception:
+                has_kernel = False
+
             for f in fills:
                 if f.get("challenger_id") != cid:
                     continue
+                cand_fills_count += 1
                 kind = f.get("event_type")
                 shares = f.get("shares") or 0
                 price = f.get("fill_price") or 0.0
                 notional = float(shares) * float(price)
+                if has_kernel:
+                    cb = CostBreakdown.calculate(notional, "BUY" if kind == "BUY_FILLED" else "SELL", model)
+                    cost = cb.total_cost
+                else:
+                    from decimal import Decimal, ROUND_HALF_UP
+
+                    def _cents(v: float) -> float:
+                        return float(Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+                    cost = _cents(notional * cost_rate) + _cents(notional * slip)
+
+                cost_cont = notional * cost_rate + notional * slip
                 if kind == "BUY_FILLED":
-                    delta -= notional + notional * cost_rate + notional * slip
+                    delta_kernel -= notional + cost
+                    delta_continuous -= notional + cost_cont
                 elif kind == "SELL_FILLED":
-                    delta += notional - notional * cost_rate - notional * slip
-            expected_cash = float(prev_cash) + delta
-            if abs(expected_cash - float(snap_by_cand[cid]["cash"])) > 0.01 + 1e-6:
+                    delta_kernel += notional - cost
+                    delta_continuous += notional - cost_cont
+
+            cash_actual = float(snap_by_cand[cid]["cash"])
+            expected_cash_kernel = float(prev_cash) + delta_kernel
+            expected_cash_continuous = float(prev_cash) + delta_continuous
+
+            diff_kernel = abs(expected_cash_kernel - cash_actual)
+            diff_continuous = abs(expected_cash_continuous - cash_actual)
+
+            # The canonical execution kernel deducts costs quantized to cents (fen) per fill.
+            # When evaluated continuously, N fills accumulate up to ~0.005-0.01 N rounding error.
+            # We accept if canonical kernel matches (within one fen) OR continuous matches
+            # within a bounded multi-fill rounding tolerance.
+            kernel_ok = diff_kernel <= 0.01 + 1e-6
+            continuous_ok = diff_continuous <= max(0.01, 0.005 * max(1, cand_fills_count)) + 1e-6
+
+            if not (kernel_ok or continuous_ok):
+                chosen_expected = expected_cash_kernel if diff_kernel <= diff_continuous else expected_cash_continuous
+                chosen_delta = delta_kernel if diff_kernel <= diff_continuous else delta_continuous
                 problems.append(
                     f"candidate {cid}: fill conservation broken — "
-                    f"prev_cash {prev_cash:.2f} + fill delta {delta:.2f} = "
-                    f"{expected_cash:.2f} != cash {snap_by_cand[cid]['cash']:.2f}")
+                    f"prev_cash {prev_cash:.2f} + fill delta {chosen_delta:.2f} = "
+                    f"{chosen_expected:.2f} != cash {cash_actual:.2f}")
 
     if problems:
         return False, ([f"result=FAIL; task=nav_contract; "
