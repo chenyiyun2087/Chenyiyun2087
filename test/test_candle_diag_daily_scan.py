@@ -77,3 +77,14 @@ def test_filter_universe_excludes_stocks_listed_after_historical_date():
     result = _filter_universe_to_target_date(symbols, "2026-09-15", FakeDbSource)
 
     assert result["symbol"].tolist() == ["000001", "920298"]
+
+
+def test_universe_first_bar_query_preserves_suspended_and_rejects_future_listing():
+    from sqlalchemy import create_engine, text
+    engine = create_engine('sqlite://')
+    with engine.begin() as conn:
+        conn.execute(text('CREATE TABLE dwd_daily (ts_code TEXT, trade_date INTEGER)'))
+        conn.execute(text("INSERT INTO dwd_daily VALUES ('000001.SZ',20261001),('000001.SZ',20261016),('920298.BJ',20261010),('688837.SH',20261016)"))
+    source = SimpleNamespace(_get_engine=lambda: engine, symbol_to_ts_code=lambda s: {'000001':'000001.SZ','920298':'920298.BJ','688837':'688837.SH'}[s])
+    result = _filter_universe_to_target_date(pd.DataFrame({'symbol':['000001','920298','688837']}), '2026-10-15', source)
+    assert result['symbol'].tolist() == ['000001', '920298']

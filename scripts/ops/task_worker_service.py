@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import signal
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -77,13 +78,14 @@ def execute_subprocess(
 ) -> TaskProcessResult:
     """Execute one task with durable heartbeat callbacks and bounded logs."""
     stdout_path = stderr_path = None
+    process = None
     try:
         with tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix="task_", suffix=".stdout.log") as stdout_handle, tempfile.NamedTemporaryFile(mode="wb+", delete=False, prefix="task_", suffix=".stderr.log") as stderr_handle:
             stdout_path, stderr_path = stdout_handle.name, stderr_handle.name
             process = subprocess.Popen(
                 command, stdout=stdout_handle, stderr=stderr_handle,
                 cwd=str(cwd), env=dict(env),
-                close_fds=True,
+                close_fds=True, start_new_session=True,
             )
             while True:
                 try:
@@ -91,12 +93,25 @@ def execute_subprocess(
                     break
                 except subprocess.TimeoutExpired:
                     heartbeat()
+        # Also fence short tasks that finish between heartbeat intervals.
+        heartbeat()
         return TaskProcessResult(
             exit_code=int(process.returncode or 0),
             stdout=_tail(stdout_path, 4000),
             stderr=_tail(stderr_path, 2400),
         )
     finally:
+        # A failed lease heartbeat must not leave a task (or its descendants)
+        # writing after the worker exits and another worker takes over.
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            except ProcessLookupError:
+                pass
         for path in (stdout_path, stderr_path):
             if path:
                 try:
@@ -142,6 +157,8 @@ def classify_task_failure(history_status: str, exit_code: int, message: object) 
     # starts. The verification wrapper must not turn this startup EINTR into
     # a permanent artifact failure. Other fatal path errors remain failures.
     if "error evaluating path" in body and "interruptederror: [errno 4] interrupted system call" in body:
+        return "TRANSIENT", True
+    if "worker database lease lost; restart required" in body:
         return "TRANSIENT", True
     if "[verify]" in body and ("result=fail" in body or "result=blocked" in body):
         return "VERIFICATION", False

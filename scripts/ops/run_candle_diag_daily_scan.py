@@ -165,7 +165,7 @@ def _filter_universe_to_target_date(symbols: pd.DataFrame, trade_date: str, db_s
     try:
         with engine.connect() as conn:
             rows = conn.execute(
-                text("SELECT DISTINCT ts_code FROM dwd_daily WHERE trade_date <= :target_date"),
+                text("SELECT ts_code FROM dwd_daily GROUP BY ts_code HAVING MIN(trade_date) <= :target_date"),
                 {"target_date": target_ymd},
             ).fetchall()
     except Exception as exc:  # noqa: BLE001

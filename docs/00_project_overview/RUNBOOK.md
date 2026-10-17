@@ -118,3 +118,13 @@ scripts/ops/check_web_console.sh
 ```
 
 项目位于外置卷时，macOS 必须允许 `/bin/bash` 和项目使用的 Python 访问“可移除卷”；若 launchd 日志出现 `Operation not permitted`，先在“系统设置 → 隐私与安全性”授予权限，再重新运行安装脚本。日志位于 `~/Library/Logs/Chenyiyun2087/`。
+
+### 批量 Worker 租约与隔离发版（2026-10-17）
+
+Worker 在每次领取任务前、任务心跳及子进程结束后，使用原连接核验 `GET_LOCK` 所有权，禁止自动重连冒充原租约。丢失连接或所有权时停止正在执行的任务进程组，记录失败并退出，由 launchd 重启后重新申请租约。健康检查同时检查数据库租约，不能仅据 launchd 的 running 状态认定正常。没有新增租约宽限开关。
+
+从隔离工作区发版时，使用 `deploy_production_release.py --source-root <clean-checkout> --runtime-source-root /Volumes/extension/projects/Chenyiyun2087 --runtime-python /Volumes/extension/projects/Chenyiyun2087/.venv/bin/python --release-id <id> --stability-hotfix`。`--runtime-source-root` 指定持久数据源和 manifest 的 source_repo；默认仍为 source-root。生成目录链接解析到持久实际目录，发布前再次校验目标代码目录洁净，禁止直接修改已发布 release 的脚本。
+
+扫描历史股票资格使用 `GROUP BY ts_code HAVING MIN(trade_date) <= :target_date`，利用现有 `idx_ts_date` 读取首个交易日；保留目标日尚未上市股票的排除和停牌股票的资格。无需增加索引或改库结构。
+
+回滚本轮稳定性修复可切回前一 release manifest 并重新安装服务；旧版缺少租约持续核验，应先核实数据库锁与代码洁净。不要随代码回滚删除已补录数据或原始失败记录。

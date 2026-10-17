@@ -15,6 +15,7 @@ os.environ["CHENYIYUN_RUNTIME_ROLE"] = "worker"
 os.environ["DISABLE_APP_SCHEDULER_LOOP"] = "1"
 
 from scripts.ops.runtime_preflight import assert_runtime
+from scripts.ops.worker_lease import WorkerLease
 
 
 def main() -> None:
@@ -32,15 +33,19 @@ def main() -> None:
         conn.close()
         raise SystemExit("another task queue worker already owns the database lease")
 
+    lease = WorkerLease(conn)
     try:
         runtime._run_web_startup_preflight(strict=True)
         threading.Thread(target=runtime._run_scheduled_tasks_loop, name="task-scheduler", daemon=True).start()
         threading.Thread(target=runtime._run_notification_outbox_loop, name="notification-outbox-worker", daemon=True).start()
-        runtime._run_queued_tasks_loop()
+        runtime._run_queued_tasks_loop(lease_guard=lease.assert_owned)
     finally:
         try:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT RELEASE_LOCK('chenyiyun.task_queue_worker')")
+        except Exception:
+            # The lease connection may already be gone. Never reconnect it.
+            pass
         finally:
             conn.close()
 

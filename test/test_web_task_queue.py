@@ -1048,3 +1048,14 @@ def test_sealed_package_for_execution_prefers_latest_revision(monkeypatch, tmp_p
     man, mpath = web_app._sealed_package_for_execution("2026-08-06")
     assert mpath.parent.name == "revision_2"
     assert man["signal_date"] == "2026-08-05"
+
+
+def test_worker_lease_loss_exits_before_claiming_more_tasks(monkeypatch):
+    import pytest
+    claimed = []
+    monkeypatch.setattr(web_app, '_claim_next_queued_task', lambda: claimed.append(True))
+    def lost():
+        raise RuntimeError('worker database lease lost; restart required')
+    with pytest.raises(RuntimeError, match='lease lost'):
+        web_app._run_queued_tasks_loop(lease_guard=lost)
+    assert claimed == []

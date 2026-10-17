@@ -85,7 +85,7 @@ def _share_untracked_subdirectories(
     if not target.exists():
         if not _has_tracked_descendant(relative, tracked):
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.symlink_to(source, target_is_directory=True)
+            target.symlink_to(source.resolve(), target_is_directory=True)
             return
         target.mkdir(parents=True)
     if not target.is_dir():
@@ -177,6 +177,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Publish a clean production runtime release.")
     parser.add_argument("--source-root", type=Path, default=SOURCE_ROOT)
     parser.add_argument("--release-id")
+    parser.add_argument("--runtime-source-root", type=Path, help="persistent generated-data source; defaults to source-root")
     parser.add_argument("--release-root", type=Path, default=DEFAULT_RELEASE_ROOT)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_RELEASE_MANIFEST)
     parser.add_argument("--runtime-python", type=Path)
@@ -189,6 +190,9 @@ def main() -> None:
     args = parser.parse_args()
 
     source_root = args.source_root.expanduser().resolve()
+    runtime_source_root = (args.runtime_source_root or source_root).expanduser().resolve()
+    if not runtime_source_root.is_dir():
+        raise SystemExit("FATAL: persistent runtime source directory is missing")
     try:
         assert_production_upgrade_allowed(
             source_root / "config" / "release_freeze" / "production_stability_hold.json",
@@ -234,14 +238,17 @@ def main() -> None:
     _ensure_worktree(source_root, target, commit_sha)
     tracked = _tracked_paths(source_root)
     for relative in SHARED_RUNTIME_ROOTS:
-        _share_untracked_subdirectories(source_root, target, relative, tracked)
+        _share_untracked_subdirectories(runtime_source_root, target, relative, tracked)
+    target_status = _git(target, "status", "--porcelain", "--untracked-files=all", "--", *GIT_STATUS_PATHS)
+    if target_status:
+        raise SystemExit("FATAL: projected release is dirty; manifest was not switched")
     _write_release_manifest(
         manifest,
         release_id=release_id,
         commit_sha=commit_sha,
         project_root=target,
         runtime_python=runtime_python,
-        source_repo=source_root,
+        source_repo=runtime_source_root,
     )
     _publish_current_link(current_link, target)
     print(json.dumps({"published": True, **plan}, ensure_ascii=False, indent=2))

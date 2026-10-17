@@ -153,3 +153,15 @@ def test_release_shares_explicit_symlinked_runtime_roots(tmp_path):
     shared = target / "data" / "evidence_store"
     assert shared.is_symlink()
     assert (shared / "sha256" / "artifact.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_release_shared_links_resolve_to_persistent_source(tmp_path):
+    persistent = tmp_path / 'persistent'
+    (persistent / 'generated').mkdir(parents=True)
+    transient = tmp_path / 'preparation'
+    transient.mkdir()
+    (transient / 'exports').symlink_to(persistent, target_is_directory=True)
+    target = tmp_path / 'release'
+    target.mkdir()
+    deploy_production_release._share_untracked_subdirectories(transient, target, 'exports', set())
+    assert (target / 'exports').readlink() == persistent

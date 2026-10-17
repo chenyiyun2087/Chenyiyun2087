@@ -4180,7 +4180,7 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
         print(f"Task notification error ({task_name}): {e}")
 
 
-def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=None):
+def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=None, lease_guard=None):
     started_at = datetime.now()
     project_root = Path(app.root_path).parent
 
@@ -4216,11 +4216,16 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
         )
 
         from scripts.ops.task_worker_service import execute_subprocess
+        def task_heartbeat():
+            if lease_guard is not None:
+                lease_guard()
+            _touch_task_lock_heartbeat(task_name)
+
         process_result = execute_subprocess(
             cmd,
             cwd=project_root,
             env=env,
-            heartbeat=lambda: _touch_task_lock_heartbeat(task_name),
+            heartbeat=task_heartbeat,
             heartbeat_interval_seconds=TASK_HEARTBEAT_INTERVAL_SECONDS,
         )
         exit_code = process_result.exit_code
@@ -4335,10 +4340,14 @@ def _trigger_task_execution(task_name, trigger_type="manual", run_options=None, 
     return _enqueue_task(task_name, trigger_type, run_options, scheduled_for)
 
 
-def _run_queued_tasks_loop():
+def _run_queued_tasks_loop(lease_guard=None):
     """Durable worker. A job stays in MySQL while its subprocess is running."""
     last_stale_reconcile_at = 0.0
     while True:
+        # Outside the retry loop: lease loss must exit this worker so launchd
+        # can reacquire a fresh exclusive lease before any more queue claims.
+        if lease_guard is not None:
+            lease_guard()
         try:
             now_monotonic = time.monotonic()
             if now_monotonic - last_stale_reconcile_at >= TASK_STALE_TIMEOUT_SECONDS:
@@ -4371,7 +4380,7 @@ def _run_queued_tasks_loop():
                 continue
             _set_task_runner(job, message="running")
             try:
-                _execute_locked_task(job["task_name"], job["trigger_type"], run_options, queue_job=job)
+                _execute_locked_task(job["task_name"], job["trigger_type"], run_options, queue_job=job, lease_guard=lease_guard)
             finally:
                 _set_task_runner(message="idle")
         except Exception as e:
