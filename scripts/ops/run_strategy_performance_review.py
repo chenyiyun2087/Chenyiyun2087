@@ -33,8 +33,9 @@ DEFAULT_TOP_N = int(PRODUCTION_CONFIG["top_n"])
 DEFAULT_MAX_TOTAL_POSITIONS = int(PRODUCTION_CONFIG["max_total_positions"])
 DEFAULT_POSITION_RATIO = float(PRODUCTION_CONFIG["position_ratio"])
 DEFAULT_HOLD_DAYS = int(PRODUCTION_CONFIG["hold_days"])
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "exports" / "production_strategy_reviews"
-DEFAULT_SIGNAL_RESEARCH_DIR = PROJECT_ROOT / "exports" / "signal_research"
+EVIDENCE_ROOT = Path(os.environ.get("CHENYIYUN_SOURCE_REPO") or PROJECT_ROOT).expanduser().resolve()
+DEFAULT_OUTPUT_ROOT = EVIDENCE_ROOT / "exports" / "production_strategy_reviews"
+DEFAULT_SIGNAL_RESEARCH_DIR = EVIDENCE_ROOT / "exports" / "signal_research"
 DEFAULT_REVIEW_WINDOW_DAYS = 63
 
 # Fallback chain: when the production-governed strategy requires corporate-action

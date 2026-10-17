@@ -229,7 +229,7 @@ def find_latest_review_dir() -> Optional[str]:
       - 现行: <ts>_<us>_trusted_account_backtest（research_trusted_strategy_account_backtest 输出）
     """
     exports_base = os.path.join(
-        PROJECT_ROOT, "exports", "signal_research"
+        os.environ.get("CHENYIYUN_SOURCE_REPO") or PROJECT_ROOT, "exports", "signal_research"
     )
     if not os.path.isdir(exports_base):
         return None

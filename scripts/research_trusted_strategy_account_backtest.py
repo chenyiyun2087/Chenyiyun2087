@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -63,7 +64,7 @@ from scripts.research_full_pool_liquidity_strategies import (
 )
 
 
-OUT_ROOT = PROJECT_ROOT / "exports" / "signal_research"
+OUT_ROOT = Path(os.environ.get("CHENYIYUN_SOURCE_REPO") or PROJECT_ROOT).expanduser().resolve() / "exports" / "signal_research"
 ASHARE_ROUTE_CACHE_ROOT = OUT_ROOT / "cache" / "adaptive_market_style_v22"
 DEFAULT_RISK_PROFILE = "balanced"
 RISK_PROFILE_DEFAULTS = {

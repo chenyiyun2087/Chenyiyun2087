@@ -2592,7 +2592,7 @@ def _verify_trusted_strategy_performance_review_result(started_at, finished_at, 
     lines = []
     try:
         project_root = Path(app.root_path).parent
-        out_root = project_root / "exports" / "production_strategy_reviews"
+        out_root = Path(os.environ.get("CHENYIYUN_SOURCE_REPO") or project_root) / "exports" / "production_strategy_reviews"
         if not out_root.exists():
             return False, [f"result=FAIL; reason=missing_output_root; path={out_root}"]
 
@@ -2804,7 +2804,7 @@ def _verify_bs_ocr_adc_compare_result(started_at, finished_at, run_options=None)
 
 def _verify_daily_strategy_backtest_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
-    out_root = Path(app.root_path).parent / "exports" / "signal_research"
+    out_root = Path(os.environ.get("CHENYIYUN_SOURCE_REPO") or Path(app.root_path).parent) / "exports" / "signal_research"
     candidates = []
     for path in out_root.glob("*/trusted_account_backtest_report.json"):
         try:
