@@ -8,6 +8,8 @@ from scripts.ops.task_worker_service import classify_task_failure
     ("[verify]\nresult=FAIL; exit_code=1\nFatal Python error: error evaluating path", 1, ('VERIFICATION', False)),
     ("[verify]\nresult=FAIL; SIGNAL_PACKAGE_BLOCKED: financial_available_at:future", 3, ('VERIFICATION', False)),
     ("[verify]\nresult=FAIL; package sha mismatch", 1, ('VERIFICATION', False)),
+    ("[verify]\nresult=FAIL; exit_code=1; (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query (timed out)')", 1, ('TRANSIENT', True)),
+    ("[verify]\nresult=FAIL; artifact timeout; sha mismatch", 0, ('VERIFICATION', False)),
 ])
 def test_retry_only_recognizes_recoverable_missing_input_or_startup_interruption(message, code, expected):
     assert classify_task_failure('Failed', code, message) == expected

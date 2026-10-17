@@ -158,6 +158,13 @@ def classify_task_failure(history_status: str, exit_code: int, message: object) 
     # a permanent artifact failure. Other fatal path errors remain failures.
     if "error evaluating path" in body and "interruptederror: [errno 4] interrupted system call" in body:
         return "TRANSIENT", True
+    # A wrapped subprocess failure can still be a real transport error.
+    # Restrict this to the DB driver's connection-loss codes, so artifact
+    # verification failures containing incidental "timeout" remain blocked.
+    if int(exit_code or 0) != 0 and "pymysql.err.operationalerror" in body and any(
+        code in body for code in ("(2006,", "(2013,")
+    ):
+        return "TRANSIENT", True
     if "worker database lease lost; restart required" in body:
         return "TRANSIENT", True
     if "[verify]" in body and ("result=fail" in body or "result=blocked" in body):
