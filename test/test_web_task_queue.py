@@ -1059,3 +1059,12 @@ def test_worker_lease_loss_exits_before_claiming_more_tasks(monkeypatch):
     with pytest.raises(RuntimeError, match='lease lost'):
         web_app._run_queued_tasks_loop(lease_guard=lost)
     assert claimed == []
+
+
+def test_reconcile_missing_orders_with_sealed_package_is_not_vacuous(monkeypatch, tmp_path):
+    monkeypatch.setattr(web_app, 'FORWARD_EVIDENCE_ROOT', tmp_path)
+    monkeypatch.setattr(web_app, '_sealed_package_for_execution', lambda day: ({'execution_date':day}, tmp_path/'manifest'))
+    ok, lines = web_app._verify_alpha_signal_execution_reconcile_result(None, None, {'datestr':'20261015'})
+    assert ok is False
+    assert any('expected_precommit_evidence_missing' in line for line in lines)
+    assert any('no_orders_file' in line for line in lines)

@@ -3428,6 +3428,17 @@ def _verify_alpha_signal_execution_reconcile_result(started_at, finished_at, run
     events, epath = _forward_events(target_datestr)
     if not epath.exists():
         if not orders:
+            # Bootstrap can have no package/orders. Once a sealed package
+            # targets this day, missing orders are missing evidence, not an
+            # empty trading day (e.g. a release pointed at the wrong root).
+            if _sealed_package_for_execution(_evidence_iso(target_datestr)) is not None:
+                precommit_ok, precommit_details = _verify_alpha_signal_precommit_result(
+                    started_at, finished_at, run_options
+                )
+                if not precommit_ok:
+                    return False, [f"result=FAIL; task=alpha_signal_execution_reconcile; "
+                                   f"execution_date={target_datestr}; "
+                                   f"reason=expected_precommit_evidence_missing", *precommit_details]
             return True, [f"result=PASS; task=alpha_signal_execution_reconcile; "
                           f"execution_date={target_datestr}; "
                           f"reason=no_orders_vacuous"]
