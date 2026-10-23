@@ -318,3 +318,33 @@ def test_reseal_non_sealed_dir_still_builds(monkeypatch, tmp_path):
     with pytest.raises(SignalPackageBlocked, match="boom"):
         pkg.run_package("2026-08-05")
     assert called == ["2026-08-05"]
+
+
+def test_retired_financial_ann_date_fallback():
+    """When upstream financial statement pipeline is retired (ann_date all NULL),
+    availability gate falls back to basic trade_date / signal_date."""
+    from scripts.ops.build_daily_alpha_signal_package import _build_availability_gates
+
+    # basic with all null ann_date
+    basic = pd.DataFrame({
+        "ts_code": ["000001.SZ", "000002.SZ"],
+        "trade_date": [20261019, 20261019],
+        "pb": [0.5, 0.4],
+        "turnover_rate": [0.8, 1.2],
+        "ann_date": [None, None],
+    })
+    industry = pd.DataFrame({
+        "ts_code": ["000001.SZ"],
+        "effective_date": [20261019],
+    })
+    inputs = {
+        "basic": basic,
+        "industry": industry,
+        "adjustment": pd.DataFrame({"dummy": [1]}),
+        "benchmark": pd.DataFrame({"dummy": [1]}),
+    }
+    gates = _build_availability_gates("2026-10-19", inputs)
+    assert gates["financial_available_at"] == "2026-10-19T08:00:00+08:00"
+    assert gates["industry_available_at"] == "2026-10-19T09:00:00+08:00"
+    assert gates["adjustment_available_at"] == "2026-10-19T08:00:00+08:00"
+    assert gates["benchmark_available_at"] == "2026-10-19T15:30:00+08:00"

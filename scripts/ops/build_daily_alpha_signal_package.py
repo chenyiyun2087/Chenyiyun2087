@@ -1011,8 +1011,16 @@ def _build_availability_gates(signal_date: str, inputs: dict) -> dict:
     gates are now backed by REAL fetched data (dwd_adj_factor /
     ods_index_daily CSI300) — previously they were fabricated always-pass
     no-ops for families that were never fetched at all.
+    When upstream financial pipeline is retired, falls back to basic trade_date.
     """
-    fin_date = _max_business_date(inputs.get("basic"), "ann_date")
+    basic = inputs.get("basic")
+    fin_date = None
+    if basic is not None and not basic.empty:
+        fin_date = (
+            _max_business_date(basic, "ann_date")
+            or _max_business_date(basic, "trade_date")
+            or signal_date
+        )
     ind_date = _max_business_date(inputs.get("industry"), "effective_date")
     adj = inputs.get("adjustment")
     bench = inputs.get("benchmark")
@@ -1115,7 +1123,7 @@ def fetch_production_inputs(signal_date: str) -> dict:
         # (dws_fina_pit_daily.ann_date) — the availability gate's DATE part
         # comes from it, never from a fabricated T15:00.
         basic_sql = (
-            "SELECT b.ts_code, b.pb, b.turnover_rate, f.ann_date "
+            "SELECT b.ts_code, b.trade_date, b.pb, b.turnover_rate, f.ann_date "
             "FROM dwd_daily_basic b "
             "LEFT JOIN dws_fina_pit_daily f "
             "  ON b.ts_code = f.ts_code AND b.trade_date = f.trade_date "
