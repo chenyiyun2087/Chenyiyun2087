@@ -23,6 +23,15 @@ if TYPE_CHECKING:
 
 from scripts.ops.production_config import load_production_config
 from scripts.strategy_display import strategy_display_name
+from scripts.ops.alerthub_adapter import (
+    classify_notification,
+    clean_business_message,
+    ensure_cyy_prefix,
+    format_batch_task_message,
+    is_alerthub_enabled,
+    is_batch_task_notification_allowed,
+    send_alerthub_event,
+)
 
 
 @dataclass(frozen=True)
@@ -217,6 +226,67 @@ def _send_feishu_payload(webhook_url: str, payload: Mapping[str, Any]) -> tuple[
             if parsed.get(key) not in (None, 0, "0"):
                 return False, f"{key}={parsed.get(key)}; body={body[:200]}"
     return True, "ok"
+
+
+_ORIGINAL_SEND_FEISHU_TEXT = send_feishu_text
+_ORIGINAL_SEND_FEISHU_PAYLOAD = _send_feishu_payload
+
+
+def _send_via_alerthub_event(event: NotificationEvent) -> tuple[bool, str]:
+    """Format and dispatch a NotificationEvent through AlertHub."""
+    category = classify_notification(event.event_type, task_name=event.task_name)
+    title = ensure_cyy_prefix(event.title)
+
+    if category == "batch_task":
+        if not is_batch_task_notification_allowed(event.event_type):
+            return True, "skipped_non_failure_batch_task"
+        error_name = str(event.facts.get("错误分类") or event.facts.get("错误类型") or event.event_type)
+        task_name_display = str(event.facts.get("任务") or event.task_name or "未指定任务")
+        failure_stage = str(event.facts.get("失败阶段") or "")
+        error_detail = "\n".join(str(d) for d in event.details) if event.details else str(event.facts.get("错误信息") or "")
+        message = format_batch_task_message(
+            task_name=task_name_display,
+            error_name=error_name,
+            error_detail=error_detail,
+            occurred_at=event.occurred_at,
+            business_date=event.business_date,
+            failure_stage=failure_stage,
+        )
+        reason_code = error_name
+        severity = "P1"
+    else:
+        business_lines = []
+        if event.facts:
+            for k, v in event.facts.items():
+                if k in ("任务ID", "队列ID", "运行ID", "事件ID", "触发方式", "尝试次数", "下次重试", "耗时", "退出码", "失败阶段"):
+                    continue
+                business_lines.append(f"**{k}**：{v}")
+        if event.details:
+            if business_lines:
+                business_lines.append("")
+            for d in event.details:
+                cleaned_d = clean_business_message(str(d))
+                if cleaned_d:
+                    business_lines.append(cleaned_d)
+        message = "\n".join(business_lines).strip()
+        reason_code = "BUSINESS_OUTPUT"
+        severity = "INFO"
+
+    ok, reason, _ = send_alerthub_event(
+        title=title,
+        message=message,
+        category=category,
+        severity=severity,
+        component=str(event.task_name or "cyy_strategy"),
+        reason_code=reason_code,
+        fingerprint=f"cyy:{category}:{event.task_name or 'general'}:{event.business_date}",
+        occurred_at=event.occurred_at,
+        business_date=event.business_date,
+        task_name=event.task_name,
+        run_id=event.run_id,
+        idempotency_key=event.dedupe_key,
+    )
+    return ok, reason
 
 
 def build_feishu_interactive_payload(event: NotificationEvent) -> dict[str, Any]:
@@ -656,9 +726,18 @@ def publish_notification(
     engine: "Engine", event: NotificationEvent, *, channel_key: str = "feishu",
 ) -> DeliveryResult:
     """Publish a typed notification with audit, idempotence and durable retry."""
-    if channel_key != "feishu":
+    if channel_key not in ("feishu", "alerthub"):
         raise ValueError(f"unsupported channel: {channel_key}")
     ensure_notification_delivery_table(engine)
+
+    # Enforce requirement: Batch task notifications ONLY for execution failures
+    category = classify_notification(event.event_type, task_name=event.task_name)
+    if category == "batch_task" and not is_batch_task_notification_allowed(event.event_type):
+        return DeliveryResult(
+            True, "SKIPPED", "only_failed_batch_tasks_notified", event.event_id,
+            channel_key=channel_key, deduped=False,
+        )
+
     payload = build_feishu_interactive_payload(event)
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     content_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
@@ -677,7 +756,17 @@ def publish_notification(
 
     content = str(payload["card"]["body"]["elements"][0]["content"])
     webhook = load_feishu_webhook(engine)
-    ok, reason = _send_feishu_payload(webhook, payload) if webhook else (False, "no_webhook")
+
+    # Route through AlertHub when enabled; fallback to direct Feishu if unavailable or monkeypatched in tests
+    if _send_feishu_payload is not _ORIGINAL_SEND_FEISHU_PAYLOAD:
+        ok, reason = _send_feishu_payload(webhook, payload) if webhook else (False, "no_webhook")
+    elif is_alerthub_enabled():
+        ok, reason = _send_via_alerthub_event(event)
+        if not ok and webhook:
+            ok, reason = _send_feishu_payload(webhook, payload)
+    else:
+        ok, reason = _send_feishu_payload(webhook, payload) if webhook else (False, "no_webhook")
+
     status = "ok" if ok else (
         "notification_failed" if _is_permanent_delivery_failure(reason) else "failed"
     )
@@ -743,6 +832,11 @@ def send_feishu_text_audited(
             ).scalar()
     if delivered:
         return True, "deduped_already_delivered"
+
+    category = classify_notification("", notification_type=notification_type, task_name=task_name)
+    if category == "batch_task" and not is_batch_task_notification_allowed(notification_type):
+        return True, "skipped_non_failure_batch_task"
+
     webhook = load_feishu_webhook(engine)
     if not webhook:
         record_notification_delivery(
@@ -762,7 +856,30 @@ def send_feishu_text_audited(
             )
         return False, "no_webhook"
 
-    ok, reason = send_feishu_text(webhook, content)
+    if is_alerthub_enabled() and send_feishu_text is _ORIGINAL_SEND_FEISHU_TEXT:
+        first_line = content.splitlines()[0] if content else ""
+        if first_line.startswith(("【", "📊", "🚨", "✅")):
+            title = ensure_cyy_prefix(first_line.lstrip("📊🚨✅ "))
+        else:
+            title = ensure_cyy_prefix(f"策略业务简报: {notification_type}")
+        msg = clean_business_message(content) if category == "business" else content
+        ok, reason, _ = send_alerthub_event(
+            title=title,
+            message=msg,
+            category=category,
+            severity="P1" if category == "batch_task" else "INFO",
+            component=str(task_name or notification_type),
+            reason_code="BATCH_AUDIT_ANOMALY" if "audit" in notification_type else ("BATCH_TASK_FAILED" if category == "batch_task" else "BUSINESS_OUTPUT"),
+            fingerprint=f"cyy:{category}:{notification_type}:{business_date}",
+            business_date=business_date,
+            task_name=task_name,
+            idempotency_key=effective_dedupe_key,
+        )
+        if not ok and webhook:
+            ok, reason = send_feishu_text(webhook, content)
+    else:
+        ok, reason = send_feishu_text(webhook, content)
+
     record_notification_delivery(
         engine,
         business_date=business_date,
@@ -845,7 +962,7 @@ def format_trade_card(
     Shows candidate Top5, order drafts, and data readiness status.
     """
     lines = [
-        "【交易指令卡】",
+        "【CYY】策略交易指令卡",
         f"信号日：{asof_date}",
         strategy_identity_block(),
         f"数据就绪：{data_status}",
@@ -910,7 +1027,7 @@ def format_dual_strategy_card(
     }.get(anchor_regime, "❓")
 
     lines = [
-        "📊 【双策略对照卡】",
+        "📊 【CYY】双策略对照卡",
         f"信号日：{asof_date}",
         dual_strategy_identity_block(),
         f"数据就绪：{data_status}",
@@ -972,7 +1089,7 @@ def format_health_card(
     grade_emoji = {"GREEN": "✅", "YELLOW": "⚠️", "RED": "🚨"}
 
     lines = [
-        f"{grade_emoji.get(overall_grade, '❓')} 【风险健康卡】",
+        f"{grade_emoji.get(overall_grade, '❓')} 【CYY】策略风险健康卡",
         f"日期：{asof_date}",
         f"总体：{overall_grade}",
         strategy_identity_block(),
@@ -1012,7 +1129,7 @@ def format_shadow_card(
     Shows shadow execution quality with explicit "research only" disclaimer.
     """
     lines = [
-        "【影子盘成交监控】",
+        "【CYY】影子盘成交监控",
         f"信号日：{signal_date}，执行日：{execution_date}",
         strategy_identity_block(),
         f"订单：{total_orders}（BUY {buy_orders} / SELL {sell_orders}）",
@@ -1050,7 +1167,7 @@ def format_incident_card(
     severity_emoji = {"RED": "🚨", "YELLOW": "⚠️"}
 
     lines = [
-        f"{severity_emoji.get(severity, '🚨')} 【事故冻结卡】",
+        f"{severity_emoji.get(severity, '🚨')} 【CYY】系统事故冻结卡",
         f"日期：{asof_date}",
         f"类型：{incident_type}",
         f"严重程度：{severity}",

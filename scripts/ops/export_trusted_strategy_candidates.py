@@ -808,13 +808,13 @@ def _publish_order_notification_event(
     account_id = "default"
 
     if blocked_reason or persistence_status == "BLOCKED":
-        event_type, severity, title = "strategy_orders_blocked", "ERROR", "策略订单已阻断"
+        event_type, severity, title = "strategy_orders_blocked", "ERROR", "【CYY】策略订单已阻断"
     elif orders.empty:
-        event_type, severity, title = "strategy_orders_no_rebalance", "INFO", "策略无需调仓"
+        event_type, severity, title = "strategy_orders_no_rebalance", "INFO", "【CYY】策略无需调仓"
     elif persistence_status == "DB_WRITTEN":
-        event_type, severity, title = "strategy_orders_ready", "SUCCESS", "T+1策略订单草案已生成"
+        event_type, severity, title = "strategy_orders_ready", "SUCCESS", "【CYY】T+1策略订单草案已生成"
     else:
-        event_type, severity, title = "strategy_orders_blocked", "WARNING", "策略订单未进入正式账本"
+        event_type, severity, title = "strategy_orders_blocked", "WARNING", "【CYY】策略订单未进入正式账本"
         blocked_reason = blocked_reason or "订单仅生成本地文件，未成功写入正式订单账本。"
     if getattr(args, "historical_reissue", False):
         title = f"历史补发：{title}"

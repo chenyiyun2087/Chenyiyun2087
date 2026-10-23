@@ -1,6 +1,7 @@
 from flask import Flask, render_template, g, request, redirect, url_for, flash, jsonify
 import sys
 import os
+import re
 import pymysql
 import json
 import csv
@@ -92,11 +93,166 @@ BS_SOURCE_OPTIONS = {
     },
 }
 DEFAULT_BS_SOURCE = "config_1"
+MAX_SINA_BS_LOOKUP_CODES = 100
+SINA_BS_SCAN_LOCK = threading.Lock()
 
 
 def _resolve_bs_source(value):
     source = str(value or DEFAULT_BS_SOURCE).strip()
     return source if source in BS_SOURCE_OPTIONS else DEFAULT_BS_SOURCE
+
+
+def _normalize_sina_bs_lookup_codes(raw_codes):
+    if isinstance(raw_codes, list):
+        raw_codes = ",".join(str(code) for code in raw_codes)
+    if not isinstance(raw_codes, str):
+        raise ValueError("请输入股票代码")
+
+    tokens = [token for token in re.split(r"[,，;；\s]+", raw_codes.strip()) if token]
+    if not tokens:
+        raise ValueError("请输入股票代码")
+
+    codes = []
+    invalid = []
+    for token in tokens:
+        match = re.fullmatch(r"(?i)(?:sh|sz|bj)?(\d{1,6})", token)
+        if not match:
+            invalid.append(token)
+            continue
+        code = match.group(1).zfill(6)
+        if code not in codes:
+            codes.append(code)
+
+    if invalid:
+        raise ValueError(f"无法识别的股票代码：{', '.join(invalid)}")
+    if len(codes) > MAX_SINA_BS_LOOKUP_CODES:
+        raise ValueError(f"单次最多查询 {MAX_SINA_BS_LOOKUP_CODES} 只股票")
+    return codes
+
+
+def _fetch_today_sina_bs_lookup(codes, batch_date):
+    if not codes:
+        return {}
+
+    placeholders = ", ".join(["%s"] * len(codes))
+    query = f"""
+        SELECT batch_date, stock_code, has_buy_signal, has_sell_signal,
+               buy_signal_description, sell_signal_description,
+               total_b_points, total_s_points, buy_points_count, sell_points_count
+        FROM bs_detection_results
+        WHERE batch_name = %s AND batch_date = %s AND stock_code IN ({placeholders})
+        ORDER BY stock_code
+    """
+    conn = _connect_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, tuple(["config_1", batch_date, *codes]))
+            rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    return {
+        str(row["stock_code"]).zfill(6): {
+            "batch_date": str(row["batch_date"]),
+            "stock_code": str(row["stock_code"]).zfill(6),
+            "has_buy_signal": bool(row["has_buy_signal"]),
+            "has_sell_signal": bool(row["has_sell_signal"]),
+            "buy_signal_description": row.get("buy_signal_description") or "",
+            "sell_signal_description": row.get("sell_signal_description") or "",
+            "total_b_points": row.get("total_b_points") or 0,
+            "total_s_points": row.get("total_s_points") or 0,
+            "buy_points_count": row.get("buy_points_count") or 0,
+            "sell_points_count": row.get("sell_points_count") or 0,
+        }
+        for row in rows
+    }
+
+
+def _run_sina_bs_lookup_scan(codes, batch_date):
+    from sina.bs_detection.main import load_config, run_pipeline
+
+    config_name, config_data = load_config("config_1")
+    mysql_config = build_pymysql_config(dict_cursor=False)
+    mysql_config["autocommit"] = True
+    return run_pipeline(
+        config_name=config_name,
+        date_str=batch_date,
+        config_data=config_data,
+        overrides={
+            "stock_codes": codes,
+            "mysql_config": mysql_config,
+            "archive_days": 0,
+        },
+    )
+
+
+def _lookup_today_sina_bs_signals(codes):
+    batch_date = datetime.now().strftime("%Y%m%d")
+    records = _fetch_today_sina_bs_lookup(codes, batch_date)
+    attempted_codes = []
+    scan_error = None
+    missing_codes = [code for code in codes if code not in records]
+
+    if missing_codes:
+        with SINA_BS_SCAN_LOCK:
+            # Recheck after waiting so simultaneous page requests share completed results.
+            records.update(_fetch_today_sina_bs_lookup(missing_codes, batch_date))
+            missing_codes = [code for code in missing_codes if code not in records]
+            if missing_codes:
+                attempted_codes = list(missing_codes)
+                try:
+                    scan_status = _run_sina_bs_lookup_scan(attempted_codes, batch_date)
+                    if scan_status != 0:
+                        scan_error = f"新浪扫描流程返回状态 {scan_status}"
+                except Exception as exc:
+                    app.logger.exception("按代码执行新浪 B/S 扫描失败")
+                    scan_error = f"新浪扫描失败：{exc}"
+                try:
+                    records.update(_fetch_today_sina_bs_lookup(attempted_codes, batch_date))
+                except Exception as exc:
+                    app.logger.exception("补扫后读取 B/S 结果失败")
+                    scan_error = f"扫描后读取本地结果失败：{exc}"
+
+    results = []
+    for code in codes:
+        row = records.get(code)
+        results.append(
+            {
+                **(row or {}),
+                "stock_code": code,
+                "batch_date": row["batch_date"] if row else batch_date,
+                "has_buy_signal": row["has_buy_signal"] if row else False,
+                "has_sell_signal": row["has_sell_signal"] if row else False,
+                "buy_signal_description": row["buy_signal_description"] if row else "",
+                "sell_signal_description": row["sell_signal_description"] if row else "",
+                "total_b_points": row["total_b_points"] if row else 0,
+                "total_s_points": row["total_s_points"] if row else 0,
+                "buy_points_count": row["buy_points_count"] if row else 0,
+                "sell_points_count": row["sell_points_count"] if row else 0,
+                "origin": "本次补扫" if row and code in attempted_codes else "今日数据库" if row else "未取得结果",
+                "status": "found" if row else "not_found",
+            }
+        )
+
+    found = [row for row in results if row["status"] == "found"]
+    buy_codes = [row["stock_code"] for row in found if row["has_buy_signal"]]
+    sell_codes = [row["stock_code"] for row in found if row["has_sell_signal"]]
+    return {
+        "batch_date": batch_date,
+        "results": results,
+        "summary": {
+            "requested_count": len(codes),
+            "found_count": len(found),
+            "database_count": sum(row["origin"] == "今日数据库" for row in found),
+            "scanned_count": sum(row["origin"] == "本次补扫" for row in found),
+            "not_found_count": len(results) - len(found),
+            "buy_count": len(buy_codes),
+            "sell_count": len(sell_codes),
+            "buy_codes": buy_codes,
+            "sell_codes": sell_codes,
+        },
+        "scan_error": scan_error,
+    }
 
 # Production startup performs schema migration once. Existing request-level
 # compatibility calls then become no-ops, avoiding repeated SHOW/DDL/upserts.
@@ -1834,6 +1990,8 @@ def _dependency_state(cursor, task_name, business_date, trigger_type=None):
     # dependencies and audit classification cannot disagree.
     from scripts.ops.daily_batch_audit import _recovered_artifact
     for dependency in dependencies:
+        if latest.get(dependency) == "SUCCESS":
+            continue
         if _recovered_artifact(cursor, dependency, business_date):
             latest[dependency] = "SUCCESS"
     missing = [name for name in dependencies if name not in latest]
@@ -1852,22 +2010,22 @@ def _send_task_blocked_notification(job, reason):
 
         queue_id = int(job.get("id") or 0)
         attempt = int(job.get("attempt_count") or 0)
+        task_display_name = TASKS.get(job.get("task_name"), {}).get("name") or job.get("task_name")
         event = NotificationEvent(
             event_type="task_blocked",
             business_date=str(job.get("business_date") or datetime.now().strftime("%Y%m%d")),
-            title="任务被上游失败阻断",
+            title=f"【CYY】批量任务被上游失败阻断: {task_display_name}",
             severity="WARNING",
             task_name=str(job.get("task_name") or ""),
             run_id=f"task:{queue_id}",
             event_id=f"task:{queue_id}:{attempt}:task_blocked",
             dedupe_key=f"task_blocked:{queue_id}",
             facts={
-                "任务": TASKS.get(job.get("task_name"), {}).get("name") or job.get("task_name"),
+                "发出时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "任务": task_display_name,
                 "任务ID": job.get("task_name"),
-                "队列ID": queue_id,
-                "触发方式": job.get("trigger_type") or "-",
+                "错误分类": "UPSTREAM_BLOCKED",
                 "失败阶段": "上游依赖",
-                "状态": "BLOCKED",
             },
             details=(str(reason or "上游任务失败。"), "先修复并补跑上游任务，再重新执行当前任务。"),
             actions=_task_notification_action(queue_id),
@@ -1886,20 +2044,22 @@ def _send_scheduler_enqueue_failure(task_name, business_date, reason):
             raw_run_id if len(raw_run_id) <= 64
             else f"scheduler:{hashlib.sha256(raw_run_id.encode('utf-8')).hexdigest()[:48]}"
         )
+        task_display_name = TASKS.get(task_name, {}).get("name") or task_name
         event = NotificationEvent(
             event_type="task_failed",
             business_date=business_date,
-            title="定时任务入队失败",
+            title=f"【CYY】定时任务入队失败: {task_display_name}",
             severity="ERROR",
             task_name=task_name,
             run_id=run_id,
             event_id=f"{run_id}:failed"[:64],
             dedupe_key=f"scheduler_enqueue_failed:{task_name}:{business_date}",
             facts={
-                "任务": TASKS.get(task_name, {}).get("name") or task_name,
+                "发出时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "任务": task_display_name,
                 "任务ID": task_name,
-                "失败阶段": "调度入队",
                 "错误分类": "SCHEDULER_ENQUEUE",
+                "失败阶段": "调度入队",
             },
             details=(str(reason or "未知入队错误"), "检查任务队列表和数据库连接后人工补跑。"),
         )
@@ -1928,7 +2088,8 @@ def _claim_next_queued_task():
                     job.get("trigger_type"),
                 )
                 if dep_state == "WAITING":
-                    cursor.execute("UPDATE app_task_queue SET message = %s WHERE id = %s", (dep_message, job["id"]))
+                    if job.get("message") != dep_message:
+                        cursor.execute("UPDATE app_task_queue SET message = %s WHERE id = %s", (dep_message, job["id"]))
                     continue
                 if dep_state == "BLOCKED":
                     cursor.execute(
@@ -2082,33 +2243,40 @@ def _read_text_tail(file_path, max_chars):
         return f"[tail-read-error] {e}"
 
 
-def _has_scheduled_run_in_slot(task_name, scheduled_for):
-    """Return True if a scheduled run already exists in history for this slot."""
-    conn = None
+def _get_scheduled_tasks_in_slots(scheduled_slots):
+    """Read all candidate slots in one round trip; errors abort this poll.
+
+    Each task retains its own half-open 24-hour window. This is only a
+    scheduling prefilter: the queue's transactional dedupe remains authoritative.
+    """
+    if not scheduled_slots:
+        return set()
+    conditions = []
+    params = []
+    for task_name, scheduled_for in scheduled_slots:
+        conditions.append("(task_name = %s AND started_at >= %s AND started_at < %s)")
+        params.extend((task_name, scheduled_for, scheduled_for + timedelta(days=1)))
+    conn = _connect_db()
     try:
-        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
-            slot_end = scheduled_for + timedelta(days=1)
             cursor.execute(
-                """
-                SELECT 1
-                FROM app_task_history
-                WHERE task_name = %s
-                  AND trigger_type = 'schedule'
-                  AND started_at >= %s
-                  AND started_at < %s
-                LIMIT 1
-                """,
-                (task_name, scheduled_for, slot_end),
+                "SELECT DISTINCT task_name FROM app_task_history "
+                "WHERE trigger_type = 'schedule' AND (" + " OR ".join(conditions) + ")",
+                tuple(params),
             )
-            return cursor.fetchone() is not None
+            return {row["task_name"] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+
+def _has_scheduled_run_in_slot(task_name, scheduled_for):
+    """Compatibility wrapper for callers checking a single history slot."""
+    try:
+        return task_name in _get_scheduled_tasks_in_slots([(task_name, scheduled_for)])
     except Exception as e:
         print(f"Failed to check scheduled history slot for {task_name}: {e}")
         return False
-    finally:
-        if conn:
-            conn.close()
 
 
 def _verify_sina_picture_result(started_at, finished_at, run_options=None):
@@ -2436,7 +2604,7 @@ def _verify_trusted_strategy_performance_review_result(started_at, finished_at, 
     lines = []
     try:
         project_root = Path(app.root_path).parent
-        out_root = project_root / "exports" / "production_strategy_reviews"
+        out_root = Path(os.environ.get("CHENYIYUN_SOURCE_REPO") or project_root) / "exports" / "production_strategy_reviews"
         if not out_root.exists():
             return False, [f"result=FAIL; reason=missing_output_root; path={out_root}"]
 
@@ -2648,7 +2816,7 @@ def _verify_bs_ocr_adc_compare_result(started_at, finished_at, run_options=None)
 
 def _verify_daily_strategy_backtest_result(started_at, finished_at, run_options=None):
     target_datestr = _queue_business_date(run_options)
-    out_root = Path(app.root_path).parent / "exports" / "signal_research"
+    out_root = Path(os.environ.get("CHENYIYUN_SOURCE_REPO") or Path(app.root_path).parent) / "exports" / "signal_research"
     candidates = []
     for path in out_root.glob("*/trusted_account_backtest_report.json"):
         try:
@@ -2934,6 +3102,15 @@ def _verify_monthly_bs_cycle_result(started_at, finished_at, run_options=None):
     if recent_manifests:
         _, manifest_path, payload = max(recent_manifests, key=lambda item: item[0])
         evidence = "current_run"
+        if payload.get("status") == "skipped" and payload.get("reason") == "model_activation_frozen":
+            from scripts.run_bs_signal_enhancement_cycle import _activation_is_frozen
+
+            if not _activation_is_frozen() or payload.get("activation", {}).get("committed") is not False:
+                return False, ["result=FAIL; reason=model_freeze_skip_without_active_freeze"]
+            return True, [
+                f"result=SKIP; task=bs_signal_monthly_cycle; business_date={target_datestr}; reason=model_activation_frozen",
+                f"manifest={manifest_path}; activation_committed=false",
+            ]
         if (
             payload.get("status") == "skipped"
             and payload.get("reason") == "production_upgrade_paused"
@@ -3263,6 +3440,17 @@ def _verify_alpha_signal_execution_reconcile_result(started_at, finished_at, run
     events, epath = _forward_events(target_datestr)
     if not epath.exists():
         if not orders:
+            # Bootstrap can have no package/orders. Once a sealed package
+            # targets this day, missing orders are missing evidence, not an
+            # empty trading day (e.g. a release pointed at the wrong root).
+            if _sealed_package_for_execution(_evidence_iso(target_datestr)) is not None:
+                precommit_ok, precommit_details = _verify_alpha_signal_precommit_result(
+                    started_at, finished_at, run_options
+                )
+                if not precommit_ok:
+                    return False, [f"result=FAIL; task=alpha_signal_execution_reconcile; "
+                                   f"execution_date={target_datestr}; "
+                                   f"reason=expected_precommit_evidence_missing", *precommit_details]
             return True, [f"result=PASS; task=alpha_signal_execution_reconcile; "
                           f"execution_date={target_datestr}; "
                           f"reason=no_orders_vacuous"]
@@ -3946,17 +4134,17 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
         recovered = bool(finish_result.get("recovered"))
         error_kind = str(finish_result.get("error_kind") or "UNKNOWN")
 
-        # Normal success is deliberately silent. A success after one or more
-        # failed attempts is the only successful task event sent to Feishu.
+        # Normal success is deliberately silent.
         if normalized_history_status == "SUCCESS" and not recovered:
             return
 
         event_type = "task_recovered" if recovered else ("task_retrying" if will_retry else "task_failed")
         severity = "SUCCESS" if recovered else ("WARNING" if will_retry else "ERROR")
+        task_display_name = TASKS.get(task_name, {}).get("name") or task_name
         title = {
-            "task_recovered": "任务已恢复",
-            "task_retrying": "任务失败，正在重试",
-            "task_failed": "任务执行失败",
+            "task_recovered": f"【CYY】任务已恢复: {task_display_name}",
+            "task_retrying": f"【CYY】任务失败，正在重试: {task_display_name}",
+            "task_failed": f"【CYY】批量任务执行失败: {task_display_name}",
         }[event_type]
         if not queue_id:
             queue_id = int(started_at.timestamp()) if isinstance(started_at, datetime) else 0
@@ -3976,6 +4164,7 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
             if isinstance(started_at, datetime) and isinstance(finished_at, datetime)
             else "-"
         )
+        emit_time = finished_at.strftime("%Y-%m-%d %H:%M:%S") if isinstance(finished_at, datetime) else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         details = []
         if recovered:
             details.append("此前失败的同一队列任务已在后续尝试中成功完成。")
@@ -3994,7 +4183,8 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
             event_id=f"{event_prefix}:{event_type}",
             dedupe_key=f"{event_type}:{queue_id}:{attempt}",
             facts={
-                "任务": TASKS.get(task_name, {}).get("name") or task_name,
+                "发出时间": emit_time,
+                "任务": task_display_name,
                 "任务ID": task_name,
                 "队列ID": queue_id,
                 "触发方式": trigger_type or "-",
@@ -4015,7 +4205,7 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
         print(f"Task notification error ({task_name}): {e}")
 
 
-def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=None):
+def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=None, lease_guard=None):
     started_at = datetime.now()
     project_root = Path(app.root_path).parent
 
@@ -4051,11 +4241,16 @@ def _execute_locked_task(task_name, trigger_type, run_options=None, queue_job=No
         )
 
         from scripts.ops.task_worker_service import execute_subprocess
+        def task_heartbeat():
+            if lease_guard is not None:
+                lease_guard()
+            _touch_task_lock_heartbeat(task_name)
+
         process_result = execute_subprocess(
             cmd,
             cwd=project_root,
             env=env,
-            heartbeat=lambda: _touch_task_lock_heartbeat(task_name),
+            heartbeat=task_heartbeat,
             heartbeat_interval_seconds=TASK_HEARTBEAT_INTERVAL_SECONDS,
         )
         exit_code = process_result.exit_code
@@ -4170,10 +4365,14 @@ def _trigger_task_execution(task_name, trigger_type="manual", run_options=None, 
     return _enqueue_task(task_name, trigger_type, run_options, scheduled_for)
 
 
-def _run_queued_tasks_loop():
+def _run_queued_tasks_loop(lease_guard=None):
     """Durable worker. A job stays in MySQL while its subprocess is running."""
     last_stale_reconcile_at = 0.0
     while True:
+        # Outside the retry loop: lease loss must exit this worker so launchd
+        # can reacquire a fresh exclusive lease before any more queue claims.
+        if lease_guard is not None:
+            lease_guard()
         try:
             now_monotonic = time.monotonic()
             if now_monotonic - last_stale_reconcile_at >= TASK_STALE_TIMEOUT_SECONDS:
@@ -4206,7 +4405,7 @@ def _run_queued_tasks_loop():
                 continue
             _set_task_runner(job, message="running")
             try:
-                _execute_locked_task(job["task_name"], job["trigger_type"], run_options, queue_job=job)
+                _execute_locked_task(job["task_name"], job["trigger_type"], run_options, queue_job=job, lease_guard=lease_guard)
             finally:
                 _set_task_runner(message="idle")
         except Exception as e:
@@ -5977,6 +6176,24 @@ def sina_monitor():
                            bs_source_meta=bs_source_meta,
                            bs_source_options=BS_SOURCE_OPTIONS,
                            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+
+@app.route('/api/sina/bs-lookup', methods=['POST'])
+def api_sina_bs_lookup():
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "请求内容格式无效"}), 400
+    if _resolve_bs_source(payload.get("source")) != "config_1":
+        return jsonify({"error": "按代码补扫仅支持 OCR 截图识别数据源，请切换到 config_1"}), 400
+
+    try:
+        codes = _normalize_sina_bs_lookup_codes(payload.get("codes", ""))
+        return jsonify(_lookup_today_sina_bs_signals(codes))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("查询今日新浪 B/S 扫描结果失败")
+        return jsonify({"error": f"查询本地数据库失败：{exc}"}), 500
 
 
 @app.route('/api/signal_stats')
@@ -8216,6 +8433,7 @@ def _run_scheduled_tasks_loop():
                 continue
             due_tasks = []
             skipped_schedule_tasks = []
+            candidates = []
             with TASKS_LOCK:
                 for task_name, task in TASKS.items():
                     if task_name not in SCHEDULED_TASK_WHITELIST:
@@ -8232,25 +8450,30 @@ def _run_scheduled_tasks_loop():
                     last_run_dt = _parse_task_last_run(task.get('last_run'))
                     if last_run_dt and last_run_dt >= scheduled_for:
                         continue
-                    # Cross-process idempotence: prevent duplicate "catch-up" runs for the same slot.
-                    if _has_scheduled_run_in_slot(task_name, scheduled_for):
-                        continue
-                    day_of_week = task.get("day_of_week")
-                    if day_of_week is not None and now.weekday() != int(day_of_week):
-                        skipped_schedule_tasks.append((task_name, scheduled_for))
-                        continue
-                    due_tasks.append(task_name)
+                    candidates.append((task_name, scheduled_for, task.get("day_of_week")))
+
+            # Database I/O must not hold TASKS_LOCK or open one connection per task.
+            recorded_tasks = _get_scheduled_tasks_in_slots(
+                [(name, slot) for name, slot, _ in candidates]
+            )
+            for task_name, scheduled_for, day_of_week in candidates:
+                if task_name in recorded_tasks:
+                    continue
+                if day_of_week is not None and now.weekday() != int(day_of_week):
+                    skipped_schedule_tasks.append((task_name, scheduled_for))
+                    continue
+                due_tasks.append((task_name, scheduled_for))
 
             for task_name, scheduled_for in skipped_schedule_tasks:
                 _mark_scheduled_skip_success(task_name, scheduled_for, "SCHEDULE_DAY")
                 print(f"Scheduled task success-skip (non-schedule weekday): {task_name}")
 
-            for task_name in due_tasks:
+            for task_name, scheduled_for in due_tasks:
                 job, created, reason = _trigger_task_execution(
                     task_name,
                     trigger_type='schedule',
                     run_options={"datestr": now.strftime("%Y%m%d")},
-                    scheduled_for=now.replace(second=0, microsecond=0),
+                    scheduled_for=scheduled_for,
                 )
                 if job and created:
                     print(f"Scheduled task queued: {task_name} (job={job['id']})")
