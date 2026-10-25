@@ -39,6 +39,7 @@ class RuntimeRelease:
     runtime_python: Path
     manifest_path: Path
     source_repo: Path
+    canonical_runtime_roots: tuple[str, ...] = ()
 
 
 def release_manifest_path(value: str | os.PathLike[str] | None = None) -> Path:
@@ -81,6 +82,19 @@ def load_runtime_release(
     if not source_repo.is_dir():
         raise RuntimeError(f"release_source_repo_missing:{source_repo}")
 
+    raw_roots = payload.get("canonical_runtime_roots", [])
+    if not isinstance(raw_roots, list):
+        raise RuntimeError("release_manifest_invalid:canonical_runtime_roots")
+    canonical_roots = []
+    for relative in raw_roots:
+        if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
+            raise RuntimeError("release_manifest_invalid:canonical_runtime_root")
+        expected = (source_repo / relative).resolve()
+        observed = (project_root / relative).resolve()
+        if not expected.is_dir() or observed != expected:
+            raise RuntimeError(f"release_runtime_root_diverged:{relative}")
+        canonical_roots.append(relative)
+
     return RuntimeRelease(
         release_id=release_id,
         commit_sha=commit_sha,
@@ -88,6 +102,7 @@ def load_runtime_release(
         runtime_python=runtime_python,
         manifest_path=manifest_path,
         source_repo=source_repo,
+        canonical_runtime_roots=tuple(canonical_roots),
     )
 
 

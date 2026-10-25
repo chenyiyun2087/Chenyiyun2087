@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -41,6 +42,7 @@ SHARED_RUNTIME_ROOTS = (
     "logs/web",
     "sina/bs_detection/SinaAppBS/archive",
 )
+CANONICAL_RUNTIME_ROOTS = ("exports/forward_shadow_evidence",)
 GIT_STATUS_PATHS = (".", *RUNTIME_STATUS_EXCLUDES)
 
 
@@ -60,6 +62,34 @@ def _tracked_paths(source_root: Path) -> set[str]:
 def _has_tracked_descendant(relative: str, tracked: set[str]) -> bool:
     prefix = relative.rstrip("/") + "/"
     return any(path == relative or path.startswith(prefix) for path in tracked)
+
+
+def _share_canonical_runtime_tree(source_root: Path, release_root: Path,
+                                  relative: str) -> Path | None:
+    """Preserve the checkout seed, then share the complete persistent ledger.
+
+    A mixed tracked/untracked tree cannot be projected one child at a time:
+    tracked historical days would otherwise shadow the persistent event files.
+    """
+    source = (source_root / relative).resolve()
+    target = release_root / relative
+    if not source.is_dir():
+        raise RuntimeError(f"canonical_runtime_source_missing:{source}")
+    if target.is_symlink():
+        if target.resolve() != source:
+            raise RuntimeError(f"release_runtime_path_conflict:{target}")
+        return None
+    backup = None
+    if target.exists():
+        if not target.is_dir():
+            raise RuntimeError(f"release_runtime_path_not_directory:{target}")
+        backup = (release_root.parent / ".runtime-seed-backups" / release_root.name
+                  / relative / datetime.now().strftime("%Y%m%dT%H%M%S%f"))
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(target), str(backup))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(source, target_is_directory=True)
+    return backup
 
 
 def _share_untracked_subdirectories(
@@ -152,6 +182,7 @@ def _write_release_manifest(
         "source_repo": str(source_repo),
         "worktree_clean": True,
         "shared_runtime_roots": list(SHARED_RUNTIME_ROOTS),
+        "canonical_runtime_roots": list(CANONICAL_RUNTIME_ROOTS),
         "published_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,6 +261,7 @@ def main() -> None:
         "runtime_python": str(runtime_python),
         "manifest": str(manifest),
         "current_link": str(current_link),
+        "canonical_runtime_roots": list(CANONICAL_RUNTIME_ROOTS),
     }
     if args.dry_run:
         print(json.dumps({"dry_run": True, **plan}, ensure_ascii=False, indent=2))
@@ -237,6 +269,8 @@ def main() -> None:
 
     _ensure_worktree(source_root, target, commit_sha)
     tracked = _tracked_paths(source_root)
+    for relative in CANONICAL_RUNTIME_ROOTS:
+        _share_canonical_runtime_tree(runtime_source_root, target, relative)
     for relative in SHARED_RUNTIME_ROOTS:
         _share_untracked_subdirectories(runtime_source_root, target, relative, tracked)
     target_status = _git(target, "status", "--porcelain", "--untracked-files=all", "--", *GIT_STATUS_PATHS)

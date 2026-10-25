@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -28,6 +30,31 @@ HISTORICAL_FORWARD_ONLY_TASKS = frozenset({"pit_forward_shadow_collection"})
 HEALTHY_AUDIT_STATUSES = frozenset({
     "OK", "SKIPPED_NON_TRADING", "SKIPPED_SCHEDULE", "SKIPPED_HISTORICAL",
 })
+SHADOW_CONTRACT_TASKS = frozenset({
+    "alpha_signal_package_seal", "alpha_signal_precommit",
+    "alpha_signal_execution_reconcile", "alpha_signal_sell_precommit",
+    "alpha_signal_nav",
+})
+
+
+def _verify_shadow_artifact(task_name: str, business_date: str) -> tuple[bool, list[str]]:
+    """Use the producer's current contract; never start a scheduler on import."""
+    previous = os.environ.get("DISABLE_APP_SCHEDULER_LOOP")
+    os.environ["DISABLE_APP_SCHEDULER_LOOP"] = "1"
+    try:
+        runtime = importlib.import_module("web.app")
+        verifier = getattr(runtime, f"_verify_{task_name}_result")
+        now = datetime.now()
+        return verifier(now, now, {"datestr": business_date, "historical_safe": True})
+    except Exception as exc:
+        return False, [f"artifact_contract_error:{type(exc).__name__}:{exc}"]
+    finally:
+        if previous is None:
+            os.environ.pop("DISABLE_APP_SCHEDULER_LOOP", None)
+        else:
+            os.environ["DISABLE_APP_SCHEDULER_LOOP"] = previous
+
+
 @dataclass(frozen=True)
 class ExpectedTask:
     task_name: str
@@ -343,6 +370,17 @@ def classify_task(
         status = "UNKNOWN"
         reason = str(queue.get("message") or history.get("message") or "状态无法判定")
         replay_required = 1
+
+    if expected.task_name in SHADOW_CONTRACT_TASKS and status in {
+        "OK", "NOTIFICATION_MISSING", "NOTIFICATION_FAILED",
+    }:
+        artifact_ok, details = _verify_shadow_artifact(expected.task_name, business_date)
+        if not artifact_ok:
+            status = "FAILED"
+            reason = "产物合同未通过：" + "\n".join(str(item) for item in details)
+            replay_required = 1
+        elif status == "OK":
+            reason += "；产物合同通过"
 
     return {
         "task_name": expected.task_name,
