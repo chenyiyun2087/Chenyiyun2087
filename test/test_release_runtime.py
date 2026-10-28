@@ -165,3 +165,32 @@ def test_release_shared_links_resolve_to_persistent_source(tmp_path):
     target.mkdir()
     deploy_production_release._share_untracked_subdirectories(transient, target, 'exports', set())
     assert (target / 'exports').readlink() == persistent
+
+
+def test_future_sina_capture_dates_remain_shared_after_release(tmp_path):
+    source = tmp_path / 'persistent'
+    target = tmp_path / 'release'
+    for relative in deploy_production_release.CANONICAL_RUNTIME_ROOTS:
+        (source / relative).mkdir(parents=True)
+    relative = 'sina/bs_detection/SinaAppBS'
+    seed = target / relative / 'config_1/20261021/original.png'
+    seed.parent.mkdir(parents=True)
+    seed.write_bytes(b'checkout seed')
+    original = source / relative / 'config_1/20261021/original.png'
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b'original capture')
+
+    for configured in deploy_production_release.CANONICAL_RUNTIME_ROOTS:
+        deploy_production_release._share_canonical_runtime_tree(source, target, configured)
+
+    # A date created after deployment must immediately be visible in the
+    # persistent store, even though the parent contains tracked historical PNGs.
+    future = target / relative / 'config_1/20261029/new.png'
+    future.parent.mkdir(parents=True)
+    future.write_bytes(b'new capture')
+    assert (target / relative).is_symlink()
+    assert (source / relative / 'config_1/20261029/new.png').read_bytes() == b'new capture'
+    assert original.read_bytes() == b'original capture'
+    backups = list((target.parent / '.runtime-seed-backups').rglob('original.png'))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == b'checkout seed'

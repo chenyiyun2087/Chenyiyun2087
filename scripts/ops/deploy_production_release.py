@@ -42,7 +42,10 @@ SHARED_RUNTIME_ROOTS = (
     "logs/web",
     "sina/bs_detection/SinaAppBS/archive",
 )
-CANONICAL_RUNTIME_ROOTS = ("exports/forward_shadow_evidence",)
+CANONICAL_RUNTIME_ROOTS = (
+    "exports/forward_shadow_evidence",
+    "sina/bs_detection/SinaAppBS",
+)
 GIT_STATUS_PATHS = (".", *RUNTIME_STATUS_EXCLUDES)
 
 
