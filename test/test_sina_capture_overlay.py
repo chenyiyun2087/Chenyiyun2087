@@ -62,3 +62,32 @@ def test_unknown_interceptor_remains_a_failure():
 
     with pytest.raises(ElementClickInterceptedException, match="unknown overlay"):
         capture.click_chart_control(Page(), ChartControl())
+
+
+def test_partial_capture_retries_only_failed_securities(monkeypatch):
+    calls = []
+
+    def screenshot(code, *_):
+        calls.append(code)
+        ok = code == '000001' or calls.count(code) == 2
+        return code, ok, 'image.png' if ok else 'timeout'
+
+    monkeypatch.setattr(capture, 'capture_bs_point_screenshot', screenshot)
+    result = capture.process_stock_codes_parallel(['000001', '600089'], '/unused', '20261028', 1)
+    assert calls.count('000001') == 1
+    assert calls.count('600089') == 2
+    assert result == {'total': 2, 'success': 2, 'failed': 0, 'failed_codes': []}
+
+
+def test_unavailable_source_is_bounded_and_counted_once(monkeypatch):
+    calls = []
+
+    def screenshot(code, *_):
+        calls.append(code)
+        raise TimeoutError('no source chart')
+
+    monkeypatch.setattr(capture, 'capture_bs_point_screenshot', screenshot)
+    result = capture.process_stock_codes_parallel(['601198'], '/unused', '20261028', 1)
+    assert calls == ['601198', '601198']
+    assert result == {'total': 1, 'success': 0, 'failed': 1,
+                      'failed_codes': [('601198', 'no source chart')]}

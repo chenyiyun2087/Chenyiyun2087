@@ -443,30 +443,34 @@ def process_stock_codes_parallel(stock_codes, save_dir, date_str, max_workers=20
 
     logger.info(f"开始并行处理{len(stock_codes)}个股票代码，最大线程数: {max_workers}")
 
-    # 使用线程池并行处理
+    # Retry only failed securities once in a fresh browser session. A partial
+    # batch can satisfy the queue coverage threshold without retrying otherwise.
+    pending = list(stock_codes)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
-        future_to_stock = {
-            executor.submit(capture_bs_point_screenshot, code, save_dir, date_str): code
-            for code in stock_codes
-        }
-
-        # 处理结果
-        for future in concurrent.futures.as_completed(future_to_stock):
-            stock_code = future_to_stock[future]
-            try:
-                code, success, result = future.result()
+        for attempt in range(2):
+            future_to_stock = {
+                executor.submit(capture_bs_point_screenshot, code, save_dir, date_str): code
+                for code in pending
+            }
+            pending = []
+            for future in concurrent.futures.as_completed(future_to_stock):
+                stock_code = future_to_stock[future]
+                try:
+                    code, success, result = future.result()
+                except Exception as exc:
+                    code, success, result = stock_code, False, str(exc)
                 if success:
                     results['success'] += 1
                     logger.info(f"股票 {code} 处理成功: {result}")
+                elif attempt == 0:
+                    pending.append(stock_code)
+                    logger.warning("股票 %s: 首次截图失败，将重试一次: %s", stock_code, result)
                 else:
                     results['failed'] += 1
                     results['failed_codes'].append((code, result))
                     logger.error(f"股票 {code} 处理失败: {result}")
-            except Exception as e:
-                results['failed'] += 1
-                results['failed_codes'].append((stock_code, str(e)))
-                logger.error(f"获取股票 {stock_code} 的结果时出现异常: {e}")
+            if not pending:
+                break
 
     return results
 
