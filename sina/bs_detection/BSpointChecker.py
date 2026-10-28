@@ -14,7 +14,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import ElementClickInterceptedException, TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
@@ -254,6 +254,31 @@ def read_stock_codes(excel_file):
         return []
 
 
+def dismiss_market_promo(driver):
+    """Close Sina's modal through its own button before interacting with charts."""
+    dismissed = False
+    for button in driver.find_elements(By.CSS_SELECTOR, ".SFA-dark-market-layer .SFA-dark-close"):
+        if button.is_displayed():
+            button.click()
+            dismissed = True
+    if dismissed:
+        WebDriverWait(driver, 3).until(
+            EC.invisibility_of_element_located((By.CSS_SELECTOR, ".SFA-dark-market-layer"))
+        )
+    return dismissed
+
+
+def click_chart_control(driver, element):
+    """Handle a promo injected after the control was located without hiding the chart."""
+    dismiss_market_promo(driver)
+    try:
+        element.click()
+    except ElementClickInterceptedException:
+        if not dismiss_market_promo(driver):
+            raise
+        element.click()
+
+
 def capture_bs_point_screenshot(stock_code, save_dir, date_str):
     """
     访问新浪财经查询指定股票代码的实时行情，
@@ -320,6 +345,7 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
             return (stock_code, False, "截图耗时超过60秒，提前结束")
 
         # 关闭可能出现的弹窗
+        dismiss_market_promo(driver)
         try:
             close_buttons = driver.find_elements(By.XPATH, "//a[contains(@class, 'close') or contains(@title, '关闭')]")
             for button in close_buttons:
@@ -335,7 +361,7 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
             bs_tab = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//a[text()='B/S点']"))
             )
-            bs_tab.click()
+            click_chart_control(driver, bs_tab)
             logger.info(f"股票 {stock_code}: 切换到B/S点标签页")
             time.sleep(2)
         except Exception as e:
@@ -354,7 +380,7 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
                     EC.element_to_be_clickable((By.XPATH,
                                                 "//div[contains(@class, 'chart')]//a[contains(@class, 'fullscreen') or contains(@title, '全屏')]"))
                 )
-                fullscreen_button.click()
+                click_chart_control(driver, fullscreen_button)
                 logger.info(f"股票 {stock_code}: 点击全屏查看按钮(XPath)")
             except Exception:
                 try:
@@ -362,7 +388,7 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
                     fullscreen_button = WebDriverWait(driver, 5).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, ".fullscreen, .full-screen, [title*='全屏']"))
                     )
-                    fullscreen_button.click()
+                    click_chart_control(driver, fullscreen_button)
                     logger.info(f"股票 {stock_code}: 点击全屏查看按钮(CSS)")
                 except Exception:
                     # 方法3: 使用JavaScript点击
@@ -379,6 +405,7 @@ def capture_bs_point_screenshot(stock_code, save_dir, date_str):
             return (stock_code, False, "截图耗时超过60秒，提前结束")
 
         # 截取全屏图片
+        dismiss_market_promo(driver)
         driver.save_screenshot(screenshot_path)
         logger.info(f"股票 {stock_code}: 截图已保存为: {screenshot_path}")
 
