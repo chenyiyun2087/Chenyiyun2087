@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from scripts.ops.release_runtime import RUNTIME_STATUS_EXCLUDES
 
 try:
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -71,7 +72,7 @@ def check_clean_worktree(project_root: Path | None = None) -> tuple[str, bool]:
     """Return (git_commit_sha, is_clean).
 
     A *clean* worktree has no modified tracked files and no untracked
-    files (excluding ``exports/`` and ``reports/``).  The function is
+    files outside the release's declared generated runtime paths. The function is
     fail-closed: any OSError / CalledProcessError makes ``is_clean=False``.
     """
     root = project_root or PROJECT_ROOT
@@ -85,9 +86,7 @@ def check_clean_worktree(project_root: Path | None = None) -> tuple[str, bool]:
                 "status",
                 "--porcelain",
                 "--",
-                ".",
-                ":(exclude)exports/**",
-                ":(exclude)reports/**",
+                ".", *RUNTIME_STATUS_EXCLUDES,
             ],
             cwd=root,
             text=True,

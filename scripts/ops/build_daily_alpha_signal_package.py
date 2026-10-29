@@ -59,6 +59,7 @@ EVIDENCE_ROOT = Path(
 ).expanduser().resolve()
 
 from runtime.pit_universe import build_daily_universe  # noqa: E402
+from scripts.ops.release_runtime import RUNTIME_STATUS_EXCLUDES  # noqa: E402
 
 PACKAGES_ROOT = EVIDENCE_ROOT / "exports" / "forward_shadow_evidence" / "packages"
 RUNTIME_CFG_PATH = PROJECT_ROOT / "config" / "strategy_runtime" / "forward_shadow_v2.yaml"
@@ -503,24 +504,9 @@ def _sha256_file(p: Path) -> str:
     return _sha256_bytes(p.read_bytes())
 
 
-# Evidence exports and reports are generated artifacts that are never
-# committed (parquet-bloat policy) — they must not block formal packaging.
-# Same pathspecs as the strict-ledger backtest worktree gate
-# (scripts/research_trusted_strategy_account_backtest.py).
-GIT_STATUS_PATHS = [
-    ".",
-    ":(exclude)exports/**",
-    ":(exclude)reports/**",
-    ":(exclude)data/pit/**",
-    ":(exclude)data/pit",
-    ":(exclude)data/evidence_store/**",
-    ":(exclude)data/evidence_store",
-    ":(exclude)logs/score_backfill/**",
-    ":(exclude)logs/score_backfill",
-    ":(exclude)logs/web/**",
-    ":(exclude)logs/web",
-    ":(exclude)sina/bs_detection/SinaAppBS/**",
-]
+# Reuse the release gate, including runtime directory entries themselves:
+# a shared directory symlink is a Git path, even when its children are excluded.
+GIT_STATUS_PATHS = (".", *RUNTIME_STATUS_EXCLUDES)
 
 
 def _git_info() -> dict:

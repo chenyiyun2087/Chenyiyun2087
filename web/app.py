@@ -102,6 +102,7 @@ def _resolve_bs_source(value):
     source = str(value or DEFAULT_BS_SOURCE).strip()
     return source if source in BS_SOURCE_OPTIONS else DEFAULT_BS_SOURCE
 
+
 def _normalize_sina_bs_lookup_codes(raw_codes):
     if isinstance(raw_codes, list):
         raw_codes = ",".join(str(code) for code in raw_codes)
@@ -1990,6 +1991,8 @@ def _dependency_state(cursor, task_name, business_date, trigger_type=None):
     # dependencies and audit classification cannot disagree.
     from scripts.ops.daily_batch_audit import _recovered_artifact
     for dependency in dependencies:
+        if latest.get(dependency) == "SUCCESS":
+            continue
         if _recovered_artifact(cursor, dependency, business_date):
             latest[dependency] = "SUCCESS"
     missing = [name for name in dependencies if name not in latest]
@@ -2008,22 +2011,22 @@ def _send_task_blocked_notification(job, reason):
 
         queue_id = int(job.get("id") or 0)
         attempt = int(job.get("attempt_count") or 0)
+        task_display_name = TASKS.get(job.get("task_name"), {}).get("name") or job.get("task_name")
         event = NotificationEvent(
             event_type="task_blocked",
             business_date=str(job.get("business_date") or datetime.now().strftime("%Y%m%d")),
-            title="任务被上游失败阻断",
+            title=f"【CYY】批量任务被上游失败阻断: {task_display_name}",
             severity="WARNING",
             task_name=str(job.get("task_name") or ""),
             run_id=f"task:{queue_id}",
             event_id=f"task:{queue_id}:{attempt}:task_blocked",
             dedupe_key=f"task_blocked:{queue_id}",
             facts={
-                "任务": TASKS.get(job.get("task_name"), {}).get("name") or job.get("task_name"),
+                "发出时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "任务": task_display_name,
                 "任务ID": job.get("task_name"),
-                "队列ID": queue_id,
-                "触发方式": job.get("trigger_type") or "-",
+                "错误分类": "UPSTREAM_BLOCKED",
                 "失败阶段": "上游依赖",
-                "状态": "BLOCKED",
             },
             details=(str(reason or "上游任务失败。"), "先修复并补跑上游任务，再重新执行当前任务。"),
             actions=_task_notification_action(queue_id),
@@ -2042,20 +2045,22 @@ def _send_scheduler_enqueue_failure(task_name, business_date, reason):
             raw_run_id if len(raw_run_id) <= 64
             else f"scheduler:{hashlib.sha256(raw_run_id.encode('utf-8')).hexdigest()[:48]}"
         )
+        task_display_name = TASKS.get(task_name, {}).get("name") or task_name
         event = NotificationEvent(
             event_type="task_failed",
             business_date=business_date,
-            title="定时任务入队失败",
+            title=f"【CYY】定时任务入队失败: {task_display_name}",
             severity="ERROR",
             task_name=task_name,
             run_id=run_id,
             event_id=f"{run_id}:failed"[:64],
             dedupe_key=f"scheduler_enqueue_failed:{task_name}:{business_date}",
             facts={
-                "任务": TASKS.get(task_name, {}).get("name") or task_name,
+                "发出时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "任务": task_display_name,
                 "任务ID": task_name,
-                "失败阶段": "调度入队",
                 "错误分类": "SCHEDULER_ENQUEUE",
+                "失败阶段": "调度入队",
             },
             details=(str(reason or "未知入队错误"), "检查任务队列表和数据库连接后人工补跑。"),
         )
@@ -2084,7 +2089,8 @@ def _claim_next_queued_task():
                     job.get("trigger_type"),
                 )
                 if dep_state == "WAITING":
-                    cursor.execute("UPDATE app_task_queue SET message = %s WHERE id = %s", (dep_message, job["id"]))
+                    if job.get("message") != dep_message:
+                        cursor.execute("UPDATE app_task_queue SET message = %s WHERE id = %s", (dep_message, job["id"]))
                     continue
                 if dep_state == "BLOCKED":
                     cursor.execute(
@@ -2238,33 +2244,40 @@ def _read_text_tail(file_path, max_chars):
         return f"[tail-read-error] {e}"
 
 
-def _has_scheduled_run_in_slot(task_name, scheduled_for):
-    """Return True if a scheduled run already exists in history for this slot."""
-    conn = None
+def _get_scheduled_tasks_in_slots(scheduled_slots):
+    """Read all candidate slots in one round trip; errors abort this poll.
+
+    Each task retains its own half-open 24-hour window. This is only a
+    scheduling prefilter: the queue's transactional dedupe remains authoritative.
+    """
+    if not scheduled_slots:
+        return set()
+    conditions = []
+    params = []
+    for task_name, scheduled_for in scheduled_slots:
+        conditions.append("(task_name = %s AND started_at >= %s AND started_at < %s)")
+        params.extend((task_name, scheduled_for, scheduled_for + timedelta(days=1)))
+    conn = _connect_db()
     try:
-        conn = _connect_db()
         with conn.cursor() as cursor:
             _ensure_task_management_schema(cursor)
-            slot_end = scheduled_for + timedelta(days=1)
             cursor.execute(
-                """
-                SELECT 1
-                FROM app_task_history
-                WHERE task_name = %s
-                  AND trigger_type = 'schedule'
-                  AND started_at >= %s
-                  AND started_at < %s
-                LIMIT 1
-                """,
-                (task_name, scheduled_for, slot_end),
+                "SELECT DISTINCT task_name FROM app_task_history "
+                "WHERE trigger_type = 'schedule' AND (" + " OR ".join(conditions) + ")",
+                tuple(params),
             )
-            return cursor.fetchone() is not None
+            return {row["task_name"] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+
+def _has_scheduled_run_in_slot(task_name, scheduled_for):
+    """Compatibility wrapper for callers checking a single history slot."""
+    try:
+        return task_name in _get_scheduled_tasks_in_slots([(task_name, scheduled_for)])
     except Exception as e:
         print(f"Failed to check scheduled history slot for {task_name}: {e}")
         return False
-    finally:
-        if conn:
-            conn.close()
 
 
 def _verify_sina_picture_result(started_at, finished_at, run_options=None):
@@ -4122,17 +4135,17 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
         recovered = bool(finish_result.get("recovered"))
         error_kind = str(finish_result.get("error_kind") or "UNKNOWN")
 
-        # Normal success is deliberately silent. A success after one or more
-        # failed attempts is the only successful task event sent to Feishu.
+        # Normal success is deliberately silent.
         if normalized_history_status == "SUCCESS" and not recovered:
             return
 
         event_type = "task_recovered" if recovered else ("task_retrying" if will_retry else "task_failed")
         severity = "SUCCESS" if recovered else ("WARNING" if will_retry else "ERROR")
+        task_display_name = TASKS.get(task_name, {}).get("name") or task_name
         title = {
-            "task_recovered": "任务已恢复",
-            "task_retrying": "任务失败，正在重试",
-            "task_failed": "任务执行失败",
+            "task_recovered": f"【CYY】任务已恢复: {task_display_name}",
+            "task_retrying": f"【CYY】任务失败，正在重试: {task_display_name}",
+            "task_failed": f"【CYY】批量任务执行失败: {task_display_name}",
         }[event_type]
         if not queue_id:
             queue_id = int(started_at.timestamp()) if isinstance(started_at, datetime) else 0
@@ -4152,6 +4165,7 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
             if isinstance(started_at, datetime) and isinstance(finished_at, datetime)
             else "-"
         )
+        emit_time = finished_at.strftime("%Y-%m-%d %H:%M:%S") if isinstance(finished_at, datetime) else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         details = []
         if recovered:
             details.append("此前失败的同一队列任务已在后续尝试中成功完成。")
@@ -4170,7 +4184,8 @@ def _send_task_completion_notification(task_name, history_status, trigger_type, 
             event_id=f"{event_prefix}:{event_type}",
             dedupe_key=f"{event_type}:{queue_id}:{attempt}",
             facts={
-                "任务": TASKS.get(task_name, {}).get("name") or task_name,
+                "发出时间": emit_time,
+                "任务": task_display_name,
                 "任务ID": task_name,
                 "队列ID": queue_id,
                 "触发方式": trigger_type or "-",
@@ -8419,6 +8434,7 @@ def _run_scheduled_tasks_loop():
                 continue
             due_tasks = []
             skipped_schedule_tasks = []
+            candidates = []
             with TASKS_LOCK:
                 for task_name, task in TASKS.items():
                     if task_name not in SCHEDULED_TASK_WHITELIST:
@@ -8435,25 +8451,30 @@ def _run_scheduled_tasks_loop():
                     last_run_dt = _parse_task_last_run(task.get('last_run'))
                     if last_run_dt and last_run_dt >= scheduled_for:
                         continue
-                    # Cross-process idempotence: prevent duplicate "catch-up" runs for the same slot.
-                    if _has_scheduled_run_in_slot(task_name, scheduled_for):
-                        continue
-                    day_of_week = task.get("day_of_week")
-                    if day_of_week is not None and now.weekday() != int(day_of_week):
-                        skipped_schedule_tasks.append((task_name, scheduled_for))
-                        continue
-                    due_tasks.append(task_name)
+                    candidates.append((task_name, scheduled_for, task.get("day_of_week")))
+
+            # Database I/O must not hold TASKS_LOCK or open one connection per task.
+            recorded_tasks = _get_scheduled_tasks_in_slots(
+                [(name, slot) for name, slot, _ in candidates]
+            )
+            for task_name, scheduled_for, day_of_week in candidates:
+                if task_name in recorded_tasks:
+                    continue
+                if day_of_week is not None and now.weekday() != int(day_of_week):
+                    skipped_schedule_tasks.append((task_name, scheduled_for))
+                    continue
+                due_tasks.append((task_name, scheduled_for))
 
             for task_name, scheduled_for in skipped_schedule_tasks:
                 _mark_scheduled_skip_success(task_name, scheduled_for, "SCHEDULE_DAY")
                 print(f"Scheduled task success-skip (non-schedule weekday): {task_name}")
 
-            for task_name in due_tasks:
+            for task_name, scheduled_for in due_tasks:
                 job, created, reason = _trigger_task_execution(
                     task_name,
                     trigger_type='schedule',
                     run_options={"datestr": now.strftime("%Y%m%d")},
-                    scheduled_for=now.replace(second=0, microsecond=0),
+                    scheduled_for=scheduled_for,
                 )
                 if job and created:
                     print(f"Scheduled task queued: {task_name} (job={job['id']})")
