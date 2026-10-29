@@ -1,6 +1,6 @@
 {
   "schema_version": "production_stability_hold_v1",
-  "status": "RESUMED",
+  "status": "PAUSED",
   "activated_at": "2026-09-02T00:00:00+08:00",
   "reason": "全面稳定性审计期间暂停生产升级、策略晋级和资本扩张",
   "scope": [
@@ -12,7 +12,5 @@
     "capital_scale_up"
   ],
   "allow_stability_hotfix": true,
-  "resume_requires": "人工复核稳定性审计结论并明确解除本文件",
-  "resumed_at": "2026-09-29T12:55:02+08:00",
-  "resume_reason": "经人工复核稳定性审计结论并按用户明确指示，恢复生产发布以发布指定股票 B/S 查询功能；不涉及模型、策略指针或资本配置切换。"
+  "resume_requires": "人工复核稳定性审计结论并明确解除本文件"
 }
