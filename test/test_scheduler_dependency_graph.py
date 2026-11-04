@@ -6,7 +6,7 @@ Validates task_registry/pipeline.yaml:
     was an impossible DAG — that bug class must never return)
   - the DAG must be acyclic
   - trading-day-only tasks share the calendar gate (single calendar)
-  - shadow tasks stay disabled until Shadow Engine v2 passes
+  - retired shadow tasks cannot return to the production DAG
 """
 
 from __future__ import annotations
@@ -86,26 +86,12 @@ def test_trading_day_tasks_share_calendar_gate():
             "day_of_week gate")
 
 
-def test_shadow_tasks_disabled_until_shadow_v2():
-    """Pre-v5.5 shadow tasks must stay disabled (evidence repair)."""
+def test_retired_shadow_tasks_are_not_registered():
+    retired = {
+        "daily_vls_scores", "alpha_challenger_shadow_record",
+        "alpha_challenger_shadow_reconcile",
+    }
     tasks = _tasks()
-    for tid in ("daily_vls_scores", "alpha_challenger_shadow_record",
-                "alpha_challenger_shadow_reconcile"):
-        assert tasks[tid]["status"] == "disabled", f"{tid} must be disabled"
-        assert "disabled_reason" in tasks[tid], f"{tid} must carry a reason"
-        reason = tasks[tid]["disabled_reason"]
-        # v5.5.1 (2026-08-05): a task may be PERMANENTLY DISABLED (superseded
-        # by alpha_signal_execution_reconcile, never re-enabled — the legacy
-        # reconcile would double-run the T+1 fill path) instead of paused
-        # awaiting v5.5.  Both semantics are legal; a bare reason is not.
-        assert ("PERMANENTLY DISABLED" in reason
-                or "v5.4.1" in reason or "v5.5" in reason), (
-            f"{tid} disabled_reason must reference the v5.4.1/v5.5 repair "
-            "or be PERMANENTLY DISABLED")
-
-
-def test_corrected_dag_times_are_post_close():
-    """The fixed shadow DAG must sit after the 16:10 data collection."""
-    tasks = _tasks()
-    assert tasks["daily_vls_scores"]["time"] >= "16:00"
-    assert tasks["alpha_challenger_shadow_record"]["time"] >= "16:40"
+    assert retired.isdisjoint(tasks)
+    assert all(retired.isdisjoint(task.get("depends_on", [])) for task in tasks.values())
+    assert tasks["alpha_signal_package_seal"]["time"] >= tasks["sina_analyse"]["time"]

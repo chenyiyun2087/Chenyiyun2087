@@ -141,10 +141,7 @@ def build_task_script_parts(
         if historical_safe and datestr:
             args.extend(["--business-date", _iso_date(datestr)])
         return [script, *args]
-    if task_name in ("alpha_challenger_shadow_record",
-                     "alpha_challenger_shadow_reconcile",
-                     "daily_vls_scores",
-                     "alpha_signal_package_seal",
+    if task_name in ("alpha_signal_package_seal",
                      "alpha_signal_precommit",
                      "alpha_signal_execution_reconcile",
                      "alpha_signal_nav"):

@@ -397,6 +397,18 @@ def test_retired_db_bs_detect_cannot_be_scheduled():
     assert "adc_bs_detect" in web_app.SCHEDULED_TASK_WHITELIST
 
 
+def test_retired_shadow_tasks_cannot_be_enqueued(monkeypatch):
+    def unexpected_connection():
+        raise AssertionError("a retired task must be rejected before accessing the queue")
+
+    monkeypatch.setattr(web_app, "_connect_db", unexpected_connection)
+    for task_name in (
+        "daily_vls_scores", "alpha_challenger_shadow_record", "alpha_challenger_shadow_reconcile",
+    ):
+        assert task_name not in web_app.TASKS
+        assert web_app._enqueue_task(task_name) == (None, False, "unknown task")
+
+
 def test_batch_monitor_definition_and_status_merge_follow_pipeline():
     definitions = web_app._load_batch_monitor_definition()
     # 16 baseline tasks + 5 re-enabled alpha_signal_* tasks (Phase 5,

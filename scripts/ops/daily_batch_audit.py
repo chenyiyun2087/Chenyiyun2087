@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from zipfile import BadZipFile, ZipFile
 
 import pymysql
 import yaml
@@ -382,6 +383,9 @@ def classify_task(
         elif status == "OK":
             reason += "；产物合同通过"
 
+    if expected.task_name in {"sina_picture", "sina_analyse"} and queue_status == "SUCCESS":
+        reason += "；" + _sina_key_coverage(cursor, expected.task_name, business_date)
+
     return {
         "task_name": expected.task_name,
         "expected_time": expected.schedule_time,
@@ -393,6 +397,56 @@ def classify_task(
         "notification_status": notification,
         "replay_required": int(replay_required),
     }
+
+
+def _sina_key_coverage(cursor, task_name: str, business_date: str) -> str:
+    """Report key gaps against the available roster, including archived originals."""
+    try:
+        cursor.execute("SELECT stock_code FROM a_share_stock_list WHERE is_self_selected=1")
+        selected = cursor.fetchall()
+    except pymysql.MySQLError:
+        selected = []
+    try:
+        scope = "当前自选股"
+        expected = set()
+        for row in selected:
+            digits = "".join(ch for ch in str(row["stock_code"] or "") if ch.isdigit())
+            if digits:
+                expected.add(digits[-6:].zfill(6))
+        if not expected:
+            import pandas as pd
+
+            scope = "当前 Excel 回退名单"
+            roster = pd.read_excel(PROJECT_ROOT / "sina/stock_codes.xlsx", dtype=str)
+            expected = {code.strip()[-6:].zfill(6) for code in roster["stock_code"].dropna()}
+        if not expected or not all(code.isdigit() for code in expected):
+            return "数据覆盖未验证：生产名单缺失或无效"
+        if task_name == "sina_analyse":
+            cursor.execute(
+                "SELECT DISTINCT stock_code FROM bs_detection_results "
+                "WHERE batch_date=%s AND batch_name=%s",
+                (business_date, "config_1"),
+            )
+            observed = {str(row["stock_code"]).zfill(6) for row in cursor.fetchall()}
+        else:
+            root = PROJECT_ROOT / "sina/bs_detection/SinaAppBS"
+            folder = root / "config_1" / business_date
+            suffix = f"_{business_date}.png"
+            observed = {p.name.removesuffix(suffix) for p in folder.glob(f"*{suffix}") if p.is_file()}
+            archive = root / "archive/config_1" / f"{business_date}.zip"
+            if archive.is_file():
+                with ZipFile(archive) as entries:
+                    observed.update(
+                        Path(name).name.removesuffix(suffix)
+                        for name in entries.namelist() if name.endswith(suffix)
+                    )
+    except (OSError, ValueError, KeyError, BadZipFile, pymysql.MySQLError):
+        return "数据覆盖未验证：名单或产物读取失败"
+    missing = sorted(expected - observed)
+    coverage = f"按{scope}核对 {len(expected & observed)}/{len(expected)}"
+    if missing:
+        coverage += f"，缺少 {len(missing)} 只：{', '.join(missing[:50])}"
+    return coverage
 
 
 def persist_audit_row(cursor, business_date: str, row: dict[str, Any]) -> None:

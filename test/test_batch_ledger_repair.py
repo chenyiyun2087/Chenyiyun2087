@@ -113,3 +113,24 @@ def test_staged_rebuild_orders_days_and_never_fabricates_a_missing_signal(tmp_pa
     assert result["promotion_performed"] is False
     with pytest.raises(ValueError, match="must be empty"):
         rebuild_chain(Shadow(), days, packages, zone, lambda *a: None)
+
+
+def test_sina_coverage_counts_archived_keys_and_lists_missing(monkeypatch, tmp_path):
+    from zipfile import ZipFile
+
+    import pandas as pd
+
+    monkeypatch.setattr(audit, "PROJECT_ROOT", tmp_path)
+    sina = tmp_path / "sina"
+    archive = sina / "bs_detection/SinaAppBS/archive/config_1/20261103.zip"
+    archive.parent.mkdir(parents=True)
+    pd.DataFrame({"stock_code": ["sz000001", "sh900925"]}).to_excel(sina / "stock_codes.xlsx", index=False)
+    with ZipFile(archive, "w") as entries:
+        entries.writestr("20261103/000001_20261103.png", b"fixture")
+        entries.writestr("20261103/900925_20261102.png", b"different business date")
+    cursor = SimpleNamespace(execute=lambda *_: None, fetchall=lambda: [])
+    assert audit._sina_key_coverage(cursor, "sina_picture", "20261103") == (
+        "按当前 Excel 回退名单核对 1/2，缺少 1 只：900925"
+    )
+    cursor.fetchall = lambda: [{"stock_code": "000001"}]
+    assert audit._sina_key_coverage(cursor, "sina_picture", "20261103") == "按当前自选股核对 1/1"
