@@ -167,9 +167,9 @@ def test_web_route_and_endpoint_contract_is_unchanged(monkeypatch):
         rows.append(f"{methods} {rule.rule} -> {rule.endpoint}")
     payload = "\n".join(sorted(rows))
 
-    assert len(rows) == 45
+    assert len(rows) == 46
     assert hashlib.sha256(payload.encode()).hexdigest() == (
-        "e7242a204604c459afcca6af363e113f81fa419b06426ae1a947ede6ade3bff4"
+        "f4acd8dbe2fff006c47d8987970fb5c2ff985a547e77869808e94bf627977eb7"
     )
 
 

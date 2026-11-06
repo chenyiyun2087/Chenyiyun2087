@@ -3,6 +3,7 @@
 Live Trading Tracker Database Layer
 """
 
+from contextlib import contextmanager
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 import logging
@@ -20,6 +21,23 @@ _SQLALCHEMY_ENGINE = None
 def get_db_connection():
     """获取复用连接池的 DBAPI 连接（close 时归还到池）"""
     return get_engine().raw_connection()
+
+
+@contextmanager
+def transaction():
+    """Yield a connection with transaction commit/rollback semantics."""
+    conn = get_db_connection()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def get_engine():
@@ -80,6 +98,7 @@ def insert_trade(
     commission: float,
     reason: str = "",
     score: float = None,
+    conn: Any = None,
 ) -> int:
     """插入交易记录，返回插入的 ID"""
     sql = """
@@ -87,17 +106,20 @@ def insert_trade(
     (trade_date, symbol, direction, price, shares, amount, commission, reason, score)
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
-    conn = get_db_connection()
+    owns_conn = conn is None
+    c = get_db_connection() if owns_conn else conn
     try:
-        with conn.cursor() as cursor:
+        with c.cursor() as cursor:
             cursor.execute(sql, (
                 trade_date, symbol, direction, price, shares,
                 amount, commission, reason, score
             ))
-            conn.commit()
+            if owns_conn:
+                c.commit()
             return cursor.lastrowid
     finally:
-        conn.close()
+        if owns_conn:
+            c.close()
 
 
 def get_trades(
@@ -144,6 +166,7 @@ def upsert_position(
     pending_forced_exit: int = 0,
     pending_exit_reason: str = None,
     rebuy_cooldown_until: date = None,
+    conn: Any = None,
 ) -> None:
     """插入或更新持仓"""
     sql = """
@@ -163,9 +186,10 @@ def upsert_position(
         pending_exit_reason = COALESCE(VALUES(pending_exit_reason), pending_exit_reason),
         rebuy_cooldown_until = COALESCE(VALUES(rebuy_cooldown_until), rebuy_cooldown_until)
     """
-    conn = get_db_connection()
+    owns_conn = conn is None
+    c = get_db_connection() if owns_conn else conn
     try:
-        with conn.cursor() as cursor:
+        with c.cursor() as cursor:
             hs = highest_since_entry if highest_since_entry is not None else current_price
             cursor.execute(
                 sql,
@@ -183,21 +207,26 @@ def upsert_position(
                     rebuy_cooldown_until,
                 ),
             )
-            conn.commit()
+            if owns_conn:
+                c.commit()
     finally:
-        conn.close()
+        if owns_conn:
+            c.close()
 
 
-def delete_position(symbol: str) -> None:
+def delete_position(symbol: str, conn: Any = None) -> None:
     """删除持仓（清仓时调用）"""
     sql = "DELETE FROM live_positions WHERE symbol = %s"
-    conn = get_db_connection()
+    owns_conn = conn is None
+    c = get_db_connection() if owns_conn else conn
     try:
-        with conn.cursor() as cursor:
+        with c.cursor() as cursor:
             cursor.execute(sql, (symbol,))
-            conn.commit()
+            if owns_conn:
+                c.commit()
     finally:
-        conn.close()
+        if owns_conn:
+            c.close()
 
 
 def get_all_positions() -> List[Dict]:
@@ -275,6 +304,7 @@ def upsert_daily_snapshot(
     daily_return_pct: float = None,
     csi300_return_pct: float = None,
     excess_return_pct: float = None,
+    conn: Any = None,
 ) -> None:
     """插入或更新每日快照"""
     sql = """
@@ -291,16 +321,19 @@ def upsert_daily_snapshot(
         csi300_return_pct = VALUES(csi300_return_pct),
         excess_return_pct = VALUES(excess_return_pct)
     """
-    conn = get_db_connection()
+    owns_conn = conn is None
+    c = get_db_connection() if owns_conn else conn
     try:
-        with conn.cursor() as cursor:
+        with c.cursor() as cursor:
             cursor.execute(sql, (
                 snapshot_date, cash, positions_value, total_equity,
                 daily_pnl, daily_return_pct, csi300_return_pct, excess_return_pct
             ))
-            conn.commit()
+            if owns_conn:
+                c.commit()
     finally:
-        conn.close()
+        if owns_conn:
+            c.close()
 
 
 def get_daily_snapshots(

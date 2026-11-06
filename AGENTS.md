@@ -55,10 +55,26 @@ If a move is necessary, create a dedicated migration plan, update imports and ru
 - Industry research: `YYYY-MM-DD_行业_产业链梳理.md`
 - Fund research: `YYYY-MM-DD_基金代码_分析.md`
 
+## Conversation Title Rules
+
+- Conversation titles use `MMDD｜TYPE｜Topic`.
+- Derive `MMDD` from the conversation's `createdAt`, converted to `Asia/Shanghai`; never use `updatedAt`.
+- Use one TYPE language for an entire rename run. Use English codes by default; use the Chinese label only when the user asks for Chinese titles:
+  - `FEA` / `功能` = feature
+  - `DES` / `设计` = design
+  - `FIX` / `修复` = bug fix
+  - `OPT` / `优化` = optimization
+  - `REL` / `发布` = release
+  - `EXP` / `探索` = exploration
+  - `DOC` / `文档` = docs
+  - `RES` / `研究` = research
+- Summarize the actual conversation topic briefly and specifically; do not repeat the project name.
+- If the topic cannot be determined reliably, preserve the original title instead of guessing.
+- Rename conversation titles only. Never change project names, conversation content, project assignment, order, pin state, or archive state.
+
 ## Strategy Research Safety
 
 - Trusted backtests must use T-day signals and T+1 execution.
 - Do not use `bs_model_*` historical backfilled fields in trusted backtests unless a walk-forward model process proves point-in-time availability.
 - Dynamic factor weights and adaptive strategy selection must only use samples whose `exit_date < signal_date`.
 - When adding a new strategy result, record the period, initial capital, transaction cost, slippage, max holding count, return, max drawdown, and future-function control.
-

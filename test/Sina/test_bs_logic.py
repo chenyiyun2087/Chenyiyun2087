@@ -8,21 +8,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+# Test isolation: save real modules first so mocks do not leak into other test modules
+_real_bspoint_checker = sys.modules.get('sina.bs_detection.BSpointChecker')
+_real_latest_bs_show = sys.modules.get('sina.bs_detection.SinaLatestBSShow')
+_real_cv2 = sys.modules.get('cv2')
+_real_pytesseract = sys.modules.get('pytesseract')
+_real_selenium = sys.modules.get('selenium')
+_real_selenium_webdriver = sys.modules.get('selenium.webdriver')
+_real_pymysql = sys.modules.get("pymysql")
+
 # Mock modules to prevent import errors in different environments
-# 1. Mock internal submodules that have heavy dependencies
 mock_bspoint_checker = MagicMock()
 sys.modules['sina.bs_detection.BSpointChecker'] = mock_bspoint_checker
 sys.modules['sina.bs_detection.SinaLatestBSShow'] = MagicMock()
-
-# 2. Mock external dependencies if still needed by SinaBSDetector itself
 sys.modules['cv2'] = MagicMock()
 sys.modules['pytesseract'] = MagicMock()
 sys.modules['selenium'] = MagicMock()
 sys.modules['selenium.webdriver'] = MagicMock()
-# Save the real pymysql first — the mock must not leak into other test
-# modules in the same process (SQLAlchemy engine creation for real-DB
-# tests would otherwise receive a MagicMock dialect).
-_real_pymysql = sys.modules.get("pymysql")
 sys.modules['pymysql'] = MagicMock()
 
 # Now import
@@ -33,13 +35,22 @@ from sina.bs_detection.SinaBSDetector import (
     normalize_stock_codes,
 )
 
-# Test isolation: restore the real pymysql after the import chain that
-# needed the mock.  SinaBSDetector's own binding already holds the mock,
-# so this file's tests remain mocked while later files get the real module.
-if _real_pymysql is not None:
-    sys.modules["pymysql"] = _real_pymysql
-else:
-    sys.modules.pop("pymysql", None)
+# Test isolation: restore real modules after import chain that needed mocks.
+# SinaBSDetector's own namespace already holds references to the mocks,
+# so this file's tests remain isolated while later files get the real packages.
+for _mod_name, _real_mod in [
+    ("sina.bs_detection.BSpointChecker", _real_bspoint_checker),
+    ("sina.bs_detection.SinaLatestBSShow", _real_latest_bs_show),
+    ("cv2", _real_cv2),
+    ("pytesseract", _real_pytesseract),
+    ("selenium", _real_selenium),
+    ("selenium.webdriver", _real_selenium_webdriver),
+    ("pymysql", _real_pymysql),
+]:
+    if _real_mod is not None:
+        sys.modules[_mod_name] = _real_mod
+    else:
+        sys.modules.pop(_mod_name, None)
 
 class TestBSLogic(unittest.TestCase):
     def test_normalize_stock_codes(self):

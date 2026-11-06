@@ -1177,11 +1177,15 @@ def _apply_hard_stop_loss(
     for symbol, position in list(account.positions.items()):
         if position.shares <= 0 or position.entry_price <= 0:
             continue
-        open_price = _safe_float(price_lookup.get(symbol, {}).get("adj_open"), np.nan)
+        price_info = price_lookup.get(symbol, {})
+        open_price = _safe_float(price_info.get("adj_open"), np.nan)
         if not np.isfinite(open_price) or open_price <= 0:
             continue
         loss_pct = (open_price / float(position.entry_price) - 1.0) * 100.0
         if loss_pct > -threshold:
+            continue
+        tradable, reject_reason = _canonical_t1_execution_gate(symbol, "SELL", price_info)
+        if not tradable:
             continue
         sell_price = open_price * (1.0 - float(slippage_rate))
         _execute_sell(

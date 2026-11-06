@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from backtest_engine.config import BacktestConfig
 from backtest_engine.core.types import Bar, Order, Trade, OrderRejection
+from runtime.canonical_execution_contract import normalize_symbol
 from runtime.canonical_execution_kernel import AccountState, execute_order
 from scripts.research.execution_costs import ExecutionCostModel
 
@@ -42,7 +43,7 @@ class Broker:
         fill_price = base_price * (1 + slip_ratio) if order.side == "BUY" else base_price * (1 - slip_ratio)
         state = AccountState(
             float(available_cash if available_cash is not None else 10**18),
-            {order.symbol: int(available_qty or 0)} if order.side == "SELL" else {},
+            {normalize_symbol(order.symbol): int(available_qty or 0)} if order.side == "SELL" else {},
         )
         executed = execute_order(
             state, order_id=f"{order.ts}:{order.symbol}:{order.side}", symbol=order.symbol,
@@ -50,9 +51,9 @@ class Broker:
             lot_size=max(1, int(self.config.lot_size)),
             cost_model=ExecutionCostModel(
                 commission_rate=self.config.commission_rate,
-                stamp_duty_rate=0.0,
-                transfer_fee_rate=0.0,
-                min_commission_cny=0.0,
+                stamp_duty_rate=self.config.stamp_duty_rate,
+                transfer_fee_rate=self.config.transfer_fee_rate,
+                min_commission_cny=self.config.min_commission_cny,
             ),
         ).as_dict()
         if executed["status"] == "REJECTED":

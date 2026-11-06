@@ -10,6 +10,8 @@ Live Trading Tracker Core Module
 - 与评分系统联动
 """
 
+import copy
+from contextlib import nullcontext
 import os
 import sys
 from dataclasses import dataclass, field
@@ -191,6 +193,10 @@ class LiveTracker:
         if total_cost > self.cash:
             raise ValueError(f"资金不足: 需要 {total_cost:.2f}, 可用 {self.cash:.2f}")
         
+        # Backup in-memory state for atomic rollback on DB error
+        prev_cash = self.cash
+        prev_positions = copy.deepcopy(self.positions)
+
         # 更新现金
         self.cash -= total_cost
         
@@ -221,37 +227,42 @@ class LiveTracker:
             )
             self.positions[symbol] = pos
         
-        # 保存到数据库
-        trade_id = db.insert_trade(
-            trade_date=trade_date,
-            symbol=symbol,
-            direction="buy",
-            price=actual_price,
-            shares=shares,
-            amount=amount,
-            commission=commission,
-            reason=reason,
-            score=score,
-        )
-        
-        # 更新持仓表
-        db.upsert_position(
-            symbol=pos.symbol,
-            shares=pos.shares,
-            avg_cost=pos.avg_cost,
-            entry_date=pos.entry_date,
-            name=pos.name,
-            current_price=pos.current_price,
-            highest_since_entry=pos.highest_since_entry,
-            holding_trade_days=pos.holding_trade_days,
-            pending_forced_exit=pos.pending_forced_exit,
-            pending_exit_reason=pos.pending_exit_reason,
-            rebuy_cooldown_until=pos.rebuy_cooldown_until,
-        )
-        
-        # 持久化当前账户状态（包括现金）
-        self.calculate_daily_pnl(trade_date)
-        
+        # 原子事务保存到数据库
+        try:
+            txn_ctx = db.transaction() if hasattr(db, "transaction") else nullcontext()
+            with txn_ctx as conn:
+                trade_id = db.insert_trade(
+                    trade_date=trade_date,
+                    symbol=symbol,
+                    direction="buy",
+                    price=actual_price,
+                    shares=shares,
+                    amount=amount,
+                    commission=commission,
+                    reason=reason,
+                    score=score,
+                    conn=conn,
+                )
+                db.upsert_position(
+                    symbol=pos.symbol,
+                    shares=pos.shares,
+                    avg_cost=pos.avg_cost,
+                    entry_date=pos.entry_date,
+                    name=pos.name,
+                    current_price=pos.current_price,
+                    highest_since_entry=pos.highest_since_entry,
+                    holding_trade_days=pos.holding_trade_days,
+                    pending_forced_exit=pos.pending_forced_exit,
+                    pending_exit_reason=pos.pending_exit_reason,
+                    rebuy_cooldown_until=pos.rebuy_cooldown_until,
+                    conn=conn,
+                )
+                self.calculate_daily_pnl(trade_date, conn=conn)
+        except Exception:
+            self.cash = prev_cash
+            self.positions = prev_positions
+            raise
+
         trade = LiveTrade(
             id=trade_id,
             trade_date=trade_date,
@@ -313,45 +324,58 @@ class LiveTracker:
         commission = amount * self.commission_rate
         net_amount = amount - commission
         
+        # Backup in-memory state for atomic rollback on DB error
+        prev_cash = self.cash
+        prev_positions = copy.deepcopy(self.positions)
+
         # 更新现金
         self.cash += net_amount
         
         # 更新持仓
         pos.shares -= shares
-        if pos.shares == 0:
+        is_cleared = (pos.shares == 0)
+        if is_cleared:
             del self.positions[symbol]
-            db.delete_position(symbol)
-        else:
-            db.upsert_position(
-                symbol=pos.symbol,
-                shares=pos.shares,
-                avg_cost=pos.avg_cost,
-                entry_date=pos.entry_date,
-                name=pos.name,
-                current_price=pos.current_price,
-                highest_since_entry=pos.highest_since_entry,
-                holding_trade_days=pos.holding_trade_days,
-                pending_forced_exit=pos.pending_forced_exit,
-                pending_exit_reason=pos.pending_exit_reason,
-                rebuy_cooldown_until=pos.rebuy_cooldown_until,
-            )
-        
-        # 持久化当前账户状态（包括现金）
-        self.calculate_daily_pnl(trade_date)
-        
-        # 保存到数据库
-        trade_id = db.insert_trade(
-            trade_date=trade_date,
-            symbol=symbol,
-            direction="sell",
-            price=actual_price,
-            shares=shares,
-            amount=amount,
-            commission=commission,
-            reason=reason,
-            score=score,
-        )
-        
+
+        # 原子事务保存到数据库
+        try:
+            txn_ctx = db.transaction() if hasattr(db, "transaction") else nullcontext()
+            with txn_ctx as conn:
+                trade_id = db.insert_trade(
+                    trade_date=trade_date,
+                    symbol=symbol,
+                    direction="sell",
+                    price=actual_price,
+                    shares=shares,
+                    amount=amount,
+                    commission=commission,
+                    reason=reason,
+                    score=score,
+                    conn=conn,
+                )
+                if is_cleared:
+                    db.delete_position(symbol, conn=conn)
+                else:
+                    db.upsert_position(
+                        symbol=pos.symbol,
+                        shares=pos.shares,
+                        avg_cost=pos.avg_cost,
+                        entry_date=pos.entry_date,
+                        name=pos.name,
+                        current_price=pos.current_price,
+                        highest_since_entry=pos.highest_since_entry,
+                        holding_trade_days=pos.holding_trade_days,
+                        pending_forced_exit=pos.pending_forced_exit,
+                        pending_exit_reason=pos.pending_exit_reason,
+                        rebuy_cooldown_until=pos.rebuy_cooldown_until,
+                        conn=conn,
+                    )
+                self.calculate_daily_pnl(trade_date, conn=conn)
+        except Exception:
+            self.cash = prev_cash
+            self.positions = prev_positions
+            raise
+
         trade = LiveTrade(
             id=trade_id,
             trade_date=trade_date,
@@ -433,12 +457,13 @@ class LiveTracker:
         """获取总收益率"""
         return (self.get_total_pnl() / self.initial_capital) * 100
     
-    def calculate_daily_pnl(self, snapshot_date: date = None) -> DailyPnL:
+    def calculate_daily_pnl(self, snapshot_date: date = None, conn: Any = None) -> DailyPnL:
         """
         计算每日盈亏并保存快照
         
         Args:
             snapshot_date: 快照日期，默认今天
+            conn: 可选数据库连接（事务复用）
             
         Returns:
             DailyPnL 对象
@@ -475,6 +500,7 @@ class LiveTracker:
             total_equity=total_equity,
             daily_pnl=daily_pnl,
             daily_return_pct=daily_return_pct,
+            conn=conn,
         )
         
         return pnl

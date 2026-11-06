@@ -10,6 +10,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+# Save original modules to prevent test pollution
+_orig_live_tracker_db = sys.modules.get('live_tracker_db')
+_orig_sina_live_tracker_db = sys.modules.get('sina.live_tracker.live_tracker_db')
+_orig_live_tracker_config = sys.modules.get('live_tracker_config')
+_orig_sina_live_tracker_config = sys.modules.get('sina.live_tracker.live_tracker_config')
+
 # Mock the entire db module used by LiveTracker
 mock_db = MagicMock()
 sys.modules['live_tracker_db'] = mock_db
@@ -75,6 +81,51 @@ class TestLiveTracker(unittest.TestCase):
         
         val = self.tracker.get_positions_value()
         self.assertEqual(val, 11000.0)
+
+    def test_record_buy_atomic_rollback_on_db_failure(self):
+        mock_db.get_latest_price.return_value = 10.0
+        mock_db.get_stock_name.return_value = "平安银行"
+        mock_db.upsert_position.side_effect = RuntimeError("Database disk full")
+
+        initial_cash = self.tracker.cash
+        initial_positions_count = len(self.tracker.positions)
+
+        with self.assertRaises(RuntimeError):
+            self.tracker.record_buy(
+                symbol="000001",
+                price=10.0,
+                shares=1000,
+                trade_date=date(2026, 2, 1),
+                reason="fail buy"
+            )
+
+        # In-memory cash and positions must be completely rolled back!
+        self.assertEqual(self.tracker.cash, initial_cash)
+        self.assertEqual(len(self.tracker.positions), initial_positions_count)
+        self.assertNotIn("000001", self.tracker.positions)
+
+    @classmethod
+    def tearDownClass(cls):
+        # Restore sys.modules to prevent mock leakage
+        if _orig_live_tracker_db is not None:
+            sys.modules['live_tracker_db'] = _orig_live_tracker_db
+        else:
+            sys.modules.pop('live_tracker_db', None)
+
+        if _orig_sina_live_tracker_db is not None:
+            sys.modules['sina.live_tracker.live_tracker_db'] = _orig_sina_live_tracker_db
+        else:
+            sys.modules.pop('sina.live_tracker.live_tracker_db', None)
+
+        if _orig_live_tracker_config is not None:
+            sys.modules['live_tracker_config'] = _orig_live_tracker_config
+        else:
+            sys.modules.pop('live_tracker_config', None)
+
+        if _orig_sina_live_tracker_config is not None:
+            sys.modules['sina.live_tracker.live_tracker_config'] = _orig_sina_live_tracker_config
+        else:
+            sys.modules.pop('sina.live_tracker.live_tracker_config', None)
 
 if __name__ == "__main__":
     unittest.main()
