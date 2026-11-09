@@ -28,6 +28,28 @@ class IncompatibleContextError(ExecutionContextError):
     """执行上下文与目标操作不兼容。"""
 
 
+@dataclass(frozen=True)
+class DataProvenanceProof:
+    """不可篡改的数据源版本、快照与防未来函数证明。"""
+
+    release_id: str
+    dataset_name: str
+    snapshot_id: str
+    pit_snapshot_id: str | None
+    visible_date_max: int
+    gate_evidence_sha256: str
+    row_count: int
+    data_hash: str
+    verified_at: str
+    certified: bool
+    status: str  # "SNAPSHOT_BOUND_CERTIFIED" | "RELEASE_DECLARED_TABLE_UNPARTITIONED" | "HISTORICAL_UNVERIFIED_STUDY"
+    source_table: str = ""
+    snapshot_bound: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def _get_current_code_sha() -> str:
     """获取当前代码仓库 Git HEAD SHA。"""
     try:

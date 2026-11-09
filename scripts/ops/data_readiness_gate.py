@@ -145,10 +145,12 @@ class PreScoreGate:
         try:
             from cross_project.adc_client import ADCClient
             client = self._adc_client or ADCClient()
+            # 强校验：生产链路必须验证数据库连接具备物理只读权限隔离
+            client.verify_server_side_readonly()
+
             gate = client.release.check_release_gate(
                 date_int,
                 allow_degraded=self._allow_degraded,
-                required_critical_datasets=["dwd_daily", "dwd_stock_daily_standard", "dim_stock"],
             )
             self._release_context = gate
             passed = bool(gate.get("eligible", False))

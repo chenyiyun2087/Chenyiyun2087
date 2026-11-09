@@ -7,12 +7,14 @@ from cross_project.adc_client import (
     ADCPITIntegrityError,
     ADCDataReleaseBlockedError,
     ADCDataUnavailableError,
+    CANONICAL_RELEASE_POINTER_NAME,
 )
 from cross_project.execution_context import (
     ExecutionContext,
     ExecutionContextError,
     ProductionAdmissionBlockedError,
     IncompatibleContextError,
+    DataProvenanceProof,
 )
 
 __all__ = [
@@ -23,8 +25,10 @@ __all__ = [
     "ADCPITIntegrityError",
     "ADCDataReleaseBlockedError",
     "ADCDataUnavailableError",
+    "CANONICAL_RELEASE_POINTER_NAME",
     "ExecutionContext",
     "ExecutionContextError",
     "ProductionAdmissionBlockedError",
     "IncompatibleContextError",
+    "DataProvenanceProof",
 ]

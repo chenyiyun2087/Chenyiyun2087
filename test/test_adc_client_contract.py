@@ -237,11 +237,14 @@ def test_release_gate_degraded_optional_only_allowed_when_flagged():
                 "published_at": "2026-11-06 21:05:00",
             }]
         elif "meta_data_release_dataset" in sql:
-            # 关键数据集全 PASS，仅可选数据集 industry_history 处于 DEGRADED
+            # 6 大 Canonical 关键数据集全 PASS，仅可选数据集 industry_history 处于 DEGRADED
             return [
-                {"dataset_name": "dwd_daily", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "dwd_stock_daily_standard", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "dim_stock", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "trade_calendar", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "security_lifecycle_daily", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "equity_daily_bar_raw", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "equity_adjustment_factor", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS"},
                 {"dataset_name": "industry_history", "criticality": "OPTIONAL", "state": "DEGRADED"},
             ]
         return []
@@ -276,9 +279,12 @@ def test_release_gate_ready():
             }]
         elif "meta_data_release_dataset" in sql:
             return [
-                {"dataset_name": "dwd_daily", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "dwd_stock_daily_standard", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "dim_stock", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "trade_calendar", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "security_lifecycle_daily", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "equity_daily_bar_raw", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "equity_adjustment_factor", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS"},
             ]
         return []
 

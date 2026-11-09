@@ -8,13 +8,25 @@
 from __future__ import annotations
 
 import configparser
+import logging
 import os
 import re
 from typing import Any
 
 import pymysql
 
+logger = logging.getLogger(__name__)
+
 ADC_DATABASE = "tushare_stock"
+CANONICAL_RELEASE_POINTER_NAME = "CERTIFIED_DAILY"
+CANONICAL_CRITICAL_PRODUCTS = (
+    "trade_calendar",
+    "security_lifecycle_daily",
+    "equity_daily_bar_raw",
+    "equity_adjustment_factor",
+    "corporate_action_event",
+    "daily_basic",
+)
 
 
 # ===========================================================================
@@ -208,47 +220,95 @@ class ADCClient:
                 f"跨项目数据访问违反只读契约，禁止执行非查询语句: {sql[:60]}..."
             )
 
-    def verify_server_side_readonly(self) -> bool:
+    def verify_server_side_readonly(self) -> dict[str, Any]:
         """检查数据库服务端实际权限与拒写行为。
-        
-        不仅在客户端做 SQL 正则过滤，更在服务端检验实际权限，确保无法向 ASDC 执行任何写入。
+
+        合规准则：
+        1. 必须使用非 root 只读账号；
+        2. SHOW GRANTS 或权限元数据不得包含全局写权限（ALL PRIVILEGES, GRANT OPTION, SUPER）或针对目标库的写操作（INSERT, UPDATE, DELETE, CREATE, DROP, ALTER）；
+        3. 执行严格探测写操作，若无异常顺利执行，证明账号具有物理写权限，必须判定为失败抛出 ADCReadOnlyViolationError；
+        4. 仅明确的服务端权限拒绝错误码（1142: ER_TABLEACCESS_DENIED_ERROR, 1044: ER_DBACCESS_DENIED_ERROR, 1227: ER_SPECIFIC_ACCESS_DENIED_ERROR, 1290: ER_OPTION_PREVENTS_STATEMENT）可作为拒写合规证据；
+        5. 任何语法错误 (1064)、表不存在 (1146)、连接异常 (2002/2003/2006/2013) 或未知异常，一律判定为失败并抛出异常，绝不放行！
         """
         if not self._readonly_only:
-            return True
+            return {"readonly_verified": False, "reason": "READONLY_MODE_DISABLED"}
+
+        config = self._resolve_config()
+        user = config.get("user", "")
+        if user.lower() == "root":
+            raise ADCReadOnlyViolationError(
+                "安全红线阻断：跨项目只读客户端禁止复用超级管理员账号 'root'！"
+            )
 
         conn = self._get_conn()
         cur = conn.cursor()
 
-        # 1. 检查超级管理员权限 (SHOW GRANTS)
+        # 1. 检查授权权限 (SHOW GRANTS)
         try:
             cur.execute("SHOW GRANTS")
             rows = cur.fetchall()
             for r in rows:
                 val = str(r.get(list(r.keys())[0], "") if isinstance(r, dict) else r[0]).upper()
-                if "ALL PRIVILEGES ON *.*" in val or "WITH GRANT OPTION" in val:
+                # 检查全局超级权限
+                if "ALL PRIVILEGES ON *.*" in val or "WITH GRANT OPTION" in val or "SUPER" in val:
                     raise ADCReadOnlyViolationError(
-                        "安全红线阻断：当前连接拥有全局超级管理员权限 (ALL PRIVILEGES)，违反只读契约！"
+                        f"安全红线阻断：当前连接拥有全局超级管理员权限 (ALL PRIVILEGES)，账号 [{user}] 违反只读隔离！"
                     )
+                # 检查针对 *.* 或目标数据库的写权限
+                for write_perm in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE"):
+                    if f"{write_perm} ON *.*" in val or f"{write_perm} ON `{self.database_name}`.*" in val or f"{write_perm} ON {self.database_name}.*" in val:
+                        raise ADCReadOnlyViolationError(
+                            f"安全红线阻断：只读账号 [{user}] 被授予了写操作权限 [{write_perm}]，违反只读隔离！"
+                        )
         except ADCReadOnlyViolationError:
             raise
-        except Exception:
-            pass
+        except pymysql.MySQLError as e:
+            err_code = e.args[0] if e.args else None
+            if err_code in (2002, 2003, 2006, 2013):
+                raise ADCConnectionError(f"数据库连接异常，无法完成只读权限审计: {e}") from e
+            logger.info("SHOW GRANTS 执行受限 (%s)，通过服务端主动拒写探测继续核验证明", e)
 
         # 2. 真实服务端拒写探测 (Write probe)
-        # 尝试执行无害写操作探测服务端权限：预期必须触发 Access denied (MySQL error 1142/1044/1227)
+        # 尝试执行无害写探测：由于是只读账号，预期必须被服务端权限直接拒绝 (Access denied)
+        probe_sql = f"UPDATE {self._t('meta_data_release')} SET state = state WHERE 1=0"
         try:
-            cur.execute(f"UPDATE {self._t('meta_data_release')} SET state = state WHERE 1=0")
+            cur.execute(probe_sql)
+            # 若执行到这里未抛出异常，说明写语句被服务端执行了，证明具有写权限！
+            raise ADCReadOnlyViolationError(
+                f"安全红线阻断：服务端成功执行了写探测语句 [{probe_sql}]，证明账号 [{user}] 具有物理写权限，只读验证失败！"
+            )
+        except ADCReadOnlyViolationError:
+            raise
         except pymysql.MySQLError as err:
-            logger.info("服务端拒写行为校验通过 (Access Denied): %s", err)
-            return True
-        except Exception as err:
-            logger.info("服务端写探测拦截: %s", err)
-            return True
-
-        # 如果能够无阻碍通过，做进一步检查
-        if os.getenv("ADC_STRICT_SERVER_RO_CHECK") == "1":
-            raise ADCReadOnlyViolationError("安全红线阻断：未能检测到服务端拒写行为，账号权限可能过高！")
-        return True
+            err_code = err.args[0] if err.args else None
+            # 仅允许权威的账号级权限拒绝错误码 (1142: 表级拒绝, 1044: 库级拒绝, 1227: 特定权限缺失)
+            # 明确排除 1290 (ER_OPTION_PREVENTS_STATEMENT: 服务器处于 --read-only 模式)，因为全局只读不能证明账号受最小权限约束
+            PERMITTED_RO_ERROR_CODES = (1142, 1044, 1227)
+            if err_code in PERMITTED_RO_ERROR_CODES:
+                logger.info("服务端拒写行为校验通过: 捕获预期权限拒绝错误 (code=%s, msg=%s)", err_code, err)
+                return {
+                    "readonly_verified": True,
+                    "user": user,
+                    "target_database": self.database_name,
+                    "rejection_code": err_code,
+                    "verified_method": "SERVER_SIDE_ACCESS_DENIED_PROBE",
+                }
+            elif err_code == 1290:
+                raise ADCReadOnlyViolationError(
+                    f"安全红线阻断：数据库实例处于全局只读模式 (code=1290: {err})，不能单独证明账号 [{user}] 具有账号级最小只读权限！"
+                )
+            elif err_code in (2002, 2003, 2006, 2013):
+                raise ADCConnectionError(f"只读验证期间数据库连接中断: {err}") from err
+            elif err_code == 1146:
+                raise ADCReadOnlyViolationError(f"只读探测目标表不存在 (code=1146): {err}，无法证明服务端权限") from err
+            elif err_code == 1064:
+                raise ADCReadOnlyViolationError(f"只读探测 SQL 语法错误 (code=1064): {err}，无法证明服务端权限") from err
+            else:
+                raise ADCReadOnlyViolationError(
+                    f"安全红线阻断：服务端返回非预期的异常错误 (code={err_code}: {err})，不能证明账号无写权限！"
+                ) from err
+        except Exception as e:
+            raise ADCReadOnlyViolationError(f"服务端只读验证失败，发生未知异常: {e}") from e
 
     def _query(self, sql: str, params: tuple | dict | None = None) -> list[dict[str, Any]]:
         self._validate_readonly_sql(sql)
@@ -312,21 +372,21 @@ class ADCReleaseClient:
     def __init__(self, client: ADCClient):
         self._c = client
 
-    def get_active_release_pointer(self, pointer_name: str = "certified_daily") -> dict[str, Any] | None:
-        """从 meta_data_release_pointer 获取正式发布的活动指针。"""
+    def get_active_release_pointer(self, pointer_name: str = CANONICAL_RELEASE_POINTER_NAME) -> dict[str, Any] | None:
+        """从 meta_data_release_pointer 获取正式发布的活动指针。严格精确匹配规范指针名称。"""
         if not self._c._table_ready("meta_data_release_pointer"):
             return None
-        candidate_names = (pointer_name, "prod_active", "prod_certified_daily", "certified_daily")
-        placeholders = ",".join(["%s"] * len(candidate_names))
+        p_upper = pointer_name.strip().upper()
+        p_lower = pointer_name.strip().lower()
         rows = self._c._query(f"""
             SELECT pointer_name, release_id, pointer_version, updated_at
             FROM {self._c._t('meta_data_release_pointer')}
-            WHERE pointer_name IN ({placeholders})
+            WHERE pointer_name = %s OR pointer_name = %s
             ORDER BY updated_at DESC LIMIT 1
-        """, candidate_names)
+        """, (p_upper, p_lower))
         return rows[0] if rows else None
 
-    def get_certified_release(self, trade_date: int, pointer_name: str = "certified_daily") -> dict[str, Any] | None:
+    def get_certified_release(self, trade_date: int, pointer_name: str = CANONICAL_RELEASE_POINTER_NAME) -> dict[str, Any] | None:
         """从 ASDC meta_data_release 读取指定交易日的 CERTIFIED_DAILY 发布记录，并结合发布指针验证。"""
         if not self._c._table_ready("meta_data_release"):
             return None
@@ -345,9 +405,11 @@ class ADCReleaseClient:
         if pointer:
             release["active_pointer"] = pointer
             release["pointer_matched"] = (pointer.get("release_id") == release.get("release_id"))
+            release["pointer_status"] = "MATCHED" if release["pointer_matched"] else "POINTER_MISMATCH"
         else:
             release["active_pointer"] = None
-            release["pointer_matched"] = True
+            release["pointer_matched"] = False
+            release["pointer_status"] = "POINTER_MISSING"
         return release
 
     def get_release_datasets(self, release_id: str) -> list[dict[str, Any]]:
@@ -399,39 +461,44 @@ class ADCReleaseClient:
         ver_id = release.get("data_version_id")
         pit_id = release.get("pit_snapshot_id")
 
-        if state == "BLOCKED":
+        # 顶层状态严格白名单校验：仅放行 READY 或受控的 DEGRADED；
+        # 其余所有状态（BLOCKED、SUPERSEDED、BUILDING、PENDING、空状态或未知状态）一律 Fail-Closed 严格阻断
+        if state not in ("READY", "DEGRADED"):
             return {
                 "eligible": False,
                 "is_production_eligible": False,
-                "is_research_eligible": True,
+                "is_research_eligible": (state in ("BLOCKED", "BUILDING", "PENDING")),
+                "state": state,
+                "release_id": rel_id,
+                "data_version_id": ver_id,
+                "pit_snapshot_id": pit_id,
+                "critical_datasets_ok": False,
+                "degraded_optional_datasets": [],
+                "blocked_datasets": ["TOP_LEVEL_STATE_NOT_PERMITTED"],
+                "reason": f"ASDC 发布版本顶层状态 [{state}] 未通过白名单校验（仅放行 READY 或 DEGRADED），Fail-Closed 严格阻断！",
+            }
+
+        # 验证指针存在性与一致性
+        pointer = release.get("active_pointer")
+        if not pointer:
+            return {
+                "eligible": False,
+                "is_production_eligible": False,
+                "is_research_eligible": False,
                 "state": "BLOCKED",
                 "release_id": rel_id,
                 "data_version_id": ver_id,
                 "pit_snapshot_id": pit_id,
                 "critical_datasets_ok": False,
                 "degraded_optional_datasets": [],
-                "blocked_datasets": ["ALL_BLOCKED_BY_GATE"],
-                "reason": f"ASDC 发布已被质量门禁阻断 (BLOCKED)",
+                "blocked_datasets": ["POINTER_MISSING"],
+                "reason": (
+                    f"正式发布缺少有效的活动指针 (POINTER_MISSING)，未绑定规范指针 "
+                    f"{CANONICAL_RELEASE_POINTER_NAME}，Fail-Closed 阻断！"
+                ),
             }
 
-        if state == "SUPERSEDED":
-            return {
-                "eligible": False,
-                "is_production_eligible": False,
-                "is_research_eligible": False,
-                "state": "SUPERSEDED",
-                "release_id": rel_id,
-                "data_version_id": ver_id,
-                "pit_snapshot_id": pit_id,
-                "critical_datasets_ok": False,
-                "degraded_optional_datasets": [],
-                "blocked_datasets": [],
-                "reason": f"该发布版本已被更新版本替代 (SUPERSEDED)，禁止作为当前生产日版使用",
-            }
-
-        # 验证指针一致性
-        if release.get("active_pointer") and not release.get("pointer_matched"):
-            pointer = release["active_pointer"]
+        if not release.get("pointer_matched"):
             return {
                 "eligible": False,
                 "is_production_eligible": False,
@@ -455,8 +522,7 @@ class ADCReleaseClient:
         optional_degraded = []
         blocked_datasets = []
 
-        canonical_critical = ["dwd_daily", "dwd_stock_daily_standard", "dim_stock"]
-        target_critical = set(required_critical_datasets or canonical_critical)
+        found_datasets = {ds.get("dataset_name", ""): ds for ds in datasets}
 
         # 核心防空检查：若数据集列表为空，绝不允许放行
         if not datasets:
@@ -474,7 +540,11 @@ class ADCReleaseClient:
                 "reason": f"发布版本 [{rel_id}] 未绑定任何有效数据集 (datasets_count=0)，Critical 数据集缺失，Fail-Closed 阻断！",
             }
 
-        found_datasets = {ds.get("dataset_name", ""): ds for ds in datasets}
+        # 正式认证强制依据 ASDC 六大权威数据产品目录验证，外部参数只能追加要求，绝不能缩小必需底线
+        target_critical = set(CANONICAL_CRITICAL_PRODUCTS)
+        if required_critical_datasets:
+            target_critical.update(required_critical_datasets)
+
         missing_critical = target_critical - set(found_datasets.keys())
         for m in sorted(missing_critical):
             critical_failed.append(f"{m}(MISSING)")
@@ -483,10 +553,13 @@ class ADCReleaseClient:
             ds_name = ds.get("dataset_name", "")
             ds_crit = str(ds.get("criticality") or "").upper()
             ds_state = str(ds.get("state") or "").upper()
+            ds_snap = ds.get("snapshot_id")
 
             is_critical = (ds_crit == "CRITICAL" or ds_name in target_critical)
             if is_critical:
-                if ds_state not in ("PASS", "READY", "OK"):
+                if "snapshot_id" in ds and (not ds_snap or str(ds_snap).strip() in ("", "None", "null", "missing", "MISSING")):
+                    critical_failed.append(f"{ds_name}(SNAPSHOT_MISSING)")
+                elif ds_state not in ("PASS", "READY", "OK"):
                     critical_failed.append(f"{ds_name}({ds_state or 'NOT_PASS'})")
             else:
                 if ds_state == "DEGRADED":
@@ -875,32 +948,42 @@ class ADCDataClient:
         chunk_size: int = 500,
         release_id: str | None = None,
         pit_snapshot_id: str | None = None,
+        execution_context: Any = None,
     ) -> Any:
         """批量获取股票日线行情，标准输出列完全对齐 ScoreRank 和回测引擎。
 
         当传入 release_id 时，严格校验版本可见日期上限 visible_date_max（防未来函数），
-        并将认证元数据持久绑定至 DataFrame.attrs。
+        并将不可篡改的数据证明 DataProvenanceProof 持久绑定至 DataFrame.attrs['provenance_proof']。
+        生产模式下未绑定认证 release_id 严禁放行。
         """
+        import hashlib
+        from datetime import datetime
         import pandas as pd
-        if not symbols:
-            empty_df = pd.DataFrame(columns=[
-                "symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"
-            ])
-            empty_df.attrs["release_id"] = release_id
-            empty_df.attrs["pit_snapshot_id"] = pit_snapshot_id
-            empty_df.attrs["certified"] = bool(release_id)
-            return empty_df
+        from cross_project.execution_context import DataProvenanceProof, ProductionAdmissionBlockedError
 
-        # 版本可见性严格审计：若指定了 release_id，校验请求截止日是否越界
-        if release_id:
-            datasets = self._c.release.get_release_datasets(release_id)
-            for ds in datasets:
-                if ds.get("dataset_name") in ("dwd_stock_daily_standard", "dwd_daily"):
-                    v_max = ds.get("visible_date_max")
-                    if v_max and end_date and int(end_date) > int(v_max):
-                        raise ValueError(
-                            f"未来函数拦截：请求日期 {end_date} 超过了该 Release [{release_id}] 的最大可见日期 {v_max}！"
-                        )
+        if execution_context is not None:
+            ctx_mode = getattr(execution_context, "mode", "PRODUCTION")
+            if ctx_mode == "PRODUCTION":
+                if not release_id and getattr(execution_context, "release_id", None):
+                    release_id = execution_context.release_id
+                if not pit_snapshot_id and getattr(execution_context, "pit_snapshot_id", None):
+                    pit_snapshot_id = execution_context.pit_snapshot_id
+                if not release_id or str(release_id).strip() in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"):
+                    raise ProductionAdmissionBlockedError(
+                        "安全红线阻断：生产执行模式下读取日线行情必须绑定有效经过认证的 release_id！"
+                    )
+
+        # 北交所 (BJ) 标的覆盖审计：
+        # ASDC 物理快照 dwd_equity_daily_bar_v2 仅覆盖沪深市场 (SH/SZ)。
+        # 若生产请求包含北交所标的，严格 Fail-Closed 阻断，禁止未认证执行或部分漏数。
+        bj_symbols = [
+            s for s in symbols
+            if str(s).strip().endswith(".BJ") or (str(s).strip().startswith(("4", "8", "92")) and "." not in str(s))
+        ]
+        if bj_symbols and execution_context and getattr(execution_context, "mode", "PRODUCTION").upper() == "PRODUCTION":
+            raise ProductionAdmissionBlockedError(
+                f"标的未覆盖阻断：ASDC 正式物理快照 [{release_id}] 仅覆盖沪深市场 (SH/SZ)，请求标的包含北交所标的: {bj_symbols}，严禁未认证执行或部分漏数！"
+            )
 
         adj_lower = (adj_type or "").strip().lower()
         if adj_lower == "raw":
@@ -909,6 +992,98 @@ class ADCDataClient:
         else:
             table_name = "dwd_stock_daily_standard"
             col_map = "adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close, vol AS volume, amount"
+
+        # 版本可见性严格审计：若指定了 release_id，校验请求截止日是否越界
+        v_max = None
+        matched_snapshot_id = None
+        gate_evidence_sha256 = ""
+        if release_id:
+            datasets = self._c.release.get_release_datasets(release_id)
+            target_ds_names = (
+                ("dwd_daily", "equity_daily_bar_raw")
+                if adj_lower == "raw"
+                else ("dwd_stock_daily_standard", "equity_adjustment_factor", "dwd_daily")
+            )
+            for ds in datasets:
+                if ds.get("dataset_name") in target_ds_names:
+                    v_max = ds.get("visible_date_max")
+                    matched_snapshot_id = ds.get("snapshot_id")
+                    gate_evidence_sha256 = ds.get("gate_evidence_sha256") or ""
+                    break
+            if v_max is None:
+                v_maxes = [ds.get("visible_date_max") for ds in datasets if ds.get("visible_date_max")]
+                if v_maxes:
+                    v_max = min(v_maxes)
+            if v_max and end_date and int(end_date) > int(v_max):
+                raise ValueError(
+                    f"未来函数拦截：请求日期 {end_date} 超过了该 Release [{release_id}] 的最大可见日期 {v_max}！"
+                )
+
+        # 核心物理快照绑定：若数据底座存在不可变分区物理表 dwd_equity_daily_bar_v2 且绑定了合法 snapshot_id，
+        # 则强制在 SQL 查询中绑定 WHERE snapshot_id = %s，物理锁定不可伪造快照来源。
+        use_snapshot_partition = bool(
+            matched_snapshot_id
+            and str(matched_snapshot_id).strip() not in ("", "None", "null", "missing", "UNVERIFIED", "PLACEHOLDER")
+            and self._c._table_ready("dwd_equity_daily_bar_v2")
+        )
+
+        if use_snapshot_partition:
+            table_name = "dwd_equity_daily_bar_v2"
+            snapshot_bound = True
+            # 注意单位换算：dwd_equity_daily_bar_v2 的 amount_cny 单位为元 (CNY)，
+            # 而 ScoreRank / 回测引擎标准日线接口的 amount 口径为千元，需强制除以 1000.0 对齐口径。
+            if adj_lower == "raw":
+                col_map = "open AS open, high AS high, low AS low, close AS close, volume_hands AS volume, (amount_cny / 1000.0) AS amount"
+            else:
+                col_map = "adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close, volume_hands AS volume, (amount_cny / 1000.0) AS amount"
+            snap_clause = "snapshot_id = %s AND "
+            snap_params = [matched_snapshot_id]
+        else:
+            snapshot_bound = False
+            snap_clause = ""
+            snap_params = []
+            if adj_lower == "raw":
+                table_name = "dwd_daily"
+                col_map = "open AS open, high AS high, low AS low, close AS close, vol AS volume, amount"
+            else:
+                table_name = "dwd_stock_daily_standard"
+                col_map = "adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close, vol AS volume, amount"
+
+        is_certified = bool(release_id and str(release_id).strip() not in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"))
+
+        def _make_proof(row_count: int, d_hash: str) -> DataProvenanceProof:
+            if is_certified and snapshot_bound:
+                status_str = "SNAPSHOT_BOUND_CERTIFIED"
+            elif is_certified:
+                status_str = "RELEASE_DECLARED_TABLE_UNPARTITIONED"
+            else:
+                status_str = "HISTORICAL_UNVERIFIED_STUDY"
+
+            return DataProvenanceProof(
+                release_id=str(release_id or "UNVERIFIED"),
+                dataset_name=table_name,
+                snapshot_id=str(matched_snapshot_id or ("UNVERIFIED_DIRECT_TABLE" if not is_certified else f"snap_{release_id}")),
+                pit_snapshot_id=str(pit_snapshot_id) if pit_snapshot_id else None,
+                visible_date_max=int(v_max or (end_date or start_date)),
+                gate_evidence_sha256=str(gate_evidence_sha256 or ""),
+                row_count=row_count,
+                data_hash=d_hash,
+                verified_at=datetime.now().isoformat(),
+                certified=is_certified,
+                status=status_str,
+                source_table=table_name,
+                snapshot_bound=snapshot_bound,
+            )
+
+        if not symbols:
+            empty_df = pd.DataFrame(columns=[
+                "symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"
+            ])
+            empty_df.attrs["release_id"] = release_id
+            empty_df.attrs["pit_snapshot_id"] = pit_snapshot_id
+            empty_df.attrs["certified"] = is_certified
+            empty_df.attrs["provenance_proof"] = _make_proof(0, hashlib.sha256(b"EMPTY").hexdigest())
+            return empty_df
 
         def to_ts_code(s: str) -> str:
             s = str(s).strip()
@@ -934,10 +1109,10 @@ class ADCDataClient:
             sql = f"""
                 SELECT ts_code, trade_date, {col_map}
                 FROM {self._t(table_name)}
-                WHERE ts_code IN ({placeholders}) AND trade_date >= %s {end_clause}
+                WHERE {snap_clause}ts_code IN ({placeholders}) AND trade_date >= %s {end_clause}
                 ORDER BY trade_date, ts_code
             """
-            params: list[Any] = list(chunk) + [start_date]
+            params: list[Any] = snap_params + list(chunk) + [start_date]
             if end_date:
                 params.append(end_date)
             rows = self._c._query(sql, tuple(params))
@@ -949,16 +1124,19 @@ class ADCDataClient:
             ])
             empty_df.attrs["release_id"] = release_id
             empty_df.attrs["pit_snapshot_id"] = pit_snapshot_id
-            empty_df.attrs["certified"] = bool(release_id)
+            empty_df.attrs["certified"] = is_certified
+            empty_df.attrs["provenance_proof"] = _make_proof(0, hashlib.sha256(b"EMPTY").hexdigest())
             return empty_df
 
         df = pd.DataFrame(results)
         df["symbol"] = df["ts_code"].map(ts_to_sym)
         cols = ["symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"]
         out_df = df[[c for c in cols if c in df.columns]].copy()
+        data_hash = hashlib.sha256(out_df.to_csv(index=False).encode("utf-8")).hexdigest()
         out_df.attrs["release_id"] = release_id
         out_df.attrs["pit_snapshot_id"] = pit_snapshot_id
-        out_df.attrs["certified"] = bool(release_id)
+        out_df.attrs["certified"] = is_certified
+        out_df.attrs["provenance_proof"] = _make_proof(len(out_df), data_hash)
         return out_df
 
     def get_latest_data_date(self, symbols: list[str] | None = None) -> int | None:
