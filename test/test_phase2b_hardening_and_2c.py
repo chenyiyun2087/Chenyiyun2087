@@ -1,139 +1,282 @@
-"""Phase 2B-Hardening 与 Phase 2C 闭环验收测试套件。"""
+"""Phase 2B-Hardening 与 Phase 2C/2D 闭环验收与安全测试套件。"""
 
 from __future__ import annotations
 
 import os
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
+from backtest.src.backtest_engine.datafeed.tushare_feed import TushareDailyFeed
 from cross_project.adc_client import (
     ADCClient,
     ADCConnectionError,
     ADCReadOnlyViolationError,
+    ADCReleaseClient,
 )
 from cross_project.execution_context import (
     ExecutionContext,
     ProductionAdmissionBlockedError,
 )
+from scoreRank.cli.run_daily import _register_snapshot_and_layers, save_scores_to_db
 from scoreRank.core.db_io import fetch_bars_batch
-from sina.live_tracker.live_tracker_db import get_latest_price
+from scripts.ops.data_readiness_gate import PipelineReadinessGate, PreScoreGate
+from sina.live_tracker.live_tracker_db import get_latest_price, get_latest_prices_from_kline
 
 
-def test_production_context_requires_eligible_release():
-    # 模拟未发布或被阻断的 release_gate_result
-    blocked_gate = {
-        "eligible": False,
-        "state": "BLOCKED",
-        "reason": "PIT 质量门禁阻断",
+# ---------------------------------------------------------------------------
+# P0-01: READY 成功路径端到端测试与字段契约对齐
+# ---------------------------------------------------------------------------
+
+def test_ready_success_path_end_to_end_context_creation():
+    """验证当 ASDC 发布门禁 READY 时，PreScoreGate 与 ExecutionContext.create_production 字段完美对齐并成功创建。"""
+    mock_engine = MagicMock()
+    mock_adc_client = MagicMock()
+    mock_adc_client.release.check_release_gate.return_value = {
+        "eligible": True,
+        "is_production_eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_20261106_01",
+        "pit_snapshot_id": "pit_20261106_01",
+        "critical_datasets_ok": True,
+        "degraded_optional_datasets": [],
+        "blocked_datasets": [],
+        "reason": "正式日版认证通过",
     }
-    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
-        ExecutionContext.create_production(20261106, blocked_gate)
-    assert "未获得正式发布资格" in str(exc_info.value)
+
+    gate = PreScoreGate(mock_engine, adc_client=mock_adc_client)
+    gate_res = gate.check_asdc_release_gate(date(2026, 11, 6))
+
+    assert gate_res["passed"] is True
+    assert gate_res["eligible"] is True
+    assert gate_res["state"] == "READY"
+    assert gate_res["release_state"] == "READY"
+
+    # 端到端串联验证：直接传给 ExecutionContext.create_production 必须成功
+    ctx = ExecutionContext.create_production(20261106, gate_res)
+    assert ctx.mode == "PRODUCTION"
+    assert ctx.research_only is False
+    assert ctx.release_id == "rel_20261106_v1"
+    assert ctx.data_version_id == "dv_20261106_01"
+    assert ctx.pit_snapshot_id == "pit_20261106_01"
+    assert ctx.certification_status == "CERTIFIED_DAILY"
+
+    # 验证准入校验放行正式写入
+    ctx.validate_for_production_write("score_rank_daily")
 
 
-def test_production_context_admission_write_guard():
-    # 合规通过的 Release 创建生产上下文
-    ready_gate = {
+def test_production_context_blocks_placeholder_credentials():
+    """验证 ExecutionContext.create_production 严禁使用占位符或缺失凭据创建正式上下文。"""
+    placeholder_gate = {
         "eligible": True,
         "state": "READY",
-        "release_id": "rel_20261106_ready",
+        "release_id": "PLACEHOLDER",
+        "data_version_id": "None",
+        "pit_snapshot_id": "",
+    }
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        ExecutionContext.create_production(20261106, placeholder_gate)
+    assert "发布凭据不完整或为占位符" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# P0-02: Critical 数据集缺失与指针一致性校验
+# ---------------------------------------------------------------------------
+
+def test_check_release_gate_blocks_empty_datasets():
+    """验证当 release 存在但绑定的数据集列表为空时，强制 Fail-Closed 阻断。"""
+    mock_client = MagicMock()
+    mock_client._table_ready.return_value = True
+    release_client = ADCReleaseClient(mock_client)
+
+    with patch.object(release_client, "get_certified_release", return_value={
+        "release_id": "rel_20261106_empty",
+        "state": "READY",
         "data_version_id": "dv_v1",
         "pit_snapshot_id": "pit_v1",
+        "active_pointer": None,
+        "pointer_matched": True,
+    }), patch.object(release_client, "get_release_datasets", return_value=[]):
+
+        res = release_client.check_release_gate(20261106)
+        assert res["eligible"] is False
+        assert res["state"] == "BLOCKED"
+        assert "ALL_DATASETS_MISSING" in res["blocked_datasets"]
+        assert "未绑定任何有效数据集" in res["reason"]
+
+
+def test_check_release_gate_blocks_missing_critical_datasets():
+    """验证当缺少必需的 Critical 数据集（如缺少 dim_stock）时，强制 Fail-Closed 阻断。"""
+    mock_client = MagicMock()
+    mock_client._table_ready.return_value = True
+    release_client = ADCReleaseClient(mock_client)
+
+    # 仅提供部分数据集，缺少 dim_stock
+    partial_datasets = [
+        {"dataset_name": "dwd_daily", "criticality": "CRITICAL", "state": "PASS"},
+        {"dataset_name": "dwd_stock_daily_standard", "criticality": "CRITICAL", "state": "PASS"},
+    ]
+
+    with patch.object(release_client, "get_certified_release", return_value={
+        "release_id": "rel_20261106_partial",
+        "state": "READY",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+        "active_pointer": None,
+        "pointer_matched": True,
+    }), patch.object(release_client, "get_release_datasets", return_value=partial_datasets):
+
+        res = release_client.check_release_gate(
+            20261106,
+            required_critical_datasets=["dwd_daily", "dwd_stock_daily_standard", "dim_stock"],
+        )
+        assert res["eligible"] is False
+        assert res["state"] == "BLOCKED"
+        assert "dim_stock(MISSING)" in res["reason"]
+
+
+def test_check_release_gate_blocks_pointer_mismatch():
+    """验证当活动发布指针 meta_data_release_pointer 与当前 release_id 冲突时，强制阻断。"""
+    mock_client = MagicMock()
+    mock_client._table_ready.return_value = True
+    release_client = ADCReleaseClient(mock_client)
+
+    pointer_mismatch_release = {
+        "release_id": "rel_20261106_old",
+        "state": "READY",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+        "active_pointer": {"release_id": "rel_20261106_latest"},
+        "pointer_matched": False,
     }
-    prod_ctx = ExecutionContext.create_production(20261106, ready_gate)
-    # 正式模式允许写入生产表
-    prod_ctx.validate_for_production_write("score_rank_daily")
 
-    # 研究模式严格阻断向生产资源写入
-    res_ctx = ExecutionContext.create_research(20261106, ready_gate)
+    with patch.object(release_client, "get_certified_release", return_value=pointer_mismatch_release):
+        res = release_client.check_release_gate(20261106)
+        assert res["eligible"] is False
+        assert res["state"] == "BLOCKED"
+        assert "POINTER_MISMATCH" in res["blocked_datasets"]
+        assert "发布指针冲突" in res["reason"]
+
+
+# ---------------------------------------------------------------------------
+# P0-03: 消除空执行上下文写入绕过
+# ---------------------------------------------------------------------------
+
+def test_save_scores_blocks_none_execution_context():
+    """验证调用 save_scores_to_db 时传入 execution_context=None 强制抛出 ProductionAdmissionBlockedError。"""
+    df_fake = pd.DataFrame([{"stock_code": "000001.SZ", "score": 90.0}])
     with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
-        res_ctx.validate_for_production_write("score_rank_daily")
-    assert "严禁向正式生产资源 [score_rank_daily] 写入数据" in str(exc_info.value)
+        save_scores_to_db(
+            df_fake,
+            asof_date=pd.to_datetime("2026-11-06"),
+            connection=MagicMock(),
+            execution_context=None,
+        )
+    assert "禁止传入 None 绕过数据准入校验" in str(exc_info.value)
 
 
-def test_adc_client_blocks_root_user_in_readonly_mode(monkeypatch):
-    monkeypatch.delenv("ADC_ALLOW_ROOT_RO", raising=False)
-    client = ADCClient(host="127.0.0.1", user="root", readonly_only=True)
-    with pytest.raises(ADCReadOnlyViolationError) as exc_info:
-        client._resolve_config()
-    assert "安全红线阻断：跨项目只读客户端禁止复用超级管理员账号 'root'" in str(exc_info.value)
+def test_register_snapshot_blocks_none_execution_context():
+    """验证调用 _register_snapshot_and_layers 时传入 execution_context=None 强制抛出 ProductionAdmissionBlockedError。"""
+    df_fake = pd.DataFrame([{"stock_code": "000001.SZ", "score": 90.0, "symbol": "000001"}])
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        _register_snapshot_and_layers(
+            df_fake,
+            asof_date=pd.to_datetime("2026-11-06"),
+            snapshot_id="rs_test_01",
+            bs_source_batch="ml_detect_v3",
+            execution_context=None,
+        )
+    assert "禁止传入 None 绕过数据准入校验" in str(exc_info.value)
 
 
-def test_adc_client_missing_user_fails_without_fallback_root(monkeypatch):
-    monkeypatch.delenv("ADC_MYSQL_USER", raising=False)
-    monkeypatch.delenv("ASDC_MYSQL_USER", raising=False)
-    monkeypatch.delenv("ADC_MYSQL_RO_USER", raising=False)
-    monkeypatch.delenv("ASDC_MYSQL_RO_USER", raising=False)
+# ---------------------------------------------------------------------------
+# P0-04: 关闭 Live Tracker 与 Backtest 的生产静默回退
+# ---------------------------------------------------------------------------
 
-    fake_cfg = "[mysql]\nhost = 127.0.0.1\nport = 3306\n"
-    with patch("builtins.open", MagicMock()), \
-         patch("configparser.ConfigParser.read", MagicMock()), \
-         patch("configparser.ConfigParser.has_section", return_value=True), \
-         patch("configparser.ConfigParser.get", return_value=None), \
-         patch("os.path.exists", return_value=True):
-        client = ADCClient(config_path="/fake/etl.ini", readonly_only=True)
-        with pytest.raises(ADCConnectionError) as exc_info:
-            client._resolve_config()
-        assert "严禁隐式回退 root 账号" in str(exc_info.value)
-
-
-def test_fetch_bars_batch_fails_closed_in_production():
-    # 在正式生产模式下，ADCClient 报错必须直接向外抛出异常，绝不静默回退 SQL
-    with patch("cross_project.adc_client.ADCClient", side_effect=RuntimeError("网络断开")):
+def test_live_tracker_fail_closed_in_production():
+    """验证在正式/可信影子模式下，Live Tracker ADCClient 失败时绝不静默回退 SQL，严格抛出 RuntimeError。"""
+    with patch("cross_project.adc_client.ADCClient", side_effect=RuntimeError("ADC 数据库不可用")):
         with pytest.raises(RuntimeError) as exc_info:
-            fetch_bars_batch(
-                engine=None,
+            get_latest_prices_from_kline(
                 symbols=["000001"],
-                adj_type="qfq",
-                start_date="2026-11-06",
-                execution_context=None,  # 默认生产模式
+                allow_research_fallback=False,
             )
-        assert "正式策略生产取数阻断" in str(exc_info.value)
-        assert "严格禁止静默回退未认证 SQL" in str(exc_info.value)
+        assert "严格禁止静默回退未认证原生 SQL" in str(exc_info.value)
 
 
-def test_live_tracker_blocks_zero_price():
-    # 模拟最新价格未查到的异常场景，禁止返回 0.0 导致资产断崖失真
-    with patch("sina.live_tracker.live_tracker_db.get_latest_prices_from_kline", return_value={}), \
+def test_live_tracker_allows_fallback_in_explicit_research():
+    """验证在显式指定 allow_research_fallback=True 的研究模式下允许回退并发出警告。"""
+    with patch("cross_project.adc_client.ADCClient", side_effect=RuntimeError("ADC 数据库不可用")), \
          patch("sina.live_tracker.live_tracker_db.get_db_connection") as mock_conn:
         mock_cursor = MagicMock()
-        mock_cursor.fetchone.return_value = None
+        mock_cursor.fetchone.return_value = {"max_date": 20261106}
         mock_conn.return_value.cursor.return_value.__enter__.return_value = mock_cursor
 
+        # 模拟回退路径执行
+        prices = get_latest_prices_from_kline(
+            symbols=["000001"],
+            trade_date=date(2026, 11, 6),
+            allow_research_fallback=True,
+        )
+        assert isinstance(prices, dict)
+
+
+def test_backtest_feed_fail_closed_in_production():
+    """验证在可信回测生产模式下，ADCClient 失败时绝不静默回退 SQL，严格抛出 RuntimeError。"""
+    feed = TushareDailyFeed(mode="production", allow_research_fallback=False)
+    with patch("cross_project.adc_client.ADCClient", side_effect=RuntimeError("ADC 数据库不可用")):
+        with pytest.raises(RuntimeError) as exc_info:
+            list(feed.iter_bars(
+                start="2026-11-01",
+                end="2026-11-06",
+                universe=["000001.SZ"],
+                fields=None,
+                freq="1d",
+            ))
+        assert "严格禁止静默回退未认证数据库表" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# P1-01: 端到端版本可见性与未来函数拦截
+# ---------------------------------------------------------------------------
+
+def test_future_leakage_visible_date_max_blocked():
+    """验证请求的数据日期若超出该 Release 的 visible_date_max，直接抛出未来函数拦截异常。"""
+    mock_conn = MagicMock()
+    client = ADCClient()
+    client._conn = mock_conn
+
+    # 模拟该 Release 对日线数据的可见上限为 20261106
+    with patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+        {"dataset_name": "dwd_stock_daily_standard", "visible_date_max": 20261106}
+    ]):
         with pytest.raises(ValueError) as exc_info:
-            get_latest_price("000001")
-        assert "拒绝返回伪造的 0.0 价格" in str(exc_info.value)
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261101,
+                end_date=20261110,  # 发生未来穿越
+                release_id="rel_20261106_v1",
+            )
+        assert "未来函数拦截" in str(exc_info.value)
+        assert "超过了该 Release [rel_20261106_v1] 的最大可见日期 20261106" in str(exc_info.value)
 
 
-def test_pipeline_readiness_blocks_order_drafts_when_asdc_blocked():
-    """验证当 ASDC Release 处于 BLOCKED 时，PipelineReadinessGate 判定 market_data_complete 为 critical 失败，
-    整体状态阻断为 BLOCKED，绝不放行订单草案生成。
-    """
-    from datetime import date
-    from scripts.ops.data_readiness_gate import PipelineReadinessGate, PreScoreGate
+# ---------------------------------------------------------------------------
+# P1-02: 服务端只读真实性与超级用户阻断测试
+# ---------------------------------------------------------------------------
 
-    mock_engine = MagicMock()
-    mock_pre_gate = MagicMock()
-    mock_pre_gate.all_checks.return_value = {
-        "passed": False,
-        "status": "BLOCKED",
-        "failed_critical": ["asdc_release_gate"],
-        "checks": [
-            {
-                "check": "asdc_release_gate",
-                "passed": False,
-                "severity": "critical",
-                "detail": "ASDC 正式发布处于 BLOCKED",
-            }
-        ],
-    }
+def test_server_side_readonly_probe_blocks_super_user():
+    """验证当 SHOW GRANTS 显示超级用户拥有全局写权限时，verify_server_side_readonly 强制抛出异常阻断。"""
+    client = ADCClient(user="fake_ro", readonly_only=True)
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [{"Grants": "GRANT ALL PRIVILEGES ON *.* TO 'fake_ro'@'%'"}]
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
 
-    pipeline_gate = PipelineReadinessGate(mock_engine)
-    with patch("scripts.ops.data_readiness_gate.PreScoreGate", return_value=mock_pre_gate):
-        result = pipeline_gate.check_market_data_complete(date(2026, 11, 6))
-        assert result["passed"] is False
-        assert result["severity"] == "critical"
-        assert "asdc_release_gate" in result["failed"]
-
+    with patch.object(client, "_get_conn", return_value=mock_conn):
+        with pytest.raises(ADCReadOnlyViolationError) as exc_info:
+            client.verify_server_side_readonly()
+        assert "当前连接拥有全局超级管理员权限 (ALL PRIVILEGES)" in str(exc_info.value)

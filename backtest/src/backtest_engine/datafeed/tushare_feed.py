@@ -24,6 +24,8 @@ class TushareDailyFeed(DataFeed):
         database: str = "tushare_stock",
         table: str = "dwd_stock_daily_standard",
         execution_context: Any = None,
+        mode: str = "production",
+        allow_research_fallback: bool = False,
     ):
         self.host = host
         self.port = port
@@ -32,6 +34,8 @@ class TushareDailyFeed(DataFeed):
         self.database = database
         self.table = table
         self.execution_context = execution_context
+        self.mode = mode
+        self.allow_research_fallback = allow_research_fallback
 
     def _conn(self):
         # 优先读取只读环境变量与 ADCClient 配置
@@ -91,14 +95,21 @@ class TushareDailyFeed(DataFeed):
         end_int = int(pd.Timestamp(end).strftime("%Y%m%d"))
 
         # 优先走统一跨项目数据底座客户端
+        is_research = self.allow_research_fallback or self.mode == "research" or bool(
+            self.execution_context and getattr(self.execution_context, "research_only", False)
+        )
         try:
             from cross_project.adc_client import ADCClient
             client = ADCClient()
+            rel_id = getattr(self.execution_context, "release_id", None)
+            pit_id = getattr(self.execution_context, "pit_snapshot_id", None)
             df = client.data.get_daily_bars_batch(
                 symbols=list(universe),
                 start_date=start_int,
                 end_date=end_int,
                 adj_type="qfq" if self.table == "dwd_stock_daily_standard" else "raw",
+                release_id=rel_id,
+                pit_snapshot_id=pit_id,
             )
             if not df.empty:
                 for r in df.itertuples(index=False):
@@ -112,8 +123,13 @@ class TushareDailyFeed(DataFeed):
                         volume=float(getattr(r, "volume", 0.0) or 0.0),
                     )
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            if not is_research:
+                raise RuntimeError(
+                    f"可信回测行情数据源获取失败: {exc}，严格禁止静默回退未认证数据库表！"
+                ) from exc
+            import logging
+            logging.getLogger(__name__).warning("RESEARCH ONLY: 可信回测数据源读取失败，经显式研究模式授权回退备用 SQL: %s", exc)
 
         # 回退离线回测路径
         table, mp = self._resolve_table()

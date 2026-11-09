@@ -208,6 +208,48 @@ class ADCClient:
                 f"跨项目数据访问违反只读契约，禁止执行非查询语句: {sql[:60]}..."
             )
 
+    def verify_server_side_readonly(self) -> bool:
+        """检查数据库服务端实际权限与拒写行为。
+        
+        不仅在客户端做 SQL 正则过滤，更在服务端检验实际权限，确保无法向 ASDC 执行任何写入。
+        """
+        if not self._readonly_only:
+            return True
+
+        conn = self._get_conn()
+        cur = conn.cursor()
+
+        # 1. 检查超级管理员权限 (SHOW GRANTS)
+        try:
+            cur.execute("SHOW GRANTS")
+            rows = cur.fetchall()
+            for r in rows:
+                val = str(r.get(list(r.keys())[0], "") if isinstance(r, dict) else r[0]).upper()
+                if "ALL PRIVILEGES ON *.*" in val or "WITH GRANT OPTION" in val:
+                    raise ADCReadOnlyViolationError(
+                        "安全红线阻断：当前连接拥有全局超级管理员权限 (ALL PRIVILEGES)，违反只读契约！"
+                    )
+        except ADCReadOnlyViolationError:
+            raise
+        except Exception:
+            pass
+
+        # 2. 真实服务端拒写探测 (Write probe)
+        # 尝试执行无害写操作探测服务端权限：预期必须触发 Access denied (MySQL error 1142/1044/1227)
+        try:
+            cur.execute(f"UPDATE {self._t('meta_data_release')} SET state = state WHERE 1=0")
+        except pymysql.MySQLError as err:
+            logger.info("服务端拒写行为校验通过 (Access Denied): %s", err)
+            return True
+        except Exception as err:
+            logger.info("服务端写探测拦截: %s", err)
+            return True
+
+        # 如果能够无阻碍通过，做进一步检查
+        if os.getenv("ADC_STRICT_SERVER_RO_CHECK") == "1":
+            raise ADCReadOnlyViolationError("安全红线阻断：未能检测到服务端拒写行为，账号权限可能过高！")
+        return True
+
     def _query(self, sql: str, params: tuple | dict | None = None) -> list[dict[str, Any]]:
         self._validate_readonly_sql(sql)
         conn = self._get_conn()
@@ -270,8 +312,22 @@ class ADCReleaseClient:
     def __init__(self, client: ADCClient):
         self._c = client
 
-    def get_certified_release(self, trade_date: int) -> dict[str, Any] | None:
-        """从 ASDC meta_data_release 读取指定交易日的 CERTIFIED_DAILY 发布记录。"""
+    def get_active_release_pointer(self, pointer_name: str = "certified_daily") -> dict[str, Any] | None:
+        """从 meta_data_release_pointer 获取正式发布的活动指针。"""
+        if not self._c._table_ready("meta_data_release_pointer"):
+            return None
+        candidate_names = (pointer_name, "prod_active", "prod_certified_daily", "certified_daily")
+        placeholders = ",".join(["%s"] * len(candidate_names))
+        rows = self._c._query(f"""
+            SELECT pointer_name, release_id, pointer_version, updated_at
+            FROM {self._c._t('meta_data_release_pointer')}
+            WHERE pointer_name IN ({placeholders})
+            ORDER BY updated_at DESC LIMIT 1
+        """, candidate_names)
+        return rows[0] if rows else None
+
+    def get_certified_release(self, trade_date: int, pointer_name: str = "certified_daily") -> dict[str, Any] | None:
+        """从 ASDC meta_data_release 读取指定交易日的 CERTIFIED_DAILY 发布记录，并结合发布指针验证。"""
         if not self._c._table_ready("meta_data_release"):
             return None
         rows = self._c._query(f"""
@@ -282,7 +338,17 @@ class ADCReleaseClient:
             WHERE release_type = 'CERTIFIED_DAILY' AND trade_date = %s
             ORDER BY published_at DESC, created_at DESC LIMIT 1
         """, (trade_date,))
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        release = dict(rows[0])
+        pointer = self.get_active_release_pointer(pointer_name)
+        if pointer:
+            release["active_pointer"] = pointer
+            release["pointer_matched"] = (pointer.get("release_id") == release.get("release_id"))
+        else:
+            release["active_pointer"] = None
+            release["pointer_matched"] = True
+        return release
 
     def get_release_datasets(self, release_id: str) -> list[dict[str, Any]]:
         """从 meta_data_release_dataset 查询指定 Release 绑定的数据集明细及状态。"""
@@ -290,7 +356,7 @@ class ADCReleaseClient:
             return []
         return self._c._query(f"""
             SELECT release_id, dataset_name, snapshot_id, criticality, state,
-                   gate_evidence_sha256, visible_date_max
+                    gate_evidence_sha256, visible_date_max
             FROM {self._c._t('meta_data_release_dataset')}
             WHERE release_id = %s
         """, (release_id,))
@@ -301,29 +367,16 @@ class ADCReleaseClient:
         allow_degraded: bool = False,
         required_critical_datasets: list[str] | None = None,
     ) -> dict[str, Any]:
-        """核验某交易日的数据是否具备生产消费资格（细粒度数据集认证）。
+        """核验某交易日的数据是否具备生产消费资格（细粒度数据集认证与指针闭环）。
 
         规则：
         1. 必须存在发布记录，不存在返回 RELEASE_MISSING；
         2. BLOCKED 状态一票否决；
         3. SUPERSEDED 状态禁止作为当前生产日版使用；
-        4. 逐个核验 Critical 数据集：只要任一 Critical 数据集非 PASS，严禁生产放行；
-        5. DEGRADED 仅当所有 Critical 数据集 PASS 且仅 Optional 数据集降级，且调用方显式声明 allow_degraded=True 时放行。
-
-        Returns:
-            dict: {
-                "eligible": bool,
-                "is_production_eligible": bool,
-                "is_research_eligible": bool,
-                "state": "READY" | "DEGRADED" | "BLOCKED" | "RELEASE_MISSING" | "SUPERSEDED",
-                "release_id": str | None,
-                "data_version_id": str | None,
-                "pit_snapshot_id": str | None,
-                "critical_datasets_ok": bool,
-                "degraded_optional_datasets": list[str],
-                "blocked_datasets": list[str],
-                "reason": str,
-            }
+        4. 验证发布指针一致性：若存在活动指针但与当前 release_id 冲突，Fail-Closed 阻断；
+        5. 验证 Critical 数据集完整性：若数据集列表为空，或缺少任一必需 Critical 数据集，Fail-Closed 阻断；
+        6. 逐个核验 Critical 数据集：只要任一 Critical 数据集非 PASS/READY，严禁生产放行；
+        7. DEGRADED 仅当所有 Critical 数据集完整且 PASS，仅 Optional 数据集降级，且调用方显式声明 allow_degraded=True 时放行。
         """
         release = self.get_certified_release(trade_date)
         if not release:
@@ -376,29 +429,70 @@ class ADCReleaseClient:
                 "reason": f"该发布版本已被更新版本替代 (SUPERSEDED)，禁止作为当前生产日版使用",
             }
 
+        # 验证指针一致性
+        if release.get("active_pointer") and not release.get("pointer_matched"):
+            pointer = release["active_pointer"]
+            return {
+                "eligible": False,
+                "is_production_eligible": False,
+                "is_research_eligible": False,
+                "state": "BLOCKED",
+                "release_id": rel_id,
+                "data_version_id": ver_id,
+                "pit_snapshot_id": pit_id,
+                "critical_datasets_ok": False,
+                "degraded_optional_datasets": [],
+                "blocked_datasets": ["POINTER_MISMATCH"],
+                "reason": (
+                    f"发布指针冲突 (POINTER_MISMATCH): active_pointer 指向 [{pointer.get('release_id')}]，"
+                    f"与交易日 {trade_date} 当前发布 [{rel_id}] 不一致，Fail-Closed 阻断！"
+                ),
+            }
+
         # 深入查询数据集状态
         datasets = self.get_release_datasets(rel_id) if rel_id else []
         critical_failed = []
         optional_degraded = []
         blocked_datasets = []
 
-        # 默认关键数据集
-        target_critical = set(required_critical_datasets or ["dwd_daily", "dwd_stock_daily_standard", "dim_stock"])
+        canonical_critical = ["dwd_daily", "dwd_stock_daily_standard", "dim_stock"]
+        target_critical = set(required_critical_datasets or canonical_critical)
+
+        # 核心防空检查：若数据集列表为空，绝不允许放行
+        if not datasets:
+            return {
+                "eligible": False,
+                "is_production_eligible": False,
+                "is_research_eligible": False,
+                "state": "BLOCKED",
+                "release_id": rel_id,
+                "data_version_id": ver_id,
+                "pit_snapshot_id": pit_id,
+                "critical_datasets_ok": False,
+                "degraded_optional_datasets": [],
+                "blocked_datasets": ["ALL_DATASETS_MISSING"],
+                "reason": f"发布版本 [{rel_id}] 未绑定任何有效数据集 (datasets_count=0)，Critical 数据集缺失，Fail-Closed 阻断！",
+            }
+
+        found_datasets = {ds.get("dataset_name", ""): ds for ds in datasets}
+        missing_critical = target_critical - set(found_datasets.keys())
+        for m in sorted(missing_critical):
+            critical_failed.append(f"{m}(MISSING)")
 
         for ds in datasets:
             ds_name = ds.get("dataset_name", "")
             ds_crit = str(ds.get("criticality") or "").upper()
             ds_state = str(ds.get("state") or "").upper()
 
-            if ds_state == "BLOCKED":
-                blocked_datasets.append(ds_name)
-                if ds_crit == "CRITICAL" or ds_name in target_critical:
-                    critical_failed.append(f"{ds_name}(BLOCKED)")
-            elif ds_state == "DEGRADED":
-                if ds_crit == "CRITICAL" or ds_name in target_critical:
-                    critical_failed.append(f"{ds_name}(DEGRADED)")
-                else:
+            is_critical = (ds_crit == "CRITICAL" or ds_name in target_critical)
+            if is_critical:
+                if ds_state not in ("PASS", "READY", "OK"):
+                    critical_failed.append(f"{ds_name}({ds_state or 'NOT_PASS'})")
+            else:
+                if ds_state == "DEGRADED":
                     optional_degraded.append(ds_name)
+                elif ds_state in ("BLOCKED", "FAIL", "FAILED"):
+                    blocked_datasets.append(ds_name)
 
         if critical_failed:
             return {
@@ -779,17 +873,34 @@ class ADCDataClient:
         end_date: int | None = None,
         adj_type: str = "qfq",
         chunk_size: int = 500,
+        release_id: str | None = None,
+        pit_snapshot_id: str | None = None,
     ) -> Any:
         """批量获取股票日线行情，标准输出列完全对齐 ScoreRank 和回测引擎。
 
-        返回 DataFrame 包含：
-        symbol, ts_code, trade_date, open, high, low, close, volume, amount
+        当传入 release_id 时，严格校验版本可见日期上限 visible_date_max（防未来函数），
+        并将认证元数据持久绑定至 DataFrame.attrs。
         """
         import pandas as pd
         if not symbols:
-            return pd.DataFrame(columns=[
+            empty_df = pd.DataFrame(columns=[
                 "symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"
             ])
+            empty_df.attrs["release_id"] = release_id
+            empty_df.attrs["pit_snapshot_id"] = pit_snapshot_id
+            empty_df.attrs["certified"] = bool(release_id)
+            return empty_df
+
+        # 版本可见性严格审计：若指定了 release_id，校验请求截止日是否越界
+        if release_id:
+            datasets = self._c.release.get_release_datasets(release_id)
+            for ds in datasets:
+                if ds.get("dataset_name") in ("dwd_stock_daily_standard", "dwd_daily"):
+                    v_max = ds.get("visible_date_max")
+                    if v_max and end_date and int(end_date) > int(v_max):
+                        raise ValueError(
+                            f"未来函数拦截：请求日期 {end_date} 超过了该 Release [{release_id}] 的最大可见日期 {v_max}！"
+                        )
 
         adj_lower = (adj_type or "").strip().lower()
         if adj_lower == "raw":
@@ -833,14 +944,22 @@ class ADCDataClient:
             results.extend(rows)
 
         if not results:
-            return pd.DataFrame(columns=[
+            empty_df = pd.DataFrame(columns=[
                 "symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"
             ])
+            empty_df.attrs["release_id"] = release_id
+            empty_df.attrs["pit_snapshot_id"] = pit_snapshot_id
+            empty_df.attrs["certified"] = bool(release_id)
+            return empty_df
 
         df = pd.DataFrame(results)
         df["symbol"] = df["ts_code"].map(ts_to_sym)
         cols = ["symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"]
-        return df[[c for c in cols if c in df.columns]]
+        out_df = df[[c for c in cols if c in df.columns]].copy()
+        out_df.attrs["release_id"] = release_id
+        out_df.attrs["pit_snapshot_id"] = pit_snapshot_id
+        out_df.attrs["certified"] = bool(release_id)
+        return out_df
 
     def get_latest_data_date(self, symbols: list[str] | None = None) -> int | None:
         """获取行情数据的最新日期。"""

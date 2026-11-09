@@ -457,8 +457,18 @@ def mark_signal_executed(signal_date: date, symbol: str, signal_type: str) -> No
 
 # ==================== 辅助查询 ====================
 
-def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) -> Dict[str, float]:
-    """从行情表获取最新收盘价 (优先走 ADCClient 统一数据契约)。"""
+def get_latest_prices_from_kline(
+    symbols: List[str],
+    trade_date: date = None,
+    execution_context: Any = None,
+    allow_research_fallback: bool = False,
+) -> Dict[str, float]:
+    """从行情表获取最新收盘价 (优先走 ADCClient 统一数据契约)。
+
+    安全规则：
+    正式和可信影子模式下 ADCClient 失败必须 Fail-Closed 阻断，严格禁止静默回退未认证 SQL！
+    仅在明确的隔离研究模式 (allow_research_fallback=True 或 execution_context.research_only=True) 下允许回退。
+    """
     if not symbols:
         return {}
     
@@ -468,6 +478,10 @@ def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) ->
     else:
         trade_date_int = None
 
+    is_research = allow_research_fallback or bool(
+        execution_context and getattr(execution_context, "research_only", False)
+    )
+
     try:
         from cross_project.adc_client import ADCClient
         adc = ADCClient()
@@ -476,11 +490,15 @@ def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) ->
             if not trade_date_int:
                 return {}
         
+        rel_id = getattr(execution_context, "release_id", None)
+        pit_id = getattr(execution_context, "pit_snapshot_id", None)
         df = adc.data.get_daily_bars_batch(
             symbols=symbols,
             start_date=trade_date_int,
             end_date=trade_date_int,
             adj_type="qfq",
+            release_id=rel_id,
+            pit_snapshot_id=pit_id,
         )
         if not df.empty:
             prices = {}
@@ -490,7 +508,12 @@ def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) ->
                     prices[str(row["symbol"])] = float(c_val)
             return prices
     except Exception as exc:
-        logger.warning("ADCClient 取最新价格失败，回退原生查询: %s", exc)
+        if not is_research:
+            logger.error("CRITICAL: Live Tracker 生产/影子模式下 ADCClient 读取失败，禁止静默回退 SQL: %s", exc)
+            raise RuntimeError(
+                f"Live Tracker 生产行情获取失败: {exc}，严格禁止静默回退未认证原生 SQL！"
+            ) from exc
+        logger.warning("RESEARCH ONLY: Live Tracker ADCClient 取最新价格失败，经显式隔离研究模式授权回退备用 SQL: %s", exc)
 
     price_table = LIVE_CONFIG.get("price_table", "tushare_stock.dwd_stock_daily_standard")
     if trade_date is None:

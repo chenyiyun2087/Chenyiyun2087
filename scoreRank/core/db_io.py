@@ -127,11 +127,15 @@ def fetch_bars_batch(
         adc = ADCClient()
         start_date_int = int(start_date.replace("-", ""))
         end_date_int = int(end_date.replace("-", "")) if end_date else None
+        rel_id = getattr(execution_context, "release_id", None)
+        pit_id = getattr(execution_context, "pit_snapshot_id", None)
         df = adc.data.get_daily_bars_batch(
             symbols=symbols,
             start_date=start_date_int,
             end_date=end_date_int,
             adj_type=adj_type,
+            release_id=rel_id,
+            pit_snapshot_id=pit_id,
         )
         if not df.empty:
             df["trade_date"] = pd.to_datetime(df["trade_date"].astype(str))

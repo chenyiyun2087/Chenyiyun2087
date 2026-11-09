@@ -103,3 +103,20 @@ def test_save_scores_blocks_research_context_writing_production_table():
 
     assert "score_rank_daily" in str(exc_info.value)
     assert not mock_conn.execute.called
+
+
+def test_save_scores_blocks_none_execution_context():
+    """验证不传 ExecutionContext (None) 调用 save_scores_to_db 强制抛出异常阻断。"""
+    df_fake = pd.DataFrame([{"stock_code": "000001.SZ", "score": 90.0, "pool_type": "TRADE"}])
+    mock_conn = MagicMock()
+
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        save_scores_to_db(
+            df_fake,
+            asof_date=pd.to_datetime("2026-11-06"),
+            connection=mock_conn,
+            execution_context=None,
+        )
+
+    assert "禁止传入 None 绕过数据准入校验" in str(exc_info.value)
+    assert not mock_conn.execute.called

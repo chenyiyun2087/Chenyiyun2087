@@ -67,17 +67,33 @@ class ExecutionContext:
         release_gate_result: Mapping[str, Any],
         config_data: Mapping[str, Any] | None = None,
     ) -> "ExecutionContext":
-        """创建正式生产执行上下文。强制要求 Release Gate 审核通过。"""
-        eligible = release_gate_result.get("eligible", False)
-        state = str(release_gate_result.get("state") or "UNKNOWN").upper()
+        """创建正式生产执行上下文。强制要求 Release Gate 审核通过且所有凭证完整。"""
+        eligible = bool(release_gate_result.get("eligible", release_gate_result.get("passed", False)))
+        state = str(
+            release_gate_result.get("state")
+            or release_gate_result.get("release_state")
+            or "UNKNOWN"
+        ).upper()
+        reason = release_gate_result.get("reason") or release_gate_result.get("detail") or "未知原因"
 
-        if not eligible or state not in ("READY", "DEGRADED"):
+        if not eligible or state not in ("READY", "DEGRADED", "CERTIFIED_DAILY"):
             raise ProductionAdmissionBlockedError(
-                f"交易日 {trade_date} 数据未获得正式发布资格 (state={state})，禁止创建正式生产上下文！"
-                f"原因: {release_gate_result.get('reason')}"
+                f"交易日 {trade_date} 数据未获得正式发布资格 (state={state}, eligible={eligible})，禁止创建正式生产上下文！"
+                f"原因: {reason}"
             )
 
-        cert = "CERTIFIED_DAILY" if state == "READY" else "DEGRADED_PERMITTED"
+        rel_id = release_gate_result.get("release_id")
+        ver_id = release_gate_result.get("data_version_id")
+        pit_id = release_gate_result.get("pit_snapshot_id")
+
+        # 凭据真实性严格防伪校验：禁止使用空串或占位符充当有效版本
+        for field_name, field_val in (("release_id", rel_id), ("data_version_id", ver_id), ("pit_snapshot_id", pit_id)):
+            if not field_val or str(field_val).strip() in ("", "None", "null", "UNKNOWN", "PLACEHOLDER"):
+                raise ProductionAdmissionBlockedError(
+                    f"交易日 {trade_date} 正式发布凭据不完整或为占位符 ({field_name}={field_val})，禁止创建正式生产上下文！"
+                )
+
+        cert = "CERTIFIED_DAILY" if state in ("READY", "CERTIFIED_DAILY") else "DEGRADED_PERMITTED"
 
         cfg_sha = ""
         if config_data:
@@ -86,9 +102,9 @@ class ExecutionContext:
         return cls(
             mode="PRODUCTION",
             trade_date=trade_date,
-            release_id=release_gate_result.get("release_id"),
-            data_version_id=release_gate_result.get("data_version_id"),
-            pit_snapshot_id=release_gate_result.get("pit_snapshot_id"),
+            release_id=str(rel_id),
+            data_version_id=str(ver_id),
+            pit_snapshot_id=str(pit_id),
             certification_status=cert,
             research_only=False,
             quality_gate_result=dict(release_gate_result),
@@ -104,7 +120,6 @@ class ExecutionContext:
     ) -> "ExecutionContext":
         """创建隔离的研究/诊断上下文。明确打上 research_only=True 标记。"""
         gate_res = dict(release_gate_result or {})
-        state = str(gate_res.get("state") or "UNVERIFIED").upper()
 
         return cls(
             mode="RESEARCH",
@@ -134,9 +149,10 @@ class ExecutionContext:
                 f"安全拦截：数据认证状态 [{self.certification_status}] 不合规，严禁写入正式资源 [{target_resource}]！"
             )
 
-        if not self.release_id or not self.data_version_id:
+        if not self.release_id or not self.data_version_id or not self.pit_snapshot_id:
             raise ProductionAdmissionBlockedError(
-                f"安全拦截：缺少明确的 release_id 或 data_version_id，禁止写入正式资源 [{target_resource}]！"
+                f"安全拦截：缺少明确的发布凭据 (release_id={self.release_id}, data_version_id={self.data_version_id}, "
+                f"pit_snapshot_id={self.pit_snapshot_id})，禁止写入正式资源 [{target_resource}]！"
             )
 
     def to_dict(self) -> dict[str, Any]:

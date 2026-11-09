@@ -47,6 +47,8 @@ def test_fetch_bars_batch_adc_client_success():
             start_date=20261106,
             end_date=20261106,
             adj_type="qfq",
+            release_id=None,
+            pit_snapshot_id=None,
         )
 
 

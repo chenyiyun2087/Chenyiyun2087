@@ -133,8 +133,12 @@ class PreScoreGate:
                 "check": "asdc_release_gate",
                 "date": str(date_int),
                 "passed": True,
+                "eligible": False,  # 跳过门禁仅允许隔离研究，无正式生产发布资格
+                "state": "UNVERIFIED_RESEARCH_ONLY",
+                "release_state": "UNVERIFIED_RESEARCH_ONLY",
                 "severity": "warning",
                 "detail": "SKIPPED_FOR_RESEARCH_ONLY",
+                "reason": "SKIPPED_FOR_RESEARCH_ONLY",
                 "data_certification": "UNVERIFIED_RESEARCH_ONLY",
             }
 
@@ -147,13 +151,17 @@ class PreScoreGate:
                 required_critical_datasets=["dwd_daily", "dwd_stock_daily_standard", "dim_stock"],
             )
             self._release_context = gate
-            passed = gate["eligible"]
+            passed = bool(gate.get("eligible", False))
             severity = "critical" if not passed else "info"
+            state = gate.get("state")
+            reason = gate.get("reason")
             return {
                 "check": "asdc_release_gate",
                 "date": str(date_int),
                 "release_id": gate.get("release_id"),
-                "release_state": gate.get("state"),
+                "release_state": state,
+                "state": state,
+                "eligible": passed,
                 "data_version_id": gate.get("data_version_id"),
                 "pit_snapshot_id": gate.get("pit_snapshot_id"),
                 "critical_datasets_ok": gate.get("critical_datasets_ok"),
@@ -161,16 +169,21 @@ class PreScoreGate:
                 "blocked_datasets": gate.get("blocked_datasets", []),
                 "passed": passed,
                 "severity": severity,
-                "detail": gate.get("reason"),
-                "data_certification": "CERTIFIED_DAILY" if passed and gate.get("state") == "READY" else "DEGRADED_PERMITTED" if passed else "BLOCKED",
+                "detail": reason,
+                "reason": reason,
+                "data_certification": "CERTIFIED_DAILY" if passed and state == "READY" else "DEGRADED_PERMITTED" if passed else "BLOCKED",
             }
         except Exception as exc:
             return {
                 "check": "asdc_release_gate",
                 "date": str(date_int),
                 "passed": False,
+                "eligible": False,
+                "release_state": "BLOCKED",
+                "state": "BLOCKED",
                 "severity": "critical",
                 "detail": f"release_gate_error={exc}",
+                "reason": f"release_gate_error={exc}",
                 "data_certification": "BLOCKED",
             }
 

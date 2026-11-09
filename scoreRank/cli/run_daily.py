@@ -319,8 +319,12 @@ def save_scores_to_db(
         print("No records to save.")
         return None
 
-    if execution_context is not None:
-        execution_context.validate_for_production_write("score_rank_daily")
+    if execution_context is None:
+        from cross_project.execution_context import ProductionAdmissionBlockedError
+        raise ProductionAdmissionBlockedError(
+            "安全红线阻断：写入正式 score_rank_daily 必须持有经过验证的 ExecutionContext，禁止传入 None 绕过数据准入校验！"
+        )
+    execution_context.validate_for_production_write("score_rank_daily")
 
     df_save = df_save.copy()
     df_save["symbol"] = df_save["symbol"].map(_normalize_symbol)
@@ -514,6 +518,13 @@ def _register_snapshot_and_layers(
     """Atomically persist scores, registry metadata, and derived layers."""
     if df_save.empty:
         raise RuntimeError("cannot_register_empty_scoring_snapshot")
+
+    if execution_context is None:
+        from cross_project.execution_context import ProductionAdmissionBlockedError
+        raise ProductionAdmissionBlockedError(
+            "安全红线阻断：注册评分快照与分层数据必须持有经过验证的 ExecutionContext，禁止传入 None 绕过数据准入校验！"
+        )
+    execution_context.validate_for_production_write("score_rank_daily")
 
     engine = get_engine(as_sqlalchemy=True)
     _ensure_score_schema_in_db()
@@ -992,7 +1003,8 @@ def main():
         _announce("Fetching raw data for enrichment...")
         raw_data = fetch_bars_batch(
             engine, all_symbols, adj_type=CONFIG["adj_for_signal"],
-            start_date=start_date, end_date=end_date
+            start_date=start_date, end_date=end_date,
+            execution_context=exec_ctx,
         )
         
         from scoreRank.core.scorer import build_features_from_qfq
