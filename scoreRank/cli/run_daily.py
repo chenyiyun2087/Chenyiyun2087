@@ -308,16 +308,19 @@ def save_scores_to_db(
     bs_source_batch: str = "ml_detect_v3",
     snapshot_id: str | None = None,
     connection=None,
+    execution_context: Any = None,
 ) -> str | None:
     """Write one scoring run, optionally as part of the caller's transaction.
 
-    New rows start as ``PENDING``.  ``run_daily`` registers the immutable
-    snapshot, writes the derived layers, and promotes the same rows to
-    ``VERIFIED`` before committing the transaction.
+    安全终审：写入正式 score_rank_daily 前强校验 ExecutionContext。
+    未认证或隔离研究模式严禁写入生产表。
     """
     if df_save.empty:
         print("No records to save.")
         return None
+
+    if execution_context is not None:
+        execution_context.validate_for_production_write("score_rank_daily")
 
     df_save = df_save.copy()
     df_save["symbol"] = df_save["symbol"].map(_normalize_symbol)
@@ -506,6 +509,7 @@ def _register_snapshot_and_layers(
     asof_date: pd.Timestamp,
     snapshot_id: str,
     bs_source_batch: str,
+    execution_context: Any = None,
 ) -> None:
     """Atomically persist scores, registry metadata, and derived layers."""
     if df_save.empty:
@@ -548,6 +552,7 @@ def _register_snapshot_and_layers(
             bs_source_batch=bs_source_batch,
             snapshot_id=snapshot_id,
             connection=conn,
+            execution_context=execution_context,
         )
         write_snapshot(
             engine,
@@ -769,7 +774,18 @@ def main():
     parser.add_argument("--date", type=str, help="Target date YYYYMMDD or YYYY-MM-DD")
     parser.add_argument("--bs-batch", type=str, default="ml_detect_v3",
                         help="Batch name in bs_detection_results (default: ml_detect_v3=ML全市场, config_1=OCR自选)")
+    parser.add_argument("--mode", type=str, default="production", choices=["production", "research"],
+                        help="执行模式: production(正式生产) 或 research(隔离研究)")
+    parser.add_argument("--allow-degraded-data", action="store_true",
+                        help="Allow running when ASDC release is in permitted DEGRADED state")
+    parser.add_argument("--skip-release-gate", action="store_true",
+                        help="Bypass ASDC release gate for RESEARCH ONLY (marks outputs as UNVERIFIED_RESEARCH)")
     args = parser.parse_args()
+
+    # 安全铁律：正式生产模式严禁跳过数据发布门禁
+    if args.mode == "production" and args.skip_release_gate:
+        _announce("FATAL 安全违规：正式生产模式 (--mode production) 严禁使用 --skip-release-gate！程序立即退出。")
+        sys.exit(2)
 
     try:
         current_time = datetime.now()
@@ -801,13 +817,46 @@ def main():
              target_date_str = latest_bs_date
              asof_date = pd.to_datetime(latest_bs_date)
 
+        _announce("Target B/S Date: %s (Mode: %s)", asof_date.date(), args.mode)
+
+        # 核心准入门禁：必须首先校验 ASDC CERTIFIED_DAILY 发布状态 (Release Gate)
+        from scripts.ops.data_readiness_gate import PreScoreGate
+        gate_checker = PreScoreGate(
+            engine,
+            allow_degraded=args.allow_degraded_data,
+            skip_release_gate=args.skip_release_gate,
+        )
+        gate_date = asof_date.date()
+        release_check = gate_checker.check_asdc_release_gate(gate_date)
+        _announce(
+            "ASDC Release Gate: 状态=%s (认证等级=%s, ReleaseID=%s)",
+            release_check.get("release_state"),
+            release_check.get("data_certification"),
+            release_check.get("release_id"),
+        )
+        if not release_check.get("passed"):
+            _announce(
+                "CRITICAL: 目标交易日 %s 未通过 ASDC 质量发布门禁: %s，程序安全阻断退出 (Fail-Closed)",
+                target_date_str,
+                release_check.get("detail"),
+            )
+            sys.exit(2)
+
+        # 构建统一不可篡改的 ExecutionContext
+        from cross_project.execution_context import ExecutionContext
+        if args.mode == "production":
+            exec_ctx = ExecutionContext.create_production(int(target_date_str), release_check)
+        else:
+            exec_ctx = ExecutionContext.create_research(int(target_date_str), release_check, reason="CLI_RESEARCH_RUN")
+
+        if args.skip_release_gate:
+            _announce("WARNING: 当前处于 --skip-release-gate 模式，产出仅作为 UNVERIFIED_RESEARCH_ONLY！")
+
         # Get latest trade_date from monthly data as a reference
         latest_data_date = _query_scalar(
             engine,
             "SELECT MAX(trade_date) AS max_trade_date FROM tushare_stock.dwd_stock_daily_standard"
         )
-            
-        _announce("Target B/S Date: %s", asof_date.date())
         _announce("Latest Data Date: %s", latest_data_date)
 
         # 2) Load Symbols from B/S Detection (Candidates for TRADE/WATCH)
@@ -1079,6 +1128,7 @@ def main():
             asof_date,
             snapshot_id=snapshot_id,
             bs_source_batch=args.bs_batch,
+            execution_context=exec_ctx,
         )
 
     except Exception as e:

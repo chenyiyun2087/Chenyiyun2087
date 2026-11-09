@@ -458,19 +458,45 @@ def mark_signal_executed(signal_date: date, symbol: str, signal_type: str) -> No
 # ==================== 辅助查询 ====================
 
 def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) -> Dict[str, float]:
-    """从行情表获取最新收盘价"""
+    """从行情表获取最新收盘价 (优先走 ADCClient 统一数据契约)。"""
     if not symbols:
         return {}
     
+    # 将 date 对象转为 int YYYYMMDD
+    if trade_date is not None:
+        trade_date_int = int(trade_date.strftime("%Y%m%d")) if isinstance(trade_date, (date, datetime)) else int(trade_date)
+    else:
+        trade_date_int = None
+
+    try:
+        from cross_project.adc_client import ADCClient
+        adc = ADCClient()
+        if trade_date_int is None:
+            trade_date_int = adc.data.get_latest_data_date(symbols)
+            if not trade_date_int:
+                return {}
+        
+        df = adc.data.get_daily_bars_batch(
+            symbols=symbols,
+            start_date=trade_date_int,
+            end_date=trade_date_int,
+            adj_type="qfq",
+        )
+        if not df.empty:
+            prices = {}
+            for _, row in df.iterrows():
+                c_val = row.get("close")
+                if pd.notna(c_val) and float(c_val) > 0:
+                    prices[str(row["symbol"])] = float(c_val)
+            return prices
+    except Exception as exc:
+        logger.warning("ADCClient 取最新价格失败，回退原生查询: %s", exc)
+
     price_table = LIVE_CONFIG.get("price_table", "tushare_stock.dwd_stock_daily_standard")
-    
-    # 如果没指定日期，查最新日期
-    # 注意：这里简化为查询这些股票最近一天的交易日期
     if trade_date is None:
         conn = get_db_connection()
         try:
             with conn.cursor() as cursor:
-                # 构造 IN 查询
                 placeholders = ", ".join(["%s"] * len(symbols))
                 date_sql = f"""
                 SELECT MAX(t.trade_date) as max_date 
@@ -481,7 +507,6 @@ def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) ->
                 cursor.execute(date_sql, symbols)
                 row = _fetchone_dict(cursor)
                 if row and row["max_date"]:
-                    # 转换 int YYYYMMDD -> date
                     date_str = str(row["max_date"])
                     trade_date = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:]))
                 else:
@@ -489,13 +514,11 @@ def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) ->
         finally:
             conn.close()
     
-    # 将 date 对象转为 int YYYYMMDD
     if isinstance(trade_date, (date, datetime)):
         trade_date_int = int(trade_date.strftime("%Y%m%d"))
     else:
         trade_date_int = int(trade_date)
 
-    # 查询收盘价
     placeholders = ", ".join(["%s"] * len(symbols))
     sql = f"""
     SELECT s.symbol, t.adj_close as close 
@@ -509,17 +532,18 @@ def get_latest_prices_from_kline(symbols: List[str], trade_date: date = None) ->
         with conn.cursor() as cursor:
             cursor.execute(sql, [trade_date_int] + list(symbols))
             rows = _fetchall_dict(cursor)
-            return {row["symbol"]: float(row["close"]) for row in rows}
+            return {row["symbol"]: float(row["close"]) for row in rows if row.get("close") is not None}
     finally:
         conn.close()
 
 
 def get_latest_price(symbol: str) -> float:
-    """获取最新收盘价"""
-    # 优先使用配置中的行情表，默认为 dwd_stock_daily_standard
+    """获取最新收盘价。禁止缺失时静默返回 0.0。"""
+    prices = get_latest_prices_from_kline([symbol])
+    if symbol in prices and prices[symbol] > 0:
+        return prices[symbol]
+
     price_table = LIVE_CONFIG.get("price_table", "tushare_stock.dwd_stock_daily_standard")
-    
-    # 关联 dim_stock 获取 ts_code，再查询行情
     sql = f"""
     SELECT t.adj_close as close
     FROM {price_table} t
@@ -528,18 +552,14 @@ def get_latest_price(symbol: str) -> float:
     ORDER BY t.trade_date DESC
     LIMIT 1
     """
-    
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute(sql, (symbol,))
             result = _fetchone_dict(cursor)
-            if result:
+            if result and result.get("close") is not None and float(result["close"]) > 0:
                 return float(result["close"])
-            return 0.0
-    except Exception as e:
-        logger.exception("Error fetching price for %s: %s", symbol, e)
-        return 0.0
+            raise ValueError(f"标的 {symbol} 行情缺失或价格为 0，拒绝返回伪造的 0.0 价格！")
     finally:
         conn.close()
 

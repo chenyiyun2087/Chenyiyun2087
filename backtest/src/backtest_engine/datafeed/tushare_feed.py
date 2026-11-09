@@ -12,17 +12,18 @@ from backtest_engine.datafeed.base import DataFeed
 class TushareDailyFeed(DataFeed):
     """MySQL tushare_stock 日频数据喂入。
 
-    默认读取 dwd_stock_daily_standard；若字段不存在则尝试 dwd_daily。
+    优先通过 ADCClient 消费数据底座规范日行情，并绑定 ExecutionContext 数据版本。
     """
 
     def __init__(
         self,
-        host: str = "127.0.0.1",
-        port: int = 3306,
-        user: str = "root",
-        password: str = "",
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
         database: str = "tushare_stock",
         table: str = "dwd_stock_daily_standard",
+        execution_context: Any = None,
     ):
         self.host = host
         self.port = port
@@ -30,13 +31,19 @@ class TushareDailyFeed(DataFeed):
         self.password = password
         self.database = database
         self.table = table
+        self.execution_context = execution_context
 
     def _conn(self):
+        # 优先读取只读环境变量与 ADCClient 配置
+        h = self.host or "127.0.0.1"
+        p = self.port or 3306
+        u = self.user or "ro_user"
+        pwd = self.password or ""
         return pymysql.connect(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
+            host=h,
+            port=p,
+            user=u,
+            password=pwd,
             database=self.database,
             charset="utf8mb4",
         )
@@ -80,6 +87,35 @@ class TushareDailyFeed(DataFeed):
         if not universe:
             return
 
+        start_int = int(pd.Timestamp(start).strftime("%Y%m%d"))
+        end_int = int(pd.Timestamp(end).strftime("%Y%m%d"))
+
+        # 优先走统一跨项目数据底座客户端
+        try:
+            from cross_project.adc_client import ADCClient
+            client = ADCClient()
+            df = client.data.get_daily_bars_batch(
+                symbols=list(universe),
+                start_date=start_int,
+                end_date=end_int,
+                adj_type="qfq" if self.table == "dwd_stock_daily_standard" else "raw",
+            )
+            if not df.empty:
+                for r in df.itertuples(index=False):
+                    yield Bar(
+                        ts=str(pd.to_datetime(str(r.trade_date), format="%Y%m%d").date()),
+                        symbol=r.ts_code,
+                        open=float(r.open),
+                        high=float(r.high),
+                        low=float(r.low),
+                        close=float(r.close),
+                        volume=float(getattr(r, "volume", 0.0) or 0.0),
+                    )
+                return
+        except Exception:
+            pass
+
+        # 回退离线回测路径
         table, mp = self._resolve_table()
         vol_expr = f", {mp['vol']} AS volume" if mp.get("vol") else ""
         in_placeholders = ",".join(["%s"] * len(universe))
@@ -90,10 +126,6 @@ class TushareDailyFeed(DataFeed):
             f"FROM {table} WHERE trade_date BETWEEN %s AND %s AND ts_code IN ({in_placeholders}) "
             "ORDER BY trade_date, ts_code"
         )
-
-        # Date conversion for integer trade_date column
-        start_int = int(pd.Timestamp(start).strftime("%Y%m%d"))
-        end_int = int(pd.Timestamp(end).strftime("%Y%m%d"))
         
         with self._conn() as conn:
             df = pd.read_sql(sql, conn, params=[start_int, end_int, *universe])

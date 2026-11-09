@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import pandas as pd
 import pymysql
 from urllib.parse import parse_qs, unquote, urlparse
@@ -102,14 +103,50 @@ def fetch_bars_batch(
     symbols: List[str],
     adj_type: str,
     start_date: str,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    execution_context: Optional[Any] = None,
 ) -> pd.DataFrame:
     """
     批量取一批股票的日线（长表），返回列：
     symbol, trade_date, open, high, low, close, volume, amount
+
+    安全原则：
+    正式生产模式下必须使用 ASDC 统一数据契约取数；若数据客户端失败，严格 Fail-Closed 阻断，
+    严禁静默回退到未认证的直接 SQL 查询！
     """
     if not symbols:
         return pd.DataFrame()
+
+    is_research = bool(
+        (execution_context and getattr(execution_context, "research_only", False))
+        or os.getenv("EXECUTION_MODE", "").upper() == "RESEARCH"
+    )
+
+    try:
+        from cross_project.adc_client import ADCClient
+        adc = ADCClient()
+        start_date_int = int(start_date.replace("-", ""))
+        end_date_int = int(end_date.replace("-", "")) if end_date else None
+        df = adc.data.get_daily_bars_batch(
+            symbols=symbols,
+            start_date=start_date_int,
+            end_date=end_date_int,
+            adj_type=adj_type,
+        )
+        if not df.empty:
+            df["trade_date"] = pd.to_datetime(df["trade_date"].astype(str))
+            for c in ["open", "high", "low", "close", "volume", "amount"]:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce")
+            return df.dropna(subset=["symbol", "trade_date", "close", "high", "low"])
+    except Exception as exc:
+        if not is_research:
+            # 正式模式绝不静默回退！Fail Closed
+            logger.error("CRITICAL: 正式生产模式下 ADCClient 统一取数失败，拒绝静默回退 SQL: %s", exc)
+            raise RuntimeError(
+                f"正式策略生产取数阻断：统一跨项目数据底座客户端读取失败 ({exc})。严格禁止静默回退未认证 SQL！"
+            ) from exc
+        logger.warning("RESEARCH ONLY: ADCClient 取数失败，经显式隔离研究模式授权回退备用 SQL: %s", exc)
 
     start_date_int = int(start_date.replace("-", ""))
     end_date_int = int(end_date.replace("-", "")) if end_date else None

@@ -100,11 +100,79 @@ def _latest_trade_date_before(engine, ref_date: date) -> date | None:
 # ---------------------------------------------------------------------------
 
 class PreScoreGate:
-    """Validates market data readiness BEFORE the scoring pipeline runs."""
+    """Validates market data readiness BEFORE the scoring pipeline runs.
 
-    def __init__(self, engine) -> None:
+    核心原则：将“有行情数据”与“数据获得正式发布资格”明确解耦。
+    首先强制校验 ASDC CERTIFIED_DAILY 发布资格 (Release Gate)；
+    通过后，方可进行行数、覆盖度、复权等补充质量检查。
+    """
+
+    def __init__(
+        self,
+        engine,
+        *,
+        allow_degraded: bool = False,
+        skip_release_gate: bool = False,
+        adc_client: Any = None,
+    ) -> None:
         self._engine = engine
+        self._allow_degraded = allow_degraded
+        self._skip_release_gate = skip_release_gate
+        self._adc_client = adc_client
         self._checks: list[dict[str, Any]] = []
+        self._release_context: dict[str, Any] = {}
+
+    def check_asdc_release_gate(self, target_date: date) -> dict[str, Any]:
+        """检查 ASDC 正式数据发布门禁 (CERTIFIED_DAILY)。
+
+        作为核心准入门禁，将“有物理行情数据”与“数据获得正式发布资格”明确解耦。
+        """
+        date_int = int(target_date.strftime("%Y%m%d"))
+        if self._skip_release_gate:
+            return {
+                "check": "asdc_release_gate",
+                "date": str(date_int),
+                "passed": True,
+                "severity": "warning",
+                "detail": "SKIPPED_FOR_RESEARCH_ONLY",
+                "data_certification": "UNVERIFIED_RESEARCH_ONLY",
+            }
+
+        try:
+            from cross_project.adc_client import ADCClient
+            client = self._adc_client or ADCClient()
+            gate = client.release.check_release_gate(
+                date_int,
+                allow_degraded=self._allow_degraded,
+                required_critical_datasets=["dwd_daily", "dwd_stock_daily_standard", "dim_stock"],
+            )
+            self._release_context = gate
+            passed = gate["eligible"]
+            severity = "critical" if not passed else "info"
+            return {
+                "check": "asdc_release_gate",
+                "date": str(date_int),
+                "release_id": gate.get("release_id"),
+                "release_state": gate.get("state"),
+                "data_version_id": gate.get("data_version_id"),
+                "pit_snapshot_id": gate.get("pit_snapshot_id"),
+                "critical_datasets_ok": gate.get("critical_datasets_ok"),
+                "degraded_optional_datasets": gate.get("degraded_optional_datasets", []),
+                "blocked_datasets": gate.get("blocked_datasets", []),
+                "passed": passed,
+                "severity": severity,
+                "detail": gate.get("reason"),
+                "data_certification": "CERTIFIED_DAILY" if passed and gate.get("state") == "READY" else "DEGRADED_PERMITTED" if passed else "BLOCKED",
+            }
+        except Exception as exc:
+            return {
+                "check": "asdc_release_gate",
+                "date": str(date_int),
+                "passed": False,
+                "severity": "critical",
+                "detail": f"release_gate_error={exc}",
+                "data_certification": "BLOCKED",
+            }
 
     def check_row_count(self, target_date: date) -> dict[str, Any]:
         """Total market rows >= EXPECTED_MIN_ROWS for the target date."""
@@ -392,7 +460,9 @@ class PreScoreGate:
 
     def all_checks(self, target_date: date) -> dict[str, Any]:
         """Run all Pre-Score checks."""
+        release_check = self.check_asdc_release_gate(target_date)
         self._checks = [
+            release_check,
             self.check_row_count(target_date),
             self.check_exchange_coverage(target_date),
             self.check_date_freshness(target_date),
@@ -402,7 +472,10 @@ class PreScoreGate:
             self.check_suspension_st_basic(target_date),
             self.check_suspension_completeness(target_date),
         ]
-        return _summarize(self._checks, target_date, gate_name="pre_score")
+        summary = _summarize(self._checks, target_date, gate_name="pre_score")
+        summary["release_context"] = self._release_context
+        summary["data_certification"] = release_check.get("data_certification", "UNKNOWN")
+        return summary
 
 
 # ---------------------------------------------------------------------------
@@ -903,15 +976,39 @@ class DataReadinessGate:
     For full pipeline, use PreScoreGate and PostScoreGate separately.
     """
 
-    def __init__(self, engine) -> None:
-        self._gate = PreScoreGate(engine)
+    def __init__(
+        self,
+        engine,
+        *,
+        allow_degraded: bool = False,
+        skip_release_gate: bool = False,
+        adc_client: Any = None,
+    ) -> None:
+        self._gate = PreScoreGate(
+            engine,
+            allow_degraded=allow_degraded,
+            skip_release_gate=skip_release_gate,
+            adc_client=adc_client,
+        )
 
     def all_checks(self, target_date: date) -> dict[str, Any]:
         return self._gate.all_checks(target_date)
 
 
-def run_pre_gate(engine, target_date: date) -> dict[str, Any]:
-    return PreScoreGate(engine).all_checks(target_date)
+def run_pre_gate(
+    engine,
+    target_date: date,
+    *,
+    allow_degraded: bool = False,
+    skip_release_gate: bool = False,
+    adc_client: Any = None,
+) -> dict[str, Any]:
+    return PreScoreGate(
+        engine,
+        allow_degraded=allow_degraded,
+        skip_release_gate=skip_release_gate,
+        adc_client=adc_client,
+    ).all_checks(target_date)
 
 
 def run_post_gate(engine, target_date: date) -> dict[str, Any]:
