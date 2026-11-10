@@ -28,6 +28,9 @@ from scoreRank.core.db_io import fetch_bars_batch
 from scripts.ops.data_readiness_gate import PipelineReadinessGate, PreScoreGate
 from sina.live_tracker.live_tracker_db import get_latest_price, get_latest_prices_from_kline
 
+VALID_SHA256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+
 
 # ---------------------------------------------------------------------------
 # P0-01: READY 成功路径端到端测试与字段契约对齐
@@ -285,7 +288,7 @@ def test_future_leakage_visible_date_max_blocked():
              "pit_snapshot_id": "pit_v1",
              "trade_date": 20261110,
          }), patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]), patch.object(client, "_table_ready", return_value=True):
         with pytest.raises(ValueError) as exc_info:
             client.data.get_daily_bars_batch(
@@ -776,7 +779,9 @@ def test_provenance_proof_bound_to_dataframe():
         "low": 9.9,
         "close": 10.2,
         "volume": 50000.0,
-        "amount": 510000.0,
+        "amount_cny": 510000000.0,
+        "available_at": "2026-11-06T18:00:00",
+        "adjustment_anchor_date": 20261106,
     }]
     res_ctx = ExecutionContext.create_research(20261106, reason="FALLBACK_STUDY")
 
@@ -842,7 +847,7 @@ def test_provenance_proof_snapshot_bound_v2_table():
              "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_20261106_v1", "trade_date": 20261106
          }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_formal_v2_001", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": "sha_proof_456"}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_formal_v2_001", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]):
         df = client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -919,7 +924,7 @@ def test_amount_cny_unit_conversion_divided_by_1000():
              "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
          }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v2", "state": "PASS", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v2", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]):
         client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -1000,7 +1005,7 @@ def test_adc_client_fail_closed_when_physical_snapshot_table_missing():
              "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
          }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]):
         with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
             client.data.get_daily_bars_batch(
@@ -1048,7 +1053,7 @@ def test_adc_client_uses_raw_bar_snapshot_not_adj_factor_snapshot():
              # 复权因子的 snapshot 为 snap_adj_factor_999
              {"dataset_name": "equity_adjustment_factor", "snapshot_id": "snap_adj_factor_999", "state": "PASS", "visible_date_max": 20261106},
              # 日线行情的 snapshot 为 snap_raw_bars_111
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_raw_bars_111", "state": "PASS", "visible_date_max": 20261106},
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_raw_bars_111", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256},
          ]):
         df = client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -1082,7 +1087,9 @@ def test_adc_client_end_date_none_constrained_by_context_and_visible_date_max():
         "low": 9.9,
         "close": 10.2,
         "volume": 50000.0,
-        "amount": 510000.0,
+        "amount_cny": 510000000.0,
+        "available_at": "2026-11-06T18:00:00",
+        "adjustment_anchor_date": 20261106,
     }]
 
     # Case A: 上下文 trade_date 正常约束 end_clause
@@ -1102,7 +1109,7 @@ def test_adc_client_end_date_none_constrained_by_context_and_visible_date_max():
              "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
          }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]):
         client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -1124,7 +1131,7 @@ def test_adc_client_end_date_none_constrained_by_context_and_visible_date_max():
              "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261109
          }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]):
         with pytest.raises(ValueError) as exc_info:
             client.data.get_daily_bars_batch(
@@ -1263,7 +1270,7 @@ def test_get_daily_bars_batch_strict_pit_trade_date_bound():
          patch.object(ADCReleaseClient, "get_release_by_id", return_value={
              "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
          }), patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261115}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261115, "gate_evidence_sha256": VALID_SHA256}
          ]):
         with pytest.raises(ValueError) as exc_info:
             client.data.get_daily_bars_batch(
@@ -1485,7 +1492,7 @@ def test_phase2e_r8_degraded_blocked_without_allow_degraded():
              "release_id": "rel_20261106_deg", "release_type": "CERTIFIED_DAILY", "state": "DEGRADED", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
          }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_deg_01", "state": "PASS", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_deg_01", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]):
         df = client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -1546,15 +1553,18 @@ def test_phase2e_r8_active_pointer_enforcement_and_historical_archive():
         {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s5"},
         {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s6"},
     ]
+    mock_client._query.return_value = [{"snapshot_status": "READY"}]
     with patch.object(release_client, "get_release_by_id", return_value={
         "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "trade_date": 20261106, "state": "READY",
         "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1",
+        "gate_evidence_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     }), patch.object(release_client, "get_active_release_pointer", return_value={
         "pointer_name": "CERTIFIED_DAILY", "release_id": "rel_future_latest"
     }), patch.object(release_client, "get_release_datasets", return_value=datasets):
         res_hist = release_client.check_release_gate(trade_date=20261106, release_id="rel_20261106_v1", is_historical=True)
         assert res_hist["eligible"] is True
         assert res_hist["state"] == "READY"
+        assert res_hist["pointer_status"] == "CERTIFIED_HISTORICAL_ARCHIVE"
 
 
 def test_phase2e_r8_strict_identity_equality_and_placeholder_rejection():
@@ -1671,7 +1681,7 @@ def test_phase2e_r8_pit_available_at_future_leakage_blocked():
              "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
          }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]):
         with pytest.raises(ValueError) as exc_info:
             client.data.get_daily_bars_batch(
@@ -1718,7 +1728,7 @@ def test_phase2e_r8_pit_adj_anchor_date_future_leakage_blocked():
              "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
          }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
          ]):
         with pytest.raises(ValueError) as exc_info:
             client.data.get_daily_bars_batch(
@@ -1731,3 +1741,297 @@ def test_phase2e_r8_pit_adj_anchor_date_future_leakage_blocked():
         assert "未来函数拦截" in str(exc_info.value)
         assert "前复权调整锚点" in str(exc_info.value)
         assert "超过了决策交易日" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2E 第九轮独立验收定点测试：PIT 绝对 Fail-Closed、时区对齐、证据完整性与历史归档强校验
+# ---------------------------------------------------------------------------
+
+def test_phase2e_r9_pit_available_at_missing_or_none_strictly_blocked():
+    """第九轮测试 1: 正式日线快照记录缺失 available_at 或为 None 时绝对 Fail-Closed 阻断。"""
+    client = ADCClient()
+    ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+    )
+    # 模拟数据缺失 available_at
+    mock_rows = [{
+        "ts_code": "000001.SZ",
+        "trade_date": 20261106,
+        "open": 10.0,
+        "high": 10.5,
+        "low": 9.9,
+        "close": 10.2,
+        "volume": 50000.0,
+        "amount_cny": 510000000.0,
+        "available_at": None,  # 为 None
+        "adjustment_anchor_date": 20261106,
+    }]
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(client, "_query", return_value=mock_rows), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
+         ]):
+        with pytest.raises(ValueError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "未来函数拦截" in str(exc_info.value)
+        assert "缺失有效的 available_at 物理可用时间" in str(exc_info.value)
+
+
+def test_phase2e_r9_pit_available_at_invalid_format_strictly_blocked():
+    """第九轮测试 2: available_at 时间戳格式非法无法解析时绝对 Fail-Closed 阻断。"""
+    client = ADCClient()
+    ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+    )
+    mock_rows = [{
+        "ts_code": "000001.SZ",
+        "trade_date": 20261106,
+        "open": 10.0,
+        "high": 10.5,
+        "low": 9.9,
+        "close": 10.2,
+        "volume": 50000.0,
+        "amount_cny": 510000000.0,
+        "available_at": "invalid-datetime-format-foo",
+        "adjustment_anchor_date": 20261106,
+    }]
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(client, "_query", return_value=mock_rows), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
+         ]):
+        with pytest.raises(ValueError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "未来函数拦截" in str(exc_info.value)
+        assert "无法将时间戳字符串" in str(exc_info.value)
+
+
+def test_phase2e_r9_pit_available_at_utc_converted_to_cst_correctly_intercepted():
+    """第九轮测试 3: 带 Z 的 UTC 时间规范转为 CST，与决策时点安全比较（早于放行、晚于阻断）。"""
+    client = ADCClient()
+    # 场景 A: UTC 09:30:00Z -> CST 17:30:00，晚于决策时点 17:00:00 CST -> 阻断
+    ctx_blocked = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+        decision_time="2026-11-06T17:00:00+08:00",
+    )
+    mock_rows = [{
+        "ts_code": "000001.SZ",
+        "trade_date": 20261106,
+        "open": 10.0,
+        "high": 10.5,
+        "low": 9.9,
+        "close": 10.2,
+        "volume": 50000.0,
+        "amount_cny": 510000000.0,
+        "available_at": "2026-11-06T09:30:00Z",  # 对应 CST 17:30:00
+        "adjustment_anchor_date": 20261106,
+    }]
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(client, "_query", return_value=mock_rows), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
+         ]):
+        with pytest.raises(ValueError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx_blocked,
+            )
+        assert "晚于决策时点" in str(exc_info.value)
+        assert "统一对齐CST" in str(exc_info.value)
+
+    # 场景 B: 决策时点为 18:00:00 CST，晚于数据 CST 17:30:00 -> 成功放行
+    ctx_passed = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+        decision_time="2026-11-06T18:00:00+08:00",
+    )
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(client, "_query", return_value=mock_rows), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
+         ]):
+        df = client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            execution_context=ctx_passed,
+        )
+        assert not df.empty
+        assert df.attrs["certified"] is True
+
+
+def test_phase2e_r9_pit_adj_anchor_missing_or_none_strictly_blocked():
+    """第九轮测试 4: 正式日线快照记录缺失 adjustment_anchor_date 或为 None 时绝对 Fail-Closed 阻断。"""
+    client = ADCClient()
+    ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+    )
+    mock_rows = [{
+        "ts_code": "000001.SZ",
+        "trade_date": 20261106,
+        "open": 10.0,
+        "high": 10.5,
+        "low": 9.9,
+        "close": 10.2,
+        "volume": 50000.0,
+        "amount_cny": 510000000.0,
+        "available_at": "2026-11-06T18:00:00",
+        "adjustment_anchor_date": None,  # 缺失复权锚点
+    }]
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(client, "_query", return_value=mock_rows), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": VALID_SHA256}
+         ]):
+        with pytest.raises(ValueError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "未来函数拦截" in str(exc_info.value)
+        assert "缺失有效的 adjustment_anchor_date 复权锚点" in str(exc_info.value)
+
+
+def test_phase2e_r9_gate_evidence_sha256_missing_or_placeholder_blocked():
+    """第九轮测试 5: gate_evidence_sha256 为空、占位符或非 64 位时阻断生产认证。"""
+    client = ADCClient()
+    ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+    )
+    for bad_sha in ("", "UNVERIFIED", "placeholder", "abc123sha", None):
+        with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+             patch.object(client, "_table_ready", return_value=True), \
+             patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+                 "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+                 "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106,
+             }), \
+             patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+                 {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "s1", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": bad_sha}
+             ]):
+            with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+                client.data.get_daily_bars_batch(
+                    symbols=["000001"],
+                    start_date=20261106,
+                    end_date=20261106,
+                    execution_context=ctx,
+                )
+            assert "缺少有效 64 位 gate_evidence_sha256 签名凭据" in str(exc_info.value)
+
+
+def test_phase2e_r9_historical_archive_requires_ready_valid_evidence_and_active_snapshot():
+    """第九轮测试 6: 历史归档模式必须核验权威 READY、64 位有效证据签名及物理快照元数据保留状态。"""
+    mock_client = MagicMock()
+    mock_client._table_ready.return_value = True
+    release_client = ADCReleaseClient(mock_client)
+
+    datasets = [
+        {"dataset_name": "trade_calendar", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s1"},
+        {"dataset_name": "security_lifecycle_daily", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s2"},
+        {"dataset_name": "equity_daily_bar_raw", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s3"},
+        {"dataset_name": "equity_adjustment_factor", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s4"},
+        {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s5"},
+        {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s6"},
+    ]
+
+    # Case A: 历史 Release 状态为 CANDIDATE 非 READY -> 阻断
+    with patch.object(release_client, "get_release_by_id", return_value={
+        "release_id": "rel_hist_01", "release_type": "CERTIFIED_DAILY", "trade_date": 20261106, "state": "CANDIDATE",
+        "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "gate_evidence_sha256": VALID_SHA256,
+    }):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_01", is_historical=True)
+        assert res["eligible"] is False
+        assert "HISTORICAL_RELEASE_NOT_READY" in res["blocked_datasets"]
+
+    # Case B: 历史 Release 缺失 gate_evidence_sha256 凭证 -> 阻断
+    with patch.object(release_client, "get_release_by_id", return_value={
+        "release_id": "rel_hist_02", "release_type": "CERTIFIED_DAILY", "trade_date": 20261106, "state": "READY",
+        "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "gate_evidence_sha256": "",
+    }):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_02", is_historical=True)
+        assert res["eligible"] is False
+        assert "HISTORICAL_EVIDENCE_MISSING" in res["blocked_datasets"]
+
+    # Case C: 历史 Release 的快照在 meta_formal_data_snapshot_v2 中已被清理 (PURGED) -> 阻断
+    mock_client._query.return_value = [{"snapshot_status": "PURGED"}]
+    with patch.object(release_client, "get_release_by_id", return_value={
+        "release_id": "rel_hist_03", "release_type": "CERTIFIED_DAILY", "trade_date": 20261106, "state": "READY",
+        "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "gate_evidence_sha256": VALID_SHA256,
+    }), patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_03", is_historical=True)
+        assert res["eligible"] is False
+        assert "HISTORICAL_SNAPSHOT_PURGED" in res["blocked_datasets"]
+

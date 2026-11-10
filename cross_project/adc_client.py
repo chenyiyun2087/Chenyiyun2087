@@ -11,6 +11,7 @@ import configparser
 import logging
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pymysql
@@ -27,6 +28,29 @@ CANONICAL_CRITICAL_PRODUCTS = (
     "corporate_action_event",
     "daily_basic",
 )
+
+CST = timezone(timedelta(hours=8))
+
+
+def _parse_to_cst(val: Any) -> datetime:
+    """严格将输入时间转换为 Asia/Shanghai (UTC+8) 的 Aware datetime，格式非法或缺失一律抛出 ValueError。"""
+    if val is None or str(val).strip() in ("", "None", "null", "NULL", "none", "placeholder"):
+        raise ValueError(f"时间戳值缺失或为空: {val}")
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            return val.replace(tzinfo=CST)
+        return val.astimezone(CST)
+    if isinstance(val, str):
+        s = val.strip()
+        try:
+            dt = datetime.fromisoformat(s)
+        except Exception as e:
+            raise ValueError(f"无法将时间戳字符串 [{s}] 解析为合法 ISO 时间: {e}") from e
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=CST)
+        return dt.astimezone(CST)
+    raise ValueError(f"不支持的时间类型 [{type(val)}]: {val}")
+
 
 
 # ===========================================================================
@@ -106,8 +130,8 @@ class ADCClient:
 
         port = int(port_raw) if port_raw else None
 
-        if host and user:
-            final_host = host
+        if user:
+            final_host = host or "localhost"
             final_port = port or 3306
             final_user = user
             final_pwd = password or ""
@@ -510,9 +534,83 @@ class ADCReleaseClient:
                 }
             pointer = self.get_active_release_pointer()
             if is_historical:
+                # 严格历史归档准入核验：禁止仅凭调用方布尔值放行，必须验证权威存档凭据与物理快照可用性
+                rel_state = str(release.get("state") or "").upper()
+                if rel_state != "READY":
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": False,
+                        "state": "BLOCKED",
+                        "release_id": release_id,
+                        "data_version_id": release.get("data_version_id"),
+                        "pit_snapshot_id": release.get("pit_snapshot_id"),
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["HISTORICAL_RELEASE_NOT_READY"],
+                        "reason": f"历史归档认证失败：历史版本 [{release_id}] 状态为 [{rel_state}]，非权威 READY 状态！",
+                    }
+
+                # 验证权威质量签名哈希
+                evidence_sha = str(release.get("gate_evidence_sha256") or "").strip()
+                if not evidence_sha or evidence_sha.lower() in ("none", "null", "missing", "unverified", "placeholder"):
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": False,
+                        "state": "BLOCKED",
+                        "release_id": release_id,
+                        "data_version_id": release.get("data_version_id"),
+                        "pit_snapshot_id": release.get("pit_snapshot_id"),
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["HISTORICAL_EVIDENCE_MISSING"],
+                        "reason": f"历史归档认证失败：历史版本 [{release_id}] 缺失权威 gate_evidence_sha256 质量签名凭证！",
+                    }
+
+                # 验证物理快照保留可用性 (Snapshot Retention Verification)
+                hist_datasets = self.get_release_datasets(release_id)
+                raw_bar_ds = next((d for d in hist_datasets if d.get("dataset_name") == "equity_daily_bar_raw"), None)
+                if not raw_bar_ds or not raw_bar_ds.get("snapshot_id") or str(raw_bar_ds.get("snapshot_id")).strip() in ("", "None", "null", "missing", "UNVERIFIED"):
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": False,
+                        "state": "BLOCKED",
+                        "release_id": release_id,
+                        "data_version_id": release.get("data_version_id"),
+                        "pit_snapshot_id": release.get("pit_snapshot_id"),
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["HISTORICAL_SNAPSHOT_ID_INVALID"],
+                        "reason": f"历史归档认证失败：Release [{release_id}] 缺少合法的 equity_daily_bar_raw 快照标识！",
+                    }
+
+                raw_snap_id = str(raw_bar_ds.get("snapshot_id")).strip()
+                # 物理探测：若快照物理表可用，核验快照物理分区或快照元数据保留状态
+                if self._c._table_ready("meta_formal_data_snapshot_v2"):
+                    snap_rows = self._c._query(
+                        f"SELECT snapshot_status FROM {self._c._t('meta_formal_data_snapshot_v2')} WHERE snapshot_id = %s",
+                        (raw_snap_id,)
+                    )
+                    if not snap_rows or str(snap_rows[0].get("snapshot_status", "")).upper() in ("PURGED", "DROPPED", "UNVERIFIED"):
+                        return {
+                            "eligible": False,
+                            "is_production_eligible": False,
+                            "is_research_eligible": False,
+                            "state": "BLOCKED",
+                            "release_id": release_id,
+                            "data_version_id": release.get("data_version_id"),
+                            "pit_snapshot_id": release.get("pit_snapshot_id"),
+                            "critical_datasets_ok": False,
+                            "degraded_optional_datasets": [],
+                            "blocked_datasets": ["HISTORICAL_SNAPSHOT_PURGED"],
+                            "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 在元数据中已失效或被清理！",
+                        }
+
                 release["active_pointer"] = pointer
                 release["pointer_matched"] = True
-                release["pointer_status"] = "HISTORICAL_ARCHIVE"
+                release["pointer_status"] = "CERTIFIED_HISTORICAL_ARCHIVE"
             else:
                 if not pointer:
                     return {
@@ -708,6 +806,7 @@ class ADCReleaseClient:
                 "degraded_optional_datasets": optional_degraded,
                 "blocked_datasets": [],
                 "reason": "正式日版认证通过",
+                "pointer_status": release.get("pointer_status", "MATCHED"),
             }
 
         if state == "DEGRADED":
@@ -728,6 +827,7 @@ class ADCReleaseClient:
                     if eligible
                     else "数据处于降级状态 (DEGRADED)，需显式配置 allow_degraded=True 消费"
                 ),
+                "pointer_status": release.get("pointer_status", "MATCHED"),
             }
 
         return {
@@ -1238,6 +1338,23 @@ class ADCDataClient:
                     raise ProductionAdmissionBlockedError(
                         f"快照缺失阻断：日线行情产品 (equity_daily_bar_raw) 缺少合法 snapshot_id！"
                     )
+                evidence_clean = str(gate_evidence_sha256 or "").strip().lower()
+                if (
+                    not evidence_clean
+                    or len(evidence_clean) != 64
+                    or not re.fullmatch(r"[0-9a-f]{64}", evidence_clean)
+                    or evidence_clean in ("none", "null", "missing", "unverified", "placeholder")
+                ):
+                    raise ProductionAdmissionBlockedError(
+                        f"质量证据缺失阻断：Release [{release_id}] 的日线产品 (equity_daily_bar_raw) 缺少有效 64 位 gate_evidence_sha256 签名凭据！当前值: {gate_evidence_sha256}"
+                    )
+                # 校验与发布记录 gate_evidence_sha256 的强一致性
+                rel_evidence = str(rel_info.get("gate_evidence_sha256") or "").strip().lower()
+                if rel_evidence and rel_evidence not in ("none", "null", "missing", "unverified", "placeholder") and len(rel_evidence) == 64:
+                    if rel_evidence != evidence_clean:
+                        raise ProductionAdmissionBlockedError(
+                            f"质量证据一致性阻断：日线产品证据哈希 [{evidence_clean}] 与发布记录权威证据哈希 [{rel_evidence}] 不一致！"
+                        )
 
         # 严格 PIT 边界与截止日期确定：
         ctx_trade_date = getattr(execution_context, "trade_date", None)
@@ -1326,8 +1443,15 @@ class ADCDataClient:
                 table_name = "dwd_stock_daily_standard"
                 col_map = "adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close, vol AS volume, amount"
 
-        # 认证状态安全约束：只有生产模式且真正绑定物理分区快照时才允许标记 certified=True
-        is_certified = bool(is_production and snapshot_bound and release_id and str(release_id).strip() not in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"))
+        # 认证状态安全约束：只有生产模式且真正绑定物理分区快照、且具备合法 64 位证据时才允许标记 certified=True
+        is_certified = bool(
+            is_production
+            and snapshot_bound
+            and release_id
+            and str(release_id).strip() not in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED")
+            and str(gate_evidence_sha256 or "").strip().lower() not in ("", "none", "null", "missing", "unverified", "placeholder")
+            and len(str(gate_evidence_sha256 or "").strip()) == 64
+        )
         is_historical = bool(getattr(execution_context, "is_historical", False))
 
         def _make_proof(row_count: int, d_hash: str, max_avail: str | None = None, max_adj: int | None = None) -> DataProvenanceProof:
@@ -1415,13 +1539,11 @@ class ADCDataClient:
         # 严格 PIT 决策时点与前复权锚点核验：
         ctx_decision_time = getattr(execution_context, "decision_time", None)
         if ctx_decision_time:
-            if isinstance(ctx_decision_time, datetime):
-                decision_cutoff = ctx_decision_time
-            else:
-                decision_cutoff = datetime.fromisoformat(str(ctx_decision_time).replace("Z", ""))
+            decision_cutoff = _parse_to_cst(ctx_decision_time)
         elif ctx_trade_date_int is not None:
-            # 默认日终截面决策时间为决策交易日 23:59:59.999999
-            decision_cutoff = datetime.strptime(f"{ctx_trade_date_int} 23:59:59.999999", "%Y%m%d %H:%M:%S.%f")
+            # 默认日终截面决策时间为决策交易日 23:59:59.999999 CST
+            base_dt = datetime.strptime(f"{ctx_trade_date_int} 23:59:59.999999", "%Y%m%d %H:%M:%S.%f")
+            decision_cutoff = base_dt.replace(tzinfo=CST)
         else:
             decision_cutoff = None
 
@@ -1431,35 +1553,61 @@ class ADCDataClient:
         for row in results:
             # 1. 前复权调整锚点检验：复权锚点严禁跨越决策交易日
             row_anchor = row.get("adjustment_anchor_date")
-            if row_anchor is not None:
-                row_anchor_int = int(row_anchor)
+            if use_snapshot_partition or is_production:
+                if row_anchor is None or str(row_anchor).strip() in ("", "None", "null", "none", "placeholder"):
+                    raise ValueError(
+                        f"未来函数拦截：正式日线快照记录 (ts_code={row.get('ts_code')}, trade_date={row.get('trade_date')}) 缺失有效的 adjustment_anchor_date 复权锚点！"
+                    )
+                try:
+                    row_anchor_int = int(row_anchor)
+                except Exception as e:
+                    raise ValueError(f"未来函数拦截：无法解析 adjustment_anchor_date [{row_anchor}]: {e}")
                 if max_adj_anchor is None or row_anchor_int > max_adj_anchor:
                     max_adj_anchor = row_anchor_int
                 if adj_lower != "raw" and ctx_trade_date_int is not None and row_anchor_int > ctx_trade_date_int:
                     raise ValueError(
                         f"未来函数拦截：前复权调整锚点 adjustment_anchor_date [{row_anchor_int}] 超过了决策交易日 [{ctx_trade_date_int}]！"
                     )
+            else:
+                if row_anchor is not None:
+                    row_anchor_int = int(row_anchor)
+                    if max_adj_anchor is None or row_anchor_int > max_adj_anchor:
+                        max_adj_anchor = row_anchor_int
+                    if adj_lower != "raw" and ctx_trade_date_int is not None and row_anchor_int > ctx_trade_date_int:
+                        raise ValueError(
+                            f"未来函数拦截：前复权调整锚点 adjustment_anchor_date [{row_anchor_int}] 超过了决策交易日 [{ctx_trade_date_int}]！"
+                        )
 
             # 2. 物理可用时间检验：数据物理可获得时间严禁晚于决策时点
             row_avail = row.get("available_at")
-            if row_avail is not None:
-                if isinstance(row_avail, str):
+            if use_snapshot_partition or is_production:
+                if row_avail is None or str(row_avail).strip() in ("", "None", "null", "none", "placeholder"):
+                    raise ValueError(
+                        f"未来函数拦截：正式日线快照记录 (ts_code={row.get('ts_code')}, trade_date={row.get('trade_date')}) 缺失有效的 available_at 物理可用时间！"
+                    )
+                try:
+                    row_dt = _parse_to_cst(row_avail)
+                except Exception as e:
+                    raise ValueError(f"未来函数拦截：无法解析 available_at 物理可用时间 [{row_avail}]: {e}") from e
+                row_avail_str = row_dt.isoformat()
+                if max_available_at is None or row_avail_str > max_available_at:
+                    max_available_at = row_avail_str
+                if decision_cutoff and row_dt > decision_cutoff:
+                    raise ValueError(
+                        f"未来函数拦截：数据物理可用时间 available_at [{row_avail}] (统一对齐CST: {row_dt}) 晚于决策时点 [{decision_cutoff}]！"
+                    )
+            else:
+                if row_avail is not None:
                     try:
-                        row_dt = datetime.fromisoformat(row_avail.replace("Z", ""))
-                    except Exception:
-                        row_dt = None
-                elif isinstance(row_avail, datetime):
-                    row_dt = row_avail
-                else:
-                    row_dt = None
-
-                if row_dt:
+                        row_dt = _parse_to_cst(row_avail)
+                    except Exception as e:
+                        raise ValueError(f"未来函数拦截：无法解析 available_at 物理可用时间 [{row_avail}]: {e}") from e
                     row_avail_str = row_dt.isoformat()
                     if max_available_at is None or row_avail_str > max_available_at:
                         max_available_at = row_avail_str
                     if decision_cutoff and row_dt > decision_cutoff:
                         raise ValueError(
-                            f"未来函数拦截：数据物理可用时间 available_at [{row_avail}] 晚于决策时点 [{decision_cutoff}]！"
+                            f"未来函数拦截：数据物理可用时间 available_at [{row_avail}] (统一对齐CST: {row_dt}) 晚于决策时点 [{decision_cutoff}]！"
                         )
 
         df = pd.DataFrame(results)
