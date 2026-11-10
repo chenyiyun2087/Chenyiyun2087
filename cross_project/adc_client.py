@@ -961,17 +961,36 @@ class ADCDataClient:
         import pandas as pd
         from cross_project.execution_context import DataProvenanceProof, ProductionAdmissionBlockedError
 
-        if execution_context is not None:
-            ctx_mode = getattr(execution_context, "mode", "PRODUCTION")
-            if ctx_mode == "PRODUCTION":
-                if not release_id and getattr(execution_context, "release_id", None):
-                    release_id = execution_context.release_id
-                if not pit_snapshot_id and getattr(execution_context, "pit_snapshot_id", None):
-                    pit_snapshot_id = execution_context.pit_snapshot_id
-                if not release_id or str(release_id).strip() in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"):
-                    raise ProductionAdmissionBlockedError(
-                        "安全红线阻断：生产执行模式下读取日线行情必须绑定有效经过认证的 release_id！"
-                    )
+        # 1. 严格判定执行模式与上下文核查
+        ctx_mode = getattr(execution_context, "mode", None)
+        is_explicit_research = bool(
+            execution_context
+            and str(ctx_mode).upper() == "RESEARCH"
+            and getattr(execution_context, "research_only", False)
+        )
+        is_production = bool(
+            (execution_context and str(ctx_mode).upper() in ("PRODUCTION", "SHADOW"))
+            or (release_id and not is_explicit_research)
+        )
+
+        if is_production:
+            if execution_context is None:
+                raise ProductionAdmissionBlockedError(
+                    "安全红线阻断：生产/可信模式下读取日线行情必须提供有效经过认证的 ExecutionContext，禁止无认证上下文取数！"
+                )
+            ctx_rel_id = getattr(execution_context, "release_id", None)
+            if release_id and ctx_rel_id and str(release_id).strip() != str(ctx_rel_id).strip():
+                raise ProductionAdmissionBlockedError(
+                    f"安全红线阻断：请求传入的 Release ID [{release_id}] 与 ExecutionContext 绑定的发布上下文 [{ctx_rel_id}] 不一致！"
+                )
+            if not release_id and ctx_rel_id:
+                release_id = ctx_rel_id
+            if not pit_snapshot_id and getattr(execution_context, "pit_snapshot_id", None):
+                pit_snapshot_id = execution_context.pit_snapshot_id
+            if not release_id or str(release_id).strip() in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"):
+                raise ProductionAdmissionBlockedError(
+                    "安全红线阻断：生产执行模式下读取日线行情必须绑定有效经过认证的 release_id！"
+                )
 
         # 北交所 (BJ) 标的覆盖审计：
         # ASDC 物理快照 dwd_equity_daily_bar_v2 仅覆盖沪深市场 (SH/SZ)。
@@ -980,43 +999,58 @@ class ADCDataClient:
             s for s in symbols
             if str(s).strip().endswith(".BJ") or (str(s).strip().startswith(("4", "8", "92")) and "." not in str(s))
         ]
-        if bj_symbols and execution_context and getattr(execution_context, "mode", "PRODUCTION").upper() == "PRODUCTION":
+        if bj_symbols and is_production:
             raise ProductionAdmissionBlockedError(
                 f"标的未覆盖阻断：ASDC 正式物理快照 [{release_id}] 仅覆盖沪深市场 (SH/SZ)，请求标的包含北交所标的: {bj_symbols}，严禁未认证执行或部分漏数！"
             )
 
         adj_lower = (adj_type or "").strip().lower()
-        if adj_lower == "raw":
-            table_name = "dwd_daily"
-            col_map = "open AS open, high AS high, low AS low, close AS close, vol AS volume, amount"
-        else:
-            table_name = "dwd_stock_daily_standard"
-            col_map = "adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close, vol AS volume, amount"
 
-        # 版本可见性严格审计：若指定了 release_id，校验请求截止日是否越界
+        # 版本可见性严格审计与物理日线快照匹配：
         v_max = None
         matched_snapshot_id = None
         gate_evidence_sha256 = ""
+        adj_factor_snapshot_id = None
+
         if release_id:
             datasets = self._c.release.get_release_datasets(release_id)
-            target_ds_names = (
-                ("dwd_daily", "equity_daily_bar_raw")
-                if adj_lower == "raw"
-                else ("dwd_stock_daily_standard", "equity_adjustment_factor", "dwd_daily")
-            )
+            # 严格日线行情产品标识：必须来自于 equity_daily_bar_raw (或 dwd_equity_daily_bar_v2 / dwd_daily)
+            # 严禁将复权因子 (equity_adjustment_factor) 的 Snapshot 混用为日线 Snapshot！
+            daily_bar_ds_names = ("equity_daily_bar_raw", "dwd_equity_daily_bar_v2", "dwd_daily")
             for ds in datasets:
-                if ds.get("dataset_name") in target_ds_names:
-                    v_max = ds.get("visible_date_max")
+                d_name = ds.get("dataset_name")
+                if d_name in daily_bar_ds_names and matched_snapshot_id is None:
                     matched_snapshot_id = ds.get("snapshot_id")
+                    v_max = ds.get("visible_date_max")
                     gate_evidence_sha256 = ds.get("gate_evidence_sha256") or ""
-                    break
+                elif d_name in ("equity_adjustment_factor", "dws_price_adj_daily"):
+                    adj_factor_snapshot_id = ds.get("snapshot_id")
+
             if v_max is None:
                 v_maxes = [ds.get("visible_date_max") for ds in datasets if ds.get("visible_date_max")]
                 if v_maxes:
                     v_max = min(v_maxes)
-            if v_max and end_date and int(end_date) > int(v_max):
+
+        # end_date 防未来函数与确定性上界约束：
+        effective_end_date = end_date
+        if effective_end_date is None:
+            if execution_context and getattr(execution_context, "trade_date", None):
+                effective_end_date = int(execution_context.trade_date)
+            elif v_max is not None:
+                effective_end_date = int(v_max)
+            elif is_production:
+                raise ProductionAdmissionBlockedError(
+                    "防未来函数阻断：生产模式下必须由 ExecutionContext 或显式传入 end_date 确定查询截止日期！"
+                )
+
+        if v_max is not None:
+            if effective_end_date and int(effective_end_date) > int(v_max):
                 raise ValueError(
-                    f"未来函数拦截：请求日期 {end_date} 超过了该 Release [{release_id}] 的最大可见日期 {v_max}！"
+                    f"未来函数拦截：请求截止日期 {effective_end_date} 超过了该 Release [{release_id}] 的最大可见日期 {v_max}！"
+                )
+            if start_date and int(start_date) > int(v_max):
+                raise ValueError(
+                    f"未来函数拦截：请求起始日期 {start_date} 超过了该 Release [{release_id}] 的最大可见日期 {v_max}！"
                 )
 
         # 核心物理快照绑定：若数据底座存在不可变分区物理表 dwd_equity_daily_bar_v2 且绑定了合法 snapshot_id，
@@ -1026,6 +1060,19 @@ class ADCDataClient:
             and str(matched_snapshot_id).strip() not in ("", "None", "null", "missing", "UNVERIFIED", "PLACEHOLDER")
             and self._c._table_ready("dwd_equity_daily_bar_v2")
         )
+
+        if is_production and not use_snapshot_partition:
+            if not self._c._table_ready("dwd_equity_daily_bar_v2"):
+                raise ProductionAdmissionBlockedError(
+                    "物理快照表缺失阻断：ASDC 正式物理快照表 dwd_equity_daily_bar_v2 不可用，生产模式严禁降级未分区旧表！"
+                )
+            if not matched_snapshot_id:
+                raise ProductionAdmissionBlockedError(
+                    f"日线快照未绑定阻断：Release [{release_id}] 中未找到合法日线行情数据集 (equity_daily_bar_raw) 快照标识，生产模式严禁放行！"
+                )
+            raise ProductionAdmissionBlockedError(
+                f"生产准入阻断：Release [{release_id}] 无法物理绑定经认证的日线物理快照！"
+            )
 
         if use_snapshot_partition:
             table_name = "dwd_equity_daily_bar_v2"
@@ -1049,13 +1096,14 @@ class ADCDataClient:
                 table_name = "dwd_stock_daily_standard"
                 col_map = "adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close, vol AS volume, amount"
 
-        is_certified = bool(release_id and str(release_id).strip() not in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"))
+        # 认证状态安全约束：只有生产模式且真正绑定物理分区快照时才允许标记 certified=True
+        is_certified = bool(is_production and snapshot_bound and release_id and str(release_id).strip() not in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"))
 
         def _make_proof(row_count: int, d_hash: str) -> DataProvenanceProof:
             if is_certified and snapshot_bound:
                 status_str = "SNAPSHOT_BOUND_CERTIFIED"
-            elif is_certified:
-                status_str = "RELEASE_DECLARED_TABLE_UNPARTITIONED"
+            elif is_explicit_research:
+                status_str = "RESEARCH_UNPARTITIONED_FALLBACK"
             else:
                 status_str = "HISTORICAL_UNVERIFIED_STUDY"
 
@@ -1064,7 +1112,7 @@ class ADCDataClient:
                 dataset_name=table_name,
                 snapshot_id=str(matched_snapshot_id or ("UNVERIFIED_DIRECT_TABLE" if not is_certified else f"snap_{release_id}")),
                 pit_snapshot_id=str(pit_snapshot_id) if pit_snapshot_id else None,
-                visible_date_max=int(v_max or (end_date or start_date)),
+                visible_date_max=int(v_max or (effective_end_date or start_date)),
                 gate_evidence_sha256=str(gate_evidence_sha256 or ""),
                 row_count=row_count,
                 data_hash=d_hash,
@@ -1100,7 +1148,7 @@ class ADCDataClient:
         ts_codes = [to_ts_code(s) for s in symbols]
         ts_to_sym = {tc: tc.split(".")[0] for tc in ts_codes}
 
-        end_clause = "AND trade_date <= %s" if end_date else ""
+        end_clause = "AND trade_date <= %s" if effective_end_date else ""
         results: list[dict[str, Any]] = []
 
         for i in range(0, len(ts_codes), chunk_size):
@@ -1113,8 +1161,8 @@ class ADCDataClient:
                 ORDER BY trade_date, ts_code
             """
             params: list[Any] = snap_params + list(chunk) + [start_date]
-            if end_date:
-                params.append(end_date)
+            if effective_end_date:
+                params.append(effective_end_date)
             rows = self._c._query(sql, tuple(params))
             results.extend(rows)
 

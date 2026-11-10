@@ -24,6 +24,7 @@ def test_prescore_gate_blocks_when_asdc_release_blocked():
 
     # 模拟 ADCClient
     mock_adc_client = MagicMock()
+    mock_adc_client.verify_server_side_readonly.return_value = {"readonly_verified": True}
     mock_adc_client.release.check_release_gate.return_value = {
         "eligible": False,
         "is_production_eligible": False,
@@ -80,6 +81,7 @@ def test_prescore_gate_blocks_when_asdc_release_missing():
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
     mock_adc_client = MagicMock()
+    mock_adc_client.verify_server_side_readonly.return_value = {"readonly_verified": True}
     mock_adc_client.release.check_release_gate.return_value = {
         "eligible": False,
         "is_production_eligible": False,
@@ -105,6 +107,7 @@ def test_prescore_gate_allows_when_asdc_release_ready():
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
     mock_adc_client = MagicMock()
+    mock_adc_client.verify_server_side_readonly.return_value = {"readonly_verified": True}
     mock_adc_client.release.check_release_gate.return_value = {
         "eligible": True,
         "is_production_eligible": True,
@@ -148,6 +151,7 @@ def test_prescore_gate_skip_flag_marks_unverified_research():
 def test_pipeline_readiness_gate_propagates_blocked_status():
     mock_engine = MagicMock()
     mock_adc_client = MagicMock()
+    mock_adc_client.verify_server_side_readonly.return_value = {"readonly_verified": True}
     mock_adc_client.release.check_release_gate.return_value = {
         "eligible": False,
         "state": "BLOCKED",

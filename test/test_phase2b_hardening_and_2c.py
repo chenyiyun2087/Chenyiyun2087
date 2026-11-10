@@ -37,6 +37,7 @@ def test_ready_success_path_end_to_end_context_creation():
     """验证当 ASDC 发布门禁 READY 时，PreScoreGate 与 ExecutionContext.create_production 字段完美对齐并成功创建。"""
     mock_engine = MagicMock()
     mock_adc_client = MagicMock()
+    mock_adc_client.verify_server_side_readonly.return_value = {"readonly_verified": True}
     mock_adc_client.release.check_release_gate.return_value = {
         "eligible": True,
         "is_production_eligible": True,
@@ -201,11 +202,20 @@ def test_register_snapshot_blocks_none_execution_context():
 
 def test_live_tracker_fail_closed_in_production():
     """验证在正式/可信影子模式下，Live Tracker ADCClient 失败时绝不静默回退 SQL，严格抛出 RuntimeError。"""
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
     with patch("cross_project.adc_client.ADCClient", side_effect=RuntimeError("ADC 数据库不可用")):
         with pytest.raises(RuntimeError) as exc_info:
             get_latest_prices_from_kline(
                 symbols=["000001"],
                 allow_research_fallback=False,
+                execution_context=ctx,
             )
         assert "严格禁止静默回退未认证原生 SQL" in str(exc_info.value)
 
@@ -255,17 +265,26 @@ def test_future_leakage_visible_date_max_blocked():
     mock_conn = MagicMock()
     client = ADCClient()
     client._conn = mock_conn
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
 
     # 模拟该 Release 对日线数据的可见上限为 20261106
     with patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-        {"dataset_name": "dwd_stock_daily_standard", "visible_date_max": 20261106}
-    ]):
+        {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "visible_date_max": 20261106}
+    ]), patch.object(client, "_table_ready", return_value=True):
         with pytest.raises(ValueError) as exc_info:
             client.data.get_daily_bars_batch(
                 symbols=["000001"],
                 start_date=20261101,
                 end_date=20261110,  # 发生未来穿越
                 release_id="rel_20261106_v1",
+                execution_context=ctx,
             )
         assert "未来函数拦截" in str(exc_info.value)
         assert "超过了该 Release [rel_20261106_v1] 的最大可见日期 20261106" in str(exc_info.value)
@@ -401,13 +420,42 @@ def test_live_tracker_fail_closed_on_empty_prices():
     """验证在生产模式下，当统一接口返回空 DataFrame 时，严格 Fail-Closed 抛出 RuntimeError。"""
     mock_adc = MagicMock()
     mock_adc.data.get_latest_data_date.return_value = 20261106
-    mock_adc.data.get_daily_bars_batch.return_value = pd.DataFrame()
+    from cross_project.execution_context import DataProvenanceProof
+    proof = DataProvenanceProof(
+        release_id="rel_20261106_v1",
+        dataset_name="dwd_equity_daily_bar_v2",
+        snapshot_id="snap_20261106_v1",
+        pit_snapshot_id="pit_v1",
+        visible_date_max=20261106,
+        gate_evidence_sha256="evidence_sha",
+        row_count=0,
+        data_hash="empty_hash",
+        verified_at="2026-11-06T00:00:00",
+        certified=True,
+        status="SNAPSHOT_BOUND_CERTIFIED",
+        source_table="dwd_equity_daily_bar_v2",
+        snapshot_bound=True,
+    )
+    mock_empty_df = pd.DataFrame()
+    mock_empty_df.attrs["certified"] = True
+    mock_empty_df.attrs["provenance_proof"] = proof
+    mock_adc.data.get_daily_bars_batch.return_value = mock_empty_df
+
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
 
     with patch("cross_project.adc_client.ADCClient", return_value=mock_adc):
         with pytest.raises(RuntimeError) as exc_info:
             get_latest_prices_from_kline(
                 symbols=["000001"],
                 allow_research_fallback=False,
+                execution_context=ctx,
             )
         assert "Live Tracker 生产行情获取返回空数据集" in str(exc_info.value)
         assert "严格禁止使用未认证备用数据" in str(exc_info.value)
@@ -417,15 +465,43 @@ def test_live_tracker_fail_closed_on_missing_symbol_price():
     """验证在生产模式下，当统一接口返回数据缺少请求的标的或价格为 0 时，严格 Fail-Closed。"""
     mock_adc = MagicMock()
     mock_adc.data.get_latest_data_date.return_value = 20261106
-    # 返回了 000002，但请求的是 000001
+    # 返回了 000002，但请求的是 000001，附带合法认证证明
+    from cross_project.execution_context import DataProvenanceProof
+    proof = DataProvenanceProof(
+        release_id="rel_20261106_v1",
+        dataset_name="dwd_equity_daily_bar_v2",
+        snapshot_id="snap_20261106_v1",
+        pit_snapshot_id="pit_v1",
+        visible_date_max=20261106,
+        gate_evidence_sha256="evidence_sha",
+        row_count=1,
+        data_hash="abc",
+        verified_at="2026-11-06T00:00:00",
+        certified=True,
+        status="SNAPSHOT_BOUND_CERTIFIED",
+        source_table="dwd_equity_daily_bar_v2",
+        snapshot_bound=True,
+    )
     mock_df = pd.DataFrame([{"symbol": "000002", "close": 15.0}])
+    mock_df.attrs["certified"] = True
+    mock_df.attrs["provenance_proof"] = proof
     mock_adc.data.get_daily_bars_batch.return_value = mock_df
+
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
 
     with patch("cross_project.adc_client.ADCClient", return_value=mock_adc):
         with pytest.raises(RuntimeError) as exc_info:
             get_latest_prices_from_kline(
                 symbols=["000001"],
                 allow_research_fallback=False,
+                execution_context=ctx,
             )
         assert "Live Tracker 生产行情获取缺失有效价格" in str(exc_info.value)
         assert "000001" in str(exc_info.value)
@@ -682,7 +758,7 @@ def test_backtest_feed_blocks_research_fallback_when_mode_is_production():
 
 
 def test_provenance_proof_bound_to_dataframe():
-    """验证 ADCDataClient.get_daily_bars_batch 在扁平表场景生成 RELEASE_DECLARED_TABLE_UNPARTITIONED 证明。"""
+    """验证在显式隔离研究回退场景下，读取未分区旧表生成 RESEARCH_UNPARTITIONED_FALLBACK 证明且 certified 严格为 False。"""
     client = ADCClient()
     mock_rows = [{
         "ts_code": "000001.SZ",
@@ -694,11 +770,12 @@ def test_provenance_proof_bound_to_dataframe():
         "volume": 50000.0,
         "amount": 510000.0,
     }]
+    res_ctx = ExecutionContext.create_research(20261106, reason="FALLBACK_STUDY")
 
     with patch.object(client, "_query", return_value=mock_rows), \
          patch.object(client, "_table_ready", return_value=False), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "dwd_stock_daily_standard", "snapshot_id": "snap_20261106_v1", "visible_date_max": 20261106, "gate_evidence_sha256": "sha_proof_123"}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_20261106_v1", "visible_date_max": 20261106, "gate_evidence_sha256": "sha_proof_123"}
          ]):
         df = client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -706,6 +783,7 @@ def test_provenance_proof_bound_to_dataframe():
             end_date=20261106,
             release_id="rel_20261106_v1",
             pit_snapshot_id="pit_20261106_v1",
+            execution_context=res_ctx,
         )
 
         assert not df.empty
@@ -717,8 +795,8 @@ def test_provenance_proof_bound_to_dataframe():
         assert proof.pit_snapshot_id == "pit_20261106_v1"
         assert proof.visible_date_max == 20261106
         assert proof.gate_evidence_sha256 == "sha_proof_123"
-        assert proof.certified is True
-        assert proof.status == "RELEASE_DECLARED_TABLE_UNPARTITIONED"
+        assert proof.certified is False
+        assert proof.status == "RESEARCH_UNPARTITIONED_FALLBACK"
         assert proof.snapshot_bound is False
         assert proof.source_table == "dwd_stock_daily_standard"
         assert proof.row_count == 1
@@ -738,11 +816,19 @@ def test_provenance_proof_snapshot_bound_v2_table():
         "volume": 50000.0,
         "amount": 510000.0,
     }]
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_20261106_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
 
     with patch.object(client, "_query", return_value=mock_rows) as mock_query, \
          patch.object(client, "_table_ready", return_value=True), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "dwd_stock_daily_standard", "snapshot_id": "snap_formal_v2_001", "visible_date_max": 20261106, "gate_evidence_sha256": "sha_proof_456"}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_formal_v2_001", "visible_date_max": 20261106, "gate_evidence_sha256": "sha_proof_456"}
          ]):
         df = client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -750,6 +836,7 @@ def test_provenance_proof_snapshot_bound_v2_table():
             end_date=20261106,
             release_id="rel_20261106_v1",
             pit_snapshot_id="pit_20261106_v1",
+            execution_context=ctx,
         )
 
         assert not df.empty
@@ -799,17 +886,26 @@ def test_amount_cny_unit_conversion_divided_by_1000():
         "volume": 50000.0,
         "amount": 929098.4382,
     }]
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
 
     with patch.object(client, "_query", return_value=mock_rows) as mock_query, \
          patch.object(client, "_table_ready", return_value=True), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "dwd_stock_daily_standard", "snapshot_id": "snap_v2", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v2", "visible_date_max": 20261106}
          ]):
         client.data.get_daily_bars_batch(
             symbols=["000001"],
             start_date=20261106,
             end_date=20261106,
             release_id="rel_20261106_v1",
+            execution_context=ctx,
         )
         called_sql, _ = mock_query.call_args[0]
         assert "(amount_cny / 1000.0) AS amount" in called_sql
@@ -834,3 +930,210 @@ def test_bj_symbols_fail_closed_in_production():
         )
     assert "标的未覆盖阻断" in str(exc_info.value)
     assert "北交所标的" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2E 最终收敛六类核心负向准入测试
+# ---------------------------------------------------------------------------
+
+def test_live_tracker_fail_closed_when_missing_context_even_if_adc_returns_prices():
+    """负向测试 1: 缺少 ExecutionContext 时，即使 ADC 返回正常价格，Live Tracker 也必须 Fail-Closed。"""
+    mock_adc = MagicMock()
+    mock_adc.data.get_latest_data_date.return_value = 20261106
+    # 模拟 ADCClient 返回了完全合法的价格数据
+    mock_df = pd.DataFrame([{"symbol": "000001", "close": 10.5}])
+    mock_adc.data.get_daily_bars_batch.return_value = mock_df
+
+    with patch("cross_project.adc_client.ADCClient", return_value=mock_adc):
+        with pytest.raises(RuntimeError) as exc_info:
+            get_latest_prices_from_kline(
+                symbols=["000001"],
+                execution_context=None,  # 显式缺失上下文
+                allow_research_fallback=False,
+            )
+        assert "安全红线阻断：Live Tracker 生产/影子模式下获取行情必须提供有效认证的 ExecutionContext" in str(exc_info.value)
+
+
+def test_adc_client_fail_closed_when_physical_snapshot_table_missing():
+    """负向测试 2: 物理快照表 dwd_equity_daily_bar_v2 不存在时，生产模式严格阻断，严禁降级旧表并标记 certified。"""
+    client = ADCClient()
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
+
+    with patch.object(client, "_table_ready", return_value=False), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "visible_date_max": 20261106}
+         ]):
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                release_id="rel_20261106_v1",
+                execution_context=ctx,
+            )
+        assert "物理快照表缺失阻断" in str(exc_info.value)
+        assert "生产模式严禁降级未分区旧表" in str(exc_info.value)
+
+
+def test_adc_client_uses_raw_bar_snapshot_not_adj_factor_snapshot():
+    """负向测试 3: 复权因子与日线 Snapshot 不同时，日线行情必须严格取 equity_daily_bar_raw 快照，严禁混用复权因子快照。"""
+    client = ADCClient()
+    mock_rows = [{
+        "ts_code": "000001.SZ",
+        "trade_date": 20261106,
+        "open": 10.0,
+        "high": 10.5,
+        "low": 9.9,
+        "close": 10.2,
+        "volume": 50000.0,
+        "amount": 510000.0,
+    }]
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
+
+    with patch.object(client, "_query", return_value=mock_rows) as mock_query, \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             # 复权因子的 snapshot 为 snap_adj_factor_999
+             {"dataset_name": "equity_adjustment_factor", "snapshot_id": "snap_adj_factor_999", "visible_date_max": 20261106},
+             # 日线行情的 snapshot 为 snap_raw_bars_111
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_raw_bars_111", "visible_date_max": 20261106},
+         ]):
+        df = client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            adj_type="qfq",
+            release_id="rel_20261106_v1",
+            execution_context=ctx,
+        )
+
+        assert not df.empty
+        proof = df.attrs["provenance_proof"]
+        # 必须绑定日线快照，绝不能混用复权因子快照
+        assert proof.snapshot_id == "snap_raw_bars_111"
+        assert proof.snapshot_id != "snap_adj_factor_999"
+
+        called_sql, called_params = mock_query.call_args[0]
+        assert "snapshot_id = %s" in called_sql
+        assert called_params[0] == "snap_raw_bars_111"
+        assert called_params[0] != "snap_adj_factor_999"
+
+
+def test_adc_client_end_date_none_constrained_by_context_and_visible_date_max():
+    """负向测试 4: end_date=None 时必须由认证上下文确定明确上界，防无限制查询与未来越界。"""
+    client = ADCClient()
+    mock_rows = [{
+        "ts_code": "000001.SZ",
+        "trade_date": 20261106,
+        "open": 10.0,
+        "high": 10.5,
+        "low": 9.9,
+        "close": 10.2,
+        "volume": 50000.0,
+        "amount": 510000.0,
+    }]
+
+    # Case A: 上下文 trade_date 正常约束 end_clause
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
+
+    with patch.object(client, "_query", return_value=mock_rows) as mock_query, \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "visible_date_max": 20261106}
+         ]):
+        client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261101,
+            end_date=None,  # 未显式传 end_date
+            release_id="rel_20261106_v1",
+            execution_context=ctx,
+        )
+        called_sql, called_params = mock_query.call_args[0]
+        # SQL 查询必须强制绑定 trade_date <= %s，防止无界查询
+        assert "trade_date <= %s" in called_sql
+        assert 20261106 in called_params
+
+    # Case B: 若上下文 trade_date 超过 visible_date_max，严格触发未来函数拦截
+    future_ctx = ExecutionContext.create_production(trade_date=20261109, release_gate_result=gate_res)
+    with patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "visible_date_max": 20261106}
+         ]):
+        with pytest.raises(ValueError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261101,
+                end_date=None,  # 自动推导为 20261109 越界
+                release_id="rel_20261106_v1",
+                execution_context=future_ctx,
+            )
+        assert "未来函数拦截" in str(exc_info.value)
+        assert "20261109 超过了该 Release [rel_20261106_v1] 的最大可见日期 20261106" in str(exc_info.value)
+
+
+def test_adc_client_fail_closed_on_release_id_mismatch():
+    """负向测试 5: 请求传入的 Release ID 与 ExecutionContext 不一致时严格阻断。"""
+    client = ADCClient()
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
+
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            release_id="rel_diff_unmatched",  # 与 ctx 不一致
+            execution_context=ctx,
+        )
+    assert "与 ExecutionContext 绑定的发布上下文 [rel_20261106_v1] 不一致" in str(exc_info.value)
+
+
+def test_prescore_gate_blocks_when_readonly_verified_is_false():
+    """负向测试 6: 当 verify_server_side_readonly 未明确返回 readonly_verified=True 时，PreScoreGate 必须阻断。"""
+    mock_engine = MagicMock()
+    mock_adc_client = MagicMock()
+    # 模拟只读模式未启用或未通过校验
+    mock_adc_client.verify_server_side_readonly.return_value = {
+        "readonly_verified": False,
+        "reason": "READONLY_MODE_DISABLED",
+    }
+    mock_adc_client.release.check_release_gate.return_value = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+    }
+
+    gate = PreScoreGate(mock_engine, adc_client=mock_adc_client)
+    res = gate.check_asdc_release_gate(date(2026, 11, 6))
+
+    assert res["eligible"] is False
+    assert res["passed"] is False
+    assert res["state"] == "READONLY_UNVERIFIED_BLOCKED"
+    assert "服务端只读权限未通过验证" in res["detail"]

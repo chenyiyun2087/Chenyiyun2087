@@ -146,7 +146,24 @@ class PreScoreGate:
             from cross_project.adc_client import ADCClient
             client = self._adc_client or ADCClient()
             # 强校验：生产链路必须验证数据库连接具备物理只读权限隔离
-            client.verify_server_side_readonly()
+            ro_status = client.verify_server_side_readonly()
+            if not ro_status or ro_status.get("readonly_verified") is not True:
+                reason = (ro_status or {}).get("reason", "READONLY_VERIFICATION_FAILED")
+                self._release_context = {
+                    "check": "asdc_release_gate",
+                    "date": str(date_int),
+                    "eligible": False,
+                    "passed": False,
+                    "state": "READONLY_UNVERIFIED_BLOCKED",
+                    "release_state": "READONLY_UNVERIFIED_BLOCKED",
+                    "severity": "critical",
+                    "detail": f"服务端只读权限未通过验证 ({reason})",
+                    "reason": f"READONLY_UNVERIFIED: {reason}",
+                    "critical_datasets_ok": False,
+                    "readonly_verified": False,
+                    "data_certification": "BLOCKED",
+                }
+                return self._release_context
 
             gate = client.release.check_release_gate(
                 date_int,

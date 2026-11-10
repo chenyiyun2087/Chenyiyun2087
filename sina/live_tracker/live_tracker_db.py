@@ -475,6 +475,8 @@ def get_latest_prices_from_kline(
     # 将 date 对象转为 int YYYYMMDD
     if trade_date is not None:
         trade_date_int = int(trade_date.strftime("%Y%m%d")) if isinstance(trade_date, (date, datetime)) else int(trade_date)
+    elif execution_context and getattr(execution_context, "trade_date", None):
+        trade_date_int = int(execution_context.trade_date)
     else:
         trade_date_int = None
 
@@ -486,6 +488,15 @@ def get_latest_prices_from_kline(
             and getattr(execution_context, "research_only", False)
         )
     )
+
+    if not is_research:
+        if execution_context is None:
+            raise RuntimeError("安全红线阻断：Live Tracker 生产/影子模式下获取行情必须提供有效认证的 ExecutionContext！")
+        rel_id = getattr(execution_context, "release_id", None)
+        if not rel_id or str(rel_id).strip() in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"):
+            raise RuntimeError("安全红线阻断：Live Tracker 生产模式下获取行情必须在 ExecutionContext 绑定有效 release_id！")
+        if trade_date_int is None:
+            raise RuntimeError("安全红线阻断：Live Tracker 生产模式下必须由 ExecutionContext 提供明确交易日期，禁止从旧表推断！")
 
     try:
         from cross_project.adc_client import ADCClient
@@ -508,6 +519,13 @@ def get_latest_prices_from_kline(
             pit_snapshot_id=pit_id,
             execution_context=execution_context,
         )
+        if not is_research:
+            proof = df.attrs.get("provenance_proof")
+            is_cert = df.attrs.get("certified", False)
+            if not is_cert or not proof or not getattr(proof, "certified", False) or not getattr(proof, "snapshot_bound", False):
+                raise RuntimeError(
+                    "安全红线阻断：Live Tracker 生产行情获取返回的数据未通过物理快照认证或未绑定有效 DataProvenanceProof！"
+                )
         if not df.empty:
             prices = {}
             for _, row in df.iterrows():
