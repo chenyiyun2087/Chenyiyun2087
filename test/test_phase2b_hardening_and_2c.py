@@ -1553,7 +1553,7 @@ def test_phase2e_r8_active_pointer_enforcement_and_historical_archive():
         {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s5"},
         {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s6"},
     ]
-    mock_client._query.return_value = [{"status": "READY"}]
+    mock_client._query.return_value = [{"status": "READY", "source_manifest_sha256": VALID_SHA256, "1": 1}]
     with patch.object(release_client, "get_release_by_id", return_value={
         "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "trade_date": 20261106, "state": "READY",
         "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1",
@@ -2091,19 +2091,23 @@ def test_phase2e_r10_snapshot_schema_status_fail_closed_validation():
         assert res["eligible"] is False
         assert "HISTORICAL_SNAPSHOT_NOT_FOUND" in res["blocked_datasets"]
 
-    # Case 4: 快照 status 为 BUILDING / REJECTED / BLOCKED -> 阻断 HISTORICAL_SNAPSHOT_NOT_READY
-    for unready_status in ("BUILDING", "REJECTED", "BLOCKED", "FAILED", "UNVERIFIED"):
-        mock_client._query.return_value = [{"status": unready_status}]
+    # Case 4: 快照 status 为非 READY（含 BUILDING / REJECTED / BLOCKED / ONLINE / ACTIVE） -> 阻断 HISTORICAL_SNAPSHOT_NOT_READY
+    for unready_status in ("BUILDING", "REJECTED", "BLOCKED", "FAILED", "UNVERIFIED", "ONLINE", "ACTIVE"):
+        mock_client._query.return_value = [{"status": unready_status, "source_manifest_sha256": VALID_SHA256}]
         with patch.object(release_client, "get_release_by_id", return_value=base_release), \
              patch.object(release_client, "get_release_datasets", return_value=datasets):
             res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
             assert res["eligible"] is False
             assert "HISTORICAL_SNAPSHOT_NOT_READY" in res["blocked_datasets"]
 
-    # Case 5: 真实 status='READY' -> 正确放行，并核实使用了 SELECT status 列名
+    # Case 5: 真实 status='READY'、有效 source_manifest_sha256 且物理快照留存 -> 正确放行，并核实使用了 SELECT status, source_manifest_sha256 列名
     recorded_sqls = []
     def recording_query(sql, params=None):
         recorded_sqls.append(sql)
+        if "meta_formal_data_snapshot_v2" in sql:
+            return [{"status": "READY", "source_manifest_sha256": VALID_SHA256}]
+        if "dwd_equity_daily_bar_v2" in sql:
+            return [{"1": 1}]
         return [{"status": "READY"}]
 
     mock_client._query.side_effect = recording_query
@@ -2113,16 +2117,51 @@ def test_phase2e_r10_snapshot_schema_status_fail_closed_validation():
         assert res["eligible"] is True
         assert res["state"] == "READY"
         assert res["pointer_status"] == "CERTIFIED_HISTORICAL_ARCHIVE"
-        # 严格断言 SQL 中使用的是 status 列名而非 snapshot_status
-        assert any("SELECT status FROM" in s and "meta_formal_data_snapshot_v2" in s for s in recorded_sqls)
+        # 严格断言 SQL 中使用的是 status 列名而非 snapshot_status，且包含 source_manifest_sha256 与物理表存在性探测
+        assert any("SELECT status, source_manifest_sha256 FROM" in s and "meta_formal_data_snapshot_v2" in s for s in recorded_sqls)
+        assert any("SELECT 1 FROM" in s and "dwd_equity_daily_bar_v2" in s for s in recorded_sqls)
         assert not any("snapshot_status" in s for s in recorded_sqls)
+
+    # Case 6: source_manifest_sha256 缺失或非 64 位 SHA256 -> 阻断 HISTORICAL_SNAPSHOT_MANIFEST_INVALID
+    mock_client._query.side_effect = None
+    for bad_manifest in ("", None, "unverified", "placeholder", "short_sha"):
+        mock_client._query.return_value = [{"status": "READY", "source_manifest_sha256": bad_manifest}]
+        with patch.object(release_client, "get_release_by_id", return_value=base_release), \
+             patch.object(release_client, "get_release_datasets", return_value=datasets):
+            res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
+            assert res["eligible"] is False
+            assert "HISTORICAL_SNAPSHOT_MANIFEST_INVALID" in res["blocked_datasets"]
+
+    # Case 7: 物理表 dwd_equity_daily_bar_v2 不可用 -> 阻断 HISTORICAL_PHYSICAL_TABLE_UNAVAILABLE
+    mock_client._table_ready.side_effect = lambda tbl: tbl != "dwd_equity_daily_bar_v2"
+    mock_client._query.return_value = [{"status": "READY", "source_manifest_sha256": VALID_SHA256}]
+    with patch.object(release_client, "get_release_by_id", return_value=base_release), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
+        assert res["eligible"] is False
+        assert "HISTORICAL_PHYSICAL_TABLE_UNAVAILABLE" in res["blocked_datasets"]
+
+    # Case 8: 物理表 dwd_equity_daily_bar_v2 中该快照无任何物理数据留存 -> 阻断 HISTORICAL_PHYSICAL_DATA_PURGED
+    mock_client._table_ready.side_effect = lambda tbl: True
+    def phys_purged_query(sql, params=None):
+        if "meta_formal_data_snapshot_v2" in sql:
+            return [{"status": "READY", "source_manifest_sha256": VALID_SHA256}]
+        if "dwd_equity_daily_bar_v2" in sql:
+            return []  # 物理分区无任何留存数据
+        return []
+    mock_client._query.side_effect = phys_purged_query
+    with patch.object(release_client, "get_release_by_id", return_value=base_release), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
+        assert res["eligible"] is False
+        assert "HISTORICAL_PHYSICAL_DATA_PURGED" in res["blocked_datasets"]
 
 
 def test_phase2e_r10_historical_superseded_origin_state_validation():
     """第十轮测试 2: 历史归档模式对 SUPERSEDED 状态的版本进行原状态 (superseded_from_state) 严格认证。"""
     mock_client = MagicMock()
     mock_client._table_ready.return_value = True
-    mock_client._query.return_value = [{"status": "READY"}]
+    mock_client._query.return_value = [{"status": "READY", "source_manifest_sha256": VALID_SHA256, "1": 1}]
     release_client = ADCReleaseClient(mock_client)
 
     datasets = [
@@ -2306,5 +2345,83 @@ def test_phase2e_r10_dual_evidence_sha256_decoupled_and_dataset_release_id_verif
                     execution_context=ctx,
                 )
             assert "聚合发布证据格式阻断" in str(exc_info.value)
+
+
+def test_phase2e_r11_empty_results_distinguishes_purged_physical_snapshot_from_legitimate_empty():
+    """第十一轮测试 4: get_daily_bars_batch 严格区分合法的无行情标的与物理快照数据已清理场景。"""
+    client = ADCClient()
+    ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+    )
+
+    # 场景 A: 物理快照已从 dwd_equity_daily_bar_v2 清理（0 行留存） -> 抛出 ProductionAdmissionBlockedError
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106,
+             "gate_evidence_sha256": VALID_SHA256,
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {
+                 "release_id": "rel_20261106_v1",
+                 "dataset_name": "equity_daily_bar_raw",
+                 "snapshot_id": "snap_purged_01",
+                 "state": "PASS",
+                 "visible_date_max": 20261106,
+                 "gate_evidence_sha256": VALID_SHA256,
+             }
+         ]):
+        # 当按股票查询返回空，且探测 SELECT 1 也返回空（快照物理数据完全不存在）
+        client._query = MagicMock(return_value=[])
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "物理快照数据缺失阻断" in str(exc_info.value)
+        assert "snap_purged_01" in str(exc_info.value)
+
+    # 场景 B: 物理快照在物理表中存在其他留存记录，但当前标的在指定区间合法无行情 -> 正常返回 certified=True 的空 DataFrame
+    def query_with_snap_existing(sql, params=None):
+        if "SELECT 1 FROM" in sql:
+            return [{"1": 1}]
+        return []
+
+    client._query = MagicMock(side_effect=query_with_snap_existing)
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106,
+             "gate_evidence_sha256": VALID_SHA256,
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {
+                 "release_id": "rel_20261106_v1",
+                 "dataset_name": "equity_daily_bar_raw",
+                 "snapshot_id": "snap_active_01",
+                 "state": "PASS",
+                 "visible_date_max": 20261106,
+                 "gate_evidence_sha256": VALID_SHA256,
+             }
+         ]):
+        empty_df = client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            execution_context=ctx,
+        )
+        assert empty_df.empty
+        assert empty_df.attrs["certified"] is True
+        assert empty_df.attrs["release_id"] == "rel_20261106_v1"
 
 

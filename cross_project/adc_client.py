@@ -636,7 +636,7 @@ class ADCReleaseClient:
                     }
                 try:
                     snap_rows = self._c._query(
-                        f"SELECT status FROM {self._c._t('meta_formal_data_snapshot_v2')} WHERE snapshot_id = %s",
+                        f"SELECT status, source_manifest_sha256 FROM {self._c._t('meta_formal_data_snapshot_v2')} WHERE snapshot_id = %s",
                         (raw_snap_id,)
                     )
                 except Exception as e:
@@ -668,7 +668,8 @@ class ADCReleaseClient:
                         "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 未在 meta_formal_data_snapshot_v2 中登记，Fail-Closed 阻断！",
                     }
                 snap_status = str(snap_rows[0].get("status", "")).upper()
-                if snap_status not in ("READY", "ACTIVE", "ONLINE"):
+                # P1: 严格对齐 ASDC Schema CHECK 约束 (BUILDING/READY/BLOCKED/FAILED/REJECTED)，仅允许权威就绪状态 READY
+                if snap_status != "READY":
                     blocked_code = "HISTORICAL_SNAPSHOT_PURGED" if snap_status in ("PURGED", "DROPPED") else "HISTORICAL_SNAPSHOT_NOT_READY"
                     return {
                         "eligible": False,
@@ -681,7 +682,78 @@ class ADCReleaseClient:
                         "critical_datasets_ok": False,
                         "degraded_optional_datasets": [],
                         "blocked_datasets": [blocked_code],
-                        "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 状态为 [{snap_status}]，非权威认证可用状态 (READY/ACTIVE/ONLINE)！",
+                        "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 状态为 [{snap_status}]，非 ASDC 权威认证就绪状态 (READY)！",
+                    }
+
+                # P0: 严格核验 source_manifest_sha256 快照元数据保留证据
+                manifest_sha = str(snap_rows[0].get("source_manifest_sha256") or "").strip().lower()
+                if (
+                    not manifest_sha
+                    or len(manifest_sha) != 64
+                    or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha)
+                    or manifest_sha in ("none", "null", "missing", "unverified", "placeholder")
+                ):
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": False,
+                        "state": "BLOCKED",
+                        "release_id": release_id,
+                        "data_version_id": release.get("data_version_id"),
+                        "pit_snapshot_id": release.get("pit_snapshot_id"),
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["HISTORICAL_SNAPSHOT_MANIFEST_INVALID"],
+                        "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 缺失有效 64 位 source_manifest_sha256 保留证据！当前值: [{manifest_sha}]",
+                    }
+
+                # P0: 严格核验物理表真实数据留存证明 (Physical Snapshot Retention Verification)
+                if not self._c._table_ready("dwd_equity_daily_bar_v2"):
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": False,
+                        "state": "BLOCKED",
+                        "release_id": release_id,
+                        "data_version_id": release.get("data_version_id"),
+                        "pit_snapshot_id": release.get("pit_snapshot_id"),
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["HISTORICAL_PHYSICAL_TABLE_UNAVAILABLE"],
+                        "reason": f"历史归档认证失败：物理快照表 dwd_equity_daily_bar_v2 不可用，Fail-Closed 阻断！",
+                    }
+                try:
+                    phys_rows = self._c._query(
+                        f"SELECT 1 FROM {self._c._t('dwd_equity_daily_bar_v2')} WHERE snapshot_id = %s LIMIT 1",
+                        (raw_snap_id,)
+                    )
+                except Exception as e:
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": False,
+                        "state": "BLOCKED",
+                        "release_id": release_id,
+                        "data_version_id": release.get("data_version_id"),
+                        "pit_snapshot_id": release.get("pit_snapshot_id"),
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["HISTORICAL_PHYSICAL_DATA_QUERY_FAILED"],
+                        "reason": f"历史归档认证失败：探测物理快照留存异常 [{e}]，Fail-Closed 阻断！",
+                    }
+                if not phys_rows:
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": False,
+                        "state": "BLOCKED",
+                        "release_id": release_id,
+                        "data_version_id": release.get("data_version_id"),
+                        "pit_snapshot_id": release.get("pit_snapshot_id"),
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["HISTORICAL_PHYSICAL_DATA_PURGED"],
+                        "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 在物理表 dwd_equity_daily_bar_v2 中无任何物理数据留存（物理快照已失效或被清理），Fail-Closed 阻断！",
                     }
 
                 release["active_pointer"] = pointer
@@ -1644,6 +1716,17 @@ class ADCDataClient:
             results.extend(rows)
 
         if not results:
+            if is_certified and use_snapshot_partition and matched_snapshot_id:
+                # 区分“标的合法无行情”与“物理快照整表无数据/已清理”：
+                # 必须验证快照物理留存：若快照在物理表中完全无任何数据，严禁标记为 certified=True 的合法空集！
+                snap_exists_rows = self._c._query(
+                    f"SELECT 1 FROM {self._t(table_name)} WHERE snapshot_id = %s LIMIT 1",
+                    (matched_snapshot_id,)
+                )
+                if not snap_exists_rows:
+                    raise ProductionAdmissionBlockedError(
+                        f"物理快照数据缺失阻断：快照 [{matched_snapshot_id}] 在物理表 {table_name} 中无任何数据留存（物理快照已失效或被清理），严禁生成认证数据！"
+                    )
             empty_df = pd.DataFrame(columns=[
                 "symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"
             ])
