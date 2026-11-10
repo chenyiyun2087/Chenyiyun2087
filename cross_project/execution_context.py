@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -154,6 +155,20 @@ class ExecutionContext:
                     f"交易日 {trade_date} 正式发布凭据不完整或为占位符 ({field_name}={field_val})，禁止创建正式生产上下文！"
                 )
 
+        if is_historical:
+            evidence_sha = str(release_gate_result.get("gate_evidence_sha256") or "").strip()
+            pointer_status = str(release_gate_result.get("pointer_status") or "").strip()
+            if (
+                not evidence_sha
+                or len(evidence_sha) != 64
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", evidence_sha)
+                or pointer_status != "CERTIFIED_HISTORICAL_ARCHIVE"
+            ):
+                raise ProductionAdmissionBlockedError(
+                    f"交易日 {trade_date} 历史归档凭据不完整 (gate_evidence_sha256={evidence_sha}, "
+                    f"pointer_status={pointer_status})，禁止创建历史生产上下文！"
+                )
+
         cfg_sha = ""
         if config_data:
             cfg_sha = hashlib.sha256(json.dumps(dict(config_data), sort_keys=True, default=str).encode("utf-8")).hexdigest()
@@ -216,6 +231,26 @@ class ExecutionContext:
                 f"安全拦截：缺少明确的发布凭据 (release_id={self.release_id}, data_version_id={self.data_version_id}, "
                 f"pit_snapshot_id={self.pit_snapshot_id})，禁止写入正式资源 [{target_resource}]！"
             )
+
+        if self.is_historical:
+            evidence_sha = str(self.quality_gate_result.get("gate_evidence_sha256") or "").strip()
+            pointer_status = str(self.quality_gate_result.get("pointer_status") or "").strip()
+            state = str(self.quality_gate_result.get("state") or "").upper()
+            if (
+                not evidence_sha
+                or len(evidence_sha) != 64
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", evidence_sha)
+                or pointer_status != "CERTIFIED_HISTORICAL_ARCHIVE"
+            ):
+                raise ProductionAdmissionBlockedError(
+                    f"安全拦截：历史归档上下文缺失有效 64 位 gate_evidence_sha256 签名凭据或 CERTIFIED_HISTORICAL_ARCHIVE 认证标记，禁止写入正式资源 [{target_resource}]！"
+                )
+            if state == "SUPERSEDED":
+                origin_state = str(self.quality_gate_result.get("superseded_from_state") or "").upper()
+                if origin_state not in ("READY", "DEGRADED"):
+                    raise ProductionAdmissionBlockedError(
+                        f"安全拦截：历史 SUPERSEDED 上下文缺失合法原状态凭据 (superseded_from_state={origin_state})，禁止写入正式资源 [{target_resource}]！"
+                    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

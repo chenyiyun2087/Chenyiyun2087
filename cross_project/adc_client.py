@@ -453,9 +453,26 @@ class ADCReleaseClient:
         return rows[0] if rows else None
 
     def get_certified_release(self, trade_date: int, pointer_name: str = CANONICAL_RELEASE_POINTER_NAME) -> dict[str, Any] | None:
-        """从 ASDC meta_data_release 读取指定交易日的 CERTIFIED_DAILY 发布记录，并结合发布指针验证。"""
+        """从 ASDC meta_data_release 读取指定交易日的 CERTIFIED_DAILY 发布记录，并结合发布指针验证。
+
+        优先解析活动指针：若指针存在且指向指定交易日的版本，以活动指针指向的版本为准；
+        否则按交易日回退检索最新发布记录并比对指针。
+        """
         if not self._c._table_ready("meta_data_release"):
             return None
+
+        # 1. 优先读取活动指针 (Active Pointer)
+        pointer = self.get_active_release_pointer(pointer_name)
+        if pointer and pointer.get("release_id"):
+            pointer_rel_id = pointer["release_id"]
+            pointer_release = self.get_release_by_id(pointer_rel_id, require_certified_daily=True)
+            if pointer_release and int(pointer_release.get("trade_date") or 0) == int(trade_date):
+                pointer_release["active_pointer"] = pointer
+                pointer_release["pointer_matched"] = True
+                pointer_release["pointer_status"] = "MATCHED"
+                return pointer_release
+
+        # 2. 指针未指向当日或指针不存在时，按交易日检索最新发布记录并比对指针
         rows = self._c._query(f"""
             SELECT release_id, release_type, trade_date, state, data_version_id,
                    pit_snapshot_id, gate_evidence_sha256, critical_status_json,
@@ -468,7 +485,6 @@ class ADCReleaseClient:
         if not rows:
             return None
         release = dict(rows[0])
-        pointer = self.get_active_release_pointer(pointer_name)
         if pointer:
             release["active_pointer"] = pointer
             release["pointer_matched"] = (pointer.get("release_id") == release.get("release_id"))
@@ -555,277 +571,6 @@ class ADCReleaseClient:
                     "blocked_datasets": ["TRADE_DATE_MISMATCH"],
                     "reason": f"发布记录 trade_date [{rel_trade_date}] 与请求交易日 [{trade_date}] 不一致！",
                 }
-            rel_state = str(release.get("state") or "").upper()
-            if is_historical:
-                # 严格历史归档准入核验：禁止仅凭调用方布尔值放行，必须验证权威存档凭据与物理快照可用性
-                if rel_state not in ("READY", "SUPERSEDED"):
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_RELEASE_NOT_READY"],
-                        "reason": f"历史归档认证失败：历史版本 [{release_id}] 状态为 [{rel_state}]，非权威 READY 或合法 SUPERSEDED 状态！",
-                    }
-                if rel_state == "SUPERSEDED":
-                    superseded_from = str(release.get("superseded_from_state") or "").upper()
-                    if superseded_from not in ("READY", "DEGRADED"):
-                        return {
-                            "eligible": False,
-                            "is_production_eligible": False,
-                            "is_research_eligible": False,
-                            "state": "BLOCKED",
-                            "release_id": release_id,
-                            "data_version_id": release.get("data_version_id"),
-                            "pit_snapshot_id": release.get("pit_snapshot_id"),
-                            "critical_datasets_ok": False,
-                            "degraded_optional_datasets": [],
-                            "blocked_datasets": ["HISTORICAL_SUPERSEDED_INVALID_ORIGIN"],
-                            "reason": f"历史归档认证失败：历史版本 [{release_id}] 状态为 SUPERSEDED，但原状态 superseded_from_state [{superseded_from}] 非法，非 READY/DEGRADED！",
-                        }
-
-                # 验证权威质量签名哈希
-                evidence_sha = str(release.get("gate_evidence_sha256") or "").strip()
-                if (
-                    not evidence_sha
-                    or len(evidence_sha) != 64
-                    or not re.fullmatch(r"[0-9a-fA-F]{64}", evidence_sha)
-                    or evidence_sha.lower() in ("none", "null", "missing", "unverified", "placeholder")
-                ):
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_EVIDENCE_MISSING"],
-                        "reason": f"历史归档认证失败：历史版本 [{release_id}] 缺失有效 64 位 gate_evidence_sha256 质量签名凭证！",
-                    }
-
-                # 验证物理快照保留可用性 (Snapshot Retention Verification)
-                hist_datasets = self.get_release_datasets(release_id)
-                raw_bar_ds = next((d for d in hist_datasets if d.get("dataset_name") == "equity_daily_bar_raw"), None)
-                if not raw_bar_ds or not raw_bar_ds.get("snapshot_id") or str(raw_bar_ds.get("snapshot_id")).strip() in ("", "None", "null", "missing", "UNVERIFIED"):
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_SNAPSHOT_ID_INVALID"],
-                        "reason": f"历史归档认证失败：Release [{release_id}] 缺少合法的 equity_daily_bar_raw 快照标识！",
-                    }
-
-                raw_snap_id = str(raw_bar_ds.get("snapshot_id")).strip()
-                # 物理探测：严格核验快照元数据保留状态 (Fail-Closed)
-                if not self._c._table_ready("meta_formal_data_snapshot_v2"):
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_SNAPSHOT_META_UNAVAILABLE"],
-                        "reason": f"历史归档认证失败：快照元数据表 meta_formal_data_snapshot_v2 不可用，Fail-Closed 阻断！",
-                    }
-                try:
-                    snap_rows = self._c._query(
-                        f"SELECT status, source_manifest_sha256 FROM {self._c._t('meta_formal_data_snapshot_v2')} WHERE snapshot_id = %s",
-                        (raw_snap_id,)
-                    )
-                except Exception as e:
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_SNAPSHOT_QUERY_FAILED"],
-                        "reason": f"历史归档认证失败：查询快照元数据异常 [{e}]，Fail-Closed 阻断！",
-                    }
-                if not snap_rows:
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_SNAPSHOT_NOT_FOUND"],
-                        "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 未在 meta_formal_data_snapshot_v2 中登记，Fail-Closed 阻断！",
-                    }
-                snap_status = str(snap_rows[0].get("status", "")).upper()
-                # P1: 严格对齐 ASDC Schema CHECK 约束 (BUILDING/READY/BLOCKED/FAILED/REJECTED)，仅允许权威就绪状态 READY
-                if snap_status != "READY":
-                    blocked_code = "HISTORICAL_SNAPSHOT_PURGED" if snap_status in ("PURGED", "DROPPED") else "HISTORICAL_SNAPSHOT_NOT_READY"
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": [blocked_code],
-                        "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 状态为 [{snap_status}]，非 ASDC 权威认证就绪状态 (READY)！",
-                    }
-
-                # P0: 严格核验 source_manifest_sha256 快照元数据保留证据
-                manifest_sha = str(snap_rows[0].get("source_manifest_sha256") or "").strip().lower()
-                if (
-                    not manifest_sha
-                    or len(manifest_sha) != 64
-                    or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha)
-                    or manifest_sha in ("none", "null", "missing", "unverified", "placeholder")
-                ):
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_SNAPSHOT_MANIFEST_INVALID"],
-                        "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 缺失有效 64 位 source_manifest_sha256 保留证据！当前值: [{manifest_sha}]",
-                    }
-
-                # P0: 严格核验物理表真实数据留存证明 (Physical Snapshot Retention Verification)
-                if not self._c._table_ready("dwd_equity_daily_bar_v2"):
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_PHYSICAL_TABLE_UNAVAILABLE"],
-                        "reason": f"历史归档认证失败：物理快照表 dwd_equity_daily_bar_v2 不可用，Fail-Closed 阻断！",
-                    }
-                try:
-                    phys_rows = self._c._query(
-                        f"SELECT 1 FROM {self._c._t('dwd_equity_daily_bar_v2')} WHERE snapshot_id = %s LIMIT 1",
-                        (raw_snap_id,)
-                    )
-                except Exception as e:
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_PHYSICAL_DATA_QUERY_FAILED"],
-                        "reason": f"历史归档认证失败：探测物理快照留存异常 [{e}]，Fail-Closed 阻断！",
-                    }
-                if not phys_rows:
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["HISTORICAL_PHYSICAL_DATA_PURGED"],
-                        "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 在物理表 dwd_equity_daily_bar_v2 中无任何物理数据留存（物理快照已失效或被清理），Fail-Closed 阻断！",
-                    }
-
-                # 历史归档模式使用独立的归档认证结果，绝不伪造数据库活动指针记录
-                release["active_pointer"] = None
-                release["pointer_matched"] = True
-                release["pointer_status"] = "CERTIFIED_HISTORICAL_ARCHIVE"
-            else:
-                # 实时生产模式：白名单校验，仅放行 READY 与 DEGRADED
-                if rel_state not in ("READY", "DEGRADED"):
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": (rel_state in ("BLOCKED", "BUILDING", "PENDING")),
-                        "state": rel_state,
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["TOP_LEVEL_STATE_NOT_PERMITTED"],
-                        "reason": f"ASDC 发布版本顶层状态 [{rel_state}] 未通过白名单校验（仅放行 ('READY', 'DEGRADED')），Fail-Closed 严格阻断！",
-                    }
-                pointer = self.get_active_release_pointer()
-                if not pointer:
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["POINTER_MISSING"],
-                        "reason": (
-                            f"正式发布缺少有效的活动指针 (POINTER_MISSING)，未绑定规范指针 "
-                            f"{CANONICAL_RELEASE_POINTER_NAME}，Fail-Closed 阻断！"
-                        ),
-                    }
-                pointer_rel_id = pointer.get("release_id")
-                if pointer_rel_id != release_id:
-                    return {
-                        "eligible": False,
-                        "is_production_eligible": False,
-                        "is_research_eligible": False,
-                        "state": "BLOCKED",
-                        "release_id": release_id,
-                        "data_version_id": release.get("data_version_id"),
-                        "pit_snapshot_id": release.get("pit_snapshot_id"),
-                        "critical_datasets_ok": False,
-                        "degraded_optional_datasets": [],
-                        "blocked_datasets": ["POINTER_MISMATCH"],
-                        "reason": (
-                            f"发布指针冲突 (POINTER_MISMATCH): active_pointer 指向 [{pointer_rel_id}]，"
-                            f"与指定 Release [{release_id}] 不一致，Fail-Closed 阻断！"
-                        ),
-                    }
-                release["active_pointer"] = pointer
-                release["pointer_matched"] = True
-                release["pointer_status"] = "MATCHED"
         else:
             release = self.get_certified_release(trade_date)
             if not release:
@@ -848,27 +593,246 @@ class ADCReleaseClient:
         ver_id = release.get("data_version_id")
         pit_id = release.get("pit_snapshot_id")
 
-        # 顶层状态严格白名单校验：仅放行 READY 或受控的 DEGRADED；历史归档模式放行已验证的 SUPERSEDED；
-        # 其余所有状态（BLOCKED、BUILDING、PENDING、空状态或未知状态）一律 Fail-Closed 严格阻断
-        allowed_top_states = ("READY", "DEGRADED", "SUPERSEDED") if is_historical else ("READY", "DEGRADED")
-        if state not in allowed_top_states:
-            return {
-                "eligible": False,
-                "is_production_eligible": False,
-                "is_research_eligible": (state in ("BLOCKED", "BUILDING", "PENDING")),
-                "state": state,
-                "release_id": rel_id,
-                "data_version_id": ver_id,
-                "pit_snapshot_id": pit_id,
-                "critical_datasets_ok": False,
-                "degraded_optional_datasets": [],
-                "blocked_datasets": ["TOP_LEVEL_STATE_NOT_PERMITTED"],
-                "reason": f"ASDC 发布版本顶层状态 [{state}] 未通过白名单校验（仅放行 {allowed_top_states}），Fail-Closed 严格阻断！",
-            }
+        if is_historical:
+            # 严格历史归档准入核验：禁止仅凭调用方布尔值放行，必须验证权威存档凭据与物理快照可用性
+            allowed_top_states = ("READY", "DEGRADED", "SUPERSEDED")
+            if state not in allowed_top_states:
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_RELEASE_NOT_READY"],
+                    "reason": f"历史归档认证失败：历史版本 [{rel_id}] 状态为 [{state}]，非权威 READY/DEGRADED 或合法 SUPERSEDED 状态！",
+                }
+            if state == "SUPERSEDED":
+                superseded_from = str(release.get("superseded_from_state") or "").upper()
+                if superseded_from not in ("READY", "DEGRADED"):
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": False,
+                        "state": "BLOCKED",
+                        "release_id": rel_id,
+                        "data_version_id": ver_id,
+                        "pit_snapshot_id": pit_id,
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["HISTORICAL_SUPERSEDED_INVALID_ORIGIN"],
+                        "reason": f"历史归档认证失败：历史版本 [{rel_id}] 状态为 SUPERSEDED，但原状态 superseded_from_state [{superseded_from}] 非法，非 READY/DEGRADED！",
+                    }
 
-        # 验证指针存在性与一致性（仅在非历史模式下强制校验活动指针；历史归档模式使用独立的 CERTIFIED_HISTORICAL_ARCHIVE 凭证）
-        if not is_historical:
+            # 验证权威质量签名哈希
+            evidence_sha = str(release.get("gate_evidence_sha256") or "").strip()
+            if (
+                not evidence_sha
+                or len(evidence_sha) != 64
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", evidence_sha)
+                or evidence_sha.lower() in ("none", "null", "missing", "unverified", "placeholder")
+            ):
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_EVIDENCE_MISSING"],
+                    "reason": f"历史归档认证失败：历史版本 [{rel_id}] 缺失有效 64 位 gate_evidence_sha256 质量签名凭证！",
+                }
+
+            # 验证物理快照保留可用性 (Snapshot Retention Verification)
+            hist_datasets = self.get_release_datasets(rel_id)
+            raw_bar_ds = next((d for d in hist_datasets if d.get("dataset_name") == "equity_daily_bar_raw"), None)
+            if not raw_bar_ds or not raw_bar_ds.get("snapshot_id") or str(raw_bar_ds.get("snapshot_id")).strip() in ("", "None", "null", "missing", "UNVERIFIED"):
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_SNAPSHOT_ID_INVALID"],
+                    "reason": f"历史归档认证失败：Release [{rel_id}] 缺少合法的 equity_daily_bar_raw 快照标识！",
+                }
+
+            raw_snap_id = str(raw_bar_ds.get("snapshot_id")).strip()
+            # 物理探测：严格核验快照元数据保留状态 (Fail-Closed)
+            if not self._c._table_ready("meta_formal_data_snapshot_v2"):
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_SNAPSHOT_META_UNAVAILABLE"],
+                    "reason": f"历史归档认证失败：快照元数据表 meta_formal_data_snapshot_v2 不可用，Fail-Closed 阻断！",
+                }
+            try:
+                snap_rows = self._c._query(
+                    f"SELECT status, source_manifest_sha256 FROM {self._c._t('meta_formal_data_snapshot_v2')} WHERE snapshot_id = %s",
+                    (raw_snap_id,)
+                )
+            except Exception as e:
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_SNAPSHOT_QUERY_FAILED"],
+                    "reason": f"历史归档认证失败：查询快照元数据异常 [{e}]，Fail-Closed 阻断！",
+                }
+            if not snap_rows:
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_SNAPSHOT_NOT_FOUND"],
+                    "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 未在 meta_formal_data_snapshot_v2 中登记，Fail-Closed 阻断！",
+                }
+            snap_status = str(snap_rows[0].get("status", "")).upper()
+            # P1: 严格对齐 ASDC Schema CHECK 约束 (BUILDING/READY/BLOCKED/FAILED/REJECTED)，仅允许权威就绪状态 READY
+            if snap_status != "READY":
+                blocked_code = "HISTORICAL_SNAPSHOT_PURGED" if snap_status in ("PURGED", "DROPPED") else "HISTORICAL_SNAPSHOT_NOT_READY"
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": [blocked_code],
+                    "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 状态为 [{snap_status}]，非 ASDC 权威认证就绪状态 (READY)！",
+                }
+
+            # P0: 严格核验 source_manifest_sha256 快照元数据保留证据
+            manifest_sha = str(snap_rows[0].get("source_manifest_sha256") or "").strip().lower()
+            if (
+                not manifest_sha
+                or len(manifest_sha) != 64
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha)
+                or manifest_sha in ("none", "null", "missing", "unverified", "placeholder")
+            ):
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_SNAPSHOT_MANIFEST_INVALID"],
+                    "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 缺失有效 64 位 source_manifest_sha256 保留证据！当前值: [{manifest_sha}]",
+                }
+
+            # P0: 严格核验物理表真实数据留存证明 (Physical Snapshot Retention Verification)
+            if not self._c._table_ready("dwd_equity_daily_bar_v2"):
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_PHYSICAL_TABLE_UNAVAILABLE"],
+                    "reason": f"历史归档认证失败：物理快照表 dwd_equity_daily_bar_v2 不可用，Fail-Closed 阻断！",
+                }
+            try:
+                phys_rows = self._c._query(
+                    f"SELECT 1 FROM {self._c._t('dwd_equity_daily_bar_v2')} WHERE snapshot_id = %s LIMIT 1",
+                    (raw_snap_id,)
+                )
+            except Exception as e:
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_PHYSICAL_DATA_QUERY_FAILED"],
+                    "reason": f"历史归档认证失败：探测物理快照留存异常 [{e}]，Fail-Closed 阻断！",
+                }
+            if not phys_rows:
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["HISTORICAL_PHYSICAL_DATA_PURGED"],
+                    "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 在物理表 dwd_equity_daily_bar_v2 中无任何物理数据留存（物理快照已失效或被清理），Fail-Closed 阻断！",
+                }
+
+            # 历史归档模式使用独立的归档认证结果，绝不伪造数据库活动指针记录
+            release["active_pointer"] = None
+            release["pointer_matched"] = True
+            release["pointer_status"] = "CERTIFIED_HISTORICAL_ARCHIVE"
+        else:
+            # 实时生产模式：白名单校验，仅放行 READY 与 DEGRADED
+            if state not in ("READY", "DEGRADED"):
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": (state in ("BLOCKED", "BUILDING", "PENDING")),
+                    "state": state,
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["TOP_LEVEL_STATE_NOT_PERMITTED"],
+                    "reason": f"ASDC 发布版本顶层状态 [{state}] 未通过白名单校验（仅放行 ('READY', 'DEGRADED')），Fail-Closed 严格阻断！",
+                }
+
             pointer = release.get("active_pointer")
+            if pointer is None and "active_pointer" not in release:
+                pointer = self.get_active_release_pointer()
+                release["active_pointer"] = pointer
+                if pointer:
+                    release["pointer_matched"] = (pointer.get("release_id") == rel_id)
+
             if not pointer:
                 return {
                     "eligible": False,
@@ -901,9 +865,10 @@ class ADCReleaseClient:
                     "blocked_datasets": ["POINTER_MISMATCH"],
                     "reason": (
                         f"发布指针冲突 (POINTER_MISMATCH): active_pointer 指向 [{pointer.get('release_id')}]，"
-                        f"与交易日 {trade_date} 当前发布 [{rel_id}] 不一致，Fail-Closed 阻断！"
+                        f"与 Release [{rel_id}] 不一致，Fail-Closed 阻断！"
                     ),
                 }
+            release["pointer_status"] = "MATCHED"
 
         # 深入查询数据集状态
         datasets = self.get_release_datasets(rel_id) if rel_id else []
@@ -986,6 +951,7 @@ class ADCReleaseClient:
                 "reason": "正式日版认证通过",
                 "pointer_status": release.get("pointer_status", "MATCHED"),
                 "active_pointer": release.get("active_pointer"),
+                "gate_evidence_sha256": release.get("gate_evidence_sha256"),
             }
 
         if state == "DEGRADED":
@@ -1008,6 +974,7 @@ class ADCReleaseClient:
                 ),
                 "pointer_status": release.get("pointer_status", "MATCHED"),
                 "active_pointer": release.get("active_pointer"),
+                "gate_evidence_sha256": release.get("gate_evidence_sha256"),
             }
 
         if state == "SUPERSEDED" and is_historical:
@@ -1039,6 +1006,7 @@ class ADCReleaseClient:
                 ),
                 "pointer_status": release.get("pointer_status", "CERTIFIED_HISTORICAL_ARCHIVE"),
                 "active_pointer": release.get("active_pointer"),
+                "gate_evidence_sha256": release.get("gate_evidence_sha256"),
             }
 
         return {

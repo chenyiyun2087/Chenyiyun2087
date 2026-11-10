@@ -856,7 +856,11 @@ def main():
         # 构建统一不可篡改的 ExecutionContext
         from cross_project.execution_context import ExecutionContext
         if args.mode == "production":
-            exec_ctx = ExecutionContext.create_production(int(target_date_str), release_check)
+            exec_ctx = ExecutionContext.create_production(
+                int(target_date_str),
+                release_check,
+                allow_degraded=bool(getattr(args, "allow_degraded_data", False)),
+            )
         else:
             exec_ctx = ExecutionContext.create_research(int(target_date_str), release_check, reason="CLI_RESEARCH_RUN")
 

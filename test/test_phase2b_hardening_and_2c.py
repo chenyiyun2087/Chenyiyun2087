@@ -2527,6 +2527,8 @@ def test_phase2e_r13_superseded_origin_state_strict_fail_closed_and_no_text_infe
                 "release_id": "rel_sneaky_01",
                 "data_version_id": "dv_01",
                 "pit_snapshot_id": "pit_01",
+                "gate_evidence_sha256": "44" * 32,
+                "pointer_status": "CERTIFIED_HISTORICAL_ARCHIVE",
                 "reason": sneaky_reason,
             }
             with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
@@ -2545,6 +2547,8 @@ def test_phase2e_r13_superseded_origin_state_strict_fail_closed_and_no_text_infe
         "release_id": "rel_deg_sneak_01",
         "data_version_id": "dv_01",
         "pit_snapshot_id": "pit_01",
+        "gate_evidence_sha256": "44" * 32,
+        "pointer_status": "CERTIFIED_HISTORICAL_ARCHIVE",
         "reason": "READY",
     }
     with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
@@ -2578,6 +2582,8 @@ def test_phase2e_r13_superseded_origin_state_strict_fail_closed_and_no_text_infe
         "release_id": "rel_valid_ready",
         "data_version_id": "dv_01",
         "pit_snapshot_id": "pit_01",
+        "gate_evidence_sha256": "44" * 32,
+        "pointer_status": "CERTIFIED_HISTORICAL_ARCHIVE",
     }
     ctx_ready = ExecutionContext.create_production(
         trade_date=20261106,
@@ -2594,6 +2600,8 @@ def test_phase2e_r13_superseded_origin_state_strict_fail_closed_and_no_text_infe
         "release_id": "rel_valid_deg",
         "data_version_id": "dv_01",
         "pit_snapshot_id": "pit_01",
+        "gate_evidence_sha256": "44" * 32,
+        "pointer_status": "CERTIFIED_HISTORICAL_ARCHIVE",
     }
     ctx_deg = ExecutionContext.create_production(
         trade_date=20261106,
@@ -2603,6 +2611,162 @@ def test_phase2e_r13_superseded_origin_state_strict_fail_closed_and_no_text_infe
     )
     assert ctx_deg.certification_status == "DEGRADED_PERMITTED"
     ctx_deg.validate_for_production_write("target_order_table")  # 正常通过
+
+
+def test_phase2e_r14_historical_gate_omitting_release_id_enforces_full_archive_verification():
+    """第十四轮测试 P0: 验证历史准入在省略 release_id 时统一执行完整归档校验并杜绝通过写入前检查。"""
+    mock_client = MagicMock()
+    mock_client._table_ready.return_value = True
+    release_client = ADCReleaseClient(mock_client)
+
+    # 构造一条缺少聚合证据 (gate_evidence_sha256) 的 SUPERSEDED 记录
+    bad_historical_release = {
+        "release_id": "rel_historical_no_evidence",
+        "trade_date": 20261106,
+        "state": "SUPERSEDED",
+        "superseded_from_state": "READY",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+        "gate_evidence_sha256": None,  # 缺少有效证据哈希
+    }
+
+    with patch.object(release_client, "get_certified_release", return_value=bad_historical_release), \
+         patch.object(release_client, "get_release_by_id", return_value=bad_historical_release):
+
+        # 1. 显式传 ID：被拒绝
+        res_with_id = release_client.check_release_gate(
+            trade_date=20261106,
+            release_id="rel_historical_no_evidence",
+            is_historical=True,
+        )
+        assert res_with_id["eligible"] is False
+        assert "HISTORICAL_EVIDENCE_MISSING" in res_with_id["blocked_datasets"]
+
+        # 2. 省略 ID：同样必须被拒绝（杜绝因省略 ID 绕过归档校验）
+        res_no_id = release_client.check_release_gate(
+            trade_date=20261106,
+            release_id=None,
+            is_historical=True,
+        )
+        assert res_no_id["eligible"] is False
+        assert "HISTORICAL_EVIDENCE_MISSING" in res_no_id["blocked_datasets"]
+
+    # 3. 验证即使存在伪造的无证据历史上下文，写入前检查 validate_for_production_write 也会强力拦截
+    invalid_hist_ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_fake_hist",
+        data_version_id="dv_01",
+        pit_snapshot_id="pit_01",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+        is_historical=True,
+        quality_gate_result={"state": "SUPERSEDED", "superseded_from_state": "READY", "pointer_status": "MATCHED"},  # 缺少 gate_evidence_sha256
+    )
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        invalid_hist_ctx.validate_for_production_write("target_order_table")
+    assert "历史归档上下文缺失有效 64 位 gate_evidence_sha256" in str(exc_info.value)
+
+
+def test_phase2e_r14_intraday_rollback_pointer_priority_resolution():
+    """第十四轮测试 P1: 同日回滚后，下游优先解析活动指针，正确采纳已恢复的旧版而非被替换的新版。"""
+    mock_client = MagicMock()
+    mock_client._table_ready.return_value = True
+    release_client = ADCReleaseClient(mock_client)
+
+    # 模拟同日存在两个版本：rel_old (10:00, READY) 与 rel_new (11:00, SUPERSEDED)
+    # 回滚后指针切回指向 rel_old
+    active_pointer = {
+        "pointer_name": "CERTIFIED_DAILY",
+        "release_id": "rel_20260625_old",
+        "pointer_version": 2,
+    }
+    rel_old = {
+        "release_id": "rel_20260625_old",
+        "trade_date": 20260625,
+        "state": "READY",
+        "data_version_id": "dv_old",
+        "pit_snapshot_id": "pit_old",
+        "published_at": "2026-06-25 10:00:00",
+    }
+    rel_new = {
+        "release_id": "rel_20260625_new",
+        "trade_date": 20260625,
+        "state": "SUPERSEDED",
+        "data_version_id": "dv_new",
+        "pit_snapshot_id": "pit_new",
+        "published_at": "2026-06-25 11:00:00",
+    }
+
+    def fake_get_release_by_id(rel_id, require_certified_daily=True):
+        if rel_id == "rel_20260625_old":
+            return dict(rel_old)
+        return dict(rel_new)
+
+    with patch.object(release_client, "get_active_release_pointer", return_value=active_pointer), \
+         patch.object(release_client, "get_release_by_id", side_effect=fake_get_release_by_id):
+
+        selected_release = release_client.get_certified_release(20260625)
+        assert selected_release is not None
+        # 必须选中指针指向的 rel_old，而不是 published_at 较新的 rel_new
+        assert selected_release["release_id"] == "rel_20260625_old"
+        assert selected_release["pointer_matched"] is True
+        assert selected_release["pointer_status"] == "MATCHED"
+
+
+def test_phase2e_r14_scorerank_allow_degraded_passthrough():
+    """第十四轮测试 P1: ScoreRank CLI 在生产模式下正确透传 allow_degraded 参数至 ExecutionContext。"""
+    degraded_gate_result = {
+        "eligible": True,
+        "passed": True,
+        "state": "DEGRADED",
+        "release_id": "rel_degraded_01",
+        "data_version_id": "dv_01",
+        "pit_snapshot_id": "pit_01",
+        "reason": "可选数据集降级",
+    }
+
+    # 1. 模拟遗漏 allow_degraded（默认 False）：被阻断
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        ExecutionContext.create_production(
+            trade_date=20261106,
+            release_gate_result=degraded_gate_result,
+            allow_degraded=False,
+        )
+    assert "未被显式授权 allow_degraded=True" in str(exc_info.value)
+
+    # 2. 模拟修复后透传 allow_degraded=True：顺利通过并创建 DEGRADED_PERMITTED 上下文
+    ctx = ExecutionContext.create_production(
+        trade_date=20261106,
+        release_gate_result=degraded_gate_result,
+        allow_degraded=True,
+    )
+    assert ctx.certification_status == "DEGRADED_PERMITTED"
+    assert ctx.allow_degraded is True
+
+
+def test_phase2e_r14_live_tracker_cli_context_injection():
+    """第十四轮测试 P1: Live Tracker CLI sync 和 snapshot 具备有效认证上下文。"""
+    from sina.live_tracker.run_live_tracker import _resolve_live_execution_context
+    from unittest.mock import MagicMock
+
+    mock_gate_ok = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_live_01",
+        "data_version_id": "dv_01",
+        "pit_snapshot_id": "pit_01",
+    }
+
+    with patch("cross_project.adc_client.ADCClient") as MockADC:
+        mock_instance = MockADC.return_value
+        mock_instance.release.check_release_gate.return_value = mock_gate_ok
+
+        ctx = _resolve_live_execution_context(date(2026, 11, 6))
+        assert ctx.mode == "PRODUCTION"
+        assert ctx.release_id == "rel_live_01"
+        assert ctx.certification_status == "CERTIFIED_DAILY"
+
 
 
 

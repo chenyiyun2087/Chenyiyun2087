@@ -121,11 +121,49 @@ def cmd_positions(args):
     print()
 
 
+def _resolve_live_execution_context(
+    target_date: date | None = None,
+    tracker: LiveTracker | None = None,
+    allow_degraded: bool = False,
+):
+    """按目标交易日创建并传入有效认证上下文。"""
+    from cross_project.adc_client import ADCClient
+    from cross_project.execution_context import ExecutionContext
+
+    adc = ADCClient()
+    trade_date_int: int | None = None
+    if target_date is not None:
+        trade_date_int = int(target_date.strftime("%Y%m%d"))
+    else:
+        # 若未指定交易日且有持仓，尝试从持仓标的查询最新可用数据日
+        symbols = list(tracker.get_positions().keys()) if tracker else []
+        if symbols:
+            trade_date_int = adc.data.get_latest_data_date(symbols)
+        if not trade_date_int:
+            trade_date_int = int(date.today().strftime("%Y%m%d"))
+
+    release_check = adc.release.check_release_gate(trade_date_int, allow_degraded=allow_degraded)
+    if release_check.get("eligible"):
+        return ExecutionContext.create_production(
+            trade_date_int,
+            release_check,
+            allow_degraded=allow_degraded,
+        )
+    return ExecutionContext.create_research(
+        trade_date_int,
+        release_check,
+        reason="LIVE_TRACKER_CLI_RESOLVED",
+    )
+
+
 def cmd_sync(args):
     """同步价格"""
+    trade_date = parse_date(args.date) if getattr(args, "date", None) else None
+    allow_degraded = bool(getattr(args, "allow_degraded", False))
     tracker = LiveTracker()
-    trade_date = parse_date(args.date) if args.date else None
-    tracker.sync_prices(trade_date)
+    ctx = _resolve_live_execution_context(trade_date, tracker, allow_degraded=allow_degraded)
+    tracker.execution_context = ctx
+    tracker.sync_prices(trade_date, execution_context=ctx)
     
     # 显示更新后的持仓
     cmd_positions(args)
@@ -133,11 +171,14 @@ def cmd_sync(args):
 
 def cmd_snapshot(args):
     """生成每日快照"""
-    tracker = LiveTracker()
     snapshot_date = parse_date(args.date)
+    allow_degraded = bool(getattr(args, "allow_degraded", False))
+    tracker = LiveTracker()
+    ctx = _resolve_live_execution_context(snapshot_date, tracker, allow_degraded=allow_degraded)
+    tracker.execution_context = ctx
     
     # 先同步价格
-    tracker.sync_prices(snapshot_date)
+    tracker.sync_prices(snapshot_date, execution_context=ctx)
     
     # 生成快照
     pnl = tracker.calculate_daily_pnl(snapshot_date)
@@ -356,11 +397,13 @@ def main():
     # sync 命令
     sync_parser = subparsers.add_parser("sync", help="同步最新价格")
     sync_parser.add_argument("--date", "-d", help="指定日期 (YYYY-MM-DD)")
+    sync_parser.add_argument("--allow-degraded", action="store_true", help="允许使用 DEGRADED 降级发布数据")
     sync_parser.set_defaults(func=cmd_sync)
     
     # snapshot 命令
     snap_parser = subparsers.add_parser("snapshot", help="生成每日快照")
     snap_parser.add_argument("--date", "-d", help="快照日期 (YYYY-MM-DD)")
+    snap_parser.add_argument("--allow-degraded", action="store_true", help="允许使用 DEGRADED 降级发布数据")
     snap_parser.set_defaults(func=cmd_snapshot)
     
     # signals 命令
