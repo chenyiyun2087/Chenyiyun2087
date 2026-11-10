@@ -322,11 +322,77 @@ def test_asdc_real_mysql_historical_superseded_origin_ready_success():
         """)
 
     try:
+        # 1. check_release_gate(is_historical=True) 成功通过并保留原状态
         gate = client.release.check_release_gate(trade_date=trade_date, release_id=rel_id, is_historical=True)
         assert gate["eligible"] is True
         assert gate["state"] == "SUPERSEDED"
+        assert gate.get("superseded_from_state") == "READY"
         assert gate["is_production_eligible"] is True
+        assert gate["pointer_status"] == "CERTIFIED_HISTORICAL_ARCHIVE"
+        assert gate.get("active_pointer") is None  # 不伪造数据库活动指针
         assert "历史归档认证通过 (原状态: READY)" in gate["reason"]
+
+        # 2. 贯穿 ExecutionContext.create_production() 成功创建且正确继承 CERTIFIED_DAILY
+        ctx = ExecutionContext.create_production(
+            trade_date=trade_date,
+            release_gate_result=gate,
+            is_historical=True,
+        )
+        assert ctx.mode == "PRODUCTION"
+        assert ctx.is_historical is True
+        assert ctx.certification_status == "CERTIFIED_DAILY"
+
+        # 3. 贯穿 get_daily_bars_batch() 成功拉取经认证的物理历史日线
+        bars = client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=trade_date,
+            end_date=trade_date,
+            execution_context=ctx,
+        )
+        assert not bars.empty
+        assert bars.attrs["certified"] is True
+        assert bars.attrs["release_id"] == rel_id
+        assert bars.attrs["provenance_proof"].certification_mode == "CERTIFIED_HISTORICAL_ARCHIVE"
+
+        # 4. 空标的 symbols=[] 在物理快照存在时也产出已认证的空集
+        empty_bars = client.data.get_daily_bars_batch(
+            symbols=[],
+            start_date=trade_date,
+            end_date=trade_date,
+            execution_context=ctx,
+        )
+        assert empty_bars.empty
+        assert empty_bars.attrs["certified"] is True
+
+        # 5. 严格验证 is_historical=False 时 SUPERSEDED 绝不放行
+        # 5a. Gate 层拒绝
+        gate_non_hist = client.release.check_release_gate(trade_date=trade_date, release_id=rel_id, is_historical=False)
+        assert gate_non_hist["eligible"] is False
+        assert "TOP_LEVEL_STATE_NOT_PERMITTED" in gate_non_hist.get("blocked_datasets", [])
+
+        # 5b. 上下文工厂层拒绝
+        with pytest.raises(ProductionAdmissionBlockedError):
+            ExecutionContext.create_production(trade_date=trade_date, release_gate_result=gate, is_historical=False)
+
+        # 5c. 取数执行层拒绝未标记 is_historical 的生产上下文
+        fake_live_ctx = ExecutionContext(
+            mode="PRODUCTION",
+            trade_date=trade_date,
+            release_id=rel_id,
+            data_version_id="dv_v1",
+            pit_snapshot_id="pit_v1",
+            certification_status="CERTIFIED_DAILY",
+            research_only=False,
+            is_historical=False,
+        )
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=trade_date,
+                end_date=trade_date,
+                execution_context=fake_live_ctx,
+            )
+        assert "未通过 ASDC 生产准入核验" in str(exc_info.value)
     finally:
         client.close()
 

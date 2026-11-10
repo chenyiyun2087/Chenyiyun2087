@@ -768,14 +768,8 @@ class ADCReleaseClient:
                         "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 在物理表 dwd_equity_daily_bar_v2 中无任何物理数据留存（物理快照已失效或被清理），Fail-Closed 阻断！",
                     }
 
-                if not pointer:
-                    pointer = {
-                        "pointer_name": CANONICAL_RELEASE_POINTER_NAME,
-                        "release_id": release_id,
-                        "pointer_version": 1,
-                        "updated_at": "HISTORICAL_ARCHIVE",
-                    }
-                release["active_pointer"] = pointer
+                # 历史归档模式使用独立的归档认证结果，绝不伪造数据库活动指针记录
+                release["active_pointer"] = None
                 release["pointer_matched"] = True
                 release["pointer_status"] = "CERTIFIED_HISTORICAL_ARCHIVE"
             else:
@@ -857,43 +851,44 @@ class ADCReleaseClient:
                 "reason": f"ASDC 发布版本顶层状态 [{state}] 未通过白名单校验（仅放行 {allowed_top_states}），Fail-Closed 严格阻断！",
             }
 
-        # 验证指针存在性与一致性
-        pointer = release.get("active_pointer")
-        if not pointer:
-            return {
-                "eligible": False,
-                "is_production_eligible": False,
-                "is_research_eligible": False,
-                "state": "BLOCKED",
-                "release_id": rel_id,
-                "data_version_id": ver_id,
-                "pit_snapshot_id": pit_id,
-                "critical_datasets_ok": False,
-                "degraded_optional_datasets": [],
-                "blocked_datasets": ["POINTER_MISSING"],
-                "reason": (
-                    f"正式发布缺少有效的活动指针 (POINTER_MISSING)，未绑定规范指针 "
-                    f"{CANONICAL_RELEASE_POINTER_NAME}，Fail-Closed 阻断！"
-                ),
-            }
+        # 验证指针存在性与一致性（仅在非历史模式下强制校验活动指针；历史归档模式使用独立的 CERTIFIED_HISTORICAL_ARCHIVE 凭证）
+        if not is_historical:
+            pointer = release.get("active_pointer")
+            if not pointer:
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["POINTER_MISSING"],
+                    "reason": (
+                        f"正式发布缺少有效的活动指针 (POINTER_MISSING)，未绑定规范指针 "
+                        f"{CANONICAL_RELEASE_POINTER_NAME}，Fail-Closed 阻断！"
+                    ),
+                }
 
-        if not release.get("pointer_matched"):
-            return {
-                "eligible": False,
-                "is_production_eligible": False,
-                "is_research_eligible": False,
-                "state": "BLOCKED",
-                "release_id": rel_id,
-                "data_version_id": ver_id,
-                "pit_snapshot_id": pit_id,
-                "critical_datasets_ok": False,
-                "degraded_optional_datasets": [],
-                "blocked_datasets": ["POINTER_MISMATCH"],
-                "reason": (
-                    f"发布指针冲突 (POINTER_MISMATCH): active_pointer 指向 [{pointer.get('release_id')}]，"
-                    f"与交易日 {trade_date} 当前发布 [{rel_id}] 不一致，Fail-Closed 阻断！"
-                ),
-            }
+            if not release.get("pointer_matched"):
+                return {
+                    "eligible": False,
+                    "is_production_eligible": False,
+                    "is_research_eligible": False,
+                    "state": "BLOCKED",
+                    "release_id": rel_id,
+                    "data_version_id": ver_id,
+                    "pit_snapshot_id": pit_id,
+                    "critical_datasets_ok": False,
+                    "degraded_optional_datasets": [],
+                    "blocked_datasets": ["POINTER_MISMATCH"],
+                    "reason": (
+                        f"发布指针冲突 (POINTER_MISMATCH): active_pointer 指向 [{pointer.get('release_id')}]，"
+                        f"与交易日 {trade_date} 当前发布 [{rel_id}] 不一致，Fail-Closed 阻断！"
+                    ),
+                }
 
         # 深入查询数据集状态
         datasets = self.get_release_datasets(rel_id) if rel_id else []
@@ -975,6 +970,7 @@ class ADCReleaseClient:
                 "blocked_datasets": [],
                 "reason": "正式日版认证通过",
                 "pointer_status": release.get("pointer_status", "MATCHED"),
+                "active_pointer": release.get("active_pointer"),
             }
 
         if state == "DEGRADED":
@@ -996,6 +992,7 @@ class ADCReleaseClient:
                     else "数据处于降级状态 (DEGRADED)，需显式配置 allow_degraded=True 消费"
                 ),
                 "pointer_status": release.get("pointer_status", "MATCHED"),
+                "active_pointer": release.get("active_pointer"),
             }
 
         if state == "SUPERSEDED" and is_historical:
@@ -1012,6 +1009,8 @@ class ADCReleaseClient:
                 "is_production_eligible": eligible,
                 "is_research_eligible": True,
                 "state": "SUPERSEDED",
+                "superseded_from_state": origin_state,
+                "is_historical": True,
                 "release_id": rel_id,
                 "data_version_id": ver_id,
                 "pit_snapshot_id": pit_id,
@@ -1024,6 +1023,7 @@ class ADCReleaseClient:
                     else f"历史版本处于 SUPERSEDED (原状态: {origin_state})，未满足准入条件"
                 ),
                 "pointer_status": release.get("pointer_status", "CERTIFIED_HISTORICAL_ARCHIVE"),
+                "active_pointer": release.get("active_pointer"),
             }
 
         return {
@@ -1691,7 +1691,20 @@ class ADCDataClient:
                 certification_mode=cert_mode,
             )
 
+        def _ensure_physical_snapshot_retained():
+            if is_certified and use_snapshot_partition and matched_snapshot_id:
+                # 统一物理留存核验：无论空标的列表还是查询无匹配记录，若物理快照整表无数据，严禁生成任何认证数据！
+                snap_exists_rows = self._c._query(
+                    f"SELECT 1 FROM {self._t(table_name)} WHERE snapshot_id = %s LIMIT 1",
+                    (matched_snapshot_id,)
+                )
+                if not snap_exists_rows:
+                    raise ProductionAdmissionBlockedError(
+                        f"物理快照数据缺失阻断：快照 [{matched_snapshot_id}] 在物理表 {table_name} 中无任何数据留存（物理快照已失效或被清理），严禁生成认证数据！"
+                    )
+
         if not symbols:
+            _ensure_physical_snapshot_retained()
             empty_df = pd.DataFrame(columns=[
                 "symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"
             ])
@@ -1735,17 +1748,7 @@ class ADCDataClient:
             results.extend(rows)
 
         if not results:
-            if is_certified and use_snapshot_partition and matched_snapshot_id:
-                # 区分“标的合法无行情”与“物理快照整表无数据/已清理”：
-                # 必须验证快照物理留存：若快照在物理表中完全无任何数据，严禁标记为 certified=True 的合法空集！
-                snap_exists_rows = self._c._query(
-                    f"SELECT 1 FROM {self._t(table_name)} WHERE snapshot_id = %s LIMIT 1",
-                    (matched_snapshot_id,)
-                )
-                if not snap_exists_rows:
-                    raise ProductionAdmissionBlockedError(
-                        f"物理快照数据缺失阻断：快照 [{matched_snapshot_id}] 在物理表 {table_name} 中无任何数据留存（物理快照已失效或被清理），严禁生成认证数据！"
-                    )
+            _ensure_physical_snapshot_retained()
             empty_df = pd.DataFrame(columns=[
                 "symbol", "ts_code", "trade_date", "open", "high", "low", "close", "volume", "amount"
             ])

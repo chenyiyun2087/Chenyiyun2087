@@ -107,16 +107,54 @@ class ExecutionContext:
         ).upper()
         reason = release_gate_result.get("reason") or release_gate_result.get("detail") or "未知原因"
 
-        if not eligible or state not in ("READY", "DEGRADED", "CERTIFIED_DAILY"):
+        effective_historical = bool(
+            is_historical
+            or release_gate_result.get("is_historical", False)
+            or release_gate_result.get("pointer_status") == "CERTIFIED_HISTORICAL_ARCHIVE"
+        )
+        allowed_states = ("READY", "DEGRADED", "CERTIFIED_DAILY", "SUPERSEDED") if effective_historical else ("READY", "DEGRADED", "CERTIFIED_DAILY")
+
+        if not eligible or state not in allowed_states:
             raise ProductionAdmissionBlockedError(
                 f"交易日 {trade_date} 数据未获得正式发布资格 (state={state}, eligible={eligible})，禁止创建正式生产上下文！"
                 f"原因: {reason}"
             )
 
-        if state == "DEGRADED" and not allow_degraded:
-            raise ProductionAdmissionBlockedError(
-                f"交易日 {trade_date} 发布状态为 DEGRADED 但未被显式授权 allow_degraded=True，禁止创建正式生产上下文！"
-            )
+        superseded_from = str(release_gate_result.get("superseded_from_state") or "").upper()
+        if state == "SUPERSEDED":
+            if not effective_historical:
+                raise ProductionAdmissionBlockedError(
+                    f"交易日 {trade_date} 发布状态为 SUPERSEDED，仅在历史归档模式 (is_historical=True) 下允许消费，禁止生产放行！"
+                )
+            if superseded_from == "READY":
+                cert = "CERTIFIED_DAILY"
+            elif superseded_from == "DEGRADED":
+                if not allow_degraded:
+                    raise ProductionAdmissionBlockedError(
+                        f"交易日 {trade_date} 历史版本原状态为 DEGRADED 但未被显式授权 allow_degraded=True，禁止创建历史生产上下文！"
+                    )
+                cert = "DEGRADED_PERMITTED"
+            else:
+                if "READY" in reason.upper():
+                    cert = "CERTIFIED_DAILY"
+                elif "DEGRADED" in reason.upper():
+                    if not allow_degraded:
+                        raise ProductionAdmissionBlockedError(
+                            f"交易日 {trade_date} 历史版本原状态为 DEGRADED 但未被显式授权 allow_degraded=True，禁止创建历史生产上下文！"
+                        )
+                    cert = "DEGRADED_PERMITTED"
+                else:
+                    raise ProductionAdmissionBlockedError(
+                        f"交易日 {trade_date} 历史版本 SUPERSEDED 缺少合法的原状态继承凭据 (superseded_from_state={superseded_from})，禁止创建历史生产上下文！"
+                    )
+        elif state == "DEGRADED":
+            if not allow_degraded:
+                raise ProductionAdmissionBlockedError(
+                    f"交易日 {trade_date} 发布状态为 DEGRADED 但未被显式授权 allow_degraded=True，禁止创建正式生产上下文！"
+                )
+            cert = "DEGRADED_PERMITTED"
+        else:
+            cert = "CERTIFIED_DAILY"
 
         rel_id = release_gate_result.get("release_id")
         ver_id = release_gate_result.get("data_version_id")
@@ -128,8 +166,6 @@ class ExecutionContext:
                 raise ProductionAdmissionBlockedError(
                     f"交易日 {trade_date} 正式发布凭据不完整或为占位符 ({field_name}={field_val})，禁止创建正式生产上下文！"
                 )
-
-        cert = "CERTIFIED_DAILY" if state in ("READY", "CERTIFIED_DAILY") else "DEGRADED_PERMITTED"
 
         cfg_sha = ""
         if config_data:
@@ -146,7 +182,7 @@ class ExecutionContext:
             quality_gate_result=dict(release_gate_result),
             config_sha=cfg_sha,
             allow_degraded=allow_degraded,
-            is_historical=is_historical,
+            is_historical=effective_historical,
             decision_time=decision_time,
         )
 

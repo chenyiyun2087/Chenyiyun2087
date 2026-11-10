@@ -2192,7 +2192,14 @@ def test_phase2e_r10_historical_superseded_origin_state_validation():
         assert res["state"] == "SUPERSEDED"
         assert res["is_production_eligible"] is True
         assert res["pointer_status"] == "CERTIFIED_HISTORICAL_ARCHIVE"
+        assert res["active_pointer"] is None  # 不伪造虚拟数据库活动指针
         assert "历史归档认证通过 (原状态: READY)" in res["reason"]
+
+        # 验证 ExecutionContext.create_production 能够正常消费历史 SUPERSEDED 版本并继承 CERTIFIED_DAILY
+        ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=res, is_historical=True)
+        assert ctx.mode == "PRODUCTION"
+        assert ctx.is_historical is True
+        assert ctx.certification_status == "CERTIFIED_DAILY"
 
     # Case 2: 历史 Release 为 SUPERSEDED 且 superseded_from_state='DEGRADED'，默认 allow_degraded=False -> 阻断
     release_sup_deg = dict(release_sup_ready)
@@ -2203,6 +2210,9 @@ def test_phase2e_r10_historical_superseded_origin_state_validation():
         assert res["eligible"] is False
         assert res["state"] == "SUPERSEDED"
 
+        with pytest.raises(ProductionAdmissionBlockedError):
+            ExecutionContext.create_production(trade_date=20261106, release_gate_result=res, is_historical=True, allow_degraded=False)
+
     # Case 3: 历史 Release 为 SUPERSEDED 且 superseded_from_state='DEGRADED'，配置 allow_degraded=True -> 放行
     with patch.object(release_client, "get_release_by_id", return_value=release_sup_deg), \
          patch.object(release_client, "get_release_datasets", return_value=datasets):
@@ -2210,6 +2220,11 @@ def test_phase2e_r10_historical_superseded_origin_state_validation():
         assert res["eligible"] is True
         assert res["state"] == "SUPERSEDED"
         assert "历史归档认证通过 (原状态: DEGRADED)" in res["reason"]
+
+        ctx_deg = ExecutionContext.create_production(trade_date=20261106, release_gate_result=res, is_historical=True, allow_degraded=True)
+        assert ctx_deg.mode == "PRODUCTION"
+        assert ctx_deg.is_historical is True
+        assert ctx_deg.certification_status == "DEGRADED_PERMITTED"
 
     # Case 4: 历史 Release 为 SUPERSEDED 但 superseded_from_state 为非法状态 (如 BLOCKED / BUILDING / None) -> 严格阻断
     for bad_origin in ("BLOCKED", "BUILDING", "CANDIDATE", None, ""):
@@ -2229,6 +2244,9 @@ def test_phase2e_r10_historical_superseded_origin_state_validation():
         assert res_non_hist["eligible"] is False
         assert res_non_hist["state"] == "SUPERSEDED"
         assert "TOP_LEVEL_STATE_NOT_PERMITTED" in res_non_hist.get("blocked_datasets", [])
+
+        with pytest.raises(ProductionAdmissionBlockedError):
+            ExecutionContext.create_production(trade_date=20261106, release_gate_result=res_non_hist, is_historical=False)
 
 
 def test_phase2e_r10_dual_evidence_sha256_decoupled_and_dataset_release_id_verified():
@@ -2423,5 +2441,78 @@ def test_phase2e_r11_empty_results_distinguishes_purged_physical_snapshot_from_l
         assert empty_df.empty
         assert empty_df.attrs["certified"] is True
         assert empty_df.attrs["release_id"] == "rel_20261106_v1"
+
+
+def test_phase2e_r12_empty_symbols_list_enforces_physical_retention_probe():
+    """第十二轮测试: 即使传入 symbols=[]，在生产认证模式下也必须严格校验物理快照留存证据。"""
+    client = ADCClient()
+    ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+    )
+
+    # 场景 A: 物理快照已清理 -> symbols=[] 也绝不放行，必须抛出 ProductionAdmissionBlockedError
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106,
+             "gate_evidence_sha256": VALID_SHA256,
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {
+                 "release_id": "rel_20261106_v1",
+                 "dataset_name": "equity_daily_bar_raw",
+                 "snapshot_id": "snap_purged_01",
+                 "state": "PASS",
+                 "visible_date_max": 20261106,
+                 "gate_evidence_sha256": VALID_SHA256,
+             }
+         ]):
+        client._query = MagicMock(return_value=[])  # 物理探测返回空
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=[],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "物理快照数据缺失阻断" in str(exc_info.value)
+        assert "snap_purged_01" in str(exc_info.value)
+
+    # 场景 B: 物理快照真实存在 -> symbols=[] 正常返回带有认证凭证的空 DataFrame
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106,
+             "gate_evidence_sha256": VALID_SHA256,
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {
+                 "release_id": "rel_20261106_v1",
+                 "dataset_name": "equity_daily_bar_raw",
+                 "snapshot_id": "snap_active_01",
+                 "state": "PASS",
+                 "visible_date_max": 20261106,
+                 "gate_evidence_sha256": VALID_SHA256,
+             }
+         ]):
+        client._query = MagicMock(return_value=[{"1": 1}])  # 物理快照存在
+        empty_df = client.data.get_daily_bars_batch(
+            symbols=[],
+            start_date=20261106,
+            end_date=20261106,
+            execution_context=ctx,
+        )
+        assert empty_df.empty
+        assert empty_df.attrs["certified"] is True
+        assert empty_df.attrs["release_id"] == "rel_20261106_v1"
+
 
 
