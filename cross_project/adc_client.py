@@ -555,10 +555,9 @@ class ADCReleaseClient:
                     "blocked_datasets": ["TRADE_DATE_MISMATCH"],
                     "reason": f"发布记录 trade_date [{rel_trade_date}] 与请求交易日 [{trade_date}] 不一致！",
                 }
-            pointer = self.get_active_release_pointer()
+            rel_state = str(release.get("state") or "").upper()
             if is_historical:
                 # 严格历史归档准入核验：禁止仅凭调用方布尔值放行，必须验证权威存档凭据与物理快照可用性
-                rel_state = str(release.get("state") or "").upper()
                 if rel_state not in ("READY", "SUPERSEDED"):
                     return {
                         "eligible": False,
@@ -773,6 +772,22 @@ class ADCReleaseClient:
                 release["pointer_matched"] = True
                 release["pointer_status"] = "CERTIFIED_HISTORICAL_ARCHIVE"
             else:
+                # 实时生产模式：白名单校验，仅放行 READY 与 DEGRADED
+                if rel_state not in ("READY", "DEGRADED"):
+                    return {
+                        "eligible": False,
+                        "is_production_eligible": False,
+                        "is_research_eligible": (rel_state in ("BLOCKED", "BUILDING", "PENDING")),
+                        "state": rel_state,
+                        "release_id": release_id,
+                        "data_version_id": release.get("data_version_id"),
+                        "pit_snapshot_id": release.get("pit_snapshot_id"),
+                        "critical_datasets_ok": False,
+                        "degraded_optional_datasets": [],
+                        "blocked_datasets": ["TOP_LEVEL_STATE_NOT_PERMITTED"],
+                        "reason": f"ASDC 发布版本顶层状态 [{rel_state}] 未通过白名单校验（仅放行 ('READY', 'DEGRADED')），Fail-Closed 严格阻断！",
+                    }
+                pointer = self.get_active_release_pointer()
                 if not pointer:
                     return {
                         "eligible": False,
