@@ -239,8 +239,20 @@ class ADCClient:
                 charset="utf8mb4",
                 cursorclass=pymysql.cursors.DictCursor,
                 database=conf["database"],
+                autocommit=True,
             )
         return self._conn
+
+    def close(self) -> None:
+        """显式关闭客户端底层数据库连接，释放连接与锁资源。"""
+        if self._conn is not None:
+            try:
+                if self._conn.open:
+                    self._conn.close()
+            except Exception:
+                pass
+            finally:
+                self._conn = None
 
     def _validate_readonly_sql(self, sql: str) -> None:
         """只读守护：严格杜绝向 ASDC 数据库进行任何写操作。"""
@@ -367,9 +379,9 @@ class ADCClient:
     def _query(self, sql: str, params: tuple | dict | None = None) -> list[dict[str, Any]]:
         self._validate_readonly_sql(sql)
         conn = self._get_conn()
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        return [dict(r) for r in cur.fetchall()]
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
 
     @property
     def database_name(self) -> str:
@@ -756,6 +768,13 @@ class ADCReleaseClient:
                         "reason": f"历史归档认证失败：物理快照 [{raw_snap_id}] 在物理表 dwd_equity_daily_bar_v2 中无任何物理数据留存（物理快照已失效或被清理），Fail-Closed 阻断！",
                     }
 
+                if not pointer:
+                    pointer = {
+                        "pointer_name": CANONICAL_RELEASE_POINTER_NAME,
+                        "release_id": release_id,
+                        "pointer_version": 1,
+                        "updated_at": "HISTORICAL_ARCHIVE",
+                    }
                 release["active_pointer"] = pointer
                 release["pointer_matched"] = True
                 release["pointer_status"] = "CERTIFIED_HISTORICAL_ARCHIVE"

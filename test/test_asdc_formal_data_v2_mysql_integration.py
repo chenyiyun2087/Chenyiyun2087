@@ -264,11 +264,14 @@ def test_asdc_real_mysql_historical_release_ready_success():
         """)
 
     # 执行历史归档 Gate 认证
-    gate = client.release.check_release_gate(trade_date=trade_date, release_id=rel_id, is_historical=True)
-    assert gate["eligible"] is True
-    assert gate["state"] == "READY"
-    assert gate["pointer_status"] == "CERTIFIED_HISTORICAL_ARCHIVE"
-    assert "正式日版认证通过" in gate["reason"]
+    try:
+        gate = client.release.check_release_gate(trade_date=trade_date, release_id=rel_id, is_historical=True)
+        assert gate["eligible"] is True
+        assert gate["state"] == "READY"
+        assert gate["pointer_status"] == "CERTIFIED_HISTORICAL_ARCHIVE"
+        assert "正式日版认证通过" in gate["reason"]
+    finally:
+        client.close()
 
 
 def test_asdc_real_mysql_historical_superseded_origin_ready_success():
@@ -318,11 +321,14 @@ def test_asdc_real_mysql_historical_superseded_origin_ready_success():
             ON DUPLICATE KEY UPDATE state='PASS';
         """)
 
-    gate = client.release.check_release_gate(trade_date=trade_date, release_id=rel_id, is_historical=True)
-    assert gate["eligible"] is True
-    assert gate["state"] == "SUPERSEDED"
-    assert gate["is_production_eligible"] is True
-    assert "历史归档认证通过 (原状态: READY)" in gate["reason"]
+    try:
+        gate = client.release.check_release_gate(trade_date=trade_date, release_id=rel_id, is_historical=True)
+        assert gate["eligible"] is True
+        assert gate["state"] == "SUPERSEDED"
+        assert gate["is_production_eligible"] is True
+        assert "历史归档认证通过 (原状态: READY)" in gate["reason"]
+    finally:
+        client.close()
 
 
 def test_asdc_real_mysql_physical_snapshot_purged_fails_closed():
@@ -363,10 +369,13 @@ def test_asdc_real_mysql_physical_snapshot_purged_fails_closed():
             ON DUPLICATE KEY UPDATE state='PASS';
         """)
 
-    gate = client.release.check_release_gate(trade_date=trade_date, release_id=rel_id, is_historical=True)
-    assert gate["eligible"] is False
-    assert "HISTORICAL_PHYSICAL_DATA_PURGED" in gate["blocked_datasets"]
-    assert "无任何物理数据留存" in gate["reason"]
+    try:
+        gate = client.release.check_release_gate(trade_date=trade_date, release_id=rel_id, is_historical=True)
+        assert gate["eligible"] is False
+        assert "HISTORICAL_PHYSICAL_DATA_PURGED" in gate["blocked_datasets"]
+        assert "无任何物理数据留存" in gate["reason"]
+    finally:
+        client.close()
 
 
 def test_asdc_real_mysql_empty_symbol_distinguishes_purged_from_legitimate_empty():
@@ -407,13 +416,25 @@ def test_asdc_real_mysql_empty_symbol_distinguishes_purged_from_legitimate_empty
         ON DUPLICATE KEY UPDATE state='READY';
     """)
 
+    # 插入规范活动指针
     _exec_admin(f"""
-        INSERT INTO {ASDC_DATABASE}.meta_data_release_dataset
-          (release_id, dataset_name, snapshot_id, criticality, state, gate_evidence_sha256, visible_date_max)
+        INSERT INTO {ASDC_DATABASE}.meta_data_release_pointer
+          (pointer_name, release_id, pointer_version, updated_by)
         VALUES
-          ('{rel_id}', 'equity_daily_bar_raw', '{snap_id}', 'CRITICAL', 'PASS', '{DATASET_SHA}', {trade_date})
-        ON DUPLICATE KEY UPDATE state='PASS';
+          ('CERTIFIED_DAILY', '{rel_id}', 1, 'integration_test')
+        ON DUPLICATE KEY UPDATE release_id='{rel_id}';
     """)
+
+    # 插入 6 大 Canonical Critical 数据集
+    for ds_name in ("trade_calendar", "security_lifecycle_daily", "equity_daily_bar_raw",
+                    "equity_adjustment_factor", "corporate_action_event", "daily_basic"):
+        _exec_admin(f"""
+            INSERT INTO {ASDC_DATABASE}.meta_data_release_dataset
+              (release_id, dataset_name, snapshot_id, criticality, state, gate_evidence_sha256, visible_date_max)
+            VALUES
+              ('{rel_id}', '{ds_name}', '{snap_id}', 'CRITICAL', 'PASS', '{DATASET_SHA}', {trade_date})
+            ON DUPLICATE KEY UPDATE state='PASS';
+        """)
 
     ctx = ExecutionContext(
         mode="PRODUCTION",
@@ -425,25 +446,29 @@ def test_asdc_real_mysql_empty_symbol_distinguishes_purged_from_legitimate_empty
         research_only=False,
     )
 
-    # 情况 1: 物理快照存在，查询不存在标的（如 000002.SZ）-> 正常返回 certified=True 的空 DataFrame
-    empty_df = client.data.get_daily_bars_batch(
-        symbols=["000002"],
-        start_date=trade_date,
-        end_date=trade_date,
-        execution_context=ctx,
-    )
-    assert empty_df.empty
-    assert empty_df.attrs["certified"] is True
-    assert empty_df.attrs["release_id"] == rel_id
-
-    # 情况 2: 将物理快照中的所有数据删除（模拟快照已被物理清理）-> 触发 ProductionAdmissionBlockedError
-    _exec_admin(f"DELETE FROM {ASDC_DATABASE}.dwd_equity_daily_bar_v2 WHERE snapshot_id='{snap_id}'")
-    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
-        client.data.get_daily_bars_batch(
+    try:
+        # 情况 1: 物理快照存在，查询不存在标的（如 000002.SZ）-> 正常返回 certified=True 的空 DataFrame
+        empty_df = client.data.get_daily_bars_batch(
             symbols=["000002"],
             start_date=trade_date,
             end_date=trade_date,
             execution_context=ctx,
         )
-    assert "物理快照数据缺失阻断" in str(exc_info.value)
-    assert snap_id in str(exc_info.value)
+        assert empty_df.empty
+        assert empty_df.attrs["certified"] is True
+        assert empty_df.attrs["release_id"] == rel_id
+
+        # 情况 2: 将物理快照中的所有数据删除（模拟快照已被物理清理）-> 触发 ProductionAdmissionBlockedError
+        client.close()
+        _exec_admin(f"DELETE FROM {ASDC_DATABASE}.dwd_equity_daily_bar_v2 WHERE snapshot_id='{snap_id}'")
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000002"],
+                start_date=trade_date,
+                end_date=trade_date,
+                execution_context=ctx,
+            )
+        assert "物理快照数据缺失阻断" in str(exc_info.value)
+        assert snap_id in str(exc_info.value)
+    finally:
+        client.close()
