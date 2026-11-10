@@ -121,11 +121,20 @@ class ADCClient:
 
     def _resolve_config(self) -> dict[str, Any]:
         """按优先级解析连接参数：显式参数 > 环境变量 > 备选配置文件。"""
-        # 1. 显式参数优先
+        # 1. 显式参数优先与环境变量优先
         host = self._host or os.getenv("ADC_MYSQL_HOST") or os.getenv("ASDC_MYSQL_HOST")
         port_raw = self._port or os.getenv("ADC_MYSQL_PORT") or os.getenv("ASDC_MYSQL_PORT")
-        user = self._user or os.getenv("ADC_MYSQL_USER") or os.getenv("ASDC_MYSQL_USER")
-        password = self._password or os.getenv("ADC_MYSQL_PASSWORD") or os.getenv("ASDC_MYSQL_PASSWORD")
+
+        ro_user = os.getenv("ADC_MYSQL_RO_USER") or os.getenv("ASDC_MYSQL_RO_USER")
+        ro_pwd = os.getenv("ADC_MYSQL_RO_PASSWORD") or os.getenv("ASDC_MYSQL_RO_PASSWORD")
+
+        if self._readonly_only and ro_user:
+            user = self._user or ro_user
+            password = self._password if self._password is not None else ro_pwd
+        else:
+            user = self._user or os.getenv("ADC_MYSQL_USER") or os.getenv("ASDC_MYSQL_USER")
+            password = self._password if self._password is not None else (os.getenv("ADC_MYSQL_PASSWORD") or os.getenv("ASDC_MYSQL_PASSWORD"))
+
         database = self._database or os.getenv("ADC_MYSQL_DATABASE") or ADC_DATABASE
 
         port = int(port_raw) if port_raw else None
@@ -138,7 +147,7 @@ class ADCClient:
             final_db = database
             resolved_path = "<explicit_parameters>"
             active_sec = "<explicit>"
-            is_dedicated = bool(user != "root")
+            is_dedicated = bool(user != "root" or (self._readonly_only and bool(ro_user)))
         else:
             # 2. 查找配置文件
             candidate_paths = []
