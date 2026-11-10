@@ -272,17 +272,24 @@ def test_future_leakage_visible_date_max_blocked():
         "data_version_id": "dv_v1",
         "pit_snapshot_id": "pit_v1",
     }
-    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
+    # 上下文 trade_date 设为 20261110
+    ctx = ExecutionContext.create_production(trade_date=20261110, release_gate_result=gate_res)
 
     # 模拟该 Release 对日线数据的可见上限为 20261106
-    with patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-        {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "visible_date_max": 20261106}
+    with patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+        "release_id": "rel_20261106_v1",
+        "state": "READY",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+        "trade_date": 20261110,
+    }), patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+        {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106}
     ]), patch.object(client, "_table_ready", return_value=True):
         with pytest.raises(ValueError) as exc_info:
             client.data.get_daily_bars_batch(
                 symbols=["000001"],
                 start_date=20261101,
-                end_date=20261110,  # 发生未来穿越
+                end_date=20261110,  # 超过 visible_date_max 20261106 发生未来穿越
                 release_id="rel_20261106_v1",
                 execution_context=ctx,
             )
@@ -401,15 +408,14 @@ def test_server_side_readonly_probe_succeeds_on_permitted_code_1142():
     mock_cursor = MagicMock()
     mock_cursor.fetchall.return_value = [{"Grants": "GRANT SELECT ON `tushare_stock`.* TO 'fake_ro'@'%'"}]
     denied_err = pymysql.MySQLError(1142, "UPDATE command denied to user 'fake_ro'@'%' for table 'meta_data_release'")
-    mock_cursor.execute.side_effect = [None, denied_err]
+    mock_cursor.execute.side_effect = [None, denied_err, denied_err]
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cursor
 
     with patch.object(client, "_get_conn", return_value=mock_conn):
         res = client.verify_server_side_readonly()
         assert res["readonly_verified"] is True
-        assert res["rejection_code"] == 1142
-        assert res["verified_method"] == "SERVER_SIDE_ACCESS_DENIED_PROBE"
+        assert "SERVER_SIDE_ACCESS_DENIED" in res["verified_method"]
 
 
 # ---------------------------------------------------------------------------
@@ -827,8 +833,11 @@ def test_provenance_proof_snapshot_bound_v2_table():
 
     with patch.object(client, "_query", return_value=mock_rows) as mock_query, \
          patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_20261106_v1", "trade_date": 20261106
+         }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_formal_v2_001", "visible_date_max": 20261106, "gate_evidence_sha256": "sha_proof_456"}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_formal_v2_001", "state": "PASS", "visible_date_max": 20261106, "gate_evidence_sha256": "sha_proof_456"}
          ]):
         df = client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -860,6 +869,7 @@ def test_production_admission_blocked_when_reading_bars_without_release():
     # 模拟一个没有 release_id 的生产执行上下文
     prod_ctx = MagicMock()
     prod_ctx.mode = "PRODUCTION"
+    prod_ctx.research_only = False
     prod_ctx.release_id = None
     prod_ctx.pit_snapshot_id = None
 
@@ -870,7 +880,7 @@ def test_production_admission_blocked_when_reading_bars_without_release():
             end_date=20261106,
             execution_context=prod_ctx,
         )
-    assert "安全红线阻断：生产执行模式下读取日线行情必须绑定有效经过认证的 release_id" in str(exc_info.value)
+    assert "安全红线阻断：生产执行模式下 ExecutionContext 必须预先绑定有效经过认证的 release_id" in str(exc_info.value)
 
 
 def test_amount_cny_unit_conversion_divided_by_1000():
@@ -897,8 +907,11 @@ def test_amount_cny_unit_conversion_divided_by_1000():
 
     with patch.object(client, "_query", return_value=mock_rows) as mock_query, \
          patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v2", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v2", "state": "PASS", "visible_date_max": 20261106}
          ]):
         client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -917,19 +930,25 @@ def test_bj_symbols_fail_closed_in_production():
     client = ADCClient()
     prod_ctx = MagicMock()
     prod_ctx.mode = "PRODUCTION"
+    prod_ctx.research_only = False
     prod_ctx.release_id = "rel_20261106_v1"
     prod_ctx.pit_snapshot_id = "pit_20261106_v1"
+    prod_ctx.data_version_id = "dv_v1"
+    prod_ctx.trade_date = 20261106
 
-    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
-        client.data.get_daily_bars_batch(
-            symbols=["000001.SZ", "830946.BJ"],
-            start_date=20261106,
-            end_date=20261106,
-            release_id="rel_20261106_v1",
-            execution_context=prod_ctx,
-        )
-    assert "标的未覆盖阻断" in str(exc_info.value)
-    assert "北交所标的" in str(exc_info.value)
+    with patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+        "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_20261106_v1", "trade_date": 20261106
+    }):
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001.SZ", "830946.BJ"],
+                start_date=20261106,
+                end_date=20261106,
+                release_id="rel_20261106_v1",
+                execution_context=prod_ctx,
+            )
+        assert "标的未覆盖阻断" in str(exc_info.value)
+        assert "北交所标的" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -967,8 +986,11 @@ def test_adc_client_fail_closed_when_physical_snapshot_table_missing():
     ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
 
     with patch.object(client, "_table_ready", return_value=False), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106}
          ]):
         with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
             client.data.get_daily_bars_batch(
@@ -1006,11 +1028,14 @@ def test_adc_client_uses_raw_bar_snapshot_not_adj_factor_snapshot():
 
     with patch.object(client, "_query", return_value=mock_rows) as mock_query, \
          patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
              # 复权因子的 snapshot 为 snap_adj_factor_999
-             {"dataset_name": "equity_adjustment_factor", "snapshot_id": "snap_adj_factor_999", "visible_date_max": 20261106},
+             {"dataset_name": "equity_adjustment_factor", "snapshot_id": "snap_adj_factor_999", "state": "PASS", "visible_date_max": 20261106},
              # 日线行情的 snapshot 为 snap_raw_bars_111
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_raw_bars_111", "visible_date_max": 20261106},
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_raw_bars_111", "state": "PASS", "visible_date_max": 20261106},
          ]):
         df = client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -1059,8 +1084,11 @@ def test_adc_client_end_date_none_constrained_by_context_and_visible_date_max():
 
     with patch.object(client, "_query", return_value=mock_rows) as mock_query, \
          patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+         }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106}
          ]):
         client.data.get_daily_bars_batch(
             symbols=["000001"],
@@ -1077,8 +1105,11 @@ def test_adc_client_end_date_none_constrained_by_context_and_visible_date_max():
     # Case B: 若上下文 trade_date 超过 visible_date_max，严格触发未来函数拦截
     future_ctx = ExecutionContext.create_production(trade_date=20261109, release_gate_result=gate_res)
     with patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261109
+         }), \
          patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
-             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "visible_date_max": 20261106}
+             {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261106}
          ]):
         with pytest.raises(ValueError) as exc_info:
             client.data.get_daily_bars_batch(
@@ -1137,3 +1168,228 @@ def test_prescore_gate_blocks_when_readonly_verified_is_false():
     assert res["passed"] is False
     assert res["state"] == "READONLY_UNVERIFIED_BLOCKED"
     assert "服务端只读权限未通过验证" in res["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 2E 第七轮最终安全闭环核心反例测试
+# ---------------------------------------------------------------------------
+
+def test_get_daily_bars_batch_fail_closed_on_unverified_release_record():
+    """第七轮测试 1: 生产读取必须核验权威 Release 状态与日线产品质量，未认证一律阻断。"""
+    client = ADCClient()
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
+
+    # Case A: 发布记录在 meta_data_release 中未找到
+    with patch.object(ADCReleaseClient, "get_release_by_id", return_value=None):
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "未在 meta_data_release 中检索到权威发布记录" in str(exc_info.value)
+
+    # Case B: 发布记录处于非正式状态 (BLOCKED / SUPERSEDED)
+    with patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+        "release_id": "rel_20261106_v1", "state": "BLOCKED", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+    }):
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "非可信发布状态 (READY/DEGRADED)" in str(exc_info.value)
+
+    # Case C: equity_daily_bar_raw 产品质量状态为 FAIL
+    with patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+        "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+    }), patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+        {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "FAIL", "visible_date_max": 20261106}
+    ]):
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "未通过质量检验" in str(exc_info.value)
+
+
+def test_get_daily_bars_batch_strict_pit_trade_date_bound():
+    """第七轮测试 2: 显式 end_date 严禁越过 ExecutionContext 的交易日，确保历史回测 PIT 正确性。"""
+    client = ADCClient()
+    gate_res = {
+        "eligible": True,
+        "state": "READY",
+        "release_id": "rel_20261106_v1",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+    }
+    # 执行上下文交易日为 20261106
+    ctx = ExecutionContext.create_production(trade_date=20261106, release_gate_result=gate_res)
+
+    # 数据集 visible_date_max 即使为 20261115，调用方显式传入 20261110 依然属于相对于上下文的未来数据，必须拦截！
+    with patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+        "release_id": "rel_20261106_v1", "state": "READY", "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106
+    }), patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+        {"dataset_name": "equity_daily_bar_raw", "snapshot_id": "snap_v1", "state": "PASS", "visible_date_max": 20261115}
+    ]):
+        with pytest.raises(ValueError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261101,
+                end_date=20261110,  # 显式 end_date 跨过上下文交易日 20261106
+                execution_context=ctx,
+            )
+        assert "未来函数拦截" in str(exc_info.value)
+        assert "超过了 ExecutionContext 绑定的交易日 20261106" in str(exc_info.value)
+
+
+def test_get_daily_bars_batch_caller_cannot_substitute_missing_release_id():
+    """第七轮测试 3: ExecutionContext 缺少 Release ID 时，严禁调用方代填身份；PIT 快照冲突阻断。"""
+    client = ADCClient()
+    # 模拟 ExecutionContext 缺少 release_id
+    mock_ctx = MagicMock()
+    mock_ctx.mode = "PRODUCTION"
+    mock_ctx.research_only = False
+    mock_ctx.release_id = None
+    mock_ctx.pit_snapshot_id = "pit_ctx_111"
+    mock_ctx.trade_date = 20261106
+
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            release_id="rel_caller_substituted",  # 调用方试图代填
+            execution_context=mock_ctx,
+        )
+    assert "严禁调用方代填身份" in str(exc_info.value)
+
+    # PIT 快照冲突检查
+    mock_ctx.release_id = "rel_20261106_v1"
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info2:
+        client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            release_id="rel_20261106_v1",
+            pit_snapshot_id="pit_caller_mismatched",  # 与 ctx pit_snapshot_id 不一致
+            execution_context=mock_ctx,
+        )
+    assert "与 ExecutionContext 绑定的 PIT 快照 [pit_ctx_111] 不一致" in str(exc_info2.value)
+
+
+def test_get_daily_bars_batch_strict_whitelist_blocks_missing_or_invalid_mode():
+    """第七轮测试 4: 准入严格白名单，无上下文或未显式声明隔离研究严禁读取旧表。"""
+    client = ADCClient()
+
+    # Case A: 完全未传上下文
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            execution_context=None,
+        )
+    assert "必须提供有效 ExecutionContext 准入上下文，禁止无上下文读取行情数据" in str(exc_info.value)
+
+    # Case B: 上下文 mode 为未知模式
+    bad_ctx = MagicMock()
+    bad_ctx.mode = "CUSTOM_MODE"
+    bad_ctx.research_only = False
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info2:
+        client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            execution_context=bad_ctx,
+        )
+    assert "不在准入白名单" in str(exc_info2.value)
+
+    # Case C: mode 为 RESEARCH 但未声明 research_only=True
+    unisolated_res_ctx = MagicMock()
+    unisolated_res_ctx.mode = "RESEARCH"
+    unisolated_res_ctx.research_only = False
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info3:
+        client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            execution_context=unisolated_res_ctx,
+        )
+    assert "不在准入白名单" in str(exc_info3.value)
+
+
+def test_check_release_gate_blocks_critical_dataset_completely_omitting_snapshot_field():
+    """第七轮测试 5: Critical 数据集完全缺少 snapshot_id 字段键时，必须判定为 SNAPSHOT_MISSING 阻断。"""
+    mock_client = MagicMock()
+    mock_client._table_ready.return_value = True
+    release_client = ADCReleaseClient(mock_client)
+
+    # trade_calendar 完全没有 snapshot_id 键
+    datasets = [
+        {"dataset_name": "trade_calendar", "criticality": "CRITICAL", "state": "PASS"},  # 缺失 snapshot_id 字段
+        {"dataset_name": "security_lifecycle_daily", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_2"},
+        {"dataset_name": "equity_daily_bar_raw", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_3"},
+        {"dataset_name": "equity_adjustment_factor", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_4"},
+        {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_5"},
+        {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_6"},
+    ]
+
+    with patch.object(release_client, "get_certified_release", return_value={
+        "release_id": "rel_20261106_v1",
+        "state": "READY",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+        "active_pointer": {"pointer_name": "CERTIFIED_DAILY", "release_id": "rel_20261106_v1"},
+        "pointer_matched": True,
+    }), patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(20261106)
+        assert res["eligible"] is False
+        assert res["state"] == "BLOCKED"
+        assert "trade_calendar(SNAPSHOT_MISSING)" in res["reason"]
+
+
+def test_verify_server_side_readonly_blocks_complex_and_table_level_grants():
+    """第七轮测试 6: 覆盖多权限组合及表级授权，确保 SHOW GRANTS 能完整识别各种复杂授权语句。"""
+    client = ADCClient(user="fake_ro", readonly_only=True)
+    mock_conn = MagicMock()
+
+    # Case A: 多权限组合 GRANT SELECT, UPDATE, DELETE ON *.*
+    mock_cursor_a = MagicMock()
+    mock_cursor_a.fetchall.return_value = [{"Grants": "GRANT SELECT, UPDATE, DELETE ON *.* TO 'fake_ro'@'%'"}]
+    mock_conn.cursor.return_value = mock_cursor_a
+    with patch.object(client, "_get_conn", return_value=mock_conn):
+        with pytest.raises(ADCReadOnlyViolationError) as exc_a:
+            client.verify_server_side_readonly()
+        assert "被授予了写操作权限" in str(exc_a.value)
+
+    # Case B: 库级多权限 GRANT SELECT, UPDATE ON tushare_stock.*
+    mock_cursor_b = MagicMock()
+    mock_cursor_b.fetchall.return_value = [{"Grants": "GRANT SELECT, UPDATE ON `tushare_stock`.* TO 'fake_ro'@'%'"}]
+    mock_conn.cursor.return_value = mock_cursor_b
+    with patch.object(client, "_get_conn", return_value=mock_conn):
+        with pytest.raises(ADCReadOnlyViolationError) as exc_b:
+            client.verify_server_side_readonly()
+        assert "被授予了写操作权限" in str(exc_b.value)
+
+    # Case C: 表级/列级授权 GRANT UPDATE (close) ON tushare_stock.dwd_stock_daily_standard
+    mock_cursor_c = MagicMock()
+    mock_cursor_c.fetchall.return_value = [{"Grants": "GRANT UPDATE (close) ON `tushare_stock`.`dwd_stock_daily_standard` TO 'fake_ro'@'%'"}]
+    mock_conn.cursor.return_value = mock_cursor_c
+    with patch.object(client, "_get_conn", return_value=mock_conn):
+        with pytest.raises(ADCReadOnlyViolationError) as exc_c:
+            client.verify_server_side_readonly()
+        assert "被授予了写操作权限" in str(exc_c.value)

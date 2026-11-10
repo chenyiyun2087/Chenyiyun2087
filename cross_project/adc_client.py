@@ -247,19 +247,36 @@ class ADCClient:
         try:
             cur.execute("SHOW GRANTS")
             rows = cur.fetchall()
+            WRITE_KEYWORDS = {"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "ALL", "ALL PRIVILEGES", "SUPER"}
             for r in rows:
                 val = str(r.get(list(r.keys())[0], "") if isinstance(r, dict) else r[0]).upper()
-                # 检查全局超级权限
+                # 检查全局超级管理员权限
                 if "ALL PRIVILEGES ON *.*" in val or "WITH GRANT OPTION" in val or "SUPER" in val:
                     raise ADCReadOnlyViolationError(
                         f"安全红线阻断：当前连接拥有全局超级管理员权限 (ALL PRIVILEGES)，账号 [{user}] 违反只读隔离！"
                     )
-                # 检查针对 *.* 或目标数据库的写权限
-                for write_perm in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE"):
-                    if f"{write_perm} ON *.*" in val or f"{write_perm} ON `{self.database_name}`.*" in val or f"{write_perm} ON {self.database_name}.*" in val:
-                        raise ADCReadOnlyViolationError(
-                            f"安全红线阻断：只读账号 [{user}] 被授予了写操作权限 [{write_perm}]，违反只读隔离！"
-                        )
+                # 正则精确提取 GRANT <privileges> ON <object> TO
+                m = re.search(r"GRANT\s+(.*?)\s+ON\s+(\S+)\s+TO", val, flags=re.DOTALL)
+                if m:
+                    privs_str = m.group(1).strip()
+                    obj_str = m.group(2).strip().replace("`", "").replace("'", "")
+                    # 提取全部授权关键字（剥离字段级声明，如 UPDATE (col1, col2) -> UPDATE）
+                    priv_tokens = {p.strip().split("(")[0].strip() for p in privs_str.split(",")}
+                    has_write = bool(priv_tokens & WRITE_KEYWORDS or any(w in privs_str for w in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "ALL")))
+                    if has_write:
+                        db_clean = self.database_name.replace("`", "").replace("'", "").upper()
+                        # 检查是否作用于全局 *.* 或目标数据库/表
+                        if obj_str == "*.*" or obj_str.startswith(f"{db_clean}.") or obj_str == db_clean:
+                            raise ADCReadOnlyViolationError(
+                                f"安全红线阻断：只读账号 [{user}] 被授予了写操作权限 [{privs_str}] 在对象 [{obj_str}] 上，违反只读隔离！"
+                            )
+                else:
+                    db_clean = self.database_name.replace("`", "").replace("'", "").upper()
+                    for write_perm in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE"):
+                        if write_perm in val and ("*.*" in val or db_clean in val):
+                            raise ADCReadOnlyViolationError(
+                                f"安全红线阻断：只读账号 [{user}] 授权语句中检测到写操作权限 [{write_perm}]，违反只读隔离！"
+                            )
         except ADCReadOnlyViolationError:
             raise
         except pymysql.MySQLError as e:
@@ -268,47 +285,50 @@ class ADCClient:
                 raise ADCConnectionError(f"数据库连接异常，无法完成只读权限审计: {e}") from e
             logger.info("SHOW GRANTS 执行受限 (%s)，通过服务端主动拒写探测继续核验证明", e)
 
-        # 2. 真实服务端拒写探测 (Write probe)
-        # 尝试执行无害写探测：由于是只读账号，预期必须被服务端权限直接拒绝 (Access denied)
-        probe_sql = f"UPDATE {self._t('meta_data_release')} SET state = state WHERE 1=0"
-        try:
-            cur.execute(probe_sql)
-            # 若执行到这里未抛出异常，说明写语句被服务端执行了，证明具有写权限！
-            raise ADCReadOnlyViolationError(
-                f"安全红线阻断：服务端成功执行了写探测语句 [{probe_sql}]，证明账号 [{user}] 具有物理写权限，只读验证失败！"
-            )
-        except ADCReadOnlyViolationError:
-            raise
-        except pymysql.MySQLError as err:
-            err_code = err.args[0] if err.args else None
-            # 仅允许权威的账号级权限拒绝错误码 (1142: 表级拒绝, 1044: 库级拒绝, 1227: 特定权限缺失)
-            # 明确排除 1290 (ER_OPTION_PREVENTS_STATEMENT: 服务器处于 --read-only 模式)，因为全局只读不能证明账号受最小权限约束
-            PERMITTED_RO_ERROR_CODES = (1142, 1044, 1227)
-            if err_code in PERMITTED_RO_ERROR_CODES:
-                logger.info("服务端拒写行为校验通过: 捕获预期权限拒绝错误 (code=%s, msg=%s)", err_code, err)
-                return {
-                    "readonly_verified": True,
-                    "user": user,
-                    "target_database": self.database_name,
-                    "rejection_code": err_code,
-                    "verified_method": "SERVER_SIDE_ACCESS_DENIED_PROBE",
-                }
-            elif err_code == 1290:
+        # 2. 真实服务端多表拒写探测 (Write probe)
+        # 依次对发布元数据表与核心业务表执行无害探测写操作，预期必须被服务端权限直接拒绝 (Access denied)
+        probe_sqls = [
+            f"UPDATE {self._t('meta_data_release')} SET state = state WHERE 1=0",
+            f"UPDATE {self._t('dwd_stock_daily_standard')} SET close = close WHERE 1=0",
+        ]
+        PERMITTED_RO_ERROR_CODES = (1142, 1044, 1227)
+        for probe_sql in probe_sqls:
+            try:
+                cur.execute(probe_sql)
+                # 若执行未抛出异常，说明写语句被执行，账号具有写权限！
                 raise ADCReadOnlyViolationError(
-                    f"安全红线阻断：数据库实例处于全局只读模式 (code=1290: {err})，不能单独证明账号 [{user}] 具有账号级最小只读权限！"
+                    f"安全红线阻断：服务端成功执行了写探测语句 [{probe_sql}]，证明账号 [{user}] 具有物理写权限，只读验证失败！"
                 )
-            elif err_code in (2002, 2003, 2006, 2013):
-                raise ADCConnectionError(f"只读验证期间数据库连接中断: {err}") from err
-            elif err_code == 1146:
-                raise ADCReadOnlyViolationError(f"只读探测目标表不存在 (code=1146): {err}，无法证明服务端权限") from err
-            elif err_code == 1064:
-                raise ADCReadOnlyViolationError(f"只读探测 SQL 语法错误 (code=1064): {err}，无法证明服务端权限") from err
-            else:
-                raise ADCReadOnlyViolationError(
-                    f"安全红线阻断：服务端返回非预期的异常错误 (code={err_code}: {err})，不能证明账号无写权限！"
-                ) from err
-        except Exception as e:
-            raise ADCReadOnlyViolationError(f"服务端只读验证失败，发生未知异常: {e}") from e
+            except ADCReadOnlyViolationError:
+                raise
+            except pymysql.MySQLError as err:
+                err_code = err.args[0] if err.args else None
+                if err_code in PERMITTED_RO_ERROR_CODES:
+                    logger.info("服务端拒写行为校验通过 (%s): code=%s", probe_sql[:40], err_code)
+                    continue
+                elif err_code == 1290:
+                    raise ADCReadOnlyViolationError(
+                        f"安全红线阻断：数据库实例处于全局只读模式 (code=1290: {err})，不能单独证明账号 [{user}] 具有账号级最小只读权限！"
+                    )
+                elif err_code in (2002, 2003, 2006, 2013):
+                    raise ADCConnectionError(f"只读验证期间数据库连接中断: {err}") from err
+                elif err_code == 1146:
+                    raise ADCReadOnlyViolationError(f"只读探测目标表不存在 (code=1146): {err}，无法证明服务端权限") from err
+                elif err_code == 1064:
+                    raise ADCReadOnlyViolationError(f"只读探测 SQL 语法错误 (code=1064): {err}，无法证明服务端权限") from err
+                else:
+                    raise ADCReadOnlyViolationError(
+                        f"安全红线阻断：服务端返回非预期的异常错误 (code={err_code}: {err})，不能证明账号无写权限！"
+                    ) from err
+            except Exception as e:
+                raise ADCReadOnlyViolationError(f"服务端只读验证失败，发生未知异常: {e}") from e
+
+        return {
+            "readonly_verified": True,
+            "user": user,
+            "target_database": self.database_name,
+            "verified_method": "SERVER_SIDE_ACCESS_DENIED_MULTI_PROBE",
+        }
 
     def _query(self, sql: str, params: tuple | dict | None = None) -> list[dict[str, Any]]:
         self._validate_readonly_sql(sql)
@@ -411,6 +431,20 @@ class ADCReleaseClient:
             release["pointer_matched"] = False
             release["pointer_status"] = "POINTER_MISSING"
         return release
+
+    def get_release_by_id(self, release_id: str) -> dict[str, Any] | None:
+        """从 meta_data_release 查询指定 release_id 的发布记录。"""
+        if not self._c._table_ready("meta_data_release"):
+            return None
+        rows = self._c._query(f"""
+            SELECT release_id, release_type, trade_date, state, data_version_id,
+                   pit_snapshot_id, gate_evidence_sha256, critical_status_json,
+                   optional_status_json, evidence_json, published_at
+            FROM {self._c._t('meta_data_release')}
+            WHERE release_id = %s
+            ORDER BY published_at DESC, created_at DESC LIMIT 1
+        """, (release_id,))
+        return dict(rows[0]) if rows else None
 
     def get_release_datasets(self, release_id: str) -> list[dict[str, Any]]:
         """从 meta_data_release_dataset 查询指定 Release 绑定的数据集明细及状态。"""
@@ -557,7 +591,7 @@ class ADCReleaseClient:
 
             is_critical = (ds_crit == "CRITICAL" or ds_name in target_critical)
             if is_critical:
-                if "snapshot_id" in ds and (not ds_snap or str(ds_snap).strip() in ("", "None", "null", "missing", "MISSING")):
+                if not ds_snap or str(ds_snap).strip() in ("", "None", "null", "missing", "MISSING", "PLACEHOLDER", "UNVERIFIED"):
                     critical_failed.append(f"{ds_name}(SNAPSHOT_MISSING)")
                 elif ds_state not in ("PASS", "READY", "OK"):
                     critical_failed.append(f"{ds_name}({ds_state or 'NOT_PASS'})")
@@ -961,35 +995,76 @@ class ADCDataClient:
         import pandas as pd
         from cross_project.execution_context import DataProvenanceProof, ProductionAdmissionBlockedError
 
-        # 1. 严格判定执行模式与上下文核查
-        ctx_mode = getattr(execution_context, "mode", None)
+        # 1. 严格白名单执行模式判定
+        if execution_context is None:
+            raise ProductionAdmissionBlockedError(
+                "安全红线阻断：必须提供有效 ExecutionContext 准入上下文，禁止无上下文读取行情数据！"
+                "显式隔离研究模式必须提供 mode='RESEARCH' 且 research_only=True 的 ExecutionContext；"
+                "生产/影子模式必须提供经过认证的 ExecutionContext。"
+            )
+
+        ctx_mode = str(getattr(execution_context, "mode", "")).strip().upper()
         is_explicit_research = bool(
-            execution_context
-            and str(ctx_mode).upper() == "RESEARCH"
-            and getattr(execution_context, "research_only", False)
+            ctx_mode == "RESEARCH" and getattr(execution_context, "research_only", False)
         )
         is_production = bool(
-            (execution_context and str(ctx_mode).upper() in ("PRODUCTION", "SHADOW"))
-            or (release_id and not is_explicit_research)
+            ctx_mode in ("PRODUCTION", "SHADOW") and not getattr(execution_context, "research_only", False)
         )
 
+        if not is_explicit_research and not is_production:
+            raise ProductionAdmissionBlockedError(
+                f"安全红线阻断：执行上下文模式 [{ctx_mode}] 不在准入白名单 (PRODUCTION, SHADOW, RESEARCH) 中，拒绝执行！"
+            )
+
         if is_production:
-            if execution_context is None:
-                raise ProductionAdmissionBlockedError(
-                    "安全红线阻断：生产/可信模式下读取日线行情必须提供有效经过认证的 ExecutionContext，禁止无认证上下文取数！"
-                )
             ctx_rel_id = getattr(execution_context, "release_id", None)
-            if release_id and ctx_rel_id and str(release_id).strip() != str(ctx_rel_id).strip():
+            if not ctx_rel_id or str(ctx_rel_id).strip() in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"):
+                raise ProductionAdmissionBlockedError(
+                    "安全红线阻断：生产执行模式下 ExecutionContext 必须预先绑定有效经过认证的 release_id，严禁调用方代填身份！"
+                )
+            if release_id and str(release_id).strip() != str(ctx_rel_id).strip():
                 raise ProductionAdmissionBlockedError(
                     f"安全红线阻断：请求传入的 Release ID [{release_id}] 与 ExecutionContext 绑定的发布上下文 [{ctx_rel_id}] 不一致！"
                 )
-            if not release_id and ctx_rel_id:
-                release_id = ctx_rel_id
-            if not pit_snapshot_id and getattr(execution_context, "pit_snapshot_id", None):
-                pit_snapshot_id = execution_context.pit_snapshot_id
-            if not release_id or str(release_id).strip() in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"):
+            release_id = str(ctx_rel_id).strip()
+
+            ctx_pit_id = getattr(execution_context, "pit_snapshot_id", None)
+            if pit_snapshot_id and ctx_pit_id and str(pit_snapshot_id).strip() != str(ctx_pit_id).strip():
                 raise ProductionAdmissionBlockedError(
-                    "安全红线阻断：生产执行模式下读取日线行情必须绑定有效经过认证的 release_id！"
+                    f"安全红线阻断：请求传入的 pit_snapshot_id [{pit_snapshot_id}] 与 ExecutionContext 绑定的 PIT 快照 [{ctx_pit_id}] 不一致！"
+                )
+            pit_snapshot_id = str(ctx_pit_id).strip() if ctx_pit_id else pit_snapshot_id
+
+            # 权威发布门禁核查：校验 Release 记录状态、版本号及关键产品质量
+            rel_info = self._c.release.get_release_by_id(release_id)
+            if not rel_info:
+                raise ProductionAdmissionBlockedError(
+                    f"安全红线阻断：未在 meta_data_release 中检索到权威发布记录 [{release_id}]，无法进行生产认证！"
+                )
+            rel_state = str(rel_info.get("state") or "").upper()
+            if rel_state not in ("READY", "DEGRADED"):
+                raise ProductionAdmissionBlockedError(
+                    f"安全红线阻断：发布记录 [{release_id}] 当前状态为 [{rel_state}]，非可信发布状态 (READY/DEGRADED)，严禁放行生产读取！"
+                )
+            # 核对 data_version_id
+            rel_ver_id = rel_info.get("data_version_id")
+            ctx_ver_id = getattr(execution_context, "data_version_id", None)
+            if ctx_ver_id and rel_ver_id and str(ctx_ver_id).strip() != str(rel_ver_id).strip():
+                raise ProductionAdmissionBlockedError(
+                    f"安全红线阻断：发布记录 data_version_id [{rel_ver_id}] 与 ExecutionContext [{ctx_ver_id}] 不一致！"
+                )
+            # 核对 pit_snapshot_id
+            rel_pit_id = rel_info.get("pit_snapshot_id")
+            if pit_snapshot_id and rel_pit_id and str(pit_snapshot_id).strip() != str(rel_pit_id).strip():
+                raise ProductionAdmissionBlockedError(
+                    f"安全红线阻断：发布记录 pit_snapshot_id [{rel_pit_id}] 与请求 PIT 上下文 [{pit_snapshot_id}] 不一致！"
+                )
+            # 核对 trade_date
+            rel_trade_date = rel_info.get("trade_date")
+            ctx_trade_date = getattr(execution_context, "trade_date", None)
+            if ctx_trade_date and rel_trade_date and int(rel_trade_date) != int(ctx_trade_date):
+                raise ProductionAdmissionBlockedError(
+                    f"安全红线阻断：发布记录 trade_date [{rel_trade_date}] 与 ExecutionContext [{ctx_trade_date}] 不一致！"
                 )
 
         # 北交所 (BJ) 标的覆盖审计：
@@ -1017,9 +1092,11 @@ class ADCDataClient:
             # 严格日线行情产品标识：必须来自于 equity_daily_bar_raw (或 dwd_equity_daily_bar_v2 / dwd_daily)
             # 严禁将复权因子 (equity_adjustment_factor) 的 Snapshot 混用为日线 Snapshot！
             daily_bar_ds_names = ("equity_daily_bar_raw", "dwd_equity_daily_bar_v2", "dwd_daily")
+            daily_bar_ds = None
             for ds in datasets:
                 d_name = ds.get("dataset_name")
-                if d_name in daily_bar_ds_names and matched_snapshot_id is None:
+                if d_name in daily_bar_ds_names and daily_bar_ds is None:
+                    daily_bar_ds = ds
                     matched_snapshot_id = ds.get("snapshot_id")
                     v_max = ds.get("visible_date_max")
                     gate_evidence_sha256 = ds.get("gate_evidence_sha256") or ""
@@ -1031,24 +1108,60 @@ class ADCDataClient:
                 if v_maxes:
                     v_max = min(v_maxes)
 
-        # end_date 防未来函数与确定性上界约束：
-        effective_end_date = end_date
-        if effective_end_date is None:
-            if execution_context and getattr(execution_context, "trade_date", None):
-                effective_end_date = int(execution_context.trade_date)
+            if is_production:
+                if not daily_bar_ds:
+                    raise ProductionAdmissionBlockedError(
+                        f"产品缺失阻断：Release [{release_id}] 中未找到日线行情数据集 (equity_daily_bar_raw)！"
+                    )
+                raw_state = str(daily_bar_ds.get("state") or "").upper()
+                if raw_state not in ("PASS", "READY", "OK"):
+                    raise ProductionAdmissionBlockedError(
+                        f"质量门禁阻断：日线行情数据集 (equity_daily_bar_raw) 状态为 [{raw_state}]，未通过质量检验！"
+                    )
+                if not matched_snapshot_id or str(matched_snapshot_id).strip() in ("", "None", "null", "missing", "UNVERIFIED", "PLACEHOLDER"):
+                    raise ProductionAdmissionBlockedError(
+                        f"快照缺失阻断：日线行情数据集 (equity_daily_bar_raw) 缺少合法 snapshot_id！"
+                    )
+
+        # 严格 PIT 边界与截止日期确定：
+        ctx_trade_date = getattr(execution_context, "trade_date", None)
+        ctx_trade_date_int = int(ctx_trade_date) if ctx_trade_date is not None else None
+
+        if end_date is not None:
+            effective_end_date = int(end_date)
+            # 显式 end_date 严禁越过 ExecutionContext 的交易日！
+            if ctx_trade_date_int is not None and effective_end_date > ctx_trade_date_int:
+                raise ValueError(
+                    f"未来函数拦截：请求截止日期 {effective_end_date} 超过了 ExecutionContext 绑定的交易日 {ctx_trade_date_int}！"
+                )
+        else:
+            if ctx_trade_date_int is not None:
+                effective_end_date = ctx_trade_date_int
             elif v_max is not None:
                 effective_end_date = int(v_max)
             elif is_production:
                 raise ProductionAdmissionBlockedError(
                     "防未来函数阻断：生产模式下必须由 ExecutionContext 或显式传入 end_date 确定查询截止日期！"
                 )
+            else:
+                effective_end_date = None
 
-        if v_max is not None:
-            if effective_end_date and int(effective_end_date) > int(v_max):
+        if effective_end_date is not None:
+            if ctx_trade_date_int is not None and effective_end_date > ctx_trade_date_int:
+                raise ValueError(
+                    f"未来函数拦截：有效截止日期 {effective_end_date} 超过了 ExecutionContext 绑定的交易日 {ctx_trade_date_int}！"
+                )
+            if v_max is not None and effective_end_date > int(v_max):
                 raise ValueError(
                     f"未来函数拦截：请求截止日期 {effective_end_date} 超过了该 Release [{release_id}] 的最大可见日期 {v_max}！"
                 )
-            if start_date and int(start_date) > int(v_max):
+
+        if start_date is not None:
+            if ctx_trade_date_int is not None and int(start_date) > ctx_trade_date_int:
+                raise ValueError(
+                    f"未来函数拦截：请求起始日期 {start_date} 超过了 ExecutionContext 绑定的交易日 {ctx_trade_date_int}！"
+                )
+            if v_max is not None and int(start_date) > int(v_max):
                 raise ValueError(
                     f"未来函数拦截：请求起始日期 {start_date} 超过了该 Release [{release_id}] 的最大可见日期 {v_max}！"
                 )
