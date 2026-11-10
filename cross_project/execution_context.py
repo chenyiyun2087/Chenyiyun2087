@@ -107,12 +107,8 @@ class ExecutionContext:
         ).upper()
         reason = release_gate_result.get("reason") or release_gate_result.get("detail") or "未知原因"
 
-        effective_historical = bool(
-            is_historical
-            or release_gate_result.get("is_historical", False)
-            or release_gate_result.get("pointer_status") == "CERTIFIED_HISTORICAL_ARCHIVE"
-        )
-        allowed_states = ("READY", "DEGRADED", "CERTIFIED_DAILY", "SUPERSEDED") if effective_historical else ("READY", "DEGRADED", "CERTIFIED_DAILY")
+        # 严格区分实时生产与历史受控模式：仅当显式声明 is_historical=True 时才允许消费 SUPERSEDED 历史归档版本
+        allowed_states = ("READY", "DEGRADED", "CERTIFIED_DAILY", "SUPERSEDED") if is_historical else ("READY", "DEGRADED", "CERTIFIED_DAILY")
 
         if not eligible or state not in allowed_states:
             raise ProductionAdmissionBlockedError(
@@ -122,7 +118,7 @@ class ExecutionContext:
 
         superseded_from = str(release_gate_result.get("superseded_from_state") or "").upper()
         if state == "SUPERSEDED":
-            if not effective_historical:
+            if not is_historical:
                 raise ProductionAdmissionBlockedError(
                     f"交易日 {trade_date} 发布状态为 SUPERSEDED，仅在历史归档模式 (is_historical=True) 下允许消费，禁止生产放行！"
                 )
@@ -182,7 +178,7 @@ class ExecutionContext:
             quality_gate_result=dict(release_gate_result),
             config_sha=cfg_sha,
             allow_degraded=allow_degraded,
-            is_historical=effective_historical,
+            is_historical=bool(is_historical),
             decision_time=decision_time,
         )
 
