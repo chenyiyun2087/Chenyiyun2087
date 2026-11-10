@@ -18,6 +18,14 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: pip install -r requirements-ci.lock.txt
+      - name: Phase 2E Cross-Project Hardening and Gate Acceptance Tests
+        run: |
+          python -m pytest \
+            test/test_phase2b_hardening_and_2c.py \
+            test/test_adc_client_contract.py \
+            test/test_data_readiness_gate_release.py \
+            test/test_db_io_adc_equivalence.py \
+            test/test_scorer_release_gate_integration.py -v
       - name: Production config consistency
         run: python -m pytest test/test_production_config_consistency.py test/test_p0_trustworthiness.py test/test_trusted_production_closure.py test/test_comprehensive_trust_upgrade.py -v
       - name: PR18 Independent Oracle and Evidence Semantic tests

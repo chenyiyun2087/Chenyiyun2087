@@ -45,6 +45,9 @@ class DataProvenanceProof:
     status: str  # "SNAPSHOT_BOUND_CERTIFIED" | "RELEASE_DECLARED_TABLE_UNPARTITIONED" | "HISTORICAL_UNVERIFIED_STUDY"
     source_table: str = ""
     snapshot_bound: bool = False
+    available_at_max: str | None = None
+    adjustment_anchor_date_max: int | None = None
+    certification_mode: str = "CERTIFIED_LIVE_POINTER"  # "CERTIFIED_LIVE_POINTER" | "CERTIFIED_HISTORICAL_ARCHIVE" | "UNVERIFIED"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -81,6 +84,9 @@ class ExecutionContext:
     code_sha: str = field(default_factory=_get_current_code_sha)
     config_sha: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    allow_degraded: bool = False
+    is_historical: bool = False
+    decision_time: str | None = None
 
     @classmethod
     def create_production(
@@ -88,6 +94,9 @@ class ExecutionContext:
         trade_date: int,
         release_gate_result: Mapping[str, Any],
         config_data: Mapping[str, Any] | None = None,
+        allow_degraded: bool = False,
+        is_historical: bool = False,
+        decision_time: str | None = None,
     ) -> "ExecutionContext":
         """创建正式生产执行上下文。强制要求 Release Gate 审核通过且所有凭证完整。"""
         eligible = bool(release_gate_result.get("eligible", release_gate_result.get("passed", False)))
@@ -104,13 +113,18 @@ class ExecutionContext:
                 f"原因: {reason}"
             )
 
+        if state == "DEGRADED" and not allow_degraded:
+            raise ProductionAdmissionBlockedError(
+                f"交易日 {trade_date} 发布状态为 DEGRADED 但未被显式授权 allow_degraded=True，禁止创建正式生产上下文！"
+            )
+
         rel_id = release_gate_result.get("release_id")
         ver_id = release_gate_result.get("data_version_id")
         pit_id = release_gate_result.get("pit_snapshot_id")
 
         # 凭据真实性严格防伪校验：禁止使用空串或占位符充当有效版本
         for field_name, field_val in (("release_id", rel_id), ("data_version_id", ver_id), ("pit_snapshot_id", pit_id)):
-            if not field_val or str(field_val).strip() in ("", "None", "null", "UNKNOWN", "PLACEHOLDER"):
+            if not field_val or str(field_val).strip() in ("", "None", "null", "UNKNOWN", "PLACEHOLDER", "UNVERIFIED", "missing"):
                 raise ProductionAdmissionBlockedError(
                     f"交易日 {trade_date} 正式发布凭据不完整或为占位符 ({field_name}={field_val})，禁止创建正式生产上下文！"
                 )
@@ -131,6 +145,9 @@ class ExecutionContext:
             research_only=False,
             quality_gate_result=dict(release_gate_result),
             config_sha=cfg_sha,
+            allow_degraded=allow_degraded,
+            is_historical=is_historical,
+            decision_time=decision_time,
         )
 
     @classmethod
