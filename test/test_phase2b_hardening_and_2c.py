@@ -2515,4 +2515,94 @@ def test_phase2e_r12_empty_symbols_list_enforces_physical_retention_probe():
         assert empty_df.attrs["release_id"] == "rel_20261106_v1"
 
 
+def test_phase2e_r13_superseded_origin_state_strict_fail_closed_and_no_text_inference():
+    """第十三轮测试: 验证 SUPERSEDED 历史原状态继承严格 Fail-Closed，坚决杜绝通过 reason 文本推断赋权。"""
+    # 场景 1: superseded_from_state 为空/None/空串/非法状态，即使 reason 包含 'READY' 或 'NOT READY'，必须坚决阻断抛出异常
+    for bad_state in (None, "", "   ", "UNKNOWN", "CANDIDATE", "BLOCKED", "BUILDING"):
+        for sneaky_reason in ("READY", "NOT READY", "STATUS IS READY FOR USE", "ALMOST READY"):
+            gate_mock = {
+                "eligible": True,
+                "state": "SUPERSEDED",
+                "superseded_from_state": bad_state,
+                "release_id": "rel_sneaky_01",
+                "data_version_id": "dv_01",
+                "pit_snapshot_id": "pit_01",
+                "reason": sneaky_reason,
+            }
+            with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+                ExecutionContext.create_production(
+                    trade_date=20261106,
+                    release_gate_result=gate_mock,
+                    is_historical=True,
+                )
+            assert "缺少合法的原状态继承凭据" in str(exc_info.value)
+
+    # 场景 2: 原状态为 DEGRADED 但 allow_degraded=False，即使 reason 包含 'READY'，必须坚决阻断
+    gate_deg_sneak = {
+        "eligible": True,
+        "state": "SUPERSEDED",
+        "superseded_from_state": "DEGRADED",
+        "release_id": "rel_deg_sneak_01",
+        "data_version_id": "dv_01",
+        "pit_snapshot_id": "pit_01",
+        "reason": "READY",
+    }
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        ExecutionContext.create_production(
+            trade_date=20261106,
+            release_gate_result=gate_deg_sneak,
+            is_historical=True,
+            allow_degraded=False,
+        )
+    assert "未被显式授权 allow_degraded=True" in str(exc_info.value)
+
+    # 场景 3: 验证非合规上下文无法通过 validate_for_production_write 校验
+    unverified_ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_unverified",
+        data_version_id="dv_01",
+        pit_snapshot_id="pit_01",
+        certification_status="UNVERIFIED_RESEARCH_ONLY",
+        research_only=False,
+    )
+    with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+        unverified_ctx.validate_for_production_write("target_order_table")
+    assert "不合规，严禁写入正式资源" in str(exc_info.value)
+
+    # 场景 4: 合法 SUPERSEDED/READY 与 SUPERSEDED/DEGRADED(allow_degraded=True) 正常通过写入前检查
+    valid_ready_gate = {
+        "eligible": True,
+        "state": "SUPERSEDED",
+        "superseded_from_state": "READY",
+        "release_id": "rel_valid_ready",
+        "data_version_id": "dv_01",
+        "pit_snapshot_id": "pit_01",
+    }
+    ctx_ready = ExecutionContext.create_production(
+        trade_date=20261106,
+        release_gate_result=valid_ready_gate,
+        is_historical=True,
+    )
+    assert ctx_ready.certification_status == "CERTIFIED_DAILY"
+    ctx_ready.validate_for_production_write("target_order_table")  # 正常通过
+
+    valid_deg_gate = {
+        "eligible": True,
+        "state": "SUPERSEDED",
+        "superseded_from_state": "DEGRADED",
+        "release_id": "rel_valid_deg",
+        "data_version_id": "dv_01",
+        "pit_snapshot_id": "pit_01",
+    }
+    ctx_deg = ExecutionContext.create_production(
+        trade_date=20261106,
+        release_gate_result=valid_deg_gate,
+        is_historical=True,
+        allow_degraded=True,
+    )
+    assert ctx_deg.certification_status == "DEGRADED_PERMITTED"
+    ctx_deg.validate_for_production_write("target_order_table")  # 正常通过
+
+
 

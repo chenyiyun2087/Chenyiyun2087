@@ -131,18 +131,9 @@ class ExecutionContext:
                     )
                 cert = "DEGRADED_PERMITTED"
             else:
-                if "READY" in reason.upper():
-                    cert = "CERTIFIED_DAILY"
-                elif "DEGRADED" in reason.upper():
-                    if not allow_degraded:
-                        raise ProductionAdmissionBlockedError(
-                            f"交易日 {trade_date} 历史版本原状态为 DEGRADED 但未被显式授权 allow_degraded=True，禁止创建历史生产上下文！"
-                        )
-                    cert = "DEGRADED_PERMITTED"
-                else:
-                    raise ProductionAdmissionBlockedError(
-                        f"交易日 {trade_date} 历史版本 SUPERSEDED 缺少合法的原状态继承凭据 (superseded_from_state={superseded_from})，禁止创建历史生产上下文！"
-                    )
+                raise ProductionAdmissionBlockedError(
+                    f"交易日 {trade_date} 历史版本 SUPERSEDED 缺少合法的原状态继承凭据 (superseded_from_state={superseded_from})，禁止创建历史生产上下文！"
+                )
         elif state == "DEGRADED":
             if not allow_degraded:
                 raise ProductionAdmissionBlockedError(
