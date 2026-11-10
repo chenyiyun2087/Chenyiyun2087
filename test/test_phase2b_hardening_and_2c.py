@@ -1553,7 +1553,7 @@ def test_phase2e_r8_active_pointer_enforcement_and_historical_archive():
         {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s5"},
         {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s6"},
     ]
-    mock_client._query.return_value = [{"snapshot_status": "READY"}]
+    mock_client._query.return_value = [{"status": "READY"}]
     with patch.object(release_client, "get_release_by_id", return_value={
         "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "trade_date": 20261106, "state": "READY",
         "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1",
@@ -2026,7 +2026,7 @@ def test_phase2e_r9_historical_archive_requires_ready_valid_evidence_and_active_
         assert "HISTORICAL_EVIDENCE_MISSING" in res["blocked_datasets"]
 
     # Case C: 历史 Release 的快照在 meta_formal_data_snapshot_v2 中已被清理 (PURGED) -> 阻断
-    mock_client._query.return_value = [{"snapshot_status": "PURGED"}]
+    mock_client._query.return_value = [{"status": "PURGED"}]
     with patch.object(release_client, "get_release_by_id", return_value={
         "release_id": "rel_hist_03", "release_type": "CERTIFIED_DAILY", "trade_date": 20261106, "state": "READY",
         "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "gate_evidence_sha256": VALID_SHA256,
@@ -2034,4 +2034,277 @@ def test_phase2e_r9_historical_archive_requires_ready_valid_evidence_and_active_
         res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_03", is_historical=True)
         assert res["eligible"] is False
         assert "HISTORICAL_SNAPSHOT_PURGED" in res["blocked_datasets"]
+
+
+def test_phase2e_r10_snapshot_schema_status_fail_closed_validation():
+    """第十轮测试 1: 严格验证 meta_formal_data_snapshot_v2 真实列名 status 及 Fail-Closed 机制。"""
+    mock_client = MagicMock()
+    mock_client._t.side_effect = lambda t: t
+    release_client = ADCReleaseClient(mock_client)
+
+    datasets = [
+        {"dataset_name": "trade_calendar", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s1"},
+        {"dataset_name": "security_lifecycle_daily", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s2"},
+        {"dataset_name": "equity_daily_bar_raw", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_raw_01"},
+        {"dataset_name": "equity_adjustment_factor", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s4"},
+        {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s5"},
+        {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s6"},
+    ]
+
+    base_release = {
+        "release_id": "rel_hist_r10",
+        "release_type": "CERTIFIED_DAILY",
+        "trade_date": 20261106,
+        "state": "READY",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+        "gate_evidence_sha256": VALID_SHA256,
+    }
+
+    # Case 1: 快照元数据表不可用 -> 阻断 HISTORICAL_SNAPSHOT_META_UNAVAILABLE
+    mock_client._table_ready.side_effect = lambda tbl: tbl != "meta_formal_data_snapshot_v2"
+    with patch.object(release_client, "get_release_by_id", return_value=base_release), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
+        assert res["eligible"] is False
+        assert "HISTORICAL_SNAPSHOT_META_UNAVAILABLE" in res["blocked_datasets"]
+
+    # Case 2: 快照元数据查询异常 -> 阻断 HISTORICAL_SNAPSHOT_QUERY_FAILED
+    mock_client._table_ready.side_effect = lambda tbl: True
+    def failing_query(sql, params=None):
+        if "meta_formal_data_snapshot_v2" in sql:
+            raise RuntimeError("Database connection timed out during snapshot probe")
+        return [{"pointer_name": "CERTIFIED_DAILY", "release_id": "rel_future"}]
+    mock_client._query.side_effect = failing_query
+    with patch.object(release_client, "get_release_by_id", return_value=base_release), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
+        assert res["eligible"] is False
+        assert "HISTORICAL_SNAPSHOT_QUERY_FAILED" in res["blocked_datasets"]
+
+    # Case 3: 快照记录不存在 -> 阻断 HISTORICAL_SNAPSHOT_NOT_FOUND
+    mock_client._query.side_effect = None
+    mock_client._query.return_value = []
+    with patch.object(release_client, "get_release_by_id", return_value=base_release), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
+        assert res["eligible"] is False
+        assert "HISTORICAL_SNAPSHOT_NOT_FOUND" in res["blocked_datasets"]
+
+    # Case 4: 快照 status 为 BUILDING / REJECTED / BLOCKED -> 阻断 HISTORICAL_SNAPSHOT_NOT_READY
+    for unready_status in ("BUILDING", "REJECTED", "BLOCKED", "FAILED", "UNVERIFIED"):
+        mock_client._query.return_value = [{"status": unready_status}]
+        with patch.object(release_client, "get_release_by_id", return_value=base_release), \
+             patch.object(release_client, "get_release_datasets", return_value=datasets):
+            res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
+            assert res["eligible"] is False
+            assert "HISTORICAL_SNAPSHOT_NOT_READY" in res["blocked_datasets"]
+
+    # Case 5: 真实 status='READY' -> 正确放行，并核实使用了 SELECT status 列名
+    recorded_sqls = []
+    def recording_query(sql, params=None):
+        recorded_sqls.append(sql)
+        return [{"status": "READY"}]
+
+    mock_client._query.side_effect = recording_query
+    with patch.object(release_client, "get_release_by_id", return_value=base_release), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_r10", is_historical=True)
+        assert res["eligible"] is True
+        assert res["state"] == "READY"
+        assert res["pointer_status"] == "CERTIFIED_HISTORICAL_ARCHIVE"
+        # 严格断言 SQL 中使用的是 status 列名而非 snapshot_status
+        assert any("SELECT status FROM" in s and "meta_formal_data_snapshot_v2" in s for s in recorded_sqls)
+        assert not any("snapshot_status" in s for s in recorded_sqls)
+
+
+def test_phase2e_r10_historical_superseded_origin_state_validation():
+    """第十轮测试 2: 历史归档模式对 SUPERSEDED 状态的版本进行原状态 (superseded_from_state) 严格认证。"""
+    mock_client = MagicMock()
+    mock_client._table_ready.return_value = True
+    mock_client._query.return_value = [{"status": "READY"}]
+    release_client = ADCReleaseClient(mock_client)
+
+    datasets = [
+        {"dataset_name": "trade_calendar", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s1"},
+        {"dataset_name": "security_lifecycle_daily", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s2"},
+        {"dataset_name": "equity_daily_bar_raw", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s3"},
+        {"dataset_name": "equity_adjustment_factor", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s4"},
+        {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s5"},
+        {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "s6"},
+    ]
+
+    # Case 1: 历史 Release 为 SUPERSEDED 且 superseded_from_state='READY' -> 正确放行
+    release_sup_ready = {
+        "release_id": "rel_hist_sup_ready",
+        "release_type": "CERTIFIED_DAILY",
+        "trade_date": 20261106,
+        "state": "SUPERSEDED",
+        "superseded_from_state": "READY",
+        "supersedes_release_id": "rel_newer_v2",
+        "data_version_id": "dv_v1",
+        "pit_snapshot_id": "pit_v1",
+        "gate_evidence_sha256": VALID_SHA256,
+    }
+    with patch.object(release_client, "get_release_by_id", return_value=release_sup_ready), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_sup_ready", is_historical=True)
+        assert res["eligible"] is True
+        assert res["state"] == "SUPERSEDED"
+        assert res["is_production_eligible"] is True
+        assert res["pointer_status"] == "CERTIFIED_HISTORICAL_ARCHIVE"
+        assert "历史归档认证通过 (原状态: READY)" in res["reason"]
+
+    # Case 2: 历史 Release 为 SUPERSEDED 且 superseded_from_state='DEGRADED'，默认 allow_degraded=False -> 阻断
+    release_sup_deg = dict(release_sup_ready)
+    release_sup_deg["superseded_from_state"] = "DEGRADED"
+    with patch.object(release_client, "get_release_by_id", return_value=release_sup_deg), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_sup_ready", allow_degraded=False, is_historical=True)
+        assert res["eligible"] is False
+        assert res["state"] == "SUPERSEDED"
+
+    # Case 3: 历史 Release 为 SUPERSEDED 且 superseded_from_state='DEGRADED'，配置 allow_degraded=True -> 放行
+    with patch.object(release_client, "get_release_by_id", return_value=release_sup_deg), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_sup_ready", allow_degraded=True, is_historical=True)
+        assert res["eligible"] is True
+        assert res["state"] == "SUPERSEDED"
+        assert "历史归档认证通过 (原状态: DEGRADED)" in res["reason"]
+
+    # Case 4: 历史 Release 为 SUPERSEDED 但 superseded_from_state 为非法状态 (如 BLOCKED / BUILDING / None) -> 严格阻断
+    for bad_origin in ("BLOCKED", "BUILDING", "CANDIDATE", None, ""):
+        bad_sup = dict(release_sup_ready)
+        bad_sup["superseded_from_state"] = bad_origin
+        with patch.object(release_client, "get_release_by_id", return_value=bad_sup), \
+             patch.object(release_client, "get_release_datasets", return_value=datasets):
+            res = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_sup_ready", is_historical=True)
+            assert res["eligible"] is False
+            assert "HISTORICAL_SUPERSEDED_INVALID_ORIGIN" in res["blocked_datasets"]
+
+    # Case 5: 非历史模式 (is_historical=False) 下消费 SUPERSEDED -> 严格一票否决
+    with patch.object(release_client, "get_release_by_id", return_value=release_sup_ready), \
+         patch.object(release_client, "get_active_release_pointer", return_value={"pointer_name": "CERTIFIED_DAILY", "release_id": "rel_hist_sup_ready"}), \
+         patch.object(release_client, "get_release_datasets", return_value=datasets):
+        res_non_hist = release_client.check_release_gate(trade_date=20261106, release_id="rel_hist_sup_ready", is_historical=False)
+        assert res_non_hist["eligible"] is False
+        assert res_non_hist["state"] == "SUPERSEDED"
+        assert "TOP_LEVEL_STATE_NOT_PERMITTED" in res_non_hist.get("blocked_datasets", [])
+
+
+def test_phase2e_r10_dual_evidence_sha256_decoupled_and_dataset_release_id_verified():
+    """第十轮测试 3: 验证 Release 聚合证据与日线产品证据解耦（允许不同合法哈希）及数据集 release_id 归属校验。"""
+    client = ADCClient()
+    ctx = ExecutionContext(
+        mode="PRODUCTION",
+        trade_date=20261106,
+        release_id="rel_20261106_v1",
+        data_version_id="dv_v1",
+        pit_snapshot_id="pit_v1",
+        certification_status="CERTIFIED_DAILY",
+        research_only=False,
+    )
+    mock_rows = [{
+        "ts_code": "000001.SZ",
+        "trade_date": 20261106,
+        "open": 10.0,
+        "high": 10.5,
+        "low": 9.9,
+        "close": 10.2,
+        "volume": 50000.0,
+        "amount_cny": 510000000.0,
+        "available_at": "2026-11-06T18:00:00",
+        "adjustment_anchor_date": 20261106,
+    }]
+
+    # 准备两个不同的合法 64 位 SHA256 哈希
+    release_evidence_hash = "1111111111222222222233333333334444444444555555555566666666667777"
+    dataset_evidence_hash = "88888888889999999999aaaaabbbbbcccccdddddeeeeefffff00000111112222"
+    assert release_evidence_hash != dataset_evidence_hash
+
+    # Case 1: 正向测试 - 聚合发布与日线产品持有不同的合法 64 位 SHA256，且 dataset release_id 匹配 -> 成功放行
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(client, "_query", return_value=mock_rows), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106,
+             "gate_evidence_sha256": release_evidence_hash,
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {
+                 "release_id": "rel_20261106_v1",
+                 "dataset_name": "equity_daily_bar_raw",
+                 "snapshot_id": "s1",
+                 "state": "PASS",
+                 "visible_date_max": 20261106,
+                 "gate_evidence_sha256": dataset_evidence_hash,
+             }
+         ]):
+        df = client.data.get_daily_bars_batch(
+            symbols=["000001"],
+            start_date=20261106,
+            end_date=20261106,
+            execution_context=ctx,
+        )
+        assert not df.empty
+        assert df.attrs["certified"] is True
+        assert df.attrs["provenance_proof"].gate_evidence_sha256 == dataset_evidence_hash
+
+    # Case 2: 负向测试 - 日线数据集的 release_id 与当前 Release 不一致 -> 阻断
+    with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+         patch.object(client, "_table_ready", return_value=True), \
+         patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+             "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+             "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106,
+             "gate_evidence_sha256": release_evidence_hash,
+         }), \
+         patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+             {
+                 "release_id": "rel_other_mismatched",
+                 "dataset_name": "equity_daily_bar_raw",
+                 "snapshot_id": "s1",
+                 "state": "PASS",
+                 "visible_date_max": 20261106,
+                 "gate_evidence_sha256": dataset_evidence_hash,
+             }
+         ]):
+        with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+            client.data.get_daily_bars_batch(
+                symbols=["000001"],
+                start_date=20261106,
+                end_date=20261106,
+                execution_context=ctx,
+            )
+        assert "数据集归属不符阻断" in str(exc_info.value)
+        assert "rel_other_mismatched" in str(exc_info.value)
+
+    # Case 3: 负向测试 - Release 聚合发布的 gate_evidence_sha256 格式非法（非 64 位 SHA256 / 占位符）-> 阻断
+    for bad_rel_hash in ("placeholder", "unverified", "abc12345", "not_a_valid_sha256"):
+        with patch.object(ADCReleaseClient, "check_release_gate", return_value={"eligible": True, "state": "READY"}), \
+             patch.object(client, "_table_ready", return_value=True), \
+             patch.object(ADCReleaseClient, "get_release_by_id", return_value={
+                 "release_id": "rel_20261106_v1", "release_type": "CERTIFIED_DAILY", "state": "READY",
+                 "data_version_id": "dv_v1", "pit_snapshot_id": "pit_v1", "trade_date": 20261106,
+                 "gate_evidence_sha256": bad_rel_hash,
+             }), \
+             patch.object(ADCReleaseClient, "get_release_datasets", return_value=[
+                 {
+                     "release_id": "rel_20261106_v1",
+                     "dataset_name": "equity_daily_bar_raw",
+                     "snapshot_id": "s1",
+                     "state": "PASS",
+                     "visible_date_max": 20261106,
+                     "gate_evidence_sha256": dataset_evidence_hash,
+                 }
+             ]):
+            with pytest.raises(ProductionAdmissionBlockedError) as exc_info:
+                client.data.get_daily_bars_batch(
+                    symbols=["000001"],
+                    start_date=20261106,
+                    end_date=20261106,
+                    execution_context=ctx,
+                )
+            assert "聚合发布证据格式阻断" in str(exc_info.value)
+
 
