@@ -49,6 +49,7 @@ def test_fetch_bars_batch_adc_client_success():
             adj_type="qfq",
             release_id=None,
             pit_snapshot_id=None,
+            execution_context=None,
         )
 
 

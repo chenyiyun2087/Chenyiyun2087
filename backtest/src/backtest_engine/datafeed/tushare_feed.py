@@ -95,8 +95,11 @@ class TushareDailyFeed(DataFeed):
         end_int = int(pd.Timestamp(end).strftime("%Y%m%d"))
 
         # 优先走统一跨项目数据底座客户端
-        is_research = self.allow_research_fallback or self.mode == "research" or bool(
-            self.execution_context and getattr(self.execution_context, "research_only", False)
+        # 研究回退条件必须严格同时满足：1.显式开启allow_research_fallback; 2.mode为RESEARCH; 3.execution_context.research_only=True
+        is_research = (
+            bool(self.allow_research_fallback)
+            and str(self.mode).strip().upper() == "RESEARCH"
+            and bool(self.execution_context and getattr(self.execution_context, "research_only", False))
         )
         try:
             from cross_project.adc_client import ADCClient
@@ -110,6 +113,7 @@ class TushareDailyFeed(DataFeed):
                 adj_type="qfq" if self.table == "dwd_stock_daily_standard" else "raw",
                 release_id=rel_id,
                 pit_snapshot_id=pit_id,
+                execution_context=self.execution_context,
             )
             if not df.empty:
                 for r in df.itertuples(index=False):
@@ -123,6 +127,10 @@ class TushareDailyFeed(DataFeed):
                         volume=float(getattr(r, "volume", 0.0) or 0.0),
                     )
                 return
+            elif not is_research:
+                raise RuntimeError(
+                    f"可信回测行情数据源返回为空 (universe={len(universe)}, {start_int}-{end_int})，生产/可信模式严禁使用未认证备用数据！"
+                )
         except Exception as exc:
             if not is_research:
                 raise RuntimeError(
@@ -130,6 +138,9 @@ class TushareDailyFeed(DataFeed):
                 ) from exc
             import logging
             logging.getLogger(__name__).warning("RESEARCH ONLY: 可信回测数据源读取失败，经显式研究模式授权回退备用 SQL: %s", exc)
+
+        if not is_research:
+            raise RuntimeError("可信回测/生产模式严禁执行离线未认证回退路径！")
 
         # 回退离线回测路径
         table, mp = self._resolve_table()

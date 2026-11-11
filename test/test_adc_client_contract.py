@@ -237,12 +237,15 @@ def test_release_gate_degraded_optional_only_allowed_when_flagged():
                 "published_at": "2026-11-06 21:05:00",
             }]
         elif "meta_data_release_dataset" in sql:
-            # 关键数据集全 PASS，仅可选数据集 industry_history 处于 DEGRADED
+            # 6 大 Canonical 关键数据集全 PASS 且均具合法快照，仅可选数据集 industry_history 处于 DEGRADED
             return [
-                {"dataset_name": "dwd_daily", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "dwd_stock_daily_standard", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "dim_stock", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "industry_history", "criticality": "OPTIONAL", "state": "DEGRADED"},
+                {"dataset_name": "trade_calendar", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "security_lifecycle_daily", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "equity_daily_bar_raw", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "equity_adjustment_factor", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "industry_history", "criticality": "OPTIONAL", "state": "DEGRADED", "snapshot_id": "snap_opt_v1"},
             ]
         return []
 
@@ -276,9 +279,12 @@ def test_release_gate_ready():
             }]
         elif "meta_data_release_dataset" in sql:
             return [
-                {"dataset_name": "dwd_daily", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "dwd_stock_daily_standard", "criticality": "CRITICAL", "state": "PASS"},
-                {"dataset_name": "dim_stock", "criticality": "CRITICAL", "state": "PASS"},
+                {"dataset_name": "trade_calendar", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "security_lifecycle_daily", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "equity_daily_bar_raw", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "equity_adjustment_factor", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "corporate_action_event", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
+                {"dataset_name": "daily_basic", "criticality": "CRITICAL", "state": "PASS", "snapshot_id": "snap_v1"},
             ]
         return []
 
@@ -316,7 +322,9 @@ def test_daily_bars_batch_contract():
     ]
     client._query = MagicMock(return_value=mock_rows)
 
-    df = client.data.get_daily_bars_batch(["000001", "600000"], start_date=20261106, end_date=20261106)
+    from cross_project.execution_context import ExecutionContext
+    res_ctx = ExecutionContext.create_research(20261106, reason="CONTRACT_TEST")
+    df = client.data.get_daily_bars_batch(["000001", "600000"], start_date=20261106, end_date=20261106, execution_context=res_ctx)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 2
     # 严格验证包含 ScoreRank 必需的 8 大字段

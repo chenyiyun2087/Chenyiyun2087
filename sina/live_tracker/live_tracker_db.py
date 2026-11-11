@@ -475,12 +475,28 @@ def get_latest_prices_from_kline(
     # 将 date 对象转为 int YYYYMMDD
     if trade_date is not None:
         trade_date_int = int(trade_date.strftime("%Y%m%d")) if isinstance(trade_date, (date, datetime)) else int(trade_date)
+    elif execution_context and getattr(execution_context, "trade_date", None):
+        trade_date_int = int(execution_context.trade_date)
     else:
         trade_date_int = None
 
-    is_research = allow_research_fallback or bool(
-        execution_context and getattr(execution_context, "research_only", False)
+    is_research = (
+        bool(allow_research_fallback)
+        and bool(
+            execution_context
+            and getattr(execution_context, "mode", "").upper() == "RESEARCH"
+            and getattr(execution_context, "research_only", False)
+        )
     )
+
+    if not is_research:
+        if execution_context is None:
+            raise RuntimeError("安全红线阻断：Live Tracker 生产/影子模式下获取行情必须提供有效认证的 ExecutionContext！")
+        rel_id = getattr(execution_context, "release_id", None)
+        if not rel_id or str(rel_id).strip() in ("", "None", "null", "PLACEHOLDER", "UNVERIFIED"):
+            raise RuntimeError("安全红线阻断：Live Tracker 生产模式下获取行情必须在 ExecutionContext 绑定有效 release_id！")
+        if trade_date_int is None:
+            raise RuntimeError("安全红线阻断：Live Tracker 生产模式下必须由 ExecutionContext 提供明确交易日期，禁止从旧表推断！")
 
     try:
         from cross_project.adc_client import ADCClient
@@ -488,6 +504,8 @@ def get_latest_prices_from_kline(
         if trade_date_int is None:
             trade_date_int = adc.data.get_latest_data_date(symbols)
             if not trade_date_int:
+                if not is_research:
+                    raise RuntimeError("Live Tracker 生产行情无法获取最新交易日，严格禁止执行未认证 SQL 回退！")
                 return {}
         
         rel_id = getattr(execution_context, "release_id", None)
@@ -499,14 +517,29 @@ def get_latest_prices_from_kline(
             adj_type="qfq",
             release_id=rel_id,
             pit_snapshot_id=pit_id,
+            execution_context=execution_context,
         )
+        if not is_research:
+            proof = df.attrs.get("provenance_proof")
+            is_cert = df.attrs.get("certified", False)
+            if not is_cert or not proof or not getattr(proof, "certified", False) or not getattr(proof, "snapshot_bound", False):
+                raise RuntimeError(
+                    "安全红线阻断：Live Tracker 生产行情获取返回的数据未通过物理快照认证或未绑定有效 DataProvenanceProof！"
+                )
         if not df.empty:
             prices = {}
             for _, row in df.iterrows():
                 c_val = row.get("close")
                 if pd.notna(c_val) and float(c_val) > 0:
                     prices[str(row["symbol"])] = float(c_val)
+            missing_syms = [s for s in symbols if s not in prices or prices[s] <= 0]
+            if missing_syms and not is_research:
+                raise RuntimeError(
+                    f"Live Tracker 生产行情获取缺失有效价格 (symbols={missing_syms})，严格禁止使用未认证数据！"
+                )
             return prices
+        elif not is_research:
+            raise RuntimeError("Live Tracker 生产行情获取返回空数据集，严格禁止使用未认证备用数据！")
     except Exception as exc:
         if not is_research:
             logger.error("CRITICAL: Live Tracker 生产/影子模式下 ADCClient 读取失败，禁止静默回退 SQL: %s", exc)
@@ -514,6 +547,9 @@ def get_latest_prices_from_kline(
                 f"Live Tracker 生产行情获取失败: {exc}，严格禁止静默回退未认证原生 SQL！"
             ) from exc
         logger.warning("RESEARCH ONLY: Live Tracker ADCClient 取最新价格失败，经显式隔离研究模式授权回退备用 SQL: %s", exc)
+
+    if not is_research:
+        raise RuntimeError("Live Tracker 生产/影子模式严禁执行未认证原生 SQL 回退！")
 
     price_table = LIVE_CONFIG.get("price_table", "tushare_stock.dwd_stock_daily_standard")
     if trade_date is None:
@@ -560,31 +596,12 @@ def get_latest_prices_from_kline(
         conn.close()
 
 
-def get_latest_price(symbol: str) -> float:
-    """获取最新收盘价。禁止缺失时静默返回 0.0。"""
-    prices = get_latest_prices_from_kline([symbol])
+def get_latest_price(symbol: str, execution_context: Optional[Any] = None) -> float:
+    """获取最新收盘价。完全通过统一跨项目行情接口获取，透传 ExecutionContext，缺失或异常时直接抛出异常，绝不回退原生 SQL。"""
+    prices = get_latest_prices_from_kline([symbol], execution_context=execution_context)
     if symbol in prices and prices[symbol] > 0:
         return prices[symbol]
-
-    price_table = LIVE_CONFIG.get("price_table", "tushare_stock.dwd_stock_daily_standard")
-    sql = f"""
-    SELECT t.adj_close as close
-    FROM {price_table} t
-    JOIN tushare_stock.dim_stock s ON t.ts_code = s.ts_code
-    WHERE s.symbol = %s
-    ORDER BY t.trade_date DESC
-    LIMIT 1
-    """
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, (symbol,))
-            result = _fetchone_dict(cursor)
-            if result and result.get("close") is not None and float(result["close"]) > 0:
-                return float(result["close"])
-            raise ValueError(f"标的 {symbol} 行情缺失或价格为 0，拒绝返回伪造的 0.0 价格！")
-    finally:
-        conn.close()
+    raise ValueError(f"标的 {symbol} 行情缺失或价格为 0，统一跨项目接口未返回有效价格，拒绝返回未认证数据！")
 
 
 def get_stock_name(symbol: str) -> str:

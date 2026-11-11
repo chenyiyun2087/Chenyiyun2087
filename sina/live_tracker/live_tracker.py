@@ -109,16 +109,18 @@ class DailyPnL:
 class LiveTracker:
     """实盘跟踪器"""
     
-    def __init__(self, initial_capital: float = None):
+    def __init__(self, initial_capital: float = None, execution_context: Optional[Any] = None):
         """
         初始化实盘跟踪器
         
         Args:
             initial_capital: 初始资金，默认使用配置中的值
+            execution_context: 跨项目数据认证与版本上下文 (ExecutionContext)
         """
         self.initial_capital = initial_capital or LIVE_CONFIG["initial_capital"]
         self.commission_rate = LIVE_CONFIG["commission"]
         self.slippage_rate = LIVE_CONFIG["slippage"]
+        self.execution_context = execution_context
         
         # 从数据库加载状态
         self._load_state()
@@ -160,6 +162,7 @@ class LiveTracker:
         trade_date: date = None,
         reason: str = "",
         score: float = None,
+        execution_context: Optional[Any] = None,
     ) -> LiveTrade:
         """
         记录买入交易
@@ -171,15 +174,17 @@ class LiveTracker:
             trade_date: 交易日期，默认今天
             reason: 买入理由
             score: 当时评分
+            execution_context: 跨项目数据认证与版本上下文 (ExecutionContext)
             
         Returns:
             交易记录
         """
         trade_date = trade_date or date.today()
+        ctx = execution_context or self.execution_context
         
-        # 如果价格为0，从数据库获取最新报价
+        # 如果价格为0，从数据库获取最新报价（透传数据认证上下文）
         if price == 0:
-            price = db.get_latest_price(symbol)
+            price = db.get_latest_price(symbol, execution_context=ctx)
             if price <= 0:
                 raise ValueError(f"无法获取股票 {symbol} 的报价，请手动输入价格")
         
@@ -287,6 +292,7 @@ class LiveTracker:
         trade_date: date = None,
         reason: str = "",
         score: float = None,
+        execution_context: Optional[Any] = None,
     ) -> LiveTrade:
         """
         记录卖出交易
@@ -298,15 +304,17 @@ class LiveTracker:
             trade_date: 交易日期，默认今天
             reason: 卖出理由
             score: 当时评分
+            execution_context: 跨项目数据认证与版本上下文 (ExecutionContext)
             
         Returns:
             交易记录
         """
         trade_date = trade_date or date.today()
+        ctx = execution_context or self.execution_context
         
-        # 如果价格为0，从数据库获取最新报价
+        # 如果价格为0，从数据库获取最新报价（透传数据认证上下文）
         if price == 0:
-            price = db.get_latest_price(symbol)
+            price = db.get_latest_price(symbol, execution_context=ctx)
             if price <= 0:
                 raise ValueError(f"无法获取股票 {symbol} 的报价，请手动输入价格")
         
@@ -403,12 +411,13 @@ class LiveTracker:
         """获取所有持仓"""
         return self.positions
     
-    def sync_prices(self, trade_date: date = None) -> Dict[str, float]:
+    def sync_prices(self, trade_date: date = None, execution_context: Optional[Any] = None) -> Dict[str, float]:
         """
         从 daily_kline 同步最新价格
         
         Args:
             trade_date: 指定日期，默认最新
+            execution_context: 跨项目数据认证与版本上下文 (ExecutionContext)
             
         Returns:
             更新后的价格字典
@@ -417,8 +426,9 @@ class LiveTracker:
             print("没有持仓")
             return {}
         
+        ctx = execution_context or self.execution_context
         symbols = list(self.positions.keys())
-        prices = db.get_latest_prices_from_kline(symbols, trade_date)
+        prices = db.get_latest_prices_from_kline(symbols, trade_date, execution_context=ctx)
         
         if not prices:
             print("未能获取最新价格")

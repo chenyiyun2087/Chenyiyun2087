@@ -118,8 +118,9 @@ def fetch_bars_batch(
         return pd.DataFrame()
 
     is_research = bool(
-        (execution_context and getattr(execution_context, "research_only", False))
-        or os.getenv("EXECUTION_MODE", "").upper() == "RESEARCH"
+        execution_context
+        and getattr(execution_context, "mode", "").upper() == "RESEARCH"
+        and getattr(execution_context, "research_only", False)
     )
 
     try:
@@ -136,6 +137,7 @@ def fetch_bars_batch(
             adj_type=adj_type,
             release_id=rel_id,
             pit_snapshot_id=pit_id,
+            execution_context=execution_context,
         )
         if not df.empty:
             df["trade_date"] = pd.to_datetime(df["trade_date"].astype(str))
@@ -143,6 +145,8 @@ def fetch_bars_batch(
                 if c in df.columns:
                     df[c] = pd.to_numeric(df[c], errors="coerce")
             return df.dropna(subset=["symbol", "trade_date", "close", "high", "low"])
+        elif not is_research:
+            raise RuntimeError("正式生产模式下 ADCClient 统一取数返回为空，严格禁止静默回退未认证 SQL！")
     except Exception as exc:
         if not is_research:
             # 正式模式绝不静默回退！Fail Closed
@@ -151,6 +155,9 @@ def fetch_bars_batch(
                 f"正式策略生产取数阻断：统一跨项目数据底座客户端读取失败 ({exc})。严格禁止静默回退未认证 SQL！"
             ) from exc
         logger.warning("RESEARCH ONLY: ADCClient 取数失败，经显式隔离研究模式授权回退备用 SQL: %s", exc)
+
+    if not is_research:
+        raise RuntimeError("正式策略生产模式严格禁止执行未认证 SQL 回退路径！")
 
     start_date_int = int(start_date.replace("-", ""))
     end_date_int = int(end_date.replace("-", "")) if end_date else None
