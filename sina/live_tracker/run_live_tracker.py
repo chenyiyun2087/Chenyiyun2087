@@ -126,7 +126,10 @@ def _resolve_live_execution_context(
     tracker: LiveTracker | None = None,
     allow_degraded: bool = False,
 ):
-    """按目标交易日创建并传入有效认证上下文。"""
+    """按目标交易日创建并传入有效认证上下文。
+
+    默认交易日从 ASDC 正式活动指针解析；门禁失败时直接 Fail-Closed 阻断并返回明确原因。
+    """
     from cross_project.adc_client import ADCClient
     from cross_project.execution_context import ExecutionContext
 
@@ -135,10 +138,13 @@ def _resolve_live_execution_context(
     if target_date is not None:
         trade_date_int = int(target_date.strftime("%Y%m%d"))
     else:
-        # 若未指定交易日且有持仓，尝试从持仓标的查询最新可用数据日
-        symbols = list(tracker.get_positions().keys()) if tracker else []
-        if symbols:
-            trade_date_int = adc.data.get_latest_data_date(symbols)
+        # 默认优先从正式活动指针解析权威交易日
+        pointer = adc.release.get_active_release_pointer()
+        if pointer and pointer.get("release_id"):
+            pointer_rel = adc.release.get_release_by_id(pointer["release_id"], require_certified_daily=True)
+            if pointer_rel and pointer_rel.get("trade_date"):
+                trade_date_int = int(pointer_rel["trade_date"])
+
         if not trade_date_int:
             trade_date_int = int(date.today().strftime("%Y%m%d"))
 
@@ -149,10 +155,13 @@ def _resolve_live_execution_context(
             release_check,
             allow_degraded=allow_degraded,
         )
-    return ExecutionContext.create_research(
-        trade_date_int,
-        release_check,
-        reason="LIVE_TRACKER_CLI_RESOLVED",
+
+    # 门禁未通过时直接阻断并返回明确原因，坚决杜绝静默回退未认证上下文
+    reason = release_check.get("reason") or "未通过 ASDC 生产发布门禁准入"
+    blocked = release_check.get("blocked_datasets") or []
+    raise RuntimeError(
+        f"安全阻断：目标交易日 {trade_date_int} 未通过 ASDC 正式发布门禁 (state={release_check.get('state')})！"
+        f"原因: {reason}，阻断项: {blocked}"
     )
 
 
@@ -163,7 +172,11 @@ def cmd_sync(args):
     tracker = LiveTracker()
     ctx = _resolve_live_execution_context(trade_date, tracker, allow_degraded=allow_degraded)
     tracker.execution_context = ctx
-    tracker.sync_prices(trade_date, execution_context=ctx)
+    sync_date = trade_date or (
+        date(ctx.trade_date // 10000, (ctx.trade_date % 10000) // 100, ctx.trade_date % 100)
+        if getattr(ctx, "trade_date", None) else None
+    )
+    tracker.sync_prices(sync_date, execution_context=ctx)
     
     # 显示更新后的持仓
     cmd_positions(args)
@@ -171,17 +184,21 @@ def cmd_sync(args):
 
 def cmd_snapshot(args):
     """生成每日快照"""
-    snapshot_date = parse_date(args.date)
+    snapshot_date = parse_date(args.date) if getattr(args, "date", None) else None
     allow_degraded = bool(getattr(args, "allow_degraded", False))
     tracker = LiveTracker()
     ctx = _resolve_live_execution_context(snapshot_date, tracker, allow_degraded=allow_degraded)
     tracker.execution_context = ctx
+    snap_date = snapshot_date or (
+        date(ctx.trade_date // 10000, (ctx.trade_date % 10000) // 100, ctx.trade_date % 100)
+        if getattr(ctx, "trade_date", None) else date.today()
+    )
     
     # 先同步价格
-    tracker.sync_prices(snapshot_date, execution_context=ctx)
+    tracker.sync_prices(snap_date, execution_context=ctx)
     
     # 生成快照
-    pnl = tracker.calculate_daily_pnl(snapshot_date)
+    pnl = tracker.calculate_daily_pnl(snap_date)
     
     print("\n" + "=" * 60)
     print(f"【每日快照】 {snapshot_date}")

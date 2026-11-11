@@ -2746,9 +2746,8 @@ def test_phase2e_r14_scorerank_allow_degraded_passthrough():
 
 
 def test_phase2e_r14_live_tracker_cli_context_injection():
-    """第十四轮测试 P1: Live Tracker CLI sync 和 snapshot 具备有效认证上下文。"""
+    """第十四轮测试 P1: Live Tracker CLI sync 和 snapshot 具备有效认证上下文，并从活动指针解析默认日期。"""
     from sina.live_tracker.run_live_tracker import _resolve_live_execution_context
-    from unittest.mock import MagicMock
 
     mock_gate_ok = {
         "eligible": True,
@@ -2758,6 +2757,7 @@ def test_phase2e_r14_live_tracker_cli_context_injection():
         "pit_snapshot_id": "pit_01",
     }
 
+    # 1. 显式传入日期
     with patch("cross_project.adc_client.ADCClient") as MockADC:
         mock_instance = MockADC.return_value
         mock_instance.release.check_release_gate.return_value = mock_gate_ok
@@ -2765,7 +2765,48 @@ def test_phase2e_r14_live_tracker_cli_context_injection():
         ctx = _resolve_live_execution_context(date(2026, 11, 6))
         assert ctx.mode == "PRODUCTION"
         assert ctx.release_id == "rel_live_01"
+        assert ctx.trade_date == 20261106
         assert ctx.certification_status == "CERTIFIED_DAILY"
+
+    # 2. 默认不传日期：必须从正式活动指针解析权威日期 20261110，杜绝从旧表获取 20261109
+    with patch("cross_project.adc_client.ADCClient") as MockADC:
+        mock_instance = MockADC.return_value
+        mock_instance.release.get_active_release_pointer.return_value = {
+            "pointer_name": "CERTIFIED_DAILY",
+            "release_id": "rel_20261110_v1",
+        }
+        mock_instance.release.get_release_by_id.return_value = {
+            "release_id": "rel_20261110_v1",
+            "trade_date": 20261110,
+        }
+        mock_instance.release.check_release_gate.return_value = {
+            "eligible": True,
+            "state": "READY",
+            "release_id": "rel_20261110_v1",
+            "data_version_id": "dv_v2",
+            "pit_snapshot_id": "pit_v2",
+        }
+
+        ctx_default = _resolve_live_execution_context(None)
+        assert ctx_default.trade_date == 20261110
+        assert ctx_default.release_id == "rel_20261110_v1"
+        assert ctx_default.mode == "PRODUCTION"
+
+    # 3. 门禁失败时直接 Fail-Closed 阻断并返回明确原因，坚决杜绝静默回退未认证上下文
+    with patch("cross_project.adc_client.ADCClient") as MockADC:
+        mock_instance = MockADC.return_value
+        mock_instance.release.get_active_release_pointer.return_value = None
+        mock_instance.release.check_release_gate.return_value = {
+            "eligible": False,
+            "state": "BLOCKED",
+            "reason": "发布缺失有效指针",
+            "blocked_datasets": ["POINTER_MISSING"],
+        }
+
+        with pytest.raises(RuntimeError) as exc_info:
+            _resolve_live_execution_context(date(2026, 11, 10))
+        assert "发布缺失有效指针" in str(exc_info.value)
+        assert "POINTER_MISSING" in str(exc_info.value)
 
 
 
