@@ -2065,8 +2065,13 @@ def _claim_next_queued_task():
                     job.get("trigger_type"),
                 )
                 if dep_state == "WAITING":
-                    if job.get("message") != dep_message:
-                        cursor.execute("UPDATE app_task_queue SET message = %s WHERE id = %s", (dep_message, job["id"]))
+                    # Yield this bounded scan slot so an old dependency wait
+                    # cannot keep ready jobs beyond the first 25 rows invisible.
+                    cursor.execute(
+                        """UPDATE app_task_queue SET message=%s,
+                           available_at=DATE_ADD(NOW(), INTERVAL 30 SECOND) WHERE id=%s""",
+                        (dep_message, job["id"]),
+                    )
                     continue
                 if dep_state == "BLOCKED":
                     cursor.execute(

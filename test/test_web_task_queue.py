@@ -56,6 +56,40 @@ def test_queue_business_date_prefers_explicit_replay_date():
     assert web_app._queue_business_date({"datestr": "2026-06-20"}) == "20260620"
 
 
+def test_queue_yields_full_dependency_wait_page_to_ready_work(monkeypatch):
+    waiting = [{"id": number, "task_name": "alpha_signal_precommit", "business_date": "20260908",
+                "trigger_type": "schedule", "message": "waiting"} for number in range(1, 26)]
+    ready = {"id": 26, "task_name": "sina_picture", "business_date": "20261113",
+             "trigger_type": "schedule"}
+    deferred = set()
+    claimed = []
+
+    class QueueCursor(FakeCursor):
+        def execute(self, sql, params=()):
+            super().execute(sql, params)
+            if sql.lstrip().startswith("SELECT * FROM app_task_queue") and "FOR UPDATE" in sql:
+                self.rows = [job for job in [*waiting, ready] if job["id"] not in deferred][:25]
+            elif "available_at=DATE_ADD" in sql:
+                assert "INTERVAL 30 SECOND" in sql
+                assert "attempt_count" not in sql
+                deferred.add(params[-1])
+            elif "attempt_count=attempt_count+1" in sql:
+                claimed.append(params[0])
+            elif sql.startswith("SELECT * FROM app_task_queue WHERE id="):
+                self.rows = [ready]
+
+    cursor = QueueCursor([])
+    conn = SimpleNamespace(cursor=lambda: cursor, commit=lambda: None, rollback=lambda: None, close=lambda: None)
+    monkeypatch.setattr(web_app, "_connect_db", lambda: conn)
+    monkeypatch.setattr(web_app, "_ensure_task_management_schema", lambda _: None)
+    monkeypatch.setattr(web_app, "_dependency_state", lambda _, name, *args:
+                        ("WAITING", "waiting") if name == "alpha_signal_precommit" else ("READY", ""))
+    assert web_app._claim_next_queued_task() is None
+    assert deferred == set(range(1, 26))
+    assert web_app._claim_next_queued_task() == ready
+    assert claimed == [26]
+
+
 def test_dependency_state_waits_for_missing_upstream_job():
     cursor = FakeCursor([])
     state, message = web_app._dependency_state(cursor, "sina_analyse", "20260620")
