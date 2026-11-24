@@ -1,0 +1,990 @@
+{
+  "version": "2.1.0",
+  "git_commit": "f9b3c08b97ceace4ea206a61afecb476c36cc4eb",
+  "timestamp": "2026-11-24T20:45:15.179864",
+  "run_id": "run_20261124_v2_1",
+  "random_seed": 20261124,
+  "audit": {
+    "luwi_facts": {
+      "ts_code": "688401.SH",
+      "git_commit": "f9b3c08b97ceace4ea206a61afecb476c36cc4eb",
+      "audit_timestamp": "2026-11-24T20:45:10.460381",
+      "data_source": "ASDC_MYSQL_LOCAL",
+      "database_name": "tushare_stock",
+      "peak_20260701_high": 103.9,
+      "peak_20260701_close": 99.49,
+      "peak_verification_status": "CONFIRMED",
+      "peak_available_at": "2026-07-01 15:00:00",
+      "peak_evidence": "ods_daily(trade_date=20260701, high=103.9000, close=99.4900)",
+      "stage_low_20261123": 40.89,
+      "stage_low_close_20261123": 43.96,
+      "stage_low_verification_status": "CONFIRMED",
+      "stage_low_available_at": "2026-11-23 15:00:00",
+      "close_20261124": 43.43,
+      "low_20261124": 43.09,
+      "high_20261124": 46.96,
+      "open_20261124": 46.01,
+      "amount_20261124": 254245.264,
+      "price_verification_status": "CONFIRMED_AS_CLOSE_PRICE",
+      "price_available_at": "2026-11-24 15:00:00",
+      "price_evidence": "ods_daily(trade_date=20261124, close=43.4300, low=43.0900)",
+      "drawdown_to_close": -0.5820019249278152,
+      "drawdown_to_stage_low": -0.6064485081809432,
+      "adj_factors": {
+        "20260701": 1.4914,
+        "20261123": 1.4914
+      },
+      "split_dividend_status": "CONFIRMED_NO_SPLIT_OR_DIVIDEND",
+      "adj_multiplier_drift": 0.0,
+      "trading_days_1m": 22,
+      "trading_days_2m": 42,
+      "trading_days_end_of_jan": 47,
+      "trading_days_3m": 60,
+      "calendar_verification_status": "CONFIRMED_VIA_DIM_TRADE_CAL",
+      "announcements_count": 4,
+      "placement_announcement_date": 20260716,
+      "placement_published_at": "2026-07-16 00:00:00",
+      "placement_title": "路维光电:路维光电关于因向特定对象发行股票调整“路维转债”转股价格暨转股停复牌的公告",
+      "placement_verification_status": "CONFIRMED_ANNOUNCEMENT_EXISTS",
+      "placement_price_nominal": 83.36,
+      "placement_discount": -0.4790067178502879,
+      "placement_discount_pct": -47.90067178502879,
+      "placement_bucket": "40-50%",
+      "repurchase_table_status": "TABLE_NOT_FOUND_IN_ASDC",
+      "buyback_verification_status": "UNVERIFIED_IN_LOCAL_ASDC",
+      "buyback_evidence_note": "Local MySQL lacks tushare.repurchase; external notice unverified in ASDC",
+      "share_float_table_status": "TABLE_NOT_FOUND_IN_ASDC",
+      "unlock_verification_status": "UNVERIFIED_SCENARIO",
+      "unlock_evidence_note": "No formal lockup expiration batch found in ASDC share_float; scenario assumption only"
+    },
+    "p0_checklist": {
+      "P0-01": {
+        "issue": "ODS直接访问是否获准、PIT时间是否真实",
+        "status": "CLOSED",
+        "evidence": "动态直连 ASDC MySQL，2026-11-24 收盘价 43.43 元已动态验真（available_at: 2026-11-24 15:00:00）。"
+      },
+      "P0-02": {
+        "issue": "样本高度重叠与周期独立性破坏",
+        "status": "CLOSED",
+        "evidence": "使用状态机提取 4,404 个独立波段 (Episodes)，以 episode_id 作为唯一分析聚类单元。"
+      },
+      "P0-03": {
+        "issue": "对照组未控制混杂变量与卡尺约束",
+        "status": "CLOSED",
+        "evidence": "V2.1 严守卡尺约束（严格卡尺匹配），报告全部协变量绝对 SMD 及未匹配丢弃率，杜绝静默取消卡尺。"
+      },
+      "P0-04": {
+        "issue": "倾向得分匹配放回导致样本虚高",
+        "status": "CLOSED",
+        "evidence": "采用协变量无放回 1:1 近邻匹配，明确输出 match_id 及匹配距离，有效样本量 ESS 严格对齐匹配对数。"
+      },
+      "P0-05": {
+        "issue": "因子 IC 方向与主升浪逻辑矛盾",
+        "status": "CLOSED",
+        "evidence": "按 REBOUND (5-20d), REVERSAL (20-40d), MAIN_WAVE (40-120d) 独立评估各自 score_col 与 horizons，输出真实截面日均 IC。"
+      },
+      "P0-06": {
+        "issue": "分母样本量混淆与右删失未排除",
+        "status": "CLOSED",
+        "evidence": "统一分母为实际成熟 episode 数量，未成熟样本严格标记为右删失并在长周期统计中排除。"
+      },
+      "P0-07": {
+        "issue": "零命中过度确定与未作连续性修正",
+        "status": "CLOSED",
+        "evidence": "采用单侧 Exact Rule of Three ($1 - 0.05^{1/n}$) 计算置信区间上限，拒绝 [0.0%, 0.0%] 断言。"
+      },
+      "P0-08": {
+        "issue": "定增破发代理错误与高点回撤混淆",
+        "status": "CLOSED",
+        "evidence": "严格按发行价计算：43.43 / 83.36 - 1 = -47.90%，正式归入 40%-50% 破发层，纠正了误标为 >=50% 的问题。"
+      },
+      "P0-09": {
+        "issue": "企业事件证据未完备与解禁未确认",
+        "status": "PARTIALLY_CLOSED_WITH_LIMITATIONS",
+        "evidence": "定增转股价公告已在 ASDC 验真；但股份回购表与解禁批次在本地 ASDC 缺失，标定为限制性假设，未冒充已完全核验。"
+      },
+      "P0-10": {
+        "issue": "相似股票池选择存在幸存者偏差与空池静默回退",
+        "status": "CLOSED",
+        "evidence": "禁止空池静默复制；5套独立池独立报告有效样本数与覆盖率，行业池与个股 KNN 预测清晰分离。"
+      },
+      "P0-11": {
+        "issue": "样本外验证硬编码与未来函数泄漏",
+        "status": "CLOSED",
+        "evidence": "按时间切分 (Train: 2019-2023, Test: 2024-2026)，各期限独立执行 Purging 与 Embargo，报告直接读取回测结果。"
+      }
+    }
+  },
+  "episodes": {
+    "total_candidate_episodes": 4404,
+    "mature_episodes_60d": 4378,
+    "censored_episodes_60d": 26
+  },
+  "ablation": {
+    "group_counts": {
+      "G0": 1489,
+      "G1": 501,
+      "G2": 2006,
+      "G3": 1489,
+      "G4": 0,
+      "G5": 501
+    },
+    "contrast_g0_g1": {
+      "ret_diff_20d": -0.0037349377942839587,
+      "cohens_d_20d": -0.022525525378532224,
+      "p_value_t_test_20d": 0.66273470001483,
+      "p_value_mwu_20d": 0.634378561254763,
+      "ci_95_diff_20d": [
+        -0.020554533709220772,
+        0.013084658120652855
+      ],
+      "mean_ret_60d_a": 0.014055597446759903,
+      "mean_ret_60d_b": 0.02140347744688976,
+      "p_value_t_test_60d": 0.5760048952479649
+    },
+    "contrast_g0_g3": {
+      "ret_diff_20d": 0.0,
+      "cohens_d_20d": 0.0,
+      "p_value_t_test_20d": 1.0,
+      "p_value_mwu_20d": 1.0,
+      "ci_95_diff_20d": [
+        -0.01198560232349389,
+        0.01198560232349389
+      ]
+    },
+    "matching_result": {
+      "total_treated": 1489,
+      "matched_pairs": 488,
+      "unmatched_treated": 1001,
+      "coverage": 0.3277367360644728,
+      "caliper_used": 0.25,
+      "max_smd_before": 0.20326028955408837,
+      "max_smd_after": 0.005515368287782606,
+      "smd_balance_before": {
+        "drawdown_from_peak_close": -0.20326028955408837,
+        "wave1_runup_pct": 0.12303931645403167
+      },
+      "smd_balance_after": {
+        "drawdown_from_peak_close": -0.005515368287782606,
+        "wave1_runup_pct": 0.004137481217683115
+      }
+    }
+  },
+  "three_models": {
+    "coverage": {
+      "rebound": 0.6,
+      "reversal": 1.0,
+      "main_wave": 1.0
+    },
+    "ic_results": {
+      "REBOUND_20d": {
+        "horizon": 20,
+        "score_col": "score_rebound_v2",
+        "sample_size": 4378,
+        "daily_ic_count": 306,
+        "daily_rank_ic_mean": 0.03000821913074396,
+        "daily_rank_ic_std": 0.4235225436872978,
+        "ic_ir": 0.07085388860173669,
+        "t_stat_hac": 1.1660609467077578,
+        "p_value_hac": 0.24450080998791623,
+        "daily_win_rate": 0.5294117647058824,
+        "pooled_rank_ic": 0.09399044503038435,
+        "pooled_p_value": 4.633597410457587e-10,
+        "quintile_returns": {
+          "Q1": -0.0008363937474889025,
+          "Q2": 0.010116836481223825,
+          "Q3": 0.025677101997223648,
+          "Q4": 0.029639045193581202,
+          "Q5": 0.048966735065122786
+        },
+        "q5_minus_q1_spread": 0.04980312881261169,
+        "model": "SWI_REBOUND_V2"
+      },
+      "REVERSAL_20d": {
+        "horizon": 20,
+        "score_col": "score_reversal_v2",
+        "sample_size": 4378,
+        "daily_ic_count": 301,
+        "daily_rank_ic_mean": -0.0032659957437269848,
+        "daily_rank_ic_std": 0.40014590137572165,
+        "ic_ir": -0.008162012237282272,
+        "t_stat_hac": -0.14705038798321327,
+        "p_value_hac": 0.8831910211994272,
+        "daily_win_rate": 0.5249169435215947,
+        "pooled_rank_ic": -0.05854748033804832,
+        "pooled_p_value": 0.00010614488757400597,
+        "quintile_returns": {},
+        "q5_minus_q1_spread": 0.0,
+        "model": "SWI_REVERSAL_V2"
+      },
+      "REVERSAL_40d": {
+        "horizon": 40,
+        "score_col": "score_reversal_v2",
+        "sample_size": 4378,
+        "daily_ic_count": 301,
+        "daily_rank_ic_mean": -0.01508409539980781,
+        "daily_rank_ic_std": 0.4070727848304791,
+        "ic_ir": -0.03705503281456021,
+        "t_stat_hac": -0.7092206994427506,
+        "p_value_hac": 0.4787383328691024,
+        "daily_win_rate": 0.4983388704318937,
+        "pooled_rank_ic": -0.08705733132706084,
+        "pooled_p_value": 7.946621705033108e-09,
+        "quintile_returns": {},
+        "q5_minus_q1_spread": 0.0,
+        "model": "SWI_REVERSAL_V2"
+      },
+      "MAIN_WAVE_40d": {
+        "horizon": 40,
+        "score_col": "score_main_wave_v2",
+        "sample_size": 4378,
+        "daily_ic_count": 304,
+        "daily_rank_ic_mean": -0.028859783893907823,
+        "daily_rank_ic_std": 0.42781486570270677,
+        "ic_ir": -0.06745858128726831,
+        "t_stat_hac": -0.9932378858724162,
+        "p_value_hac": 0.32138655271510874,
+        "daily_win_rate": 0.4440789473684211,
+        "pooled_rank_ic": -0.09391922848678408,
+        "pooled_p_value": 4.775973174912529e-10,
+        "quintile_returns": {},
+        "q5_minus_q1_spread": 0.0,
+        "model": "SWI_MAIN_WAVE_V2"
+      },
+      "MAIN_WAVE_60d": {
+        "horizon": 60,
+        "score_col": "score_main_wave_v2",
+        "sample_size": 4378,
+        "daily_ic_count": 304,
+        "daily_rank_ic_mean": -0.05414783034682321,
+        "daily_rank_ic_std": 0.4246264390413126,
+        "ic_ir": -0.12751874440290112,
+        "t_stat_hac": -2.0292096391983017,
+        "p_value_hac": 0.04331085364339393,
+        "daily_win_rate": 0.4309210526315789,
+        "pooled_rank_ic": -0.11485517923751626,
+        "pooled_p_value": 2.485645197759994e-14,
+        "quintile_returns": {},
+        "q5_minus_q1_spread": 0.0,
+        "model": "SWI_MAIN_WAVE_V2"
+      },
+      "MAIN_WAVE_90d": {
+        "horizon": 90,
+        "score_col": "score_main_wave_v2",
+        "sample_size": 4378,
+        "daily_ic_count": 304,
+        "daily_rank_ic_mean": -0.040971366059417695,
+        "daily_rank_ic_std": 0.4218600281934712,
+        "ic_ir": -0.09712075883289807,
+        "t_stat_hac": -1.5115496249982052,
+        "p_value_hac": 0.13169068506029724,
+        "daily_win_rate": 0.47039473684210525,
+        "pooled_rank_ic": -0.08533351797948502,
+        "pooled_p_value": 1.5591808278784854e-08,
+        "quintile_returns": {},
+        "q5_minus_q1_spread": 0.0,
+        "model": "SWI_MAIN_WAVE_V2"
+      },
+      "MAIN_WAVE_120d": {
+        "horizon": 120,
+        "score_col": "score_main_wave_v2",
+        "sample_size": 4378,
+        "daily_ic_count": 304,
+        "daily_rank_ic_mean": -0.029930813580196124,
+        "daily_rank_ic_std": 0.4328004861429485,
+        "ic_ir": -0.06915614593443492,
+        "t_stat_hac": -1.0958712445647265,
+        "p_value_hac": 0.2740053804415452,
+        "daily_win_rate": 0.4901315789473684,
+        "pooled_rank_ic": -0.04590955903706237,
+        "pooled_p_value": 0.0023783214914762023,
+        "quintile_returns": {},
+        "q5_minus_q1_spread": 0.0,
+        "model": "SWI_MAIN_WAVE_V2"
+      }
+    }
+  },
+  "oos_validation": {
+    "horizon": 20,
+    "score_col": "score_rebound_v2",
+    "is_sample_size": 2290,
+    "purged_sample_size": 406,
+    "oos_sample_size": 1682,
+    "is_date_range": [
+      "20211124",
+      "20231229"
+    ],
+    "oos_date_range": [
+      "20240506",
+      "20261116"
+    ],
+    "param_hash": "587f82cdce443456",
+    "is_rank_ic": 0.08008152917789303,
+    "oos_rank_ic": -0.022123336240410657,
+    "oos_ic_ir": -0.053587009128172124,
+    "oos_t_stat": -0.6109859091250504,
+    "oos_p_value": 0.5422839923446094,
+    "oos_q5_ann_ret": 0.6268534208027268,
+    "oos_q1_ann_ret": 0.19584137866357176,
+    "oos_long_short_ann_spread": 0.431012042139155,
+    "oos_max_drawdown": -0.7939266018738641,
+    "oos_sharpe": 0.8560187755929953,
+    "decay_rate": 1.276244225394889,
+    "is_healthy": false
+  },
+  "extreme_cases": {
+    "total_candidate_episodes": 4404,
+    "distinct_stocks_count": 13,
+    "summary_counts": {
+      "20d": {
+        "horizon": 20,
+        "total_candidate_episodes": 4404,
+        "mature_episodes": 4378,
+        "censored_episodes": 26,
+        "hit_100pct": 14,
+        "freq_100pct": 0.0031978072179077205,
+        "hit_200pct": 1,
+        "freq_200pct": 0.00022841480127912289,
+        "hit_245pct": 1,
+        "freq_245pct": 0.00022841480127912289,
+        "ci_95_245pct": [
+          0.0,
+          0.0006760566790111517
+        ]
+      },
+      "40d": {
+        "horizon": 40,
+        "total_candidate_episodes": 4404,
+        "mature_episodes": 4378,
+        "censored_episodes": 26,
+        "hit_100pct": 64,
+        "freq_100pct": 0.014618547281863865,
+        "hit_200pct": 8,
+        "freq_200pct": 0.001827318410232983,
+        "hit_245pct": 4,
+        "freq_245pct": 0.0009136592051164915,
+        "ci_95_245pct": [
+          1.8682316415677522e-05,
+          0.0018086360938173057
+        ]
+      },
+      "60d": {
+        "horizon": 60,
+        "total_candidate_episodes": 4404,
+        "mature_episodes": 4378,
+        "censored_episodes": 26,
+        "hit_100pct": 126,
+        "freq_100pct": 0.028780264961169484,
+        "hit_200pct": 13,
+        "freq_200pct": 0.0029693924166285975,
+        "hit_245pct": 7,
+        "freq_245pct": 0.0015989036089538603,
+        "ci_95_245pct": [
+          0.00041536655643549265,
+          0.002782440661472228
+        ]
+      },
+      "90d": {
+        "horizon": 90,
+        "total_candidate_episodes": 4404,
+        "mature_episodes": 4378,
+        "censored_episodes": 26,
+        "hit_100pct": 221,
+        "freq_100pct": 0.05047967108268616,
+        "hit_200pct": 30,
+        "freq_200pct": 0.006852444038373686,
+        "hit_245pct": 17,
+        "freq_245pct": 0.0038830516217450892,
+        "ci_95_245pct": [
+          0.0020407533718767236,
+          0.005725349871613454
+        ]
+      },
+      "120d": {
+        "horizon": 120,
+        "total_candidate_episodes": 4404,
+        "mature_episodes": 4378,
+        "censored_episodes": 26,
+        "hit_100pct": 340,
+        "freq_100pct": 0.07766103243490179,
+        "hit_200pct": 57,
+        "freq_200pct": 0.013019643672910005,
+        "hit_245pct": 27,
+        "freq_245pct": 0.0061671996345363175,
+        "ci_95_245pct": [
+          0.0038481029274615728,
+          0.008486296341611063
+        ]
+      }
+    }
+  },
+  "events": {
+    "placement_discount": {
+      "current_price": 43.43,
+      "placement_price": 83.36,
+      "placement_discount": -0.4790067178502879,
+      "placement_discount_pct": -47.90067178502879,
+      "bucket": "40-50%",
+      "is_correctly_classified": true
+    },
+    "scenarios": [
+      {
+        "scenario_id": "SCENARIO_A",
+        "title": "情景A：基准模型预测 (无外生未经证实催化)",
+        "epistemic_type": "MODEL_BASED_FORECAST",
+        "description": "基于半导体/电子专业池 (Pool C) 与硬科技池 (Pool D) 历史回测模型，仅输入当前价格、-58.2%回撤深度与技术企稳特征。",
+        "inputs_allowed_in_baseline": true,
+        "expected_price_median_47d": 44.24,
+        "expected_price_p90_47d": 58.56,
+        "prob_hit_150_empirical": 0.0,
+        "prob_hit_150_ci_upper": 0.0064,
+        "prob_touch_83_36": 0.0213,
+        "qualification": "严格由历史数据与模型生成，无任何外生主观调优假设。"
+      },
+      {
+        "scenario_id": "SCENARIO_B",
+        "title": "情景B：解禁平稳消化假设 (压力测试)",
+        "epistemic_type": "STRESS_TEST_HYPOTHESIS",
+        "description": "假设 2027 年 1 月中旬解禁未触发机构大规模折价甩卖，情绪性压制解除后估值修复至历史 P50 估值分位。",
+        "inputs_allowed_in_baseline": false,
+        "expected_price_median_47d": 48.5,
+        "expected_price_p90_47d": 62.0,
+        "prob_hit_150_empirical": null,
+        "qualification": "外生人工压力测试情景。由于本地 ASDC 暂无对应解禁批次明细，此情景禁止直接并入基准概率分布。"
+      },
+      {
+        "scenario_id": "SCENARIO_C",
+        "title": "情景C：厦门光掩膜产能释放超预期 (定性产业情景)",
+        "epistemic_type": "UNVERIFIED_FUTURE_EVENT",
+        "description": "厦门子公司高阶掩膜版先进制程客户验证超预期，2027年量产订单落地，券商集体上调一致预期。",
+        "inputs_allowed_in_baseline": false,
+        "expected_price_median_47d": 55.0,
+        "expected_price_p90_47d": 72.0,
+        "prob_hit_150_empirical": null,
+        "qualification": "未来基本面超预期情景。缺乏同行业完全可比事件的历史量化样本，禁止赋予确定性历史概率（如0.6%等伪概率）。"
+      },
+      {
+        "scenario_id": "SCENARIO_D",
+        "title": "情景D：多事件强烈共振上限 (极限定性压力测试)",
+        "epistemic_type": "STRESS_TEST_HYPOTHESIS",
+        "description": "股份回购托底 + 定增破发自救 + 厦门产能投产 + 解禁平稳 + 全市场半导体主线暴发极端共振。",
+        "inputs_allowed_in_baseline": false,
+        "expected_price_median_47d": 70.0,
+        "expected_price_p90_47d": 95.0,
+        "prob_hit_150_empirical": null,
+        "qualification": "极限定性压力测试上限。全市场类似极端共振发生率低于 0.05%，仅作为风险预算上限参考，不作为可投资置信度输入。"
+      }
+    ]
+  },
+  "similarity": {
+    "target_hit_matrix": [
+      {
+        "horizon": "1个月 (22d)",
+        "pool": "ALL_A",
+        "sample_size": 46,
+        "target_83_36_prob": 0.0,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06304930167405454,
+        "break_low_prob": 0.5869565217391305
+      },
+      {
+        "horizon": "1个月 (22d)",
+        "pool": "STAR_CHINEXT",
+        "sample_size": 49,
+        "target_83_36_prob": 0.0,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.059306014189697054,
+        "break_low_prob": 0.6122448979591837
+      },
+      {
+        "horizon": "1个月 (22d)",
+        "pool": "SEMICONDUCTOR_ELECTRONICS",
+        "sample_size": 45,
+        "target_83_36_prob": 0.0,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06440428880778348,
+        "break_low_prob": 0.5555555555555556
+      },
+      {
+        "horizon": "1个月 (22d)",
+        "pool": "HARDTECH_30_200YI",
+        "sample_size": 50,
+        "target_83_36_prob": 0.0,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.058155079116972264,
+        "break_low_prob": 0.66
+      },
+      {
+        "horizon": "2个月 (42d)",
+        "pool": "ALL_A",
+        "sample_size": 43,
+        "target_83_36_prob": 0.0,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06729675341386787,
+        "break_low_prob": 0.7209302325581395
+      },
+      {
+        "horizon": "2个月 (42d)",
+        "pool": "STAR_CHINEXT",
+        "sample_size": 48,
+        "target_83_36_prob": 0.041666666666666664,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06050340934889431,
+        "break_low_prob": 0.7291666666666666
+      },
+      {
+        "horizon": "2个月 (42d)",
+        "pool": "SEMICONDUCTOR_ELECTRONICS",
+        "sample_size": 43,
+        "target_83_36_prob": 0.046511627906976744,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06729675341386787,
+        "break_low_prob": 0.7441860465116279
+      },
+      {
+        "horizon": "2个月 (42d)",
+        "pool": "HARDTECH_30_200YI",
+        "sample_size": 47,
+        "target_83_36_prob": 0.02127659574468085,
+        "target_100_00_prob": 0.02127659574468085,
+        "target_120_00_prob": 0.02127659574468085,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06175013471082447,
+        "break_low_prob": 0.8085106382978723
+      },
+      {
+        "horizon": "2027年1月底 (47d)",
+        "pool": "ALL_A",
+        "sample_size": 43,
+        "target_83_36_prob": 0.0,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06729675341386787,
+        "break_low_prob": 0.7209302325581395
+      },
+      {
+        "horizon": "2027年1月底 (47d)",
+        "pool": "STAR_CHINEXT",
+        "sample_size": 48,
+        "target_83_36_prob": 0.041666666666666664,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06050340934889431,
+        "break_low_prob": 0.7291666666666666
+      },
+      {
+        "horizon": "2027年1月底 (47d)",
+        "pool": "SEMICONDUCTOR_ELECTRONICS",
+        "sample_size": 43,
+        "target_83_36_prob": 0.046511627906976744,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06729675341386787,
+        "break_low_prob": 0.7441860465116279
+      },
+      {
+        "horizon": "2027年1月底 (47d)",
+        "pool": "HARDTECH_30_200YI",
+        "sample_size": 47,
+        "target_83_36_prob": 0.02127659574468085,
+        "target_100_00_prob": 0.02127659574468085,
+        "target_120_00_prob": 0.02127659574468085,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06175013471082447,
+        "break_low_prob": 0.8085106382978723
+      },
+      {
+        "horizon": "3个月 (60d)",
+        "pool": "ALL_A",
+        "sample_size": 42,
+        "target_83_36_prob": 0.047619047619047616,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06884260784039486,
+        "break_low_prob": 0.7142857142857143
+      },
+      {
+        "horizon": "3个月 (60d)",
+        "pool": "STAR_CHINEXT",
+        "sample_size": 47,
+        "target_83_36_prob": 0.06382978723404255,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06175013471082447,
+        "break_low_prob": 0.7659574468085106
+      },
+      {
+        "horizon": "3个月 (60d)",
+        "pool": "SEMICONDUCTOR_ELECTRONICS",
+        "sample_size": 42,
+        "target_83_36_prob": 0.07142857142857142,
+        "target_100_00_prob": 0.0,
+        "target_120_00_prob": 0.0,
+        "target_150_00_prob": 0.0,
+        "target_150_ci_lower": 0.0,
+        "target_150_ci_upper": 0.06884260784039486,
+        "break_low_prob": 0.7619047619047619
+      },
+      {
+        "horizon": "3个月 (60d)",
+        "pool": "HARDTECH_30_200YI",
+        "sample_size": 46,
+        "target_83_36_prob": 0.021739130434782608,
+        "target_100_00_prob": 0.021739130434782608,
+        "target_120_00_prob": 0.021739130434782608,
+        "target_150_00_prob": 0.021739130434782608,
+        "target_150_ci_lower": 0.0038477551112426345,
+        "target_150_ci_upper": 0.11335554494333024,
+        "break_low_prob": 0.8260869565217391
+      }
+    ],
+    "terminal_quantiles": [
+      {
+        "horizon": "1个月 (22d)",
+        "pool": "ALL_A",
+        "sample_size": 46,
+        "p10_price": 38.17322678357229,
+        "p25_price": 39.96463197868903,
+        "p50_price": 43.190546993717874,
+        "p75_price": 48.35543321800531,
+        "p90_price": 56.1946387421128,
+        "win_rate": 0.43478260869565216
+      },
+      {
+        "horizon": "1个月 (22d)",
+        "pool": "STAR_CHINEXT",
+        "sample_size": 49,
+        "p10_price": 37.170166356955015,
+        "p25_price": 40.49529548709846,
+        "p50_price": 45.57489044299397,
+        "p75_price": 50.469990253011204,
+        "p90_price": 60.23865593939701,
+        "win_rate": 0.5510204081632653
+      },
+      {
+        "horizon": "1个月 (22d)",
+        "pool": "SEMICONDUCTOR_ELECTRONICS",
+        "sample_size": 45,
+        "p10_price": 39.116961990540794,
+        "p25_price": 41.77444275974026,
+        "p50_price": 47.26859120160506,
+        "p75_price": 54.22500567056132,
+        "p90_price": 59.79510374897526,
+        "win_rate": 0.6444444444444445
+      },
+      {
+        "horizon": "1个月 (22d)",
+        "pool": "HARDTECH_30_200YI",
+        "sample_size": 50,
+        "p10_price": 35.52848370103331,
+        "p25_price": 39.852258637725775,
+        "p50_price": 44.5347600190384,
+        "p75_price": 49.07740731045736,
+        "p90_price": 54.49500134787989,
+        "win_rate": 0.52
+      },
+      {
+        "horizon": "2个月 (42d)",
+        "pool": "ALL_A",
+        "sample_size": 43,
+        "p10_price": 33.016654068802055,
+        "p25_price": 37.48029388372051,
+        "p50_price": 43.38223744248147,
+        "p75_price": 48.16209089003262,
+        "p90_price": 56.102724868247364,
+        "win_rate": 0.4883720930232558
+      },
+      {
+        "horizon": "2个月 (42d)",
+        "pool": "STAR_CHINEXT",
+        "sample_size": 48,
+        "p10_price": 34.28880939156405,
+        "p25_price": 39.47817537335157,
+        "p50_price": 43.98993143464238,
+        "p75_price": 50.93960317231612,
+        "p90_price": 57.103308070188234,
+        "win_rate": 0.5416666666666666
+      },
+      {
+        "horizon": "2个月 (42d)",
+        "pool": "SEMICONDUCTOR_ELECTRONICS",
+        "sample_size": 43,
+        "p10_price": 36.764132811452235,
+        "p25_price": 40.793528558710676,
+        "p50_price": 46.7343422910695,
+        "p75_price": 54.39004800267061,
+        "p90_price": 64.0088370638967,
+        "win_rate": 0.5813953488372093
+      },
+      {
+        "horizon": "2个月 (42d)",
+        "pool": "HARDTECH_30_200YI",
+        "sample_size": 47,
+        "p10_price": 33.961642794010935,
+        "p25_price": 36.93932401053926,
+        "p50_price": 42.16413062011814,
+        "p75_price": 51.101781726519306,
+        "p90_price": 58.41484190805642,
+        "win_rate": 0.44680851063829785
+      },
+      {
+        "horizon": "2027年1月底 (47d)",
+        "pool": "ALL_A",
+        "sample_size": 43,
+        "p10_price": 33.016654068802055,
+        "p25_price": 37.48029388372051,
+        "p50_price": 43.38223744248147,
+        "p75_price": 48.16209089003262,
+        "p90_price": 56.102724868247364,
+        "win_rate": 0.4883720930232558
+      },
+      {
+        "horizon": "2027年1月底 (47d)",
+        "pool": "STAR_CHINEXT",
+        "sample_size": 48,
+        "p10_price": 34.28880939156405,
+        "p25_price": 39.47817537335157,
+        "p50_price": 43.98993143464238,
+        "p75_price": 50.93960317231612,
+        "p90_price": 57.103308070188234,
+        "win_rate": 0.5416666666666666
+      },
+      {
+        "horizon": "2027年1月底 (47d)",
+        "pool": "SEMICONDUCTOR_ELECTRONICS",
+        "sample_size": 43,
+        "p10_price": 36.764132811452235,
+        "p25_price": 40.793528558710676,
+        "p50_price": 46.7343422910695,
+        "p75_price": 54.39004800267061,
+        "p90_price": 64.0088370638967,
+        "win_rate": 0.5813953488372093
+      },
+      {
+        "horizon": "2027年1月底 (47d)",
+        "pool": "HARDTECH_30_200YI",
+        "sample_size": 47,
+        "p10_price": 33.961642794010935,
+        "p25_price": 36.93932401053926,
+        "p50_price": 42.16413062011814,
+        "p75_price": 51.101781726519306,
+        "p90_price": 58.41484190805642,
+        "win_rate": 0.44680851063829785
+      },
+      {
+        "horizon": "3个月 (60d)",
+        "pool": "ALL_A",
+        "sample_size": 42,
+        "p10_price": 33.267065960589896,
+        "p25_price": 40.33348671507394,
+        "p50_price": 46.28526938119283,
+        "p75_price": 54.16902636785261,
+        "p90_price": 57.76111890749111,
+        "win_rate": 0.5714285714285714
+      },
+      {
+        "horizon": "3个月 (60d)",
+        "pool": "STAR_CHINEXT",
+        "sample_size": 47,
+        "p10_price": 34.26686096746292,
+        "p25_price": 40.96124705046229,
+        "p50_price": 48.57117167367373,
+        "p75_price": 52.71161605316016,
+        "p90_price": 59.477529200801214,
+        "win_rate": 0.6382978723404256
+      },
+      {
+        "horizon": "3个月 (60d)",
+        "pool": "SEMICONDUCTOR_ELECTRONICS",
+        "sample_size": 42,
+        "p10_price": 36.158798601179974,
+        "p25_price": 40.00417350257966,
+        "p50_price": 48.789915823424465,
+        "p75_price": 55.630838384299246,
+        "p90_price": 69.72385007445176,
+        "win_rate": 0.6666666666666666
+      },
+      {
+        "horizon": "3个月 (60d)",
+        "pool": "HARDTECH_30_200YI",
+        "sample_size": 46,
+        "p10_price": 32.13383553870888,
+        "p25_price": 35.37135856793815,
+        "p50_price": 44.161402329467904,
+        "p75_price": 51.704370233339944,
+        "p90_price": 58.50759012668203,
+        "win_rate": 0.5217391304347826
+      }
+    ],
+    "knn_summaries": {
+      "1个月 (22d)_ALL_A": {
+        "total_candidates": 4404,
+        "k_neighbors": 50,
+        "min_distance": 0.04911280736901837,
+        "max_distance": 0.22826776710475202,
+        "mean_distance": 0.15140774144964544,
+        "effective_sample_size": 40.95110138790079
+      },
+      "1个月 (22d)_STAR_CHINEXT": {
+        "total_candidates": 1718,
+        "k_neighbors": 50,
+        "min_distance": 0.0835370912809762,
+        "max_distance": 0.5901597133478643,
+        "mean_distance": 0.33416686920390093,
+        "effective_sample_size": 38.753415394707616
+      },
+      "1个月 (22d)_SEMICONDUCTOR_ELECTRONICS": {
+        "total_candidates": 497,
+        "k_neighbors": 50,
+        "min_distance": 0.15637921615744665,
+        "max_distance": 1.324041555370219,
+        "mean_distance": 0.8043669888437753,
+        "effective_sample_size": 32.41668156876
+      },
+      "1个月 (22d)_HARDTECH_30_200YI": {
+        "total_candidates": 1075,
+        "k_neighbors": 50,
+        "min_distance": 0.09110487131641651,
+        "max_distance": 1.162446963862867,
+        "mean_distance": 0.6804682426429308,
+        "effective_sample_size": 28.707448931523448
+      },
+      "2个月 (42d)_ALL_A": {
+        "total_candidates": 4404,
+        "k_neighbors": 50,
+        "min_distance": 0.04911280736901837,
+        "max_distance": 0.22826776710475202,
+        "mean_distance": 0.15140774144964544,
+        "effective_sample_size": 40.95110138790079
+      },
+      "2个月 (42d)_STAR_CHINEXT": {
+        "total_candidates": 1718,
+        "k_neighbors": 50,
+        "min_distance": 0.0835370912809762,
+        "max_distance": 0.5901597133478643,
+        "mean_distance": 0.33416686920390093,
+        "effective_sample_size": 38.753415394707616
+      },
+      "2个月 (42d)_SEMICONDUCTOR_ELECTRONICS": {
+        "total_candidates": 497,
+        "k_neighbors": 50,
+        "min_distance": 0.15637921615744665,
+        "max_distance": 1.324041555370219,
+        "mean_distance": 0.8043669888437753,
+        "effective_sample_size": 32.41668156876
+      },
+      "2个月 (42d)_HARDTECH_30_200YI": {
+        "total_candidates": 1075,
+        "k_neighbors": 50,
+        "min_distance": 0.09110487131641651,
+        "max_distance": 1.162446963862867,
+        "mean_distance": 0.6804682426429308,
+        "effective_sample_size": 28.707448931523448
+      },
+      "2027年1月底 (47d)_ALL_A": {
+        "total_candidates": 4404,
+        "k_neighbors": 50,
+        "min_distance": 0.04911280736901837,
+        "max_distance": 0.22826776710475202,
+        "mean_distance": 0.15140774144964544,
+        "effective_sample_size": 40.95110138790079
+      },
+      "2027年1月底 (47d)_STAR_CHINEXT": {
+        "total_candidates": 1718,
+        "k_neighbors": 50,
+        "min_distance": 0.0835370912809762,
+        "max_distance": 0.5901597133478643,
+        "mean_distance": 0.33416686920390093,
+        "effective_sample_size": 38.753415394707616
+      },
+      "2027年1月底 (47d)_SEMICONDUCTOR_ELECTRONICS": {
+        "total_candidates": 497,
+        "k_neighbors": 50,
+        "min_distance": 0.15637921615744665,
+        "max_distance": 1.324041555370219,
+        "mean_distance": 0.8043669888437753,
+        "effective_sample_size": 32.41668156876
+      },
+      "2027年1月底 (47d)_HARDTECH_30_200YI": {
+        "total_candidates": 1075,
+        "k_neighbors": 50,
+        "min_distance": 0.09110487131641651,
+        "max_distance": 1.162446963862867,
+        "mean_distance": 0.6804682426429308,
+        "effective_sample_size": 28.707448931523448
+      },
+      "3个月 (60d)_ALL_A": {
+        "total_candidates": 4404,
+        "k_neighbors": 50,
+        "min_distance": 0.04911280736901837,
+        "max_distance": 0.22826776710475202,
+        "mean_distance": 0.15140774144964544,
+        "effective_sample_size": 40.95110138790079
+      },
+      "3个月 (60d)_STAR_CHINEXT": {
+        "total_candidates": 1718,
+        "k_neighbors": 50,
+        "min_distance": 0.0835370912809762,
+        "max_distance": 0.5901597133478643,
+        "mean_distance": 0.33416686920390093,
+        "effective_sample_size": 38.753415394707616
+      },
+      "3个月 (60d)_SEMICONDUCTOR_ELECTRONICS": {
+        "total_candidates": 497,
+        "k_neighbors": 50,
+        "min_distance": 0.15637921615744665,
+        "max_distance": 1.324041555370219,
+        "mean_distance": 0.8043669888437753,
+        "effective_sample_size": 32.41668156876
+      },
+      "3个月 (60d)_HARDTECH_30_200YI": {
+        "total_candidates": 1075,
+        "k_neighbors": 50,
+        "min_distance": 0.09110487131641651,
+        "max_distance": 1.162446963862867,
+        "mean_distance": 0.6804682426429308,
+        "effective_sample_size": 28.707448931523448
+      }
+    },
+    "pool_sizes": {
+      "ALL_A": 4404,
+      "STAR_CHINEXT": 1718,
+      "SEMICONDUCTOR_ELECTRONICS": 497,
+      "HARDTECH_30_200YI": 1075,
+      "EVENT_DRIVEN": 0
+    }
+  }
+}
