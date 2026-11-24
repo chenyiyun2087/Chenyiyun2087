@@ -1,0 +1,82 @@
+research:
+  name: PAIR_BOTTOM_SECOND_WAVE_V1
+  status: RESEARCH_ONLY
+  as_of_date: "2026-11-24"
+  start_date: "2021-11-24"
+  warmup_start: "2020-01-01"
+  end_date: "2026-11-24"
+  random_seed: 20261124
+
+universe:
+  scope: historical_all_a_shares
+  include_delisted: true
+  focus_boards: [STAR, CHINEXT]
+  focus_industries: [semiconductor, electronics]
+  focus_market_cap_cny: [3000000000, 20000000000]
+
+wave1:
+  lookback_days: [20, 40, 60, 120]
+  min_runup_returns: [0.30, 0.50, 0.80, 1.00]
+  default_lookback: 120
+  default_min_runup: 0.50
+
+drawdown:
+  thresholds: [0.30, 0.40, 0.50, 0.60]
+  lookback_days: [20, 40, 60, 120]
+  use_only_prior_information: true
+
+pair_signal:
+  patterns: [ABAB, AAAA, ABBA, DECIMAL_PAIR]
+  low_windows: [20, 60, 120]
+  detect_low: true
+  detect_close: true
+  price_precision: integer_cents
+  episode_cooldown_days: [10, 20, 30]
+  default_cooldown: 20
+
+backtest:
+  horizons: [20, 40, 60, 90, 120, 250]
+  signal_price: unadjusted
+  return_price: adjusted
+  entry: next_tradable_open
+  include_dividends: true
+  enforce_t_plus_one: true
+  enforce_price_limits: true
+  include_suspensions: true
+  fees: 0.0010
+  slippage: 0.0010
+
+events:
+  placement: true
+  unlock: true
+  buyback: true
+  insider_trade: true
+  earnings: true
+  capacity_milestones: true
+  require_point_in_time: true
+
+statistics:
+  bootstrap_iterations: 10000
+  confidence_level: 0.95
+  multiple_testing: fdr_bh
+  cluster_by_stock: true
+  cluster_by_signal_date: true
+  min_independent_samples: 50
+
+target_stock:
+  ts_code: "688401.SH"
+  reference_date: "2026-11-24"
+  reference_price_hint: 43.43
+  prior_peak_price_hint: 103.90
+  placement_price_hint: 83.36
+  unlock_date_hint: "2027-01-14"
+  target_prices: [50, 60, 68, 80, 83.36, 100, 120, 150]
+  horizons: [20, 40, 60]
+
+governance:
+  require_release_gate: true
+  require_pit: true
+  allow_degraded: false
+  allow_future_data: false
+  production_write: false
+  live_trading: false

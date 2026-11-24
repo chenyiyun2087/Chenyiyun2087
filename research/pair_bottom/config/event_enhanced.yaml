@@ -1,0 +1,83 @@
+research:
+  name: PAIR_BOTTOM_EVENT_ENHANCED_V1
+  promotion_state: RESEARCH_ONLY
+  as_of_date: '2026-11-24'
+  start_date: '2021-11-24'
+  end_date: '2026-11-24'
+  warmup_start: '2020-01-01'
+  random_seed: 20261124
+universe:
+  exchanges: [SSE, SZSE, BSE]
+  include_delisted: true
+  min_listing_days: 250
+focus:
+  industries: [半导体, 电子, 元器件]
+  market_cap_cny: {min: 3000000000, max: 20000000000}
+  price_min: 20
+  price_max: 100
+signal:
+  patterns: [ABAB, AAAA, ABBA, DECIMAL_PAIR]
+  primary_pattern: ABAB_INCLUDING_AAAA
+  primary_low_window: 60
+  integer_digits: 2
+  low_windows: [20, 60, 120]
+  min_drawdown_focus: 0.25
+  episode_cooldown_days: 20
+  detect_low: true
+  detect_close: true
+  comparison_price: point_in_time_adjusted
+backtest:
+  forward_days: [5, 10, 20, 30, 45, 60, 90, 120, 250]
+  primary_horizon: 45
+  signal_price: unadjusted
+  return_price: adjusted
+  calendar: market_trading_days
+  entry_method: next_tradable_open
+  max_entry_delay_days: 5
+  commission_rate: 0.00025
+  minimum_commission_cny: 5
+  slippage_rate: 0.001
+  stamp_duty: historical_as_of
+  transfer_fee: historical_as_of
+  enforce_price_limit: true
+  enforce_t_plus_one: true
+  intraday_ambiguity: conservative_or_bounds
+  immature_labels: censored
+  raw_quote_target_sensitivity: true
+events:
+  enable_placement: true
+  enable_unlock: true
+  enable_buyback: true
+  enable_insider_trade: true
+  enable_capacity_release: true
+  placement_loss_threshold: 0.40
+  unlock_forward_days: 60
+  point_in_time_required: true
+  unknown_is_not_zero: true
+statistics:
+  bootstrap_iterations: 10000
+  confidence_level: 0.95
+  min_group_samples: 50
+  multiple_testing: fdr_bh
+  cluster_by: [issuer, time_block]
+  split_train_end: '2023-12-31'
+  split_validation_end: '2024-12-31'
+  purge_by_label_end: true
+  holdout_frozen: true
+target_stock:
+  ts_code: 688401.SH
+  base_price: 43.43
+  placement_price: 83.36
+  expected_unlock_date: '2027-01-14'
+  forecast_end_date: '2027-01-29'
+  input_status: UNVERIFIED_UNTIL_SOURCE_CHECK
+  capacity_full_production_january: SCENARIO_ONLY
+  target_prices: [50, 60, 70, 83.36, 100, 120, 150, 200]
+  similarity_top_k: [20, 50, 100]
+  minimum_common_feature_coverage: 0.80
+governance:
+  require_release_gate: true
+  allow_degraded: false
+  allow_future_data: false
+  allow_live_trading: false
+  allow_production_write: false

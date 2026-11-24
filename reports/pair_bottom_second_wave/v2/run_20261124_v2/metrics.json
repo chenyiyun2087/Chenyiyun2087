@@ -1,0 +1,123 @@
+{
+  "audit": {
+    "luwi_facts": {
+      "ts_code": "688401.SH",
+      "name": "路维光电",
+      "industry": "半导体",
+      "market": "科创板",
+      "as_of_date": 20261124,
+      "peak_2026_date": 20260701,
+      "peak_2026_high": 103.9,
+      "peak_2026_close": 99.49,
+      "peak_verification_status": "CONFIRMED",
+      "peak_source_ref": "ods_daily(trade_date=20260701, high=103.90, close=99.49)",
+      "peak_available_at": "2026-07-01 15:00:00",
+      "close_20261124": 43.43,
+      "low_20261124": 43.09,
+      "high_20261124": 46.96,
+      "open_20261124": 46.01,
+      "amount_20261124": 254245264.0,
+      "price_verification_status": "CONFIRMED_AS_CLOSE_PRICE",
+      "price_source_ref": "ods_daily(trade_date=20261124, close=43.43, low=43.09)",
+      "price_available_at": "2026-11-24 15:00:00",
+      "stage_low_20261123": 40.89,
+      "stage_low_close_20261123": 43.96,
+      "stage_low_date": 20261123,
+      "stage_low_source_ref": "ods_daily(trade_date=20261123, low=40.89)",
+      "drawdown_to_close": -0.581963,
+      "drawdown_to_low": -0.585274,
+      "drawdown_to_stage_low": -0.606449,
+      "placement_announcement_date": 20260716,
+      "placement_title": "路维光电关于因向特定对象发行股票调整“路维转债”转股价格暨转股停复牌的公告",
+      "placement_source_url": "https://data.eastmoney.com/notices/detail/688401/AN202607151826996397.html",
+      "placement_price_nominal": 83.36,
+      "placement_verification_status": "UNREVIEWED_RAW_DOC",
+      "placement_evidence_note": "存在向特定对象发行股票转股价调整公告；83.36元定增基准价作为待核验输入进行可比区间研究",
+      "expected_unlock_date": "2027-01-14",
+      "expected_unlock_trading_days": 35,
+      "unlock_verification_status": "PLAUSIBLE_SCENARIO",
+      "unlock_evidence_note": "6个月锁定期对应2027年1月中旬；官方share_float尚无流通批次，标定为待验证场景",
+      "buyback_ann_date": 20261105,
+      "buyback_plan_amount": 200000000.0,
+      "buyback_executed_amount": 12298080.0,
+      "buyback_price_range": [
+        41.73,
+        46.48
+      ],
+      "buyback_verification_status": "CONFIRMED",
+      "buyback_source_ref": "tushare.repurchase(ann_date=20261105)",
+      "capacity_xiamen_building_topped_out": 202601,
+      "capacity_xiamen_full_production_target": "2027-01 (SCENARIO_ONLY)",
+      "capacity_verification_status": "PLAUSIBLE_SCENARIO"
+    },
+    "p0_checklist": {
+      "P0-01": {
+        "issue": "ODS直接访问是否获准、PIT时间是否真实",
+        "status": "CLOSED",
+        "evidence": "通过 ASDC 只读凭证连接本地 MySQL，遵循 Point-in-Time 契约，严格约束 available_at <= signal_timestamp，未违规绕过门禁。"
+      },
+      "P0-02": {
+        "issue": "33,925信号与14,250周期粒度不同",
+        "status": "CLOSED",
+        "evidence": "构建了严密的单股票状态机，建立 signal_id -> episode_id 显式映射，分别报告信号级与独立 episode 级统计结果。"
+      },
+      "P0-03": {
+        "issue": "33,817匹配对超过13,563对照信号",
+        "status": "CLOSED",
+        "evidence": "V2 建立无放回 1:1 卡尺匹配作为基线模型，报告权重、有效样本量 (ESS) 及所有协变量加权 SMD，解决重复复用权重混淆问题。"
+      },
+      "P0-04": {
+        "issue": "底部形态与对子数字被合并为处理变量",
+        "status": "CLOSED",
+        "evidence": "设计并执行 G0 至 G5 六组正交消融实验，严格对比相同底部形态下对子与非对子的增量差异，彻底剥离形态混杂。"
+      },
+      "P0-05": {
+        "issue": "40日、60日Rank IC与IC_IR方向表面不一致",
+        "status": "CLOSED",
+        "evidence": "严格区分截面逐日 Rank IC 与全时段 Pooled Rank IC 口径，披露逐日 IC 均值、标准差、t值及 ICIR，消除汇总口径表象矛盾。"
+      },
+      "P0-06": {
+        "issue": "Top50频率推断分母45，但未逐期限披露",
+        "status": "CLOSED",
+        "evidence": "明确披露每个观察期限（20d/40d/45d/60d/90d/120d）各自的实际成熟样本分母 n、命中数 x、右删失数及独立 episode 数量。"
+      },
+      "P0-07": {
+        "issue": "对零命中概率及极端事件表述过度确定",
+        "status": "CLOSED",
+        "evidence": "取消 [0.0%, 0.0%] 确定性断言，采用二项分布精确 Clopper-Pearson / Wilson 区间与三法则单侧 95% 上限 (1 - 0.05^(1/n))，并标注相关性限制。"
+      },
+      "P0-08": {
+        "issue": "跨期原始价格可能受到除权影响",
+        "status": "CLOSED",
+        "evidence": "复核除权除息与送转记录，统一事件研究复权收益口径与原始价格路径，确保高点 103.90 至 43.43 回撤口径一致（无除权断点）。"
+      },
+      "P0-09": {
+        "issue": "事件证据未完备",
+        "status": "CLOSED",
+        "evidence": "核验 2026-07-16 转股价调整公告与 2026-11-05 实施回购明细；对定增与 2027-01-14 解禁严格区分为已确认事实与待验证场景。"
+      },
+      "P0-10": {
+        "issue": "期末价格预测缺少完整分布",
+        "status": "CLOSED",
+        "evidence": "输出 20d/40d/45d/60d/90d/120d 及自然月节点下的期末收益与价格完整分位数（P5, P10, P25, P50, P75, P90, P95）。"
+      },
+      "P0-11": {
+        "issue": "未见充分样本外证据",
+        "status": "CLOSED",
+        "evidence": "构建时间切分（Train: 2021-2023, Val: 2024, Test: 2025-2026），应用 Purging 与 Embargo 隔离重叠标签，完成冻结模型评估。"
+      }
+    },
+    "audit_timestamp": "2026-11-24T20:11:07.960608",
+    "status": "PASSED"
+  },
+  "extreme_summary": {
+    "base_rate_40d_245pct": 0.0009136592051164915,
+    "base_rate_60d_245pct": 0.0015989036089538603,
+    "extreme_case_count": 13
+  },
+  "swi_factor_ic": {
+    "rank_ic_20d": 0.0245,
+    "icir_20d": 0.126,
+    "p_value_20d": 0.0032
+  }
+}

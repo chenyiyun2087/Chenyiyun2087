@@ -8,6 +8,7 @@ exports/bs_point_models/
 exports/signal_enhancement/
 exports/forward_shadow_evidence/
 data/processed/
+data/research/
 data/evidence_store/
 
 /sina/sina_bs_capture.log

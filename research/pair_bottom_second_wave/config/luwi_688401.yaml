@@ -1,0 +1,54 @@
+target_audit:
+  ts_code: "688401.SH"
+  name: "路维光电"
+  industry: "半导体"
+  market: "科创板"
+  as_of_date: "2026-11-24"
+
+audited_facts:
+  peak_2026_date: 20260701
+  peak_2026_high: 103.90
+  peak_2026_close: 99.49
+  peak_verification_status: "CONFIRMED"
+  peak_source: "ASDC.ods_daily"
+
+  close_20261124: 43.43
+  low_20261124: 43.09
+  high_20261124: 46.96
+  open_20261124: 46.01
+  amount_20261124: 254245264.0
+  price_verification_status: "CONFIRMED"
+  price_source: "ASDC.ods_daily"
+
+  stage_low_20261123: 40.89
+  stage_low_date: 20261123
+
+  drawdown_to_close: -0.5820
+  drawdown_to_low: -0.5853
+  drawdown_to_stage_low: -0.6064
+
+  placement_announcement_date: 20260716
+  placement_title: "路维光电关于因向特定对象发行股票调整“路维转债”转股价格暨转股停复牌的公告"
+  placement_price_nominal: 83.36
+  placement_verification_status: "UNVERIFIED_PENDING_DOC_PARSE"
+  placement_source: "ASDC.ods_official_announcement_v2"
+
+  unlock_date_expected: "2027-01-14"
+  unlock_trading_days_to_as_of: 35
+  unlock_verification_status: "PLAUSIBLE_SCENARIO"
+
+  buyback_ann_date: 20261105
+  buyback_plan_amount: 200000000.0
+  buyback_executed_amount: 12298080.0
+  buyback_price_range: [41.73, 46.48]
+  buyback_verification_status: "CONFIRMED"
+  buyback_source: "Tushare.repurchase"
+
+  capacity_xiamen_building_topped_out: 202601
+  capacity_xiamen_full_production_target: "2027-01 (SCENARIO_ONLY)"
+  capacity_verification_status: "PLAUSIBLE_SCENARIO"
+
+target_simulation:
+  price_targets: [50, 60, 68, 80, 83.36, 100, 120, 150]
+  horizons: [20, 40, 60]
+  bootstrap_runs: 10000

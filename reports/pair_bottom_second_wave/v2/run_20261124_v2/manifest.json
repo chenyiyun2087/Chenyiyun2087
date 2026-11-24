@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "git_branch": "review/swi-factor-v2-audit-20261124",
+  "timestamp": "2026-11-24T20:11:14.197337",
+  "target_stock": "688401.SH",
+  "target_close": 43.43,
+  "stage_low": 40.89,
+  "peak_high": 103.9,
+  "p0_closure_count": 11,
+  "run_mode": "RESEARCH_ONLY"
+}

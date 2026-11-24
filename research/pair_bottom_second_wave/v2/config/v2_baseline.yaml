@@ -1,0 +1,106 @@
+research:
+  name: SWI_FACTOR_V2
+  version: "2.0"
+  status: RESEARCH_ONLY
+  as_of_date: "2026-11-24"
+  warmup_start: "2020-01-01"
+  start: "2021-11-24"
+  end: "2026-11-24"
+  seed: 20261124
+  preserve_v1: true
+
+universe:
+  historical_all_a: true
+  include_delisted: true
+  stratify_st_and_price_limit_regime: true
+  focus_market_cap_cny: [3000000000, 20000000000]
+
+wave:
+  primary_lookback: 120
+  primary_runup: 0.50
+  primary_drawdown: 0.40
+  lookbacks: [120, 180, 250]
+  runup_thresholds: [0.30, 0.50, 0.80, 1.00, 1.50]
+  drawdown_thresholds: [0.30, 0.40, 0.50, 0.60]
+  landmark: first_eligible_signal
+  cooldown_days: 20
+
+pair:
+  source_price: raw_unadjusted
+  patterns: [ABAB, AAAA, ABBA, DECIMAL_PAIR]
+  primary_price_range: [20, 100]
+  low_windows: [20, 60, 120]
+  separate_low_and_close: true
+  control_groups: [G0, G1, G2, G3, G3C, G4, G5]
+
+matching:
+  baseline_replacement: false
+  sensitivity_replacement: true
+  caliper_sd_logit: 0.2
+  report_weights_ess_and_all_smd: true
+
+backtest:
+  horizons: [5, 10, 20, 40, 45, 60, 90, 120]
+  event_entry: signal_close
+  strategy_entry: next_tradable_open
+  calendar: exchange_sessions
+  enforce_t_plus_one: true
+  enforce_price_limits: true
+  fees: 0.0010
+  slippage: 0.0010
+  censored: explicit
+
+models:
+  baseline: SWI_FACTOR_V1_FROZEN
+  rebound: SWI_REBOUND_V2
+  reversal: SWI_REVERSAL_V2
+  main_wave: SWI_MAIN_WAVE_V2
+  event_variants: [TECH_ONLY, CONFIRMED_EVENT, EXPECTED_EVENT]
+  train_end: "2023-12-31"
+  validation_end: "2024-12-31"
+  test_end: "2026-11-24"
+  purge_overlapping_labels: true
+  embargo: horizon_aware
+
+extreme:
+  horizons: [20, 40, 45, 60, 90, 120]
+  return_thresholds: [0.50, 1.00, 1.50, 2.00, 2.4538338, 3.00]
+  exact_target_gain: 2.4538338  # (150 - 43.43) / 43.43
+  include_exact_target_ratio: true
+  verify_each_rare_hit: true
+
+similarity:
+  pools: [ALL_A, STAR_CHINEXT, SEMICONDUCTOR_ELECTRONICS, HARDTECH_30_200YI, EVENT_DRIVEN]
+  top_k: [20, 50, 100, 200]
+  unique_episode: true
+  mature_labels_per_horizon: true
+
+statistics:
+  bootstrap_iterations: 10000
+  confidence_level: 0.95
+  fdr: BH
+  cluster_by_stock: true
+  account_for_calendar_dependence: true
+  min_independent_episodes_descriptive: 50
+  min_independent_episodes_primary: 100
+  rare_event_min_hits_for_model: 30
+
+target:
+  ts_code: "688401.SH"
+  base_price: 43.43
+  prior_peak: 103.90
+  risk_price: 40.89
+  placement_price_hint: 83.36
+  expected_unlock_date_hint: "2027-01-14"
+  price_targets: [50, 60, 68, 80, 83.36, 100, 103.90, 120, 150]
+  calendar_deadlines: ["2026-12-24", "2027-01-24", "2027-01-31", "2027-02-24"]
+  require_verified_inputs: true
+
+governance:
+  require_release_gate: true
+  require_pit: true
+  allow_degraded: false
+  allow_future_data: false
+  allow_production_write: false
+  allow_live_trading: false
+  allow_direct_main_push: false
