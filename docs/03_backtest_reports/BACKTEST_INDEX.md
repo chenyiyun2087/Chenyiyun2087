@@ -1,5 +1,15 @@
 # 回测报告索引
 
+## 2026-11-27 本地策略（scoreRank & chenyiyunSelected）× Z 值 × MIT Trader 组合回测
+
+- [本地策略（scoreRank & chenyiyunSelected）× Z 值 × MIT Trader 组合回测报告](../../reports/local_strategy_z_mit/LOCAL_STRATEGY_Z_MIT_REPORT.md)：在 2023-09-01 至 2026-11-24（780 个交易日，基准沪深 300 +4.55%）同窗环境下，基于各自默认股票池（`scoreRank` 全 A 股；`chenyiyunSelected` 剔除科创板与北交所）对比原版仅选股、叠加日线 Z 值择时（$Z<-2$ 买、$Z\ge 0$ 卖）与叠加 MIT 风控六组策略表现。
+- 核心实证结论：
+  1. **`scoreRank` + Z 值**：原版 Top 3 月初轮动累计 **-49.73%**（MDD -60.11%，Sharpe -0.17）；叠加 Z 值择时后累计提升至 **+6.49%**（MDD -34.34%，Sharpe +0.20，年化超额差 **+13.35%**, $p=0.6320$），Z 值有效化解了高流动性追高接盘回撤。
+  2. **`chenyiyunSelected` + Z 值**：原版高股息小市值 Top 3 月初轮动累计 **+40.17%**（CAGR +11.53%，Sharpe +0.62，MDD -24.09%，通过 Gate 1 与 Gate 3）；叠加 Z 值后收益降至 **+5.33%**（Sharpe +0.20，MDD -16.06%，年化超额差 **-10.83%**, $p=0.2890$），价值小盘股等待超跌反而踏空主升段。
+  3. **MIT 风控叠加**：将两组最大回撤进一步压缩至 **-3.33%** 与 **-3.09%**（平均仓位 1.32% / 0.81%），但因严格拒单与止损导致收益为 **-2.81% / -2.09%**。
+  4. **数据与门禁备注**：因 `tushare_stock.dwd_fina_indicator` 为空表，`chenyiyunSelected` 中 `mlev` 因子按缺省中位数退化透传；全部六组未同时通过 MIT Three Gates，保持 `RESEARCH_ONLY`。
+- 指标统一源位于 [`exports/backtest/local_strategy_z_mit/metrics.json`](file:///Volumes/extension/projects/Chenyiyun2087/exports/backtest/local_strategy_z_mit/metrics.json)，执行入口 [`scripts/research/run_local_strategy_z_mit.py`](file:///Volumes/extension/projects/Chenyiyun2087/scripts/research/run_local_strategy_z_mit.py)。
+
 ## 2026-11-27 科创板 PE/PEG × Z 值 × MIT Trader 策略实施与实证回测 (审计修复版)
 
 - [科创板 PE/PEG × Z 值 × MIT Trader 策略回测摘要](2026-11-27_科创板_PE_PEG_Z值_MITTrader_回测摘要.md)：针对科创板逐日/月末动态池 (严格校验当期上市满 1,001 交易日且保留退市股真实状态)，在同一 200 万元初始账户架构与真实交易摩擦下，完成 2023-09-01 至 2026-11-26 (782 个交易日) 的 6 组同窗对照与 3 项增量价值配对分块置信区间检验（已修复 MIT 引擎未来函数、原型组名单持久化、Three Gates 毛夏普及 Z 值停牌滚动问题）。

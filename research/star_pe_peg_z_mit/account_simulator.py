@@ -88,6 +88,7 @@ class AccountSimulator:
         stamp_duty_change_date: int = 20230828,
         cost_stress: float = 1.0,
         star_min_shares: int = 200,
+        auto_board_lot: bool = False,
         turnover_1pct_cap: bool = True,
         risk_engine: Optional[MitRiskEngine] = None,
     ):
@@ -99,8 +100,14 @@ class AccountSimulator:
         self.stamp_duty_change_date = stamp_duty_change_date
         self.cost_stress = cost_stress
         self.star_min_shares = star_min_shares
+        self.auto_board_lot = auto_board_lot
         self.turnover_1pct_cap = turnover_1pct_cap
         self.risk_engine = risk_engine
+
+    def get_min_shares(self, ts_code: str) -> int:
+        if self.auto_board_lot:
+            return 200 if ts_code.startswith(("688", "689")) else 100
+        return self.star_min_shares
 
     def get_sell_fee_rate(self, date_int: int) -> float:
         duty = self.sell_duty_before if date_int < self.stamp_duty_change_date else self.sell_duty_after
@@ -239,17 +246,18 @@ class AccountSimulator:
                     nominal_order = shares_to_sell * open_px
 
                     if self.turnover_1pct_cap and nominal_order > limit_1pct:
+                        min_lot = self.get_min_shares(sym)
                         max_shares_allowed = int(limit_1pct / open_px)
                         if max_shares_allowed < shares_to_sell:
-                            # Apply odd lot rule: if remainder < 200, sell all now
+                            # Apply odd lot rule: if remainder < min_lot, sell all now
                             remainder = shares_to_sell - max_shares_allowed
-                            if remainder < self.star_min_shares:
+                            if remainder < min_lot:
                                 shares_today = shares_to_sell
                                 remaining_queued = 0
                             else:
-                                shares_today = (max_shares_allowed // self.star_min_shares) * self.star_min_shares
+                                shares_today = (max_shares_allowed // min_lot) * min_lot
                                 if shares_today == 0:
-                                    shares_today = min(self.star_min_shares, shares_to_sell)
+                                    shares_today = min(min_lot, shares_to_sell)
                                 remaining_queued = shares_to_sell - shares_today
                         else:
                             shares_today = shares_to_sell
@@ -419,20 +427,21 @@ class AccountSimulator:
                     max_notional_after_fee = target_cash / cost_factor
                     raw_shares = int(max_notional_after_fee / open_px)
 
-                    # Apply STAR 200 shares minimum rule
-                    lot_shares = (raw_shares // self.star_min_shares) * self.star_min_shares
-                    if lot_shares < self.star_min_shares:
-                        blocks_counter["BUY_BLOCKED_LESS_THAN_200_SHARES"] += 1
-                        rejections.append(RejectionRecord(curr_date, "BUY", sym, raw_shares, "LESS_THAN_STAR_200_SHARES"))
+                    # Apply board minimum lot rule (200 for STAR, 100 for Main/ChiNext)
+                    min_lot = self.get_min_shares(sym)
+                    lot_shares = (raw_shares // min_lot) * min_lot
+                    if lot_shares < min_lot:
+                        blocks_counter["BUY_BLOCKED_LESS_THAN_MIN_LOT"] += 1
+                        rejections.append(RejectionRecord(curr_date, "BUY", sym, raw_shares, f"LESS_THAN_{min_lot}_SHARES"))
                         continue
 
                     # Apply 1% 20d Turnover cap (scale down buy orders)
                     if self.turnover_1pct_cap and (lot_shares * open_px) > limit_1pct:
                         scaled_shares = int(limit_1pct / open_px)
-                        lot_shares = (scaled_shares // self.star_min_shares) * self.star_min_shares
-                        if lot_shares < self.star_min_shares:
+                        lot_shares = (scaled_shares // min_lot) * min_lot
+                        if lot_shares < min_lot:
                             blocks_counter["BUY_BLOCKED_TURNOVER_LIMIT"] += 1
-                            rejections.append(RejectionRecord(curr_date, "BUY", sym, lot_shares, "TURNOVER_LIMIT_SCALE_UNDER_200"))
+                            rejections.append(RejectionRecord(curr_date, "BUY", sym, lot_shares, f"TURNOVER_LIMIT_SCALE_UNDER_{min_lot}"))
                             continue
 
                     buy_notional = lot_shares * open_px
