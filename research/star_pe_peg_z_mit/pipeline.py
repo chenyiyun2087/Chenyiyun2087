@@ -82,23 +82,31 @@ def compute_prototype_ranks(sessions: pd.DatetimeIndex, market_frames: dict, sig
         idx = date_ints.index(me)
         if idx < 504:
             continue
-        start_idx = idx + 1 - 504
+        me_dt = pd.Timestamp(str(me))
+        start_dt = sessions[idx + 1 - 504]
 
         rows = []
         for sym, m_df in market_frames.items():
             s_df = signal_frames.get(sym)
-            if s_df is None or len(m_df) < idx + 1:
+            if s_df is None or me_dt not in m_df.index:
                 continue
-            z_sub = s_df["z"].iloc[start_idx : idx + 1].to_numpy()
+            if "eligible_1001d" in m_df.columns and not bool(m_df.loc[me_dt, "eligible_1001d"]):
+                continue
+            m_win = m_df.loc[start_dt:me_dt]
+            s_win = s_df.loc[start_dt:me_dt]
+            if len(m_win) < 504 or len(s_win) < 504:
+                continue
+            z_sub = s_win["z"].iloc[-504:].to_numpy()
             if len(z_sub) < 504 or not np.isfinite(z_sub[-1]):
                 continue
             # Open returns
-            adj_open = m_df["adj_open"].ffill()
-            open_ret = adj_open.pct_change().fillna(0.0).iloc[start_idx : idx + 1].to_numpy()
-            can_b = m_df["can_buy"].iloc[start_idx : idx + 1].to_numpy()
-            can_s = m_df["can_sell"].iloc[start_idx : idx + 1].to_numpy()
+            adj_open = m_win["adj_open"].ffill()
+            open_ret = adj_open.pct_change(fill_method=None).fillna(0.0).iloc[-504:].to_numpy()
+            can_b = m_win["can_buy"].iloc[-504:].to_numpy()
+            can_s = m_win["can_sell"].iloc[-504:].to_numpy()
+            fee_slice = costs[1][idx + 1 - 504 : idx + 1]
 
-            res = assess_prototype_window(z_sub, open_ret, can_b, can_s, (costs[0], costs[1][start_idx : idx + 1]))
+            res = assess_prototype_window(z_sub, open_ret, can_b, can_s, (costs[0], fee_slice))
             rows.append({"code": sym, **res})
 
         rows.sort(key=lambda r: (-r["net_sharpe"], r["code"]))
@@ -170,7 +178,14 @@ class StarResearchPipeline:
         month_ends.append(date_ints[-1])
         next_open_dates.append(date_ints[-1])
 
-        eligible_by_date = {me: eligible_symbols for me in month_ends}
+        eligible_by_date = {
+            me: [
+                sym
+                for sym, mf in market_frames.items()
+                if pd.Timestamp(str(me)) in mf.index and bool(mf.loc[pd.Timestamp(str(me)), "eligible_1001d"])
+            ]
+            for me in month_ends
+        }
 
         # 4. Valuation Service
         val_service = ValuationService(pe_lower=0.0, pe_upper=60.0, peg_lower=0.0, peg_upper=1.1)
@@ -319,11 +334,11 @@ class StarResearchPipeline:
         )
 
         gates_results = {
-            "pure_z": validator.evaluate_strategy(res_pure_z["daily_snapshots"], res_pure_z["daily_snapshots"], res_pure_z_stress["daily_snapshots"]),
-            "prototype_rank_z": validator.evaluate_strategy(res_proto_z["daily_snapshots"], res_proto_z["daily_snapshots"], res_proto_z_stress["daily_snapshots"]),
-            "valuation_only": validator.evaluate_strategy(res_val_only["daily_snapshots"], res_val_only["daily_snapshots"], res_val_only_stress["daily_snapshots"]),
-            "valuation_plus_z": validator.evaluate_strategy(res_val_z["daily_snapshots"], res_val_z["daily_snapshots"], res_val_z_stress["daily_snapshots"]),
-            "valuation_plus_z_mit": validator.evaluate_strategy(res_val_z_mit["daily_snapshots"], res_val_z_mit["daily_snapshots"], res_val_z_mit_stress["daily_snapshots"]),
+            "pure_z": validator.evaluate_strategy(res_pure_z["daily_snapshots"], bm_daily_rets, res_pure_z_stress["daily_snapshots"]),
+            "prototype_rank_z": validator.evaluate_strategy(res_proto_z["daily_snapshots"], bm_daily_rets, res_proto_z_stress["daily_snapshots"]),
+            "valuation_only": validator.evaluate_strategy(res_val_only["daily_snapshots"], bm_daily_rets, res_val_only_stress["daily_snapshots"]),
+            "valuation_plus_z": validator.evaluate_strategy(res_val_z["daily_snapshots"], bm_daily_rets, res_val_z_stress["daily_snapshots"]),
+            "valuation_plus_z_mit": validator.evaluate_strategy(res_val_z_mit["daily_snapshots"], bm_daily_rets, res_val_z_mit_stress["daily_snapshots"]),
         }
 
         # 10. Summary Metrics & Delivery Manifest

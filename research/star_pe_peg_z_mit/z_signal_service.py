@@ -17,21 +17,19 @@ class ZSignalService:
         self.exit_threshold = exit_threshold
 
     def compute_signals(self, market_frame: pd.DataFrame) -> pd.DataFrame:
-        """Compute rolling Z-score, fresh entry cross, and exit signal for a single stock."""
+        """Compute rolling Z-score on the latest `window` valid closes, fresh entry cross, and exit signal."""
         df = market_frame.copy()
-        adj_close = df["adj_close"]
-        rolling = adj_close.rolling(window=self.window)
+        valid_close = df["adj_close"].dropna()
+        rolling = valid_close.rolling(window=self.window, min_periods=self.window)
         mean = rolling.mean()
         std = rolling.std(ddof=1)
 
-        z = (adj_close - mean) / std
-        df["z"] = z
+        z_valid = (valid_close - mean) / std
+        z_prev_valid = z_valid.shift(1)
+        fresh_entry_valid = (z_prev_valid >= self.entry_threshold) & (z_valid < self.entry_threshold)
+        exit_intent_valid = z_valid >= self.exit_threshold
 
-        # Fresh cross: previous day z >= entry_threshold and current day z < entry_threshold
-        z_prev = z.shift(1)
-        fresh_entry = (z_prev >= self.entry_threshold) & (z < self.entry_threshold)
-        exit_intent = z >= self.exit_threshold
-
-        df["fresh_entry"] = fresh_entry.fillna(False).astype(bool)
-        df["exit_intent"] = exit_intent.fillna(False).astype(bool)
+        df["z"] = z_valid.reindex(df.index)
+        df["fresh_entry"] = fresh_entry_valid.reindex(df.index).fillna(False).astype(bool)
+        df["exit_intent"] = exit_intent_valid.reindex(df.index).fillna(False).astype(bool)
         return df

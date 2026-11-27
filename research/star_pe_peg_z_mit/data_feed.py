@@ -131,11 +131,14 @@ class StarDataFeed:
                 if not metadata or not metadata[0]["list_date"]:
                     skipped[symbol] = "证券主表缺少上市日期"
                     continue
-                if metadata[0]["delist_date"] and metadata[0]["delist_date"] <= self.end_date:
-                    skipped[symbol] = "区间内已退市"
+                delist_date = metadata[0]["delist_date"]
+                if delist_date and delist_date <= self.replay_start_date:
+                    skipped[symbol] = "回放起点前已退市"
                     continue
 
                 stock_sessions = sessions[sessions >= pd.Timestamp(str(metadata[0]["list_date"]))]
+                if delist_date and delist_date > 0:
+                    stock_sessions = stock_sessions[stock_sessions < pd.Timestamp(str(delist_date))]
                 rows = query(
                     cursor,
                     """SELECT d.trade_date, d.open, d.high, d.low, d.close, d.vol, d.amount,
@@ -213,6 +216,7 @@ class StarDataFeed:
                 frame["turnover_ma20_1pct"] = turnover_ma20 * 0.01
 
                 frame["is_market_session"] = market
+                frame["eligible_1001d"] = np.arange(1, len(stock_sessions) + 1) >= self.history_sessions
                 audit = {
                     "total_sessions": len(stock_sessions),
                     "valid_market_bars": int(market.sum()),
@@ -263,8 +267,9 @@ class StarDataFeed:
         annual["np"] = pd.to_numeric(annual["net_profit_ttm"], errors="coerce")
         annual_unique = (
             annual.dropna(subset=["np"])
-            .drop_duplicates(subset=["symbol", "year"])
-            .sort_values(["symbol", "year"])
+            .sort_values(["symbol", "year", "ann_date_int", "trade_date"])
+            .drop_duplicates(subset=["symbol", "year", "ann_date_int"], keep="last")
+            .sort_values(["symbol", "year", "ann_date_int"])
         )
 
         cagr_records = []

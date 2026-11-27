@@ -61,6 +61,7 @@ class DailyAccountSnapshot:
     drawdown: float
     fills_count: int
     blocked_count: int
+    daily_fee: float = 0.0
 
 
 @dataclass
@@ -133,6 +134,17 @@ class AccountSimulator:
 
         current_month_watchlist: List[str] = []
         current_valuation_top3: List[str] = []
+        current_proto_watchlist: List[str] = []
+
+        # Precompute adjusted close daily returns once; strictly slice [:prev_dt] inside daily loop (zero lookahead)
+        all_adj_rets: Optional[pd.DataFrame] = None
+        if strategy_mode == "valuation_plus_z_mit" and self.risk_engine is not None:
+            all_adj_rets = pd.DataFrame(
+                {
+                    s_code: market_frames[s_code]["adj_close"].pct_change(fill_method=None)
+                    for s_code in market_frames
+                }
+            )
 
         prev_nav = self.initial_capital
         circuit_breaker_active = False
@@ -142,12 +154,16 @@ class AccountSimulator:
             prev_date = date_ints[day_idx - 1]
             curr_dt = sessions[day_idx]
             prev_dt = sessions[day_idx - 1]
+            today_fee = 0.0
+            today_fills = 0
 
             # 1. Update Month-end Watchlist if prev_date was a month-end
             if prev_date in monthly_snapshots:
                 snap = monthly_snapshots[prev_date]
                 current_month_watchlist = snap.watchlist_valuation_plus_z
                 current_valuation_top3 = snap.top3_valuation_only
+            if prototype_ranks and prev_date in prototype_ranks:
+                current_proto_watchlist = prototype_ranks[prev_date].get("watchlist", [])
 
             # 2. Check Daily Drawdown Circuit Breaker on Previous Day Close
             # If account close daily return <= -3%, pause new entries today
@@ -248,6 +264,8 @@ class AccountSimulator:
                     net_proceeds = sell_notional - sell_fee
 
                     sleeve.cash += net_proceeds
+                    today_fee += sell_fee
+                    today_fills += 1
                     fills.append(
                         FillRecord(
                             trade_date=curr_date, side="SELL", ts_code=sym, shares=shares_today,
@@ -256,10 +274,12 @@ class AccountSimulator:
                         )
                     )
 
-                    # Update holding daily returns for Kelly history
+                    # Update holding daily returns for Kelly history (strictly 1-day returns up to prev_dt)
                     if pos.entry_date < curr_date:
-                        ret_p = (open_px - pos.entry_open) / pos.entry_open
-                        closed_z_daily_returns.append(ret_p)
+                        entry_dt = pd.Timestamp(str(pos.entry_date))
+                        hold_daily = m_frame.loc[entry_dt:prev_dt, "adj_close"].pct_change(fill_method=None).dropna()
+                        if not hold_daily.empty:
+                            closed_z_daily_returns.extend([float(x) for x in hold_daily.values if np.isfinite(x)])
 
                     if remaining_queued > 0:
                         pos.shares -= shares_today
@@ -287,9 +307,13 @@ class AccountSimulator:
                         buy_candidates.append(sym)
 
             elif strategy_mode == "pure_z":
-                # All eligible STAR stocks where fresh_entry fired on prev_date
+                # All eligible STAR stocks (>=1001d at prev_dt) where fresh_entry fired on prev_date
                 eligible = []
                 for sym, s_frame in signal_frames.items():
+                    m_f = market_frames.get(sym)
+                    if m_f is not None and "eligible_1001d" in m_f.columns:
+                        if prev_dt not in m_f.index or not bool(m_f.loc[prev_dt, "eligible_1001d"]):
+                            continue
                     if prev_dt in s_frame.index and s_frame.loc[prev_dt, "fresh_entry"]:
                         z_val = float(s_frame.loc[prev_dt, "z"])
                         eligible.append((z_val, sym))
@@ -297,10 +321,9 @@ class AccountSimulator:
                 buy_candidates = [x[1] for x in eligible if x[1] not in occupied_codes]
 
             elif strategy_mode == "prototype_rank_z":
-                # Only stocks in prototype rank watchlist
-                proto_watchlist = prototype_ranks.get(prev_date, {}).get("watchlist", []) if prototype_ranks else []
+                # Only stocks in current month prototype rank watchlist
                 eligible = []
-                for sym in proto_watchlist:
+                for sym in current_proto_watchlist:
                     s_frame = signal_frames.get(sym)
                     if s_frame is not None and prev_dt in s_frame.index and s_frame.loc[prev_dt, "fresh_entry"]:
                         z_val = float(s_frame.loc[prev_dt, "z"])
@@ -359,19 +382,19 @@ class AccountSimulator:
                     stop_loss_px = None
                     stop_pct = None
 
-                    # If MIT Risk Engine active: evaluate ticket, stop-loss, Kelly & VaR scaling
+                    # If MIT Risk Engine active: evaluate ticket, stop-loss, Kelly & VaR scaling (strictly PIT <= prev_dt)
                     if strategy_mode == "valuation_plus_z_mit" and self.risk_engine is not None:
                         current_book = {
                             s.position.ts_code: s.position.shares * float(market_frames[s.position.ts_code].loc[curr_dt, "open"])
                             for s in sleeves if s.position is not None and curr_dt in market_frames[s.position.ts_code].index
                         }
-                        stock_rets = m_frame["adj_close"].pct_change(fill_method=None).dropna()
-                        # Returns matrix of all symbols
-                        returns_dict = {
-                            s_code: market_frames[s_code]["adj_close"].pct_change(fill_method=None)
-                            for s_code in market_frames
-                        }
-                        returns_matrix = pd.DataFrame(returns_dict)
+                        if all_adj_rets is not None:
+                            stock_rets = all_adj_rets[sym].loc[:prev_dt].dropna()
+                            relevant_syms = list({sym} | set(current_book.keys()))
+                            returns_matrix = all_adj_rets[relevant_syms].loc[:prev_dt]
+                        else:
+                            stock_rets = m_frame.loc[:prev_dt, "adj_close"].pct_change(fill_method=None).dropna()
+                            returns_matrix = pd.DataFrame({sym: stock_rets})
 
                         ticket = self.risk_engine.evaluate_entry_ticket(
                             symbol=sym,
@@ -417,6 +440,8 @@ class AccountSimulator:
                     total_outlay = buy_notional + buy_fee
 
                     sleeve.cash -= total_outlay
+                    today_fee += buy_fee
+                    today_fills += 1
                     sleeve.position = Position(
                         ts_code=sym, shares=lot_shares, entry_open=open_px, entry_date=curr_date,
                         sleeve_id=sleeve.sleeve_id, stop_loss_price=stop_loss_px, stop_pct=stop_pct,
@@ -468,7 +493,8 @@ class AccountSimulator:
                     trade_date=curr_date, cash=total_cash, position_value=pos_val, total_nav=account_nav,
                     exposure=pos_val / account_nav if account_nav > 0 else 0.0, holdings=holdings_dict,
                     daily_return=daily_ret, cum_return=cum_ret, drawdown=0.0,
-                    fills_count=len(fills), blocked_count=sum(blocks_counter.values()),
+                    fills_count=today_fills, blocked_count=sum(blocks_counter.values()),
+                    daily_fee=today_fee,
                 )
             )
             prev_nav = account_nav

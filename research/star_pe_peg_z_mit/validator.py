@@ -160,12 +160,27 @@ class MitThreeGatesValidator:
         T = len(daily_snapshots)
         insufficient_sample = T < self.min_oos_sessions
 
-        net_returns = np.array([s.daily_return for s in daily_snapshots])
-        exposures = np.array([s.exposure for s in daily_snapshots])
-        bm_returns = np.array([b.daily_return for b in benchmark_snapshots]) if benchmark_snapshots else np.zeros(T)
+        net_returns = np.array([s.daily_return for s in daily_snapshots], dtype=float)
+        exposures = np.array([s.exposure for s in daily_snapshots], dtype=float)
+        if benchmark_snapshots is not None and len(benchmark_snapshots) > 0:
+            if hasattr(benchmark_snapshots[0], "daily_return"):
+                bm_returns = np.array([b.daily_return for b in benchmark_snapshots], dtype=float)
+            else:
+                bm_returns = np.asarray(benchmark_snapshots, dtype=float)
+        else:
+            bm_returns = np.zeros(T, dtype=float)
 
-        # Gross return approximation (return without deduction of fees)
-        fee_impact = np.array([s.fills_count * 0.00075 / 3.0 for s in daily_snapshots])  # approx fee load
+        # Exact gross return: add back actual daily transaction fees / previous-day NAV
+        fee_impact = np.zeros(T, dtype=float)
+        for i, s in enumerate(daily_snapshots):
+            daily_fee = float(getattr(s, "daily_fee", 0.0))
+            if daily_fee > 0:
+                if i > 0:
+                    prev_nav = float(daily_snapshots[i - 1].total_nav)
+                else:
+                    prev_nav = float(s.total_nav / (1.0 + s.daily_return)) if (1.0 + s.daily_return) != 0 else float(s.total_nav)
+                if prev_nav > 0:
+                    fee_impact[i] = daily_fee / prev_nav
         gross_returns = net_returns + fee_impact
 
         # 5-fold sequential walk forward
