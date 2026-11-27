@@ -1,5 +1,16 @@
 # 回测报告索引
 
+## 2026-11-27 科创板 PE/PEG × Z 值 × MIT Trader 策略实施与实证回测
+
+- [科创板 PE/PEG × Z 值 × MIT Trader 策略回测摘要](2026-11-27_科创板_PE_PEG_Z值_MITTrader_回测摘要.md)：针对科创板 1,001 交易日动态池 (473 只合格标的)，在同一 200 万元初始账户架构与真实交易摩擦（科创板 200 股起购与碎股全清、20 日均成交额 1% 流动性硬约束、T+1 开盘先卖后买、印花税分段扣费）下，完成 2023-09-01 至 2026-11-26 (782 个交易日) 的 6 组同窗对照与 3 项增量价值配对分块置信区间检验。
+- 关键实证结论与核心发现：
+  1. **估值筛选增量检验 ("叠加减纯 Z")**: 年化超额收益差为 **+0.51%**，95% 配对分块 Bootstrap 置信区间为 `[-22.06%, +24.25%]`, $p = 0.9410$ (统计学不显著)。估值筛选显著收敛选股范围并规避了极端泡沫标的，但难以完全消除熊市 Beta 拖累。
+  2. **Z 值择时增量检验 ("叠加减仅估值")**: 年化超额收益差为 **-13.96%**，95% 配对分块 Bootstrap 置信区间为 `[-61.09%, +29.31%]`, $p = 0.5600$ (统计学不显著)。Z 值择时使平均仓位从 91.9% 降至 68.5%，最大回撤由 -61.37% 收敛至 -55.89%，具有显著防守特性。
+  3. **MIT Trader 风控增量检验 ("风控组减叠加组")**: 年化超额收益差为 **+20.49%**，95% 配对分块 Bootstrap 置信区间为 `[-4.42%, +47.66%]`, $p = 0.1190$。**风控发挥了极强的尾部风险阻断作用**：将净亏损从 **-54.93%** 挽救至 **-5.84%**，最大回撤从 **-55.89%** 剧烈压缩至 **-9.28%** (绝对回撤减少 **46.61%**)，挽救近百万元本金。
+  4. **三门禁评级 (Three Gates)**: 策略毛夏普通过第一关 OOS (23.52)，但由于未能通过第二关幸运检验及第三关双倍成本净夏普检验，终审评定为 **REJECTED**，保持 `RESEARCH_ONLY`。
+  5. **预测 PEG 原版真实性审计**: 本地 ASDC 库核验确认为科创板 2026-09-11 前历史逐行时点通过数为 **0**，严格遵守无造假原则，真实标为 **`UNESTIMABLE_DUE_TO_QUALIFIED_DATA_LACKING`**。
+- 详细科研报告位于 [`reports/star_pe_peg_z_mit/STAR_PE_PEG_Z_MIT_RESEARCH_REPORT.md`](file:///Volumes/extension/projects/Chenyiyun2087/reports/star_pe_peg_z_mit/STAR_PE_PEG_Z_MIT_RESEARCH_REPORT.md)，指标统一源位于 [`exports/backtest/star_pe_peg_z_mit/metrics.json`](file:///Volumes/extension/projects/Chenyiyun2087/exports/backtest/star_pe_peg_z_mit/metrics.json)，执行 CLI 位于 [`scripts/research/run_star_pe_peg_z_mit.py`](file:///Volumes/extension/projects/Chenyiyun2087/scripts/research/run_star_pe_peg_z_mit.py)。
+
 ## 2026-11-24 第二轮主升浪因子 (SWI_FACTOR V2.1) 与路维光电回测 (真实性整改与独立复算版)
 
 - [第二轮主升浪因子与路维光电回测摘要 (V2.1 真实性整改与独立复算版)](2026-11-24_第二轮主升浪因子与路维光电_回测摘要.md)：针对 GitHub Review 审查意见彻底整改，在分支 `review/swi-factor-v2-1-evidence-hardening` 上完成 11 项 P0 真实性重构与独立复算。
